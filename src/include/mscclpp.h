@@ -1,3 +1,6 @@
+#ifndef MSCCLPP_H_
+#define MSCCLPP_H_
+
 #define MSCCLPP_MAJOR 0
 #define MSCCLPP_MINOR 1
 
@@ -16,3 +19,5 @@ mscclppResult_t  mscclppGetUniqueId(mscclppUniqueId* uniqueId);
 
 //mscclppResult_t  mscclppCommInitRank(mscclppComm_t* comm, int nranks, mscclppUniqueId commId, int rank);
 //mscclppResult_t  mscclppCommDestroy(mscclppComm_t comm);
+
+#endif // MSCCLPP_H_
