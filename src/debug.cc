@@ -40,7 +40,9 @@ void mscclppDebugLog(mscclDebugLogLevel level, const char *filefunc, int line,
     return;
   }
   string lev_str;
-  if (level == MSCCLPP_LOG_INFO) {
+  if (level == MSCCLPP_LOG_WARN) {
+    lev_str = "WARN";
+  } else if (level == MSCCLPP_LOG_INFO) {
     lev_str = "INFO";
   } else if (level == MSCCLPP_LOG_DEBUG) {
     lev_str = "DEBUG";

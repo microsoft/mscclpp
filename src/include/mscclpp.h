@@ -12,8 +12,12 @@ typedef struct { char internal[MSCCLPP_UNIQUE_ID_BYTES]; } mscclppUniqueId;
 
 /* Error type */
 typedef enum { mscclppSuccess                 =  0,
-               mscclppUnhandledCudaError      =  1
-            } mscclppResult_t;
+               mscclppUnhandledCudaError      =  1,
+               mscclppSystemError             =  2,
+               mscclppInternalError           =  3,
+               mscclppInvalidArgument         =  4,
+               mscclppInvalidUsage            =  5,
+               mscclppNumResults              =  6 } mscclppResult_t;
 
 mscclppResult_t  mscclppGetUniqueId(mscclppUniqueId* uniqueId);
 

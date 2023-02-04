@@ -77,7 +77,7 @@ endif
 BUILDDIR ?= $(abspath ./build)
 ABSBUILDDIR := $(abspath $(BUILDDIR))
 
-BUILDSRCS := init.cc debug.cc
+BUILDSRCS := init.cc debug.cc bootstrap.cc
 BUILDOBJS := $(patsubst %.cc,$(ABSBUILDDIR)/src/%.o,$(BUILDSRCS))
 
 TESTSSRCS := init_test.cc
