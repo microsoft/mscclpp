@@ -20,7 +20,7 @@ static_assert(sizeof(struct mscclppBootstrapHandle) <= sizeof(mscclppUniqueId), 
 
 mscclppResult_t bootstrapNetInit();
 mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle, bool idFromEnv);
-mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle);
+mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot = true);
 mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscclppComm* comm);
 mscclppResult_t bootstrapAllGather(void* commState, void* allData, int size);
 mscclppResult_t bootstrapSend(void* commState, int peer, int tag, void* data, int size);

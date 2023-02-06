@@ -185,10 +185,13 @@ mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle, bool 
   return mscclppSuccess;
 }
 
-mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle) {
-  memset(handle, 0, sizeof(mscclppBootstrapHandle));
-  MSCCLPPCHECK(getRandomData(&handle->magic, sizeof(handle->magic)));
+// #include <netinet/in.h>
+// #include <arpa/inet.h>
 
+mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot) {
+  memset(handle, 0, sizeof(mscclppBootstrapHandle));
+  // MSCCLPPCHECK(getRandomData(&handle->magic, sizeof(handle->magic)));
+  handle->magic = 0xdeadbeef;
   char* env = getenv("MSCCLPP_COMM_ID");
   if (env) {
     INFO(MSCCLPP_ENV, "MSCCLPP_COMM_ID set by environment to %s", env);
@@ -196,10 +199,14 @@ mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle) {
       WARN("Invalid MSCCLPP_COMM_ID, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
       return mscclppInvalidArgument;
     }
+    if (isRoot)
+      MSCCLPPCHECK(bootstrapCreateRoot(handle, false));
   } else {
     memcpy(&handle->addr, &bootstrapNetIfAddr, sizeof(union mscclppSocketAddress));
     MSCCLPPCHECK(bootstrapCreateRoot(handle, false));
   }
+  // printf("addr = %s port = %d\n", inet_ntoa(handle->addr.sin.sin_addr), (int)ntohs(handle->addr.sin.sin_port));
+  // printf("addr = %s\n", inet_ntoa((*(struct sockaddr_in*)&handle->addr.sa).sin_addr));
 
   return mscclppSuccess;
 }

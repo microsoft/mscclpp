@@ -11,6 +11,8 @@ int main()
   int world_size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+  // int a;
+  // scanf("%d", &a);
 
   mscclppResult_t res = bootstrapNetInit();
   if (res != mscclppSuccess) {
@@ -19,15 +21,15 @@ int main()
   }
 
   mscclppBootstrapHandle handle;
-  if (rank == 0) {
-    res = bootstrapGetUniqueId(&handle);
+  if (true || rank == 0) {
+    res = bootstrapGetUniqueId(&handle, rank == 0);
     if (res != mscclppSuccess) {
       printf("bootstrapGetUniqueId failed\n");
       return -1;
     }
   }
 
-  MPI_Bcast(&handle, sizeof(mscclppBootstrapHandle), MPI_BYTE, 0, MPI_COMM_WORLD);
+  // MPI_Bcast(&handle, sizeof(mscclppBootstrapHandle), MPI_BYTE, 0, MPI_COMM_WORLD);
 
   mscclppComm *comm;
   res = mscclppCalloc(&comm, 1);
@@ -80,6 +82,6 @@ int main()
 
   MPI_Finalize();
 
-  printf("Succeeded!\n");
+  printf("Succeeded! %d\n", rank);
   return 0;
 }
