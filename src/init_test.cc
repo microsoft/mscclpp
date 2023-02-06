@@ -6,9 +6,9 @@ int main()
   mscclppUniqueId uid;
   mscclppResult_t res = mscclppGetUniqueId(&uid);
   if (res != mscclppSuccess) {
-    printf("mscclppGetUniqueId failed");
+    printf("mscclppGetUniqueId failed\n");
     return -1;
   }
-  printf("Succeeded!\n");
+  printf("Succeeded! %d\n", uid);
   return 0;
 }
