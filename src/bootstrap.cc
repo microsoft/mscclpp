@@ -6,12 +6,12 @@
 
 #include "mscclpp.h"
 #include "core.h"
-// #include "utils.h"
+#include "utils.h"
 #include "bootstrap.h"
-// #include "net.h"
+#include "net.h"
 #include <unistd.h>
 #include <sys/types.h>
-// #include "proxy.h"
+#include "proxy.h"
 
 struct bootstrapRootArgs {
   struct mscclppSocket* listenSock;
@@ -28,11 +28,11 @@ mscclppResult_t bootstrapNetInit() {
   if (bootstrapNetInitDone == 0) {
     pthread_mutex_lock(&bootstrapNetLock);
     if (bootstrapNetInitDone == 0) {
-      char* env = getenv("mscclpp_COMM_ID");
+      char* env = getenv("MSCCLPP_COMM_ID");
       if (env) {
         union mscclppSocketAddress remoteAddr;
         if (mscclppSocketGetAddrFromString(&remoteAddr, env) != mscclppSuccess) {
-          WARN("Invalid mscclpp_COMM_ID, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
+          WARN("Invalid MSCCLPP_COMM_ID, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
           return mscclppInvalidArgument;
         }
         if (mscclppFindInterfaceMatchSubnet(bootstrapNetIfName, &bootstrapNetIfAddr, &remoteAddr, MAX_IF_NAME_SIZE, 1) <= 0) {
@@ -49,7 +49,7 @@ mscclppResult_t bootstrapNetInit() {
       char line[SOCKET_NAME_MAXLEN+MAX_IF_NAME_SIZE+2];
       sprintf(line, " %s:", bootstrapNetIfName);
       mscclppSocketToString(&bootstrapNetIfAddr, line+strlen(line));
-      INFO("Bootstrap : Using%s", line);
+      INFO(MSCCLPP_INIT, "Bootstrap : Using%s", line);
       bootstrapNetInitDone = 1;
     }
     pthread_mutex_unlock(&bootstrapNetLock);
@@ -107,7 +107,7 @@ static void *bootstrapRoot(void* rargs) {
   MSCCLPPCHECKGOTO(mscclppCalloc(&zero, 1), res, out);
   setFilesLimit();
 
-  TRACE(mscclpp_INIT, "BEGIN");
+  TRACE(MSCCLPP_INIT, "BEGIN");
   /* Receive addresses from all ranks */
   do {
     struct mscclppSocket sock;
@@ -137,9 +137,9 @@ static void *bootstrapRoot(void* rargs) {
     memcpy(rankAddresses+info.rank, &info.extAddressListen, sizeof(union mscclppSocketAddress));
 
     ++c;
-    TRACE(mscclpp_INIT, "Received connect from rank %d total %d/%d",  info.rank, c, nranks);
+    TRACE(MSCCLPP_INIT, "Received connect from rank %d total %d/%d",  info.rank, c, nranks);
   } while (c < nranks);
-  TRACE(mscclpp_INIT, "COLLECTED ALL %d HANDLES", nranks);
+  TRACE(MSCCLPP_INIT, "COLLECTED ALL %d HANDLES", nranks);
 
   // Send the connect handle for the next rank in the AllGather ring
   for (int r=0; r<nranks; ++r) {
@@ -150,7 +150,7 @@ static void *bootstrapRoot(void* rargs) {
     MSCCLPPCHECKGOTO(bootstrapNetSend(&sock, rankAddresses+next, sizeof(union mscclppSocketAddress)), res, out);
     MSCCLPPCHECKGOTO(mscclppSocketClose(&sock), res, out);
   }
-  TRACE(mscclpp_INIT, "SENT OUT ALL %d HANDLES", nranks);
+  TRACE(MSCCLPP_INIT, "SENT OUT ALL %d HANDLES", nranks);
 
 out:
   if (listenSock != NULL) {
@@ -162,7 +162,7 @@ out:
   if (zero) free(zero);
   free(rargs);
 
-  TRACE(mscclpp_INIT, "DONE");
+  TRACE(MSCCLPP_INIT, "DONE");
   return NULL;
 }
 
@@ -180,7 +180,7 @@ mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle, bool 
   args->listenSock = listenSock;
   args->magic = handle->magic;
   NEQCHECK(pthread_create(&thread, NULL, bootstrapRoot, (void*)args), 0);
-  mscclppSetThreadName(thread, "mscclpp BootstrapR");
+  mscclppSetThreadName(thread, "MSCCLPP BootstrapR");
   NEQCHECK(pthread_detach(thread), 0); // will not be pthread_join()'d
   return mscclppSuccess;
 }
@@ -189,11 +189,11 @@ mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle) {
   memset(handle, 0, sizeof(mscclppBootstrapHandle));
   MSCCLPPCHECK(getRandomData(&handle->magic, sizeof(handle->magic)));
 
-  char* env = getenv("mscclpp_COMM_ID");
+  char* env = getenv("MSCCLPP_COMM_ID");
   if (env) {
-    INFO(mscclpp_ENV, "mscclpp_COMM_ID set by environment to %s", env);
+    INFO(MSCCLPP_ENV, "MSCCLPP_COMM_ID set by environment to %s", env);
     if (mscclppSocketGetAddrFromString(&handle->addr, env) != mscclppSuccess) {
-      WARN("Invalid mscclpp_COMM_ID, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
+      WARN("Invalid MSCCLPP_COMM_ID, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
       return mscclppInvalidArgument;
     }
   } else {
@@ -241,7 +241,7 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
   comm->bootstrap = state;
   comm->magic = state->magic = handle->magic;
 
-  TRACE(mscclpp_INIT, "rank %d nranks %d", rank, nranks);
+  TRACE(MSCCLPP_INIT, "rank %d nranks %d", rank, nranks);
 
   info.rank = rank;
   info.nranks = nranks;
@@ -261,7 +261,7 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
     struct timespec tv;
     tv.tv_sec = msec / 1000;
     tv.tv_nsec = 1000000 * (msec % 1000);
-    TRACE(mscclpp_INIT, "rank %d delaying connection to root by %ld msec", rank, msec);
+    TRACE(MSCCLPP_INIT, "rank %d delaying connection to root by %ld msec", rank, msec);
     (void) nanosleep(&tv, NULL);
   }
 
@@ -300,7 +300,7 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
   MSCCLPPCHECK(bootstrapAllGather(state, state->peerProxyAddresses, sizeof(union mscclppSocketAddress)));
   MSCCLPPCHECK(mscclppProxyInit(comm, proxySocket, state->peerProxyAddresses));
 
-  TRACE(mscclpp_INIT, "rank %d nranks %d - DONE", rank, nranks);
+  TRACE(MSCCLPP_INIT, "rank %d nranks %d - DONE", rank, nranks);
 
   return mscclppSuccess;
 }
@@ -311,7 +311,7 @@ mscclppResult_t bootstrapAllGather(void* commState, void* allData, int size) {
   int rank = state->rank;
   int nranks = state->nranks;
 
-  TRACE(mscclpp_INIT, "rank %d nranks %d size %d", rank, nranks, size);
+  TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d", rank, nranks, size);
 
   /* Simple ring based AllGather
    * At each step i receive data from (rank-i-1) from left
@@ -327,7 +327,7 @@ mscclppResult_t bootstrapAllGather(void* commState, void* allData, int size) {
     MSCCLPPCHECK(bootstrapNetRecv(&state->ringRecvSocket, data+rslice*size, size));
   }
 
-  TRACE(mscclpp_INIT, "rank %d nranks %d size %d - DONE", rank, nranks, size);
+  TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d - DONE", rank, nranks, size);
   return mscclppSuccess;
 }
 
@@ -351,7 +351,7 @@ fail:
 
 mscclppResult_t bootstrapBarrier(void* commState, int *ranks, int rank, int nranks, int tag) {
   if (nranks == 1) return mscclppSuccess;
-  TRACE(mscclpp_INIT, "rank %d nranks %d tag %x - ENTER", rank, nranks, tag);
+  TRACE(MSCCLPP_INIT, "rank %d nranks %d tag %x - ENTER", rank, nranks, tag);
 
   /* Simple intra process barrier
    *
@@ -366,14 +366,14 @@ mscclppResult_t bootstrapBarrier(void* commState, int *ranks, int rank, int nran
     MSCCLPPCHECK(bootstrapRecv(commState, ranks[src], tag, data, sizeof(data)));
   }
 
-  TRACE(mscclpp_INIT, "rank %d nranks %d tag %x - DONE", rank, nranks, tag);
+  TRACE(MSCCLPP_INIT, "rank %d nranks %d tag %x - DONE", rank, nranks, tag);
   return mscclppSuccess;
 }
 
 mscclppResult_t bootstrapIntraNodeAllGather(void* commState, int *ranks, int rank, int nranks, void* allData, int size) {
   if (nranks == 1) return mscclppSuccess;
   char* data = (char*)allData;
-  TRACE(mscclpp_INIT, "rank %d nranks %d size %d - ENTER", rank, nranks, size);
+  TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d - ENTER", rank, nranks, size);
 
   for (int i=1; i<nranks; i++) {
     int src = (rank - i + nranks) % nranks;
@@ -382,7 +382,7 @@ mscclppResult_t bootstrapIntraNodeAllGather(void* commState, int *ranks, int ran
     MSCCLPPCHECK(bootstrapRecv(commState, ranks[src], /*tag=*/i, data+src*size, size));
   }
 
-  TRACE(mscclpp_INIT, "rank %d nranks %d size %d - DONE", rank, nranks, size);
+  TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d - DONE", rank, nranks, size);
   return mscclppSuccess;
 }
 

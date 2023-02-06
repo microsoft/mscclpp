@@ -10,7 +10,7 @@
 #include "mscclpp.h"
 #include "socket.h"
 
-// #include "comm.h"
+#include "comm.h"
 
 struct mscclppBootstrapHandle {
   uint64_t magic;
