@@ -79,19 +79,19 @@ mscclppResult_t mscclppSocketGetAddr(struct mscclppSocket* sock, union mscclppSo
 // Connect to sock->addr. sock->fd is set after a successful call.
 mscclppResult_t mscclppSocketConnect(struct mscclppSocket* sock);
 // Return socket connection state.
-mscclppResult_t mscclppSocketReady(struct mscclppSocket* sock, int *running);
+// mscclppResult_t mscclppSocketReady(struct mscclppSocket* sock, int *running);
 // Accept an incoming connection from listenSock->fd and keep the file descriptor in sock->fd, with the remote side IP/port in sock->addr.
 mscclppResult_t mscclppSocketAccept(struct mscclppSocket* sock, struct mscclppSocket* ulistenSock);
-mscclppResult_t mscclppSocketGetFd(struct mscclppSocket* sock, int* fd);
-mscclppResult_t mscclppSocketSetFd(int fd, struct mscclppSocket* sock);
+// mscclppResult_t mscclppSocketGetFd(struct mscclppSocket* sock, int* fd);
+// mscclppResult_t mscclppSocketSetFd(int fd, struct mscclppSocket* sock);
 
 #define MSCCLPP_SOCKET_SEND 0
 #define MSCCLPP_SOCKET_RECV 1
 
 mscclppResult_t mscclppSocketProgress(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset);
-mscclppResult_t mscclppSocketWait(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset);
+// mscclppResult_t mscclppSocketWait(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset);
 mscclppResult_t mscclppSocketSend(struct mscclppSocket* sock, void* ptr, int size);
 mscclppResult_t mscclppSocketRecv(struct mscclppSocket* sock, void* ptr, int size);
-mscclppResult_t mscclppSocketTryRecv(struct mscclppSocket* sock, void* ptr, int size, int* closed);
+// mscclppResult_t mscclppSocketTryRecv(struct mscclppSocket* sock, void* ptr, int size, int* closed);
 mscclppResult_t mscclppSocketClose(struct mscclppSocket* sock);
 #endif

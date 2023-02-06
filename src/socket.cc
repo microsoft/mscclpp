@@ -562,22 +562,22 @@ static mscclppResult_t socketProgressState(struct mscclppSocket* sock) {
   return mscclppSuccess;
 }
 
-mscclppResult_t mscclppSocketReady(struct mscclppSocket* sock, int *running) {
-  if (sock == NULL) {
-    *running = 0;
-    return mscclppSuccess;
-  }
-  if (sock->state == mscclppSocketStateError || sock->state == mscclppSocketStateClosed) {
-    WARN("mscclppSocketReady: unexpected socket state %d", sock->state);
-    return mscclppRemoteError;
-  }
-  *running = (sock->state == mscclppSocketStateReady) ? 1 : 0;
-  if (*running == 0) {
-    MSCCLPPCHECK(socketProgressState(sock));
-    *running = (sock->state == mscclppSocketStateReady) ? 1 : 0;
-  }
-  return mscclppSuccess;
-}
+// mscclppResult_t mscclppSocketReady(struct mscclppSocket* sock, int *running) {
+//   if (sock == NULL) {
+//     *running = 0;
+//     return mscclppSuccess;
+//   }
+//   if (sock->state == mscclppSocketStateError || sock->state == mscclppSocketStateClosed) {
+//     WARN("mscclppSocketReady: unexpected socket state %d", sock->state);
+//     return mscclppRemoteError;
+//   }
+//   *running = (sock->state == mscclppSocketStateReady) ? 1 : 0;
+//   if (*running == 0) {
+//     MSCCLPPCHECK(socketProgressState(sock));
+//     *running = (sock->state == mscclppSocketStateReady) ? 1 : 0;
+//   }
+//   return mscclppSuccess;
+// }
 
 mscclppResult_t mscclppSocketConnect(struct mscclppSocket* sock) {
 #ifdef ENABLE_TRACE
@@ -740,14 +740,14 @@ mscclppResult_t mscclppSocketProgress(int op, struct mscclppSocket* sock, void* 
   return mscclppSuccess;
 }
 
-mscclppResult_t mscclppSocketWait(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset) {
-  if (sock == NULL) {
-    WARN("mscclppSocketWait: pass NULL socket");
-    return mscclppInvalidArgument;
-  }
-  MSCCLPPCHECK(socketWait(op, sock, ptr, size, offset));
-  return mscclppSuccess;
-}
+// mscclppResult_t mscclppSocketWait(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset) {
+//   if (sock == NULL) {
+//     WARN("mscclppSocketWait: pass NULL socket");
+//     return mscclppInvalidArgument;
+//   }
+//   MSCCLPPCHECK(socketWait(op, sock, ptr, size, offset));
+//   return mscclppSuccess;
+// }
 
 mscclppResult_t mscclppSocketSend(struct mscclppSocket* sock, void* ptr, int size) {
   int offset = 0;
@@ -778,19 +778,19 @@ mscclppResult_t mscclppSocketRecv(struct mscclppSocket* sock, void* ptr, int siz
 }
 
 // Receive or detect connection closed
-mscclppResult_t mscclppSocketTryRecv(struct mscclppSocket* sock, void* ptr, int size, int* closed) {
-  int offset = 0;
-  if (sock == NULL) {
-    WARN("mscclppSocketTryRecv: pass NULL socket");
-    return mscclppInvalidArgument;
-  }
-  *closed = 0;
-  while (offset < size) {
-    MSCCLPPCHECK(socketProgressOpt(MSCCLPP_SOCKET_RECV, sock, ptr, size, &offset, 0, closed));
-    if (*closed) return mscclppSuccess;
-  }
-  return mscclppSuccess;
-}
+// mscclppResult_t mscclppSocketTryRecv(struct mscclppSocket* sock, void* ptr, int size, int* closed) {
+//   int offset = 0;
+//   if (sock == NULL) {
+//     WARN("mscclppSocketTryRecv: pass NULL socket");
+//     return mscclppInvalidArgument;
+//   }
+//   *closed = 0;
+//   while (offset < size) {
+//     MSCCLPPCHECK(socketProgressOpt(MSCCLPP_SOCKET_RECV, sock, ptr, size, &offset, 0, closed));
+//     if (*closed) return mscclppSuccess;
+//   }
+//   return mscclppSuccess;
+// }
 
 mscclppResult_t mscclppSocketClose(struct mscclppSocket* sock) {
   if (sock != NULL) {
@@ -801,20 +801,20 @@ mscclppResult_t mscclppSocketClose(struct mscclppSocket* sock) {
   return mscclppSuccess;
 }
 
-mscclppResult_t mscclppSocketGetFd(struct mscclppSocket* sock, int* fd) {
-  if (sock == NULL) {
-    WARN("mscclppSocketGetFd: pass NULL socket");
-    return mscclppInvalidArgument;
-  }
-  if (fd) *fd = sock->fd;
-  return mscclppSuccess;
-}
+// mscclppResult_t mscclppSocketGetFd(struct mscclppSocket* sock, int* fd) {
+//   if (sock == NULL) {
+//     WARN("mscclppSocketGetFd: pass NULL socket");
+//     return mscclppInvalidArgument;
+//   }
+//   if (fd) *fd = sock->fd;
+//   return mscclppSuccess;
+// }
 
-mscclppResult_t mscclppSocketSetFd(int fd, struct mscclppSocket* sock) {
-  if (sock == NULL) {
-    WARN("mscclppSocketGetFd: pass NULL socket");
-    return mscclppInvalidArgument;
-  }
-  sock->fd = fd;
-  return mscclppSuccess;
-}
+// mscclppResult_t mscclppSocketSetFd(int fd, struct mscclppSocket* sock) {
+//   if (sock == NULL) {
+//     WARN("mscclppSocketGetFd: pass NULL socket");
+//     return mscclppInvalidArgument;
+//   }
+//   sock->fd = fd;
+//   return mscclppSuccess;
+// }
