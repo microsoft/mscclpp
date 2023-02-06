@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-./build/src/init_test
+MSCCLPP_DEBUG_SUBSYS=ALL MSCCLPP_DEBUG=TRACE ./build/src/bootstrap/init_test

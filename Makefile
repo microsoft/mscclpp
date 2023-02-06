@@ -82,10 +82,11 @@ endif
 BUILDDIR ?= $(abspath ./build)
 ABSBUILDDIR := $(abspath $(BUILDDIR))
 
-BUILDSRCS := init.cc debug.cc bootstrap.cc utils.cc param.cc socket.cc proxy.cc
+BUILDSRCS := debug.cc utils.cc param.cc
+BUILDSRCS += $(addprefix bootstrap/,init.cc bootstrap.cc socket.cc proxy.cc)
 BUILDOBJS := $(patsubst %.cc,$(ABSBUILDDIR)/src/%.o,$(BUILDSRCS))
 
-TESTSSRCS := init_test.cc
+TESTSSRCS := bootstrap/init_test.cc
 TESTSOBJS := $(patsubst %.cc,$(ABSBUILDDIR)/src/%.o,$(TESTSSRCS))
 TESTBINS  := $(patsubst %.cc,$(ABSBUILDDIR)/src/%,$(TESTSSRCS))
 
