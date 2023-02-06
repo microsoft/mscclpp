@@ -9,6 +9,6 @@ int main()
     printf("mscclppGetUniqueId failed\n");
     return -1;
   }
-  printf("Succeeded! %d\n", uid);
+  printf("Succeeded!\n");
   return 0;
 }

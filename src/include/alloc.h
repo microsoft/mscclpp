@@ -46,7 +46,7 @@ mscclppResult_t mscclppCallocDebug(T** ptr, size_t nelem, const char *filefunc, 
     WARN("Failed to malloc %ld bytes", nelem*sizeof(T));
     return mscclppSystemError;
   }
-  //INFO(MSCCLPP_ALLOC, "%s:%d malloc Size %ld pointer %p", filefunc, line, nelem*sizeof(T), p);
+  INFO(MSCCLPP_ALLOC, "%s:%d malloc Size %ld pointer %p", filefunc, line, nelem*sizeof(T), p);
   memset(p, 0, nelem*sizeof(T));
   *ptr = (T*)p;
   return mscclppSuccess;

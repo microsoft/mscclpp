@@ -1,5 +1,6 @@
 DEBUG ?= 0
 VERBOSE ?= 1
+TRACE ?= 0
 
 ######## CUDA
 CUDA_HOME ?= /usr/local/cuda
@@ -47,6 +48,10 @@ CXXFLAGS   := -DCUDA_MAJOR=$(CUDA_MAJOR) -DCUDA_MINOR=$(CUDA_MINOR) -fPIC -fvisi
               -Wall -Wno-unused-function -Wno-sign-compare -std=c++14 -Wvla \
               -I $(CUDA_INC) \
               $(CXXFLAGS)
+
+ifneq ($(TRACE), 0)
+CXXFLAGS  += -DENABLE_TRACE
+endif
 # Maxrregcount needs to be set accordingly to MSCCLPP_MAX_NTHREADS (otherwise it will cause kernel launch errors)
 # 512 : 120, 640 : 96, 768 : 80, 1024 : 60
 # We would not have to set this if we used __launch_bounds__, but this only works on kernels, not on functions.
