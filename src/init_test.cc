@@ -1,4 +1,3 @@
-#include <cassert>
 #include "debug.h"
 #include "mscclpp.h"
 
@@ -7,8 +6,9 @@ int main()
   mscclppUniqueId uid;
   mscclppResult_t res = mscclppGetUniqueId(&uid);
   if (res != mscclppSuccess) {
-    ABORT("mscclppGetUniqueId failed");
+    printf("mscclppGetUniqueId failed");
+    return -1;
   }
-  INFO("init_test succeed");
+  printf("Succeeded!\n");
   return 0;
 }

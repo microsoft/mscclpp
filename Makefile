@@ -77,7 +77,7 @@ endif
 BUILDDIR ?= $(abspath ./build)
 ABSBUILDDIR := $(abspath $(BUILDDIR))
 
-BUILDSRCS := init.cc debug.cc bootstrap.cc
+BUILDSRCS := init.cc debug.cc bootstrap.cc utils.cc param.cc socket.cc proxy.cc
 BUILDOBJS := $(patsubst %.cc,$(ABSBUILDDIR)/src/%.o,$(BUILDSRCS))
 
 TESTSSRCS := init_test.cc
@@ -99,7 +99,7 @@ $(ABSBUILDDIR)/%.o: %.cc
 
 $(TESTBINS): %: %.o $(BUILDOBJS)
 	@mkdir -p $(@D)
-	$(CXX) -o $@ $^ $(NVLDFLAGS)
+	$(NVCC) -o $@ $^ $(NVLDFLAGS)
 
 clean:
 	rm -rf $(ABSBUILDDIR)

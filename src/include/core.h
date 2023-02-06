@@ -17,6 +17,7 @@
 #include "mscclpp.h"
 #include "debug.h"
 #include "alloc.h"
+#include "param.h"
 
 /*
 #ifdef PROFAPI
@@ -62,7 +63,6 @@ static __inline__ int mscclppTypeSize(mscclppDataType_t type) {
 #include "checks.h"
 #include "cudawrap.h"
 #include "utils.h"
-#include "param.h"
 #include "nvtx.h"
 */
 

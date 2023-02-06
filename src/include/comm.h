@@ -251,7 +251,7 @@ struct mscclppComm {
 //   char intraPad2[64 - sizeof(uint64_t)];
 //   uint64_t intraBarrierGate; // only used if this is intraComm0
 
-//   struct mscclppProxyState proxyState;
+  struct mscclppProxyState proxyState;
 
 //   // Whether this communicator uses collNet
 //   int collNetSupport;

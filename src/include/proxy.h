@@ -161,22 +161,22 @@
 //   int nextOps;
 // };
 
-// struct mscclppProxyState {
-//   // Service thread
-//   pthread_t thread;
-//   struct mscclppSocket* listenSock;
-//   int stop;
+struct mscclppProxyState {
+  // Service thread
+  pthread_t thread;
+  struct mscclppSocket* listenSock;
+  int stop;
 //   CUcontext cudaCtx;
 
-//   // Used by main thread
-//   union mscclppSocketAddress* peerAddresses;
-//   struct mscclppSocket* peerSocks;
+  // Used by main thread
+  union mscclppSocketAddress* peerAddresses;
+  struct mscclppSocket* peerSocks;
 //   struct mscclppProxyOps* proxyOps;
 //   void** sharedDevMems;
 
-//   // Progress thread
+  // Progress thread
 //   struct mscclppProxyProgressState progressState;
-// };
+};
 
 // enum proxyConnectState {
 //   connUninitialized     = 0,
