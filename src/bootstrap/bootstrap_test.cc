@@ -32,7 +32,8 @@ int main()
   mscclppComm *comm;
   res = mscclppCalloc(&comm, 1);
   if (res != mscclppSuccess) {
-      printf("mscclppCalloc failed\n");
+    printf("mscclppCalloc failed\n");
+    return -1;
   }
 
   comm->magic = 0xdeadbeef;
@@ -40,12 +41,14 @@ int main()
   comm->nRanks = world_size;
   res = mscclppCudaHostCalloc((uint32_t **)&comm->abortFlag, 1);
   if (res != mscclppSuccess) {
-      printf("mscclppCudaHostCalloc failed\n");
+    printf("mscclppCudaHostCalloc failed\n");
+    return -1;
   }
 
   res = bootstrapInit(&handle, comm);
   if (res != mscclppSuccess) {
     printf("bootstrapInit failed\n");
+    return -1;
   }
 
   printf("bootstrapInit done\n");
@@ -53,22 +56,26 @@ int main()
   int *buf = (int *)calloc(world_size, sizeof(int));
   if (buf == nullptr) {
     printf("calloc failed\n");
+    return -1;
   }
   buf[rank] = rank;
   res = bootstrapAllGather(comm->bootstrap, buf, sizeof(int));
   if (res != mscclppSuccess) {
     printf("bootstrapAllGather failed\n");
+    return -1;
   }
 
   for (int i = 0; i < world_size; ++i) {
     if (buf[i] != i) {
       printf("wrong data: %d, expected %d\n", buf[i], i);
+      return -1;
     }
   }
 
   res = bootstrapClose(comm->bootstrap);
   if (res != mscclppSuccess) {
     printf("bootstrapClose failed\n");
+    return -1;
   }
 
   MPI_Finalize();
