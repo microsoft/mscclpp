@@ -78,6 +78,11 @@ ifeq ($(NVTX), 0)
 CXXFLAGS  += -DNVTX_DISABLE
 endif
 
+#### MPI (only for test code)
+MPI_HOME    ?= /usr/local/mpi
+MPI_INC     := -I$(MPI_HOME)/include
+MPI_LDFLAGS := -L$(MPI_HOME)/lib
+
 #### MSCCL++
 BUILDDIR ?= $(abspath ./build)
 ABSBUILDDIR := $(abspath $(BUILDDIR))
@@ -86,11 +91,11 @@ BUILDSRCS := debug.cc utils.cc param.cc
 BUILDSRCS += $(addprefix bootstrap/,init.cc bootstrap.cc socket.cc proxy.cc)
 BUILDOBJS := $(patsubst %.cc,$(ABSBUILDDIR)/src/%.o,$(BUILDSRCS))
 
-TESTSSRCS := bootstrap/init_test.cc
+TESTSSRCS := $(addprefix bootstrap/,init_test.cc bootstrap_test.cc)
 TESTSOBJS := $(patsubst %.cc,$(ABSBUILDDIR)/src/%.o,$(TESTSSRCS))
 TESTBINS  := $(patsubst %.cc,$(ABSBUILDDIR)/src/%,$(TESTSSRCS))
 
-INCLUDE := -Isrc -Isrc/include
+INCLUDE := -Isrc -Isrc/include $(MPI_INC)
 
 .PHONY: all build tests clean
 
@@ -105,7 +110,7 @@ $(ABSBUILDDIR)/%.o: %.cc
 
 $(TESTBINS): %: %.o $(BUILDOBJS)
 	@mkdir -p $(@D)
-	$(NVCC) -o $@ $^ $(NVLDFLAGS)
+	$(NVCC) -o $@ $^ $(NVLDFLAGS) $(MPI_LDFLAGS) -lmpi
 
 clean:
 	rm -rf $(ABSBUILDDIR)
