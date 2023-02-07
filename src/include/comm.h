@@ -7,11 +7,11 @@
 #ifndef MSCCLPP_COMM_H_
 #define MSCCLPP_COMM_H_
 
-#include "transport.h"
+// #include "transport.h"
 // #include "p2p.h"
 // #include "collectives.h"
 #include "proxy.h"
-#include "strongstream.h"
+// #include "strongstream.h"
 
 // #if CUDART_VERSION < 9000
 // struct cudaLaunchParams {
@@ -96,18 +96,18 @@
 //   mscclppResult_t(*fn)(struct mscclppComm* comm, struct mscclppCommCallback* cb);
 // };
 
-struct mscclppChannel {
-  struct mscclppChannelPeer* peers;
-  struct mscclppDevChannelPeer* devPeers;
-  struct mscclppRing ring;
-  int* devRingUserRanks;
-  struct mscclppTree tree;
-  struct mscclppTree collnetChain;
-  struct mscclppDirect collnetDirect;
-  int id; // index of this channel
-  uint32_t workFifoSent; // last used work index+1
-  uint64_t p2pOpCount;
-};
+// struct mscclppChannel {
+//   struct mscclppChannelPeer* peers;
+//   struct mscclppDevChannelPeer* devPeers;
+//   struct mscclppRing ring;
+//   int* devRingUserRanks;
+//   struct mscclppTree tree;
+//   struct mscclppTree collnetChain;
+//   struct mscclppDirect collnetDirect;
+//   int id; // index of this channel
+//   uint32_t workFifoSent; // last used work index+1
+//   uint64_t p2pOpCount;
+// };
 
 // struct mscclppWorkList {
 //   struct mscclppWorkList* next;
@@ -160,16 +160,16 @@ struct mscclppComm {
 //   // List of destructors to run when comm is destructed
 //   struct mscclppDestructor* destructorHead;
 
-  struct mscclppChannel channels[MAXCHANNELS];
-  struct mscclppPeerInfo* peerInfo;
-  struct mscclppTopoSystem* topo;
+//   struct mscclppChannel channels[MAXCHANNELS];
+//   struct mscclppPeerInfo* peerInfo;
+//   struct mscclppTopoSystem* topo;
 
 //   mscclppNet_t* mscclppNet;
 //   mscclppCollNet_t* mscclppCollNet;
   void* bootstrap;
-  // Bitmasks for mscclppTransportP2pSetup
-  uint64_t* connectSend;
-  uint64_t* connectRecv;
+//   // Bitmasks for mscclppTransportP2pSetup
+//   uint64_t* connectSend;
+//   uint64_t* connectRecv;
 
   uint64_t magic; // Magic number for all network communication. Not a security key -- only goal is to detect mismatches.
 
@@ -181,13 +181,13 @@ struct mscclppComm {
 //   cpu_set_t cpuAffinity; // CPU affinity of the GPU
 
 //   int node;
-  int nNodes;
-  int localRank;
-  int localRanks;
+//   int nNodes;
+//   int localRank;
+//   int localRanks;
 //   int maxLocalRanks;
 //   int* rankToNode;
 //   int* rankToLocalRank;
-  int* localRankToRank;
+//   int* localRankToRank;
 //   // localRanks and localRanktoRank for all nodes
 //   struct mscclppNodeRanks* nodeRanks;
 
@@ -199,8 +199,8 @@ struct mscclppComm {
 //   // Collective operation counter
 //   uint64_t collOpCount;
 
-  // Channels for collectives
-  int nChannels;
+//   // Channels for collectives
+//   int nChannels;
 //   // Channels (per peer) for p2p
 //   int p2pnChannels;
 //   int p2pnChannelsPerPeer;
@@ -259,8 +259,8 @@ struct mscclppComm {
 
 //   size_t channelSize; // User requested work size (bytes) for channel partitions
 
-  // Internal streams
-  struct mscclppStrongStream deviceStream, hostStream;
+//   // Internal streams
+//   struct mscclppStrongStream deviceStream, hostStream;
 
 //   // pools backed by comm->memPermanent
 //   struct mscclppMemoryPool memPool_mscclppProxyOp;
