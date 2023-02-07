@@ -95,7 +95,7 @@
 // // Make sure we have enough to store two full rounds of operations on all channels.
 // // Otherwise we'd be unable to post half of them to free new elements.
 // #define MAX_OPS_PER_PEER (2*MAXCHANNELS*MSCCLPP_MAX_WORK_ELEMENTS_P2P)
-// #define MSCCLPP_MAX_LOCAL_RANKS 64
+#define MSCCLPP_MAX_LOCAL_RANKS 64
 // struct mscclppProxyOpsPool {
 //   struct mscclppProxyOp ops[MAX_OPS_PER_PEER*MSCCLPP_MAX_LOCAL_RANKS];
 //   volatile int nextOps;
