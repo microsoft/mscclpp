@@ -44,3 +44,46 @@ mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* out) {
   TRACE_CALL("mscclppGetUniqueId(0x%llx)", (unsigned long long)hashUniqueId(*out));
   return res;
 }
+
+mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int size){
+  MSCCLPPCHECK(bootstrapAllGather(comm->bootstrap, data, size));
+  return mscclppSuccess;
+}
+
+
+mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, char* ip_port_pair){
+  mscclppResult_t res = mscclppSuccess;
+  mscclppComm_t _comm = NULL;
+  MSCCLPPCHECKGOTO(mscclppCalloc(&_comm, 1), res, fail);
+  _comm->rank = rank;
+  _comm->nRanks = nranks;
+
+  MSCCLPPCHECK(bootstrapNetInit(ip_port_pair));
+  mscclppBootstrapHandle handle;
+  MSCCLPPCHECK(bootstrapGetUniqueId(&handle, rank == 0, ip_port_pair));
+  _comm->magic = handle.magic;
+
+  MSCCLPPCHECKGOTO(mscclppCudaHostCalloc((uint32_t **)&_comm->abortFlag, 1), res, fail);
+  MSCCLPPCHECK(bootstrapInit(&handle, _comm));
+  *comm = _comm;
+  return res;
+fail:
+  if (_comm) {
+    if (_comm->abortFlag) mscclppCudaHostFree((void *)_comm->abortFlag);
+    free(_comm);
+  }
+  if (comm) *comm = NULL;
+  return res;
+}
+
+mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
+  if (comm == NULL)
+    return mscclppSuccess;
+
+  if (comm->bootstrap)
+    MSCCLPPCHECK(bootstrapClose(comm->bootstrap));
+
+  mscclppCudaHostFree((void *)comm->abortFlag);
+  free(comm);
+  return mscclppSuccess;
+}

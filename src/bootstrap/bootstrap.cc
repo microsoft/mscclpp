@@ -24,11 +24,16 @@ static union mscclppSocketAddress bootstrapNetIfAddr;
 static int bootstrapNetInitDone = 0;
 pthread_mutex_t bootstrapNetLock = PTHREAD_MUTEX_INITIALIZER;
 
-mscclppResult_t bootstrapNetInit() {
+mscclppResult_t bootstrapNetInit(char* ip_port_pair) {
   if (bootstrapNetInitDone == 0) {
     pthread_mutex_lock(&bootstrapNetLock);
     if (bootstrapNetInitDone == 0) {
-      char* env = getenv("MSCCLPP_COMM_ID");
+      char* env;
+      if (ip_port_pair) {
+        env = ip_port_pair;
+      } else {
+        env = getenv("MSCCLPP_COMM_ID");
+      }
       if (env) {
         union mscclppSocketAddress remoteAddr;
         if (mscclppSocketGetAddrFromString(&remoteAddr, env) != mscclppSuccess) {
@@ -188,11 +193,16 @@ mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle, bool 
 // #include <netinet/in.h>
 // #include <arpa/inet.h>
 
-mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot) {
+mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot, char* ip_port_pair) {
   memset(handle, 0, sizeof(mscclppBootstrapHandle));
   // MSCCLPPCHECK(getRandomData(&handle->magic, sizeof(handle->magic)));
   handle->magic = 0xdeadbeef;
-  char* env = getenv("MSCCLPP_COMM_ID");
+  char* env;
+  if (ip_port_pair) {
+    env = ip_port_pair;
+  } else {
+    env = getenv("MSCCLPP_COMM_ID");
+  }
   if (env) {
     INFO(MSCCLPP_ENV, "MSCCLPP_COMM_ID set by environment to %s", env);
     if (mscclppSocketGetAddrFromString(&handle->addr, env) != mscclppSuccess) {

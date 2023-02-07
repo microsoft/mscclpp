@@ -339,8 +339,8 @@ int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress *ifAddrs, in
     if (nIfs == 0) {
       char* commId = getenv("MSCCLPP_COMM_ID");
       if (commId && strlen(commId) > 1) {
-	INFO(MSCCLPP_ENV, "MSCCLPP_COMM_ID set by environment to %s", commId);
-	// Try to find interface that is in the same subnet as the IP in comm id
+        INFO(MSCCLPP_ENV, "MSCCLPP_COMM_ID set by environment to %s", commId);
+        // Try to find interface that is in the same subnet as the IP in comm id
         union mscclppSocketAddress idAddr;
         mscclppSocketGetAddrFromString(&idAddr, commId);
         nIfs = mscclppFindInterfaceMatchSubnet(ifNames, ifAddrs, &idAddr, ifNameMaxSize, maxIfs);

@@ -1,4 +1,4 @@
-#include "bootstrap.h"
+#include "mscclpp.h"
 #include "alloc.h"
 #include "mpi.h"
 #include <stdio.h>
@@ -11,49 +11,10 @@ int main()
   int world_size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-  // int a;
-  // scanf("%d", &a);
 
-  mscclppResult_t res = bootstrapNetInit();
-  if (res != mscclppSuccess) {
-    printf("bootstrapNetInit failed\n");
-    return -1;
-  }
-
-  mscclppBootstrapHandle handle;
-  if (true || rank == 0) {
-    res = bootstrapGetUniqueId(&handle, rank == 0);
-    if (res != mscclppSuccess) {
-      printf("bootstrapGetUniqueId failed\n");
-      return -1;
-    }
-  }
-
-  // MPI_Bcast(&handle, sizeof(mscclppBootstrapHandle), MPI_BYTE, 0, MPI_COMM_WORLD);
-
-  mscclppComm *comm;
-  res = mscclppCalloc(&comm, 1);
-  if (res != mscclppSuccess) {
-    printf("mscclppCalloc failed\n");
-    return -1;
-  }
-
-  comm->magic = 0xdeadbeef;
-  comm->rank = rank;
-  comm->nRanks = world_size;
-  res = mscclppCudaHostCalloc((uint32_t **)&comm->abortFlag, 1);
-  if (res != mscclppSuccess) {
-    printf("mscclppCudaHostCalloc failed\n");
-    return -1;
-  }
-
-  res = bootstrapInit(&handle, comm);
-  if (res != mscclppSuccess) {
-    printf("bootstrapInit failed\n");
-    return -1;
-  }
-
-  printf("bootstrapInit done\n");
+  mscclppComm_t comm;
+  char ip_port[] = "192.168.0.32:50000";
+  mscclppCommInitRank(&comm, world_size, rank, ip_port);
 
   int *buf = (int *)calloc(world_size, sizeof(int));
   if (buf == nullptr) {
@@ -61,7 +22,7 @@ int main()
     return -1;
   }
   buf[rank] = rank;
-  res = bootstrapAllGather(comm->bootstrap, buf, sizeof(int));
+  mscclppResult_t res = mscclppBootStrapAllGather(comm, buf, sizeof(int));
   if (res != mscclppSuccess) {
     printf("bootstrapAllGather failed\n");
     return -1;
@@ -74,9 +35,9 @@ int main()
     }
   }
 
-  res = bootstrapClose(comm->bootstrap);
+  res = mscclppCommDestroy(comm);
   if (res != mscclppSuccess) {
-    printf("bootstrapClose failed\n");
+    printf("mscclppDestroy failed\n");
     return -1;
   }
 
