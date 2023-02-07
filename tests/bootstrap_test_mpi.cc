@@ -1,24 +1,29 @@
 #include "mscclpp.h"
+#include "mpi.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 void print_usage(const char *prog)
 {
-  printf("usage: %s IP:PORT rank nranks\n", prog);
+  printf("usage: %s IP:PORT\n", prog);
 }
 
 int main(int argc, const char *argv[])
 {
-  if (argc != 4) {
+  if (argc != 2) {
     print_usage(argv[0]);
     return -1;
   }
 
+  MPI_Init(NULL, NULL);
+
+  int rank;
+  int world_size;
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
   mscclppComm_t comm;
   const char *ip_port = argv[1];
-  int rank = atoi(argv[2]);
-  int world_size = atoi(argv[3]);
-
   mscclppCommInitRank(&comm, world_size, rank, ip_port);
 
   int *buf = (int *)calloc(world_size, sizeof(int));
@@ -45,6 +50,8 @@ int main(int argc, const char *argv[])
     printf("mscclppDestroy failed\n");
     return -1;
   }
+
+  MPI_Finalize();
 
   printf("Succeeded! %d\n", rank);
   return 0;
