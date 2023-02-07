@@ -18,9 +18,9 @@ struct mscclppBootstrapHandle {
 };
 static_assert(sizeof(struct mscclppBootstrapHandle) <= sizeof(mscclppUniqueId), "Bootstrap handle is too large to fit inside MSCCLPP unique ID");
 
-mscclppResult_t bootstrapNetInit(char* ip_port_pair = NULL);
+mscclppResult_t bootstrapNetInit(const char* ip_port_pair = NULL);
 mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle, bool idFromEnv);
-mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot = true, char* ip_port_pair = NULL);
+mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot = true, const char* ip_port_pair = NULL);
 mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscclppComm* comm);
 mscclppResult_t bootstrapAllGather(void* commState, void* allData, int size);
 mscclppResult_t bootstrapSend(void* commState, int peer, int tag, void* data, int size);

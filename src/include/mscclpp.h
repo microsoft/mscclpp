@@ -12,6 +12,10 @@
 
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 100 + MSCCLPP_MINOR)
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct mscclppComm* mscclppComm_t;
 
 
@@ -69,11 +73,14 @@ typedef enum { mscclppInt8       = 0, mscclppChar       = 0,
 } mscclppDataType_t;
 
 
-mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, char* ip_port_pair);
+mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair);
 
 mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int size);
 
-//mscclppResult_t  mscclppCommInitRank(mscclppComm_t* comm, int nranks, mscclppUniqueId commId, int rank);
 mscclppResult_t  mscclppCommDestroy(mscclppComm_t comm);
+
+#ifdef __cplusplus
+} // end extern "C"
+#endif
 
 #endif // MSCCLPP_H_

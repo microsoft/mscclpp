@@ -24,11 +24,11 @@ static union mscclppSocketAddress bootstrapNetIfAddr;
 static int bootstrapNetInitDone = 0;
 pthread_mutex_t bootstrapNetLock = PTHREAD_MUTEX_INITIALIZER;
 
-mscclppResult_t bootstrapNetInit(char* ip_port_pair) {
+mscclppResult_t bootstrapNetInit(const char* ip_port_pair) {
   if (bootstrapNetInitDone == 0) {
     pthread_mutex_lock(&bootstrapNetLock);
     if (bootstrapNetInitDone == 0) {
-      char* env;
+      const char* env;
       if (ip_port_pair) {
         env = ip_port_pair;
       } else {
@@ -193,11 +193,11 @@ mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle, bool 
 // #include <netinet/in.h>
 // #include <arpa/inet.h>
 
-mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot, char* ip_port_pair) {
+mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot, const char* ip_port_pair) {
   memset(handle, 0, sizeof(mscclppBootstrapHandle));
   // MSCCLPPCHECK(getRandomData(&handle->magic, sizeof(handle->magic)));
   handle->magic = 0xdeadbeef;
-  char* env;
+  const char* env;
   if (ip_port_pair) {
     env = ip_port_pair;
   } else {

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 
+LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:./build/lib
 mpirun -allow-run-as-root \
        -tag-output \
        -map-by ppr:8:node \
        -bind-to numa \
+       -x MSCCLPP_DEBUG=INFO \
        -x MSCCLPP_DEBUG_SUBSYS=ALL \
-       -x MSCCLPP_DEBUG=TRACE \
-       ./build/src/bootstrap/bootstrap_test
-# MSCCLPP_DEBUG_SUBSYS=ALL MSCCLPP_DEBUG=TRACE ./build/src/bootstrap/init_test
+       -x MSCCLPP_SOCKET_IFNAME=eth0 \
+       ./build/bin/tests/bootstrap_test 172.17.0.4:50000

@@ -1,10 +1,20 @@
 #include "mscclpp.h"
-#include "alloc.h"
 #include "mpi.h"
 #include <stdio.h>
+#include <stdlib.h>
 
-int main()
+void print_usage(const char *prog)
 {
+  printf("usage: %s IP:PORT\n", prog);
+}
+
+int main(int argc, const char *argv[])
+{
+  if (argc != 2) {
+    print_usage(argv[0]);
+    return -1;
+  }
+
   MPI_Init(NULL, NULL);
 
   int rank;
@@ -13,7 +23,7 @@ int main()
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
   mscclppComm_t comm;
-  char ip_port[] = "192.168.0.32:50000";
+  const char *ip_port = argv[1];
   mscclppCommInitRank(&comm, world_size, rank, ip_port);
 
   int *buf = (int *)calloc(world_size, sizeof(int));

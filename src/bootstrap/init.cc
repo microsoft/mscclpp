@@ -45,13 +45,14 @@ mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* out) {
   return res;
 }
 
+MSCCLPP_API(mscclppResult_t, mscclppBootStrapAllGather, mscclppComm_t comm, void* data, int size);
 mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int size){
   MSCCLPPCHECK(bootstrapAllGather(comm->bootstrap, data, size));
   return mscclppSuccess;
 }
 
-
-mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, char* ip_port_pair){
+MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair);
+mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair){
   mscclppResult_t res = mscclppSuccess;
   mscclppComm_t _comm = NULL;
   MSCCLPPCHECKGOTO(mscclppCalloc(&_comm, 1), res, fail);
@@ -76,6 +77,7 @@ fail:
   return res;
 }
 
+MSCCLPP_API(mscclppResult_t, mscclppCommDestroy, mscclppComm_t comm);
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
   if (comm == NULL)
     return mscclppSuccess;

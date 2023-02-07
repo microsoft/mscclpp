@@ -19,7 +19,6 @@
 #include "alloc.h"
 #include "param.h"
 
-/*
 #ifdef PROFAPI
 #define MSCCLPP_API(ret, func, args...)        \
     __attribute__ ((visibility("default"))) \
@@ -36,6 +35,7 @@
     ret func(args)
 #endif // end PROFAPI
 
+/*
 static __inline__ int mscclppTypeSize(mscclppDataType_t type) {
   switch (type) {
     case mscclppInt8:
