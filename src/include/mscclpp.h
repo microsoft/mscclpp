@@ -16,8 +16,26 @@
 extern "C" {
 #endif
 
-typedef struct mscclppComm* mscclppComm_t;
+struct mscclppDevConn {
+  int tag;
 
+  void* localBuff;
+  int* localFlag;
+  // // remoteFlag <- localFlag
+  // virtual void pushLocalFlag();
+  // // remoteBuff[dstOffset..dstOffset+size-1] <- localBuff[srcOffset..srcOffset+size-1]
+  // virtual void pushLocalBuff(size_t srcOffset, size_t dstOffset, size_t size);
+
+  void* remoteBuff;
+  int* remoteFlag;
+  // // localFlag <- remoteFlag
+  // virtual void pullRmoteFlag();
+  // // localBuff[srcOffset..srcOffset+size-1] <- remoteBuff[dstOffset..dstOffset+size-1]
+  // virtual void pullRemoteBuff(size_t srcOffset, size_t dstOffset, size_t size);
+};
+
+typedef struct mscclppComm* mscclppComm_t;
+typedef struct mscclppDevConn* mscclppDevConn_t;
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
 typedef struct { char internal[MSCCLPP_UNIQUE_ID_BYTES]; } mscclppUniqueId;
@@ -33,7 +51,7 @@ typedef enum { mscclppSuccess                 =  0,
                mscclppInProgress              =  7,
                mscclppNumResults              =  8 } mscclppResult_t;
 
-mscclppResult_t  mscclppGetUniqueId(mscclppUniqueId* uniqueId);
+mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* uniqueId);
 
 /* Reduction operation selector */
 typedef enum { mscclppNumOps_dummy = 5 } mscclppRedOp_dummy_t;
@@ -72,12 +90,24 @@ typedef enum { mscclppInt8       = 0, mscclppChar       = 0,
 #endif
 } mscclppDataType_t;
 
+/* Transport Types */
+typedef enum { mscclppTransportP2P = 0,
+               mscclppTransportSHM = 1,
+               mscclppTransportIB = 2,
+} mscclppTransport_t;
 
 mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair);
 
 mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int size);
 
-mscclppResult_t  mscclppCommDestroy(mscclppComm_t comm);
+mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
+
+mscclppResult_t mscclppConnect(mscclppComm_t comm, int rankRecv, int rankSend, void *buff, int *flag, int tag,
+                               mscclppTransport_t transportType, const char *ibDev=NULL);
+
+mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);
+
+mscclppResult_t mscclppGetDevConns(mscclppComm_t comm, mscclppDevConn_t* devConns);
 
 #ifdef __cplusplus
 } // end extern "C"

@@ -33,6 +33,8 @@
 // #define MSCCLPP_LL128_THREAD_THRESHOLD 8
 // #define MSCCLPP_SIMPLE_THREAD_THRESHOLD 64
 
+#define MAXCONNECTIONS 1024
+
 // struct mscclppSendMem {
 //   union {
 //     struct {
@@ -155,6 +157,17 @@
 //   } channels[MAXCHANNELS];
 // };
 
+struct mscclppConn {
+  mscclppTransport_t transport;
+  int localRank;
+  int remoteRank;
+  const char* ibDev;
+  int tag;
+  void* buff;
+  int* flag;
+  struct mscclppDevConn *devConn;
+};
+
 struct mscclppComm {
 //   struct mscclppMemoryStack memPermanent, memScoped;
 //   // List of destructors to run when comm is destructed
@@ -163,6 +176,10 @@ struct mscclppComm {
 //   struct mscclppChannel channels[MAXCHANNELS];
 //   struct mscclppPeerInfo* peerInfo;
 //   struct mscclppTopoSystem* topo;
+
+  struct mscclppConn conns[MAXCONNECTIONS];
+  struct mscclppDevConn *devConns;
+  int nConns;
 
 //   mscclppNet_t* mscclppNet;
 //   mscclppCollNet_t* mscclppCollNet;
@@ -180,14 +197,14 @@ struct mscclppComm {
 //   int64_t busId;   // my PCI bus ID in int format
 //   cpu_set_t cpuAffinity; // CPU affinity of the GPU
 
-//   int node;
-//   int nNodes;
-//   int localRank;
-//   int localRanks;
-//   int maxLocalRanks;
-//   int* rankToNode;
-//   int* rankToLocalRank;
-//   int* localRankToRank;
+  int node;
+  int nNodes;
+  int localRank;
+  int localRanks;
+  int maxLocalRanks;
+  int* rankToNode;
+  int* rankToLocalRank;
+  int* localRankToRank;
 //   // localRanks and localRanktoRank for all nodes
 //   struct mscclppNodeRanks* nodeRanks;
 

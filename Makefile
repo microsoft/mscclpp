@@ -20,10 +20,6 @@ CUDA_MINOR = $(shell echo $(CUDA_VERSION) | cut -d "." -f 2)
 CUDA8_GENCODE = -gencode=arch=compute_50,code=sm_50 \
                 -gencode=arch=compute_60,code=sm_60 \
                 -gencode=arch=compute_61,code=sm_61
-ifeq ($(shell test "0$(CUDA_MAJOR)" -lt 12; echo $$?),0)
-# SM35 is deprecated from CUDA12.0 onwards
-CUDA8_GENCODE += -gencode=arch=compute_35,code=sm_35
-endif
 CUDA9_GENCODE = -gencode=arch=compute_70,code=sm_70
 CUDA11_GENCODE = -gencode=arch=compute_80,code=sm_80
 CUDA12_GENCODE = -gencode=arch=compute_90,code=sm_90
@@ -97,7 +93,7 @@ OBJDIR := obj
 BINDIR := bin
 
 LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc)
-LIBSRCS += $(addprefix src/bootstrap/,init.cc bootstrap.cc socket.cc proxy.cc)
+LIBSRCS += $(addprefix src/bootstrap/,init.cc bootstrap.cc socket.cc proxy.cc shmutils.cc)
 LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 
@@ -109,8 +105,8 @@ LIBSONAME := $(LIBNAME).$(MSCCLPP_MAJOR)
 LIBTARGET := $(BUILDDIR)/$(LIBDIR)/$(LIBNAME).$(MSCCLPP_MAJOR).$(MSCCLPP_MINOR)
 
 TESTSDIR  := tests
-TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc bootstrap_test_mpi.cc)
-TESTSOBJS := $(patsubst %.cc,%.o,$(TESTSSRCS))
+TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc bootstrap_test_mpi.cc p2p_test_mpi.cu)
+TESTSOBJS := $(patsubst %.cc,%.o,$(TESTSSRCS)) $(patsubst %.cu,%.o,$(TESTSSRCS))
 TESTSOBJTARGETS := $(TESTSOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 TESTSBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(TESTSOBJS))
 
@@ -141,10 +137,15 @@ $(LIBTARGET): $(LIBOBJTARGETS)
 	ln -sf $(LIBTARGET) $(BUILDDIR)/$(LIBDIR)/$(LIBNAME)
 	ln -sf $(LIBTARGET) $(BUILDDIR)/$(LIBDIR)/$(LIBSONAME)
 
-# Compile tests
+# Compile .cc tests
 $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cc
 	@mkdir -p $(@D)
 	$(CXX) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(CXXFLAGS) -c $<
+
+# Compile .cu tests
+$(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cu
+	@mkdir -p $(@D)
+	$(NVCC) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(NVCUFLAGS) -c $<
 
 # Test bins
 $(BUILDDIR)/$(BINDIR)/%: $(BUILDDIR)/$(OBJDIR)/%.o $(LIBTARGET)
