@@ -81,36 +81,36 @@ mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, c
   MSCCLPPCHECKGOTO(mscclppCudaHostCalloc((uint32_t **)&_comm->abortFlag, 1), res, fail);
   MSCCLPPCHECK(bootstrapInit(&handle, _comm));
 
-  _comm->maxLocalRanks = 8;
-  MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->rankToNode, nranks), res, fail);
-  MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->rankToLocalRank, nranks), res, fail);
-  MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->localRankToRank, _comm->maxLocalRanks), res, fail);
+  // _comm->maxLocalRanks = 8;
+  // MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->rankToNode, nranks), res, fail);
+  // MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->rankToLocalRank, nranks), res, fail);
+  // MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->localRankToRank, _comm->maxLocalRanks), res, fail);
 
-  MSCCLPPCHECKGOTO(mscclppCalloc(&hashes, nranks), res, fail);
-  hashes[rank] = hash;
-  MSCCLPPCHECK(bootstrapAllGather(_comm->bootstrap, hashes, sizeof(uint64_t)));
+  // MSCCLPPCHECKGOTO(mscclppCalloc(&hashes, nranks), res, fail);
+  // hashes[rank] = hash;
+  // MSCCLPPCHECK(bootstrapAllGather(_comm->bootstrap, hashes, sizeof(uint64_t)));
 
-  for (int i = 0; i < nranks; ++i) {
-    auto it = hashToNode.find(hashes[i]);
-    if (it == hashToNode.end()) {
-      _comm->nNodes++;
-      hashToNode[hashes[i]] = _comm->nNodes - 1;
-      _comm->rankToNode[i] = _comm->nNodes - 1;
-    } else {
-      _comm->rankToNode[i] = it->second;
-    }
-    if (hashes[i] == hash) {
-      _comm->rankToLocalRank[i] = _comm->localRanks++;
-      _comm->localRankToRank[_comm->rankToLocalRank[i]] = i;
-    }
-  }
-  if (_comm->localRanks > _comm->maxLocalRanks) {
-    WARN("Too many ranks on the same host: %d", _comm->localRanks);
-    res = mscclppInvalidUsage;
-    goto fail;
-  }
-  _comm->node = _comm->rankToNode[rank];
-  _comm->localRank = _comm->rankToLocalRank[rank];
+  // for (int i = 0; i < nranks; ++i) {
+  //   auto it = hashToNode.find(hashes[i]);
+  //   if (it == hashToNode.end()) {
+  //     _comm->nNodes++;
+  //     hashToNode[hashes[i]] = _comm->nNodes - 1;
+  //     _comm->rankToNode[i] = _comm->nNodes - 1;
+  //   } else {
+  //     _comm->rankToNode[i] = it->second;
+  //   }
+  //   if (hashes[i] == hash) {
+  //     _comm->rankToLocalRank[i] = _comm->localRanks++;
+  //     _comm->localRankToRank[_comm->rankToLocalRank[i]] = i;
+  //   }
+  // }
+  // if (_comm->localRanks > _comm->maxLocalRanks) {
+  //   WARN("Too many ranks on the same host: %d", _comm->localRanks);
+  //   res = mscclppInvalidUsage;
+  //   goto fail;
+  // }
+  // _comm->node = _comm->rankToNode[rank];
+  // _comm->localRank = _comm->rankToLocalRank[rank];
 
   *comm = _comm;
   return res;
@@ -211,7 +211,7 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
   std::map<int, int> localHandles;
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn *conn = &comm->conns[i];
-    struct ipcMemHandleInfo* handle = &handleInfos[comm->rank+i];
+    struct ipcMemHandleInfo* handle = &handleInfos[comm->rank*MAXCONNECTIONS+i];
     if (conn->transport == mscclppTransportP2P){
       MSCCLPPCHECK(mscclppP2pConnectionSetupStart(handle, conn));
     } else {
@@ -252,7 +252,6 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
         return mscclppInternalError;
       }
     }
-    free(handleInfos);
     // int fd_r;
     // struct ipcMemHandleInfo *handleInfos_r;
     // std::string shmname_r = mscclppShmFileName(comm, r);
@@ -280,6 +279,7 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
 
     // MSCCLPPCHECK(mscclppShmutilsMapClose(shmname_r.c_str(), shmSize, fd_r, handleInfos_r));
   }
+  free(handleInfos);
 
   // Local intra-node barrier: wait for all local ranks to have read all memory handles
   // MSCCLPPCHECK(bootstrapBarrier(comm->bootstrap, comm->localRankToRank, comm->localRank, comm->localRanks, comm->localRankToRank[0]));

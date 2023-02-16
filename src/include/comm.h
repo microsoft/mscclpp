@@ -196,14 +196,14 @@ struct mscclppComm {
 //   int64_t busId;   // my PCI bus ID in int format
 //   cpu_set_t cpuAffinity; // CPU affinity of the GPU
 
-  int node;
-  int nNodes;
-  int localRank;
-  int localRanks;
-  int maxLocalRanks;
-  int* rankToNode;
-  int* rankToLocalRank;
-  int* localRankToRank;
+  // int node;
+  // int nNodes;
+  // int localRank;
+  // int localRanks;
+  // int maxLocalRanks;
+  // int* rankToNode;
+  // int* rankToLocalRank;
+  // int* localRankToRank;
 //   // localRanks and localRanktoRank for all nodes
 //   struct mscclppNodeRanks* nodeRanks;
 

@@ -13,34 +13,38 @@
     }                                                       \
 } while(false)
 
-__global__ void kernel(mscclppDevConn_t devConns[8], int rank, int world_size)
+__constant__ mscclppDevConn_t constDevConns[8];
+
+__global__ void kernel(int rank, int world_size)
 {
   int tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid == 0) {
     // Set my data
-    volatile int *data = (volatile int *)devConns[rank].localBuff;
-    volatile int *flag = (volatile int *)devConns[rank].localFlag;
+    volatile int *data = (volatile int *)constDevConns[(rank+1) % world_size].localBuff;
+    volatile int *flag = (volatile int *)constDevConns[(rank+1) % world_size].localFlag;
     data[rank] = rank;
 
     // Inform that the data is set
     *flag = 1;
 
-    for (int i = 0; i < (world_size - 1) * 2; ++i) {
-      mscclppDevConn_t* devConn = &devConns[i];
-      int tag = devConn->tag;
-      int rankRecv = tag / world_size;
-      int rankSend = tag % world_size;
+    for (int i = 0; i < world_size; ++i) {
+      if (i == rank) continue;
+      mscclppDevConn_t* devConn = &constDevConns[i];
+      // int tag = devConn->tag;
+      // int rankRecv = tag / world_size;
+      // int rankSend = tag % world_size;
 
-      if (rankRecv != rank) continue;
+      // if (rankRecv != rank) continue;
 
       volatile int *remoteData = (volatile int *)devConn->remoteBuff;
       volatile int *remoteFlag = (volatile int *)devConn->remoteFlag;
+      // printf("i = %d ptr1 %p, ptr2 %p\n", i,remoteData, remoteFlag);
 
       // Wait until the remote data is set
       while (*remoteFlag != 1) {}
 
       // Read remote data
-      data[rankSend] = remoteData[rankSend];
+      data[i] = remoteData[i];
     }
   }
 }
@@ -78,6 +82,11 @@ int main(int argc, const char *argv[])
 
   mscclppResult_t res;
 
+  // if (rank == 0)
+  //   sleep(10);
+  // else
+  //   sleep(10);
+
   mscclppDevConn_t devConns[8];
   // Read from all other ranks
   for (int r = 0; r < world_size; ++r) {
@@ -89,6 +98,7 @@ int main(int argc, const char *argv[])
       return -1;
     }
   }
+
   // Let others read from me
   // for (int r = 0; r < world_size; ++r) {
   //   if (r == rank) continue;
@@ -106,7 +116,8 @@ int main(int argc, const char *argv[])
     return -1;
   }
 
-  kernel<<<1, 1>>>(devConns, rank, world_size);
+  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * world_size));
+  kernel<<<1, 1>>>(rank, world_size);
   CUDACHECK(cudaDeviceSynchronize());
 
   int *buf = (int *)calloc(world_size, sizeof(int));
