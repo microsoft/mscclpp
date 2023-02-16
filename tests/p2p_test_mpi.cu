@@ -13,7 +13,7 @@
     }                                                       \
 } while(false)
 
-__global__ void kernel(mscclppDevConn_t* devConns, int rank, int world_size)
+__global__ void kernel(mscclppDevConn_t devConns[8], int rank, int world_size)
 {
   int tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid == 0) {
@@ -26,7 +26,7 @@ __global__ void kernel(mscclppDevConn_t* devConns, int rank, int world_size)
     *flag = 1;
 
     for (int i = 0; i < (world_size - 1) * 2; ++i) {
-      mscclppDevConn_t devConn = &devConns[i];
+      mscclppDevConn_t* devConn = &devConns[i];
       int tag = devConn->tag;
       int rankRecv = tag / world_size;
       int rankSend = tag % world_size;
@@ -76,12 +76,12 @@ int main(int argc, const char *argv[])
 
   mscclppResult_t res;
 
-  mscclppDevConn_t devConns[world_size];
+  mscclppDevConn_t devConns[8];
   // Read from all other ranks
   for (int r = 0; r < world_size; ++r) {
     if (r == rank) continue;
     int tag = 0;
-    res = mscclppConnect(comm, &devConn[r], r, data_d, flag_d, tag, mscclppTransportP2P);
+    res = mscclppConnect(comm, &devConns[r], r, data_d, flag_d, tag, mscclppTransportP2P);
     if (res != mscclppSuccess) {
       printf("mscclppConnect failed\n");
       return -1;
@@ -104,7 +104,7 @@ int main(int argc, const char *argv[])
     return -1;
   }
 
-  kernel<<<1, 1>>>(devConn, rank, world_size);
+  kernel<<<1, 1>>>(devConns, rank, world_size);
   CUDACHECK(cudaDeviceSynchronize());
 
   int *buf = (int *)calloc(world_size, sizeof(int));

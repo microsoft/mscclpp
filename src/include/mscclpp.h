@@ -34,20 +34,8 @@ struct mscclppDevConn {
   // virtual void pullRemoteBuff(size_t srcOffset, size_t dstOffset, size_t size);
 };
 
-struct mscclppConn {
-  mscclppTransport_t transport;
-  // int localRank;
-  int remoteRank;
-  const char* ibDev;
-  // int tag;
-  // void* buff;
-  // int* flag;
-  mscclppDevConn* devConn;
-};
-
-
 typedef struct mscclppComm* mscclppComm_t;
-typedef struct mscclppDevConn* mscclppDevConn_t;
+typedef struct mscclppDevConn mscclppDevConn_t;
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
 typedef struct { char internal[MSCCLPP_UNIQUE_ID_BYTES]; } mscclppUniqueId;
@@ -119,7 +107,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
 
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);
 
-mscclppResult_t mscclppGetDevConns(mscclppComm_t comm, mscclppDevConn_t* devConns);
+// mscclppResult_t mscclppGetDevConns(mscclppComm_t comm, mscclppDevConn_t* devConns);
 
 #ifdef __cplusplus
 } // end extern "C"

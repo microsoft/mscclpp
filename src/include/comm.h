@@ -157,14 +157,16 @@
 //   } channels[MAXCHANNELS];
 // };
 
-// struct mscclppConn {
-//   mscclppTransport_t transport;
-//   int remoteRank;
-//   const char* ibDev;
-//   int tag;
-//   void* buff;
-//   int* flag;
-// };
+struct mscclppConn {
+  mscclppTransport_t transport;
+  // int localRank;
+  int remoteRank;
+  const char* ibDev;
+  // int tag;
+  // void* buff;
+  // int* flag;
+  struct mscclppDevConn* devConn;
+};
 
 struct mscclppComm {
 //   struct mscclppMemoryStack memPermanent, memScoped;

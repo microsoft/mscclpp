@@ -136,8 +136,6 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int rankRecv, int rankSend,
-            void *buff, int *flag, int tag, mscclppTransport_t transportType, const char *ibDev);
 mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, int* localFlag, int tag,
                                mscclppTransport_t transportType, const char *ibDev/*=NULL*/)
 {
@@ -175,7 +173,7 @@ mscclppResult_t mscclppP2pConnectionSetupStart(struct ipcMemHandleInfo* handleIn
   }
   CUDACHECK(cudaIpcGetMemHandle(&handleInfo->buffHandle, conn->devConn->localBuff));
   CUDACHECK(cudaIpcGetMemHandle(&handleInfo->flagHandle, conn->devConn->localFlag));
-  handleInfo->remoteRank = conn->devConn->remoteRank;
+  handleInfo->remoteRank = conn->remoteRank;
   handleInfo->tag = conn->devConn->tag;
   handleInfo->valid = 1;
   return mscclppSuccess;
@@ -186,8 +184,8 @@ mscclppResult_t mscclppP2pConnectionSetupEnd(struct ipcMemHandleInfo* handleInfo
     WARN("ipcHandles or connection cannot be null");
     return mscclppInternalError;
   }
-  CUDACHECK(cudaIpcOpenMemHandle(&conn->devConn->remoteBuff, handleInfo->buffHandle, cudaIpcMemLazyEnablePeerAccess));
-  CUDACHECK(cudaIpcOpenMemHandle(&conn->devConn->remoteFlag, handleInfo->remoteFlag, cudaIpcMemLazyEnablePeerAccess));
+  CUDACHECK(cudaIpcOpenMemHandle((void**)&conn->devConn->remoteBuff, handleInfo->buffHandle, cudaIpcMemLazyEnablePeerAccess));
+  CUDACHECK(cudaIpcOpenMemHandle((void**)&conn->devConn->remoteFlag, handleInfo->flagHandle, cudaIpcMemLazyEnablePeerAccess));
   return mscclppSuccess;
 }
 
@@ -212,8 +210,8 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn *conn = &comm->conns[i];
     struct ipcMemHandleInfo* handle = &handleInfos[comm->rank+i];
-    if (conn->transport == mscclppP2pConnectionSetup){
-      MSCCPPCHECK(mscclppP2pConnectionSetupStart(handle, conn));
+    if (conn->transport == mscclppTransportP2P){
+      MSCCLPPCHECK(mscclppP2pConnectionSetupStart(handle, conn));
     } else {
       WARN("Not implemented yet!");
       return mscclppInternalError;
@@ -245,8 +243,8 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
       }
       int localConnIdx = localHandles[key];
       struct mscclppConn *conn = &comm->conns[localConnIdx];
-      if (conn->transport == mscclppP2pConnectionSetup){
-        MSCCPPCHECK(mscclppP2pConnectionSetupEnd(handle, conn));
+      if (conn->transport == mscclppTransportP2P){
+        MSCCLPPCHECK(mscclppP2pConnectionSetupEnd(handle, conn));
       } else {
         WARN("Not implemented yet!");
         return mscclppInternalError;
@@ -289,9 +287,9 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppGetDevConns, mscclppComm_t comm, mscclppDevConn_t* devConns);
-mscclppResult_t mscclppGetDevConns(mscclppComm_t comm, mscclppDevConn_t* devConns)
-{
-  *devConns = comm->devConns;
-  return mscclppSuccess;
-}
+// MSCCLPP_API(mscclppResult_t, mscclppGetDevConns, mscclppComm_t comm, mscclppDevConn_t* devConns);
+// mscclppResult_t mscclppGetDevConns(mscclppComm_t comm, mscclppDevConn_t* devConns)
+// {
+//   *devConns = comm->devConns;
+//   return mscclppSuccess;
+// }
