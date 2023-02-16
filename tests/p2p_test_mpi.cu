@@ -63,6 +63,8 @@ int main(int argc, const char *argv[])
   int world_size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+  CUDACHECK(cudaSetDevice(rank % 8));
+  printf("Starting rank %d of %d\n", rank, world_size);
 
   mscclppComm_t comm;
   const char *ip_port = argv[1];

@@ -136,6 +136,8 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
   return mscclppSuccess;
 }
 
+MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, int* localFlag, int tag,
+                               mscclppTransport_t transportType, const char *ibDev);
 mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, int* localFlag, int tag,
                                mscclppTransport_t transportType, const char *ibDev/*=NULL*/)
 {
