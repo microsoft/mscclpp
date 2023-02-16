@@ -1,7 +1,6 @@
 #include "mscclpp.h"
 #include "bootstrap.h"
 #include "core.h"
-#include "shmutils.h"
 #include <map>
 #include <sstream>
 
@@ -65,9 +64,9 @@ MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nrank
 mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair){
   mscclppResult_t res = mscclppSuccess;
   mscclppComm_t _comm = NULL;
-  uint64_t hash = getHostHash();
-  uint64_t *hashes;
-  std::map<uint64_t, int> hashToNode;
+  // uint64_t hash = getHostHash();
+  // uint64_t *hashes;
+  // std::map<uint64_t, int> hashToNode;
 
   MSCCLPPCHECKGOTO(mscclppCalloc(&_comm, 1), res, fail);
   _comm->rank = rank;

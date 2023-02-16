@@ -93,7 +93,7 @@ OBJDIR := obj
 BINDIR := bin
 
 LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc)
-LIBSRCS += $(addprefix src/bootstrap/,init.cc bootstrap.cc socket.cc proxy.cc shmutils.cc)
+LIBSRCS += $(addprefix src/bootstrap/,init.cc bootstrap.cc socket.cc proxy.cc)
 LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 
