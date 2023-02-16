@@ -138,38 +138,56 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
 
 MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int rankRecv, int rankSend,
             void *buff, int *flag, int tag, mscclppTransport_t transportType, const char *ibDev);
-mscclppResult_t mscclppConnect(mscclppComm_t comm, int rankRecv, int rankSend, void *buff, int *flag, int tag,
+mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, int* localFlag, int tag,
                                mscclppTransport_t transportType, const char *ibDev/*=NULL*/)
 {
-  if (comm->rank == rankRecv || comm->rank == rankSend) {
-    struct mscclppConn *conn = &comm->conns[comm->nConns++];
-    conn->transport = transportType;
-    conn->localRank = comm->rank;
-    conn->ibDev = ibDev;
-    conn->tag = tag;
-    conn->buff = buff;
-    conn->flag = flag;
-    conn->remoteRank = (comm->rank == rankRecv) ? rankSend : rankRecv;
+  if (comm->nConns == MAXCONNECTIONS){
+    WARN("Too many connections made");
+    return mscclppInternalError;
   }
+  if (devConnOut == NULL){
+    WARN("devConnOut is the output of this function and needs to be allocated by the user");
+    return mscclppInvalidUsage;
+  }
+  struct mscclppConn *conn = &comm->conns[comm->nConns++];
+  conn->transport = transportType;
+  conn->ibDev = ibDev;
+  conn->remoteRank = remoteRank;
+  conn->devConn = devConnOut;
+  conn->devConn->localBuff = localBuff;
+  conn->devConn->localFlag = localFlag;
+  conn->devConn->tag = tag;
   return mscclppSuccess;
 }
 
 struct ipcMemHandleInfo {
   cudaIpcMemHandle_t buffHandle;
   cudaIpcMemHandle_t flagHandle;
+  int remoteRank;
   int tag;
   int valid; // indicates whether the handles are valid
 };
 
-mscclppResult_t mscclppP2pConnectionSetup(struct ipcMemHandleInfo* handleInfo /*output*/, struct mscclppConn* conn /*input*/){
+mscclppResult_t mscclppP2pConnectionSetupStart(struct ipcMemHandleInfo* handleInfo /*output*/, struct mscclppConn* conn /*input*/){
   if (handleInfo == NULL || conn == NULL){
     WARN("ipcHandles or connection cannot be null");
     return mscclppInternalError;
   }
-  CUDACHECK(cudaIpcGetMemHandle(&handleInfo->buffHandle, conn->buff));
-  CUDACHECK(cudaIpcGetMemHandle(&handleInfo->flagHandle, conn->flag));
-  handleInfo->tag = conn->tag;
+  CUDACHECK(cudaIpcGetMemHandle(&handleInfo->buffHandle, conn->devConn->localBuff));
+  CUDACHECK(cudaIpcGetMemHandle(&handleInfo->flagHandle, conn->devConn->localFlag));
+  handleInfo->remoteRank = conn->devConn->remoteRank;
+  handleInfo->tag = conn->devConn->tag;
   handleInfo->valid = 1;
+  return mscclppSuccess;
+}
+
+mscclppResult_t mscclppP2pConnectionSetupEnd(struct ipcMemHandleInfo* handleInfo /*input*/, struct mscclppConn* conn /*output*/){
+  if (handleInfo == NULL || conn == NULL){
+    WARN("ipcHandles or connection cannot be null");
+    return mscclppInternalError;
+  }
+  CUDACHECK(cudaIpcOpenMemHandle(&conn->devConn->remoteBuff, handleInfo->buffHandle, cudaIpcMemLazyEnablePeerAccess));
+  CUDACHECK(cudaIpcOpenMemHandle(&conn->devConn->remoteFlag, handleInfo->remoteFlag, cudaIpcMemLazyEnablePeerAccess));
   return mscclppSuccess;
 }
 
@@ -189,59 +207,84 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
   // std::string shmname = mscclppShmFileName(comm, comm->localRank);
   // MSCCLPPCHECK(mscclppShmutilsMapCreate(shmname.c_str(), shmSize, &fd, (void **)&handleInfos));
 
+  // this maps tag * nRanks + remoteRank to the index of local connection
+  std::map<int, int> localHandles;
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn *conn = &comm->conns[i];
     struct ipcMemHandleInfo* handle = &handleInfos[comm->rank+i];
     if (conn->transport == mscclppP2pConnectionSetup){
-      MSCCPPCHECK(mscclppP2pConnectionSetup(handle, conn));
+      MSCCPPCHECK(mscclppP2pConnectionSetupStart(handle, conn));
     } else {
       WARN("Not implemented yet!");
       return mscclppInternalError;
     }
+    localHandles[conn->devConn->tag * comm->nRanks + conn->remoteRank] = i;
   }
 
-  MSCCLPPCHECK(bootstrapAllGather(comm->bootstrap, handleInfos, comm->nRanks*MAXCONNECTIONS*sizeof(struct ipcMemHandleInfo)));
+  MSCCLPPCHECK(bootstrapAllGather(comm->bootstrap, handleInfos, MAXCONNECTIONS*sizeof(struct ipcMemHandleInfo)));
 
   // // Local intra-node barrier: wait for all local ranks to have written their memory handles
   // MSCCLPPCHECK(bootstrapBarrier(comm->bootstrap, comm->localRankToRank, comm->localRank, comm->localRanks, comm->localRankToRank[0]));
+  
 
-  MSCCLPPCHECK(mscclppCudaHostCalloc(&comm->devConns, comm->nConns));
-
-  for (int r = 0; r < comm->localRanks; ++r) {
-    if (r == comm->localRank)
+  for (int r = 0; r < comm->nRanks; ++r) {
+    if (r == comm->rank)
       continue;
-    int fd_r;
-    struct ipcMemHandleInfo *handleInfos_r;
-    std::string shmname_r = mscclppShmFileName(comm, r);
-    MSCCLPPCHECK(mscclppShmutilsMapOpen(shmname_r.c_str(), shmSize, &fd_r, (void **)&handleInfos_r));
-
-    std::map<int, std::pair<cudaIpcMemHandle_t, cudaIpcMemHandle_t>> remoteHandles;
-    for (int i = 0; i < MAXCONNECTIONS; ++i) {
-      if (handleInfos_r[i].valid != 1) {
+    for (int i = 0; i < MAXCONNECTIONS; i++){
+      struct ipcMemHandleInfo* handle = &handleInfos[r*MAXCONNECTIONS+i];
+      if (handle->valid != 1){
         break;
       }
-      remoteHandles[handleInfos_r[i].tag] = std::make_pair(handleInfos_r[i].buffHandle, handleInfos_r[i].flagHandle);
-    }
-
-    for (int i = 0; i < comm->nConns; ++i) {
-      struct mscclppConn *conn = &comm->conns[i];
-      auto it = remoteHandles.find(conn->tag);
-      if (it != remoteHandles.end()) {
-        comm->devConns[i].tag = conn->tag;
-        comm->devConns[i].localBuff = conn->buff;
-        comm->devConns[i].localFlag = conn->flag;
-        CUDACHECK(cudaIpcOpenMemHandle(&comm->devConns[i].remoteBuff, it->second.first, cudaIpcMemLazyEnablePeerAccess));
-        CUDACHECK(cudaIpcOpenMemHandle((void **)&comm->devConns[i].remoteFlag, it->second.second, cudaIpcMemLazyEnablePeerAccess));
+      if (handle->remoteRank != comm->rank){
+        continue;
+      }
+      int key = handle->tag * comm->nRanks + r;
+      if (localHandles.find(key) == localHandles.end()){
+        WARN("Cannot find a local connection on rank %d for remote connection rank %d with tag %d", comm->rank, r, handle->tag);
+        return mscclppInvalidUsage;
+      }
+      int localConnIdx = localHandles[key];
+      struct mscclppConn *conn = &comm->conns[localConnIdx];
+      if (conn->transport == mscclppP2pConnectionSetup){
+        MSCCPPCHECK(mscclppP2pConnectionSetupEnd(handle, conn));
+      } else {
+        WARN("Not implemented yet!");
+        return mscclppInternalError;
       }
     }
+    free(handleInfos);
+    // int fd_r;
+    // struct ipcMemHandleInfo *handleInfos_r;
+    // std::string shmname_r = mscclppShmFileName(comm, r);
+    // MSCCLPPCHECK(mscclppShmutilsMapOpen(shmname_r.c_str(), shmSize, &fd_r, (void **)&handleInfos_r));
 
-    MSCCLPPCHECK(mscclppShmutilsMapClose(shmname_r.c_str(), shmSize, fd_r, handleInfos_r));
+    // std::map<int, std::pair<cudaIpcMemHandle_t, cudaIpcMemHandle_t>> remoteHandles;
+    // for (int i = 0; i < MAXCONNECTIONS; ++i) {
+    //   if (handleInfos_r[i].valid != 1) {
+    //     break;
+    //   }
+    //   remoteHandles[handleInfos_r[i].tag] = std::make_pair(handleInfos_r[i].buffHandle, handleInfos_r[i].flagHandle);
+    // }
+
+    // for (int i = 0; i < comm->nConns; ++i) {
+    //   struct mscclppConn *conn = &comm->conns[i];
+    //   auto it = remoteHandles.find(conn->tag);
+    //   if (it != remoteHandles.end()) {
+    //     comm->devConns[i].tag = conn->tag;
+    //     comm->devConns[i].localBuff = conn->buff;
+    //     comm->devConns[i].localFlag = conn->flag;
+    //     CUDACHECK(cudaIpcOpenMemHandle(&comm->devConns[i].remoteBuff, it->second.first, cudaIpcMemLazyEnablePeerAccess));
+    //     CUDACHECK(cudaIpcOpenMemHandle((void **)&comm->devConns[i].remoteFlag, it->second.second, cudaIpcMemLazyEnablePeerAccess));
+    //   }
+    // }
+
+    // MSCCLPPCHECK(mscclppShmutilsMapClose(shmname_r.c_str(), shmSize, fd_r, handleInfos_r));
   }
 
   // Local intra-node barrier: wait for all local ranks to have read all memory handles
-  MSCCLPPCHECK(bootstrapBarrier(comm->bootstrap, comm->localRankToRank, comm->localRank, comm->localRanks, comm->localRankToRank[0]));
+  // MSCCLPPCHECK(bootstrapBarrier(comm->bootstrap, comm->localRankToRank, comm->localRank, comm->localRanks, comm->localRankToRank[0]));
 
-  MSCCLPPCHECK(mscclppShmutilsMapDestroy(shmname.c_str(), shmSize, fd, handleInfos));
+  // MSCCLPPCHECK(mscclppShmutilsMapDestroy(shmname.c_str(), shmSize, fd, handleInfos));
 
   return mscclppSuccess;
 }

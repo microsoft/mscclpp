@@ -34,6 +34,18 @@ struct mscclppDevConn {
   // virtual void pullRemoteBuff(size_t srcOffset, size_t dstOffset, size_t size);
 };
 
+struct mscclppConn {
+  mscclppTransport_t transport;
+  // int localRank;
+  int remoteRank;
+  const char* ibDev;
+  // int tag;
+  // void* buff;
+  // int* flag;
+  mscclppDevConn* devConn;
+};
+
+
 typedef struct mscclppComm* mscclppComm_t;
 typedef struct mscclppDevConn* mscclppDevConn_t;
 
@@ -102,7 +114,7 @@ mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int si
 
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
-mscclppResult_t mscclppConnect(mscclppComm_t comm, int rankRecv, int rankSend, void *buff, int *flag, int tag,
+mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, int* localFlag, int tag,
                                mscclppTransport_t transportType, const char *ibDev=NULL);
 
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);

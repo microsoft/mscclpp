@@ -157,16 +157,14 @@
 //   } channels[MAXCHANNELS];
 // };
 
-struct mscclppConn {
-  mscclppTransport_t transport;
-  int localRank;
-  int remoteRank;
-  const char* ibDev;
-  int tag;
-  void* buff;
-  int* flag;
-  struct mscclppDevConn *devConn;
-};
+// struct mscclppConn {
+//   mscclppTransport_t transport;
+//   int remoteRank;
+//   const char* ibDev;
+//   int tag;
+//   void* buff;
+//   int* flag;
+// };
 
 struct mscclppComm {
 //   struct mscclppMemoryStack memPermanent, memScoped;
@@ -178,7 +176,6 @@ struct mscclppComm {
 //   struct mscclppTopoSystem* topo;
 
   struct mscclppConn conns[MAXCONNECTIONS];
-  struct mscclppDevConn *devConns;
   int nConns;
 
 //   mscclppNet_t* mscclppNet;
