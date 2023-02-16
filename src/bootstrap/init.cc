@@ -154,32 +154,56 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int rankRecv, int rankSend, v
   return mscclppSuccess;
 }
 
+struct ipcMemHandleInfo {
+  cudaIpcMemHandle_t buffHandle;
+  cudaIpcMemHandle_t flagHandle;
+  int tag;
+  int valid; // indicates whether the handles are valid
+};
+
+mscclppResult_t mscclppP2pConnectionSetup(struct ipcMemHandleInfo* handleInfo /*output*/, struct mscclppConn* conn /*input*/){
+  if (handleInfo == NULL || conn == NULL){
+    WARN("ipcHandles or connection cannot be null");
+    return mscclppInternalError;
+  }
+  CUDACHECK(cudaIpcGetMemHandle(&handleInfo->buffHandle, conn->buff));
+  CUDACHECK(cudaIpcGetMemHandle(&handleInfo->flagHandle, conn->flag));
+  handleInfo->tag = conn->tag;
+  handleInfo->valid = 1;
+  return mscclppSuccess;
+}
+
+
 MSCCLPP_API(mscclppResult_t, mscclppConnectionSetup, mscclppComm_t comm);
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
 {
-  struct ipcMemHandleInfo {
-    cudaIpcMemHandle_t handle_buff;
-    cudaIpcMemHandle_t handle_flag;
-    int tag;
-    int valid;
-  };
 
-  size_t shmSize = MAXCONNECTIONS * sizeof(struct ipcMemHandleInfo);
-  int fd;
-  struct ipcMemHandleInfo *handleInfos;
-  std::string shmname = mscclppShmFileName(comm, comm->localRank);
-  MSCCLPPCHECK(mscclppShmutilsMapCreate(shmname.c_str(), shmSize, &fd, (void **)&handleInfos));
+  struct ipcMemHandleInfo* handleInfos;
+  // this could potentially be very large, but it's OK since it is on the CPU
+  MSCCLPPCHECK(mscclppCalloc(&handleInfos, MAXCONNECTIONS*comm->nRanks));
+
+
+  // size_t shmSize = MAXCONNECTIONS * sizeof(struct ipcMemHandleInfo);
+  // int fd;
+  // struct ipcMemHandleInfo *handleInfos;
+  // std::string shmname = mscclppShmFileName(comm, comm->localRank);
+  // MSCCLPPCHECK(mscclppShmutilsMapCreate(shmname.c_str(), shmSize, &fd, (void **)&handleInfos));
 
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn *conn = &comm->conns[i];
-    CUDACHECK(cudaIpcGetMemHandle(&handleInfos[i].handle_buff, conn->buff));
-    CUDACHECK(cudaIpcGetMemHandle(&handleInfos[i].handle_flag, conn->flag));
-    handleInfos[i].tag = conn->tag;
-    handleInfos[i].valid = 1;
+    struct ipcMemHandleInfo* handle = &handleInfos[comm->rank+i];
+    if (conn->transport == mscclppP2pConnectionSetup){
+      MSCCPPCHECK(mscclppP2pConnectionSetup(handle, conn));
+    } else {
+      WARN("Not implemented yet!");
+      return mscclppInternalError;
+    }
   }
 
-  // Local intra-node barrier: wait for all local ranks to have written their memory handles
-  MSCCLPPCHECK(bootstrapBarrier(comm->bootstrap, comm->localRankToRank, comm->localRank, comm->localRanks, comm->localRankToRank[0]));
+  MSCCLPPCHECK(bootstrapAllGather(comm->bootstrap, handleInfos, comm->nRanks*MAXCONNECTIONS*sizeof(struct ipcMemHandleInfo)));
+
+  // // Local intra-node barrier: wait for all local ranks to have written their memory handles
+  // MSCCLPPCHECK(bootstrapBarrier(comm->bootstrap, comm->localRankToRank, comm->localRank, comm->localRanks, comm->localRankToRank[0]));
 
   MSCCLPPCHECK(mscclppCudaHostCalloc(&comm->devConns, comm->nConns));
 
@@ -196,7 +220,7 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
       if (handleInfos_r[i].valid != 1) {
         break;
       }
-      remoteHandles[handleInfos_r[i].tag] = std::make_pair(handleInfos_r[i].handle_buff, handleInfos_r[i].handle_flag);
+      remoteHandles[handleInfos_r[i].tag] = std::make_pair(handleInfos_r[i].buffHandle, handleInfos_r[i].flagHandle);
     }
 
     for (int i = 0; i < comm->nConns; ++i) {
