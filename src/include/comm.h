@@ -203,7 +203,7 @@ struct mscclppComm {
   // int maxLocalRanks;
   // int* rankToNode;
   // int* rankToLocalRank;
-  // int* localRankToRank;
+  // int* localRankToRank; 
 //   // localRanks and localRanktoRank for all nodes
 //   struct mscclppNodeRanks* nodeRanks;
 
