@@ -1,6 +1,8 @@
 #include "mscclpp.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+
 
 void print_usage(const char *prog)
 {
@@ -18,6 +20,8 @@ int main(int argc, const char *argv[])
   const char *ip_port = argv[1];
   int rank = atoi(argv[2]);
   int world_size = atoi(argv[3]);
+
+  // sleep(10);
 
   mscclppCommInitRank(&comm, world_size, rank, ip_port);
 

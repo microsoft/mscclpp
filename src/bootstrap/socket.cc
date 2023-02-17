@@ -507,6 +507,9 @@ static mscclppResult_t socketPollConnect(struct mscclppSocket* sock) {
     }
     if (sock->refusedRetries % 1000 == 0) INFO(MSCCLPP_ALL, "Call to connect returned %s, retrying", strerror(errno));
     usleep(SLEEP_INT);
+
+    close(sock->fd);
+    sock->fd = socket(sock->addr.sa.sa_family, SOCK_STREAM, 0);
     sock->state = mscclppSocketStateConnecting;
   } else if (ret == ETIMEDOUT) {
     if (++sock->timedOutRetries == RETRY_TIMEDOUT_TIMES) {
@@ -515,6 +518,9 @@ static mscclppResult_t socketPollConnect(struct mscclppSocket* sock) {
       return mscclppRemoteError;
     }
     usleep(SLEEP_INT);
+
+    close(sock->fd);
+    sock->fd = socket(sock->addr.sa.sa_family, SOCK_STREAM, 0);
     sock->state = mscclppSocketStateConnecting;
   } else if (ret != EINPROGRESS) {
     sock->state = mscclppSocketStateError;
