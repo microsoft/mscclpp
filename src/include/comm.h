@@ -12,6 +12,7 @@
 // #include "collectives.h"
 #include "proxy.h"
 // #include "strongstream.h"
+#include "ib.h"
 
 // #if CUDART_VERSION < 9000
 // struct cudaLaunchParams {
@@ -159,13 +160,17 @@
 
 struct mscclppConn {
   mscclppTransport_t transport;
-  int localRank;
-  int remoteRank;
-  const char* ibDev;
+  int rankSend;
+  int rankRecv;
   int tag;
   void* buff;
+  int buffSize;
   int* flag;
   struct mscclppDevConn *devConn;
+  struct mscclppIbContext *ibCtx;
+  struct mscclppIbQp *ibQp;
+  struct mscclppIbMr *ibMr;
+  struct mscclppIbMrInfo ibRemoteMrInfo;
 };
 
 struct mscclppComm {
@@ -268,7 +273,9 @@ struct mscclppComm {
 //   char intraPad2[64 - sizeof(uint64_t)];
 //   uint64_t intraBarrierGate; // only used if this is intraComm0
 
-  struct mscclppProxyState proxyState;
+  struct mscclppIbContext *ibContext[MSCCLPP_IB_MAX_DEVS];
+
+  struct mscclppProxyState proxyState[MSCCLPP_IB_MAX_DEVS];
 
 //   // Whether this communicator uses collNet
 //   int collNetSupport;

@@ -6,6 +6,7 @@ MSCCLPP_MINOR := 1
 DEBUG ?= 0
 VERBOSE ?= 1
 TRACE ?= 0
+USE_MPI_FOR_TESTS ?= 0
 
 ######## CUDA
 CUDA_HOME ?= /usr/local/cuda
@@ -81,9 +82,17 @@ CXXFLAGS  += -DNVTX_DISABLE
 endif
 
 #### MPI (only for test code)
+ifeq ($(USE_MPI_FOR_TESTS), 1)
 MPI_HOME    ?= /usr/local/mpi
 MPI_INC     := -I$(MPI_HOME)/include
 MPI_LDFLAGS := -L$(MPI_HOME)/lib -lmpi
+MPI_MACRO   := -D MSCCLPP_USE_MPI_FOR_TESTS
+else
+MPI_HOME    :=
+MPI_INC     :=
+MPI_LDFLAGS :=
+MPI_MACRO   :=
+endif
 
 #### MSCCL++
 BUILDDIR ?= $(abspath ./build)
@@ -92,8 +101,10 @@ LIBDIR := lib
 OBJDIR := obj
 BINDIR := bin
 
+LDFLAGS := $(NVLDFLAGS) -libverbs
+
 LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc)
-LIBSRCS += $(addprefix src/bootstrap/,init.cc bootstrap.cc socket.cc proxy.cc shmutils.cc)
+LIBSRCS += $(addprefix src/bootstrap/,init.cc bootstrap.cc socket.cc proxy.cc ib.cc)
 LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 
@@ -105,7 +116,7 @@ LIBSONAME := $(LIBNAME).$(MSCCLPP_MAJOR)
 LIBTARGET := $(BUILDDIR)/$(LIBDIR)/$(LIBNAME).$(MSCCLPP_MAJOR).$(MSCCLPP_MINOR)
 
 TESTSDIR  := tests
-TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc bootstrap_test_mpi.cc p2p_test_mpi.cu)
+TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc p2p_test.cu)
 TESTSOBJS := $(patsubst %.cc,%.o,$(TESTSSRCS)) $(patsubst %.cu,%.o,$(TESTSSRCS))
 TESTSOBJTARGETS := $(TESTSOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 TESTSBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(TESTSOBJS))
@@ -140,17 +151,17 @@ $(LIBTARGET): $(LIBOBJTARGETS)
 # Compile .cc tests
 $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cc
 	@mkdir -p $(@D)
-	$(CXX) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(CXXFLAGS) -c $<
+	$(CXX) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(CXXFLAGS) -c $< $(MPI_MACRO)
 
 # Compile .cu tests
 $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cu
 	@mkdir -p $(@D)
-	$(NVCC) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(NVCUFLAGS) -c $<
+	$(NVCC) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(NVCUFLAGS) -c $< $(MPI_MACRO)
 
 # Test bins
 $(BUILDDIR)/$(BINDIR)/%: $(BUILDDIR)/$(OBJDIR)/%.o $(LIBTARGET)
 	@mkdir -p $(@D)
-	$(NVCC) -o $@ $< $(NVLDFLAGS) $(MPI_LDFLAGS) -L$(BUILDDIR)/$(LIBDIR) -lmscclpp
+	$(NVCC) -o $@ $< $(MPI_LDFLAGS) -L$(BUILDDIR)/$(LIBDIR) -lmscclpp
 
 clean:
 	rm -rf $(BUILDDIR)
