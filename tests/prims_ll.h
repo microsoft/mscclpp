@@ -22,8 +22,8 @@ public:
     // In the case of Fan::MaxRecv == 0, we need to force MaxRecv to 1 for this
     // to compile This is because of a recv buffer which is allocated to MaxRecv
     // length in send-only cases
-    static constexpr int MaxRecv = 1;
-    static constexpr int MaxSend = 1;
+    // static constexpr int MaxRecv = 1;
+    // static constexpr int MaxSend = 1;
     static constexpr int Input = 0, Output = 1;
     uint64_t redOp;
     const int tid;
@@ -46,31 +46,6 @@ public:
     union ncclLLFifoLine *recvBuff;
     // union ncclLLFifoLine *sendBuff;
 
-    // inline __device__ int recvOffset(int i)
-    // {
-    //     return (recvStep[i] % NCCL_STEPS) * stepLines;
-    // }
-    // inline __device__ int sendOffset(int i)
-    // {
-    //     return (sendStep[i] % NCCL_STEPS) * stepLines;
-    // }
-    // inline __device__ union ncclLLFifoLine *recvPtr(int i)
-    // {
-    //     return recvBuff[i] + recvOffset(i);
-    // }
-    // inline __device__ union ncclLLFifoLine *sendPtr(int i)
-    // {
-    //     return sendBuff[i] + sendOffset(i);
-    // }
-    // inline __device__ uint32_t recvFlag(int i)
-    // {
-    //     return NCCL_LL_FLAG(recvStep[i] + 1);
-    // }
-    // inline __device__ uint32_t sendFlag(int i)
-    // {
-    //     return NCCL_LL_FLAG(sendStep[i] + 1);
-    // }
-
     inline __device__ void barrier()
     {
         constexpr int WARP_SIZE = 32;
@@ -90,14 +65,11 @@ public:
         barrier();
     }
 
-    // inline __device__ void incRecv(int i) { recvStep[i] += 1; }
     inline __device__ void postRecv()
     {
         barrier();
         *recvConnHeadPtr = recvConnHead += 1;
     }
-
-    // inline __device__ void incSend(int i, int offset) { sendStep[i]++; }
 
     __device__ uint64_t readLL(union ncclLLFifoLine *src_, int offset)
     {
@@ -221,6 +193,25 @@ public:
         }
     }
 
+    union converter {
+        uint64_t storage;
+        struct {
+            float a, b;
+        };
+    };
+
+    __device__ uint64_t floatsum(const uint64_t x, const uint64_t y)
+    {
+        converter cx, cy, cr;
+        cx.storage = x;
+        cy.storage = y;
+
+        cr.a = cx.a + cy.a;
+        cr.b = cx.b + cy.b;
+
+        return cr.storage;
+    }
+
     template <int RECV, int SEND, int SrcBuf, int DstBuf>
     __device__ __forceinline__ void LLGenericOp(intptr_t srcIx, intptr_t dstIx,
                                                 int nelem, bool postOp)
@@ -243,7 +234,7 @@ public:
             int eltInLine = EltPerLine < nelem ? EltPerLine : nelem;
 
             DataLoader dl;
-            ncclLLFifoLine line[MaxRecv];
+            // ncclLLFifoLine line[MaxRecv];
             uint64_t data, peerData;
             if (SRC) {
                 dl.loadBegin(srcElts, eltInLine);
@@ -259,9 +250,7 @@ public:
                 //     data = MULTI<RedOp, T>().preOp(redOp, data);
             }
             if (RECV) {
-                // data =
-                //     !SRC ? peerData : MULTI<RedOp, T>()(redOp, peerData, data);
-                data = peerData;
+                data = !SRC ? peerData : floatsum(peerData, data);
             }
 
             // if (postOp)
