@@ -50,23 +50,23 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
       asm volatile ("bar.sync %1, %0;" :: "r"(nthreads), "r"(15-group));
   }
 
-  uint32_t abort = 0;
+  // uint32_t abort = 0;
 
-  inline __device__ int checkAbort(int &spins, int send) {
-    spins++;
-    if (abort == 0 && spins == NCCL_SPINS_BEFORE_CHECK_ABORT) {
-      abort = *ncclShmem.comm.abortFlag;
-      spins = 0;
-    }
-    return abort;
-  }
+  // inline __device__ int checkAbort(int &spins, int send) {
+  //   spins++;
+  //   if (abort == 0 && spins == NCCL_SPINS_BEFORE_CHECK_ABORT) {
+  //     abort = *ncclShmem.comm.abortFlag;
+  //     spins = 0;
+  //   }
+  //   return abort;
+  // }
 
   inline __device__ void waitSend(int nbytes) {
     if (sendConnHeadPtr) {
       int spins = 0;
       while (sendConnHeadCache + NCCL_STEPS < sendConnHead + 1) {
         sendConnHeadCache = *sendConnHeadPtr;
-        if (checkAbort(spins, 1)) break;
+        // if (checkAbort(spins, 1)) break;
       }
       if (sendConnFifoPtr) {
         int size = ((sendConnHead & NCCL_LL_CLEAN_MASK) == NCCL_LL_CLEAN_MASK) ? stepLines*sizeof(union ncclLLFifoLine) : nbytes;
@@ -100,8 +100,8 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
     uint32_t data1, flag1, data2, flag2;
     int spins = 0;
     do {
-      asm("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(data1), "=r"(flag1), "=r"(data2), "=r"(flag2) : "l"(&src->i4));
-      if (checkAbort(spins, 0)) break;
+      asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(data1), "=r"(flag1), "=r"(data2), "=r"(flag2) : "l"(&src->i4));
+      // if (checkAbort(spins, 0)) break;
     } while ((flag1 != flag) || (flag2 != flag));
     uint64_t val64 = data1 + (((uint64_t)data2) << 32);
     return val64;
@@ -122,8 +122,8 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
     uint32_t flag = recvFlag(i);
     int spins = 0;
     while (line[i].flag1 != flag || line[i].flag2 != flag) {
-      asm("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(line[i].data1), "=r"(line[i].flag1), "=r"(line[i].data2), "=r"(line[i].flag2) : "l"(&src->i4));
-      if (checkAbort(spins, 0)) break;
+      asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(line[i].data1), "=r"(line[i].flag1), "=r"(line[i].data2), "=r"(line[i].flag2) : "l"(&src->i4));
+      // if (checkAbort(spins, 0)) break;
     }
     uint64_t val64 = line[i].data1 + (((uint64_t)line[i].data2) << 32);
     return val64;
@@ -320,31 +320,31 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
   }
 
  public:
-  __device__  Primitives(
-      const int tid, const int nthreads, int const *recvPeers, int const *sendPeers,
-      void const *inputBuf, void *outputBuf, uint64_t redOpArg, int group=0
-    ):
-    redOp(redOpArg),
-    tid(tid), nthreads(nthreads), wid(tid%WARP_SIZE), group(group&(uint16_t)0xFFFF),
-    stepLines(ncclShmem.comm.buffSizes[NCCL_PROTO_LL]/NCCL_STEPS/sizeof(ncclLLFifoLine)) {
-    int connIndex = group >> 16;
-    auto *channel = &ncclShmem.channel;
-    // If we are going to support oneshot collNet + LL, then we would need to add connector index here
-    int nrecv=0, nsend=0;
-    // We compare with Fan::MaxRecv here because this->MaxRecv is always at least 1
-    while (nrecv < Fan::MaxRecv && recvPeers[nrecv] >= 0) {
-      loadRecvConn(&channel->peers[recvPeers[nrecv]].recv[connIndex], nrecv);
-      nrecv++;
-    }
-    while (nsend < MaxSend && sendPeers[nsend] >= 0) {
-      loadSendConn(&channel->peers[sendPeers[nsend]].send[connIndex], nsend);
-      nsend++;
-    }
-    this->fan = Fan(nrecv, nsend);
-    loadRecvSync();
-    loadSendSync();
-    setDataPtrs(inputBuf, outputBuf);
-  }
+  // __device__  Primitives(
+  //     const int tid, const int nthreads, int const *recvPeers, int const *sendPeers,
+  //     void const *inputBuf, void *outputBuf, uint64_t redOpArg, int group=0
+  //   ):
+  //   redOp(redOpArg),
+  //   tid(tid), nthreads(nthreads), wid(tid%WARP_SIZE), group(group&(uint16_t)0xFFFF),
+  //   stepLines(ncclShmem.comm.buffSizes[NCCL_PROTO_LL]/NCCL_STEPS/sizeof(ncclLLFifoLine)) {
+  //   int connIndex = group >> 16;
+  //   auto *channel = &ncclShmem.channel;
+  //   // If we are going to support oneshot collNet + LL, then we would need to add connector index here
+  //   int nrecv=0, nsend=0;
+  //   // We compare with Fan::MaxRecv here because this->MaxRecv is always at least 1
+  //   while (nrecv < Fan::MaxRecv && recvPeers[nrecv] >= 0) {
+  //     loadRecvConn(&channel->peers[recvPeers[nrecv]].recv[connIndex], nrecv);
+  //     nrecv++;
+  //   }
+  //   while (nsend < MaxSend && sendPeers[nsend] >= 0) {
+  //     loadSendConn(&channel->peers[sendPeers[nsend]].send[connIndex], nsend);
+  //     nsend++;
+  //   }
+  //   this->fan = Fan(nrecv, nsend);
+  //   loadRecvSync();
+  //   loadSendSync();
+  //   setDataPtrs(inputBuf, outputBuf);
+  // }
 
   __device__ Primitives(const int tid, const int nthreads, int const *recvPeers,
                         int const *sendPeers, void const *inputBuf,
@@ -390,10 +390,10 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
     userBufs[Output] = (T*)outputBuf;
   }
 
-  __device__ void moveDataPtrs(intptr_t delta) {
-    userBufs[Input] += delta;
-    userBufs[Output] += delta;
-  }
+  // __device__ void moveDataPtrs(intptr_t delta) {
+  //   userBufs[Input] += delta;
+  //   userBufs[Output] += delta;
+  // }
 
   __device__ void send(intptr_t inpIx, int eltN) {
     return LLGenericOp<0, 1, Input, -1>(inpIx, -1, eltN, false);

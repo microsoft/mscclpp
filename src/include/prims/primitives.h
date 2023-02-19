@@ -135,7 +135,7 @@ struct PrimitivesWithoutDirect {
     static_cast<RealPrimitives*>(this)->recvReduceCopySend(inpIx, outIx, eltN, postOp);
   }
 };
-#include "prims_simple.h"
+// #include "prims_simple.h"
 #include "prims_ll.h"
-#include "prims_ll128.h"
+// #include "prims_ll128.h"
 #endif
