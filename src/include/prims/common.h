@@ -8,7 +8,7 @@
 #define NCCL_DEVICE_COMMON_H_
 
 // #include "collectives.h"
-#include "devcomm.h"
+// #include "devcomm.h"
 #include "op128.h"
 
 #if __CUDA_ARCH__ >= 800

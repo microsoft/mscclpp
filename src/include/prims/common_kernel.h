@@ -7,7 +7,7 @@
 #ifndef NCCL_COMMON_KERNEL_H_
 #define NCCL_COMMON_KERNEL_H_
 
-#include "devcomm.h"
+// #include "devcomm.h"
 #include <cstdio>
 #include <cstdint>
 

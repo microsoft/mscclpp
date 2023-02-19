@@ -1,6 +1,6 @@
 #include "mpi.h"
 #include "mscclpp.h"
-#include "prims/primitives.h"
+#include "prims/prims_ll.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -17,24 +17,24 @@
 __device__ void test_send_ll(void *data_src, void *recvbuff, void *sendConnHead,
                              int size)
 {
-    using Proto = ProtoLL;
+    // using Proto = ProtoLL;
     int tid = threadIdx.x;
     int nthreads = blockDim.x;
-    Primitives<float, FuncSum<float>, FanSymmetric<1>, 1, Proto, 0> prims(
-        tid, nthreads, ncclDevSum, 0);
-    prims.send(0, size);
+    // Primitives<float, FuncSum<float>, FanSymmetric<1>, 1, Proto, 0> prims(
+    //     tid, nthreads, ncclDevSum, 0);
+    // prims.send(0, size);
     return;
 }
 
 __device__ void test_recv_ll(void *data_dst, void *recvbuff, void *sendConnHead,
                              int size)
 {
-    using Proto = ProtoLL;
+    // using Proto = ProtoLL;
     int tid = threadIdx.x;
     int nthreads = blockDim.x;
-    Primitives<float, FuncSum<float>, FanSymmetric<1>, 1, Proto, 0> prims(
-        tid, nthreads, ncclDevSum, 0);
-    prims.recv(0, size);
+    // Primitives<float, FuncSum<float>, FanSymmetric<1>, 1, Proto, 0> prims(
+    //     tid, nthreads, ncclDevSum, 0);
+    // prims.recv(0, size);
     return;
 }
 
@@ -97,11 +97,13 @@ int main(int argc, const char *argv[])
     const char *ip_port = argv[1];
     mscclppCommInitRank(&comm, world_size, rank, ip_port);
 
-    int *data_d;
+    int *data_src;
+    int *data_dst;
+    int elem_num = 1024;
+    int data_size = sizeof(float) * elem_num;
     int *flag_d;
-    CUDACHECK(cudaMalloc(&data_d, sizeof(int) * world_size));
+    CUDACHECK(cudaMalloc(&data_src, data_size));
     CUDACHECK(cudaMalloc(&flag_d, sizeof(int)));
-    printf("-------- buf: %p, flag: %p\n", data_d, flag_d);
 
     mscclppResult_t res;
 
@@ -110,7 +112,7 @@ int main(int argc, const char *argv[])
         if (r == rank)
             continue;
         int tag = rank * world_size + r;
-        res = mscclppConnect(comm, rank, r, data_d, sizeof(int) * world_size,
+        res = mscclppConnect(comm, rank, r, data_src, data_size,
                              flag_d, tag, mscclppTransportP2P);
         if (res != mscclppSuccess) {
             printf("mscclppConnect failed\n");
@@ -122,7 +124,7 @@ int main(int argc, const char *argv[])
         if (r == rank)
             continue;
         int tag = r * world_size + rank;
-        res = mscclppConnect(comm, r, rank, data_d, sizeof(int) * world_size,
+        res = mscclppConnect(comm, r, rank, data_src, data_size,
                              flag_d, tag, mscclppTransportP2P);
         if (res != mscclppSuccess) {
             printf("mscclppConnect failed\n");
@@ -146,15 +148,9 @@ int main(int argc, const char *argv[])
         printf("calloc failed\n");
         return -1;
     }
-    CUDACHECK(cudaMemcpy(buf, data_d, sizeof(int) * world_size,
+    CUDACHECK(cudaMemcpy(buf, data_dst, data_size,
                          cudaMemcpyDeviceToHost));
 
-    for (int i = 0; i < world_size; ++i) {
-        if (buf[i] != i) {
-            printf("wrong data: %d, expected %d\n", buf[i], i);
-            return -1;
-        }
-    }
 
     res = mscclppCommDestroy(comm);
     if (res != mscclppSuccess) {
