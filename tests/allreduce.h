@@ -1,27 +1,18 @@
 #include "prims_ll.h"
 
-__device__ void run_allreduce()
+__global__ void run_allreduce(int ringIx)
 {
     const int tid = threadIdx.x;
     const int nthreads = args->nWarps * WARP_SIZE;
-    int ringIx = ring->index;
     const ssize_t chunkSize =
-        int(Proto::calcBytePerStep() / sizeof(T) *
-            (Proto::Id == NCCL_PROTO_SIMPLE ? ALLREDUCE_CHUNKSTEPS : 1));
+        int(Proto::calcBytePerStep() / sizeof(T));
     const int nranks = ncclShmem.comm.nRanks;
     const ssize_t loopSize = nChannels * nranks * chunkSize;
     const ssize_t size = args->count;
 
     int minChunkSize;
     // if (Proto::Id == NCCL_PROTO_LL)
-    minChunkSize = nthreads * (Proto::calcBytePerGrain() / sizeof(T));
-    // if (Proto::Id == NCCL_PROTO_LL128) {
-    //     // We should not need the final /2 but it makes performance much,
-    //     much
-    //     // smoother. Might be a bug somewhere.
-    //     minChunkSize = nthreads * (Proto::calcBytePerGrain() / sizeof(T)) /
-    //     2;
-    // }
+    minChunkSize = nthreads * (sizeof(uint64_t) / sizeof(T));
 
     Primitives<T, RedOp, FanSymmetric<1>, 1, Proto, 0> prims(
         tid, nthreads, &ring->prev, &ring->next, args->sendbuff, args->recvbuff,
