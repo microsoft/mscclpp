@@ -41,8 +41,8 @@ public:
     volatile uint64_t *sendConnHeadPtr = NULL;
     uint64_t sendConnHead;
 
-    uint64_t recvStep;
-    uint64_t sendStep;
+    // uint64_t recvStep;
+    // uint64_t sendStep;
     union ncclLLFifoLine *recvBuff;
     // union ncclLLFifoLine *sendBuff;
 
@@ -234,7 +234,6 @@ public:
         // nelem = nelem < 0 ? 0 : nelem;
         if (SEND)
             waitSend(nelem);
-
         nelem -= tid * EltPerLine;
         srcElts += tid * EltPerLine;
         dstElts += tid * EltPerLine;
@@ -261,13 +260,8 @@ public:
             }
             if (RECV) {
                 // data =
-                //     !SRC ? peerData : MULTI<RedOp, T>()(redOp, peerData,
-                //     data);
-                // #pragma unroll MaxRecv
-                // for (int i=1; i < MaxRecv && i < fan.nrecv(); i++) {
-                //   peerData = readLLFinish(offset, line, i);
-                //   data = MULTI<RedOp,T>()(redOp, peerData, data);
-                // }
+                //     !SRC ? peerData : MULTI<RedOp, T>()(redOp, peerData, data);
+                data = peerData;
             }
 
             // if (postOp)
@@ -285,45 +279,13 @@ public:
         }
 
         if (RECV) {
-            recvStep += 1;
+            // recvStep += 1;
             postRecv();
         }
-        if (SEND) {
-            sendStep++;
-        }
+        // if (SEND) {
+        //     sendStep++;
+        // }
     }
-
-    // __device__ __forceinline__ void send(int nelem)
-    // {
-    //     constexpr int SRC = SrcBuf != -1 ? 1 : 0;
-    //     constexpr int DST = DstBuf != -1 ? 1 : 0;
-    //     T *srcElts = SrcBuf == -1 ? nullptr : userBufs[SrcBuf] + srcIx;
-    //     // Always waitSend in case of cleanup
-    //     // nelem = nelem < 0 ? 0 : nelem;
-    //     waitSend(divUp(nelem, EltPerLine) * sizeof(ncclLLFifoLine));
-
-    //     nelem -= tid * EltPerLine;
-    //     srcElts += tid * EltPerLine;
-    //     dstElts += tid * EltPerLine;
-    //     int offset = tid;
-    //     int eltPerTrip = nthreads * EltPerLine;
-    //     while (nelem > 0) {
-    //         int eltInLine = EltPerLine < nelem ? EltPerLine : nelem;
-
-    //         DataLoader dl;
-    //         ncclLLFifoLine line[MaxRecv];
-    //         uint64_t data, peerData;
-
-    //         dl.loadBegin(srcElts, eltInLine);
-    //         srcElts += eltPerTrip;
-    //         data = dl.loadFinish();
-
-    //         storeLL(sendPtr(0) + offset, data, sendFlag(0));
-    //         nelem -= eltPerTrip;
-    //         offset += nthreads;
-    //     }
-    //     sendStep[0]++;
-    // }
 
     __device__ Primitives_LL(const int tid, const int nthreads,
                              uint64_t redOpArg, int group)
