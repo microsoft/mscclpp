@@ -91,9 +91,7 @@ public:
     // inline __device__ void incRecv(int i) { recvStep[i] += 1; }
     inline __device__ void postRecv()
     {
-        barri]
-        
-        er();
+        barrier();
         *recvConnHeadPtr = recvConnHead += 1;
     }
 
@@ -292,43 +290,79 @@ public:
         }
     }
 
-    __device__ __forceinline__ void send(int nelem)
-    {
-        constexpr int SRC = SrcBuf != -1 ? 1 : 0;
-        constexpr int DST = DstBuf != -1 ? 1 : 0;
-        T *srcElts = SrcBuf == -1 ? nullptr : userBufs[SrcBuf] + srcIx;
-        // Always waitSend in case of cleanup
-        // nelem = nelem < 0 ? 0 : nelem;
-        waitSend(divUp(nelem, EltPerLine) * sizeof(ncclLLFifoLine));
+    // __device__ __forceinline__ void send(int nelem)
+    // {
+    //     constexpr int SRC = SrcBuf != -1 ? 1 : 0;
+    //     constexpr int DST = DstBuf != -1 ? 1 : 0;
+    //     T *srcElts = SrcBuf == -1 ? nullptr : userBufs[SrcBuf] + srcIx;
+    //     // Always waitSend in case of cleanup
+    //     // nelem = nelem < 0 ? 0 : nelem;
+    //     waitSend(divUp(nelem, EltPerLine) * sizeof(ncclLLFifoLine));
 
-        nelem -= tid * EltPerLine;
-        srcElts += tid * EltPerLine;
-        dstElts += tid * EltPerLine;
-        int offset = tid;
-        int eltPerTrip = nthreads * EltPerLine;
-        while (nelem > 0) {
-            int eltInLine = EltPerLine < nelem ? EltPerLine : nelem;
+    //     nelem -= tid * EltPerLine;
+    //     srcElts += tid * EltPerLine;
+    //     dstElts += tid * EltPerLine;
+    //     int offset = tid;
+    //     int eltPerTrip = nthreads * EltPerLine;
+    //     while (nelem > 0) {
+    //         int eltInLine = EltPerLine < nelem ? EltPerLine : nelem;
 
-            DataLoader dl;
-            ncclLLFifoLine line[MaxRecv];
-            uint64_t data, peerData;
+    //         DataLoader dl;
+    //         ncclLLFifoLine line[MaxRecv];
+    //         uint64_t data, peerData;
 
-            dl.loadBegin(srcElts, eltInLine);
-            srcElts += eltPerTrip;
-            data = dl.loadFinish();
+    //         dl.loadBegin(srcElts, eltInLine);
+    //         srcElts += eltPerTrip;
+    //         data = dl.loadFinish();
 
-            storeLL(sendPtr(0) + offset, data, sendFlag(0));
-            nelem -= eltPerTrip;
-            offset += nthreads;
-        }
-        sendStep[0]++;
-    }
+    //         storeLL(sendPtr(0) + offset, data, sendFlag(0));
+    //         nelem -= eltPerTrip;
+    //         offset += nthreads;
+    //     }
+    //     sendStep[0]++;
+    // }
 
     __device__ Primitives_LL(const int tid, const int nthreads,
                              uint64_t redOpArg, int group)
         : redOp(redOpArg), tid(tid), nthreads(nthreads),
           group(group & (uint16_t)0xFFFF), stepLines(4096)
     {
+    }
+
+    __device__ void send(intptr_t inpIx, int eltN)
+    {
+        return LLGenericOp<0, 1, Input, -1>(inpIx, -1, eltN, false);
+    }
+    __device__ void sendFromOutput(intptr_t outIx, int eltN)
+    {
+        return LLGenericOp<0, 1, Output, -1>(outIx, -1, eltN, false);
+    }
+    __device__ void recv(intptr_t outIx, int eltN, bool postOp = false)
+    {
+        return LLGenericOp<1, 0, -1, Output>(-1, outIx, eltN, postOp);
+    }
+    __device__ void recvReduceSend(intptr_t inpIx, int eltN)
+    {
+        return LLGenericOp<1, 1, Input, -1>(inpIx, -1, eltN, false);
+    }
+    __device__ void recvReduceCopy(intptr_t inpIx, intptr_t outIx, int eltN,
+                                   bool postOp = false)
+    {
+        return LLGenericOp<1, 0, Input, Output>(inpIx, outIx, eltN, postOp);
+    }
+    __device__ void copySend(intptr_t inpIx, intptr_t outIx, int eltN,
+                             bool postOp = false)
+    {
+        return LLGenericOp<0, 1, Input, Output>(inpIx, outIx, eltN, postOp);
+    }
+    __device__ void recvCopySend(intptr_t outIx, int eltN, bool postOp = false)
+    {
+        return LLGenericOp<1, 1, -1, Output>(-1, outIx, eltN, postOp);
+    }
+    __device__ void recvReduceCopySend(intptr_t inpIx, intptr_t outIx, int eltN,
+                                       bool postOp = false)
+    {
+        return LLGenericOp<1, 1, Input, Output>(inpIx, outIx, eltN, postOp);
     }
 };
 

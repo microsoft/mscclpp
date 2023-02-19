@@ -1,7 +1,6 @@
 #include "prims_ll.h"
 
-
-void run_allreduce()
+__device__ void run_allreduce()
 {
     const int tid = threadIdx.x;
     const int nthreads = args->nWarps * WARP_SIZE;
@@ -14,13 +13,15 @@ void run_allreduce()
     const ssize_t size = args->count;
 
     int minChunkSize;
-    if (Proto::Id == NCCL_PROTO_LL)
-        minChunkSize = nthreads * (Proto::calcBytePerGrain() / sizeof(T));
-    if (Proto::Id == NCCL_PROTO_LL128) {
-        // We should not need the final /2 but it makes performance much, much
-        // smoother. Might be a bug somewhere.
-        minChunkSize = nthreads * (Proto::calcBytePerGrain() / sizeof(T)) / 2;
-    }
+    // if (Proto::Id == NCCL_PROTO_LL)
+    minChunkSize = nthreads * (Proto::calcBytePerGrain() / sizeof(T));
+    // if (Proto::Id == NCCL_PROTO_LL128) {
+    //     // We should not need the final /2 but it makes performance much,
+    //     much
+    //     // smoother. Might be a bug somewhere.
+    //     minChunkSize = nthreads * (Proto::calcBytePerGrain() / sizeof(T)) /
+    //     2;
+    // }
 
     Primitives<T, RedOp, FanSymmetric<1>, 1, Proto, 0> prims(
         tid, nthreads, &ring->prev, &ring->next, args->sendbuff, args->recvbuff,
@@ -35,11 +36,7 @@ void run_allreduce()
         realChunkSize = int(realChunkSize);
 
         auto calcOffset = [&] __device__(int chunk) -> ssize_t {
-            if (Proto::Id == NCCL_PROTO_SIMPLE)
-                return gridOffset + bid * nranks * realChunkSize +
-                       chunk * realChunkSize;
-            else
-                return gridOffset + (chunk * nChannels + bid) * realChunkSize;
+            return gridOffset + (chunk * nChannels + bid) * realChunkSize;
         };
         auto modRanks = [&] __device__(int r) -> int {
             return r - (r >= nranks ? nranks : 0);
