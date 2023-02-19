@@ -1,10 +1,6 @@
-/*************************************************************************
- * Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
- *
- * See LICENSE.txt for license information
- ************************************************************************/
 // #include "reduce_kernel.h" // for reduction funcs
-
+#ifndef PRIMS_LL_H_
+#define PRIMS_LL_H_
 union ncclLLFifoLine {
     /* Flags have to be *after* data, because otherwise, an incomplete receive
        from the network may receive the flag but not the data.
@@ -20,16 +16,16 @@ union ncclLLFifoLine {
     int4 i4;
 };
 
-template <typename T, typename RedOp> class Primitives_LL
+template <typename T> class Primitives_LL
 {
 public:
     // In the case of Fan::MaxRecv == 0, we need to force MaxRecv to 1 for this
     // to compile This is because of a recv buffer which is allocated to MaxRecv
     // length in send-only cases
-    static constexpr int MaxRecv = Fan::MaxRecv > 1 ? Fan::MaxRecv : 1;
-    static constexpr int MaxSend = Fan::MaxSend;
+    static constexpr int MaxRecv = 1;
+    static constexpr int MaxSend = 1;
     static constexpr int Input = 0, Output = 1;
-    RedOp redOp;
+    uint64_t redOp;
     const int tid;
     const int nthreads;
     // const int wid;
@@ -64,17 +60,18 @@ public:
     // {
     //     return sendBuff[i] + sendOffset(i);
     // }
-    inline __device__ uint32_t recvFlag(int i)
-    {
-        return NCCL_LL_FLAG(recvStep[i] + 1);
-    }
-    inline __device__ uint32_t sendFlag(int i)
-    {
-        return NCCL_LL_FLAG(sendStep[i] + 1);
-    }
+    // inline __device__ uint32_t recvFlag(int i)
+    // {
+    //     return NCCL_LL_FLAG(recvStep[i] + 1);
+    // }
+    // inline __device__ uint32_t sendFlag(int i)
+    // {
+    //     return NCCL_LL_FLAG(sendStep[i] + 1);
+    // }
 
     inline __device__ void barrier()
     {
+        constexpr int WARP_SIZE = 32;
         if (nthreads == WARP_SIZE)
             __syncwarp();
         else
@@ -83,26 +80,28 @@ public:
 
     inline __device__ void waitSend(int nbytes)
     {
-        uint64_t sendConnHeadCache; // Cache last seen value
-        while (sendConnHeadCache + NCCL_STEPS < sendConnHead + 1) {
+        uint64_t sendConnHeadCache = *sendConnHeadPtr; // Cache last seen value
+        while (sendConnHeadCache < sendConnHead + 1) {
             sendConnHeadCache = *sendConnHeadPtr;
         }
         sendConnHead += 1;
         barrier();
     }
 
-    inline __device__ void incRecv(int i) { recvStep[i] += 1; }
+    // inline __device__ void incRecv(int i) { recvStep[i] += 1; }
     inline __device__ void postRecv()
     {
-        barrier();
+        barri]
+        
+        er();
         *recvConnHeadPtr = recvConnHead += 1;
     }
 
-    inline __device__ void incSend(int i, int offset) { sendStep[i]++; }
+    // inline __device__ void incSend(int i, int offset) { sendStep[i]++; }
 
-    __device__ uint64_t readLL(union ncclLLFifoLine *src, int offset, int i)
+    __device__ uint64_t readLL(union ncclLLFifoLine *src, int offset)
     {
-        uint32_t flag = recvFlag(i);
+        uint32_t flag = 1;
         uint32_t data1, flag1, data2, flag2;
         int spins = 0;
         do {
@@ -233,7 +232,7 @@ public:
         // Always waitSend in case of cleanup
         // nelem = nelem < 0 ? 0 : nelem;
         if (SEND)
-            waitSend(divUp(nelem, EltPerLine) * sizeof(ncclLLFifoLine));
+            waitSend(nelem);
 
         nelem -= tid * EltPerLine;
         srcElts += tid * EltPerLine;
@@ -285,21 +284,19 @@ public:
         }
 
         if (RECV) {
-            recvStep[0] += 1;
+            recvStep += 1;
             postRecv();
         }
         if (SEND) {
-            sendStep[0]++;
+            sendStep++;
         }
     }
 
-    __device__ send(int nelem)
+    __device__ __forceinline__ void send(int nelem)
     {
         constexpr int SRC = SrcBuf != -1 ? 1 : 0;
         constexpr int DST = DstBuf != -1 ? 1 : 0;
         T *srcElts = SrcBuf == -1 ? nullptr : userBufs[SrcBuf] + srcIx;
-        T *dstElts = DstBuf == -1 ? nullptr : userBufs[DstBuf] + dstIx;
-
         // Always waitSend in case of cleanup
         // nelem = nelem < 0 ? 0 : nelem;
         waitSend(divUp(nelem, EltPerLine) * sizeof(ncclLLFifoLine));
@@ -327,10 +324,12 @@ public:
         sendStep[0]++;
     }
 
-    __device__ Primitives(const int tid, const int nthreads, uint64_t redOpArg,
-                          int group)
+    __device__ Primitives_LL(const int tid, const int nthreads,
+                             uint64_t redOpArg, int group)
         : redOp(redOpArg), tid(tid), nthreads(nthreads),
           group(group & (uint16_t)0xFFFF), stepLines(4096)
     {
     }
 };
+
+#endif
