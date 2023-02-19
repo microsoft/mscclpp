@@ -14,80 +14,83 @@
         }                                                                      \
     } while (false)
 
-__global__ void test_send_ll(void *data_src, void *recvbuff,
-                             void *sendConnHeadPtr, int size)
-{
-    // using Proto = ProtoLL;
-    int tid = threadIdx.x;
-    int nthreads = blockDim.x;
-    Primitives_LL<float> prims(tid, nthreads, 0, 0);
-    prims.sendConnHeadPtr = (volatile uint64_t *)sendConnHeadPtr;
-    prims.data_src = (float *)data_src;
-    prims.recvBuff = (ncclLLFifoLine *)recvbuff;
-    prims.send(0, size);
-    return;
-}
+// __global__ void test_send_ll(void *data_src, void *recvbuff,
+//                              void *sendConnHeadPtr, int size)
+// {
+//     // using Proto = ProtoLL;
+//     int tid = threadIdx.x;
+//     int nthreads = blockDim.x;
+//     Primitives_LL<float> prims(tid, nthreads, 0, 0);
+//     prims.sendConnHeadPtr = (volatile uint64_t *)sendConnHeadPtr;
+//     prims.data_src = (float *)data_src;
+//     prims.recvBuff = (ncclLLFifoLine *)recvbuff;
+//     prims.send(0, size);
+//     return;
+// }
 
-__global__ void test_recv_ll(void *data_dst, void *recvbuff,
-                             void *sendConnHeadPtr, int size)
+// __global__ void test_recv_ll(void *data_dst, void *recvbuff,
+//                              void *sendConnHeadPtr, int size)
+// {
+//     int tid = threadIdx.x;
+//     int nthreads = blockDim.x;
+//     Primitives_LL<float> prims(tid, nthreads, 0, 0);
+//     prims.sendConnHeadPtr = (volatile uint64_t *)sendConnHeadPtr;
+//     prims.data_dst = (float *)data_dst;
+//     prims.recvBuff = (ncclLLFifoLine *)recvbuff;
+//     prims.recv(0, size);
+//     return;
+// }
+
+__global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
+                                void *data_dst, int size)
 {
     int tid = threadIdx.x;
     int nthreads = blockDim.x;
     Primitives_LL<float> prims(tid, nthreads, 0, 0);
-    prims.sendConnHeadPtr = (volatile uint64_t *)sendConnHeadPtr;
+    prims.data_src = (float *)devConns[0].localBuff;
     prims.data_dst = (float *)data_dst;
-    prims.recvBuff = (ncclLLFifoLine *)recvbuff;
-    prims.recv(0, size);
-    return;
-}
-
-__global__ void ring_all_reduce(int realChunkSize)
-{
-    Primitives_LL<float> prims(tid, nthreads, 0, 0);
-
-    auto calcOffset = [&] __device__(int chunk) -> ssize_t {
-        return gridOffset + (chunk * nChannels + bid) * realChunkSize;
-    };
+    prims.recvBuff = (ncclLLFifoLine *)devConns[0].remoteBuff;
+    int ChunkSize = size / nranks;
 
     ssize_t offset;
-    int nelem;
+    int nelem=ChunkSize;
     int chunk;
 
     // step 0: push data to next GPU
-    chunk = (ringIx + nranks - 1) % nranks;
-    offset = calcOffset(chunk);
-    nelem = min(realChunkSize, size - offset);
+    chunk = (rank + nranks - 1) % nranks;
+    offset = chunk * ChunkSize;
+    // nelem = min(ChunkSize, size - offset);
     prims.send(offset, nelem);
 
     // k-2 steps: reduce and copy to next GPU
     for (int j = 2; j < nranks; ++j) {
-        chunk = (ringIx + nranks - j) % nranks;
-        offset = calcOffset(chunk);
-        nelem = min(realChunkSize, size - offset);
+        chunk = (rank + nranks - j) % nranks;
+        offset = chunk * ChunkSize;
+        // nelem = min(ChunkSize, size - offset);
         prims.recvReduceSend(offset, nelem);
     }
 
     // step k-1: reduce this buffer and data, which will produce the final
     // result that we store in this data and push to the next GPU
-    chunk = ringIx + 0;
-    offset = calcOffset(chunk);
-    nelem = min(realChunkSize, size - offset);
-    prims.directRecvReduceCopySend(offset, offset, offset, nelem,
+    chunk = rank + 0;
+    offset = chunk * ChunkSize;
+    // nelem = min(ChunkSize, size - offset);
+    prims.recvReduceCopySend(offset, offset, nelem,
                                    /*postOp=*/true);
 
     // k-2 steps: copy to next GPU
     for (int j = 1; j < nranks - 1; ++j) {
-        chunk = (ringIx + nranks - j) % nranks;
-        offset = calcOffset(chunk);
-        nelem = min(realChunkSize, size - offset);
-        prims.directRecvCopySend(offset, offset, nelem);
+        chunk = (rank + nranks - j) % nranks;
+        offset = chunk * ChunkSize;
+        // nelem = min(ChunkSize, size - offset);
+        prims.recvCopySend(offset, nelem);
     }
 
     // Make final copy from buffer to dest.
-    chunk = (ringIx + 1) % nranks;
-    offset = calcOffset(chunk);
-    nelem = min(realChunkSize, size - offset);
-    prims.directRecv(offset, nelem);
+    chunk = (rank + 1) % nranks;
+    offset = chunk * ChunkSize;
+    // nelem = min(ChunkSize, size - offset);
+    prims.recv(offset, nelem);
 }
 
 void print_usage(const char *prog) { printf("usage: %s IP:PORT\n", prog); }
@@ -146,14 +149,7 @@ int main(int argc, const char *argv[])
 
     mscclppDevConn_t devConns;
     mscclppGetDevConns(comm, &devConns);
-    if (rank == 0) {
-        test_send_ll<<<1, 32>>>(devConns[0].localBuff, devConns[0].remoteBuff,
-                                devConns[0].localFlag, data_size);
-    }
-    if (rank == 1) {
-        test_recv_ll<<<1, 32>>>(data_dst, devConns[0].localBuff,
-                                devConns[0].remoteFlag, data_size);
-    }
+    ring_all_reduce<<<1, 32>>>(devConns, rank, world_size, data_dst, data_size);
     CUDACHECK(cudaDeviceSynchronize());
     if (rank == 1) {
         float *h_data_dst = (float *)malloc(data_size);
