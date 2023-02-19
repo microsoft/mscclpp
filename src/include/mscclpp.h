@@ -75,7 +75,7 @@ typedef enum { mscclppInt8       = 0, mscclppChar       = 0,
 
 mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair);
 
-mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int size);
+mscclppResult_t mscclppBootatrapAllGather(mscclppComm_t comm, void* data, int size);
 
 mscclppResult_t  mscclppCommDestroy(mscclppComm_t comm);
 

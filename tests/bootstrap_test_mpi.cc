@@ -32,7 +32,7 @@ int main(int argc, const char *argv[])
     return -1;
   }
   buf[rank] = rank;
-  mscclppResult_t res = mscclppBootStrapAllGather(comm, buf, sizeof(int));
+  mscclppResult_t res = mscclppBootatrapAllGather(comm, buf, sizeof(int));
   if (res != mscclppSuccess) {
     printf("bootstrapAllGather failed\n");
     return -1;

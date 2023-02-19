@@ -45,8 +45,8 @@ mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* out) {
   return res;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppBootStrapAllGather, mscclppComm_t comm, void* data, int size);
-mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int size){
+MSCCLPP_API(mscclppResult_t, mscclppBootatrapAllGather, mscclppComm_t comm, void* data, int size);
+mscclppResult_t mscclppBootatrapAllGather(mscclppComm_t comm, void* data, int size){
   MSCCLPPCHECK(bootstrapAllGather(comm->bootstrap, data, size));
   return mscclppSuccess;
 }
