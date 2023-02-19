@@ -109,8 +109,8 @@ LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 
 INCEXPORTS := mscclpp.h mscclpp_net.h
-INCEXPORTS += prims/common_kernel.h prims/common.h prims/primitives.h prims/op128.h prims/prims_ll.h prims/prims_ll128.h prims/prims_simple.h prims/reduce_kernel.h
-INCEXPORTS += prims/align.h prims/devcomm.h
+# INCEXPORTS += prims/common_kernel.h prims/common.h prims/primitives.h prims/op128.h prims/prims_ll.h prims/prims_ll128.h prims/prims_simple.h prims/reduce_kernel.h
+# INCEXPORTS += prims/align.h prims/devcomm.h
 INCTARGETS := $(INCEXPORTS:%=$(BUILDDIR)/$(INCDIR)/%)
 
 LIBNAME   := libmscclpp.so

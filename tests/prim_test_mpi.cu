@@ -1,6 +1,6 @@
 #include "mpi.h"
 #include "mscclpp.h"
-#include "prims/prims_ll.h"
+#include "prims_ll.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
