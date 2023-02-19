@@ -22,6 +22,17 @@
 
 typedef void(*ncclKern_t)();
 
+enum ncclDevRedOp_t {
+  ncclDevSum, ncclDevProd, ncclDevMax, ncclDevMin,
+  ncclDevPreMulSum, ncclDevSumPostDiv,
+  ncclNumDevRedOps
+};
+struct ncclDevRedOpFull {
+  ncclDevRedOp_t op;
+  bool scalarArgIsPtr;
+  uint64_t scalarArg;
+};
+
 struct ncclShmemGroup {
   ncclConnInfo *recvConns[NCCL_MAX_DIRECT_ARITY];
   ncclConnInfo *sendConns[NCCL_MAX_DIRECT_ARITY];

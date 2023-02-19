@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-
+#include "prims/primitives.h"
 // Check CUDA RT calls
 #define CUDACHECK(cmd) do {                                 \
     cudaError_t err = cmd;                                  \
@@ -43,6 +43,50 @@ __global__ void kernel(mscclppDevConn_t devConns, int rank, int world_size)
       data[rankSend] = remoteData[rankSend];
     }
   }
+}
+
+__global__ void test_send_ll(float *data_src, char *recvbuff,
+                             uint64_t *sendConnHead, int size)
+{
+    using Proto = ProtoLL;
+    int tid = threadIdx.x;
+    int nthreads = blockDim.x;
+    int sendPeers[2] = {0, -1};
+    int recvPeers[2] = {0, -1};
+    ncclDevChannelPeer peerInfo;
+    peerInfo.send[0].buffs[NCCL_PROTO_LL] = recvbuff;
+    peerInfo.send[0].head = sendConnHead;
+    peerInfo.send[0].step = 0;
+    // peerInfo.recv[0].buffs[NCCL_PROTO_LL] = recvbuff;
+    // peerInfo.recv[0].head = sendConnHead;
+    // peerInfo.recv[0].step = 0;
+    Primitives<float, FuncSum<float>, FanSymmetric<1>, 1, Proto, 0> prims(
+        tid, nthreads, sendPeers, recvPeers, data_src, NULL, &peerInfo,
+        ncclDevSum, 0);
+    prims.send(0, size);
+    return;
+}
+
+__global__ void test_recv_ll(float *data_dst, char *recvbuff,
+                             uint64_t *sendConnHead, int size)
+{
+    using Proto = ProtoLL;
+    int tid = threadIdx.x;
+    int nthreads = blockDim.x;
+    int sendPeers[2] = {0, -1};
+    int recvPeers[2] = {0, -1};
+    ncclDevChannelPeer peerInfo;
+    // peerInfo.send[0].buffs[NCCL_PROTO_LL] = recvbuff;
+    peerInfo.send[0].head = sendConnHead;
+    peerInfo.send[0].step = 0;
+    peerInfo.recv[0].buffs[NCCL_PROTO_LL] = recvbuff;
+    // peerInfo.recv[0].head = sendConnHead;
+    peerInfo.recv[0].step = 0;
+    Primitives<float, FuncSum<float>, FanSymmetric<1>, 1, Proto, 0> prims(
+        tid, nthreads, sendPeers, recvPeers, NULL, data_dst, &peerInfo,
+        ncclDevSum, 0);
+    prims.recv(0, size);
+    return;
 }
 
 void print_usage(const char *prog)
@@ -87,15 +131,15 @@ int main(int argc, const char *argv[])
     }
   }
   // Let others read from me
-  // for (int r = 0; r < world_size; ++r) {
-  //   if (r == rank) continue;
-  //   int tag = r * world_size + rank;
-  //   res = mscclppConnect(comm, r, rank, data_d, flag_d, tag, mscclppTransportP2P);
-  //   if (res != mscclppSuccess) {
-  //     printf("mscclppConnect failed\n");
-  //     return -1;
-  //   }
-  // }
+  for (int r = 0; r < world_size; ++r) {
+    if (r == rank) continue;
+    int tag = r * world_size + rank;
+    res = mscclppConnect(comm, r, rank, data_d,sizeof(int) * world_size , flag_d, tag, mscclppTransportP2P);
+    if (res != mscclppSuccess) {
+      printf("mscclppConnect failed\n");
+      return -1;
+    }
+  }
   res = mscclppConnectionSetup(comm);
   if (res != mscclppSuccess) {
     printf("mscclppConnectionSetup failed\n");
