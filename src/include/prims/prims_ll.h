@@ -3,7 +3,7 @@
  *
  * See LICENSE.txt for license information
  ************************************************************************/
-#include "reduce_kernel.h" // for reduction funcs
+// #include "reduce_kernel.h" // for reduction funcs
 
 union ncclLLFifoLine {
     /* Flags have to be *after* data, because otherwise, an incomplete receive
@@ -37,19 +37,16 @@ template <typename T, typename RedOp> class Primitives_LL
     const int stepLines;
     // Fan fan;
     T *userBufs[2];
-    // struct ncclConnInfo* recvConn = NULL;
     volatile uint64_t *recvConnHeadPtr = NULL;
     uint64_t recvConnHead;
 
-    // struct ncclConnInfo* sendConn = NULL;
-    // volatile int* sendConnFifoPtr = NULL;
     volatile uint64_t *sendConnHeadPtr = NULL;
     uint64_t sendConnHead;
 
-    uint64_t recvStep[MaxRecv];
-    uint64_t sendStep[MaxSend];
-    union ncclLLFifoLine *recvBuff[MaxRecv];
-    union ncclLLFifoLine *sendBuff[MaxSend];
+    uint64_t recvStep;
+    uint64_t sendStep;
+    union ncclLLFifoLine *recvBuff;
+    union ncclLLFifoLine *sendBuff;
 
     inline __device__ int recvOffset(int i)
     {
@@ -84,33 +81,13 @@ template <typename T, typename RedOp> class Primitives_LL
             asm volatile("bar.sync %1, %0;" ::"r"(nthreads), "r"(15 - group));
     }
 
-    // uint32_t abort = 0;
-
-    // inline __device__ int checkAbort(int &spins, int send) {
-    //   spins++;
-    //   if (abort == 0 && spins == NCCL_SPINS_BEFORE_CHECK_ABORT) {
-    //     abort = *ncclShmem.comm.abortFlag;
-    //     spins = 0;
-    //   }
-    //   return abort;
-    // }
-
     inline __device__ void waitSend(int nbytes)
     {
         uint64_t sendConnHeadCache; // Cache last seen value
-                                    // if (sendConnHeadPtr) {
-        // int spins = 0;
         while (sendConnHeadCache + NCCL_STEPS < sendConnHead + 1) {
             sendConnHeadCache = *sendConnHeadPtr;
-            // if (checkAbort(spins, 1)) break;
         }
-        // if (sendConnFifoPtr) {
-        //   int size = ((sendConnHead & NCCL_LL_CLEAN_MASK) ==
-        //   NCCL_LL_CLEAN_MASK) ? stepLines*sizeof(union ncclLLFifoLine) :
-        //   nbytes; sendConnFifoPtr[sendConnHead%NCCL_STEPS] = size;
-        // }
         sendConnHead += 1;
-        // }
         barrier();
     }
 
@@ -118,18 +95,11 @@ template <typename T, typename RedOp> class Primitives_LL
     inline __device__ void postRecv()
     {
         barrier();
-        // if (recvConnHeadPtr)
         *recvConnHeadPtr = recvConnHead += 1;
     }
 
     inline __device__ void incSend(int i, int offset)
     {
-        // LL Cleanup : write all flags in the slice to make sure we don't have
-        // data corruption when flag loops over.
-        // if ((sendStep[i] & NCCL_LL_CLEAN_MASK) == NCCL_LL_CLEAN_MASK) {
-        //   for (int o = offset; o<stepLines; o+=nthreads)
-        //   storeLL(sendPtr(i)+o, 0, sendFlag(i));
-        // }
         sendStep[i]++;
     }
 
@@ -146,36 +116,6 @@ template <typename T, typename RedOp> class Primitives_LL
             // if (checkAbort(spins, 0)) break;
         } while ((flag1 != flag) || (flag2 != flag));
         uint64_t val64 = data1 + (((uint64_t)data2) << 32);
-        return val64;
-    }
-
-    // template<int BeginIx>
-    // __device__ void readLLBeginAll(int offset,
-    // ncclLLFifoLine(&line)[MaxRecv]) {
-    //   #pragma unroll
-    //   for (int i=BeginIx; i < MaxRecv; i++) {
-    //     if (i < fan.nrecv()) {
-    //       union ncclLLFifoLine* src = recvPtr(i) + offset;
-    //       asm("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" :
-    //       "=r"(line[i].data1), "=r"(line[i].flag1), "=r"(line[i].data2),
-    //       "=r"(line[i].flag2) : "l"(&src->i4));
-    //     }
-    //   }
-    // }
-    __device__ uint64_t readLLFinish(int offset,
-                                     ncclLLFifoLine (&line)[MaxRecv], int i)
-    {
-        union ncclLLFifoLine *src = recvPtr(i) + offset;
-        uint32_t flag = recvFlag(i);
-        int spins = 0;
-        while (line[i].flag1 != flag || line[i].flag2 != flag) {
-            asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
-                         : "=r"(line[i].data1), "=r"(line[i].flag1),
-                           "=r"(line[i].data2), "=r"(line[i].flag2)
-                         : "l"(&src->i4));
-            // if (checkAbort(spins, 0)) break;
-        }
-        uint64_t val64 = line[i].data1 + (((uint64_t)line[i].data2) << 32);
         return val64;
     }
 
@@ -336,10 +276,7 @@ template <typename T, typename RedOp> class Primitives_LL
             // if (postOp)
             //     data = MULTI<RedOp, T>().postOp(redOp, data);
 
-            // Send : inter-node, then intra-node, then local
             if (SEND) {
-                // for (int i=1; i < MaxSend && i < fan.nsend(); i++)
-                //   storeLL(sendPtr(i)+offset, data, sendFlag(i));
                 storeLL(sendPtr(0) + offset, data, sendFlag(0));
             }
             if (DST) {
@@ -352,152 +289,17 @@ template <typename T, typename RedOp> class Primitives_LL
 
         if (RECV) {
             recvStep[0] += 1;
-            // for (int i=0; i < MaxRecv; i++) incRecv(i);
             postRecv();
         }
         if (SEND) {
-            // for (int i=1; i < MaxSend && i < fan.nsend(); i++)
-            //   incSend(i, offset);
             sendStep[0]++;
         }
     }
-
-    // __device__ __forceinline__ void loadRecvConn(struct ncclConnInfo* conn,
-    // int i) {
-    //   recvBuff[i] = (union ncclLLFifoLine*)conn->buffs[NCCL_PROTO_LL];
-    //   recvStep[i] = conn->step;
-    //   if (wid == i) recvConn = conn;
-    // }
-    // __device__ __forceinline__ void loadRecvSync() {
-    //   if (tid >= nthreads-WARP_SIZE && wid < fan.nrecv()) {
-    //     recvConnHeadPtr = recvConn->head;
-    //     recvConnHead = recvConn->step;
-    //   }
-    // }
-
-    // __device__ __forceinline__ void loadSendConn(struct ncclConnInfo* conn,
-    // int i) {
-    //   sendBuff[i] = (union ncclLLFifoLine*)conn->buffs[NCCL_PROTO_LL];
-    //   sendStep[i] = conn->step;
-    //   if (wid == i) sendConn = conn;
-    // }
-    // __device__ __forceinline__ void loadSendSync() {
-    //   if (tid < fan.nsend()) {
-    //     sendConnHeadPtr = sendConn->head;
-    //     sendConnHeadCache = *sendConnHeadPtr;
-    //     sendConnHead = sendConn->step;
-    //     sendConnFifoPtr = sendConn->sizesFifo;
-    //   }
-    // }
-
-// public:
-    // __device__  Primitives(
-    //     const int tid, const int nthreads, int const *recvPeers, int const
-    //     *sendPeers, void const *inputBuf, void *outputBuf, uint64_t redOpArg,
-    //     int group=0
-    //   ):
-    //   redOp(redOpArg),
-    //   tid(tid), nthreads(nthreads), wid(tid%WARP_SIZE),
-    //   group(group&(uint16_t)0xFFFF),
-    //   stepLines(ncclShmem.comm.buffSizes[NCCL_PROTO_LL]/NCCL_STEPS/sizeof(ncclLLFifoLine))
-    //   { int connIndex = group >> 16; auto *channel = &ncclShmem.channel;
-    //   // If we are going to support oneshot collNet + LL, then we would need
-    //   to add connector index here int nrecv=0, nsend=0;
-    //   // We compare with Fan::MaxRecv here because this->MaxRecv is always at
-    //   least 1 while (nrecv < Fan::MaxRecv && recvPeers[nrecv] >= 0) {
-    //     loadRecvConn(&channel->peers[recvPeers[nrecv]].recv[connIndex],
-    //     nrecv); nrecv++;
-    //   }
-    //   while (nsend < MaxSend && sendPeers[nsend] >= 0) {
-    //     loadSendConn(&channel->peers[sendPeers[nsend]].send[connIndex],
-    //     nsend); nsend++;
-    //   }
-    //   this->fan = Fan(nrecv, nsend);
-    //   loadRecvSync();
-    //   loadSendSync();
-    //   setDataPtrs(inputBuf, outputBuf);
-    // }
 
     __device__ Primitives(const int tid, const int nthreads, uint64_t redOpArg,
                           int group)
         : redOp(redOpArg), tid(tid), nthreads(nthreads),
           group(group & (uint16_t)0xFFFF), stepLines(4096)
     {
-        // according to my test, the stepLines seems to be always 4096
-        // int connIndex = group >> 16;
-        // auto *channel = &ncclShmem.channel;
-        // If we are going to support oneshot collNet + LL, then we would need
-        // to add connector index here int nrecv = 0, nsend = 0; We compare with
-        // Fan::MaxRecv here because this->MaxRecv is always at least 1 while
-        // (nrecv < Fan::MaxRecv && recvPeers[nrecv] >= 0) {
-        //   loadRecvConn(&channel_peer[0].recv[connIndex], nrecv);
-        //   nrecv++;
-        // }
-        // while (nsend < MaxSend && sendPeers[nsend] >= 0) {
-        //   loadSendConn(&channel_peer[0].send[connIndex], nsend);
-        //   nsend++;
-        // }
-        // this->fan = Fan(nrecv, nsend);
-        // loadRecvSync();
-        // loadSendSync();
-        // setDataPtrs(inputBuf, outputBuf);
     }
-
-    // __device__ ~Primitives()
-    // {
-    //     // Save steps for the next operation
-    //     // if (tid >= nthreads-WARP_SIZE && wid < fan.nrecv())
-    //     //   recvConn->step = recvConnHead;
-    //     // if (tid < fan.nsend())
-    //     //   sendConn->step = sendConnHead;
-    //     // // Ensure all steps written back
-    //     // barrier();
-    // }
-
-    // __device__ void setDataPtrs(void const *inputBuf, void *outputBuf)
-    // {
-    //     userBufs[Input] = (T *)inputBuf;
-    //     userBufs[Output] = (T *)outputBuf;
-    // }
-
-    // __device__ void moveDataPtrs(intptr_t delta) {
-    //   userBufs[Input] += delta;
-    //   userBufs[Output] += delta;
-    // }
-
-    // __device__ void send(intptr_t inpIx, int eltN)
-    // {
-    //     return LLGenericOp<0, 1, Input, -1>(inpIx, -1, eltN, false);
-    // }
-    // __device__ void sendFromOutput(intptr_t outIx, int eltN)
-    // {
-    //     return LLGenericOp<0, 1, Output, -1>(outIx, -1, eltN, false);
-    // }
-    // __device__ void recv(intptr_t outIx, int eltN, bool postOp = false)
-    // {
-    //     return LLGenericOp<1, 0, -1, Output>(-1, outIx, eltN, postOp);
-    // }
-    // __device__ void recvReduceSend(intptr_t inpIx, int eltN)
-    // {
-    //     return LLGenericOp<1, 1, Input, -1>(inpIx, -1, eltN, false);
-    // }
-    // __device__ void recvReduceCopy(intptr_t inpIx, intptr_t outIx, int eltN,
-    //                                bool postOp = false)
-    // {
-    //     return LLGenericOp<1, 0, Input, Output>(inpIx, outIx, eltN, postOp);
-    // }
-    // __device__ void copySend(intptr_t inpIx, intptr_t outIx, int eltN,
-    //                          bool postOp = false)
-    // {
-    //     return LLGenericOp<0, 1, Input, Output>(inpIx, outIx, eltN, postOp);
-    // }
-    // __device__ void recvCopySend(intptr_t outIx, int eltN, bool postOp = false)
-    // {
-    //     return LLGenericOp<1, 1, -1, Output>(-1, outIx, eltN, postOp);
-    // }
-    // __device__ void recvReduceCopySend(intptr_t inpIx, intptr_t outIx, int eltN,
-    //                                    bool postOp = false)
-    // {
-    //     return LLGenericOp<1, 1, Input, Output>(inpIx, outIx, eltN, postOp);
-    // }
 };
