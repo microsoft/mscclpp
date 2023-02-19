@@ -271,7 +271,7 @@ public:
             //     data = MULTI<RedOp, T>().postOp(redOp, data);
 
             if (SEND) {
-                storeLL(sendPtr(0) + offset, data, sendFlag(0));
+                storeLL(sendBuff + offset, data, 1);
             }
             if (DST) {
                 storeData(dstElts, data, eltInLine);
@@ -325,7 +325,7 @@ public:
     __device__ Primitives_LL(const int tid, const int nthreads,
                              uint64_t redOpArg, int group)
         : redOp(redOpArg), tid(tid), nthreads(nthreads),
-          group(group & (uint16_t)0xFFFF), stepLines(4096)
+          group(group & (uint16_t)0xFFFF)
     {
     }
 
