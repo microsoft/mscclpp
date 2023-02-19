@@ -16,10 +16,10 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
   RedOp redOp;
   const int tid;
   const int nthreads;
-  const int wid;
+  // const int wid;
   const int group;
   const int stepLines;
-  Fan fan;
+  // Fan fan;
   T *userBufs[2];
   struct ncclConnInfo* recvConn = NULL;
   volatile uint64_t* recvConnHeadPtr = NULL;
@@ -107,16 +107,16 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
     return val64;
   }
 
-  template<int BeginIx>
-  __device__ void readLLBeginAll(int offset, ncclLLFifoLine(&line)[MaxRecv]) {
-    #pragma unroll
-    for (int i=BeginIx; i < MaxRecv; i++) {
-      if (i < fan.nrecv()) {
-        union ncclLLFifoLine* src = recvPtr(i) + offset;
-        asm("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(line[i].data1), "=r"(line[i].flag1), "=r"(line[i].data2), "=r"(line[i].flag2) : "l"(&src->i4));
-      }
-    }
-  }
+  // template<int BeginIx>
+  // __device__ void readLLBeginAll(int offset, ncclLLFifoLine(&line)[MaxRecv]) {
+  //   #pragma unroll
+  //   for (int i=BeginIx; i < MaxRecv; i++) {
+  //     if (i < fan.nrecv()) {
+  //       union ncclLLFifoLine* src = recvPtr(i) + offset;
+  //       asm("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(line[i].data1), "=r"(line[i].flag1), "=r"(line[i].data2), "=r"(line[i].flag2) : "l"(&src->i4));
+  //     }
+  //   }
+  // }
   __device__ uint64_t readLLFinish(int offset, ncclLLFifoLine(&line)[MaxRecv], int i) {
     union ncclLLFifoLine* src = recvPtr(i) + offset;
     uint32_t flag = recvFlag(i);
@@ -250,7 +250,7 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
         srcElts += eltPerTrip;
       }
       if (RECV) {
-        readLLBeginAll<1>(offset, line);
+        // readLLBeginAll<1>(offset, line);
         peerData = readLL(offset, 0);
       }
       if (SRC) {
@@ -259,19 +259,19 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
       }
       if (RECV) {
         data = !SRC ? peerData : MULTI<RedOp,T>()(redOp, peerData, data);
-        #pragma unroll MaxRecv
-        for (int i=1; i < MaxRecv && i < fan.nrecv(); i++) {
-          peerData = readLLFinish(offset, line, i);
-          data = MULTI<RedOp,T>()(redOp, peerData, data);
-        }
+        // #pragma unroll MaxRecv
+        // for (int i=1; i < MaxRecv && i < fan.nrecv(); i++) {
+        //   peerData = readLLFinish(offset, line, i);
+        //   data = MULTI<RedOp,T>()(redOp, peerData, data);
+        // }
       }
 
       if (postOp) data = MULTI<RedOp, T>().postOp(redOp, data);
 
       // Send : inter-node, then intra-node, then local
       if (SEND) {
-        for (int i=1; i < MaxSend && i < fan.nsend(); i++)
-          storeLL(sendPtr(i)+offset, data, sendFlag(i));
+        // for (int i=1; i < MaxSend && i < fan.nsend(); i++)
+        //   storeLL(sendPtr(i)+offset, data, sendFlag(i));
         storeLL(sendPtr(0)+offset, data, sendFlag(0));
       }
       if (DST) {
@@ -287,37 +287,37 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
       postRecv();
     }
     if (SEND) {
-      for (int i=1; i < MaxSend && i < fan.nsend(); i++)
-        incSend(i, offset);
+      // for (int i=1; i < MaxSend && i < fan.nsend(); i++)
+      //   incSend(i, offset);
       incSend(0, offset);
     }
   }
 
-  __device__ __forceinline__ void loadRecvConn(struct ncclConnInfo* conn, int i) {
-    recvBuff[i] = (union ncclLLFifoLine*)conn->buffs[NCCL_PROTO_LL];
-    recvStep[i] = conn->step;
-    if (wid == i) recvConn = conn;
-  }
-  __device__ __forceinline__ void loadRecvSync() {
-    if (tid >= nthreads-WARP_SIZE && wid < fan.nrecv()) {
-      recvConnHeadPtr = recvConn->head;
-      recvConnHead = recvConn->step;
-    }
-  }
+  // __device__ __forceinline__ void loadRecvConn(struct ncclConnInfo* conn, int i) {
+  //   recvBuff[i] = (union ncclLLFifoLine*)conn->buffs[NCCL_PROTO_LL];
+  //   recvStep[i] = conn->step;
+  //   if (wid == i) recvConn = conn;
+  // }
+  // __device__ __forceinline__ void loadRecvSync() {
+  //   if (tid >= nthreads-WARP_SIZE && wid < fan.nrecv()) {
+  //     recvConnHeadPtr = recvConn->head;
+  //     recvConnHead = recvConn->step;
+  //   }
+  // }
 
-  __device__ __forceinline__ void loadSendConn(struct ncclConnInfo* conn, int i) {
-    sendBuff[i] = (union ncclLLFifoLine*)conn->buffs[NCCL_PROTO_LL];
-    sendStep[i] = conn->step;
-    if (wid == i) sendConn = conn;
-  }
-  __device__ __forceinline__ void loadSendSync() {
-    if (tid < fan.nsend()) {
-      sendConnHeadPtr = sendConn->head;
-      sendConnHeadCache = *sendConnHeadPtr;
-      sendConnHead = sendConn->step;
-      sendConnFifoPtr = sendConn->sizesFifo;
-    }
-  }
+  // __device__ __forceinline__ void loadSendConn(struct ncclConnInfo* conn, int i) {
+  //   sendBuff[i] = (union ncclLLFifoLine*)conn->buffs[NCCL_PROTO_LL];
+  //   sendStep[i] = conn->step;
+  //   if (wid == i) sendConn = conn;
+  // }
+  // __device__ __forceinline__ void loadSendSync() {
+  //   if (tid < fan.nsend()) {
+  //     sendConnHeadPtr = sendConn->head;
+  //     sendConnHeadCache = *sendConnHeadPtr;
+  //     sendConnHead = sendConn->step;
+  //     sendConnFifoPtr = sendConn->sizesFifo;
+  //   }
+  // }
 
  public:
   // __device__  Primitives(
@@ -346,43 +346,40 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
   //   setDataPtrs(inputBuf, outputBuf);
   // }
 
-  __device__ Primitives(const int tid, const int nthreads, int const *recvPeers,
-                        int const *sendPeers, void const *inputBuf,
-                        void *outputBuf, struct ncclDevChannelPeer *channel_peer,
-                        uint64_t redOpArg, int group)
-      : redOp(redOpArg), tid(tid), nthreads(nthreads), wid(tid % WARP_SIZE),
+  __device__ Primitives(const int tid, const int nthreads,uint64_t redOpArg, int group)
+      : redOp(redOpArg), tid(tid), nthreads(nthreads),
         group(group & (uint16_t)0xFFFF), stepLines(4096)
   {
     // according to my test, the stepLines seems to be always 4096
-    int connIndex = group >> 16;
+    // int connIndex = group >> 16;
     // auto *channel = &ncclShmem.channel;
     // If we are going to support oneshot collNet + LL, then we would need to
     // add connector index here
-    int nrecv = 0, nsend = 0;
+    // int nrecv = 0, nsend = 0;
     // We compare with Fan::MaxRecv here because this->MaxRecv is always at
     // least 1
-    while (nrecv < Fan::MaxRecv && recvPeers[nrecv] >= 0) {
-      loadRecvConn(&channel_peer[0].recv[connIndex], nrecv);
-      nrecv++;
-    }
-    while (nsend < MaxSend && sendPeers[nsend] >= 0) {
-      loadSendConn(&channel_peer[0].send[connIndex], nsend);
-      nsend++;
-    }
-    this->fan = Fan(nrecv, nsend);
-    loadRecvSync();
-    loadSendSync();
-    setDataPtrs(inputBuf, outputBuf);
+    // while (nrecv < Fan::MaxRecv && recvPeers[nrecv] >= 0) {
+    //   loadRecvConn(&channel_peer[0].recv[connIndex], nrecv);
+    //   nrecv++;
+    // }
+    // while (nsend < MaxSend && sendPeers[nsend] >= 0) {
+    //   loadSendConn(&channel_peer[0].send[connIndex], nsend);
+    //   nsend++;
+    // }
+    // this->fan = Fan(nrecv, nsend);
+    // loadRecvSync();
+    // loadSendSync();
+    // setDataPtrs(inputBuf, outputBuf);
   }
 
   __device__ ~Primitives() {
     // Save steps for the next operation
-    if (tid >= nthreads-WARP_SIZE && wid < fan.nrecv())
-      recvConn->step = recvConnHead;
-    if (tid < fan.nsend())
-      sendConn->step = sendConnHead;
-    // Ensure all steps written back
-    barrier();
+    // if (tid >= nthreads-WARP_SIZE && wid < fan.nrecv())
+    //   recvConn->step = recvConnHead;
+    // if (tid < fan.nsend())
+    //   sendConn->step = sendConnHead;
+    // // Ensure all steps written back
+    // barrier();
   }
 
   __device__ void setDataPtrs(void const *inputBuf, void *outputBuf) {
