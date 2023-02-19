@@ -32,6 +32,8 @@ public:
     const int group;
     // const int stepLines;
     // Fan fan;
+    T *data_src;
+    T *data_dst;
     T *userBufs[2];
     volatile uint64_t *recvConnHeadPtr = NULL;
     uint64_t recvConnHead;
@@ -42,7 +44,7 @@ public:
     uint64_t recvStep;
     uint64_t sendStep;
     union ncclLLFifoLine *recvBuff;
-    union ncclLLFifoLine *sendBuff;
+    // union ncclLLFifoLine *sendBuff;
 
     // inline __device__ int recvOffset(int i)
     // {
@@ -97,8 +99,9 @@ public:
 
     // inline __device__ void incSend(int i, int offset) { sendStep[i]++; }
 
-    __device__ uint64_t readLL(union ncclLLFifoLine *src, int offset)
+    __device__ uint64_t readLL(union ncclLLFifoLine *src_, int offset)
     {
+        union ncclLLFifoLine *src = src_ + offset;
         uint32_t flag = 1;
         uint32_t data1, flag1, data2, flag2;
         int spins = 0;
@@ -224,8 +227,8 @@ public:
     {
         constexpr int SRC = SrcBuf != -1 ? 1 : 0;
         constexpr int DST = DstBuf != -1 ? 1 : 0;
-        T *srcElts = SrcBuf == -1 ? nullptr : userBufs[SrcBuf] + srcIx;
-        T *dstElts = DstBuf == -1 ? nullptr : userBufs[DstBuf] + dstIx;
+        T *srcElts = SrcBuf == -1 ? nullptr : data_src + srcIx;
+        T *dstElts = DstBuf == -1 ? nullptr : data_dst + dstIx;
 
         // Always waitSend in case of cleanup
         // nelem = nelem < 0 ? 0 : nelem;
@@ -249,7 +252,7 @@ public:
             }
             if (RECV) {
                 // readLLBeginAll<1>(offset, line);
-                peerData = readLL(offset, 0);
+                peerData = readLL(recvBuff, offset);
             }
             if (SRC) {
                 data = dl.loadFinish();
@@ -271,7 +274,7 @@ public:
             //     data = MULTI<RedOp, T>().postOp(redOp, data);
 
             if (SEND) {
-                storeLL(sendBuff + offset, data, 1);
+                storeLL(recvBuff + offset, data, 1);
             }
             if (DST) {
                 storeData(dstElts, data, eltInLine);
