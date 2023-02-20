@@ -14,7 +14,7 @@
         }                                                                      \
     } while (false)
 
-__global__ void test_send_ll(void *data_src, void *recvbuff,
+__global__ void test_send_ll(void *data_src, void *sendBuff,
                              void *sendConnHeadPtr, int eltN)
 {
     // using Proto = ProtoLL;
@@ -24,7 +24,7 @@ __global__ void test_send_ll(void *data_src, void *recvbuff,
     prims.sendConnHeadPtr = (volatile uint64_t *)sendConnHeadPtr;
     *((volatile int *)sendConnHeadPtr) = 0;
     prims.data_src = (float *)data_src;
-    prims.recvBuff = (ncclLLFifoLine *)recvbuff;
+    prims.sendBuff = (ncclLLFifoLine *)sendBuff;
     prims.send(0, eltN/2);
     prims.send(eltN/2, eltN/2);
     return;

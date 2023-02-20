@@ -45,7 +45,7 @@ public:
     // uint64_t recvStep;
     // uint64_t sendStep;
     union ncclLLFifoLine *recvBuff;
-    // union ncclLLFifoLine *sendBuff;
+    union ncclLLFifoLine *sendBuff;
 
     inline __device__ void barrier()
     {
@@ -62,6 +62,7 @@ public:
         while (sendConnHeadCache < sendConnHead) {
             sendConnHeadCache = *sendConnHeadPtr;
         }
+        printf("sendConnHeadCache: %d", sendConnHeadCache);
         sendConnHead += 1;
         barrier();
     }
@@ -73,10 +74,10 @@ public:
         *recvConnHeadPtr = recvConnHead;
     }
 
-    __device__ uint64_t readLL(union ncclLLFifoLine *src_, int offset)
+    __device__ uint64_t readLL(union ncclLLFifoLine *src_, int offset,
+                               uint32_t flag)
     {
         union ncclLLFifoLine *src = src_ + offset;
-        uint32_t flag = 1;
         uint32_t data1, flag1, data2, flag2;
         int spins = 0;
         do {
@@ -86,6 +87,7 @@ public:
             // if (checkAbort(spins, 0)) break;
         } while ((flag1 != flag) || (flag2 != flag));
         uint64_t val64 = data1 + (((uint64_t)data2) << 32);
+        // src->i4 = make_int4(0, 0, 0, 0);
         return val64;
     }
 
@@ -242,8 +244,10 @@ public:
                 srcElts += eltPerTrip;
             }
             if (RECV) {
+                printf("readLLBeginAll");
                 // readLLBeginAll<1>(offset, line);
-                peerData = readLL(recvBuff, offset);
+                peerData = readLL(recvBuff, offset, 1);
+                printf("readLLBegindone");
             }
             if (SRC) {
                 data = dl.loadFinish();
@@ -258,7 +262,8 @@ public:
             //     data = MULTI<RedOp, T>().postOp(redOp, data);
 
             if (SEND) {
-                storeLL(recvBuff + offset, data, 1);
+                printf("sendBuff = %p\n", sendBuff);
+                storeLL(sendBuff + offset, data, 1);
             }
             if (DST) {
                 storeData(dstElts, data, eltInLine);
@@ -269,12 +274,8 @@ public:
         }
 
         if (RECV) {
-            // recvStep += 1;
             postRecv();
         }
-        // if (SEND) {
-        //     sendStep++;
-        // }
     }
 
     __device__ Primitives_LL(const int tid, const int nthreads,

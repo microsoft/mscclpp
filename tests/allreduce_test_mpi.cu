@@ -26,16 +26,26 @@
     } while (false)
 
 __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
-                                void *data_dst, int size)
+                                void *data_src, void *data_dst, void *recvBuff,
+                                int elem_num)
 {
     int tid = threadIdx.x;
     int nthreads = blockDim.x;
     Primitives_LL<float> prims(tid, nthreads, 0, 0);
-    prims.data_src = (float *)devConns[0].localBuff;
+    // devConns[0] is the connection to the previous GPU and devConns[1] is the
+    // connection to the next GPU
+    prims.data_src = (float *)data_src;
     prims.data_dst = (float *)data_dst;
-    prims.recvBuff = (ncclLLFifoLine *)devConns[0].remoteBuff;
-
-    int ChunkSize = size / nranks;
+    prims.sendBuff = (ncclLLFifoLine *)devConns[1].remoteBuff;
+    prims.recvBuff = (ncclLLFifoLine *)recvBuff;
+    prims.sendConnHeadPtr = (volatile uint64_t *)devConns[1].localFlag;
+    prims.recvConnHeadPtr = (volatile uint64_t *)devConns[0].remoteFlag;
+    if (tid == 0)
+        printf("data_src: %p, data_dst: %p, sendBuff: %p, recvBuff: %p "
+               "sendConnHeadPtr: %p, recvConnHeadPtr: %p\n",
+               prims.data_src, prims.data_dst, prims.sendBuff, prims.recvBuff,
+               prims.sendConnHeadPtr, prims.recvConnHeadPtr);
+    int ChunkSize = elem_num / nranks;
 
     ssize_t offset;
     int nelem = ChunkSize;
@@ -46,12 +56,13 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
     offset = chunk * ChunkSize;
     // nelem = min(ChunkSize, size - offset);
     prims.send(offset, nelem);
-
+    // return;
     // k-2 steps: reduce and copy to next GPU
     for (int j = 2; j < nranks; ++j) {
         chunk = (rank + nranks - j) % nranks;
         offset = chunk * ChunkSize;
         // nelem = min(ChunkSize, size - offset);
+        printf("recvReduceCopySend1");
         prims.recvReduceSend(offset, nelem);
     }
 
@@ -60,14 +71,17 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
     chunk = rank + 0;
     offset = chunk * ChunkSize;
     // nelem = min(ChunkSize, size - offset);
-    prims.recvReduceCopySend(offset, offset, nelem,
-                             /*postOp=*/true);
-
+    printf("recvReduceCopySend2\n");
+    printf("offset: %ld, nelem: %d", offset, nelem);
+    prims.recv(offset, nelem,
+               /*postOp=*/true);
+    return;
     // k-2 steps: copy to next GPU
     for (int j = 1; j < nranks - 1; ++j) {
         chunk = (rank + nranks - j) % nranks;
         offset = chunk * ChunkSize;
         // nelem = min(ChunkSize, size - offset);
+        printf("recvCopySend");
         prims.recvCopySend(offset, nelem);
     }
 
@@ -75,6 +89,7 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
     chunk = (rank + 1) % nranks;
     offset = chunk * ChunkSize;
     // nelem = min(ChunkSize, size - offset);
+    printf("recv\n");
     prims.recv(offset, nelem);
 }
 
@@ -130,8 +145,11 @@ int main(int argc, const char *argv[])
     MSCCLPPCHECK(mscclppConnectionSetup(comm));
 
     mscclppDevConn_t devConns;
-    mscclppGetDevConns(comm, &devConns);
-    ring_all_reduce<<<1, 32>>>(devConns, rank, world_size, data_dst, data_size);
+    MSCCLPPCHECK(mscclppGetDevConns(comm, &devConns));
+    printf("data_src: %p, data_dst: %p, recvbuff %p\n", data_src, data_dst,
+           recvbuff);
+    ring_all_reduce<<<1, 32>>>(devConns, rank, world_size, data_src, data_dst,
+                               recvbuff, elem_num);
     CUDACHECK(cudaDeviceSynchronize());
     float *h_data_dst = (float *)malloc(data_size);
     CUDACHECK(
