@@ -55,10 +55,10 @@ public:
             asm volatile("bar.sync %1, %0;" ::"r"(nthreads), "r"(15 - group));
     }
 
-    inline __device__ void waitSend(int nbytes)
+    inline __device__ void waitSend()
     {
         uint64_t sendConnHeadCache = *sendConnHeadPtr; // Cache last seen value
-        while (sendConnHeadCache < sendConnHead + 1) {
+        while (sendConnHeadCache < sendConnHead) {
             sendConnHeadCache = *sendConnHeadPtr;
         }
         sendConnHead += 1;
@@ -68,7 +68,8 @@ public:
     inline __device__ void postRecv()
     {
         barrier();
-        *recvConnHeadPtr = recvConnHead += 1;
+        recvConnHead += 1;
+        *recvConnHeadPtr = recvConnHead;
     }
 
     __device__ uint64_t readLL(union ncclLLFifoLine *src_, int offset)
@@ -224,7 +225,7 @@ public:
         // Always waitSend in case of cleanup
         // nelem = nelem < 0 ? 0 : nelem;
         if (SEND)
-            waitSend(nelem);
+            waitSend();
         nelem -= tid * EltPerLine;
         srcElts += tid * EltPerLine;
         dstElts += tid * EltPerLine;
@@ -281,6 +282,8 @@ public:
         : redOp(redOpArg), tid(tid), nthreads(nthreads),
           group(group & (uint16_t)0xFFFF)
     {
+        sendConnHead = 0;
+        recvConnHead = 0;
     }
 
     __device__ void send(intptr_t inpIx, int eltN)
