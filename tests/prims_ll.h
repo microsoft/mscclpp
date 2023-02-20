@@ -30,6 +30,7 @@ public:
     const int nthreads;
     // const int wid;
     const int group;
+    int offset;
     // const int stepLines;
     // Fan fan;
     T *data_src;
@@ -229,7 +230,6 @@ public:
         nelem -= tid * EltPerLine;
         srcElts += tid * EltPerLine;
         dstElts += tid * EltPerLine;
-        int offset = tid;
         int eltPerTrip = nthreads * EltPerLine;
         while (nelem > 0) {
             int eltInLine = EltPerLine < nelem ? EltPerLine : nelem;
@@ -282,6 +282,7 @@ public:
         : redOp(redOpArg), tid(tid), nthreads(nthreads),
           group(group & (uint16_t)0xFFFF)
     {
+        offset = tid;
         sendConnHead = 0;
         recvConnHead = 0;
     }

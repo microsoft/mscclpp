@@ -15,7 +15,7 @@
     } while (false)
 
 __global__ void test_send_ll(void *data_src, void *recvbuff,
-                             void *sendConnHeadPtr, int size)
+                             void *sendConnHeadPtr, int eltN)
 {
     // using Proto = ProtoLL;
     int tid = threadIdx.x;
@@ -25,12 +25,13 @@ __global__ void test_send_ll(void *data_src, void *recvbuff,
     *((volatile int *)sendConnHeadPtr) = 0;
     prims.data_src = (float *)data_src;
     prims.recvBuff = (ncclLLFifoLine *)recvbuff;
-    prims.send(0, size);
+    prims.send(0, eltN/2);
+    prims.send(eltN/2, eltN/2);
     return;
 }
 
 __global__ void test_recv_ll(void *data_dst, void *recvbuff,
-                             void *sendConnHeadPtr, int size)
+                             void *sendConnHeadPtr, int eltN)
 {
     int tid = threadIdx.x;
     int nthreads = blockDim.x;
@@ -38,7 +39,8 @@ __global__ void test_recv_ll(void *data_dst, void *recvbuff,
     prims.recvConnHeadPtr = (volatile uint64_t *)sendConnHeadPtr;
     prims.data_dst = (float *)data_dst;
     prims.recvBuff = (ncclLLFifoLine *)recvbuff;
-    prims.recv(0, size);
+    prims.recv(0, eltN/2);
+    prims.recv(eltN/2, eltN/2);
     return;
 }
 
@@ -78,7 +80,7 @@ int main(int argc, const char *argv[])
     // mscclppBootStrapAllGather(comm, data_src, data_size);
     CUDACHECK(cudaMalloc(&data_dst, data_size));
     CUDACHECK(cudaMalloc(&recvbuff, 2 * data_size));
-    CUDACHECK(cudaMalloc(&flag_d, sizeof(int)));
+    CUDACHECK(cudaMalloc(&flag_d, sizeof(uint64_t)));
 
     mscclppResult_t res;
     int tag = 0;
@@ -100,11 +102,11 @@ int main(int argc, const char *argv[])
     mscclppGetDevConns(comm, &devConns);
     if (rank == 0) {
         test_send_ll<<<1, 32>>>(devConns[0].localBuff, devConns[0].remoteBuff,
-                                devConns[0].localFlag, data_size);
+                                devConns[0].localFlag, elem_num);
     }
     if (rank == 1) {
         test_recv_ll<<<1, 32>>>(data_dst, devConns[0].localBuff,
-                                devConns[0].remoteFlag, data_size);
+                                devConns[0].remoteFlag, elem_num);
     }
     CUDACHECK(cudaDeviceSynchronize());
     if (rank == 1) {
