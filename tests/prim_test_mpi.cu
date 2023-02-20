@@ -14,19 +14,21 @@
         }                                                                      \
     } while (false)
 
+#define STEPLINES 4096
+
 __global__ void test_send_ll(void *data_src, void *sendBuff,
                              void *sendConnHeadPtr, int eltN)
 {
     // using Proto = ProtoLL;
     int tid = threadIdx.x;
     int nthreads = blockDim.x;
-    Primitives_LL<float> prims(tid, nthreads, 0, 0);
+    Primitives_LL<float> prims(tid, nthreads, 0, 0, STEPLINES);
     prims.sendConnHeadPtr = (volatile uint64_t *)sendConnHeadPtr;
     *((volatile int *)sendConnHeadPtr) = 0;
     prims.data_src = (float *)data_src;
     prims.sendBuff = (ncclLLFifoLine *)sendBuff;
-    prims.send(0, eltN/2);
-    prims.send(eltN/2, eltN/2);
+    prims.send(0, eltN / 2);
+    prims.send(eltN / 2, eltN / 2);
     return;
 }
 
@@ -35,12 +37,12 @@ __global__ void test_recv_ll(void *data_dst, void *recvbuff,
 {
     int tid = threadIdx.x;
     int nthreads = blockDim.x;
-    Primitives_LL<float> prims(tid, nthreads, 0, 0);
+    Primitives_LL<float> prims(tid, nthreads, 0, 0, STEPLINES);
     prims.recvConnHeadPtr = (volatile uint64_t *)sendConnHeadPtr;
     prims.data_dst = (float *)data_dst;
     prims.recvBuff = (ncclLLFifoLine *)recvbuff;
-    prims.recv(0, eltN/2);
-    prims.recv(eltN/2, eltN/2);
+    prims.recv(0, eltN / 2);
+    prims.recv(eltN / 2, eltN / 2);
     return;
 }
 

@@ -15,7 +15,7 @@ union ncclLLFifoLine {
     uint64_t v[2];
     int4 i4;
 };
-
+#define NCCL_STEPS 8
 template <typename T> class Primitives_LL
 {
 public:
@@ -30,7 +30,7 @@ public:
     const int nthreads;
     // const int wid;
     const int group;
-    // const int stepLines;
+    const int stepLines;
     // Fan fan;
     T *data_src;
     T *data_dst;
@@ -41,10 +41,35 @@ public:
     volatile uint64_t *sendConnHeadPtr = NULL;
     uint64_t sendConnHead;
 
-    // uint64_t recvStep;
-    // uint64_t sendStep;
+    uint64_t recvStep;
+    uint64_t sendStep;
     union ncclLLFifoLine *recvBuff;
     union ncclLLFifoLine *sendBuff;
+
+    inline __device__ int recvOffset(int i)
+    {
+        return (recvStep % NCCL_STEPS) * stepLines;
+    }
+    inline __device__ int sendOffset(int i)
+    {
+        return (sendStep % NCCL_STEPS) * stepLines;
+    }
+    inline __device__ union ncclLLFifoLine *recvPtr(int i)
+    {
+        return recvBuff + recvOffset(i);
+    }
+    inline __device__ union ncclLLFifoLine *sendPtr(int i)
+    {
+        return sendBuff + sendOffset(i);
+    }
+    inline __device__ uint32_t recvFlag(int i)
+    {
+        return (uint32_t)(recvStep + 1);
+    }
+    inline __device__ uint32_t sendFlag(int i)
+    {
+        return (uint32_t)(sendStep + 1);
+    }
 
     inline __device__ void barrier()
     {
@@ -274,17 +299,23 @@ public:
         }
 
         if (RECV) {
+            recvStep++;
             postRecv();
+        }
+        if (SEND) {
+            sendStep++;
         }
     }
 
     __device__ Primitives_LL(const int tid, const int nthreads,
-                             uint64_t redOpArg, int group)
+                             uint64_t redOpArg, int group, const int stepLines)
         : redOp(redOpArg), tid(tid), nthreads(nthreads),
-          group(group & (uint16_t)0xFFFF)
+          group(group & (uint16_t)0xFFFF), stepLines(stepLines)
     {
         sendConnHead = 0;
         recvConnHead = 0;
+        sendStep = 0;
+        recvStep = 0;
     }
 
     __device__ void send(intptr_t inpIx, int eltN)

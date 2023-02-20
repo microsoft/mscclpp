@@ -31,7 +31,7 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
 {
     int tid = threadIdx.x;
     int nthreads = blockDim.x;
-    Primitives_LL<float> prims(tid, nthreads, 0, 0);
+    Primitives_LL<float> prims(tid, nthreads, 0, 0, 4096);
     // devConns[0] is the connection to the previous GPU and devConns[1] is the
     // connection to the next GPU
     prims.data_src = (float *)data_src;
@@ -73,9 +73,11 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
     // nelem = min(ChunkSize, size - offset);
     printf("recvReduceCopySend2\n");
     printf("offset: %ld, nelem: %d", offset, nelem);
-    prims.recv(offset, nelem,
-               /*postOp=*/true);
-    return;
+    prims.recvReduceCopySend(offset, offset, nelem,
+                         /*postOp=*/true);
+    // prims.recv(offset, nelem,
+    //                       /*postOp=*/true);
+    // return;
     // k-2 steps: copy to next GPU
     for (int j = 1; j < nranks - 1; ++j) {
         chunk = (rank + nranks - j) % nranks;
