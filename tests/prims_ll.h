@@ -30,7 +30,6 @@ public:
     const int nthreads;
     // const int wid;
     const int group;
-    int offset;
     // const int stepLines;
     // Fan fan;
     T *data_src;
@@ -87,7 +86,7 @@ public:
             // if (checkAbort(spins, 0)) break;
         } while ((flag1 != flag) || (flag2 != flag));
         uint64_t val64 = data1 + (((uint64_t)data2) << 32);
-        // src->i4 = make_int4(0, 0, 0, 0);
+        src->i4 = make_int4(0, 0, 0, 0);
         return val64;
     }
 
@@ -224,6 +223,7 @@ public:
         constexpr int DST = DstBuf != -1 ? 1 : 0;
         T *srcElts = SrcBuf == -1 ? nullptr : data_src + srcIx;
         T *dstElts = DstBuf == -1 ? nullptr : data_dst + dstIx;
+        int offset = tid;
 
         // Always waitSend in case of cleanup
         // nelem = nelem < 0 ? 0 : nelem;
@@ -283,7 +283,6 @@ public:
         : redOp(redOpArg), tid(tid), nthreads(nthreads),
           group(group & (uint16_t)0xFFFF)
     {
-        offset = tid;
         sendConnHead = 0;
         recvConnHead = 0;
     }
