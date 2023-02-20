@@ -46,21 +46,13 @@ public:
     union ncclLLFifoLine *recvBuff;
     union ncclLLFifoLine *sendBuff;
 
-    inline __device__ int recvOffset(int i)
+    inline __device__ union ncclLLFifoLine *recvPtr()
     {
-        return (recvStep % NCCL_STEPS) * stepLines;
+        return recvBuff + (recvStep % NCCL_STEPS) * stepLines;
     }
-    inline __device__ int sendOffset(int i)
+    inline __device__ union ncclLLFifoLine *sendPtr()
     {
-        return (sendStep % NCCL_STEPS) * stepLines;
-    }
-    inline __device__ union ncclLLFifoLine *recvPtr(int i)
-    {
-        return recvBuff + recvOffset(i);
-    }
-    inline __device__ union ncclLLFifoLine *sendPtr(int i)
-    {
-        return sendBuff + sendOffset(i);
+        return sendBuff + (sendStep % NCCL_STEPS) * stepLines;
     }
     inline __device__ uint32_t recvFlag(int i)
     {
@@ -98,10 +90,8 @@ public:
         *recvConnHeadPtr = recvConnHead;
     }
 
-    __device__ uint64_t readLL(union ncclLLFifoLine *src_, int offset,
-                               uint32_t flag)
+    __device__ uint64_t readLL(union ncclLLFifoLine *src, uint32_t flag)
     {
-        union ncclLLFifoLine *src = src_ + offset;
         uint32_t data1, flag1, data2, flag2;
         int spins = 0;
         do {
@@ -271,7 +261,7 @@ public:
             if (RECV) {
                 printf("readLLBeginAll");
                 // readLLBeginAll<1>(offset, line);
-                peerData = readLL(recvBuff, offset, 1);
+                peerData = readLL(recvPtr() + offset, 1);
                 printf("readLLBegindone");
             }
             if (SRC) {
@@ -288,7 +278,7 @@ public:
 
             if (SEND) {
                 printf("sendBuff = %p\n", sendBuff);
-                storeLL(sendBuff + offset, data, 1);
+                storeLL(sendPtr() + offset, data, 1);
             }
             if (DST) {
                 storeData(dstElts, data, eltInLine);

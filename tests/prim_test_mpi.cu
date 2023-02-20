@@ -81,7 +81,7 @@ int main(int argc, const char *argv[])
         cudaMemcpy(data_src, h_data_src, data_size, cudaMemcpyHostToDevice));
     // mscclppBootStrapAllGather(comm, data_src, data_size);
     CUDACHECK(cudaMalloc(&data_dst, data_size));
-    CUDACHECK(cudaMalloc(&recvbuff, 2 * data_size));
+    CUDACHECK(cudaMalloc(&recvbuff, STEPLINES * NCCL_STEPS));
     CUDACHECK(cudaMalloc(&flag_d, sizeof(uint64_t)));
 
     mscclppResult_t res;
