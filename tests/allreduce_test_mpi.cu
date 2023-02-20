@@ -40,11 +40,11 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
     prims.recvBuff = (ncclLLFifoLine *)recvBuff;
     prims.sendConnHeadPtr = (volatile uint64_t *)devConns[1].localFlag;
     prims.recvConnHeadPtr = (volatile uint64_t *)devConns[0].remoteFlag;
-    if (tid == 0)
-        printf("data_src: %p, data_dst: %p, sendBuff: %p, recvBuff: %p "
-               "sendConnHeadPtr: %p, recvConnHeadPtr: %p\n",
-               prims.data_src, prims.data_dst, prims.sendBuff, prims.recvBuff,
-               prims.sendConnHeadPtr, prims.recvConnHeadPtr);
+    // if (tid == 0)
+    //     printf("data_src: %p, data_dst: %p, sendBuff: %p, recvBuff: %p "
+    //            "sendConnHeadPtr: %p, recvConnHeadPtr: %p\n",
+    //            prims.data_src, prims.data_dst, prims.sendBuff, prims.recvBuff,
+    //            prims.sendConnHeadPtr, prims.recvConnHeadPtr);
     int ChunkSize = elem_num / nranks;
 
     ssize_t offset;
@@ -62,7 +62,6 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
         chunk = (rank + nranks - j) % nranks;
         offset = chunk * ChunkSize;
         // nelem = min(ChunkSize, size - offset);
-        printf("recvReduceCopySend1");
         prims.recvReduceSend(offset, nelem);
     }
 
@@ -71,8 +70,6 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
     chunk = rank + 0;
     offset = chunk * ChunkSize;
     // nelem = min(ChunkSize, size - offset);
-    printf("recvReduceCopySend2\n");
-    printf("offset: %ld, nelem: %d", offset, nelem);
     prims.recvReduceCopySend(offset, offset, nelem,
                          /*postOp=*/true);
     // prims.recv(offset, nelem,
@@ -83,7 +80,6 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
         chunk = (rank + nranks - j) % nranks;
         offset = chunk * ChunkSize;
         // nelem = min(ChunkSize, size - offset);
-        printf("recvCopySend");
         prims.recvCopySend(offset, nelem);
     }
 
@@ -91,7 +87,6 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
     chunk = (rank + 1) % nranks;
     offset = chunk * ChunkSize;
     // nelem = min(ChunkSize, size - offset);
-    printf("recv\n");
     prims.recv(offset, nelem);
 }
 

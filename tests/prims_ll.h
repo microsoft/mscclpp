@@ -75,10 +75,9 @@ public:
     inline __device__ void waitSend()
     {
         uint64_t sendConnHeadCache = *sendConnHeadPtr; // Cache last seen value
-        while (sendConnHeadCache < sendConnHead) {
+        while (sendConnHeadCache + NCCL_STEPS < sendConnHead) {
             sendConnHeadCache = *sendConnHeadPtr;
         }
-        printf("sendConnHeadCache: %d", sendConnHeadCache);
         sendConnHead += 1;
         barrier();
     }
@@ -259,10 +258,8 @@ public:
                 srcElts += eltPerTrip;
             }
             if (RECV) {
-                printf("readLLBeginAll");
                 // readLLBeginAll<1>(offset, line);
                 peerData = readLL(recvPtr() + offset, 1);
-                printf("readLLBegindone");
             }
             if (SRC) {
                 data = dl.loadFinish();
@@ -277,7 +274,6 @@ public:
             //     data = MULTI<RedOp, T>().postOp(redOp, data);
 
             if (SEND) {
-                printf("sendBuff = %p\n", sendBuff);
                 storeLL(sendPtr() + offset, data, 1);
             }
             if (DST) {
