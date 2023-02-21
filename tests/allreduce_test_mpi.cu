@@ -24,13 +24,17 @@
             exit(EXIT_FAILURE);                                                \
         }                                                                      \
     } while (false)
+
 #define STEPLINES 4096
+
 __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
                                 void *data_src, void *data_dst, void *recvBuff,
                                 int elem_num)
 {
     int tid = threadIdx.x;
     int nthreads = blockDim.x;
+    // in the ring allreduce algorithm, a primitive need to connect to the prev
+    // and next GPU.
     Primitives_LL<float> prims(tid, nthreads, 0, 0, STEPLINES);
     // devConns[0] is the connection to the next GPU and devConns[1] is the
     // connection to the previous GPU
@@ -38,6 +42,7 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
     prims.data_dst = (float *)data_dst;
     prims.sendBuff = (ncclLLFifoLine *)devConns[0].remoteBuff;
     prims.recvBuff = (ncclLLFifoLine *)recvBuff;
+    // the control flag, might be a little buggy, still need to be developed
     prims.sendConnHeadPtr = (volatile uint64_t *)devConns[0].localFlag;
     prims.recvConnHeadPtr = (volatile uint64_t *)devConns[1].remoteFlag;
     int ChunkSize = elem_num / nranks;
@@ -65,10 +70,7 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
     offset = chunk * ChunkSize;
     // nelem = min(ChunkSize, size - offset);
     prims.recvReduceCopySend(offset, offset, nelem,
-                         /*postOp=*/true);
-    // prims.recv(offset, nelem,
-    //                       /*postOp=*/true);
-    // return;
+                             /*postOp=*/true);
     // k-2 steps: copy to next GPU
     for (int j = 1; j < nranks - 1; ++j) {
         chunk = (rank + nranks - j) % nranks;
@@ -103,16 +105,14 @@ int main(int argc, const char *argv[])
     mscclppComm_t comm;
     const char *ip_port = argv[1];
     MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
-    int device_id;
     CUDACHECK(cudaSetDevice(rank));
+
+    int elem_num = 1024;
+    int data_size = sizeof(float) * elem_num;
 
     float *data_src;
     float *data_dst;
     char *recvbuff;
-    int elem_num = 1024;
-
-    int data_size = sizeof(float) * elem_num;
-
     int *sendConnhead;
 
     CUDACHECK(cudaMalloc(&data_src, data_size));
@@ -123,6 +123,9 @@ int main(int argc, const char *argv[])
     CUDACHECK(
         cudaMemcpy(data_src, h_data_src, data_size, cudaMemcpyHostToDevice));
     CUDACHECK(cudaMalloc(&data_dst, data_size));
+    // the recvbuff's size is NCCL_STEPS * STEPLINES, NCCL has a concept of
+    // NCCL_STEPS, NCCL will allocate multiple recvbuff , So we can have
+    // multiple send recv operations happen at the same time.
     CUDACHECK(cudaMalloc(&recvbuff, NCCL_STEPS * STEPLINES));
     CUDACHECK(cudaMalloc(&sendConnhead, sizeof(int)));
     mscclppResult_t res;
@@ -141,7 +144,7 @@ int main(int argc, const char *argv[])
 
     mscclppDevConn_t devConns;
     MSCCLPPCHECK(mscclppGetDevConns(comm, &devConns));
-    
+
     ring_all_reduce<<<1, 32>>>(devConns, rank, world_size, data_src, data_dst,
                                recvbuff, elem_num);
     CUDACHECK(cudaDeviceSynchronize());
