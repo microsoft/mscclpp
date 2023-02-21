@@ -258,10 +258,7 @@ public:
                 srcElts += eltPerTrip;
             }
             if (RECV) {
-                // readLLBeginAll<1>(offset, line);
-                printf("readLL start\n");
                 peerData = readLL(recvPtr() + offset, 1);
-                printf("readLL end\n");
             }
             if (SRC) {
                 data = dl.loadFinish();
@@ -276,7 +273,6 @@ public:
             //     data = MULTI<RedOp, T>().postOp(redOp, data);
 
             if (SEND) {
-                printf("sendBuff2:%p sendStep:%d\n", sendPtr(), sendStep);
                 storeLL(sendPtr() + offset, data, 1);
             }
             if (DST) {

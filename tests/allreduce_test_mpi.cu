@@ -107,7 +107,7 @@ int main(int argc, const char *argv[])
     cudaSetDevice(rank);
     cudaGetDevice(&device_id);
 
-    printf("Current CUDA device ID: %d\n", device_id);
+    // printf("Current CUDA device ID: %d\n", device_id);
 
     float *data_src;
     float *data_dst;
@@ -135,8 +135,8 @@ int main(int argc, const char *argv[])
     int tag = 0;
     int rank_next = (rank + 1) % world_size;
     int rank_prev = (rank + world_size - 1) % world_size;
-    printf("rank: %d, rank_next: %d, rank_prev: %d\n", rank, rank_next,
-           rank_prev);
+    // printf("rank: %d, rank_next: %d, rank_prev: %d\n", rank, rank_next,
+    //        rank_prev);
     // in the ring all reduce, we need to connect to the next and previous GPU
     MSCCLPPCHECK(mscclppConnect(comm, rank_next, rank, recvbuff, data_size,
                                 sendConnhead, tag, mscclppTransportP2P));
@@ -149,10 +149,10 @@ int main(int argc, const char *argv[])
     MSCCLPPCHECK(mscclppGetDevConns(comm, &devConns));
     cudaPointerAttributes attributes;
     CUDACHECK(cudaPointerGetAttributes(&attributes, devConns[1].localBuff));
-    printf("devConns[0].remoteBuff: %p located at %d\n", devConns[1].remoteBuff,
-           attributes.device);
-    printf("data_src: %p, data_dst: %p, recvbuff %p sendConnhead %p\n",
-           data_src, data_dst, recvbuff, sendConnhead);
+    // printf("devConns[0].remoteBuff: %p located at %d\n", devConns[1].remoteBuff,
+    //        attributes.device);
+    // printf("data_src: %p, data_dst: %p, recvbuff %p sendConnhead %p\n",
+    //        data_src, data_dst, recvbuff, sendConnhead);
     ring_all_reduce<<<1, 32>>>(devConns, rank, world_size, data_src, data_dst,
                                recvbuff, elem_num);
     CUDACHECK(cudaDeviceSynchronize());
