@@ -24,27 +24,22 @@
             exit(EXIT_FAILURE);                                                \
         }                                                                      \
     } while (false)
-
+#define STEPLINES 4096
 __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
                                 void *data_src, void *data_dst, void *recvBuff,
                                 int elem_num)
 {
     int tid = threadIdx.x;
     int nthreads = blockDim.x;
-    Primitives_LL<float> prims(tid, nthreads, 0, 0, 4096);
-    // devConns[0] is the connection to the previous GPU and devConns[1] is the
-    // connection to the next GPU
+    Primitives_LL<float> prims(tid, nthreads, 0, 0, STEPLINES);
+    // devConns[0] is the connection to the next GPU and devConns[1] is the
+    // connection to the previous GPU
     prims.data_src = (float *)data_src;
     prims.data_dst = (float *)data_dst;
-    prims.sendBuff = (ncclLLFifoLine *)devConns[1].remoteBuff;
+    prims.sendBuff = (ncclLLFifoLine *)devConns[0].remoteBuff;
     prims.recvBuff = (ncclLLFifoLine *)recvBuff;
-    prims.sendConnHeadPtr = (volatile uint64_t *)devConns[1].localFlag;
-    prims.recvConnHeadPtr = (volatile uint64_t *)devConns[0].remoteFlag;
-    // if (tid == 0)
-    //     printf("data_src: %p, data_dst: %p, sendBuff: %p, recvBuff: %p "
-    //            "sendConnHeadPtr: %p, recvConnHeadPtr: %p\n",
-    //            prims.data_src, prims.data_dst, prims.sendBuff, prims.recvBuff,
-    //            prims.sendConnHeadPtr, prims.recvConnHeadPtr);
+    prims.sendConnHeadPtr = (volatile uint64_t *)devConns[0].localFlag;
+    prims.recvConnHeadPtr = (volatile uint64_t *)devConns[1].remoteFlag;
     int ChunkSize = elem_num / nranks;
 
     ssize_t offset;
@@ -56,7 +51,6 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
     offset = chunk * ChunkSize;
     // nelem = min(ChunkSize, size - offset);
     prims.send(offset, nelem);
-    // return;
     // k-2 steps: reduce and copy to next GPU
     for (int j = 2; j < nranks; ++j) {
         chunk = (rank + nranks - j) % nranks;
@@ -109,6 +103,11 @@ int main(int argc, const char *argv[])
     mscclppComm_t comm;
     const char *ip_port = argv[1];
     MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
+    int device_id;
+    cudaSetDevice(rank);
+    cudaGetDevice(&device_id);
+
+    printf("Current CUDA device ID: %d\n", device_id);
 
     float *data_src;
     float *data_dst;
@@ -117,7 +116,9 @@ int main(int argc, const char *argv[])
 
     int data_size = sizeof(float) * elem_num;
 
-    int *flag_d;
+    int *sendConnhead;
+    // dummy_flag is not used in LL protocol, just for compatibility
+    int *dummy_flag;
     CUDACHECK(cudaMalloc(&data_src, data_size));
     float *h_data_src = (float *)malloc(data_size);
     for (int i = 0; i < elem_num; ++i) {
@@ -127,24 +128,31 @@ int main(int argc, const char *argv[])
         cudaMemcpy(data_src, h_data_src, data_size, cudaMemcpyHostToDevice));
     // mscclppBootStrapAllGather(comm, data_src, data_size);
     CUDACHECK(cudaMalloc(&data_dst, data_size));
-    CUDACHECK(cudaMalloc(&recvbuff, 2 * data_size));
-    CUDACHECK(cudaMalloc(&flag_d, sizeof(int)));
-
+    CUDACHECK(cudaMalloc(&recvbuff, NCCL_STEPS * STEPLINES));
+    CUDACHECK(cudaMalloc(&sendConnhead, sizeof(int)));
+    CUDACHECK(cudaMalloc(&dummy_flag, sizeof(int)));
     mscclppResult_t res;
     int tag = 0;
     int rank_next = (rank + 1) % world_size;
     int rank_prev = (rank + world_size - 1) % world_size;
+    printf("rank: %d, rank_next: %d, rank_prev: %d\n", rank, rank_next,
+           rank_prev);
     // in the ring all reduce, we need to connect to the next and previous GPU
-    MSCCLPPCHECK(mscclppConnect(comm, rank_next, rank, data_src, data_size,
-                                flag_d, tag, mscclppTransportP2P));
+    MSCCLPPCHECK(mscclppConnect(comm, rank_next, rank, recvbuff, data_size,
+                                sendConnhead, tag, mscclppTransportP2P));
     MSCCLPPCHECK(mscclppConnect(comm, rank, rank_prev, recvbuff, data_size,
-                                flag_d, tag, mscclppTransportP2P));
+                                sendConnhead, tag, mscclppTransportP2P));
+
     MSCCLPPCHECK(mscclppConnectionSetup(comm));
 
     mscclppDevConn_t devConns;
     MSCCLPPCHECK(mscclppGetDevConns(comm, &devConns));
-    printf("data_src: %p, data_dst: %p, recvbuff %p\n", data_src, data_dst,
-           recvbuff);
+    cudaPointerAttributes attributes;
+    CUDACHECK(cudaPointerGetAttributes(&attributes, devConns[1].localBuff));
+    printf("devConns[0].remoteBuff: %p located at %d\n", devConns[1].remoteBuff,
+           attributes.device);
+    printf("data_src: %p, data_dst: %p, recvbuff %p sendConnhead %p\n",
+           data_src, data_dst, recvbuff, sendConnhead);
     ring_all_reduce<<<1, 32>>>(devConns, rank, world_size, data_src, data_dst,
                                recvbuff, elem_num);
     CUDACHECK(cudaDeviceSynchronize());
@@ -154,7 +162,7 @@ int main(int argc, const char *argv[])
     for (int i = 0; i < elem_num; ++i) {
         if (h_data_dst[i] != world_size * (i % 23)) {
             printf("data_dst[%d] = %f, expected %f", i, h_data_dst[i],
-                   (i % 23));
+                   1.0 * world_size * (i % 23));
             return -1;
         }
     }
