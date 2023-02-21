@@ -1,7 +1,7 @@
 // #include "reduce_kernel.h" // for reduction funcs
 #ifndef PRIMS_LL_H_
 #define PRIMS_LL_H_
-union ncclLLFifoLine {
+union mscclppLLFifoLine {
     /* Flags have to be *after* data, because otherwise, an incomplete receive
        from the network may receive the flag but not the data.
        Note this is assuming that either we receive contiguous chunks of data
@@ -15,7 +15,7 @@ union ncclLLFifoLine {
     uint64_t v[2];
     int4 i4;
 };
-#define NCCL_STEPS 8
+#define MSCCLPP_STEPS 8
 template <typename T> class Primitives_LL
 {
 public:
@@ -43,16 +43,16 @@ public:
 
     uint64_t recvStep;
     uint64_t sendStep;
-    union ncclLLFifoLine *recvBuff;
-    union ncclLLFifoLine *sendBuff;
+    union mscclppLLFifoLine *recvBuff;
+    union mscclppLLFifoLine *sendBuff;
 
-    inline __device__ union ncclLLFifoLine *recvPtr()
+    inline __device__ union mscclppLLFifoLine *recvPtr()
     {
-        return recvBuff + (recvStep % NCCL_STEPS) * stepLines;
+        return recvBuff + (recvStep % MSCCLPP_STEPS) * stepLines;
     }
-    inline __device__ union ncclLLFifoLine *sendPtr()
+    inline __device__ union mscclppLLFifoLine *sendPtr()
     {
-        return sendBuff + (sendStep % NCCL_STEPS) * stepLines;
+        return sendBuff + (sendStep % MSCCLPP_STEPS) * stepLines;
     }
     inline __device__ uint32_t recvFlag(int i)
     {
@@ -75,7 +75,7 @@ public:
     inline __device__ void waitSend()
     {
         uint64_t sendConnHeadCache = *sendConnHeadPtr; // Cache last seen value
-        while (sendConnHeadCache + NCCL_STEPS < sendConnHead) {
+        while (sendConnHeadCache + MSCCLPP_STEPS < sendConnHead) {
             sendConnHeadCache = *sendConnHeadPtr;
         }
         sendConnHead += 1;
@@ -89,7 +89,7 @@ public:
         *recvConnHeadPtr = recvConnHead;
     }
 
-    __device__ uint64_t readLL(union ncclLLFifoLine *src, uint32_t flag)
+    __device__ uint64_t readLL(union mscclppLLFifoLine *src, uint32_t flag)
     {
         uint32_t data1, flag1, data2, flag2;
         int spins = 0;
@@ -104,7 +104,7 @@ public:
         return val64;
     }
 
-    __device__ void storeLL(union ncclLLFifoLine *dst, uint64_t val,
+    __device__ void storeLL(union mscclppLLFifoLine *dst, uint64_t val,
                             uint32_t flag)
     {
         asm volatile(
@@ -251,7 +251,7 @@ public:
             int eltInLine = EltPerLine < nelem ? EltPerLine : nelem;
 
             DataLoader dl;
-            // ncclLLFifoLine line[MaxRecv];
+            // mscclppLLFifoLine line[MaxRecv];
             uint64_t data, peerData;
             if (SRC) {
                 dl.loadBegin(srcElts, eltInLine);

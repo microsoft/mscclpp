@@ -26,7 +26,7 @@ __global__ void test_send_ll(void *data_src, void *sendBuff,
     prims.sendConnHeadPtr = (volatile uint64_t *)sendConnHeadPtr;
     *((volatile int *)sendConnHeadPtr) = 0;
     prims.data_src = (float *)data_src;
-    prims.sendBuff = (ncclLLFifoLine *)sendBuff;
+    prims.sendBuff = (mscclppLLFifoLine *)sendBuff;
     prims.send(0, eltN / 2);
     prims.send(eltN / 2, eltN / 2);
     return;
@@ -40,7 +40,7 @@ __global__ void test_recv_ll(void *data_dst, void *recvbuff,
     Primitives_LL<float> prims(tid, nthreads, 0, 0, STEPLINES);
     prims.recvConnHeadPtr = (volatile uint64_t *)sendConnHeadPtr;
     prims.data_dst = (float *)data_dst;
-    prims.recvBuff = (ncclLLFifoLine *)recvbuff;
+    prims.recvBuff = (mscclppLLFifoLine *)recvbuff;
     prims.recv(0, eltN / 2);
     prims.recv(eltN / 2, eltN / 2);
     return;
@@ -81,7 +81,7 @@ int main(int argc, const char *argv[])
         cudaMemcpy(data_src, h_data_src, data_size, cudaMemcpyHostToDevice));
     // mscclppBootStrapAllGather(comm, data_src, data_size);
     CUDACHECK(cudaMalloc(&data_dst, data_size));
-    CUDACHECK(cudaMalloc(&recvbuff, STEPLINES * NCCL_STEPS));
+    CUDACHECK(cudaMalloc(&recvbuff, STEPLINES * MSCCLPP_STEPS));
     CUDACHECK(cudaMalloc(&flag_d, sizeof(uint64_t)));
 
     mscclppResult_t res;

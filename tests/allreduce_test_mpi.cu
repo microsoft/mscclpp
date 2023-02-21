@@ -40,8 +40,8 @@ __global__ void ring_all_reduce(mscclppDevConn_t devConns, int rank, int nranks,
     // connection to the previous GPU
     prims.data_src = (float *)data_src;
     prims.data_dst = (float *)data_dst;
-    prims.sendBuff = (ncclLLFifoLine *)devConns[0].remoteBuff;
-    prims.recvBuff = (ncclLLFifoLine *)recvBuff;
+    prims.sendBuff = (mscclppLLFifoLine *)devConns[0].remoteBuff;
+    prims.recvBuff = (mscclppLLFifoLine *)recvBuff;
     // the control flag, might be a little buggy, still need to be developed
     prims.sendConnHeadPtr = (volatile uint64_t *)devConns[0].localFlag;
     prims.recvConnHeadPtr = (volatile uint64_t *)devConns[1].remoteFlag;
@@ -123,17 +123,15 @@ int main(int argc, const char *argv[])
     CUDACHECK(
         cudaMemcpy(data_src, h_data_src, data_size, cudaMemcpyHostToDevice));
     CUDACHECK(cudaMalloc(&data_dst, data_size));
-    // the recvbuff's size is NCCL_STEPS * STEPLINES, NCCL has a concept of
-    // NCCL_STEPS, NCCL will allocate multiple recvbuff , So we can have
+    // the recvbuff's size is MSCCLPP_STEPS * STEPLINES, MSCCLPP has a concept of
+    // MSCCLPP_STEPS, MSCCLPP will allocate multiple recvbuff , So we can have
     // multiple send recv operations happen at the same time.
-    CUDACHECK(cudaMalloc(&recvbuff, NCCL_STEPS * STEPLINES));
+    CUDACHECK(cudaMalloc(&recvbuff, MSCCLPP_STEPS * STEPLINES));
     CUDACHECK(cudaMalloc(&sendConnhead, sizeof(int)));
     mscclppResult_t res;
     int tag = 0;
     int rank_next = (rank + 1) % world_size;
     int rank_prev = (rank + world_size - 1) % world_size;
-    // printf("rank: %d, rank_next: %d, rank_prev: %d\n", rank, rank_next,
-    //        rank_prev);
     // in the ring all reduce, we need to connect to the next and previous GPU
     MSCCLPPCHECK(mscclppConnect(comm, rank_next, rank, recvbuff, data_size,
                                 sendConnhead, tag, mscclppTransportP2P));
