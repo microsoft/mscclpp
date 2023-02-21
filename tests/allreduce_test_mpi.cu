@@ -104,10 +104,7 @@ int main(int argc, const char *argv[])
     const char *ip_port = argv[1];
     MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
     int device_id;
-    cudaSetDevice(rank);
-    cudaGetDevice(&device_id);
-
-    // printf("Current CUDA device ID: %d\n", device_id);
+    CUDACHECK(cudaSetDevice(rank));
 
     float *data_src;
     float *data_dst;
@@ -117,8 +114,7 @@ int main(int argc, const char *argv[])
     int data_size = sizeof(float) * elem_num;
 
     int *sendConnhead;
-    // dummy_flag is not used in LL protocol, just for compatibility
-    int *dummy_flag;
+
     CUDACHECK(cudaMalloc(&data_src, data_size));
     float *h_data_src = (float *)malloc(data_size);
     for (int i = 0; i < elem_num; ++i) {
@@ -126,11 +122,9 @@ int main(int argc, const char *argv[])
     }
     CUDACHECK(
         cudaMemcpy(data_src, h_data_src, data_size, cudaMemcpyHostToDevice));
-    // mscclppBootStrapAllGather(comm, data_src, data_size);
     CUDACHECK(cudaMalloc(&data_dst, data_size));
     CUDACHECK(cudaMalloc(&recvbuff, NCCL_STEPS * STEPLINES));
     CUDACHECK(cudaMalloc(&sendConnhead, sizeof(int)));
-    CUDACHECK(cudaMalloc(&dummy_flag, sizeof(int)));
     mscclppResult_t res;
     int tag = 0;
     int rank_next = (rank + 1) % world_size;
