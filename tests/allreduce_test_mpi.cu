@@ -147,12 +147,7 @@ int main(int argc, const char *argv[])
 
     mscclppDevConn_t devConns;
     MSCCLPPCHECK(mscclppGetDevConns(comm, &devConns));
-    cudaPointerAttributes attributes;
-    CUDACHECK(cudaPointerGetAttributes(&attributes, devConns[1].localBuff));
-    // printf("devConns[0].remoteBuff: %p located at %d\n", devConns[1].remoteBuff,
-    //        attributes.device);
-    // printf("data_src: %p, data_dst: %p, recvbuff %p sendConnhead %p\n",
-    //        data_src, data_dst, recvbuff, sendConnhead);
+    
     ring_all_reduce<<<1, 32>>>(devConns, rank, world_size, data_src, data_dst,
                                recvbuff, elem_num);
     CUDACHECK(cudaDeviceSynchronize());
