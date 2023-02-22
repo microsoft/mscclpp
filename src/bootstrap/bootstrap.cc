@@ -11,7 +11,6 @@
 #include "net.h"
 #include <unistd.h>
 #include <sys/types.h>
-#include "proxy.h"
 
 struct bootstrapRootArgs {
   struct mscclppSocket* listenSock;
