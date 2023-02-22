@@ -7,4 +7,4 @@ mpirun -allow-run-as-root \
        -bind-to numa \
        -x MSCCLPP_DEBUG_SUBSYS=ALL \
        -x MSCCLPP_SOCKET_IFNAME=eth0 \
-       ./build/bin/tests/p2p_test_mpi 172.17.0.4:50000
+       ./build/bin/tests/p2p_test 172.17.0.4:50000
