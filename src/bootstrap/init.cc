@@ -1,6 +1,7 @@
 #include "mscclpp.h"
 #include "bootstrap.h"
 #include "core.h"
+#include "gdr.h"
 #include <map>
 #include <sstream>
 
@@ -18,6 +19,17 @@ static uint64_t hashUniqueId(mscclppUniqueId const &id) {
 pthread_mutex_t initLock = PTHREAD_MUTEX_INITIALIZER;
 static bool initialized = false;
 // static size_t maxLocalSizeBytes = 0;
+
+gdr_t mscclppGdrCopy = NULL;
+
+mscclppResult_t initGdrCopy() {
+  mscclppGdrCopy = mscclppGdrInit();
+  if (mscclppGdrCopy == NULL) {
+    WARN("GDR init failed");
+    return mscclppSystemError;
+  }
+  return mscclppSuccess;
+}
 
 static mscclppResult_t mscclppInit() {
   if (__atomic_load_n(&initialized, __ATOMIC_ACQUIRE)) return mscclppSuccess;
@@ -61,7 +73,11 @@ mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int si
 }
 
 MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair);
-mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair){
+mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair) {
+  if (mscclppGdrCopy == NULL) {
+    MSCCLPPCHECK(initGdrCopy());
+  }
+
   mscclppResult_t res = mscclppSuccess;
   mscclppComm_t _comm = NULL;
   // uint64_t hash = getHostHash();
@@ -162,7 +178,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
   conn->devConn->localBuff = localBuff;
   conn->devConn->localFlag = localFlag;
   conn->devConn->tag = tag;
-  MSCCLPPCHECK(mscclppCudaHostCalloc(&conn->devConn->trigger, 1));
+  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuTrigger, &conn->devConn->trigger, 1, &conn->cpuTriggerGdrDesc));
 
   conn->ibCtx = NULL;
   conn->ibQp = NULL;
@@ -233,7 +249,7 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
   }
   struct mscclppDevConn *devConn = conn->devConn;
   devConn->remoteBuff = NULL;
-  MSCCLPPCHECK(mscclppCudaCalloc(&devConn->remoteFlag, 1));
+  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuRemoteFlag, &devConn->remoteFlag, 1, &conn->cpuRemoteFlagGdrDesc));
 
   struct mscclppIbContext *ibCtx = conn->ibCtx;
   if (conn->ibQp == NULL) {

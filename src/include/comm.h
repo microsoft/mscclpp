@@ -162,6 +162,10 @@ struct mscclppConn {
   mscclppTransport_t transport;
   int remoteRank;
   int buffSize;
+  mscclppTrigger *cpuTrigger;
+  int *cpuRemoteFlag;
+  void *cpuTriggerGdrDesc;
+  void *cpuRemoteFlagGdrDesc;
   struct mscclppDevConn *devConn;
   struct mscclppIbContext *ibCtx;
   struct mscclppIbQp *ibQp;

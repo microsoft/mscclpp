@@ -8,7 +8,7 @@
 #include <sys/syscall.h>
 #include <map>
 
-#define MSCCLPP_PROXY_FLAG_SET_BY_RDMA 1
+#define MSCCLPP_PROXY_FLAG_SET_BY_RDMA 0
 
 struct proxyArgs {
   struct mscclppComm* comm;
@@ -35,7 +35,7 @@ void* mscclppProxyService(void* _args) {
     struct mscclppConn *conn = &comm->conns[i];
     if (conn->transport != mscclppTransportIB) continue;
     if (conn->ibCtx != ibCtx) continue;
-    volatile uint64_t *tmp = (volatile uint64_t *)conn->devConn->trigger;
+    volatile uint64_t *tmp = (volatile uint64_t *)conn->cpuTrigger;
     trigToSendStateAndConn[tmp].first = SEND_STATE_INIT;
     trigToSendStateAndConn[tmp].second = conn;
     qpNumToConn[conn->ibQp->qp->qp_num] = conn;
@@ -83,18 +83,18 @@ void* mscclppProxyService(void* _args) {
         }
         struct mscclppConn *conn = qpNumToConn[wc->qp_num];
         if (wc->opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
+#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA != 1)
+          // TODO(chhwang): cpu flush
+          *((volatile int *)conn->cpuRemoteFlag) = 1;
+#endif
           // recv completion
           if (qpNumToConn[wc->qp_num]->ibQp->postRecv(wc->wr_id) != 0) {
             WARN("postRecv failed: errno %d", errno);
           }
-#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA != 1)
-          // TODO(chhwang): gdc & cpu flush
-          // *((volatile int *)conn->devConn->remoteFlag) = 1;
-#endif
           // WARN("rank %d recv completion", rank);
         } else if (wc->opcode == IBV_WC_RDMA_WRITE) {
           // send completion
-          volatile uint64_t *tmp = (volatile uint64_t *)conn->devConn->trigger;
+          volatile uint64_t *tmp = (volatile uint64_t *)conn->cpuTrigger;
           *tmp = 0;
           trigToSendStateAndConn[tmp].first = SEND_STATE_INIT;
           // WARN("rank %d send completion", rank);

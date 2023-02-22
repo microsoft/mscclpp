@@ -101,9 +101,9 @@ LIBDIR := lib
 OBJDIR := obj
 BINDIR := bin
 
-LDFLAGS := $(NVLDFLAGS) -libverbs
+LDFLAGS := $(NVLDFLAGS) -libverbs -lgdrapi
 
-LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc)
+LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc gdr.cc)
 LIBSRCS += $(addprefix src/bootstrap/,init.cc bootstrap.cc socket.cc proxy.cc ib.cc)
 LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
