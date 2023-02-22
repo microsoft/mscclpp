@@ -41,6 +41,8 @@ struct mscclppIbQp {
   struct mscclppIbQpInfo info;
   struct ibv_send_wr *wrs;
   struct ibv_sge *sges;
+  struct ibv_cq *cq;
+  struct ibv_wc *wcs;
   int wrn;
 
   int rtr(const mscclppIbQpInfo *info);
@@ -49,16 +51,14 @@ struct mscclppIbQp {
                 uint64_t wrId, unsigned int immData, uint64_t offset, bool signaled);
   int postSend();
   int postRecv(uint64_t wrId);
+  int pollCq();
 };
 
 // Holds resources of a single IB device.
 struct mscclppIbContext {
   int numa_node;
   struct ibv_context *ctx;
-  struct ibv_cq *cq;
   struct ibv_pd *pd;
-  struct ibv_wc *wcs;
-  int wcn;
   int *ports;
   int nPorts;
   struct mscclppIbQp *qps;
@@ -73,6 +73,5 @@ mscclppResult_t mscclppIbContextCreate(struct mscclppIbContext **ctx, const char
 mscclppResult_t mscclppIbContextDestroy(struct mscclppIbContext *ctx);
 mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext *ctx, struct mscclppIbQp **ibQp, int port = -1);
 mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext *ctx, void *buff, size_t size, struct mscclppIbMr **ibMr);
-mscclppResult_t mscclppIbContextPollCq(struct mscclppIbContext *ctx, int *wcNum);
 
 #endif

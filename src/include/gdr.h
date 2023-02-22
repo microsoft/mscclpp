@@ -100,7 +100,6 @@ mscclppResult_t mscclppGdrCudaCallocDebug(T** ptr, T** devPtr, size_t nelem, voi
   MSCCLPPCHECKGOTO(mscclppCudaCalloc(&devMem, mapSize+GPU_PAGE_SIZE-1), result, finish);
   alignedAddr = (((uint64_t) devMem) + GPU_PAGE_OFFSET) & GPU_PAGE_MASK;
   align = alignedAddr - (uint64_t)devMem;
-  WARN("GDR: mscclppGdrCopy %p alignedAddr %p, mapSize %lu", mscclppGdrCopy, (void*)alignedAddr, mapSize);
   MSCCLPPCHECKGOTO(wrap_gdr_pin_buffer(mscclppGdrCopy, alignedAddr, mapSize, 0, 0, &mh), result, finish);
 
   MSCCLPPCHECKGOTO(wrap_gdr_map(mscclppGdrCopy, mh, &gdrMap, mapSize), result, finish);

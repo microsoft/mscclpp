@@ -14,7 +14,6 @@ mscclppResult_t mscclppIbContextCreate(struct mscclppIbContext **ctx, const char
 {
   struct mscclppIbContext *_ctx;
   MSCCLPPCHECK(mscclppCalloc(&_ctx, 1));
-  MSCCLPPCHECK(mscclppCalloc(&_ctx->wcs, MSCCLPP_IB_CQ_POLL_NUM));
 
   std::vector<int> ports;
 
@@ -64,12 +63,6 @@ mscclppResult_t mscclppIbContextCreate(struct mscclppIbContext **ctx, const char
     _ctx->ports[i] = ports[i];
   }
 
-  _ctx->cq = ibv_create_cq(_ctx->ctx, MSCCLPP_IB_CQ_SIZE, NULL, NULL, 0);
-  if (_ctx->cq == NULL) {
-    WARN("ibv_create_cq failed (errno %d)", errno);
-    goto fail;
-  }
-
   _ctx->pd = ibv_alloc_pd(_ctx->ctx);
   if (_ctx->pd == NULL) {
     WARN("ibv_alloc_pd failed (errno %d)", errno);
@@ -83,7 +76,6 @@ fail:
   if (_ctx->ports != NULL) {
     free(_ctx->ports);
   }
-  free(_ctx->wcs);
   free(_ctx);
   return mscclppInternalError;
 }
@@ -95,12 +87,11 @@ mscclppResult_t mscclppIbContextDestroy(struct mscclppIbContext *ctx)
   }
   for (int i = 0; i < ctx->nQps; ++i) {
     ibv_destroy_qp(ctx->qps[i].qp);
+    ibv_destroy_cq(ctx->qps[i].cq);
+    free(ctx->qps[i].wcs);
   }
   if (ctx->pd != NULL) {
     ibv_dealloc_pd(ctx->pd);
-  }
-  if (ctx->cq != NULL) {
-    ibv_destroy_cq(ctx->cq);
   }
   if (ctx->ctx != NULL) {
     ibv_close_device(ctx->ctx);
@@ -108,7 +99,6 @@ mscclppResult_t mscclppIbContextDestroy(struct mscclppIbContext *ctx)
   free(ctx->mrs);
   free(ctx->qps);
   free(ctx->ports);
-  free(ctx->wcs);
   free(ctx);
   return mscclppSuccess;
 }
@@ -126,15 +116,22 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext *ctx, struct ms
       }
     }
     if (!found) {
-        WARN("invalid IB port: %d", port);
-        return mscclppInternalError;
+      WARN("invalid IB port: %d", port);
+      return mscclppInternalError;
     }
   }
+
+  struct ibv_cq *cq = ibv_create_cq(ctx->ctx, MSCCLPP_IB_CQ_SIZE, NULL, NULL, 0);
+  if (cq == NULL) {
+    WARN("ibv_create_cq failed (errno %d)", errno);
+    return mscclppInternalError;
+  }
+
   struct ibv_qp_init_attr qp_init_attr;
   std::memset(&qp_init_attr, 0, sizeof(struct ibv_qp_init_attr));
   qp_init_attr.sq_sig_all = 0;
-  qp_init_attr.send_cq = ctx->cq;
-  qp_init_attr.recv_cq = ctx->cq;
+  qp_init_attr.send_cq = cq;
+  qp_init_attr.recv_cq = cq;
   qp_init_attr.qp_type = IBV_QPT_RC;
   qp_init_attr.cap.max_send_wr = MAXCONNECTIONS;
   qp_init_attr.cap.max_recv_wr = MAXCONNECTIONS;
@@ -143,8 +140,8 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext *ctx, struct ms
   qp_init_attr.cap.max_inline_data = 0;
   struct ibv_qp *qp = ibv_create_qp(ctx->pd, &qp_init_attr);
   if (qp == nullptr) {
-      WARN("ibv_create_qp failed (errno %d)", errno);
-      return mscclppInternalError;
+    WARN("ibv_create_qp failed (errno %d)", errno);
+    return mscclppInternalError;
   }
   struct ibv_port_attr port_attr;
   if (ibv_query_port(ctx->ctx, port, &port_attr) != 0) {
@@ -196,6 +193,8 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext *ctx, struct ms
 
   MSCCLPPCHECK(mscclppCalloc(&_ibQp->wrs, MSCCLPP_IB_MAX_SENDS));
   MSCCLPPCHECK(mscclppCalloc(&_ibQp->sges, MSCCLPP_IB_MAX_SENDS));
+  MSCCLPPCHECK(mscclppCalloc(&_ibQp->wcs, MSCCLPP_IB_CQ_POLL_NUM));
+  _ibQp->cq = cq;
 
   *ibQp = _ibQp;
 
@@ -236,18 +235,6 @@ mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext *ctx, void *b
   _ibMr->info.addr = (uint64_t)buff;
   _ibMr->info.rkey = mr->rkey;
   *ibMr = _ibMr;
-  return mscclppSuccess;
-}
-
-mscclppResult_t mscclppIbContextPollCq(struct mscclppIbContext *ctx, int *wcNum)
-{
-  int ret = ibv_poll_cq(ctx->cq, MSCCLPP_IB_CQ_POLL_NUM, ctx->wcs);
-  if (ret < 0) {
-    WARN("ibv_poll_cq failed (errno %d)", errno);
-    return mscclppInternalError;
-  }
-  ctx->wcn = ret;
-  *wcNum = ret;
   return mscclppSuccess;
 }
 
@@ -348,5 +335,10 @@ int mscclppIbQp::postRecv(uint64_t wrId)
     wr.sg_list = nullptr;
     wr.num_sge = 0;
     wr.next = nullptr;
-    return ibv_post_recv((struct ibv_qp *)this->qp, &wr, &bad_wr);
+    return ibv_post_recv(this->qp, &wr, &bad_wr);
+}
+
+int mscclppIbQp::pollCq()
+{
+  return ibv_poll_cq(this->cq, MSCCLPP_IB_CQ_POLL_NUM, this->wcs);
 }

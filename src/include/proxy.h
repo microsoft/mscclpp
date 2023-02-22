@@ -6,8 +6,8 @@
 #include <pthread.h>
 
 struct mscclppProxyState {
-  pthread_t thread;
-  int stop;
+  pthread_t *threads;
+  int *runs;
 };
 
 mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm);
