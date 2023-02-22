@@ -101,7 +101,7 @@ void* mscclppProxyService(void* _args) {
     }
   }
   *run = 1;
-  WARN("Proxy exits: rank %d", rank);
+  // WARN("Proxy exits: rank %d", rank);
   return NULL;
 }
 

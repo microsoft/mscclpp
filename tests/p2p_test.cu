@@ -191,9 +191,16 @@ int main(int argc, const char *argv[])
   CUDACHECK(cudaEventCreate(&ev_start));
   CUDACHECK(cudaEventCreate(&ev_end));
 
+  // warm up
+  int iter = 10;
+  for (int i = 0; i < iter; ++i) {
+    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+  }
+
   CUDACHECK(cudaEventRecord(ev_start, stream));
 
-  int iter = 1000000;
+  // measure
+  iter = 10000;
   for (int i = 0; i < iter; ++i) {
     kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
   }
@@ -202,7 +209,7 @@ int main(int argc, const char *argv[])
 
   float ms;
   CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
-  printf("rank: %d, time: %f ms/iter\n", rank, ms / (float)iter);
+  printf("rank: %d, time: %f us/iter\n", rank, ms * 1000. / (float)iter);
 
   MSCCLPPCHECK(mscclppProxyStop(comm));
 
