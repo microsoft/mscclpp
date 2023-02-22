@@ -32,6 +32,8 @@ __constant__ mscclppDevConn_t constDevConns[8];
 
 __global__ void kernel(int rank, int world_size)
 {
+  if (threadIdx.x % 32 != 0) return;
+
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   mscclppDevConn_t devConn = constDevConns[remoteRank];
@@ -39,38 +41,38 @@ __global__ void kernel(int rank, int world_size)
   volatile int *localFlag = devConn.localFlag;
   volatile int *remoteFlag = devConn.remoteFlag;
   volatile uint64_t *trig = (volatile uint64_t *)devConn.trigger;
+  int baseFlag = *localFlag;
 
   if (threadIdx.x == 0) {
     // Set my data and flag
     *(data + rank) = rank + 1;
+    // Do we need a sys fence?
     __threadfence_system();
-    *localFlag = 1;
+    *localFlag = baseFlag + 1;
   }
   __syncthreads();
 
   // Each warp receives data from different ranks
-  if (threadIdx.x % 32 == 0) {
-    if (devConn.remoteBuff == NULL) { // IB
-      // Trigger sending data and flag
-      uint64_t dataOffset = rank * sizeof(int);
-      uint64_t dataSize = sizeof(int);
-      *trig = (dataOffset << 32) + dataSize;
+  if (devConn.remoteBuff == NULL) { // IB
+    // Trigger sending data and flag
+    uint64_t dataOffset = rank * sizeof(int);
+    uint64_t dataSize = sizeof(int);
+    *trig = (dataOffset << 32) + dataSize;
 
-      // Wait until the proxy have sent my data and flag
-      while (*trig != 0) {}
+    // Wait until the proxy have sent my data and flag
+    while (*trig != 0) {}
 
-      // Wait for receiving data from remote rank
-      while (*remoteFlag != 1) {}
-    } else { // P2P
-      // Directly read data
-      volatile int *remoteData = (volatile int *)devConn.remoteBuff;
+    // Wait for receiving data from remote rank
+    while (*remoteFlag == baseFlag) {}
+  } else { // P2P
+    // Directly read data
+    volatile int *remoteData = (volatile int *)devConn.remoteBuff;
 
-      // Wait until the remote data is set
-      while (*remoteFlag != 1) {}
+    // Wait until the remote data is set
+    while (*remoteFlag == baseFlag) {}
 
-      // Read remote data
-      data[remoteRank] = remoteData[remoteRank];
-    }
+    // Read remote data
+    data[remoteRank] = remoteData[remoteRank];
   }
 }
 
@@ -158,10 +160,11 @@ int main(int argc, const char *argv[])
 
   CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * world_size));
 
-  kernel<<<1, 32 * (world_size - 1)>>>(rank, world_size);
-  CUDACHECK(cudaDeviceSynchronize());
+  cudaStream_t stream;
+  CUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
-  MSCCLPPCHECK(mscclppProxyStop(comm));
+  kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+  CUDACHECK(cudaDeviceSynchronize());
 
   // Read results from GPU
   int *buf = (int *)calloc(world_size, sizeof(int));
@@ -181,6 +184,27 @@ int main(int argc, const char *argv[])
   if (failed) {
     return -1;
   }
+
+  // Perf test
+  cudaEvent_t ev_start;
+  cudaEvent_t ev_end;
+  CUDACHECK(cudaEventCreate(&ev_start));
+  CUDACHECK(cudaEventCreate(&ev_end));
+
+  CUDACHECK(cudaEventRecord(ev_start, stream));
+
+  int iter = 1000000;
+  for (int i = 0; i < iter; ++i) {
+    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+  }
+  CUDACHECK(cudaEventRecord(ev_end, stream));
+  CUDACHECK(cudaStreamSynchronize(stream));
+
+  float ms;
+  CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
+  printf("rank: %d, time: %f ms/iter\n", rank, ms / (float)iter);
+
+  MSCCLPPCHECK(mscclppProxyStop(comm));
 
   MSCCLPPCHECK(mscclppCommDestroy(comm));
 

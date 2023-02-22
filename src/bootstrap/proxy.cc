@@ -24,6 +24,9 @@ void* mscclppProxyService(void* _args) {
   volatile int *run = args->run;
   struct mscclppConn *conn = &comm->conns[args->connIdx];
   free(_args);
+#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
+  int currentRemoteFlagVlaue = *conn->cpuRemoteFlag;
+#endif
 
   // TODO(chhwang): NUMA & core binding
 
@@ -80,7 +83,7 @@ void* mscclppProxyService(void* _args) {
         if (wc->opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA != 1)
           // TODO(chhwang): cpu flush
-          *((volatile int *)conn->cpuRemoteFlag) = 1;
+          *((volatile int *)conn->cpuRemoteFlag) = ++currentRemoteFlagVlaue;
 #endif
           // recv completion
           if (conn->ibQp->postRecv(wc->wr_id) != 0) {
