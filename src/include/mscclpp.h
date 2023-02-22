@@ -46,7 +46,7 @@ struct mscclppDevConn {
 };
 
 typedef struct mscclppComm* mscclppComm_t;
-typedef struct mscclppDevConn* mscclppDevConn_t;
+typedef struct mscclppDevConn mscclppDevConn_t;
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
 typedef struct { char internal[MSCCLPP_UNIQUE_ID_BYTES]; } mscclppUniqueId;
@@ -113,18 +113,14 @@ mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int si
 
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
-mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, void *buff, size_t buffSize, int *flag,
-                               int tag, mscclppTransport_t transportType, const char *ibDev=NULL);
+mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, size_t buffSize,
+                               int* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev=NULL);
 
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);
 
 mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm);
 
 mscclppResult_t mscclppProxyStop(mscclppComm_t comm);
-
-mscclppResult_t mscclppGetLocalRank(mscclppComm_t comm, int *localRank);
-mscclppResult_t mscclppGetNodeFromRank(mscclppComm_t comm, int rank, int *node);
-mscclppResult_t mscclppGetDevConns(mscclppComm_t comm, mscclppDevConn_t* devConns);
 
 #ifdef __cplusplus
 } // end extern "C"

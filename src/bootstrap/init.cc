@@ -64,9 +64,9 @@ MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nrank
 mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair){
   mscclppResult_t res = mscclppSuccess;
   mscclppComm_t _comm = NULL;
-  uint64_t hash = getHostHash();
-  uint64_t *hashes;
-  std::map<uint64_t, int> hashToNode;
+  // uint64_t hash = getHostHash();
+  // uint64_t *hashes;
+  // std::map<uint64_t, int> hashToNode;
 
   MSCCLPPCHECKGOTO(mscclppCalloc(&_comm, 1), res, fail);
   _comm->rank = rank;
@@ -80,36 +80,36 @@ mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, c
   MSCCLPPCHECKGOTO(mscclppCudaHostCalloc((uint32_t **)&_comm->abortFlag, 1), res, fail);
   MSCCLPPCHECK(bootstrapInit(&handle, _comm));
 
-  _comm->maxLocalRanks = 8;
-  MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->rankToNode, nranks), res, fail);
-  MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->rankToLocalRank, nranks), res, fail);
-  MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->localRankToRank, _comm->maxLocalRanks), res, fail);
+  // _comm->maxLocalRanks = 8;
+  // MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->rankToNode, nranks), res, fail);
+  // MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->rankToLocalRank, nranks), res, fail);
+  // MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->localRankToRank, _comm->maxLocalRanks), res, fail);
 
-  MSCCLPPCHECKGOTO(mscclppCalloc(&hashes, nranks), res, fail);
-  hashes[rank] = hash;
-  MSCCLPPCHECK(bootstrapAllGather(_comm->bootstrap, hashes, sizeof(uint64_t)));
+  // MSCCLPPCHECKGOTO(mscclppCalloc(&hashes, nranks), res, fail);
+  // hashes[rank] = hash;
+  // MSCCLPPCHECK(bootstrapAllGather(_comm->bootstrap, hashes, sizeof(uint64_t)));
 
-  for (int i = 0; i < nranks; ++i) {
-    auto it = hashToNode.find(hashes[i]);
-    if (it == hashToNode.end()) {
-      _comm->nNodes++;
-      hashToNode[hashes[i]] = _comm->nNodes - 1;
-      _comm->rankToNode[i] = _comm->nNodes - 1;
-    } else {
-      _comm->rankToNode[i] = it->second;
-    }
-    if (hashes[i] == hash) {
-      _comm->rankToLocalRank[i] = _comm->localRanks++;
-      _comm->localRankToRank[_comm->rankToLocalRank[i]] = i;
-    }
-  }
-  if (_comm->localRanks > _comm->maxLocalRanks) {
-    WARN("Too many ranks on the same host: %d", _comm->localRanks);
-    res = mscclppInvalidUsage;
-    goto fail;
-  }
-  _comm->node = _comm->rankToNode[rank];
-  _comm->localRank = _comm->rankToLocalRank[rank];
+  // for (int i = 0; i < nranks; ++i) {
+  //   auto it = hashToNode.find(hashes[i]);
+  //   if (it == hashToNode.end()) {
+  //     _comm->nNodes++;
+  //     hashToNode[hashes[i]] = _comm->nNodes - 1;
+  //     _comm->rankToNode[i] = _comm->nNodes - 1;
+  //   } else {
+  //     _comm->rankToNode[i] = it->second;
+  //   }
+  //   if (hashes[i] == hash) {
+  //     _comm->rankToLocalRank[i] = _comm->localRanks++;
+  //     _comm->localRankToRank[_comm->rankToLocalRank[i]] = i;
+  //   }
+  // }
+  // if (_comm->localRanks > _comm->maxLocalRanks) {
+  //   WARN("Too many ranks on the same host: %d", _comm->localRanks);
+  //   res = mscclppInvalidUsage;
+  //   goto fail;
+  // }
+  // _comm->node = _comm->rankToNode[rank];
+  // _comm->localRank = _comm->rankToLocalRank[rank];
 
   *comm = _comm;
   return res;
@@ -141,21 +141,31 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int remoteRank,
-            void *buff, size_t buffSize, int *flag, int tag, mscclppTransport_t transportType, const char *ibDev);
-mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, void *buff, size_t buffSize,
-                               int *flag, int tag, mscclppTransport_t transportType, const char *ibDev/*=NULL*/)
+MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank,
+            void* localBuff, size_t buffSize, int* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev);
+mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, size_t buffSize,
+                               int* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev/*=NULL*/)
 {
+  if (comm->nConns == MAXCONNECTIONS) {
+    WARN("Too many connections made");
+    return mscclppInternalError;
+  }
+  if (devConnOut == NULL) {
+    WARN("devConnOut is the output of this function and needs to be allocated by the user");
+    return mscclppInvalidUsage;
+  }
   struct mscclppConn *conn = &comm->conns[comm->nConns++];
   conn->transport = transportType;
   conn->remoteRank = remoteRank;
-  conn->tag = tag;
-  conn->buff = buff;
   conn->buffSize = buffSize;
-  conn->flag = flag;
+  conn->devConn = devConnOut;
+  conn->devConn->localBuff = localBuff;
+  conn->devConn->localFlag = localFlag;
+  conn->devConn->tag = tag;
+  MSCCLPPCHECK(mscclppCudaHostCalloc(&conn->devConn->trigger, 1));
+
   conn->ibCtx = NULL;
   conn->ibQp = NULL;
-
   if (ibDev != NULL) {
     // Check if an IB context exists
     int ibDevIdx = -1;
@@ -196,70 +206,95 @@ struct connInfo {
   mscclppIbMrInfo infoRemoteFlagMr;
 };
 
+mscclppResult_t mscclppP2pConnectionSetupStart(struct connInfo* connInfo /*output*/, struct mscclppConn* conn /*input*/){
+  if (connInfo == NULL || conn == NULL){
+    WARN("connInfo or connection cannot be null");
+    return mscclppInternalError;
+  }
+  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleBuff, conn->devConn->localBuff));
+  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleFlag, conn->devConn->localFlag));
+  return mscclppSuccess;
+}
+
+mscclppResult_t mscclppP2pConnectionSetupEnd(struct connInfo* connInfo /*input*/, struct mscclppConn* conn /*output*/){
+  if (connInfo == NULL || conn == NULL){
+    WARN("ipcHandles or connection cannot be null");
+    return mscclppInternalError;
+  }
+  CUDACHECK(cudaIpcOpenMemHandle((void**)&conn->devConn->remoteBuff, connInfo->handleBuff, cudaIpcMemLazyEnablePeerAccess));
+  CUDACHECK(cudaIpcOpenMemHandle((void**)&conn->devConn->remoteFlag, connInfo->handleFlag, cudaIpcMemLazyEnablePeerAccess));
+  return mscclppSuccess;
+}
+
+mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output*/, struct mscclppConn* conn /*input*/){
+  if (connInfo == NULL || conn == NULL){
+    WARN("connInfo or connection cannot be null");
+    return mscclppInternalError;
+  }
+  struct mscclppDevConn *devConn = conn->devConn;
+  devConn->remoteBuff = NULL;
+  MSCCLPPCHECK(mscclppCudaCalloc(&devConn->remoteFlag, 1));
+
+  struct mscclppIbContext *ibCtx = conn->ibCtx;
+  if (conn->ibQp == NULL) {
+    MSCCLPPCHECK(mscclppIbContextCreateQp(ibCtx, &conn->ibQp));
+  }
+  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localBuff, conn->buffSize, &conn->ibBuffMr));
+  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localFlag, sizeof(int), &conn->ibLocalFlagMr));
+  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->remoteFlag, sizeof(int), &conn->ibRemoteFlagMr));
+  connInfo->infoQp = conn->ibQp->info;
+  connInfo->infoBuffMr = conn->ibBuffMr->info;
+  connInfo->infoLocalFlagMr = conn->ibLocalFlagMr->info;
+  connInfo->infoRemoteFlagMr = conn->ibRemoteFlagMr->info;
+  return mscclppSuccess;
+}
+
+mscclppResult_t mscclppIbConnectionSetupEnd(struct connInfo* connInfo /*input*/, struct mscclppConn* conn /*output*/){
+  if (connInfo == NULL || conn == NULL){
+    WARN("ipcHandles or connection cannot be null");
+    return mscclppInternalError;
+  }
+  if (conn->ibQp->rtr(&connInfo->infoQp) != 0) {
+    WARN("Failed to transition QP to RTR");
+    return mscclppInvalidUsage;
+  }
+  if (conn->ibQp->rts() != 0) {
+    WARN("Failed to transition QP to RTS");
+    return mscclppInvalidUsage;
+  }
+  conn->ibBuffMrInfo = connInfo->infoBuffMr;
+  conn->ibLocalFlagMrInfo = connInfo->infoLocalFlagMr;
+  conn->ibRemoteFlagMrInfo = connInfo->infoRemoteFlagMr;
+  return mscclppSuccess;
+}
+
 MSCCLPP_API(mscclppResult_t, mscclppConnectionSetup, mscclppComm_t comm);
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
 {
-  // Allocate connection info to be shared with GPU
-  MSCCLPPCHECK(mscclppCudaHostCalloc(&comm->devConns, comm->nConns));
-
   // Send info to peers
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn *conn = &comm->conns[i];
-    struct mscclppDevConn *devConn = &comm->devConns[i];
-    conn->devConn = devConn;
-    devConn->tag = conn->tag;
-    devConn->localBuff = conn->buff;
-    devConn->localFlag = conn->flag;
-    MSCCLPPCHECK(mscclppCudaHostCalloc(&devConn->trigger, 1));
 
     struct connInfo cInfo;
     if (conn->transport == mscclppTransportP2P) {
-      CUDACHECK(cudaIpcGetMemHandle(&cInfo.handleBuff, devConn->localBuff));
-      CUDACHECK(cudaIpcGetMemHandle(&cInfo.handleFlag, devConn->localFlag));
+      MSCCLPPCHECK(mscclppP2pConnectionSetupStart(&cInfo, conn));
     } else if (conn->transport == mscclppTransportIB) {
-      devConn->remoteBuff = NULL;
-      MSCCLPPCHECK(mscclppCudaCalloc(&devConn->remoteFlag, 1));
-
-      struct mscclppIbContext *ibCtx = conn->ibCtx;
-      if (conn->ibQp == NULL) {
-        MSCCLPPCHECK(mscclppIbContextCreateQp(ibCtx, &conn->ibQp));
-      }
-      MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localBuff, conn->buffSize, &conn->ibBuffMr));
-      MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localFlag, sizeof(int), &conn->ibLocalFlagMr));
-      MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->remoteFlag, sizeof(int), &conn->ibRemoteFlagMr));
-      cInfo.infoQp = conn->ibQp->info;
-      cInfo.infoBuffMr = conn->ibBuffMr->info;
-      cInfo.infoLocalFlagMr = conn->ibLocalFlagMr->info;
-      cInfo.infoRemoteFlagMr = conn->ibRemoteFlagMr->info;
+      MSCCLPPCHECK(mscclppIbConnectionSetupStart(&cInfo, conn));
     }
-    MSCCLPPCHECK(bootstrapSend(comm->bootstrap, conn->remoteRank, conn->tag, &cInfo, sizeof(cInfo)));
+    MSCCLPPCHECK(bootstrapSend(comm->bootstrap, conn->remoteRank, conn->devConn->tag, &cInfo, sizeof(cInfo)));
   }
 
   // Recv info from peers
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn *conn = &comm->conns[i];
-    struct mscclppDevConn *devConn = &comm->devConns[i];
-
     struct connInfo cInfo;
-    MSCCLPPCHECK(bootstrapRecv(comm->bootstrap, conn->remoteRank, conn->tag, &cInfo, sizeof(cInfo)));
+    MSCCLPPCHECK(bootstrapRecv(comm->bootstrap, conn->remoteRank, conn->devConn->tag, &cInfo, sizeof(cInfo)));
     if (conn->transport == mscclppTransportP2P) {
-      CUDACHECK(cudaIpcOpenMemHandle(&devConn->remoteBuff, cInfo.handleBuff, cudaIpcMemLazyEnablePeerAccess));
-      CUDACHECK(cudaIpcOpenMemHandle((void **)&devConn->remoteFlag, cInfo.handleFlag, cudaIpcMemLazyEnablePeerAccess));
+      MSCCLPPCHECK(mscclppP2pConnectionSetupEnd(&cInfo, conn));
     } else if (conn->transport == mscclppTransportIB) {
-      if (conn->ibQp->rtr(&cInfo.infoQp) != 0) {
-        WARN("Failed to transition QP to RTR");
-        return mscclppInvalidUsage;
-      }
-      if (conn->ibQp->rts() != 0) {
-        WARN("Failed to transition QP to RTS");
-        return mscclppInvalidUsage;
-      }
-      conn->ibBuffMrInfo = cInfo.infoBuffMr;
-      conn->ibLocalFlagMrInfo = cInfo.infoLocalFlagMr;
-      conn->ibRemoteFlagMrInfo = cInfo.infoRemoteFlagMr;
+      MSCCLPPCHECK(mscclppIbConnectionSetupEnd(&cInfo, conn));
     }
   }
-
   return mscclppSuccess;
 }
 
@@ -274,26 +309,5 @@ MSCCLPP_API(mscclppResult_t, mscclppProxyStop, mscclppComm_t comm);
 mscclppResult_t mscclppProxyStop(mscclppComm_t comm)
 {
   MSCCLPPCHECK(mscclppProxyDestroy(comm));
-  return mscclppSuccess;
-}
-
-MSCCLPP_API(mscclppResult_t, mscclppGetLocalRank, mscclppComm_t comm, int *localRank);
-mscclppResult_t mscclppGetLocalRank(mscclppComm_t comm, int *localRank)
-{
-  *localRank = comm->localRank;
-  return mscclppSuccess;
-}
-
-MSCCLPP_API(mscclppResult_t, mscclppGetNodeFromRank, mscclppComm_t comm, int rank, int *node);
-mscclppResult_t mscclppGetNodeFromRank(mscclppComm_t comm, int rank, int *node)
-{
-  *node = comm->rankToNode[rank];
-  return mscclppSuccess;
-}
-
-MSCCLPP_API(mscclppResult_t, mscclppGetDevConns, mscclppComm_t comm, mscclppDevConn_t* devConns);
-mscclppResult_t mscclppGetDevConns(mscclppComm_t comm, mscclppDevConn_t* devConns)
-{
-  *devConns = comm->devConns;
   return mscclppSuccess;
 }

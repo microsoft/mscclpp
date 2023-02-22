@@ -6,7 +6,7 @@ MSCCLPP_MINOR := 1
 DEBUG ?= 0
 VERBOSE ?= 1
 TRACE ?= 0
-USE_MPI_FOR_TESTS ?= 0
+USE_MPI_FOR_TESTS ?= 1
 
 ######## CUDA
 CUDA_HOME ?= /usr/local/cuda
@@ -116,7 +116,7 @@ LIBSONAME := $(LIBNAME).$(MSCCLPP_MAJOR)
 LIBTARGET := $(BUILDDIR)/$(LIBDIR)/$(LIBNAME).$(MSCCLPP_MAJOR).$(MSCCLPP_MINOR)
 
 TESTSDIR  := tests
-TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc p2p_test.cu)
+TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc p2p_test_mpi.cu)
 TESTSOBJS := $(patsubst %.cc,%.o,$(TESTSSRCS)) $(patsubst %.cu,%.o,$(TESTSSRCS))
 TESTSOBJTARGETS := $(TESTSOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 TESTSBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(TESTSOBJS))
