@@ -1,9 +1,11 @@
 #include "mscclpp.h"
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
-#include "mpi.h"
-#endif // MSCCLPP_USE_MPI_FOR_TESTS
+#include <mpi.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+
 
 void print_usage(const char *prog)
 {
