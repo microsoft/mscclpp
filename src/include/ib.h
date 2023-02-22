@@ -45,8 +45,8 @@ struct mscclppIbQp {
 
   int rtr(const mscclppIbQpInfo *info);
   int rts();
-  int stageSend(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info, int size,
-                uint64_t wrId, unsigned int immData, int offset = 0);
+  int stageSend(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info, uint32_t size,
+                uint64_t wrId, unsigned int immData, uint64_t offset, bool signaled);
   int postSend();
   int postRecv(uint64_t wrId);
 };

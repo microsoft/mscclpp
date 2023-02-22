@@ -6,6 +6,7 @@
 #if CUDART_VERSION >= 11000
 #include <cuda_bf16.h>
 #endif
+#include <stdint.h>
 
 #define MSCCLPP_MAJOR 0
 #define MSCCLPP_MINOR 1
@@ -15,6 +16,14 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+union alignas(8) mscclppTrigger {
+  uint64_t value;
+  struct {
+    uint64_t dataSize : 32;
+    uint64_t dataOffset : 32;
+  } fields;
+};
 
 struct mscclppDevConn {
   int tag;
@@ -32,6 +41,8 @@ struct mscclppDevConn {
   // virtual void pullRmoteFlag();
   // // localBuff[srcOffset..srcOffset+size-1] <- remoteBuff[dstOffset..dstOffset+size-1]
   // virtual void pullRemoteBuff(size_t srcOffset, size_t dstOffset, size_t size);
+
+  mscclppTrigger* trigger;
 };
 
 typedef struct mscclppComm* mscclppComm_t;
@@ -102,8 +113,8 @@ mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int si
 
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
-mscclppResult_t mscclppConnect(mscclppComm_t comm, int rankRecv, int rankSend, void *buff, size_t buffSize, int *flag, int tag,
-                               mscclppTransport_t transportType, const char *ibDev=NULL);
+mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, void *buff, size_t buffSize, int *flag,
+                               int tag, mscclppTransport_t transportType, const char *ibDev=NULL);
 
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);
 

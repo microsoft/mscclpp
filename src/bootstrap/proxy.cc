@@ -8,6 +8,8 @@
 #include <sys/syscall.h>
 #include <map>
 
+#define MSCCLPP_PROXY_FLAG_SET_BY_RDMA 1
+
 struct proxyArgs {
   struct mscclppComm* comm;
   struct mscclppIbContext* ibCtx;
@@ -27,45 +29,47 @@ void* mscclppProxyService(void* _args) {
   };
 
   int rank = comm->rank;
-  std::map<int, struct mscclppConn *> recvTagToConn;
-  std::map<int, struct mscclppConn *> sendTagToConn;
-  std::map<struct mscclppConn *, int> sendConnToState;
+  std::map<uint32_t, struct mscclppConn *> qpNumToConn;
+  std::map<volatile uint64_t *, std::pair<int, struct mscclppConn *>> trigToSendStateAndConn;
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn *conn = &comm->conns[i];
     if (conn->transport != mscclppTransportIB) continue;
     if (conn->ibCtx != ibCtx) continue;
-    if (conn->rankRecv == rank) {
-      recvTagToConn[conn->tag] = conn;
-    } else if (conn->rankSend == rank) {
-      sendTagToConn[conn->tag] = conn;
-      sendConnToState[conn] = SEND_STATE_INIT;
-    }
-  }
-  // Initial post recv
-  for (auto &pair : recvTagToConn) {
-    struct mscclppConn *conn = pair.second;
-    int tag = pair.first;
-    if (conn->ibQp->postRecv((uint64_t)-tag) != 0) {
+    volatile uint64_t *tmp = (volatile uint64_t *)conn->devConn->trigger;
+    trigToSendStateAndConn[tmp].first = SEND_STATE_INIT;
+    trigToSendStateAndConn[tmp].second = conn;
+    qpNumToConn[conn->ibQp->qp->qp_num] = conn;
+    // All connections may read
+    if (conn->ibQp->postRecv(0) != 0) {
       WARN("postRecv failed: errno %d", errno);
     }
   }
   // TODO(chhwang): run send and recv in different threads for lower latency
+  mscclppTrigger trigger;
   int wcNum;
   while (*stop == 0) {
     // Try send
-    for (auto &pair : sendConnToState) {
-      if (pair.second == SEND_STATE_INPROGRESS) continue;
-      // TODO(chhwang): do we need a thread per flag?
-      struct mscclppConn *conn = pair.first;
-      volatile int *flag = (volatile int *)conn->flag;
-      if (*flag == 0) continue;
+    // TODO(chhwang): one thread per conn
+    for (auto &pair : trigToSendStateAndConn) {
+      if (pair.second.first != SEND_STATE_INIT) continue;
+      trigger.value = *pair.first;
+      if (trigger.value == 0) continue;
       // Do send
-      conn->ibQp->stageSend(conn->ibMr, &conn->ibRemoteMrInfo, conn->buffSize,
-                            (uint64_t)conn->tag, (unsigned int)conn->tag);
+      struct mscclppConn *conn = pair.second.second;
+#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1)
+      conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
+                            /*wrId=*/0, /*immData=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
+      // My local flag is copied to the peer's remote flag
+      conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibRemoteFlagMrInfo, sizeof(int),
+                            /*wrId=*/0, /*immData=*/0, /*offset=*/0, /*signaled=*/true);
+#else
+      conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
+                            /*wrId=*/0, /*immData=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/true);
+#endif
       if (conn->ibQp->postSend() != 0) {
         WARN("postSend failed: errno %d", errno);
       }
-      pair.second = SEND_STATE_INPROGRESS;
+      pair.second.first = SEND_STATE_INPROGRESS;
     }
 
     // Poll completions
@@ -74,32 +78,26 @@ void* mscclppProxyService(void* _args) {
       for (int i = 0; i < wcNum; ++i) {
         struct ibv_wc *wc = &ibCtx->wcs[i];
         if (wc->status != IBV_WC_SUCCESS) {
-          WARN("wc status %d", wc->status);
+          WARN("rank %d wc status %d", rank, wc->status);
+          continue;
         }
-        if (((int)wc->wr_id) < 0) {
-          // recv
-          auto search = recvTagToConn.find(wc->imm_data);
-          if (search == recvTagToConn.end()) {
-            WARN("unexpected imm_data %d", wc->imm_data);
-          }
-          struct mscclppConn *conn = search->second;
-          if (conn->ibQp->postRecv((uint64_t)-wc->imm_data) != 0) {
+        struct mscclppConn *conn = qpNumToConn[wc->qp_num];
+        if (wc->opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
+          // recv completion
+          if (qpNumToConn[wc->qp_num]->ibQp->postRecv(wc->wr_id) != 0) {
             WARN("postRecv failed: errno %d", errno);
           }
-          volatile int *flag = (volatile int *)conn->flag;
-          *flag = 1;
-        } else {
-          // send
-          int tag = (int)wc->wr_id;
-          auto search = sendTagToConn.find(tag);
-          if (search == sendTagToConn.end()) {
-            WARN("unexpected tag %d", tag);
-          }
-          struct mscclppConn *conn = search->second;
-          volatile int *flag = (volatile int *)conn->flag;
-          *flag = 0;
-          sendConnToState[conn] = SEND_STATE_INIT;
-          // WARN("send done rank %d", rank);
+#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA != 1)
+          // TODO(chhwang): gdc & cpu flush
+          // *((volatile int *)conn->devConn->remoteFlag) = 1;
+#endif
+          // WARN("rank %d recv completion", rank);
+        } else if (wc->opcode == IBV_WC_RDMA_WRITE) {
+          // send completion
+          volatile uint64_t *tmp = (volatile uint64_t *)conn->devConn->trigger;
+          *tmp = 0;
+          trigToSendStateAndConn[tmp].first = SEND_STATE_INIT;
+          // WARN("rank %d send completion", rank);
         }
       }
     }

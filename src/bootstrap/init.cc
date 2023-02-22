@@ -141,105 +141,112 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int rankRecv, int rankSend,
+MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int remoteRank,
             void *buff, size_t buffSize, int *flag, int tag, mscclppTransport_t transportType, const char *ibDev);
-mscclppResult_t mscclppConnect(mscclppComm_t comm, int rankRecv, int rankSend, void *buff, size_t buffSize,
+mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, void *buff, size_t buffSize,
                                int *flag, int tag, mscclppTransport_t transportType, const char *ibDev/*=NULL*/)
 {
-  if (comm->rank == rankRecv || comm->rank == rankSend) {
-    struct mscclppConn *conn = &comm->conns[comm->nConns++];
-    conn->transport = transportType;
-    conn->rankSend = rankSend;
-    conn->rankRecv = rankRecv;
-    conn->tag = tag;
-    conn->buff = buff;
-    conn->buffSize = buffSize;
-    conn->flag = flag;
-    conn->ibCtx = NULL;
-    conn->ibQp = NULL;
+  struct mscclppConn *conn = &comm->conns[comm->nConns++];
+  conn->transport = transportType;
+  conn->remoteRank = remoteRank;
+  conn->tag = tag;
+  conn->buff = buff;
+  conn->buffSize = buffSize;
+  conn->flag = flag;
+  conn->ibCtx = NULL;
+  conn->ibQp = NULL;
 
-    if (ibDev != NULL) {
-      // Check if an IB context exists
-      int ibDevIdx = -1;
-      int firstNullIdx = -1;
-      for (int i = 0; i < MSCCLPP_IB_MAX_DEVS; ++i) {
-        if (comm->ibContext[i] == NULL) {
-          if (firstNullIdx == -1) {
-            firstNullIdx = i;
-          }
-        } else if (strncmp(comm->ibContext[i]->ctx->device->name, ibDev, IBV_SYSFS_NAME_MAX) == 0) {
-          ibDevIdx = i;
-          break;
-        }
-      }
-      if (ibDevIdx == -1) {
-        // Create a new context.
+  if (ibDev != NULL) {
+    // Check if an IB context exists
+    int ibDevIdx = -1;
+    int firstNullIdx = -1;
+    for (int i = 0; i < MSCCLPP_IB_MAX_DEVS; ++i) {
+      if (comm->ibContext[i] == NULL) {
         if (firstNullIdx == -1) {
-          WARN("Too many IB devices");
-          return mscclppInvalidUsage;
+          firstNullIdx = i;
         }
-        ibDevIdx = firstNullIdx;
-        if (mscclppIbContextCreate(&comm->ibContext[ibDevIdx], ibDev) != mscclppSuccess) {
-          WARN("Failed to create IB context");
-          return mscclppInternalError;
-        }
+      } else if (strncmp(comm->ibContext[i]->ctx->device->name, ibDev, IBV_SYSFS_NAME_MAX) == 0) {
+        ibDevIdx = i;
+        break;
       }
-      conn->ibCtx = comm->ibContext[ibDevIdx];
     }
+    if (ibDevIdx == -1) {
+      // Create a new context.
+      if (firstNullIdx == -1) {
+        WARN("Too many IB devices");
+        return mscclppInvalidUsage;
+      }
+      ibDevIdx = firstNullIdx;
+      if (mscclppIbContextCreate(&comm->ibContext[ibDevIdx], ibDev) != mscclppSuccess) {
+        WARN("Failed to create IB context");
+        return mscclppInternalError;
+      }
+    }
+    conn->ibCtx = comm->ibContext[ibDevIdx];
   }
   return mscclppSuccess;
 }
 
+struct connInfo {
+  cudaIpcMemHandle_t handleBuff;
+  cudaIpcMemHandle_t handleFlag;
+  mscclppIbQpInfo infoQp;
+  mscclppIbMrInfo infoBuffMr;
+  mscclppIbMrInfo infoLocalFlagMr;
+  mscclppIbMrInfo infoRemoteFlagMr;
+};
+
 MSCCLPP_API(mscclppResult_t, mscclppConnectionSetup, mscclppComm_t comm);
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
 {
-  struct connInfo {
-    cudaIpcMemHandle_t handleBuff;
-    cudaIpcMemHandle_t handleFlag;
-    mscclppIbQpInfo qpInfo;
-    mscclppIbMrInfo mrInfo;
-  };
+  // Allocate connection info to be shared with GPU
+  MSCCLPPCHECK(mscclppCudaHostCalloc(&comm->devConns, comm->nConns));
 
   // Send info to peers
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn *conn = &comm->conns[i];
+    struct mscclppDevConn *devConn = &comm->devConns[i];
+    conn->devConn = devConn;
+    devConn->tag = conn->tag;
+    devConn->localBuff = conn->buff;
+    devConn->localFlag = conn->flag;
+    MSCCLPPCHECK(mscclppCudaHostCalloc(&devConn->trigger, 1));
+
     struct connInfo cInfo;
     if (conn->transport == mscclppTransportP2P) {
-      CUDACHECK(cudaIpcGetMemHandle(&cInfo.handleBuff, conn->buff));
-      CUDACHECK(cudaIpcGetMemHandle(&cInfo.handleFlag, conn->flag));
+      CUDACHECK(cudaIpcGetMemHandle(&cInfo.handleBuff, devConn->localBuff));
+      CUDACHECK(cudaIpcGetMemHandle(&cInfo.handleFlag, devConn->localFlag));
     } else if (conn->transport == mscclppTransportIB) {
+      devConn->remoteBuff = NULL;
+      MSCCLPPCHECK(mscclppCudaCalloc(&devConn->remoteFlag, 1));
+
       struct mscclppIbContext *ibCtx = conn->ibCtx;
       if (conn->ibQp == NULL) {
         MSCCLPPCHECK(mscclppIbContextCreateQp(ibCtx, &conn->ibQp));
       }
-      MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, conn->buff, conn->buffSize, &conn->ibMr));
-      cInfo.qpInfo = conn->ibQp->info;
-      cInfo.mrInfo = conn->ibMr->info;
+      MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localBuff, conn->buffSize, &conn->ibBuffMr));
+      MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localFlag, sizeof(int), &conn->ibLocalFlagMr));
+      MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->remoteFlag, sizeof(int), &conn->ibRemoteFlagMr));
+      cInfo.infoQp = conn->ibQp->info;
+      cInfo.infoBuffMr = conn->ibBuffMr->info;
+      cInfo.infoLocalFlagMr = conn->ibLocalFlagMr->info;
+      cInfo.infoRemoteFlagMr = conn->ibRemoteFlagMr->info;
     }
-    int peer = conn->rankSend == comm->rank ? conn->rankRecv : conn->rankSend;
-    MSCCLPPCHECK(bootstrapSend(comm->bootstrap, peer, conn->tag, &cInfo, sizeof(cInfo)));
+    MSCCLPPCHECK(bootstrapSend(comm->bootstrap, conn->remoteRank, conn->tag, &cInfo, sizeof(cInfo)));
   }
-
-  // Allocate connection info to be shared with GPU
-  MSCCLPPCHECK(mscclppCudaHostCalloc(&comm->devConns, comm->nConns));
 
   // Recv info from peers
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn *conn = &comm->conns[i];
     struct mscclppDevConn *devConn = &comm->devConns[i];
 
-    devConn->tag = conn->tag;
-    devConn->localBuff = conn->buff;
-    devConn->localFlag = conn->flag;
-
     struct connInfo cInfo;
-    int peer = conn->rankSend == comm->rank ? conn->rankRecv : conn->rankSend;
-    MSCCLPPCHECK(bootstrapRecv(comm->bootstrap, peer, conn->tag, &cInfo, sizeof(cInfo)));
+    MSCCLPPCHECK(bootstrapRecv(comm->bootstrap, conn->remoteRank, conn->tag, &cInfo, sizeof(cInfo)));
     if (conn->transport == mscclppTransportP2P) {
       CUDACHECK(cudaIpcOpenMemHandle(&devConn->remoteBuff, cInfo.handleBuff, cudaIpcMemLazyEnablePeerAccess));
       CUDACHECK(cudaIpcOpenMemHandle((void **)&devConn->remoteFlag, cInfo.handleFlag, cudaIpcMemLazyEnablePeerAccess));
     } else if (conn->transport == mscclppTransportIB) {
-      if (conn->ibQp->rtr(&cInfo.qpInfo) != 0) {
+      if (conn->ibQp->rtr(&cInfo.infoQp) != 0) {
         WARN("Failed to transition QP to RTR");
         return mscclppInvalidUsage;
       }
@@ -247,9 +254,9 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
         WARN("Failed to transition QP to RTS");
         return mscclppInvalidUsage;
       }
-      conn->ibRemoteMrInfo = cInfo.mrInfo;
-      devConn->remoteBuff = NULL;
-      CUDACHECK(cudaMalloc(&devConn->remoteFlag, sizeof(int)));
+      conn->ibBuffMrInfo = cInfo.infoBuffMr;
+      conn->ibLocalFlagMrInfo = cInfo.infoLocalFlagMr;
+      conn->ibRemoteFlagMrInfo = cInfo.infoRemoteFlagMr;
     }
   }
 

@@ -14,75 +14,51 @@
 #define CUDACHECK(cmd) do {                                   \
     cudaError_t err = cmd;                                    \
     if( err != cudaSuccess ) {                                \
-        printf("Cuda failure '%s'", cudaGetErrorString(err)); \
+        printf("%s:%d Cuda failure '%s'", __FILE__, __LINE__, cudaGetErrorString(err)); \
         exit(EXIT_FAILURE);                                   \
     }                                                         \
 } while(false)
 
 __global__ void kernel(mscclppDevConn_t devConns, int rank, int world_size)
 {
-  int tid = blockIdx.x * blockDim.x + threadIdx.x;
-  if (tid == 0) {
-    // Get sending data and send flag
-    volatile int *data;
-    for (int i = 0; i < (world_size - 1) * 2; ++i) {
-      mscclppDevConn_t devConn = &devConns[i];
-      int tag = devConn->tag;
-      int rankSend = tag % world_size;
-      if (rankSend == rank) { // I am a sender
-        data = (volatile int *)devConn->localBuff;
-        // We are sending the same data to all peers, so just break here
-        break;
-      }
-    }
+  int warpId = threadIdx.x / 32;
+  int remoteRank = (warpId < rank) ? warpId : warpId + 1;
+  mscclppDevConn_t devConn = &devConns[(remoteRank < rank) ? remoteRank : remoteRank - 1];
+  volatile int *data = (volatile int *)devConn->localBuff;
+  volatile int *localFlag = devConn->localFlag;
+  volatile int *remoteFlag = devConn->remoteFlag;
+  volatile uint64_t *trig = (volatile uint64_t *)devConn->trigger;
 
-    // Set my data
-    *data = rank + 1;
+  if (threadIdx.x == 0) {
+    // Set my data and flag
+    *(data + rank) = rank + 1;
+    __threadfence_system();
+    *localFlag = 1;
+  }
+  __syncthreads();
 
-    // Set send flags to inform all peers that the data is ready
-    for (int i = 0; i < (world_size - 1) * 2; ++i) {
-      mscclppDevConn_t devConn = &devConns[i];
-      int tag = devConn->tag;
-      int rankSend = tag % world_size;
-      if (rankSend == rank) { // I am a sender
-        *((volatile int *)devConn->localFlag) = 1;
-      }
-    }
+  // Each warp receives data from different ranks
+  if (threadIdx.x % 32 == 0) {
+    if (devConn->remoteBuff == NULL) { // IB
+      // Trigger sending data and flag
+      uint64_t dataOffset = rank * sizeof(int);
+      uint64_t dataSize = sizeof(int);
+      *trig = (dataOffset << 32) + dataSize;
 
-    // Read data from all other peers
-    for (int i = 0; i < (world_size - 1) * 2; ++i) {
-      mscclppDevConn_t devConn = &devConns[i];
-      int tag = devConn->tag;
-      int rankSend = tag % world_size;
-      int rankRecv = tag / world_size;
-      if (rankRecv == rank) { // I am a receiver
-        if (devConn->remoteBuff == NULL) { // IB
-          volatile int *localFlag = (volatile int *)devConn->localFlag;
+      // Wait until the proxy have sent my data and flag
+      while (*trig != 0) {}
 
-          // Wait until the data comes in via proxy
-          while (*localFlag != 1) {}
-        } else { // P2P
-          volatile int *remoteData = (volatile int *)devConn->remoteBuff;
-          volatile int *remoteFlag = (volatile int *)devConn->remoteFlag;
+      // Wait for receiving data from remote rank
+      while (*remoteFlag != 1) {}
+    } else { // P2P
+      // Directly read data
+      volatile int *remoteData = (volatile int *)devConn->remoteBuff;
 
-          // Wait until the remote data is set
-          while (*remoteFlag != 1) {}
+      // Wait until the remote data is set
+      while (*remoteFlag != 1) {}
 
-          // Read remote data
-          data[rankSend] = remoteData[rankSend];
-        }
-      }
-    }
-
-    // Wait until the proxy have sent my data to all peers
-    for (int i = 0; i < (world_size - 1) * 2; ++i) {
-      mscclppDevConn_t devConn = &devConns[i];
-      int tag = devConn->tag;
-      int rankSend = tag % world_size;
-      if (rankSend == rank) { // I am a sender
-        volatile int *flag = (volatile int *)devConn->localFlag;
-        while (*flag == 1) {}
-      }
+      // Read remote data
+      data[remoteRank] = remoteData[remoteRank];
     }
   }
 }
@@ -133,6 +109,8 @@ int main(int argc, const char *argv[])
   int rank = atoi(argv[2]);
   int world_size = atoi(argv[3]);
 #endif
+  int localRank = rankToLocalRank(rank);
+  int thisNode = rankToNode(rank);
 
   mscclppComm_t comm;
   mscclppResult_t res = mscclppCommInitRank(&comm, world_size, rank, ip_port);
@@ -141,64 +119,33 @@ int main(int argc, const char *argv[])
     return -1;
   }
 
+  CUDACHECK(cudaSetDevice(localRank));
+
   int *data_d;
-  int *send_flags_d;
-  int *recv_flags_d;
+  int *flag_d;
   CUDACHECK(cudaMalloc(&data_d, sizeof(int) * world_size));
-  CUDACHECK(cudaHostAlloc(&send_flags_d, sizeof(int) * (world_size - 1), cudaHostAllocMapped));
-  CUDACHECK(cudaHostAlloc(&recv_flags_d, sizeof(int) * (world_size - 1), cudaHostAllocMapped));
-
+  CUDACHECK(cudaMalloc(&flag_d, sizeof(int)));
   CUDACHECK(cudaMemset(data_d, 0, sizeof(int) * world_size));
-  // CUDACHECK(cudaMemcpy(data_d, tmp, sizeof(int) * 2, cudaMemcpyHostToDevice));
-  // printf("rank %d CPU: setting data at %p\n", rank, data_d + rank);
-  memset(send_flags_d, 0, sizeof(int) * (world_size - 1));
-  memset(recv_flags_d, 0, sizeof(int) * (world_size - 1));
+  CUDACHECK(cudaMemset(flag_d, 0, sizeof(int)));
 
-  int localRank = rankToLocalRank(rank);
-  int thisNode = rankToNode(rank);
-  std::string ibDev = "mlx5_ib" + std::to_string(localRank);
+  std::string ibDevStr = "mlx5_ib" + std::to_string(localRank);
 
-  // Read from all other ranks
-  int idx = 0;
   for (int r = 0; r < world_size; ++r) {
     if (r == rank) continue;
-    int tag = rank * world_size + r;
+    mscclppTransport_t transportType = mscclppTransportIB;
+    const char *ibDev = ibDevStr.c_str();
 #if (TEST_CONN_TYPE == 0) // P2P+IB
-    int node = rankToNode(r);
-    if (node == thisNode) {
-      res = mscclppConnect(comm, rank, r, data_d + r, sizeof(int), recv_flags_d + idx, tag, mscclppTransportP2P);
-    } else {
-      res = mscclppConnect(comm, rank, r, data_d + r, sizeof(int), recv_flags_d + idx, tag, mscclppTransportIB, ibDev.c_str());
+    if (rankToNode(r) == thisNode) {
+      transportType = mscclppTransportP2P;
+      ibDev = NULL;
     }
-#else // (TEST_CONN_TYPE == 1) // IB-Only
-    res = mscclppConnect(comm, rank, r, data_d + r, sizeof(int), recv_flags_d + idx, tag, mscclppTransportIB, ibDev.c_str());
 #endif
+    // Connect with all other ranks
+    res = mscclppConnect(comm, r, data_d, sizeof(int) * world_size, flag_d, 0, transportType, ibDev);
     if (res != mscclppSuccess) {
       printf("mscclppConnect failed\n");
       return -1;
     }
-    ++idx;
-  }
-  // Let others read from me
-  idx = 0;
-  for (int r = 0; r < world_size; ++r) {
-    if (r == rank) continue;
-    int tag = r * world_size + rank;
-#if (TEST_CONN_TYPE == 0) // P2P+IB
-    int node = rankToNode(r);
-    if (node == thisNode) {
-      res = mscclppConnect(comm, r, rank, data_d + rank, sizeof(int), send_flags_d + idx, tag, mscclppTransportP2P);
-    } else {
-      res = mscclppConnect(comm, r, rank, data_d + rank, sizeof(int), send_flags_d + idx, tag, mscclppTransportIB, ibDev.c_str());
-    }
-#else // (TEST_CONN_TYPE == 1) // IB-Only
-    res = mscclppConnect(comm, r, rank, data_d + rank, sizeof(int), send_flags_d + idx, tag, mscclppTransportIB, ibDev.c_str());
-#endif
-    if (res != mscclppSuccess) {
-      printf("mscclppConnect failed\n");
-      return -1;
-    }
-    ++idx;
   }
 
   res = mscclppConnectionSetup(comm);
@@ -216,7 +163,7 @@ int main(int argc, const char *argv[])
   mscclppDevConn_t devConns;
   mscclppGetDevConns(comm, &devConns);
 
-  kernel<<<1, 1>>>(devConns, rank, world_size);
+  kernel<<<1, 32 * (world_size - 1)>>>(devConns, rank, world_size);
   CUDACHECK(cudaDeviceSynchronize());
 
   res = mscclppProxyStop(comm);

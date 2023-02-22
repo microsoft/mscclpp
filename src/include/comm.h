@@ -160,8 +160,7 @@
 
 struct mscclppConn {
   mscclppTransport_t transport;
-  int rankSend;
-  int rankRecv;
+  int remoteRank;
   int tag;
   void* buff;
   int buffSize;
@@ -169,8 +168,12 @@ struct mscclppConn {
   struct mscclppDevConn *devConn;
   struct mscclppIbContext *ibCtx;
   struct mscclppIbQp *ibQp;
-  struct mscclppIbMr *ibMr;
-  struct mscclppIbMrInfo ibRemoteMrInfo;
+  struct mscclppIbMr *ibBuffMr;
+  struct mscclppIbMr *ibLocalFlagMr;
+  struct mscclppIbMr *ibRemoteFlagMr;
+  struct mscclppIbMrInfo ibBuffMrInfo;
+  struct mscclppIbMrInfo ibLocalFlagMrInfo;
+  struct mscclppIbMrInfo ibRemoteFlagMrInfo;
 };
 
 struct mscclppComm {
