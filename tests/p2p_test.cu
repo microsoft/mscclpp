@@ -46,11 +46,14 @@ __global__ void kernel(int rank, int world_size)
   if (threadIdx.x == 0) {
     // Set my data and flag
     *(data + rank) = rank + 1;
-    // Do we need a sys fence?
-    __threadfence_system();
-    *localFlag = baseFlag + 1;
   }
   __syncthreads();
+
+  if (threadIdx.x == 0) {
+    // Do we need a sys fence?
+    // __threadfence_system();
+    *localFlag = baseFlag + 1;
+  }
 
   // Each warp receives data from different ranks
   if (devConn.remoteBuff == NULL) { // IB
@@ -84,6 +87,32 @@ int rankToLocalRank(int rank)
 int rankToNode(int rank)
 {
   return rank / RANKS_PER_NODE;
+}
+
+int cudaNumToIbNum(int cudaNum)
+{
+  int ibNum;
+  if (cudaNum == 0) {
+    ibNum = 0;
+  } else if (cudaNum == 1) {
+    ibNum = 4;
+  } else if (cudaNum == 2) {
+    ibNum = 1;
+  } else if (cudaNum == 3) {
+    ibNum = 5;
+  } else if (cudaNum == 4) {
+    ibNum = 2;
+  } else if (cudaNum == 5) {
+    ibNum = 6;
+  } else if (cudaNum == 6) {
+    ibNum = 3;
+  } else if (cudaNum == 7) {
+    ibNum = 7;
+  } else {
+    printf("Invalid cudaNum: %d\n", cudaNum);
+    exit(EXIT_FAILURE);
+  }
+  return ibNum;
 }
 
 void print_usage(const char *prog)
@@ -124,7 +153,11 @@ int main(int argc, const char *argv[])
 #endif
   int localRank = rankToLocalRank(rank);
   int thisNode = rankToNode(rank);
-  CUDACHECK(cudaSetDevice(localRank));
+  int cudaNum = localRank;
+  int ibNum = cudaNumToIbNum(cudaNum);
+
+  CUDACHECK(cudaSetDevice(cudaNum));
+  std::string ibDevStr = "mlx5_ib" + std::to_string(ibNum);
 
   mscclppComm_t comm;
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
@@ -136,8 +169,6 @@ int main(int argc, const char *argv[])
   CUDACHECK(cudaMalloc(&flag_d, sizeof(int)));
   CUDACHECK(cudaMemset(data_d, 0, data_size));
   CUDACHECK(cudaMemset(flag_d, 0, sizeof(int)));
-
-  std::string ibDevStr = "mlx5_ib" + std::to_string(localRank);
 
   mscclppDevConn_t devConns[16];
   for (int r = 0; r < world_size; ++r) {

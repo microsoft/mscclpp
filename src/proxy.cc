@@ -6,10 +6,19 @@
 #include "checks.h"
 
 #include <sys/syscall.h>
+#include <numa.h>
 #include <map>
 #include <thread>
 
 #define MSCCLPP_PROXY_FLAG_SET_BY_RDMA 0
+
+static void NumaBind(int node)
+{
+  nodemask_t mask;
+  nodemask_zero(&mask);
+  nodemask_set_compat(&mask, node);
+  numa_bind_compat(&mask);
+}
 
 struct proxyArgs {
   struct mscclppComm* comm;
@@ -21,6 +30,7 @@ struct proxyArgs {
 void* mscclppProxyService(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
   struct mscclppComm *comm = args->comm;
+  struct mscclppIbContext *ibCtx = args->ibCtx;
   volatile int *run = args->run;
   struct mscclppConn *conn = &comm->conns[args->connIdx];
   free(_args);
@@ -28,7 +38,8 @@ void* mscclppProxyService(void* _args) {
   int currentRemoteFlagVlaue = *conn->cpuRemoteFlag;
 #endif
 
-  // TODO(chhwang): NUMA & core binding
+  // TODO(chhwang): core binding
+  NumaBind(ibCtx->numaNode);
 
   enum {
     SEND_STATE_INIT,

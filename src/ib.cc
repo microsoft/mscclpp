@@ -10,6 +10,48 @@
 #include "comm.h"
 #include "ib.h"
 
+static int getIbDevNumaNode(const char *ibDevPath)
+{
+  if (ibDevPath == NULL) {
+    WARN("ibDevPath is NULL");
+    return -1;
+  }
+  const char *postfix = "/device/numa_node";
+  FILE *fp = NULL;
+  char *filePath = NULL;
+  int node = -1;
+  int res;
+  if (mscclppCalloc(&filePath, strlen(ibDevPath) + strlen(postfix) + 1) != mscclppSuccess) {
+    WARN("mscclppCalloc failed");
+    goto exit;
+  }
+  memcpy(filePath, ibDevPath, strlen(ibDevPath) * sizeof(char));
+  filePath[strlen(ibDevPath)] = '\0';
+  if (strncat(filePath, postfix, strlen(postfix)) == NULL) {
+    WARN("strncat failed");
+    goto exit;
+  }
+  fp = fopen(filePath, "r");
+  if (fp == NULL) {
+    WARN("fopen failed (errno %d, path %s)", errno, filePath);
+    goto exit;
+  }
+  res = fscanf(fp, "%d", &node);
+  if (res != 1) {
+    WARN("fscanf failed (errno %d, path %s)", errno, filePath);
+    node = -1;
+    goto exit;
+  }
+exit:
+  if (filePath != NULL) {
+    free(filePath);
+  }
+  if (fp != NULL) {
+    fclose(fp);
+  }
+  return node;
+}
+
 mscclppResult_t mscclppIbContextCreate(struct mscclppIbContext **ctx, const char *ibDevName)
 {
   struct mscclppIbContext *_ctx;
@@ -18,16 +60,23 @@ mscclppResult_t mscclppIbContextCreate(struct mscclppIbContext **ctx, const char
   std::vector<int> ports;
 
   int num;
+  const char *ibDevPath = NULL;
   struct ibv_device **devices = ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
     if (strncmp(devices[i]->name, ibDevName, IBV_SYSFS_NAME_MAX) == 0) {
       _ctx->ctx = ibv_open_device(devices[i]);
+      ibDevPath = devices[i]->ibdev_path;
       break;
     }
   }
   ibv_free_device_list(devices);
   if (_ctx->ctx == nullptr) {
     WARN("ibv_open_device failed (errno %d, device name %s)", errno, ibDevName);
+    goto fail;
+  }
+
+  _ctx->numaNode = getIbDevNumaNode(ibDevPath);
+  if (_ctx->numaNode < 0) {
     goto fail;
   }
 

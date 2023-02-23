@@ -56,7 +56,7 @@ struct mscclppIbQp {
 
 // Holds resources of a single IB device.
 struct mscclppIbContext {
-  int numa_node;
+  int numaNode;
   struct ibv_context *ctx;
   struct ibv_pd *pd;
   int *ports;

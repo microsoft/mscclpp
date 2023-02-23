@@ -101,7 +101,7 @@ LIBDIR := lib
 OBJDIR := obj
 BINDIR := bin
 
-LDFLAGS := $(NVLDFLAGS) -libverbs -lgdrapi
+LDFLAGS := $(NVLDFLAGS) -libverbs -lgdrapi -lnuma
 
 LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc gdr.cc init.cc proxy.cc ib.cc)
 LIBSRCS += $(addprefix src/bootstrap/,bootstrap.cc socket.cc)
