@@ -343,8 +343,8 @@ int mscclppIbQp::stageSend(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info
   int wrn = this->wrn;
   struct ibv_send_wr *wr_ = &this->wrs[wrn];
   struct ibv_sge *sge_ = &this->sges[wrn];
-  std::memset(wr_, 0, sizeof(struct ibv_send_wr));
-  std::memset(sge_, 0, sizeof(struct ibv_sge));
+  // std::memset(wr_, 0, sizeof(struct ibv_send_wr));
+  // std::memset(sge_, 0, sizeof(struct ibv_sge));
   wr_->wr_id = wrId;
   wr_->sg_list = sge_;
   wr_->num_sge = 1;
@@ -371,8 +371,8 @@ int mscclppIbQp::postSend()
     if (ret != 0) {
         return ret;
     }
-    std::memset(this->wrs, 0, sizeof(struct ibv_send_wr) * this->wrn);
-    std::memset(this->sges, 0, sizeof(struct ibv_sge) * this->wrn);
+    // std::memset(this->wrs, 0, sizeof(struct ibv_send_wr) * this->wrn);
+    // std::memset(this->sges, 0, sizeof(struct ibv_sge) * this->wrn);
     this->wrn = 0;
     return 0;
 }
