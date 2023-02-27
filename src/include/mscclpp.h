@@ -25,6 +25,32 @@ union alignas(8) mscclppTrigger {
   } fields;
 };
 
+/**************************************
+ * A mscclppDevConn provides a zero-copy connection between a sender and a receiver.
+ * It contains a send_buffer and a recv_buffer of the same size
+ * 
+ * At connection setup, the sender and receiver register the respective buffers through mscclppConnect.
+ * 
+ * After connection setup, 
+ *    mscclppDevConn has exclusive ownership of the recv_buffer; 
+ *    the sender has exclusive ownership of the send_buffer
+ * 
+ * The Push communication proceeds as follows:
+ * 1. Sender calls mscclppDevConn::asyncSend() once the contents of the send_buffer are ready
+ *    Now both the sender and mscclppDevConn have shared (read) ownership of the send_buffer
+ *    mscclppDevConn synchronously waits for the exclusive ownership of the recv_buffer (for previous recv to finish),
+ *    initiates the copy to the recv_buffer, and returns
+ * 
+ * 2. Sender calls mscclppDevConn::waitSend() to wait for the copy to complete.
+ *    When this call returns, the sender has exclusive ownership of the send_buffer again; mscclppDevConn has no ownership
+ * 
+ * 3. Receiver calls mscclppDevConn::waitRecv() to wait for the copy to complete.
+ *    When this call returns, the receiver has exclusive ownership of the recv_buffer; mscclppDevConn has no ownership
+ * 
+ * 4. Receiver calls mscclppDevConn::recvDone() to indicate that it is done with the recv_buffer
+ * 
+ ***************************************/
+
 struct mscclppDevConn {
   int tag;
 
