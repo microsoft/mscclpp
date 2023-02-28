@@ -239,12 +239,16 @@ int main(int argc, const char *argv[])
   cudaStreamEndCapture(stream, &graph);
   cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
 
+  int cudagraphwarmup = 200;
+  for (int i = 0; i < cudagraphwarmup; ++i) {
+    cudaGraphLaunch(instance, stream);
+  }
 
   // measure runtime 
   CUDACHECK(cudaEventRecord(ev_start, stream));
-  int cudagraphlaunch = 100;
+  int cudagraphlaunch = 1000;
   for (int i = 0; i < cudagraphlaunch; ++i) {
-//    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+    // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
     cudaGraphLaunch(instance, stream);
   }
   CUDACHECK(cudaEventRecord(ev_end, stream));
