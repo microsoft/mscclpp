@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <string>
 
+#define RANKS_PER_NODE 8
 #define USE_DMA_FOR_P2P 1
 #define TEST_CONN_TYPE 0 // 0: P2P(for local)+IB(for remote), 1: IB-Only
 
@@ -242,39 +243,42 @@ int main(int argc, const char *argv[])
 
   // warm up
   int warmupiter = 1000;
-  for (int i = 0; i < warmupiter; ++i) {
-    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+//  for (int i = 0; i < warmupiter; ++i) {
+//    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+//  }
+
+  // cudaGraph Capture
+  cudaGraph_t graph;
+  cudaGraphExec_t instance;
+  cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
+  int cudagraphiter = 100;
+  for (int i = 0; i < cudagraphiter; ++i) {
+  	kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
   }
+  cudaStreamEndCapture(stream, &graph);
+  cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
 
-  // // cudaGraph Capture
-  // cudaGraph_t graph;
-  // cudaGraphExec_t instance;
-  // cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
-  // int cudagraphiter = 100;
-  // for (int i = 0; i < cudagraphiter; ++i) {
-  //   kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
-  // }
-  // cudaStreamEndCapture(stream, &graph);
-  // cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
-
-  // int cudagraphwarmup = 200;
-  // for (int i = 0; i < cudagraphwarmup; ++i) {
-  //   cudaGraphLaunch(instance, stream);
-  // }
-
-  // // measure runtime 
-  // CUDACHECK(cudaEventRecord(ev_start, stream));
-  // int cudagraphlaunch = 1000;
-  // for (int i = 0; i < cudagraphlaunch; ++i) {
-  //   // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
-  //   cudaGraphLaunch(instance, stream);
-  // }
-  // CUDACHECK(cudaEventRecord(ev_end, stream));
+  int cudagraphwarmup = 200;
+  for (int i = 0; i < cudagraphwarmup; ++i) {
+	  cudaGraphLaunch(instance, stream);
+  }
   CUDACHECK(cudaStreamSynchronize(stream));
 
-  // float ms;
-  // CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
-  // printf("rank: %d, time: %f us/iter\n", rank, ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter);
+  // measure runtime 
+//  CUDACHECK(cudaEventRecord(ev_start, stream));
+  double t0 = MPI_Wtime();
+  int cudagraphlaunch = 1000;
+  for (int i = 0; i < cudagraphlaunch; ++i) {
+  // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+     cudaGraphLaunch(instance, stream);
+  }
+//  CUDACHECK(cudaEventRecord(ev_end, stream));
+  CUDACHECK(cudaStreamSynchronize(stream));
+
+  double t1 = MPI_Wtime();
+  float ms = (t1-t0)*1000.0;
+//  CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
+  printf("rank: %d, time: %f us/iter\n", rank, ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter);
 
   MSCCLPPCHECK(mscclppProxyStop(comm));
 
