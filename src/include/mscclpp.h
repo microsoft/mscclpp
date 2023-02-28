@@ -69,6 +69,7 @@ struct mscclppDevConn {
   // virtual void pullRemoteBuff(size_t srcOffset, size_t dstOffset, size_t size);
 
   mscclppTrigger* trigger;
+  int* proxyFlag;
 };
 
 typedef struct mscclppComm* mscclppComm_t;

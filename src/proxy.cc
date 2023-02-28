@@ -12,6 +12,15 @@
 
 #define MSCCLPP_PROXY_FLAG_SET_BY_RDMA 0
 
+#define PROXYCUDACHECK(cmd) \
+  do { \
+    cudaError_t err = cmd; \
+    if (err != cudaSuccess) { \
+      WARN("CUDA error from proxy: %s", cudaGetErrorString(err)); \
+      return NULL; \
+    } \
+  } while (false)
+
 static void NumaBind(int node)
 {
   nodemask_t mask;
@@ -23,11 +32,54 @@ static void NumaBind(int node)
 struct proxyArgs {
   struct mscclppComm* comm;
   struct mscclppIbContext* ibCtx;
+  cudaStream_t stream;
   volatile int* run;
   int connIdx;
 };
 
-void* mscclppProxyService(void* _args) {
+void* mscclppProxyServiceP2P(void* _args) {
+  struct proxyArgs *args = (struct proxyArgs *)_args;
+  struct mscclppComm *comm = args->comm;
+  volatile int *run = args->run;
+  struct mscclppConn *conn = &comm->conns[args->connIdx];
+  cudaStream_t stream = args->stream;
+  free(_args);
+
+  // int rank = comm->rank;
+  mscclppTrigger trigger;
+  // TODO(chhwang): find numa node
+  NumaBind((comm->cudaDev / 2) ^ 1);
+
+  PROXYCUDACHECK(cudaSetDevice(comm->cudaDev));
+  PROXYCUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+  // TODO(chhwang): find numa node for this gpu
+
+  while (*run) {
+    // Try send
+    trigger.value = *(volatile uint64_t *)conn->cpuTrigger;
+    if (trigger.value == 0) continue;
+
+    // Do send
+    void *srcBuff = (void *)((char *)conn->devConn->localBuff + trigger.fields.dataOffset);
+    void *dstBuff = (void *)((char *)conn->devConn->remoteBuff + trigger.fields.dataOffset);
+    PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
+    PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->localFlag, sizeof(int), cudaMemcpyDeviceToDevice, stream));
+
+    // Wait for completion
+    PROXYCUDACHECK(cudaStreamSynchronize(stream));
+
+    // send completion
+    volatile uint64_t *tmp = (volatile uint64_t *)conn->cpuTrigger;
+    *tmp = 0;
+  }
+  *run = 1;
+  PROXYCUDACHECK(cudaStreamDestroy(stream));
+
+  // WARN("Proxy exits: rank %d", rank);
+  return NULL;
+}
+
+void* mscclppProxyServiceIb(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
   struct mscclppComm *comm = args->comm;
   struct mscclppIbContext *ibCtx = args->ibCtx;
@@ -35,11 +87,8 @@ void* mscclppProxyService(void* _args) {
   struct mscclppConn *conn = &comm->conns[args->connIdx];
   free(_args);
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
-  int currentRemoteFlagVlaue = *conn->cpuRemoteFlag;
+  int currentProxyFlagVlaue = *conn->cpuProxyFlag;
 #endif
-
-  // TODO(chhwang): core binding
-  NumaBind(ibCtx->numaNode);
 
   enum {
     SEND_STATE_INIT,
@@ -48,11 +97,14 @@ void* mscclppProxyService(void* _args) {
 
   int rank = comm->rank;
   int sendState = SEND_STATE_INIT;
+  mscclppTrigger trigger;
+  int wcNum;
+
+  NumaBind(ibCtx->numaNode);
   if (conn->ibQp->postRecv(0) != 0) {
     WARN("postRecv failed: errno %d", errno);
   }
-  mscclppTrigger trigger;
-  int wcNum;
+
   while (*run) {
     // Try send
     if (sendState == SEND_STATE_INIT) {
@@ -62,8 +114,8 @@ void* mscclppProxyService(void* _args) {
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1)
         conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
                               /*wrId=*/0, /*immData=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
-        // My local flag is copied to the peer's remote flag
-        conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibRemoteFlagMrInfo, sizeof(int),
+        // My local flag is copied to the peer's proxy flag
+        conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(int),
                               /*wrId=*/0, /*immData=*/0, /*offset=*/0, /*signaled=*/true);
 #else
         conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
@@ -94,7 +146,7 @@ void* mscclppProxyService(void* _args) {
         if (wc->opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA != 1)
           // TODO(chhwang): cpu flush
-          *((volatile int *)conn->cpuRemoteFlag) = ++currentRemoteFlagVlaue;
+          *((volatile int *)conn->cpuProxyFlag) = ++currentProxyFlagVlaue;
 #endif
           // recv completion
           if (conn->ibQp->postRecv(wc->wr_id) != 0) {
@@ -114,6 +166,18 @@ void* mscclppProxyService(void* _args) {
   *run = 1;
   // WARN("Proxy exits: rank %d", rank);
   return NULL;
+}
+
+void* mscclppProxyService(void* _args) {
+  struct proxyArgs *args = (struct proxyArgs *)_args;
+  struct mscclppIbContext *ibCtx = args->ibCtx;
+  void *ret;
+  if (ibCtx == NULL) {
+    ret = mscclppProxyServiceP2P(_args);
+  } else {
+    ret = mscclppProxyServiceIb(_args);
+  }
+  return ret;
 }
 
 // mscclppResult_t mscclppProxyInit(struct mscclppComm* comm, struct mscclppSocket* sock, union mscclppSocketAddress* peerAddresses) {
@@ -147,6 +211,27 @@ mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm) {
       mscclppSetThreadName(comm->proxyState[i].threads[j], "MSCCLPP Service %2d - %4d", i, j);
     }
   }
+  // P2P proxies
+  mscclppProxyState *proxyState = &comm->proxyState[MSCCLPP_IB_MAX_DEVS];
+  if (proxyState->threads == NULL) {
+    MSCCLPPCHECK(mscclppCalloc(&proxyState->threads, comm->nConns));
+  }
+  if (proxyState->runs == NULL) {
+    MSCCLPPCHECK(mscclppCalloc(&proxyState->runs, comm->nConns));
+  }
+  for (int j = 0; j < comm->nConns; ++j) {
+    if (comm->conns[j].transport != mscclppTransportP2P) continue;
+    struct proxyArgs *args;
+    MSCCLPPCHECK(mscclppCalloc(&args, 1));
+    args->comm = comm;
+    args->ibCtx = NULL;
+    args->run = &proxyState->runs[j];
+    args->connIdx = j;
+    CUDACHECK(cudaStreamCreateWithFlags(&args->stream, cudaStreamNonBlocking));
+    *args->run = 1;
+    pthread_create(&proxyState->threads[j], NULL, mscclppProxyService, args);
+    mscclppSetThreadName(proxyState->threads[j], "MSCCLPP Service %2d - %4d", MSCCLPP_IB_MAX_DEVS + 1, j);
+  }
   return mscclppSuccess;
 }
 
@@ -163,6 +248,18 @@ mscclppResult_t mscclppProxyDestroy(struct mscclppComm* comm) {
         *run = 0;
       }
     }
+  }
+  // P2P proxies
+  mscclppProxyState *proxyState = &comm->proxyState[MSCCLPP_IB_MAX_DEVS];
+  for (int j = 0; j < comm->nConns; ++j) {
+    if (comm->conns[j].transport != mscclppTransportP2P) continue;
+    volatile int *run = (volatile int *)&proxyState->runs[j];
+    if (*run == 0) continue;
+    *run = 0;
+    while (*run == 0 && *comm->abortFlag == 0) {
+      usleep(1000);
+    }
+    *run = 0;
   }
   return mscclppSuccess;
 }

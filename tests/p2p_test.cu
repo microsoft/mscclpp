@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <string>
 
-#define RANKS_PER_NODE 4
+#define USE_DMA_FOR_P2P 1
 #define TEST_CONN_TYPE 0 // 0: P2P(for local)+IB(for remote), 1: IB-Only
 
 #define MSCCLPPCHECK(call) do { \
@@ -40,6 +40,7 @@ __global__ void kernel(int rank, int world_size)
   volatile int *data = (volatile int *)devConn.localBuff;
   volatile int *localFlag = devConn.localFlag;
   volatile int *remoteFlag = devConn.remoteFlag;
+  volatile int *proxyFlag = devConn.proxyFlag;
   volatile uint64_t *trig = (volatile uint64_t *)devConn.trigger;
   int baseFlag = *localFlag;
 
@@ -56,6 +57,21 @@ __global__ void kernel(int rank, int world_size)
   }
 
   // Each warp receives data from different ranks
+#if (USE_DMA_FOR_P2P == 1)
+
+  // Trigger sending data and flag
+  uint64_t dataOffset = rank * sizeof(int);
+  uint64_t dataSize = sizeof(int);
+  *trig = (dataOffset << 32) + dataSize;
+
+  // Wait until the proxy have sent my data and flag
+  while (*trig != 0) {}
+
+  // Wait for receiving data from remote rank
+  while (*proxyFlag == baseFlag) {}
+
+#else // USE_DMA_FOR_P2P == 0
+
   if (devConn.remoteBuff == NULL) { // IB
     // Trigger sending data and flag
     uint64_t dataOffset = rank * sizeof(int);
@@ -66,7 +82,7 @@ __global__ void kernel(int rank, int world_size)
     while (*trig != 0) {}
 
     // Wait for receiving data from remote rank
-    while (*remoteFlag == baseFlag) {}
+    while (*proxyFlag == baseFlag) {}
   } else { // P2P
     // Directly read data
     volatile int *remoteData = (volatile int *)devConn.remoteBuff;
@@ -77,6 +93,8 @@ __global__ void kernel(int rank, int world_size)
     // Read remote data
     data[remoteRank] = remoteData[remoteRank];
   }
+
+#endif
 }
 
 int rankToLocalRank(int rank)
@@ -228,35 +246,35 @@ int main(int argc, const char *argv[])
     kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
   }
 
-  // cudaGraph Capture
-  cudaGraph_t graph;
-  cudaGraphExec_t instance;
-  cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
-  int cudagraphiter = 100;
-  for (int i = 0; i < cudagraphiter; ++i) {
-    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
-  }
-  cudaStreamEndCapture(stream, &graph);
-  cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
+  // // cudaGraph Capture
+  // cudaGraph_t graph;
+  // cudaGraphExec_t instance;
+  // cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
+  // int cudagraphiter = 100;
+  // for (int i = 0; i < cudagraphiter; ++i) {
+  //   kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+  // }
+  // cudaStreamEndCapture(stream, &graph);
+  // cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
 
-  int cudagraphwarmup = 200;
-  for (int i = 0; i < cudagraphwarmup; ++i) {
-    cudaGraphLaunch(instance, stream);
-  }
+  // int cudagraphwarmup = 200;
+  // for (int i = 0; i < cudagraphwarmup; ++i) {
+  //   cudaGraphLaunch(instance, stream);
+  // }
 
-  // measure runtime 
-  CUDACHECK(cudaEventRecord(ev_start, stream));
-  int cudagraphlaunch = 1000;
-  for (int i = 0; i < cudagraphlaunch; ++i) {
-    // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
-    cudaGraphLaunch(instance, stream);
-  }
-  CUDACHECK(cudaEventRecord(ev_end, stream));
+  // // measure runtime 
+  // CUDACHECK(cudaEventRecord(ev_start, stream));
+  // int cudagraphlaunch = 1000;
+  // for (int i = 0; i < cudagraphlaunch; ++i) {
+  //   // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+  //   cudaGraphLaunch(instance, stream);
+  // }
+  // CUDACHECK(cudaEventRecord(ev_end, stream));
   CUDACHECK(cudaStreamSynchronize(stream));
 
-  float ms;
-  CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
-  printf("rank: %d, time: %f us/iter\n", rank, ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter);
+  // float ms;
+  // CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
+  // printf("rank: %d, time: %f us/iter\n", rank, ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter);
 
   MSCCLPPCHECK(mscclppProxyStop(comm));
 

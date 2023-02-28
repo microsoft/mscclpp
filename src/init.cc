@@ -87,6 +87,7 @@ mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, c
   MSCCLPPCHECKGOTO(mscclppCalloc(&_comm, 1), res, fail);
   _comm->rank = rank;
   _comm->nRanks = nranks;
+  CUDACHECK(cudaGetDevice(&_comm->cudaDev));
 
   MSCCLPPCHECK(bootstrapNetInit(ip_port_pair));
   mscclppBootstrapHandle handle;
@@ -216,10 +217,11 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
 struct connInfo {
   cudaIpcMemHandle_t handleBuff;
   cudaIpcMemHandle_t handleFlag;
+  cudaIpcMemHandle_t handleProxyFlag;
   mscclppIbQpInfo infoQp;
   mscclppIbMrInfo infoBuffMr;
   mscclppIbMrInfo infoLocalFlagMr;
-  mscclppIbMrInfo infoRemoteFlagMr;
+  mscclppIbMrInfo infoProxyFlagMr;
 };
 
 mscclppResult_t mscclppP2pConnectionSetupStart(struct connInfo* connInfo /*output*/, struct mscclppConn* conn /*input*/){
@@ -227,8 +229,11 @@ mscclppResult_t mscclppP2pConnectionSetupStart(struct connInfo* connInfo /*outpu
     WARN("connInfo or connection cannot be null");
     return mscclppInternalError;
   }
-  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleBuff, conn->devConn->localBuff));
-  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleFlag, conn->devConn->localFlag));
+  struct mscclppDevConn *devConn = conn->devConn;
+  MSCCLPPCHECK(mscclppCudaCalloc(&devConn->proxyFlag, 1));
+  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleBuff, devConn->localBuff));
+  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleFlag, devConn->localFlag));
+  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleProxyFlag, devConn->proxyFlag));
   return mscclppSuccess;
 }
 
@@ -239,6 +244,7 @@ mscclppResult_t mscclppP2pConnectionSetupEnd(struct connInfo* connInfo /*input*/
   }
   CUDACHECK(cudaIpcOpenMemHandle((void**)&conn->devConn->remoteBuff, connInfo->handleBuff, cudaIpcMemLazyEnablePeerAccess));
   CUDACHECK(cudaIpcOpenMemHandle((void**)&conn->devConn->remoteFlag, connInfo->handleFlag, cudaIpcMemLazyEnablePeerAccess));
+  CUDACHECK(cudaIpcOpenMemHandle((void**)&conn->remoteProxyFlag, connInfo->handleProxyFlag, cudaIpcMemLazyEnablePeerAccess));
   return mscclppSuccess;
 }
 
@@ -249,7 +255,8 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
   }
   struct mscclppDevConn *devConn = conn->devConn;
   devConn->remoteBuff = NULL;
-  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuRemoteFlag, &devConn->remoteFlag, 1, &conn->cpuRemoteFlagGdrDesc));
+  devConn->remoteFlag = NULL;
+  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuProxyFlag, &devConn->proxyFlag, 1, &conn->cpuProxyFlagGdrDesc));
 
   struct mscclppIbContext *ibCtx = conn->ibCtx;
   if (conn->ibQp == NULL) {
@@ -257,11 +264,11 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
   }
   MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localBuff, conn->buffSize, &conn->ibBuffMr));
   MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localFlag, sizeof(int), &conn->ibLocalFlagMr));
-  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->remoteFlag, sizeof(int), &conn->ibRemoteFlagMr));
+  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->proxyFlag, sizeof(int), &conn->ibProxyFlagMr));
   connInfo->infoQp = conn->ibQp->info;
   connInfo->infoBuffMr = conn->ibBuffMr->info;
   connInfo->infoLocalFlagMr = conn->ibLocalFlagMr->info;
-  connInfo->infoRemoteFlagMr = conn->ibRemoteFlagMr->info;
+  connInfo->infoProxyFlagMr = conn->ibProxyFlagMr->info;
   return mscclppSuccess;
 }
 
@@ -280,7 +287,7 @@ mscclppResult_t mscclppIbConnectionSetupEnd(struct connInfo* connInfo /*input*/,
   }
   conn->ibBuffMrInfo = connInfo->infoBuffMr;
   conn->ibLocalFlagMrInfo = connInfo->infoLocalFlagMr;
-  conn->ibRemoteFlagMrInfo = connInfo->infoRemoteFlagMr;
+  conn->ibProxyFlagMrInfo = connInfo->infoProxyFlagMr;
   return mscclppSuccess;
 }
 

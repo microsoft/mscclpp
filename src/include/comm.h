@@ -163,18 +163,19 @@ struct mscclppConn {
   int remoteRank;
   int buffSize;
   mscclppTrigger *cpuTrigger;
-  int *cpuRemoteFlag;
+  int *remoteProxyFlag;
+  int *cpuProxyFlag;
   void *cpuTriggerGdrDesc;
-  void *cpuRemoteFlagGdrDesc;
+  void *cpuProxyFlagGdrDesc;
   struct mscclppDevConn *devConn;
   struct mscclppIbContext *ibCtx;
   struct mscclppIbQp *ibQp;
   struct mscclppIbMr *ibBuffMr;
   struct mscclppIbMr *ibLocalFlagMr;
-  struct mscclppIbMr *ibRemoteFlagMr;
+  struct mscclppIbMr *ibProxyFlagMr;
   struct mscclppIbMrInfo ibBuffMrInfo;
   struct mscclppIbMrInfo ibLocalFlagMrInfo;
-  struct mscclppIbMrInfo ibRemoteFlagMrInfo;
+  struct mscclppIbMrInfo ibProxyFlagMrInfo;
 };
 
 struct mscclppComm {
@@ -200,7 +201,7 @@ struct mscclppComm {
 
   int rank;    // my rank in the communicator
   int nRanks;  // number of GPUs in communicator
-//   int cudaDev; // my cuda device index
+  int cudaDev; // my cuda device index
 //   int compCap; // compute capability of the GPU
 //   int64_t busId;   // my PCI bus ID in int format
 //   cpu_set_t cpuAffinity; // CPU affinity of the GPU
@@ -278,7 +279,8 @@ struct mscclppComm {
 
   struct mscclppIbContext *ibContext[MSCCLPP_IB_MAX_DEVS];
 
-  struct mscclppProxyState proxyState[MSCCLPP_IB_MAX_DEVS];
+  // Last one is for P2P proxies.
+  struct mscclppProxyState proxyState[MSCCLPP_IB_MAX_DEVS + 1];
 
 //   // Whether this communicator uses collNet
 //   int collNetSupport;
