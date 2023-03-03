@@ -8,7 +8,7 @@
 #include <string>
 
 #define RANKS_PER_NODE 8
-#define USE_DMA_FOR_P2P 0
+#define USE_DMA_FOR_P2P 1
 #define TEST_CONN_TYPE 0 // 0: P2P(for local)+IB(for remote), 1: IB-Only
 
 #define MSCCLPPCHECK(call) do { \
