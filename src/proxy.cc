@@ -116,13 +116,13 @@ void* mscclppProxyServiceIb(void* _args) {
         // Do send
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1)
         conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
-                              /*wrId=*/0, /*immData=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
+                              /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
         // My local flag is copied to the peer's proxy flag
         conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
-                              /*wrId=*/0, /*immData=*/0, /*offset=*/0, /*signaled=*/true);
+                              /*wrId=*/0, /*offset=*/0, /*signaled=*/true);
 #else
         conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
-                              /*wrId=*/0, /*immData=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/true);
+                              /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/true);
 #endif
         if (conn->ibQp->postSend() != 0) {
           WARN("postSend failed: errno %d", errno);

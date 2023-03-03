@@ -301,7 +301,7 @@ int mscclppIbQp::rtr(const mscclppIbQpInfo *info)
   struct ibv_qp_attr qp_attr;
   std::memset(&qp_attr, 0, sizeof(struct ibv_qp_attr));
   qp_attr.qp_state = IBV_QPS_RTR;
-  qp_attr.path_mtu = IBV_MTU_1024;
+  qp_attr.path_mtu = info->mtu;
   qp_attr.dest_qp_num = info->qpn;
   qp_attr.rq_psn = 0;
   qp_attr.max_dest_rd_atomic = 1;
@@ -342,7 +342,7 @@ int mscclppIbQp::rts()
 }
 
 int mscclppIbQp::stageSend(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info, uint32_t size,
-                            uint64_t wrId, unsigned int immData, uint64_t offset, bool signaled)
+                           uint64_t wrId, uint64_t offset, bool signaled)
 {
   if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
     return -1;
@@ -355,8 +355,7 @@ int mscclppIbQp::stageSend(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info
   wr_->wr_id = wrId;
   wr_->sg_list = sge_;
   wr_->num_sge = 1;
-  wr_->opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
-  wr_->imm_data = immData;
+  wr_->opcode = IBV_WR_RDMA_WRITE;
   wr_->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
   wr_->wr.rdma.remote_addr = (uint64_t)(info->addr) + offset;
   wr_->wr.rdma.rkey = info->rkey;
@@ -369,6 +368,15 @@ int mscclppIbQp::stageSend(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info
   }
   this->wrn++;
   return this->wrn;
+}
+
+int mscclppIbQp::stageSendWithImm(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info, uint32_t size,
+                                  uint64_t wrId, uint64_t offset, bool signaled, unsigned int immData)
+{
+  int wrn = this->stageSend(ibMr, info, size, wrId, offset, signaled);
+  this->wrs[wrn - 1].opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
+  this->wrs[wrn - 1].imm_data = immData;
+  return wrn;
 }
 
 int mscclppIbQp::postSend()

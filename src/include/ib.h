@@ -32,7 +32,7 @@ struct mscclppIbQpInfo {
   uint8_t linkLayer;
   uint32_t qpn;
   uint64_t spn;
-  int mtu;
+  ibv_mtu mtu;
 };
 
 // IB queue pair
@@ -48,7 +48,9 @@ struct mscclppIbQp {
   int rtr(const mscclppIbQpInfo *info);
   int rts();
   int stageSend(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info, uint32_t size,
-                uint64_t wrId, unsigned int immData, uint64_t offset, bool signaled);
+                uint64_t wrId, uint64_t offset, bool signaled);
+  int stageSendWithImm(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info, uint32_t size,
+                       uint64_t wrId, uint64_t offset, bool signaled, unsigned int immData);
   int postSend();
   int postRecv(uint64_t wrId);
   int pollCq();
