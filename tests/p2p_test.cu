@@ -39,11 +39,11 @@ __global__ void kernel(int rank, int world_size)
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   mscclppDevConn_t devConn = constDevConns[remoteRank];
   volatile int *data = (volatile int *)devConn.localBuff;
-  volatile int *localFlag = devConn.localFlag;
-  volatile int *remoteFlag = devConn.remoteFlag;
-  volatile int *proxyFlag = devConn.proxyFlag;
+  volatile uint64_t *localFlag = devConn.localFlag;
+  volatile uint64_t *remoteFlag = devConn.remoteFlag;
+  volatile uint64_t *proxyFlag = devConn.proxyFlag;
   volatile uint64_t *trig = (volatile uint64_t *)devConn.trigger;
-  int baseFlag = *localFlag;
+  uint64_t baseFlag = *localFlag;
 
   if (threadIdx.x == 0) {
     // Set my data and flag
@@ -182,12 +182,12 @@ int main(int argc, const char *argv[])
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
 
   int *data_d;
-  int *flag_d;
+  uint64_t *flag_d;
   size_t data_size = sizeof(int) * world_size;
   CUDACHECK(cudaMalloc(&data_d, data_size));
-  CUDACHECK(cudaMalloc(&flag_d, sizeof(int)));
+  CUDACHECK(cudaMalloc(&flag_d, sizeof(uint64_t)));
   CUDACHECK(cudaMemset(data_d, 0, data_size));
-  CUDACHECK(cudaMemset(flag_d, 0, sizeof(int)));
+  CUDACHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
 
   mscclppDevConn_t devConns[16];
   for (int r = 0; r < world_size; ++r) {

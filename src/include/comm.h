@@ -163,8 +163,8 @@ struct mscclppConn {
   int remoteRank;
   int buffSize;
   mscclppTrigger *cpuTrigger;
-  int *remoteProxyFlag;
-  int *cpuProxyFlag;
+  uint64_t *remoteProxyFlag;
+  uint64_t *cpuProxyFlag;
   void *cpuTriggerGdrDesc;
   void *cpuProxyFlagGdrDesc;
   struct mscclppDevConn *devConn;

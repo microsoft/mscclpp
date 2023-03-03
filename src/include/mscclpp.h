@@ -55,21 +55,21 @@ struct mscclppDevConn {
   int tag;
 
   void* localBuff;
-  int* localFlag;
+  uint64_t* localFlag;
   // // remoteFlag <- localFlag
   // virtual void pushLocalFlag();
   // // remoteBuff[dstOffset..dstOffset+size-1] <- localBuff[srcOffset..srcOffset+size-1]
   // virtual void pushLocalBuff(size_t srcOffset, size_t dstOffset, size_t size);
 
   void* remoteBuff;
-  int* remoteFlag;
+  uint64_t* remoteFlag;
   // // localFlag <- remoteFlag
   // virtual void pullRmoteFlag();
   // // localBuff[srcOffset..srcOffset+size-1] <- remoteBuff[dstOffset..dstOffset+size-1]
   // virtual void pullRemoteBuff(size_t srcOffset, size_t dstOffset, size_t size);
 
   mscclppTrigger* trigger;
-  int* proxyFlag;
+  uint64_t* proxyFlag;
 };
 
 typedef struct mscclppComm* mscclppComm_t;
@@ -141,7 +141,7 @@ mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int si
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
 mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, size_t buffSize,
-                               int* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev=NULL);
+                               uint64_t* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev=NULL);
 
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);
 

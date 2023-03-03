@@ -159,9 +159,9 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
 }
 
 MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank,
-            void* localBuff, size_t buffSize, int* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev);
+            void* localBuff, size_t buffSize, uint64_t* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev);
 mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, size_t buffSize,
-                               int* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev/*=NULL*/)
+                               uint64_t* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev/*=NULL*/)
 {
   if (comm->nConns == MAXCONNECTIONS) {
     WARN("Too many connections made");
@@ -263,8 +263,8 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
     MSCCLPPCHECK(mscclppIbContextCreateQp(ibCtx, &conn->ibQp));
   }
   MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localBuff, conn->buffSize, &conn->ibBuffMr));
-  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localFlag, sizeof(int), &conn->ibLocalFlagMr));
-  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->proxyFlag, sizeof(int), &conn->ibProxyFlagMr));
+  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localFlag, sizeof(uint64_t), &conn->ibLocalFlagMr));
+  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->proxyFlag, sizeof(uint64_t), &conn->ibProxyFlagMr));
   connInfo->infoQp = conn->ibQp->info;
   connInfo->infoBuffMr = conn->ibBuffMr->info;
   connInfo->infoLocalFlagMr = conn->ibLocalFlagMr->info;

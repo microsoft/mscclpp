@@ -65,7 +65,7 @@ void* mscclppProxyServiceP2P(void* _args) {
     void *srcBuff = (void *)((char *)conn->devConn->localBuff + trigger.fields.dataOffset);
     void *dstBuff = (void *)((char *)conn->devConn->remoteBuff + trigger.fields.dataOffset);
     PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
-    PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->localFlag, sizeof(int), cudaMemcpyDeviceToDevice, stream));
+    PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->localFlag, sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
 
     // Wait for completion
     PROXYCUDACHECK(cudaStreamSynchronize(stream));
@@ -89,7 +89,7 @@ void* mscclppProxyServiceIb(void* _args) {
   struct mscclppConn *conn = &comm->conns[args->connIdx];
   free(_args);
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
-  int currentProxyFlagVlaue = *conn->cpuProxyFlag;
+  uint64_t currentProxyFlagVlaue = *conn->cpuProxyFlag;
 #endif
 
   enum {
@@ -117,7 +117,7 @@ void* mscclppProxyServiceIb(void* _args) {
         conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
                               /*wrId=*/0, /*immData=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
         // My local flag is copied to the peer's proxy flag
-        conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(int),
+        conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
                               /*wrId=*/0, /*immData=*/0, /*offset=*/0, /*signaled=*/true);
 #else
         conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
@@ -148,7 +148,7 @@ void* mscclppProxyServiceIb(void* _args) {
         if (wc->opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA != 1)
           // TODO(chhwang): cpu flush
-          *((volatile int *)conn->cpuProxyFlag) = ++currentProxyFlagVlaue;
+          *((volatile uint64_t *)conn->cpuProxyFlag) = ++currentProxyFlagVlaue;
 #endif
           // recv completion
           if (conn->ibQp->postRecv(wc->wr_id) != 0) {
