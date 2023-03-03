@@ -58,18 +58,23 @@ void* mscclppProxyServiceP2P(void* _args) {
   cudaStreamIsCapturing(stream, &stat);
 
   while (*run) {
-    // Try send
+    // Poll to see if we are ready to send anything
     trigger.value = *(volatile uint64_t *)conn->cpuTrigger;
     if (trigger.value == 0) continue;
 
-    // Do send
-    void *srcBuff = (void *)((char *)conn->devConn->localBuff + trigger.fields.dataOffset);
-    void *dstBuff = (void *)((char *)conn->devConn->remoteBuff + trigger.fields.dataOffset);
-    PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
-    PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->localFlag, sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
-
+    // Iterate over what send is needed
+    if (type & mscclppBuff){
+      void *srcBuff = (void *)((char *)conn->devConn->localBuff + trigger.fields.dataOffset);
+      void *dstBuff = (void *)((char *)conn->devConn->remoteBuff + trigger.fields.dataOffset);
+      PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
+    }
+    if (type & mscclppFlag) {
+      PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->localFlag, sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
+    }
     // Wait for completion
-    PROXYCUDACHECK(cudaStreamSynchronize(stream));
+    if (type & mscclppSync){
+      PROXYCUDACHECK(cudaStreamSynchronize(stream));
+    }
 
     // send completion
     volatile uint64_t *tmp = (volatile uint64_t *)conn->cpuTrigger;
