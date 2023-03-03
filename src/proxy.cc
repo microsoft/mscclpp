@@ -52,7 +52,7 @@ void* mscclppProxyServiceP2P(void* _args) {
 
   PROXYCUDACHECK(cudaSetDevice(comm->cudaDev));
   PROXYCUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-  // TODO(chhwang): find numa node for this gpu
+
   cudaStreamCaptureStatus stat;
   cudaStreamIsCapturing(stream, &stat);
 
