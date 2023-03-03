@@ -199,10 +199,6 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
     }
     if (ibDevIdx == -1) {
       // Create a new context.
-      if (firstNullIdx == -1) {
-        WARN("Too many IB devices");
-        return mscclppInvalidUsage;
-      }
       ibDevIdx = firstNullIdx;
       if (mscclppIbContextCreate(&comm->ibContext[ibDevIdx], ibDev) != mscclppSuccess) {
         WARN("Failed to create IB context");
@@ -262,6 +258,7 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
   if (conn->ibQp == NULL) {
     MSCCLPPCHECK(mscclppIbContextCreateQp(ibCtx, &conn->ibQp));
   }
+  // TODO(chhwang): can we register only one MR for the following three?
   MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localBuff, conn->buffSize, &conn->ibBuffMr));
   MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localFlag, sizeof(uint64_t), &conn->ibLocalFlagMr));
   MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->proxyFlag, sizeof(uint64_t), &conn->ibProxyFlagMr));

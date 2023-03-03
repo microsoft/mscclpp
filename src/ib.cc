@@ -132,10 +132,14 @@ fail:
 mscclppResult_t mscclppIbContextDestroy(struct mscclppIbContext *ctx)
 {
   for (int i = 0; i < ctx->nMrs; ++i) {
-    ibv_dereg_mr(ctx->mrs[i].mr);
+    if (ctx->mrs[i].mr) {
+      ibv_dereg_mr(ctx->mrs[i].mr);
+    }
   }
   for (int i = 0; i < ctx->nQps; ++i) {
-    ibv_destroy_qp(ctx->qps[i].qp);
+    if (ctx->qps[i].qp) {
+      ibv_destroy_qp(ctx->qps[i].qp);
+    }
     ibv_destroy_cq(ctx->qps[i].cq);
     free(ctx->qps[i].wcs);
   }
@@ -259,6 +263,9 @@ mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext *ctx, void *b
   static __thread uintptr_t pageSize = 0;
   if (pageSize == 0) {
     pageSize = sysconf(_SC_PAGESIZE);
+  }
+  if (reinterpret_cast<uintptr_t>(buff) % pageSize != 0) {
+    WARN("buff (%p) is not aligned to the page size! Ignoring and proceeding anyway.", buff);
   }
   uintptr_t addr = reinterpret_cast<uintptr_t>(buff) & -pageSize;
   size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;

@@ -130,7 +130,7 @@ typedef enum { mscclppInt8       = 0, mscclppChar       = 0,
 
 /* Transport Types */
 typedef enum { mscclppTransportP2P = 0,
-               mscclppTransportSHM = 1,
+               mscclppTransportSHM = 1, // TODO(chhwang): not implemented yet
                mscclppTransportIB = 2,
 } mscclppTransport_t;
 

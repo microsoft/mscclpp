@@ -48,6 +48,7 @@ void* mscclppProxyServiceP2P(void* _args) {
   // int rank = comm->rank;
   mscclppTrigger trigger;
   // TODO(chhwang): find numa node
+  // Current mapping is based on NDv4: GPU [0,1,2,3,4,5,6,7] -> NUMA [1,1,0,0,3,3,2,2]
   NumaBind((comm->cudaDev / 2) ^ 1);
 
   PROXYCUDACHECK(cudaSetDevice(comm->cudaDev));
@@ -199,6 +200,7 @@ mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm) {
       MSCCLPPCHECK(mscclppCalloc(&comm->proxyState[i].runs, comm->nConns));
     }
     for (int j = 0; j < comm->nConns; ++j) {
+      // Create IB proxy threads
       struct mscclppConn *conn = &comm->conns[j];
       if (conn->transport != mscclppTransportIB) continue;
       if (conn->ibCtx != comm->ibContext[i]) continue;
@@ -222,6 +224,7 @@ mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm) {
     MSCCLPPCHECK(mscclppCalloc(&proxyState->runs, comm->nConns));
   }
   for (int j = 0; j < comm->nConns; ++j) {
+    // Create P2P DMA proxy threads
     if (comm->conns[j].transport != mscclppTransportP2P) continue;
     struct proxyArgs *args;
     MSCCLPPCHECK(mscclppCalloc(&args, 1));
@@ -237,17 +240,21 @@ mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm) {
   return mscclppSuccess;
 }
 
+static void _stopProxy(struct mscclppComm* comm, int devIdx, int connIdx) {
+  volatile int *run = (volatile int *)&comm->proxyState[devIdx].runs[connIdx];
+  if (*run == 0) return;
+  *run = 0;
+  while (*run == 0 && *comm->abortFlag == 0) {
+    usleep(1000);
+  }
+  *run = 0;
+}
+
 mscclppResult_t mscclppProxyDestroy(struct mscclppComm* comm) {
   for (int i = 0; i < MSCCLPP_IB_MAX_DEVS; ++i) {
     if (comm->ibContext[i] != NULL) {
       for (int j = 0; j < comm->nConns; ++j) {
-        volatile int *run = (volatile int *)&comm->proxyState[i].runs[j];
-        if (*run == 0) continue;
-        *run = 0;
-        while (*run == 0 && *comm->abortFlag == 0) {
-          usleep(1000);
-        }
-        *run = 0;
+        _stopProxy(comm, i, j);
       }
     }
   }
@@ -255,13 +262,7 @@ mscclppResult_t mscclppProxyDestroy(struct mscclppComm* comm) {
   mscclppProxyState *proxyState = &comm->proxyState[MSCCLPP_IB_MAX_DEVS];
   for (int j = 0; j < comm->nConns; ++j) {
     if (comm->conns[j].transport != mscclppTransportP2P) continue;
-    volatile int *run = (volatile int *)&proxyState->runs[j];
-    if (*run == 0) continue;
-    *run = 0;
-    while (*run == 0 && *comm->abortFlag == 0) {
-      usleep(1000);
-    }
-    *run = 0;
+    _stopProxy(comm, MSCCLPP_IB_MAX_DEVS, j);
   }
   return mscclppSuccess;
 }
