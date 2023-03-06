@@ -11,7 +11,6 @@
 #include "net.h"
 #include <unistd.h>
 #include <sys/types.h>
-#include "proxy.h"
 
 struct bootstrapRootArgs {
   struct mscclppSocket* listenSock;
@@ -315,7 +314,7 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
   MSCCLPPCHECK(mscclppSocketListen(proxySocket));
   MSCCLPPCHECK(mscclppSocketGetAddr(proxySocket, state->peerProxyAddresses+rank));
   MSCCLPPCHECK(bootstrapAllGather(state, state->peerProxyAddresses, sizeof(union mscclppSocketAddress)));
-  MSCCLPPCHECK(mscclppProxyInit(comm, proxySocket, state->peerProxyAddresses));
+  // MSCCLPPCHECK(mscclppProxyInit(comm, proxySocket, state->peerProxyAddresses));
 
   TRACE(MSCCLPP_INIT, "rank %d nranks %d - DONE", rank, nranks);
 

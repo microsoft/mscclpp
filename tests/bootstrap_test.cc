@@ -1,4 +1,7 @@
 #include "mscclpp.h"
+#ifdef MSCCLPP_USE_MPI_FOR_TESTS
+#include <mpi.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -14,21 +17,37 @@
 
 void print_usage(const char *prog)
 {
+#ifdef MSCCLPP_USE_MPI_FOR_TESTS
+  printf("usage: %s IP:PORT\n", prog);
+#else
   printf("usage: %s IP:PORT rank nranks\n", prog);
+#endif
 }
 
 int main(int argc, const char *argv[])
 {
+#ifdef MSCCLPP_USE_MPI_FOR_TESTS
+  if (argc != 2) {
+    print_usage(argv[0]);
+    return -1;
+  }
+  MPI_Init(NULL, NULL);
+  const char *ip_port = argv[1];
+  int rank;
+  int world_size;
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+#else
   if (argc != 4) {
     print_usage(argv[0]);
     return -1;
   }
-
-  mscclppComm_t comm;
   const char *ip_port = argv[1];
   int rank = atoi(argv[2]);
   int world_size = atoi(argv[3]);
+#endif
 
+  mscclppComm_t comm;
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
 
   // allocate some test buffer
@@ -40,7 +59,7 @@ int main(int argc, const char *argv[])
   // each rank sets one element in the array
   buf[rank] = rank;
 
-  MSCCLPPCHECK(mscclppBootatrapAllGather(comm, buf, sizeof(int)));
+  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, buf, sizeof(int)));
 
   // check the correctness of all elements in the output of AllGather
   for (int i = 0; i < world_size; ++i) {
@@ -51,6 +70,10 @@ int main(int argc, const char *argv[])
   }
 
   MSCCLPPCHECK(mscclppCommDestroy(comm));
+
+#ifdef MSCCLPP_USE_MPI_FOR_TESTS
+  MPI_Finalize();
+#endif
 
   printf("Rank %d Succeeded\n", rank);
   return 0;

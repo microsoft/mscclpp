@@ -6,6 +6,7 @@ MSCCLPP_MINOR := 1
 DEBUG ?= 0
 VERBOSE ?= 1
 TRACE ?= 0
+USE_MPI_FOR_TESTS ?= 1
 
 ######## CUDA
 CUDA_HOME ?= /usr/local/cuda
@@ -20,10 +21,6 @@ CUDA_MINOR = $(shell echo $(CUDA_VERSION) | cut -d "." -f 2)
 CUDA8_GENCODE = -gencode=arch=compute_50,code=sm_50 \
                 -gencode=arch=compute_60,code=sm_60 \
                 -gencode=arch=compute_61,code=sm_61
-ifeq ($(shell test "0$(CUDA_MAJOR)" -lt 12; echo $$?),0)
-# SM35 is deprecated from CUDA12.0 onwards
-CUDA8_GENCODE += -gencode=arch=compute_35,code=sm_35
-endif
 CUDA9_GENCODE = -gencode=arch=compute_70,code=sm_70
 CUDA11_GENCODE = -gencode=arch=compute_80,code=sm_80
 CUDA12_GENCODE = -gencode=arch=compute_90,code=sm_90
@@ -85,9 +82,17 @@ CXXFLAGS  += -DNVTX_DISABLE
 endif
 
 #### MPI (only for test code)
+ifeq ($(USE_MPI_FOR_TESTS), 1)
 MPI_HOME    ?= /usr/local/mpi
 MPI_INC     := -I$(MPI_HOME)/include
 MPI_LDFLAGS := -L$(MPI_HOME)/lib -lmpi
+MPI_MACRO   := -D MSCCLPP_USE_MPI_FOR_TESTS
+else
+MPI_HOME    :=
+MPI_INC     :=
+MPI_LDFLAGS :=
+MPI_MACRO   :=
+endif
 
 #### MSCCL++
 BUILDDIR ?= $(abspath ./build)
@@ -96,8 +101,10 @@ LIBDIR := lib
 OBJDIR := obj
 BINDIR := bin
 
-LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc)
-LIBSRCS += $(addprefix src/bootstrap/,init.cc bootstrap.cc socket.cc proxy.cc)
+LDFLAGS := $(NVLDFLAGS) -libverbs -lgdrapi -lnuma
+
+LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc gdr.cc init.cc proxy.cc ib.cc)
+LIBSRCS += $(addprefix src/bootstrap/,bootstrap.cc socket.cc)
 LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 
@@ -109,8 +116,8 @@ LIBSONAME := $(LIBNAME).$(MSCCLPP_MAJOR)
 LIBTARGET := $(BUILDDIR)/$(LIBDIR)/$(LIBNAME).$(MSCCLPP_MAJOR).$(MSCCLPP_MINOR)
 
 TESTSDIR  := tests
-TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc bootstrap_test_mpi.cc)
-TESTSOBJS := $(patsubst %.cc,%.o,$(TESTSSRCS))
+TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc p2p_test.cu)
+TESTSOBJS := $(patsubst %.cc,%.o,$(TESTSSRCS)) $(patsubst %.cu,%.o,$(TESTSSRCS))
 TESTSOBJTARGETS := $(TESTSOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 TESTSBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(TESTSOBJS))
 
@@ -141,15 +148,20 @@ $(LIBTARGET): $(LIBOBJTARGETS)
 	ln -sf $(LIBTARGET) $(BUILDDIR)/$(LIBDIR)/$(LIBNAME)
 	ln -sf $(LIBTARGET) $(BUILDDIR)/$(LIBDIR)/$(LIBSONAME)
 
-# Compile tests
+# Compile .cc tests
 $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cc
 	@mkdir -p $(@D)
-	$(CXX) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(CXXFLAGS) -c $<
+	$(CXX) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(CXXFLAGS) -c $< $(MPI_MACRO)
+
+# Compile .cu tests
+$(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cu
+	@mkdir -p $(@D)
+	$(NVCC) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(NVCUFLAGS) -c $< $(MPI_MACRO)
 
 # Test bins
 $(BUILDDIR)/$(BINDIR)/%: $(BUILDDIR)/$(OBJDIR)/%.o $(LIBTARGET)
 	@mkdir -p $(@D)
-	$(NVCC) -o $@ $< $(NVLDFLAGS) $(MPI_LDFLAGS) -L$(BUILDDIR)/$(LIBDIR) -lmscclpp
+	$(NVCC) -o $@ $< $(MPI_LDFLAGS) -L$(BUILDDIR)/$(LIBDIR) -lmscclpp
 
 clean:
 	rm -rf $(BUILDDIR)

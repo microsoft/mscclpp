@@ -12,6 +12,7 @@
 // #include "collectives.h"
 #include "proxy.h"
 // #include "strongstream.h"
+#include "ib.h"
 
 // #if CUDART_VERSION < 9000
 // struct cudaLaunchParams {
@@ -32,6 +33,8 @@
 // #define MSCCLPP_LL_THREAD_THRESHOLD 8
 // #define MSCCLPP_LL128_THREAD_THRESHOLD 8
 // #define MSCCLPP_SIMPLE_THREAD_THRESHOLD 64
+
+#define MAXCONNECTIONS 1024
 
 // struct mscclppSendMem {
 //   union {
@@ -155,6 +158,26 @@
 //   } channels[MAXCHANNELS];
 // };
 
+struct mscclppConn {
+  mscclppTransport_t transport;
+  int remoteRank;
+  int buffSize;
+  mscclppTrigger *cpuTrigger;
+  uint64_t *remoteProxyFlag;
+  uint64_t *cpuProxyFlag;
+  void *cpuTriggerGdrDesc;
+  void *cpuProxyFlagGdrDesc;
+  struct mscclppDevConn *devConn;
+  struct mscclppIbContext *ibCtx;
+  struct mscclppIbQp *ibQp;
+  struct mscclppIbMr *ibBuffMr;
+  struct mscclppIbMr *ibLocalFlagMr;
+  struct mscclppIbMr *ibProxyFlagMr;
+  struct mscclppIbMrInfo ibBuffMrInfo;
+  struct mscclppIbMrInfo ibLocalFlagMrInfo;
+  struct mscclppIbMrInfo ibProxyFlagMrInfo;
+};
+
 struct mscclppComm {
 //   struct mscclppMemoryStack memPermanent, memScoped;
 //   // List of destructors to run when comm is destructed
@@ -163,6 +186,9 @@ struct mscclppComm {
 //   struct mscclppChannel channels[MAXCHANNELS];
 //   struct mscclppPeerInfo* peerInfo;
 //   struct mscclppTopoSystem* topo;
+
+  struct mscclppConn conns[MAXCONNECTIONS];
+  int nConns;
 
 //   mscclppNet_t* mscclppNet;
 //   mscclppCollNet_t* mscclppCollNet;
@@ -175,19 +201,19 @@ struct mscclppComm {
 
   int rank;    // my rank in the communicator
   int nRanks;  // number of GPUs in communicator
-//   int cudaDev; // my cuda device index
+  int cudaDev; // my cuda device index
 //   int compCap; // compute capability of the GPU
 //   int64_t busId;   // my PCI bus ID in int format
 //   cpu_set_t cpuAffinity; // CPU affinity of the GPU
 
-//   int node;
-//   int nNodes;
-//   int localRank;
-//   int localRanks;
-//   int maxLocalRanks;
-//   int* rankToNode;
-//   int* rankToLocalRank;
-//   int* localRankToRank;
+  // int node;
+  // int nNodes;
+  // int localRank;
+  // int localRanks;
+  // int maxLocalRanks;
+  // int* rankToNode;
+  // int* rankToLocalRank;
+  // int* localRankToRank; 
 //   // localRanks and localRanktoRank for all nodes
 //   struct mscclppNodeRanks* nodeRanks;
 
@@ -251,7 +277,10 @@ struct mscclppComm {
 //   char intraPad2[64 - sizeof(uint64_t)];
 //   uint64_t intraBarrierGate; // only used if this is intraComm0
 
-  struct mscclppProxyState proxyState;
+  struct mscclppIbContext *ibContext[MSCCLPP_IB_MAX_DEVS];
+
+  // Last one is for P2P proxies.
+  struct mscclppProxyState proxyState[MSCCLPP_IB_MAX_DEVS + 1];
 
 //   // Whether this communicator uses collNet
 //   int collNetSupport;
