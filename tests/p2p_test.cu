@@ -42,7 +42,8 @@ __global__ void kernel(int rank, int world_size)
   volatile uint64_t *localFlag = devConn.localFlag;
   volatile uint64_t *remoteFlag = devConn.remoteFlag;
   volatile uint64_t *proxyFlag = devConn.proxyFlag;
-  volatile uint64_t *trig = (volatile uint64_t *)devConn.trigger;
+  volatile uint64_t *trig = (volatile uint64_t *)devConn.triggerFifo[devConn.triggerFifoHead];
+  devConn.triggerFifoHead++;
   uint64_t baseFlag = *localFlag;
 
   if (threadIdx.x == 0) {

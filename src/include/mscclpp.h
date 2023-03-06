@@ -79,6 +79,7 @@ struct mscclppDevConn {
   // // localBuff[srcOffset..srcOffset+size-1] <- remoteBuff[dstOffset..dstOffset+size-1]
   // virtual void pullRemoteBuff(size_t srcOffset, size_t dstOffset, size_t size);
 
+  int* triggerFifoHead; // indicates the tail of the fifo. only accessible by the gpu. for parallel, access use atomic
   mscclppTrigger* trigger;
   uint64_t* proxyFlag;
 };

@@ -179,7 +179,10 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
   conn->devConn->localBuff = localBuff;
   conn->devConn->localFlag = localFlag;
   conn->devConn->tag = tag;
+
+  // TODO(saemal): these two should be shared for all P2P-DMA connections made from each GPU. Same for each IB driver.
   MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuTriggerFifo, &conn->devConn->trigger, MSCCLPP_PROXY_FIFO_SIZE, &conn->cpuTriggerFifoGdrDesc));
+  MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->triggerFifoHead, 1));
 
   conn->ibCtx = NULL;
   conn->ibQp = NULL;
