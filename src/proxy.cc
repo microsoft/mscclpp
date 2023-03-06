@@ -59,7 +59,7 @@ void* mscclppProxyServiceP2P(void* _args) {
 
   while (*run) {
     // Poll to see if we are ready to send anything
-    trigger.value = *(volatile uint64_t *)(&conn->cpuTriggerFifo[conn->triggerFifoHead]);
+    trigger.value = *(volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
     if (trigger.value == 0) continue;
 
     // Iterate over what send is needed
@@ -79,7 +79,7 @@ void* mscclppProxyServiceP2P(void* _args) {
     // send completion
     volatile uint64_t *tmp = (volatile uint64_t *)conn->cpuTriggerFifo;
     *tmp = 0;
-    conn->triggerFifoHead++;
+    conn->fifoTail++;
   }
   *run = 1;
   PROXYCUDACHECK(cudaStreamDestroy(stream));
