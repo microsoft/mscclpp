@@ -63,7 +63,7 @@ __global__ void kernel(int rank, int world_size)
   // Trigger sending data and flag
   uint64_t dataOffset = rank * sizeof(int);
   uint64_t dataSize = sizeof(int);
-  *trig = TRIGGER_VALUE(mscclppSync | mscclppFlag | mscclppData, dataOffset, dataSize); // (dataOffset << 32) + dataSize;
+  *trig = TRIGGER_VALUE(mscclppSync | mscclppFlag | mscclppData, dataOffset, dataSize);
 
   // Wait until the proxy have sent my data and flag
   while (*trig != 0) {}
@@ -77,7 +77,7 @@ __global__ void kernel(int rank, int world_size)
     // Trigger sending data and flag
     uint64_t dataOffset = rank * sizeof(int);
     uint64_t dataSize = sizeof(int);
-    *trig = (dataOffset << 32) + dataSize;
+    *trig = TRIGGER_VALUE(mscclppSync | mscclppFlag | mscclppData, dataOffset, dataSize);
 
     // Wait until the proxy have sent my data and flag
     while (*trig != 0) {}

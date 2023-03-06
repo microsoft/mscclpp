@@ -10,7 +10,7 @@
 #include <map>
 #include <thread>
 
-#define MSCCLPP_PROXY_FLAG_SET_BY_RDMA 0
+#define MSCCLPP_PROXY_FLAG_SET_BY_RDMA 1
 
 #define PROXYCUDACHECK(cmd) \
   do { \
@@ -87,6 +87,8 @@ void* mscclppProxyServiceP2P(void* _args) {
   return NULL;
 }
 
+#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
+
 void* mscclppProxyServiceIb(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
   struct mscclppComm *comm = args->comm;
@@ -94,9 +96,7 @@ void* mscclppProxyServiceIb(void* _args) {
   volatile int *run = args->run;
   struct mscclppConn *conn = &comm->conns[args->connIdx];
   free(_args);
-#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
   uint64_t currentProxyFlagVlaue = *conn->cpuProxyFlag;
-#endif
 
   enum {
     SEND_STATE_INIT,
@@ -119,16 +119,8 @@ void* mscclppProxyServiceIb(void* _args) {
       trigger.value = *(volatile uint64_t *)conn->cpuTrigger;
       if (trigger.value != 0) {
         // Do send
-#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1)
-        conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
-                              /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
-        // My local flag is copied to the peer's proxy flag
-        conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
-                              /*wrId=*/0, /*offset=*/0, /*signaled=*/true);
-#else
-        conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
-                              /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/true);
-#endif
+        conn->ibQp->stageSendWithImm(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
+                                     /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/true, /*immData=*/0);
         if (conn->ibQp->postSend() != 0) {
           WARN("postSend failed: errno %d", errno);
         }
@@ -152,10 +144,8 @@ void* mscclppProxyServiceIb(void* _args) {
           continue;
         }
         if (wc->opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
-#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA != 1)
           // TODO(chhwang): cpu flush
           *((volatile uint64_t *)conn->cpuProxyFlag) = ++currentProxyFlagVlaue;
-#endif
           // recv completion
           if (conn->ibQp->postRecv(wc->wr_id) != 0) {
             WARN("postRecv failed: errno %d", errno);
@@ -175,6 +165,79 @@ void* mscclppProxyServiceIb(void* _args) {
   // WARN("Proxy exits: rank %d", rank);
   return NULL;
 }
+
+#else // MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1
+
+void* mscclppProxyServiceIb(void* _args) {
+  struct proxyArgs *args = (struct proxyArgs *)_args;
+  struct mscclppComm *comm = args->comm;
+  struct mscclppIbContext *ibCtx = args->ibCtx;
+  volatile int *run = args->run;
+  struct mscclppConn *conn = &comm->conns[args->connIdx];
+  free(_args);
+
+  int rank = comm->rank;
+  mscclppTrigger trigger;
+  int wcNum;
+
+  NumaBind(ibCtx->numaNode);
+
+  while (*run) {
+    // Poll to see if we are ready to send anything
+    trigger.value = *(volatile uint64_t *)conn->cpuTrigger;
+    if (trigger.value == 0) continue;
+
+    if (trigger.fields.type & mscclppData) {
+      conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
+                            /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
+    }
+    if (trigger.fields.type & mscclppFlag) {
+        // My local flag is copied to the peer's proxy flag
+        conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
+                              /*wrId=*/0, /*offset=*/0, /*signaled=*/true);
+    }
+    if (conn->ibQp->postSend() != 0) {
+      WARN("postSend failed: errno %d", errno);
+    }
+
+    // Wait for completion
+    if (trigger.fields.type & mscclppSync) {
+      bool waiting = true;
+      while (waiting) {
+        wcNum = conn->ibQp->pollCq();
+        if (wcNum < 0) {
+          WARN("rank %d pollCq failed: errno %d", rank, errno);
+          continue;
+        }
+        for (int i = 0; i < wcNum; ++i) {
+          struct ibv_wc *wc = &conn->ibQp->wcs[i];
+          if (wc->status != IBV_WC_SUCCESS) {
+            WARN("rank %d wc status %d", rank, wc->status);
+            continue;
+          }
+          if (wc->qp_num != conn->ibQp->qp->qp_num) {
+            WARN("rank %d got wc of unknown qp_num %d", rank, wc->qp_num);
+            continue;
+          }
+          if (wc->opcode == IBV_WC_RDMA_WRITE) {
+            // send completion
+            waiting = false;
+            break;
+          }
+        }
+      }
+    }
+
+    // Send completion
+    volatile uint64_t *tmp = (volatile uint64_t *)conn->cpuTrigger;
+    *tmp = 0;
+  }
+  *run = 1;
+  // WARN("Proxy exits: rank %d", rank);
+  return NULL;
+}
+
+#endif
 
 void* mscclppProxyService(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
