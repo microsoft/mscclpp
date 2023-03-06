@@ -301,6 +301,7 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
     } else if (conn->transport == mscclppTransportIB) {
       MSCCLPPCHECK(mscclppIbConnectionSetupStart(&cInfo, conn));
     }
+    // TODO: from saemal: do we possibly deadlock if there are too many outstanding sends?
     MSCCLPPCHECK(bootstrapSend(comm->bootstrap, conn->remoteRank, conn->devConn->tag, &cInfo, sizeof(cInfo)));
   }
 

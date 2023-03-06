@@ -37,9 +37,11 @@ struct proxyArgs {
   int connIdx;
 };
 
+// TODO(saemal) We need to add a fifo for each DMA engine
 void* mscclppProxyServiceP2P(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
   struct mscclppComm *comm = args->comm;
+  // TODO(saemal): we perhaps need a finite state for run instead of just 0 and 1
   volatile int *run = args->run;
   struct mscclppConn *conn = &comm->conns[args->connIdx];
   cudaStream_t stream = args->stream;
@@ -49,6 +51,7 @@ void* mscclppProxyServiceP2P(void* _args) {
   mscclppTrigger trigger;
   // TODO(chhwang): find numa node
   // Current mapping is based on NDv4: GPU [0,1,2,3,4,5,6,7] -> NUMA [1,1,0,0,3,3,2,2]
+  // TODO(saemal): either ask user or detect it automatically
   NumaBind((comm->cudaDev / 2) ^ 1);
 
   PROXYCUDACHECK(cudaSetDevice(comm->cudaDev));
@@ -89,6 +92,7 @@ void* mscclppProxyServiceP2P(void* _args) {
 
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
 
+// TODO(saemal) We need to add a fifo for each DMA engine
 void* mscclppProxyServiceIb(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
   struct mscclppComm *comm = args->comm;
@@ -168,6 +172,7 @@ void* mscclppProxyServiceIb(void* _args) {
 
 #else // MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1
 
+// TODO(saemal): merge this with the function above
 void* mscclppProxyServiceIb(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
   struct mscclppComm *comm = args->comm;
