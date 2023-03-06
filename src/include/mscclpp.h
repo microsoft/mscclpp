@@ -17,11 +17,22 @@
 extern "C" {
 #endif
 
+typedef enum { mscclppData = 0x1,
+               mscclppFlag = 0x2,
+               mscclppSync = 0x4} mscclppTriggerType_t;
+
+#define MSCCLPP_SIZE_BITS 30
+#define MSCCLPP_OFFSET_BITS 31
+
+#define TRIGGER_VALUE(__TYPE__,__OFFSET__,__SIZE__) (((((__TYPE__) << MSCCLPP_OFFSET_BITS) + (__OFFSET__)) << MSCCLPP_SIZE_BITS) + __SIZE__ )
+
+// the summation of number of bits must be 64 or less
 union alignas(8) mscclppTrigger {
   uint64_t value;
   struct {
-    uint64_t dataSize : 32;
-    uint64_t dataOffset : 32;
+    uint64_t dataSize : MSCCLPP_SIZE_BITS;
+    uint64_t dataOffset : MSCCLPP_OFFSET_BITS;
+    uint64_t type : 3;
   } fields;
 };
 
