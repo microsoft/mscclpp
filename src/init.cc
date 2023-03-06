@@ -179,7 +179,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
   conn->devConn->localBuff = localBuff;
   conn->devConn->localFlag = localFlag;
   conn->devConn->tag = tag;
-  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuTrigger, &conn->devConn->trigger, 1, &conn->cpuTriggerGdrDesc));
+  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuTriggerFifo, &conn->devConn->trigger, MSCCLPP_PROXY_FIFO_SIZE, &conn->cpuTriggerFifoGdrDesc));
 
   conn->ibCtx = NULL;
   conn->ibQp = NULL;

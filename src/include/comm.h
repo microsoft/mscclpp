@@ -158,14 +158,18 @@
 //   } channels[MAXCHANNELS];
 // };
 
+#define MSCCLPP_PROXY_FIFO_SIZE 8
+
 struct mscclppConn {
   mscclppTransport_t transport;
   int remoteRank;
   int buffSize;
-  mscclppTrigger *cpuTrigger;
+  mscclppTrigger *cpuTriggerFifo;
+  int* fifoHead; // indicates where CPU needs to read work elements. Write by CPU only, read by both
+  int* fifoTail; // indicates where GPU needs to write work elements. Write by GPU only, read by both
   uint64_t *remoteProxyFlag;
   uint64_t *cpuProxyFlag;
-  void *cpuTriggerGdrDesc;
+  void *cpuTriggerFifoGdrDesc;
   void *cpuProxyFlagGdrDesc;
   struct mscclppDevConn *devConn;
   struct mscclppIbContext *ibCtx;
