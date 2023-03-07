@@ -10,6 +10,7 @@
 #include <map>
 #include <thread>
 
+// TODO(chhwang): verify if MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0 is useful, otherwise delete this option.
 #define MSCCLPP_PROXY_FLAG_SET_BY_RDMA 1
 
 #define PROXYCUDACHECK(cmd) \
