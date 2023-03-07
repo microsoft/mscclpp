@@ -77,7 +77,7 @@ void* mscclppProxyServiceP2P(void* _args) {
     }
 
     // send completion
-    volatile uint64_t *tmp = (volatile uint64_t *)conn->cpuTriggerFifo;
+    volatile uint64_t *tmp = (volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
     *tmp = 0;
     conn->fifoTail++;
   }
