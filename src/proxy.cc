@@ -10,6 +10,7 @@
 #include <map>
 #include <thread>
 
+// TODO(chhwang): verify if MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0 is useful, otherwise delete this option.
 #define MSCCLPP_PROXY_FLAG_SET_BY_RDMA 1
 
 #define PROXYCUDACHECK(cmd) \
@@ -86,9 +87,6 @@ void* mscclppProxyServiceP2P(void* _args) {
   return NULL;
 }
 
-#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
-
-// TODO(saemal) We need to add a fifo for each DMA engine
 void* mscclppProxyServiceIb(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
   struct mscclppComm *comm = args->comm;
@@ -96,24 +94,30 @@ void* mscclppProxyServiceIb(void* _args) {
   volatile mscclppProxyRunState_t *run = args->run;
   struct mscclppConn *conn = &comm->conns[args->connIdx];
   free(_args);
-  uint64_t currentProxyFlagVlaue = *conn->cpuProxyFlag;
 
+#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
   enum {
     SEND_STATE_INIT,
     SEND_STATE_INPROGRESS
   };
+  int sendState = SEND_STATE_INIT;
+  uint64_t currentProxyFlagVlaue = *conn->cpuProxyFlag;
+#endif
 
   int rank = comm->rank;
-  int sendState = SEND_STATE_INIT;
   mscclppTrigger trigger;
   int wcNum;
 
   NumaBind(ibCtx->numaNode);
+
+#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
   if (conn->ibQp->postRecv(0) != 0) {
     WARN("postRecv failed: errno %d", errno);
   }
+#endif
 
   while (*run == MSCCLPP_PROXY_RUN_STATE_RUNNING) {
+#if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
     // Try send
     if (sendState == SEND_STATE_INIT) {
       trigger.value = *(volatile uint64_t *)conn->cpuTrigger;
@@ -160,30 +164,7 @@ void* mscclppProxyServiceIb(void* _args) {
         }
       }
     }
-  }
-  *run = MSCCLPP_PROXY_RUN_STATE_IDLE;
-  // WARN("Proxy exits: rank %d", rank);
-  return NULL;
-}
-
-#else // MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1
-
-// TODO(saemal): merge this with the function above
-void* mscclppProxyServiceIb(void* _args) {
-  struct proxyArgs *args = (struct proxyArgs *)_args;
-  struct mscclppComm *comm = args->comm;
-  struct mscclppIbContext *ibCtx = args->ibCtx;
-  volatile mscclppProxyRunState_t *run = args->run;
-  struct mscclppConn *conn = &comm->conns[args->connIdx];
-  free(_args);
-
-  int rank = comm->rank;
-  mscclppTrigger trigger;
-  int wcNum;
-
-  NumaBind(ibCtx->numaNode);
-
-  while (*run == MSCCLPP_PROXY_RUN_STATE_RUNNING) {
+#else // (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1)
     // Poll to see if we are ready to send anything
     trigger.value = *(volatile uint64_t *)conn->cpuTrigger;
     if (trigger.value == 0) continue;
@@ -232,13 +213,12 @@ void* mscclppProxyServiceIb(void* _args) {
     // Send completion
     volatile uint64_t *tmp = (volatile uint64_t *)conn->cpuTrigger;
     *tmp = 0;
+#endif
   }
   *run = MSCCLPP_PROXY_RUN_STATE_IDLE;
   // WARN("Proxy exits: rank %d", rank);
   return NULL;
 }
-
-#endif
 
 void* mscclppProxyService(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
