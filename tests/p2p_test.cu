@@ -67,12 +67,12 @@ __global__ void kernel(int rank, int world_size, uint64_t flag_base, uint64_t it
 
     // Trigger sending data and flag
     if (thMod == 0) {
+      // Wait until the previous trigger is consumed
+      WAIT_LOOP(*trig != 0);
+
       uint64_t dataOffset = rank * sizeof(int) * NELEM;
       uint64_t dataSize = sizeof(int) * NELEM;
-      *trig = TRIGGER_VALUE(mscclppSync | mscclppFlag | mscclppData, dataOffset, dataSize);
-
-      // Wait until the proxy have sent my data and flag
-      WAIT_LOOP(*trig != 0);
+      *trig = TRIGGER_VALUE(mscclppFlag | mscclppData, dataOffset, dataSize);
 
       // Wait for receiving data from remote rank
       WAIT_LOOP(*proxyFlag == i);
@@ -259,7 +259,7 @@ int main(int argc, const char *argv[])
 
   // measure runtime
   double t0 = MPI_Wtime();
-  int iter = 100;
+  int iter = 10000;
   kernel<<<1, NUM_THREADS_PER_REMOTE_RANK * (world_size - 1), 0, stream>>>(rank, world_size, 1, iter);
   CUDACHECK(cudaStreamSynchronize(stream));
 

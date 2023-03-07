@@ -76,10 +76,13 @@ void* mscclppProxyServiceP2P(void* _args) {
       PROXYCUDACHECK(cudaStreamSynchronize(stream));
     }
 
-    // send completion
-    volatile uint64_t *tmp = (volatile uint64_t *)conn->cpuTrigger;
-    *tmp = 0;
+    // Send completion
+    *(volatile uint64_t *)conn->cpuTrigger = 0;
   }
+
+  // Need a sync in case previous copies are not completed
+  PROXYCUDACHECK(cudaStreamSynchronize(stream));
+
   *run = MSCCLPP_PROXY_RUN_STATE_IDLE;
   PROXYCUDACHECK(cudaStreamDestroy(stream));
 
