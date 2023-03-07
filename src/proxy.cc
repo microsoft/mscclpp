@@ -56,9 +56,6 @@ void* mscclppProxyServiceP2P(void* _args) {
   PROXYCUDACHECK(cudaSetDevice(comm->cudaDev));
   PROXYCUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
-  cudaStreamCaptureStatus stat;
-  cudaStreamIsCapturing(stream, &stat);
-
   while (*run == MSCCLPP_PROXY_RUN_STATE_RUNNING) {
     // Poll to see if we are ready to send anything
     trigger.value = *(volatile uint64_t *)conn->cpuTrigger;
