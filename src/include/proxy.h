@@ -5,9 +5,15 @@
 #include "comm.h"
 #include <pthread.h>
 
+typedef enum {
+  MSCCLPP_PROXY_RUN_STATE_IDLE = 0,
+  MSCCLPP_PROXY_RUN_STATE_RUNNING,
+  MSCCLPP_PROXY_RUN_STATE_EXITING,
+} mscclppProxyRunState_t;
+
 struct mscclppProxyState {
   pthread_t *threads;
-  int *runs;
+  mscclppProxyRunState_t *runs;
 };
 
 mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm);
