@@ -8,6 +8,7 @@
 #include <sys/syscall.h>
 #include <numa.h>
 #include <map>
+#include <vector>
 #include <thread>
 
 // TODO(chhwang): verify if MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0 is useful, otherwise delete this option.
@@ -43,7 +44,13 @@ void* mscclppProxyServiceP2P(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
   struct mscclppComm *comm = args->comm;
   volatile mscclppProxyRunState_t *run = args->run;
-  struct mscclppConn *conn = &comm->conns[args->connIdx];
+  std::vector<struct mscclppConn *> conns;
+  for (int i = 0; i < comm->nConns; ++i) {
+    struct mscclppConn *conn = &comm->conns[i];
+    if (conn->transport == mscclppTransportP2P) {
+      conns.push_back(conn);
+    }
+  }
   cudaStream_t stream = args->stream;
   free(_args);
 
@@ -58,26 +65,28 @@ void* mscclppProxyServiceP2P(void* _args) {
   PROXYCUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
   while (*run == MSCCLPP_PROXY_RUN_STATE_RUNNING) {
-    // Poll to see if we are ready to send anything
-    trigger.value = *(volatile uint64_t *)conn->cpuTrigger;
-    if (trigger.value == 0) continue;
+    for (struct mscclppConn *conn : conns) {
+      // Poll to see if we are ready to send anything
+      trigger.value = *(volatile uint64_t *)conn->cpuTrigger;
+      if (trigger.value == 0) continue;
 
-    // Iterate over what send is needed
-    if (trigger.fields.type & mscclppData){
-      void *srcBuff = (void *)((char *)conn->devConn->localBuff + trigger.fields.dataOffset);
-      void *dstBuff = (void *)((char *)conn->devConn->remoteBuff + trigger.fields.dataOffset);
-      PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
-    }
-    if (trigger.fields.type & mscclppFlag) {
-      PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->localFlag, sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
-    }
-    // Wait for completion
-    if (trigger.fields.type & mscclppSync){
-      PROXYCUDACHECK(cudaStreamSynchronize(stream));
-    }
+      // Iterate over what send is needed
+      if (trigger.fields.type & mscclppData){
+        void *srcBuff = (void *)((char *)conn->devConn->localBuff + trigger.fields.dataOffset);
+        void *dstBuff = (void *)((char *)conn->devConn->remoteBuff + trigger.fields.dataOffset);
+        PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
+      }
+      if (trigger.fields.type & mscclppFlag) {
+        PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->localFlag, sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
+      }
+      // Wait for completion
+      if (trigger.fields.type & mscclppSync){
+        PROXYCUDACHECK(cudaStreamSynchronize(stream));
+      }
 
-    // Send completion
-    *(volatile uint64_t *)conn->cpuTrigger = 0;
+      // Send completion
+      *(volatile uint64_t *)conn->cpuTrigger = 0;
+    }
   }
 
   // Need a sync in case previous copies are not completed
@@ -270,25 +279,22 @@ mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm) {
   // P2P proxies
   mscclppProxyState *proxyState = &comm->proxyState[MSCCLPP_IB_MAX_DEVS];
   if (proxyState->threads == NULL) {
-    MSCCLPPCHECK(mscclppCalloc(&proxyState->threads, comm->nConns));
+    MSCCLPPCHECK(mscclppCalloc(&proxyState->threads, 1));
   }
   if (proxyState->runs == NULL) {
-    MSCCLPPCHECK(mscclppCalloc(&proxyState->runs, comm->nConns));
+    MSCCLPPCHECK(mscclppCalloc(&proxyState->runs, 1));
   }
-  for (int j = 0; j < comm->nConns; ++j) {
-    // Create P2P DMA proxy threads
-    if (comm->conns[j].transport != mscclppTransportP2P) continue;
-    struct proxyArgs *args;
-    MSCCLPPCHECK(mscclppCalloc(&args, 1));
-    args->comm = comm;
-    args->ibCtx = NULL;
-    args->run = &proxyState->runs[j];
-    args->connIdx = j;
-    CUDACHECK(cudaStreamCreateWithFlags(&args->stream, cudaStreamNonBlocking));
-    *args->run = MSCCLPP_PROXY_RUN_STATE_RUNNING;
-    pthread_create(&proxyState->threads[j], NULL, mscclppProxyService, args);
-    mscclppSetThreadName(proxyState->threads[j], "MSCCLPP Service %2d - %4d", MSCCLPP_IB_MAX_DEVS + 1, j);
-  }
+  // Create P2P DMA proxy thread
+  struct proxyArgs *args;
+  MSCCLPPCHECK(mscclppCalloc(&args, 1));
+  args->comm = comm;
+  args->ibCtx = NULL;
+  args->run = proxyState->runs;
+  args->connIdx = -1; // unused
+  CUDACHECK(cudaStreamCreateWithFlags(&args->stream, cudaStreamNonBlocking));
+  *args->run = MSCCLPP_PROXY_RUN_STATE_RUNNING;
+  pthread_create(proxyState->threads, NULL, mscclppProxyService, args);
+  mscclppSetThreadName(proxyState->threads[0], "MSCCLPP Service P2P - %02d", comm->cudaDev);
   return mscclppSuccess;
 }
 
@@ -310,10 +316,6 @@ mscclppResult_t mscclppProxyDestroy(struct mscclppComm* comm) {
     }
   }
   // P2P proxies
-  mscclppProxyState *proxyState = &comm->proxyState[MSCCLPP_IB_MAX_DEVS];
-  for (int j = 0; j < comm->nConns; ++j) {
-    if (comm->conns[j].transport != mscclppTransportP2P) continue;
-    _stopProxy(comm, MSCCLPP_IB_MAX_DEVS, j);
-  }
+  _stopProxy(comm, MSCCLPP_IB_MAX_DEVS, 0);
   return mscclppSuccess;
 }
