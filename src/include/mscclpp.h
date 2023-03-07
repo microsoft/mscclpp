@@ -17,9 +17,9 @@
 extern "C" {
 #endif
 
-typedef enum { mscclppData = 0x1,
-               mscclppFlag = 0x2,
-               mscclppSync = 0x4} mscclppTriggerType_t;
+typedef enum : uint64_t { mscclppData = 0x1,
+                          mscclppFlag = 0x2,
+                          mscclppSync = 0x4} mscclppTriggerType_t;
 
 #define MSCCLPP_SIZE_BITS 30
 #define MSCCLPP_OFFSET_BITS 31
