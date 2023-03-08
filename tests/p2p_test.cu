@@ -29,6 +29,7 @@
     }                                                         \
 } while(false)
 
+#define MSCCLPP_PROXY_FIFO_SIZE 8
 __constant__ mscclppDevConn_t constDevConns[16];
 
 __global__ void kernel(int rank, int world_size)
@@ -42,8 +43,13 @@ __global__ void kernel(int rank, int world_size)
   volatile uint64_t *localFlag = devConn.localFlag;
   volatile uint64_t *remoteFlag = devConn.remoteFlag;
   volatile uint64_t *proxyFlag = devConn.proxyFlag;
-  volatile uint64_t *trig = (volatile uint64_t *)&devConn.trigger[*devConn.triggerFifoHead];
-  *devConn.triggerFifoHead += 1;
+  int curFifoHead = *devConn.triggerFifoHead;
+  volatile uint64_t *trig = (volatile uint64_t *)&devConn.trigger[curFifoHead];
+  curFifoHead += 1;
+  if (curFifoHead == MSCCLPP_PROXY_FIFO_SIZE)
+    curFifoHead = 0;
+  *devConn.triggerFifoHead = curFifoHead;
+
   uint64_t baseFlag = *localFlag;
 
   if (threadIdx.x == 0) {
@@ -243,7 +249,7 @@ int main(int argc, const char *argv[])
   CUDACHECK(cudaEventCreate(&ev_end));
 
   // warm up
-  int warmupiter = 1000;
+  int warmupiter = 10;
 //  for (int i = 0; i < warmupiter; ++i) {
 //    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
 //  }
@@ -252,14 +258,14 @@ int main(int argc, const char *argv[])
   cudaGraph_t graph;
   cudaGraphExec_t instance;
   cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
-  int cudagraphiter = 100;
+  int cudagraphiter = 10;
   for (int i = 0; i < cudagraphiter; ++i) {
   	kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
   }
   cudaStreamEndCapture(stream, &graph);
   cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
 
-  int cudagraphwarmup = 200;
+  int cudagraphwarmup = 20;
   for (int i = 0; i < cudagraphwarmup; ++i) {
 	  cudaGraphLaunch(instance, stream);
   }
@@ -268,7 +274,7 @@ int main(int argc, const char *argv[])
   // measure runtime 
 //  CUDACHECK(cudaEventRecord(ev_start, stream));
   double t0 = MPI_Wtime();
-  int cudagraphlaunch = 1000;
+  int cudagraphlaunch = 10;
   for (int i = 0; i < cudagraphlaunch; ++i) {
   // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
      cudaGraphLaunch(instance, stream);

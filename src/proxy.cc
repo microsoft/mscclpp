@@ -80,6 +80,8 @@ void* mscclppProxyServiceP2P(void* _args) {
     volatile uint64_t *tmp = (volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
     *tmp = 0;
     conn->fifoTail++;
+    if (conn->fifoTail == MSCCLPP_PROXY_FIFO_SIZE)
+      conn->fifoTail = 0;
   }
   *run = 1;
   PROXYCUDACHECK(cudaStreamDestroy(stream));
