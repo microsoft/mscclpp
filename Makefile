@@ -105,7 +105,8 @@ LDFLAGS := $(NVLDFLAGS) -libverbs -lgdrapi -lnuma
 
 LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc gdr.cc init.cc proxy.cc ib.cc)
 LIBSRCS += $(addprefix src/bootstrap/,bootstrap.cc socket.cc)
-LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
+LIBCUSRCS := $(addprefix src/,gpu_utils.cu)
+LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS)) $(patsubst %.cu,%.o,$(LIBCUSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 
 INCEXPORTS := mscclpp.h mscclpp_net.h
@@ -137,6 +138,10 @@ tests: $(TESTSBINS)
 $(BUILDDIR)/$(OBJDIR)/%.o: %.cc
 	@mkdir -p $(@D)
 	$(CXX) -o $@ $(INCLUDE) $(CXXFLAGS) -c $<
+
+$(BUILDDIR)/$(OBJDIR)/%.o: %.cu
+	@mkdir -p $(@D)
+	$(NVCC) -o $@ $(INCLUDE) $(NVCUFLAGS) -Xcompiler "-fPIC" -c $<
 
 $(BUILDDIR)/$(INCDIR)/%.h: src/$(INCDIR)/%.h
 	@mkdir -p $(@D)

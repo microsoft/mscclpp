@@ -4,6 +4,7 @@
 #include "alloc.h"
 #include "ib.h"
 #include "checks.h"
+#include "gpu_utils.h"
 
 #include <sys/syscall.h>
 #include <numa.h>
@@ -23,6 +24,15 @@
     } \
   } while (false)
 
+#define PROXYMSCCLPPCHECK(call) do { \
+  mscclppResult_t res = call; \
+  if (res != mscclppSuccess && res != mscclppInProgress) { \
+    /* Print the back trace*/ \
+    if (mscclppDebugNoWarn == 0) INFO(MSCCLPP_ALL,"%s:%d -> %d", __FILE__, __LINE__, res);    \
+    return NULL; \
+  } \
+} while (0);
+
 static void NumaBind(int node)
 {
   nodemask_t mask;
@@ -38,6 +48,8 @@ struct proxyArgs {
   volatile mscclppProxyRunState_t* run;
   int connIdx;
 };
+
+#define COPY_FLAGS_ON_GPU 1
 
 // TODO(saemal) We need to add a fifo for each DMA engine
 void* mscclppProxyServiceP2P(void* _args) {
@@ -64,11 +76,37 @@ void* mscclppProxyServiceP2P(void* _args) {
   PROXYCUDACHECK(cudaSetDevice(comm->cudaDev));
   PROXYCUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
+  uint64_t **flagsHost;
+  uint64_t **flagsDev;
+  uint64_t **triggers;
+  // * 2 because one for local and one for remote
+  PROXYMSCCLPPCHECK(mscclppCalloc(&flagsHost, conns.size() * 2));
+  PROXYMSCCLPPCHECK(mscclppCudaCalloc(&flagsDev, conns.size() * 2));
+  PROXYMSCCLPPCHECK(mscclppCalloc(&triggers, conns.size()));
+  int numConn = (int)conns.size();
+  int connIdx = 0;
+  int numTriggeredFlags;
+  int numTriggers;
+  bool doSync;
+
   while (*run == MSCCLPP_PROXY_RUN_STATE_RUNNING) {
-    for (struct mscclppConn *conn : conns) {
+    numTriggeredFlags = 0;
+    numTriggers = 0;
+    doSync = false;
+    // for (int i = 0; i < numConn; ++i) {
+    int exitcnt = numConn * 10;
+    while (numTriggers < numConn) {
+      if (exitcnt-- == 0) break;
+      struct mscclppConn *conn = conns[connIdx];
+      connIdx = (connIdx + 1) % numConn;
+
       // Poll to see if we are ready to send anything
       trigger.value = *(volatile uint64_t *)conn->cpuTrigger;
       if (trigger.value == 0) continue;
+
+#if (COPY_FLAGS_ON_GPU == 1)
+      triggers[numTriggers++] = (uint64_t *)conn->cpuTrigger;
+#endif
 
       // Iterate over what send is needed
       if (trigger.fields.type & mscclppData){
@@ -77,16 +115,47 @@ void* mscclppProxyServiceP2P(void* _args) {
         PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
       }
       if (trigger.fields.type & mscclppFlag) {
+#if (COPY_FLAGS_ON_GPU == 1)
+        flagsHost[2 * numTriggeredFlags] = conn->devConn->localFlag;
+        flagsHost[2 * numTriggeredFlags + 1] = conn->remoteProxyFlag;
+        numTriggeredFlags++;
+#else
         PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->localFlag, sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
+#endif
       }
       // Wait for completion
       if (trigger.fields.type & mscclppSync){
+#if (COPY_FLAGS_ON_GPU == 1)
+        doSync = true;
+        break;
+#else
         PROXYCUDACHECK(cudaStreamSynchronize(stream));
+#endif
       }
 
+#if (COPY_FLAGS_ON_GPU == 0)
       // Send completion
       *(volatile uint64_t *)conn->cpuTrigger = 0;
+#endif
     }
+#if (COPY_FLAGS_ON_GPU == 1)
+    if (numTriggeredFlags == 1000) {
+      for (int i = 0; i < numTriggeredFlags; ++i) {
+        PROXYCUDACHECK(cudaMemcpyAsync(flagsHost[2 * i + 1], flagsHost[2 * i], sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
+      }
+    } else if (numTriggeredFlags > 0) {
+      PROXYCUDACHECK(cudaMemcpyAsync(flagsDev, flagsHost, numTriggeredFlags * 2 * sizeof(uint64_t *), cudaMemcpyHostToDevice, stream));
+      PROXYCUDACHECK(copyFlag(flagsDev, numTriggeredFlags, stream));
+    }
+    if (doSync) {
+      PROXYCUDACHECK(cudaStreamSynchronize(stream));
+    }
+    if (numTriggers > 0) {
+      for (int i = 0; i < numTriggers; ++i) {
+        *(volatile uint64_t *)triggers[i] = 0;
+      }
+    }
+#endif
   }
 
   // Need a sync in case previous copies are not completed

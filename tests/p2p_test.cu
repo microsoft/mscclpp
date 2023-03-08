@@ -11,9 +11,9 @@
 #define USE_DMA_FOR_P2P 1
 #define TEST_CONN_TYPE 0 // 0: P2P(for local)+IB(for remote), 1: IB-Only
 
-#define NELEM 256 // only up to 256 for now.
+#define NELEM 2 // only up to 256 for now.
 #define NELEM2 (NELEM / 2)
-#define NUM_THREADS_PER_REMOTE_RANK 128
+#define NUM_THREADS_PER_REMOTE_RANK 32
 
 #define WAIT_LOOP(cond) do { \
   constexpr int maxIter = 10000000; \
