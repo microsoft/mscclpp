@@ -120,7 +120,7 @@ void* mscclppProxyServiceIb(void* _args) {
   while (*run) {
     // Try send
     if (sendState == SEND_STATE_INIT) {
-      trigger.value = *(volatile uint64_t *)conn->cpuTriggerFifo;
+      trigger.value = *(volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
       if (trigger.value != 0) {
         // Do send
         conn->ibQp->stageSendWithImm(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
@@ -157,8 +157,11 @@ void* mscclppProxyServiceIb(void* _args) {
           // WARN("rank %d recv completion", rank);
         } else if (wc->opcode == IBV_WC_RDMA_WRITE) {
           // send completion
-          volatile uint64_t *tmp = (volatile uint64_t *)conn->cpuTriggerFifo;
+          volatile uint64_t *tmp = (volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
           *tmp = 0;
+          conn->fifoTail++;
+          if (conn->fifoTail == MSCCLPP_PROXY_FIFO_SIZE)
+            conn->fifoTail = 0;
           sendState = SEND_STATE_INIT;
           // WARN("rank %d send completion", rank);
         }
@@ -189,7 +192,7 @@ void* mscclppProxyServiceIb(void* _args) {
 
   while (*run) {
     // Poll to see if we are ready to send anything
-    trigger.value = *(volatile uint64_t *)conn->cpuTriggerFifo;
+    trigger.value = *(volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
     if (trigger.value == 0) continue;
 
     if (trigger.fields.type & mscclppData) {
@@ -234,8 +237,11 @@ void* mscclppProxyServiceIb(void* _args) {
     }
 
     // Send completion
-    volatile uint64_t *tmp = (volatile uint64_t *)conn->cpuTriggerFifo;
+    volatile uint64_t *tmp = (volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
     *tmp = 0;
+    conn->fifoTail++;
+    if (conn->fifoTail == MSCCLPP_PROXY_FIFO_SIZE)
+      conn->fifoTail = 0;
   }
   *run = 1;
   // WARN("Proxy exits: rank %d", rank);
