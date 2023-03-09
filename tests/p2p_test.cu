@@ -67,13 +67,13 @@ __global__ void kernel(int rank, int world_size)
   // Each warp receives data from different ranks
 #if (USE_DMA_FOR_P2P == 1)
 
+  // Wait until the proxy have sent my data and flag
+  while (*trig != 0) {}
+
   // Trigger sending data and flag
   uint64_t dataOffset = rank * sizeof(int);
   uint64_t dataSize = sizeof(int);
-  *trig = TRIGGER_VALUE(mscclppSync | mscclppFlag | mscclppData, dataOffset, dataSize);
-
-  // Wait until the proxy have sent my data and flag
-  while (*trig != 0) {}
+  *trig = TRIGGER_VALUE(mscclppFlag | mscclppData, dataOffset, dataSize);
 
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag) {}
