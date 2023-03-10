@@ -68,8 +68,13 @@ void* mscclppProxyServiceP2P(void* _args) {
   while (*run == MSCCLPP_PROXY_RUN_STATE_RUNNING) {
     for (struct mscclppConn *conn : conns) {
       // Poll to see if we are ready to send anything
-      trigger.value = *(volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
-      if (trigger.value == 0) continue;
+      trigger.value[0] = *(volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value);
+      if (trigger.value[0] == 0) continue;
+      // TODO(chhwang): latency overhead of reading value[1] is too large (~9us)
+      trigger.value[1] = *(volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value + 1);
+      if (trigger.value[1] != 42) {
+        WARN("Unexpected value");
+      }
 
       // Iterate over what send is needed
       if (trigger.fields.type & mscclppData){
@@ -85,7 +90,7 @@ void* mscclppProxyServiceP2P(void* _args) {
         PROXYCUDACHECK(cudaStreamSynchronize(stream));
       }
 
-      // Send completion
+      // Send completion: reset only the high 64 bits
       volatile uint64_t *tmp = (volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
       *tmp = 0;
       conn->fifoTail++;
@@ -196,8 +201,13 @@ void* mscclppProxyServiceIb(void* _args) {
       }
 #else // (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1)
       // Poll to see if we are ready to send anything
-      trigger.value = *(volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
-      if (trigger.value == 0) continue;
+      trigger.value[0] = *(volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value);
+      if (trigger.value[0] == 0) continue;
+      // TODO(chhwang): latency overhead of reading value[1] is too large (~9us)
+      trigger.value[1] = *(volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value + 1);
+      if (trigger.value[1] != 42) {
+        WARN("Unexpected value");
+      }
 
       if (trigger.fields.type & mscclppData) {
         conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
@@ -240,7 +250,7 @@ void* mscclppProxyServiceIb(void* _args) {
         }
       }
 
-      // Send completion
+      // Send completion: reset only the high 64 bits
       volatile uint64_t *tmp = (volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
       *tmp = 0;
       conn->fifoTail++;

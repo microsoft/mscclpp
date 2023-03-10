@@ -22,18 +22,23 @@ typedef enum : uint64_t { mscclppData = 0x1,
                           mscclppFlag = 0x2,
                           mscclppSync = 0x4} mscclppTriggerType_t;
 
-#define MSCCLPP_SIZE_BITS 30
-#define MSCCLPP_OFFSET_BITS 31
+#define MSCCLPP_BITS_SIZE 30
+#define MSCCLPP_BITS_OFFSET 31
+#define MSCCLPP_BITS_CONNID 10
 
-#define TRIGGER_VALUE(__TYPE__,__OFFSET__,__SIZE__) (((((__TYPE__) << MSCCLPP_OFFSET_BITS) + (__OFFSET__)) << MSCCLPP_SIZE_BITS) + __SIZE__ )
+#define TRIGGER_VALUE(__TYPE__,__OFFSET__,__SIZE__) (((((__TYPE__) << MSCCLPP_BITS_OFFSET) + (__OFFSET__)) << MSCCLPP_BITS_SIZE) + __SIZE__ )
 
-// the summation of number of bits must be 64 or less
-union alignas(8) mscclppTrigger {
-  uint64_t value;
+// the summation of number of bits must be 128 or less
+union alignas(16) mscclppTrigger {
+  uint64_t value[2];
   struct {
-    uint64_t dataSize : MSCCLPP_SIZE_BITS;
-    uint64_t dataOffset : MSCCLPP_OFFSET_BITS;
+    // high 64 bits: value[0]
+    uint64_t dataSize : MSCCLPP_BITS_SIZE;
+    uint64_t dataOffset : MSCCLPP_BITS_OFFSET;
     uint64_t type : 3;
+    uint64_t      : 0; // ensure 64-bit alignment
+    // low 64 bits: value[1]
+    uint64_t connId : MSCCLPP_BITS_CONNID;
   } fields;
 };
 

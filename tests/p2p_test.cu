@@ -42,6 +42,17 @@ static double getTime(void)
 
 __constant__ mscclppDevConn_t constDevConns[16];
 
+__forceinline__ __device__ void setTrigger(mscclppTrigger *trig, uint64_t connId, uint64_t type,
+                                           uint64_t dataOffset, uint64_t dataSize)
+{
+  asm volatile(
+    "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(&trig->value),
+    "l"((type << (MSCCLPP_BITS_SIZE + MSCCLPP_BITS_OFFSET)) +
+        (dataOffset << (MSCCLPP_BITS_SIZE)) +
+        (dataSize)),
+    "l"(connId));
+}
+
 __global__ void kernel(int rank, int world_size)
 {
   if (threadIdx.x % 32 != 0) return;
@@ -54,7 +65,7 @@ __global__ void kernel(int rank, int world_size)
   volatile uint64_t *remoteFlag = devConn.remoteFlag;
   volatile uint64_t *proxyFlag = devConn.proxyFlag;
   int curFifoHead = *devConn.triggerFifoHead;
-  volatile uint64_t *trig = (volatile uint64_t *)&devConn.trigger[curFifoHead];
+  mscclppTrigger *trig = &devConn.trigger[curFifoHead];
   curFifoHead += 1;
   if (curFifoHead == MSCCLPP_PROXY_FIFO_SIZE)
     curFifoHead = 0;
@@ -78,12 +89,11 @@ __global__ void kernel(int rank, int world_size)
 #if (USE_DMA_FOR_P2P == 1)
 
   // Wait until the proxy have sent my data and flag
-  while (*trig != 0) {}
+  // Check only the high 64 bits
+  while (*(volatile uint64_t *)trig->value != 0) {}
 
   // Trigger sending data and flag
-  uint64_t dataOffset = rank * sizeof(int);
-  uint64_t dataSize = sizeof(int);
-  *trig = TRIGGER_VALUE(mscclppFlag | mscclppData, dataOffset, dataSize);
+  setTrigger(trig, /*for test*/42, mscclppFlag | mscclppData, rank * sizeof(int), sizeof(int));
 
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag) {}
