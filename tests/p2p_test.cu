@@ -29,7 +29,6 @@
     }                                                         \
 } while(false)
 
-#define MSCCLPP_PROXY_FIFO_SIZE 8
 __constant__ mscclppDevConn_t constDevConns[16];
 
 __global__ void kernel(int rank, int world_size)

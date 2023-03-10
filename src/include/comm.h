@@ -158,8 +158,6 @@
 //   } channels[MAXCHANNELS];
 // };
 
-#define MSCCLPP_PROXY_FIFO_SIZE 8
-
 struct mscclppConn {
   mscclppTransport_t transport;
   int remoteRank;

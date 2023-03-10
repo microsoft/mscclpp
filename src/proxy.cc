@@ -47,6 +47,7 @@ void* mscclppProxyServiceP2P(void* _args) {
   std::vector<struct mscclppConn *> conns;
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn *conn = &comm->conns[i];
+    // TODO(saemal): we need to create another transport type which doesn't need a proxy.
     if (conn->transport == mscclppTransportP2P) {
       conns.push_back(conn);
     }
@@ -290,7 +291,7 @@ mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm) {
     pthread_create(comm->proxyState[i].threads, NULL, mscclppProxyService, args);
     mscclppSetThreadName(comm->proxyState[i].threads[0], "MSCCLPP Service IB - %02d", i);
   }
-  // P2P proxies
+  // P2P proxy
   mscclppProxyState *proxyState = &comm->proxyState[MSCCLPP_IB_MAX_DEVS];
   if (proxyState->threads == NULL) {
     MSCCLPPCHECK(mscclppCalloc(&proxyState->threads, 1));
