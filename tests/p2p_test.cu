@@ -29,6 +29,17 @@
     }                                                         \
 } while(false)
 
+// Measure current time in second.
+static double getTime(void)
+{
+  struct timespec tspec;
+  if (clock_gettime(CLOCK_MONOTONIC, &tspec) == -1) {
+    printf("clock_gettime failed\n");
+    exit(EXIT_FAILURE);
+  }
+  return (tspec.tv_nsec / 1.0e9) + tspec.tv_sec;
+}
+
 __constant__ mscclppDevConn_t constDevConns[16];
 
 __global__ void kernel(int rank, int world_size)
@@ -272,7 +283,7 @@ int main(int argc, const char *argv[])
 
   // measure runtime 
 //  CUDACHECK(cudaEventRecord(ev_start, stream));
-  double t0 = MPI_Wtime();
+  double t0 = getTime();
   int cudagraphlaunch = 10;
   for (int i = 0; i < cudagraphlaunch; ++i) {
   // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
@@ -281,7 +292,7 @@ int main(int argc, const char *argv[])
 //  CUDACHECK(cudaEventRecord(ev_end, stream));
   CUDACHECK(cudaStreamSynchronize(stream));
 
-  double t1 = MPI_Wtime();
+  double t1 = getTime();
   float ms = (t1-t0)*1000.0;
 //  CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
   printf("rank: %d, time: %f us/iter\n", rank, ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter);
