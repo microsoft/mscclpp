@@ -1,14 +1,58 @@
-# Project
+# MSCCL++
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+GPU-driven computation & communication stack.
 
-As the maintainer of this project, please make a few updates:
+## Quick Start
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+### Preliminaries
+
+- OS: tested over Ubuntu 18.04 and 20.04
+- Libraries: CUDA >= 11.1.1, [gdrcopy](https://github.com/NVIDIA/gdrcopy), [libnuma](https://github.com/numactl/numactl)
+- GPUs: A100 (TBU: H100)
+- Azure SKUs: [ND_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/nda100-v4-series), [NDm_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series) (TBD: [NC_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/nc-a100-v4-series))
+
+
+### Compile Library
+
+Run `make` in the top directory. To use MPI for test code, pass `MPI_HOME` (`/usr/local/mpi` by default). For example:
+
+```
+$ MPI_HOME=/usr/local/mpi make -j
+```
+
+If you do not want to use MPI, pass `USE_MPI_FOR_TESTS=0`.
+
+```
+# Do not use MPI
+$ USE_MPI_FOR_TESTS=0 make -j
+```
+
+`make` will create a header file `build/include/mscclpp.h` and a shared library `build/lib/libmscclpp.so`.
+
+### (Optional) Tests
+
+For verification, one can try provided sample code `bootstrap_test` or `p2p_test`. First add the MSCCL++ library path to `LD_LIBRARY_PATH`.
+
+```
+$ export LD_LIBRARY_PATH=$PWD/build/lib:$LD_LIBRARY_PATH
+```
+
+Run tests using MPI:
+
+```
+$ mpirun -np 8 ./build/bin/tests/bootstrap_test 127.0.0.1:50000
+$ mpirun -np 8 ./build/bin/tests/p2p_test 127.0.0.1:50000
+```
+
+If tests are compiled without MPI, pass a rank and the number of ranks as the following example. Usage of `p2p_test` is also the same as `bootstrap_test`.
+
+```
+# Terminal 1: Rank 0, #Ranks 2
+$ ./build/bin/tests/bootstrap_test 127.0.0.1:50000 0 2
+# Terminal 2: Rank 1, #Ranks 2
+$ ./build/bin/tests/bootstrap_test 127.0.0.1:50000 1 2
+```
+
 
 ## Contributing
 
