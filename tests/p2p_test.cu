@@ -47,10 +47,9 @@ __forceinline__ __device__ void setTrigger(mscclppTrigger *trig, uint64_t connId
 {
   asm volatile(
     "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(&trig->value),
-    "l"((type << (MSCCLPP_BITS_SIZE + MSCCLPP_BITS_OFFSET)) +
-        (dataOffset << (MSCCLPP_BITS_SIZE)) +
+    "l"((dataOffset << (MSCCLPP_BITS_SIZE)) +
         (dataSize)),
-    "l"(connId));
+    "l"((type << MSCCLPP_BITS_CONNID) + connId));
 }
 
 __global__ void kernel(int rank, int world_size)
