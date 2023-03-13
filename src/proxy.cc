@@ -39,6 +39,9 @@ struct proxyArgs {
   int connIdx;
 };
 
+
+#include <emmintrin.h>
+
 // TODO(saemal) We need to add a fifo for each DMA engine
 void* mscclppProxyServiceP2P(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
@@ -68,10 +71,14 @@ void* mscclppProxyServiceP2P(void* _args) {
   while (*run == MSCCLPP_PROXY_RUN_STATE_RUNNING) {
     for (struct mscclppConn *conn : conns) {
       // Poll to see if we are ready to send anything
-      trigger.value[0] = *(volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value);
+      // trigger.value[0] = *(volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value);
+      volatile uint64_t* src = (volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value);
+      volatile uint64_t* dst = (volatile uint64_t *)trigger.value;
+      __m128i xmm0 = _mm_loadu_si128((__m128i*)src);
+      _mm_storeu_si128((__m128i*)dst, xmm0);
       if (trigger.value[0] == 0) continue;
       // TODO(chhwang): latency overhead of reading value[1] is too large (~9us)
-      trigger.value[1] = *(volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value + 1);
+      // trigger.value[1] = *(volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value + 1);
       if (trigger.value[1] != 42) {
         WARN("Unexpected value");
       }

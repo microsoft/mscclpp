@@ -269,7 +269,7 @@ int main(int argc, const char *argv[])
   CUDACHECK(cudaEventCreate(&ev_end));
 
   // warm up
-  int warmupiter = 10;
+  // int warmupiter = 10;
 //  for (int i = 0; i < warmupiter; ++i) {
 //    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
 //  }
@@ -278,14 +278,14 @@ int main(int argc, const char *argv[])
   cudaGraph_t graph;
   cudaGraphExec_t instance;
   cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
-  int cudagraphiter = 10;
+  int cudagraphiter = 100;
   for (int i = 0; i < cudagraphiter; ++i) {
   	kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
   }
   cudaStreamEndCapture(stream, &graph);
   cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
 
-  int cudagraphwarmup = 20;
+  int cudagraphwarmup = 100;
   for (int i = 0; i < cudagraphwarmup; ++i) {
 	  cudaGraphLaunch(instance, stream);
   }
@@ -294,7 +294,7 @@ int main(int argc, const char *argv[])
   // measure runtime 
 //  CUDACHECK(cudaEventRecord(ev_start, stream));
   double t0 = getTime();
-  int cudagraphlaunch = 10;
+  int cudagraphlaunch = 100;
   for (int i = 0; i < cudagraphlaunch; ++i) {
   // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
      cudaGraphLaunch(instance, stream);
