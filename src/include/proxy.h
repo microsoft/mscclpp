@@ -12,8 +12,12 @@ typedef enum {
 } mscclppProxyRunState_t;
 
 struct mscclppProxyState {
-  pthread_t *threads;
-  mscclppProxyRunState_t *runs;
+  pthread_t thread;
+  mscclppProxyRunState_t run;
+  mscclppTrigger *cpuTriggerFifo;
+  mscclppTrigger *gpuTriggerFifo;
+  unsigned int *gpuTriggerFifoHead;
+  void *cpuTriggerFifoGdrDesc;
 };
 
 mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm);

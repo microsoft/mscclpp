@@ -64,12 +64,8 @@ __global__ void kernel(int rank, int world_size)
   volatile uint64_t *localFlag = devConn.localFlag;
   volatile uint64_t *remoteFlag = devConn.remoteFlag;
   volatile uint64_t *proxyFlag = devConn.proxyFlag;
-  int curFifoHead = *devConn.triggerFifoHead;
+  unsigned int curFifoHead = atomicInc(devConn.triggerFifoHead, MSCCLPP_PROXY_FIFO_SIZE - 1);
   mscclppTrigger *trig = &devConn.trigger[curFifoHead];
-  curFifoHead += 1;
-  if (curFifoHead == MSCCLPP_PROXY_FIFO_SIZE)
-    curFifoHead = 0;
-  *devConn.triggerFifoHead = curFifoHead;
 
   uint64_t baseFlag = *localFlag;
 
@@ -93,7 +89,7 @@ __global__ void kernel(int rank, int world_size)
   while (*(volatile uint64_t *)trig->value != 0) {}
 
   // Trigger sending data and flag
-  setTrigger(trig, /*for test*/42, mscclppFlag | mscclppData, rank * sizeof(int), sizeof(int));
+  setTrigger(trig, devConn.connId, mscclppFlag | mscclppData, rank * sizeof(int), sizeof(int));
 
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag) {}
@@ -101,13 +97,12 @@ __global__ void kernel(int rank, int world_size)
 #else // USE_DMA_FOR_P2P == 0
 
   if (devConn.remoteBuff == NULL) { // IB
-    // Trigger sending data and flag
-    uint64_t dataOffset = rank * sizeof(int);
-    uint64_t dataSize = sizeof(int);
-    *trig = TRIGGER_VALUE(mscclppSync | mscclppFlag | mscclppData, dataOffset, dataSize);
-
     // Wait until the proxy have sent my data and flag
-    while (*trig != 0) {}
+    // Check only the high 64 bits
+    while (*(volatile uint64_t *)trig->value != 0) {}
+
+    // Trigger sending data and flag
+    setTrigger(trig, devConn.connId, mscclppFlag | mscclppData, rank * sizeof(int), sizeof(int));
 
     // Wait for receiving data from remote rank
     while (*proxyFlag == baseFlag) {}
@@ -285,7 +280,7 @@ int main(int argc, const char *argv[])
   cudaStreamEndCapture(stream, &graph);
   cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
 
-  int cudagraphwarmup = 100;
+  int cudagraphwarmup = 10;
   for (int i = 0; i < cudagraphwarmup; ++i) {
 	  cudaGraphLaunch(instance, stream);
   }
@@ -294,7 +289,7 @@ int main(int argc, const char *argv[])
   // measure runtime 
 //  CUDACHECK(cudaEventRecord(ev_start, stream));
   double t0 = getTime();
-  int cudagraphlaunch = 100;
+  int cudagraphlaunch = 10;
   for (int i = 0; i < cudagraphlaunch; ++i) {
   // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
      cudaGraphLaunch(instance, stream);

@@ -162,13 +162,8 @@ struct mscclppConn {
   mscclppTransport_t transport;
   int remoteRank;
   int buffSize;
-  mscclppTrigger *cpuTriggerFifo;
-  // fifoTail indicates where CPU needs to read the head of the fifo. only accessible by CPU
-  // No atomicity is required for fifoTail as only a single CPU thread accesses it.
-  int fifoTail; 
   uint64_t *remoteProxyFlag;
   uint64_t *cpuProxyFlag;
-  void *cpuTriggerFifoGdrDesc;
   void *cpuProxyFlagGdrDesc;
   struct mscclppDevConn *devConn;
   struct mscclppIbContext *ibCtx;

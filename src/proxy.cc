@@ -5,6 +5,7 @@
 #include "ib.h"
 #include "checks.h"
 
+#include <emmintrin.h>
 #include <sys/syscall.h>
 #include <numa.h>
 #include <map>
@@ -36,11 +37,13 @@ struct proxyArgs {
   struct mscclppIbContext* ibCtx;
   cudaStream_t stream;
   volatile mscclppProxyRunState_t* run;
-  int connIdx;
+  mscclppTrigger *triggerFifo;
 };
 
-
-#include <emmintrin.h>
+static void readTrigger(mscclppTrigger *dst, mscclppTrigger *src) {
+  __m128i xmm0 = _mm_loadu_si128((__m128i *)src);
+  _mm_storeu_si128((__m128i *)dst, xmm0);
+}
 
 // TODO(saemal) We need to add a fifo for each DMA engine
 void* mscclppProxyServiceP2P(void* _args) {
@@ -55,6 +58,7 @@ void* mscclppProxyServiceP2P(void* _args) {
       conns.push_back(conn);
     }
   }
+  mscclppTrigger *fifo = args->triggerFifo;
   cudaStream_t stream = args->stream;
   free(_args);
 
@@ -68,42 +72,32 @@ void* mscclppProxyServiceP2P(void* _args) {
   PROXYCUDACHECK(cudaSetDevice(comm->cudaDev));
   PROXYCUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
+  // fifoTail indicates where CPU needs to read the head of the fifo.
+  int fifoTail = 0;
   while (*run == MSCCLPP_PROXY_RUN_STATE_RUNNING) {
-    for (struct mscclppConn *conn : conns) {
-      // Poll to see if we are ready to send anything
-      // trigger.value[0] = *(volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value);
-      volatile uint64_t* src = (volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value);
-      volatile uint64_t* dst = (volatile uint64_t *)trigger.value;
-      __m128i xmm0 = _mm_loadu_si128((__m128i*)src);
-      _mm_storeu_si128((__m128i*)dst, xmm0);
-      if (trigger.value[0] == 0) continue;
-      // TODO(chhwang): latency overhead of reading value[1] is too large (~9us)
-      // trigger.value[1] = *(volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value + 1);
-      if (trigger.value[1] != 42) {
-        WARN("Unexpected value");
-      }
+    // Poll to see if we are ready to send anything
+    readTrigger(&trigger, &fifo[fifoTail]);
+    if (trigger.value[0] == 0) continue;
 
-      // Iterate over what send is needed
-      if (trigger.fields.type & mscclppData){
-        void *srcBuff = (void *)((char *)conn->devConn->localBuff + trigger.fields.dataOffset);
-        void *dstBuff = (void *)((char *)conn->devConn->remoteBuff + trigger.fields.dataOffset);
-        PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
-      }
-      if (trigger.fields.type & mscclppFlag) {
-        PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->localFlag, sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
-      }
-      // Wait for completion
-      if (trigger.fields.type & mscclppSync){
-        PROXYCUDACHECK(cudaStreamSynchronize(stream));
-      }
+    struct mscclppConn *conn = &comm->conns[trigger.fields.connId];
 
-      // Send completion: reset only the high 64 bits
-      volatile uint64_t *tmp = (volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
-      *tmp = 0;
-      conn->fifoTail++;
-      if (conn->fifoTail == MSCCLPP_PROXY_FIFO_SIZE)
-        conn->fifoTail = 0;
+    // Iterate over what send is needed
+    if (trigger.fields.type & mscclppData){
+      void *srcBuff = (void *)((char *)conn->devConn->localBuff + trigger.fields.dataOffset);
+      void *dstBuff = (void *)((char *)conn->devConn->remoteBuff + trigger.fields.dataOffset);
+      PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
     }
+    if (trigger.fields.type & mscclppFlag) {
+      PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->localFlag, sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
+    }
+    // Wait for completion
+    if (trigger.fields.type & mscclppSync){
+      PROXYCUDACHECK(cudaStreamSynchronize(stream));
+    }
+
+    // Send completion: reset only the high 64 bits
+    *(volatile uint64_t *)(&fifo[fifoTail]) = 0;
+    fifoTail = (fifoTail + 1) % MSCCLPP_PROXY_FIFO_SIZE;
   }
 
   // Need a sync in case previous copies are not completed
@@ -128,6 +122,7 @@ void* mscclppProxyServiceIb(void* _args) {
       conns.push_back(conn);
     }
   }
+  mscclppTrigger *fifo = args->triggerFifo;
   free(_args);
 
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
@@ -135,8 +130,16 @@ void* mscclppProxyServiceIb(void* _args) {
     SEND_STATE_INIT,
     SEND_STATE_INPROGRESS
   };
-  int sendState = SEND_STATE_INIT;
-  uint64_t currentProxyFlagVlaue = *conn->cpuProxyFlag;
+  int *sendState;
+  uint64_t *currentProxyFlagVlaue;
+  if (mscclppCalloc((void **)&sendState, comm->nConns) != mscclppSuccess) {
+    WARN("mscclppCalloc failed: errno %d", errno);
+    return NULL;
+  }
+  if (mscclppCalloc((void **)&currentProxyFlagVlaue, comm->nConns) != mscclppSuccess) {
+    WARN("mscclppCalloc failed: errno %d", errno);
+    return NULL;
+  }
 #endif
 
   int rank = comm->rank;
@@ -146,7 +149,10 @@ void* mscclppProxyServiceIb(void* _args) {
   NumaBind(ibCtx->numaNode);
 
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
-  for (struct mscclppConn *conn : conns) {
+  for (int i = 0; i < (int)comm->nConns; ++i) {
+    sendState[i] = SEND_STATE_INIT;
+    struct mscclppConn *conn = &comm->conns[i];
+    currentProxyFlagVlaue[i] = *conn->cpuProxyFlag;
     // Post recv
     if (conn->ibQp->postRecv(0) != 0) {
       WARN("postRecv failed: errno %d", errno);
@@ -154,28 +160,90 @@ void* mscclppProxyServiceIb(void* _args) {
   }
 #endif
 
+  // fifoTail indicates where CPU needs to read the head of the fifo.
+  int fifoTail = 0;
   while (*run == MSCCLPP_PROXY_RUN_STATE_RUNNING) {
-    for (struct mscclppConn *conn : conns) {
+    // Poll to see if we are ready to send anything
+    readTrigger(&trigger, &fifo[fifoTail]);
+
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
-      // Try send
-      if (sendState == SEND_STATE_INIT) {
-        trigger.value = *(volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
-        if (trigger.value != 0) {
-          // Do send
-          conn->ibQp->stageSendWithImm(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
-                                      /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/true, /*immData=*/0);
-          if (conn->ibQp->postSend() != 0) {
-            WARN("postSend failed: errno %d", errno);
+    struct mscclppConn *conn = &comm->conns[trigger.fields.connId];
+    // Try send
+    if (sendState[trigger.fields.connId] == SEND_STATE_INIT) {
+      if (trigger.value[0] != 0) {
+        // Do send
+        conn->ibQp->stageSendWithImm(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
+                                     /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/true, /*immData=*/0);
+        int ret;
+        if ((ret = conn->ibQp->postSend()) != 0) {
+          // Return value is errno.
+          WARN("postSend failed: errno %d", ret);
+        }
+        sendState[trigger.fields.connId] = SEND_STATE_INPROGRESS;
+      }
+    }
+
+    // Poll completions
+    wcNum = conn->ibQp->pollCq();
+    if (wcNum < 0) {
+      WARN("rank %d pollCq failed: errno %d", rank, errno);
+    } else {
+      for (int i = 0; i < wcNum; ++i) {
+        struct ibv_wc *wc = &conn->ibQp->wcs[i];
+        if (wc->status != IBV_WC_SUCCESS) {
+          WARN("rank %d wc status %d", rank, wc->status);
+          continue;
+        }
+        if (wc->qp_num != conn->ibQp->qp->qp_num) {
+          WARN("rank %d got wc of unknown qp_num %d", rank, wc->qp_num);
+          continue;
+        }
+        if (wc->opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
+          // TODO(chhwang): cpu flush
+          *((volatile uint64_t *)conn->cpuProxyFlag) = ++currentProxyFlagVlaue[trigger.fields.connId];
+          // recv completion
+          if (conn->ibQp->postRecv(wc->wr_id) != 0) {
+            WARN("postRecv failed: errno %d", errno);
           }
-          sendState = SEND_STATE_INPROGRESS;
+          // WARN("rank %d recv completion", rank);
+        } else if (wc->opcode == IBV_WC_RDMA_WRITE) {
+          // send completion
+          *(volatile uint64_t *)(&fifo[fifoTail]) = 0;
+          fifoTail = (fifoTail + 1) % MSCCLPP_PROXY_FIFO_SIZE;
+          sendState[trigger.fields.connId] = SEND_STATE_INIT;
+          // WARN("rank %d send completion", rank);
         }
       }
+    }
+#else // (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1)
+    if (trigger.value[0] == 0) continue;
 
-      // Poll completions
-      wcNum = conn->ibQp->pollCq();
-      if (wcNum < 0) {
-        WARN("rank %d pollCq failed: errno %d", rank, errno);
-      } else {
+    struct mscclppConn *conn = &comm->conns[trigger.fields.connId];
+
+    if (trigger.fields.type & mscclppData) {
+      conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
+                            /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
+    }
+    if (trigger.fields.type & mscclppFlag) {
+      // My local flag is copied to the peer's proxy flag
+      conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
+                            /*wrId=*/0, /*offset=*/0, /*signaled=*/true);
+    }
+    int ret;
+    if ((ret = conn->ibQp->postSend()) != 0) {
+      // Return value is errno.
+      WARN("postSend failed: errno %d", ret);
+    }
+
+    // Wait for completion
+    if (trigger.fields.type & mscclppSync) {
+      bool waiting = true;
+      while (waiting) {
+        wcNum = conn->ibQp->pollCq();
+        if (wcNum < 0) {
+          WARN("rank %d pollCq failed: errno %d", rank, errno);
+          continue;
+        }
         for (int i = 0; i < wcNum; ++i) {
           struct ibv_wc *wc = &conn->ibQp->wcs[i];
           if (wc->status != IBV_WC_SUCCESS) {
@@ -186,85 +254,19 @@ void* mscclppProxyServiceIb(void* _args) {
             WARN("rank %d got wc of unknown qp_num %d", rank, wc->qp_num);
             continue;
           }
-          if (wc->opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
-            // TODO(chhwang): cpu flush
-            *((volatile uint64_t *)conn->cpuProxyFlag) = ++currentProxyFlagVlaue;
-            // recv completion
-            if (conn->ibQp->postRecv(wc->wr_id) != 0) {
-              WARN("postRecv failed: errno %d", errno);
-            }
-            // WARN("rank %d recv completion", rank);
-          } else if (wc->opcode == IBV_WC_RDMA_WRITE) {
+          if (wc->opcode == IBV_WC_RDMA_WRITE) {
             // send completion
-            volatile uint64_t *tmp = (volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
-            *tmp = 0;
-            conn->fifoTail++;
-            if (conn->fifoTail == MSCCLPP_PROXY_FIFO_SIZE)
-              conn->fifoTail = 0;
-            sendState = SEND_STATE_INIT;
-            // WARN("rank %d send completion", rank);
+            waiting = false;
+            break;
           }
         }
       }
-#else // (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1)
-      // Poll to see if we are ready to send anything
-      trigger.value[0] = *(volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value);
-      if (trigger.value[0] == 0) continue;
-      // TODO(chhwang): latency overhead of reading value[1] is too large (~9us)
-      trigger.value[1] = *(volatile uint64_t *)(conn->cpuTriggerFifo[conn->fifoTail].value + 1);
-      if (trigger.value[1] != 42) {
-        WARN("Unexpected value");
-      }
-
-      if (trigger.fields.type & mscclppData) {
-        conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
-                              /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
-      }
-      if (trigger.fields.type & mscclppFlag) {
-          // My local flag is copied to the peer's proxy flag
-          conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
-                                /*wrId=*/0, /*offset=*/0, /*signaled=*/true);
-      }
-      if (conn->ibQp->postSend() != 0) {
-        WARN("postSend failed: errno %d", errno);
-      }
-
-      // Wait for completion
-      if (trigger.fields.type & mscclppSync) {
-        bool waiting = true;
-        while (waiting) {
-          wcNum = conn->ibQp->pollCq();
-          if (wcNum < 0) {
-            WARN("rank %d pollCq failed: errno %d", rank, errno);
-            continue;
-          }
-          for (int i = 0; i < wcNum; ++i) {
-            struct ibv_wc *wc = &conn->ibQp->wcs[i];
-            if (wc->status != IBV_WC_SUCCESS) {
-              WARN("rank %d wc status %d", rank, wc->status);
-              continue;
-            }
-            if (wc->qp_num != conn->ibQp->qp->qp_num) {
-              WARN("rank %d got wc of unknown qp_num %d", rank, wc->qp_num);
-              continue;
-            }
-            if (wc->opcode == IBV_WC_RDMA_WRITE) {
-              // send completion
-              waiting = false;
-              break;
-            }
-          }
-        }
-      }
-
-      // Send completion: reset only the high 64 bits
-      volatile uint64_t *tmp = (volatile uint64_t *)(&conn->cpuTriggerFifo[conn->fifoTail]);
-      *tmp = 0;
-      conn->fifoTail++;
-      if (conn->fifoTail == MSCCLPP_PROXY_FIFO_SIZE)
-        conn->fifoTail = 0;
-#endif
     }
+
+    // Send completion: reset only the high 64 bits
+    *(volatile uint64_t *)(&fifo[fifoTail]) = 0;
+    fifoTail = (fifoTail + 1) % MSCCLPP_PROXY_FIFO_SIZE;
+#endif
   }
   *run = MSCCLPP_PROXY_RUN_STATE_IDLE;
   // WARN("Proxy exits: rank %d", rank);
@@ -283,69 +285,51 @@ void* mscclppProxyService(void* _args) {
   return ret;
 }
 
-// mscclppResult_t mscclppProxyInit(struct mscclppComm* comm, struct mscclppSocket* sock, union mscclppSocketAddress* peerAddresses) {
-//   comm->proxyState.listenSock = sock;
-//   comm->proxyState.peerAddresses = peerAddresses;
-//   return mscclppSuccess;
-// }
-
 mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm) {
-  for (int i = 0; i < MSCCLPP_IB_MAX_DEVS; ++i) {
-    if (comm->ibContext[i] == NULL) continue;
-    if (comm->proxyState[i].threads == NULL) {
-      MSCCLPPCHECK(mscclppCalloc(&comm->proxyState[i].threads, 1));
+  for (int i = 0; i < MSCCLPP_IB_MAX_DEVS + 1; ++i) {
+    // `i == MSCCLPP_IB_MAX_DEVS` is for the P2P proxy
+    bool is_p2p = (i == MSCCLPP_IB_MAX_DEVS);
+    if (!is_p2p) {
+      if (comm->ibContext[i] == NULL) continue;
     }
-    if (comm->proxyState[i].runs == NULL) {
-      MSCCLPPCHECK(mscclppCalloc(&comm->proxyState[i].runs, 1));
+    if (comm->proxyState[i].cpuTriggerFifo == NULL) {
+      // reachable when there is no mscclppTransportP2P type connection
+      continue;
     }
-    // Create IB proxy threads
     struct proxyArgs *args;
     MSCCLPPCHECK(mscclppCalloc(&args, 1));
     args->comm = comm;
-    args->ibCtx = comm->ibContext[i];
-    args->run = comm->proxyState[i].runs;
+    args->ibCtx = is_p2p ? NULL : comm->ibContext[i];
+    args->run = &comm->proxyState[i].run;
+    args->triggerFifo = comm->proxyState[i].cpuTriggerFifo;
+    if (is_p2p) {
+      CUDACHECK(cudaStreamCreateWithFlags(&args->stream, cudaStreamNonBlocking));
+    }
     *args->run = MSCCLPP_PROXY_RUN_STATE_RUNNING;
-    pthread_create(comm->proxyState[i].threads, NULL, mscclppProxyService, args);
-    mscclppSetThreadName(comm->proxyState[i].threads[0], "MSCCLPP Service IB - %02d", i);
+    pthread_create(&comm->proxyState[i].thread, NULL, mscclppProxyService, args);
+    if (is_p2p) {
+      mscclppSetThreadName(comm->proxyState[i].thread, "MSCCLPP Service P2P - %02d", comm->cudaDev);
+    } else {
+      mscclppSetThreadName(comm->proxyState[i].thread, "MSCCLPP Service IB - %02d", i);
+    }
   }
-  // P2P proxy
-  mscclppProxyState *proxyState = &comm->proxyState[MSCCLPP_IB_MAX_DEVS];
-  if (proxyState->threads == NULL) {
-    MSCCLPPCHECK(mscclppCalloc(&proxyState->threads, 1));
-  }
-  if (proxyState->runs == NULL) {
-    MSCCLPPCHECK(mscclppCalloc(&proxyState->runs, 1));
-  }
-  // Create P2P DMA proxy thread
-  struct proxyArgs *args;
-  MSCCLPPCHECK(mscclppCalloc(&args, 1));
-  args->comm = comm;
-  args->ibCtx = NULL;
-  args->run = proxyState->runs;
-  args->connIdx = -1; // unused
-  CUDACHECK(cudaStreamCreateWithFlags(&args->stream, cudaStreamNonBlocking));
-  *args->run = MSCCLPP_PROXY_RUN_STATE_RUNNING;
-  pthread_create(proxyState->threads, NULL, mscclppProxyService, args);
-  mscclppSetThreadName(proxyState->threads[0], "MSCCLPP Service P2P - %02d", comm->cudaDev);
   return mscclppSuccess;
 }
 
-static void _stopProxy(struct mscclppComm* comm, int devIdx, int connIdx) {
-  volatile int *run = (volatile int *)&comm->proxyState[devIdx].runs[connIdx];
-  if (*run == MSCCLPP_PROXY_RUN_STATE_IDLE) return;
-  *run = MSCCLPP_PROXY_RUN_STATE_EXITING;
-  while (*run == MSCCLPP_PROXY_RUN_STATE_EXITING && *comm->abortFlag == 0) {
-    usleep(1000);
-  }
-}
-
 mscclppResult_t mscclppProxyDestroy(struct mscclppComm* comm) {
-  for (int i = 0; i < MSCCLPP_IB_MAX_DEVS; ++i) {
-    if (comm->ibContext[i] != NULL) {
-      _stopProxy(comm, i, 0);
+  for (int i = 0; i < MSCCLPP_IB_MAX_DEVS + 1; ++i) {
+    // `i == MSCCLPP_IB_MAX_DEVS` is for the P2P proxy
+    if (i < MSCCLPP_IB_MAX_DEVS) {
+      if (comm->ibContext[i] == NULL) continue;
+    }
+    volatile int *run = (volatile int *)&comm->proxyState[i].run;
+    if (*run == MSCCLPP_PROXY_RUN_STATE_IDLE) {
+      continue;
+    }
+    *run = MSCCLPP_PROXY_RUN_STATE_EXITING;
+    while (*run == MSCCLPP_PROXY_RUN_STATE_EXITING && *comm->abortFlag == 0) {
+      usleep(1000);
     }
   }
-  // P2P proxies
-  _stopProxy(comm, MSCCLPP_IB_MAX_DEVS, 0);
   return mscclppSuccess;
 }

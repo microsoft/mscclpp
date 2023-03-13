@@ -171,24 +171,16 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
     WARN("devConnOut is the output of this function and needs to be allocated by the user");
     return mscclppInvalidUsage;
   }
-  struct mscclppConn *conn = &comm->conns[comm->nConns++];
+  struct mscclppConn *conn = &comm->conns[comm->nConns];
   conn->transport = transportType;
   conn->remoteRank = remoteRank;
   conn->buffSize = buffSize;
-  conn->devConn = devConnOut;
-  conn->devConn->localBuff = localBuff;
-  conn->devConn->localFlag = localFlag;
-  conn->devConn->tag = tag;
-
-  // TODO(saemal): these two should be shared for all P2P-DMA connections made from each GPU. Same for each IB driver.
-  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuTriggerFifo, &conn->devConn->trigger, MSCCLPP_PROXY_FIFO_SIZE, &conn->cpuTriggerFifoGdrDesc));
-  MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->triggerFifoHead, 1));
 
   conn->ibCtx = NULL;
   conn->ibQp = NULL;
+  int ibDevIdx = -1;
   if (ibDev != NULL) {
     // Check if an IB context exists
-    int ibDevIdx = -1;
     int firstNullIdx = -1;
     for (int i = 0; i < MSCCLPP_IB_MAX_DEVS; ++i) {
       if (comm->ibContext[i] == NULL) {
@@ -210,6 +202,22 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
     }
     conn->ibCtx = comm->ibContext[ibDevIdx];
   }
+  int proxyIdx = (ibDevIdx == -1) ? MSCCLPP_IB_MAX_DEVS : ibDevIdx;
+  struct mscclppProxyState *proxyState = &comm->proxyState[proxyIdx];
+  if (proxyState->cpuTriggerFifo == NULL) {
+    MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->cpuTriggerFifo, &proxyState->gpuTriggerFifo,
+                                      MSCCLPP_PROXY_FIFO_SIZE, &proxyState->cpuTriggerFifoGdrDesc));
+    MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->gpuTriggerFifoHead, 1));
+  }
+  conn->devConn = devConnOut;
+  conn->devConn->localBuff = localBuff;
+  conn->devConn->localFlag = localFlag;
+  conn->devConn->tag = tag;
+  conn->devConn->connId = comm->nConns;
+  conn->devConn->trigger = proxyState->gpuTriggerFifo;
+  conn->devConn->triggerFifoHead = proxyState->gpuTriggerFifoHead;
+
+  comm->nConns++;
   return mscclppSuccess;
 }
 
