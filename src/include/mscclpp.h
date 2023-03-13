@@ -26,8 +26,6 @@ typedef enum : uint64_t { mscclppData = 0x1,
 #define MSCCLPP_BITS_OFFSET 31
 #define MSCCLPP_BITS_CONNID 10
 
-#define TRIGGER_VALUE(__TYPE__,__OFFSET__,__SIZE__) (((((__TYPE__) << MSCCLPP_BITS_OFFSET) + (__OFFSET__)) << MSCCLPP_BITS_SIZE) + __SIZE__ )
-
 // the summation of number of bits must be 128 or less
 union alignas(16) mscclppTrigger {
   uint64_t value[2];
