@@ -45,19 +45,10 @@ static void readTrigger(mscclppTrigger *dst, mscclppTrigger *src) {
   _mm_storeu_si128((__m128i *)dst, xmm0);
 }
 
-// TODO(saemal) We need to add a fifo for each DMA engine
 void* mscclppProxyServiceP2P(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
   struct mscclppComm *comm = args->comm;
   volatile mscclppProxyRunState_t *run = args->run;
-  std::vector<struct mscclppConn *> conns;
-  for (int i = 0; i < comm->nConns; ++i) {
-    struct mscclppConn *conn = &comm->conns[i];
-    // TODO(saemal): we need to create another transport type which doesn't need a proxy.
-    if (conn->transport == mscclppTransportP2P) {
-      conns.push_back(conn);
-    }
-  }
   mscclppTrigger *fifo = args->triggerFifo;
   cudaStream_t stream = args->stream;
   free(_args);
@@ -115,13 +106,6 @@ void* mscclppProxyServiceIb(void* _args) {
   struct mscclppComm *comm = args->comm;
   struct mscclppIbContext *ibCtx = args->ibCtx;
   volatile mscclppProxyRunState_t *run = args->run;
-  std::vector<struct mscclppConn *> conns;
-  for (int i = 0; i < comm->nConns; ++i) {
-    struct mscclppConn *conn = &comm->conns[i];
-    if (conn->transport == mscclppTransportIB) {
-      conns.push_back(conn);
-    }
-  }
   mscclppTrigger *fifo = args->triggerFifo;
   free(_args);
 
