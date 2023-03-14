@@ -170,7 +170,7 @@ out:
   return NULL;
 }
 
-mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle, bool idFromEnv) {
+mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle) {
   struct mscclppSocket* listenSock;
   struct bootstrapRootArgs* args;
   pthread_t thread;
@@ -209,10 +209,10 @@ mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool
       return mscclppInvalidArgument;
     }
     if (isRoot)
-      MSCCLPPCHECK(bootstrapCreateRoot(handle, false));
+      MSCCLPPCHECK(bootstrapCreateRoot(handle));
   } else {
     memcpy(&handle->addr, &bootstrapNetIfAddr, sizeof(union mscclppSocketAddress));
-    MSCCLPPCHECK(bootstrapCreateRoot(handle, false));
+    MSCCLPPCHECK(bootstrapCreateRoot(handle));
   }
   // printf("addr = %s port = %d\n", inet_ntoa(handle->addr.sin.sin_addr), (int)ntohs(handle->addr.sin.sin_port));
   // printf("addr = %s\n", inet_ntoa((*(struct sockaddr_in*)&handle->addr.sa).sin_addr));
@@ -248,7 +248,7 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
   struct mscclppSocket* proxySocket;
   mscclppSocketAddress nextAddr;
   struct mscclppSocket sock, listenSockRoot;
-  struct extInfo info = { 0 };
+  struct extInfo info;
 
   MSCCLPPCHECK(mscclppCalloc(&state, 1));
   state->rank = rank;

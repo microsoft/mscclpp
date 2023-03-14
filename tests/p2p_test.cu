@@ -61,7 +61,9 @@ __global__ void kernel(int rank, int world_size)
   mscclppDevConn_t devConn = constDevConns[remoteRank];
   volatile int *data = (volatile int *)devConn.localBuff;
   volatile uint64_t *localFlag = devConn.localFlag;
+#if (USE_DMA_FOR_P2P == 0)
   volatile uint64_t *remoteFlag = devConn.remoteFlag;
+#endif
   volatile uint64_t *proxyFlag = devConn.proxyFlag;
   unsigned int curFifoHead = atomicInc(devConn.triggerFifoHead, MSCCLPP_PROXY_FIFO_SIZE - 1);
   mscclppTrigger *trig = &devConn.trigger[curFifoHead];
