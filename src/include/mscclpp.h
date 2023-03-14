@@ -69,6 +69,26 @@ union alignas(16) mscclppTrigger {
  ***************************************/
 
 struct mscclppDevConn {
+#ifdef __CUDACC__
+  __forceinline__ __device__ mscclppTrigger *getTrigger() {
+    unsigned int curFifoHead = atomicInc(this->triggerFifoHead, MSCCLPP_PROXY_FIFO_SIZE - 1);
+    return &this->trigger[curFifoHead];
+  }
+
+  __forceinline__ __device__ void setTrigger(mscclppTrigger *trig, uint64_t type, uint64_t dataOffset, uint64_t dataSize) {
+    asm volatile(
+      "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(&trig->value),
+      "l"((dataOffset << (MSCCLPP_BITS_SIZE)) +
+          (dataSize)),
+      "l"((type << MSCCLPP_BITS_CONNID) + this->connId));
+  }
+
+  __forceinline__ __device__ void waitTrigger(mscclppTrigger *trig) {
+    // Check only the first 64 bits
+    while (*(volatile uint64_t *)trig->value != 0) {}
+  }
+#endif // __CUDACC__
+
   int tag;
 
   void* localBuff;
