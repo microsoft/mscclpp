@@ -122,12 +122,12 @@ void* mscclppProxyServiceIb(void* _args) {
     SEND_STATE_INPROGRESS
   };
   int *sendState;
-  uint64_t *currentProxyFlagVlaue;
+  uint64_t *currentProxyFlagValue;
   if (mscclppCalloc((void **)&sendState, comm->nConns) != mscclppSuccess) {
     WARN("mscclppCalloc failed: errno %d", errno);
     return NULL;
   }
-  if (mscclppCalloc((void **)&currentProxyFlagVlaue, comm->nConns) != mscclppSuccess) {
+  if (mscclppCalloc((void **)&currentProxyFlagValue, comm->nConns) != mscclppSuccess) {
     WARN("mscclppCalloc failed: errno %d", errno);
     return NULL;
   }
@@ -143,7 +143,7 @@ void* mscclppProxyServiceIb(void* _args) {
   for (int i = 0; i < (int)comm->nConns; ++i) {
     sendState[i] = SEND_STATE_INIT;
     struct mscclppConn *conn = &comm->conns[i];
-    currentProxyFlagVlaue[i] = *conn->cpuProxyFlag;
+    currentProxyFlagValue[i] = *conn->cpuProxyFlag;
     // Post recv
     if (conn->ibQp->postRecv(0) != 0) {
       WARN("postRecv failed: errno %d", errno);
@@ -195,7 +195,7 @@ void* mscclppProxyServiceIb(void* _args) {
         }
         if (wc->opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
           // TODO(chhwang): cpu flush
-          *((volatile uint64_t *)conn->cpuProxyFlag) = ++currentProxyFlagVlaue[trigger.fields.connId];
+          *((volatile uint64_t *)conn->cpuProxyFlag) = ++currentProxyFlagValue[trigger.fields.connId];
           // recv completion
           if (conn->ibQp->postRecv(wc->wr_id) != 0) {
             WARN("postRecv failed: errno %d", errno);
