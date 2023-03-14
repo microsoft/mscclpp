@@ -41,8 +41,8 @@ struct proxyArgs {
 };
 
 static void readTrigger(mscclppTrigger *dst, mscclppTrigger *src) {
-  __m128i xmm0 = _mm_loadu_si128((__m128i *)src);
-  _mm_storeu_si128((__m128i *)dst, xmm0);
+  __m128i xmm0 = _mm_load_si128((__m128i *)src);
+  _mm_store_si128((__m128i *)dst, xmm0);
 }
 
 void* mscclppProxyServiceP2P(void* _args) {
