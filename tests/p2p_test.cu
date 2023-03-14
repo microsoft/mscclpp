@@ -51,14 +51,11 @@ __global__ void kernel(int rank, int world_size)
   mscclppDevConn_t devConn = constDevConns[remoteRank];
   volatile int *data = (volatile int *)devConn.localBuff;
   volatile uint64_t *localFlag = devConn.localFlag;
+#if (USE_DMA_FOR_P2P == 0)
   volatile uint64_t *remoteFlag = devConn.remoteFlag;
+#endif
   volatile uint64_t *proxyFlag = devConn.proxyFlag;
-  int curFifoHead = *devConn.triggerFifoHead;
-  volatile uint64_t *trig = (volatile uint64_t *)&devConn.trigger[curFifoHead];
-  curFifoHead += 1;
-  if (curFifoHead == MSCCLPP_PROXY_FIFO_SIZE)
-    curFifoHead = 0;
-  *devConn.triggerFifoHead = curFifoHead;
+  mscclppTrigger *trig = devConn.getTrigger();
 
   uint64_t baseFlag = *localFlag;
 
@@ -78,12 +75,10 @@ __global__ void kernel(int rank, int world_size)
 #if (USE_DMA_FOR_P2P == 1)
 
   // Wait until the proxy have sent my data and flag
-  while (*trig != 0) {}
+  devConn.waitTrigger(trig);
 
   // Trigger sending data and flag
-  uint64_t dataOffset = rank * sizeof(int);
-  uint64_t dataSize = sizeof(int);
-  *trig = TRIGGER_VALUE(mscclppFlag | mscclppData, dataOffset, dataSize);
+  devConn.setTrigger(trig, mscclppFlag | mscclppData, rank * sizeof(int), sizeof(int));
 
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag) {}
@@ -91,13 +86,11 @@ __global__ void kernel(int rank, int world_size)
 #else // USE_DMA_FOR_P2P == 0
 
   if (devConn.remoteBuff == NULL) { // IB
-    // Trigger sending data and flag
-    uint64_t dataOffset = rank * sizeof(int);
-    uint64_t dataSize = sizeof(int);
-    *trig = TRIGGER_VALUE(mscclppSync | mscclppFlag | mscclppData, dataOffset, dataSize);
-
     // Wait until the proxy have sent my data and flag
-    while (*trig != 0) {}
+    devConn.waitTrigger(trig);
+
+    // Trigger sending data and flag
+    devConn.setTrigger(trig, mscclppFlag | mscclppData, rank * sizeof(int), sizeof(int));
 
     // Wait for receiving data from remote rank
     while (*proxyFlag == baseFlag) {}
@@ -259,7 +252,7 @@ int main(int argc, const char *argv[])
   CUDACHECK(cudaEventCreate(&ev_end));
 
   // warm up
-  int warmupiter = 10;
+  // int warmupiter = 10;
 //  for (int i = 0; i < warmupiter; ++i) {
 //    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
 //  }
@@ -268,14 +261,14 @@ int main(int argc, const char *argv[])
   cudaGraph_t graph;
   cudaGraphExec_t instance;
   cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
-  int cudagraphiter = 10;
+  int cudagraphiter = 100;
   for (int i = 0; i < cudagraphiter; ++i) {
   	kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
   }
   cudaStreamEndCapture(stream, &graph);
   cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
 
-  int cudagraphwarmup = 20;
+  int cudagraphwarmup = 10;
   for (int i = 0; i < cudagraphwarmup; ++i) {
 	  cudaGraphLaunch(instance, stream);
   }

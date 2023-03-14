@@ -186,8 +186,8 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext *ctx, struct ms
   qp_init_attr.send_cq = cq;
   qp_init_attr.recv_cq = cq;
   qp_init_attr.qp_type = IBV_QPT_RC;
-  qp_init_attr.cap.max_send_wr = MAXCONNECTIONS;
-  qp_init_attr.cap.max_recv_wr = MAXCONNECTIONS;
+  qp_init_attr.cap.max_send_wr = MAXCONNECTIONS * MSCCLPP_PROXY_FIFO_SIZE;
+  qp_init_attr.cap.max_recv_wr = MAXCONNECTIONS * MSCCLPP_PROXY_FIFO_SIZE;
   qp_init_attr.cap.max_send_sge = 1;
   qp_init_attr.cap.max_recv_sge = 1;
   qp_init_attr.cap.max_inline_data = 0;
@@ -381,25 +381,23 @@ int mscclppIbQp::stageSendWithImm(struct mscclppIbMr *ibMr, const mscclppIbMrInf
 
 int mscclppIbQp::postSend()
 {
-    struct ibv_send_wr *bad_wr;
-    int ret = ibv_post_send(this->qp, this->wrs, &bad_wr);
-    if (ret != 0) {
-        return ret;
-    }
-    // std::memset(this->wrs, 0, sizeof(struct ibv_send_wr) * this->wrn);
-    // std::memset(this->sges, 0, sizeof(struct ibv_sge) * this->wrn);
-    this->wrn = 0;
-    return 0;
+  struct ibv_send_wr *bad_wr;
+  int ret = ibv_post_send(this->qp, this->wrs, &bad_wr);
+  if (ret != 0) {
+    return ret;
+  }
+  this->wrn = 0;
+  return 0;
 }
 
 int mscclppIbQp::postRecv(uint64_t wrId)
 {
-    struct ibv_recv_wr wr, *bad_wr;
-    wr.wr_id = wrId;
-    wr.sg_list = nullptr;
-    wr.num_sge = 0;
-    wr.next = nullptr;
-    return ibv_post_recv(this->qp, &wr, &bad_wr);
+  struct ibv_recv_wr wr, *bad_wr;
+  wr.wr_id = wrId;
+  wr.sg_list = nullptr;
+  wr.num_sge = 0;
+  wr.next = nullptr;
+  return ibv_post_recv(this->qp, &wr, &bad_wr);
 }
 
 int mscclppIbQp::pollCq()

@@ -22,18 +22,23 @@ typedef enum : uint64_t { mscclppData = 0x1,
                           mscclppFlag = 0x2,
                           mscclppSync = 0x4} mscclppTriggerType_t;
 
-#define MSCCLPP_SIZE_BITS 30
-#define MSCCLPP_OFFSET_BITS 31
+#define MSCCLPP_BITS_SIZE 32
+#define MSCCLPP_BITS_OFFSET 32
+#define MSCCLPP_BITS_TYPE 3
+#define MSCCLPP_BITS_CONNID 10
 
-#define TRIGGER_VALUE(__TYPE__,__OFFSET__,__SIZE__) (((((__TYPE__) << MSCCLPP_OFFSET_BITS) + (__OFFSET__)) << MSCCLPP_SIZE_BITS) + __SIZE__ )
-
-// the summation of number of bits must be 64 or less
-union alignas(8) mscclppTrigger {
-  uint64_t value;
+// the summation of number of bits must be 128 or less
+union alignas(16) mscclppTrigger {
+  uint64_t value[2];
   struct {
-    uint64_t dataSize : MSCCLPP_SIZE_BITS;
-    uint64_t dataOffset : MSCCLPP_OFFSET_BITS;
-    uint64_t type : 3;
+    // first 64 bits: value[0]
+    uint64_t dataSize   : MSCCLPP_BITS_SIZE;
+    uint64_t dataOffset : MSCCLPP_BITS_OFFSET;
+    uint64_t            : (64-MSCCLPP_BITS_SIZE-MSCCLPP_BITS_OFFSET); // ensure 64-bit alignment
+    // second 64 bits: value[1]
+    uint64_t connId     : MSCCLPP_BITS_CONNID;
+    uint64_t type       : MSCCLPP_BITS_TYPE;
+    uint64_t            : (64-MSCCLPP_BITS_CONNID-MSCCLPP_BITS_TYPE); // ensure 64-bit alignment
   } fields;
 };
 
@@ -64,6 +69,26 @@ union alignas(8) mscclppTrigger {
  ***************************************/
 
 struct mscclppDevConn {
+#ifdef __CUDACC__
+  __forceinline__ __device__ mscclppTrigger *getTrigger() {
+    unsigned int curFifoHead = atomicInc(this->triggerFifoHead, MSCCLPP_PROXY_FIFO_SIZE - 1);
+    return &this->trigger[curFifoHead];
+  }
+
+  __forceinline__ __device__ void setTrigger(mscclppTrigger *trig, uint64_t type, uint64_t dataOffset, uint64_t dataSize) {
+    asm volatile(
+      "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(&trig->value),
+      "l"((dataOffset << (MSCCLPP_BITS_SIZE)) +
+          (dataSize)),
+      "l"((type << MSCCLPP_BITS_CONNID) + this->connId));
+  }
+
+  __forceinline__ __device__ void waitTrigger(mscclppTrigger *trig) {
+    // Check only the first 64 bits
+    while (*(volatile uint64_t *)trig->value != 0) {}
+  }
+#endif // __CUDACC__
+
   int tag;
 
   void* localBuff;
@@ -80,9 +105,10 @@ struct mscclppDevConn {
   // // localBuff[srcOffset..srcOffset+size-1] <- remoteBuff[dstOffset..dstOffset+size-1]
   // virtual void pullRemoteBuff(size_t srcOffset, size_t dstOffset, size_t size);
 
-  int* triggerFifoHead; // indicates the tail of the fifo. only accessible by the gpu. for parallel, access use atomic
+  unsigned int* triggerFifoHead; // indicates the tail of the fifo. only accessible by the gpu. for parallel, access use atomic
   mscclppTrigger* trigger;
   uint64_t* proxyFlag;
+  int connId;
 };
 
 typedef struct mscclppComm* mscclppComm_t;

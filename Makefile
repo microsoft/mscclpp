@@ -108,7 +108,7 @@ LIBSRCS += $(addprefix src/bootstrap/,bootstrap.cc socket.cc)
 LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 
-INCEXPORTS := mscclpp.h mscclpp_net.h
+INCEXPORTS := mscclpp.h
 INCTARGETS := $(INCEXPORTS:%=$(BUILDDIR)/$(INCDIR)/%)
 
 LIBNAME   := libmscclpp.so

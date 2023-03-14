@@ -5,7 +5,7 @@
  ************************************************************************/
 
 #include "core.h"
-#include "mscclpp_net.h"
+#include "debug.h"
 #include <stdlib.h>
 #include <stdarg.h>
 #include <sys/syscall.h>

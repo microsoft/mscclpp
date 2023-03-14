@@ -7,7 +7,7 @@
 #ifndef MSCCLPP_DEBUG_H_
 #define MSCCLPP_DEBUG_H_
 
-#include "mscclpp_net.h"
+#include "mscclpp.h"
 #include <stdio.h>
 #include <chrono>
 #include <type_traits>
@@ -18,6 +18,9 @@
 
 // Conform to pthread and NVTX standard
 #define MSCCLPP_THREAD_NAMELEN 16
+
+typedef enum {MSCCLPP_LOG_NONE=0, MSCCLPP_LOG_VERSION=1, MSCCLPP_LOG_WARN=2, MSCCLPP_LOG_INFO=3, MSCCLPP_LOG_ABORT=4, MSCCLPP_LOG_TRACE=5} mscclppDebugLogLevel;
+typedef enum {MSCCLPP_INIT=1, MSCCLPP_COLL=2, MSCCLPP_P2P=4, MSCCLPP_SHM=8, MSCCLPP_NET=16, MSCCLPP_GRAPH=32, MSCCLPP_TUNING=64, MSCCLPP_ENV=128, MSCCLPP_ALLOC=256, MSCCLPP_CALL=512, MSCCLPP_ALL=~0} mscclppDebugLogSubSys;
 
 extern int mscclppDebugLevel;
 extern uint64_t mscclppDebugMask;
