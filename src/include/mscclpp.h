@@ -38,7 +38,7 @@ union alignas(16) mscclppTrigger {
     // second 64 bits: value[1]
     uint64_t connId     : MSCCLPP_BITS_CONNID;
     uint64_t type       : MSCCLPP_BITS_TYPE;
-    uint64_t      : (64-MSCCLPP_BITS_CONNID-MSCCLPP_BITS_TYPE);
+    uint64_t            : (64-MSCCLPP_BITS_CONNID-MSCCLPP_BITS_TYPE); // ensure 64-bit alignment
   } fields;
 };
 
