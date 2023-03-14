@@ -43,28 +43,34 @@ union alignas(16) mscclppTrigger {
 };
 
 /**************************************
- * A mscclppDevConn provides a zero-copy connection between a sender and a receiver.
- * It contains a send_buffer and a recv_buffer of the same size
+ * A mscclppDevConn provides a zero-copy connection between a sender and a receiver that are
+ * connected via P2P NVLink or IB.
+ * The communication API is one-sided meaning that not both side of a connection are involved
+ * in a single transfer. This is unlike NCCL/MSCCL where for each send instruction, there needs 
+ * to be a matching receive instruction. MPI_Put and MPI_Get are the closest programming model 
+ * in MSCCL++.
  * 
  * At connection setup, the sender and receiver register the respective buffers through mscclppConnect.
  * 
- * After connection setup, 
- *    mscclppDevConn has exclusive ownership of the recv_buffer; 
- *    the sender has exclusive ownership of the send_buffer
+ * After connection setup, if the connection type is:
+ *    P2P via NVLink: mscclppDevConn has access to remoteBuff and remoteFlag
+ *    InfiniBand: mscclppDevConn has no access to remoteBuff or remoteFlag
  * 
- * The Push communication proceeds as follows:
- * 1. Sender calls mscclppDevConn::asyncSend() once the contents of the send_buffer are ready
- *    Now both the sender and mscclppDevConn have shared (read) ownership of the send_buffer
- *    mscclppDevConn synchronously waits for the exclusive ownership of the recv_buffer (for previous recv to finish),
- *    initiates the copy to the recv_buffer, and returns
+ * For any connection, there is a proxy thread associated with it:
+ *    P2P via NVLink: the DMA engine can perform the copy between the buffers. DMA engine has higher latency
+ *    but has a higher bandwidth and costs no compute cycles on the GPU.
+ *    InfiniBand: the RDMA engine copies the data over via MLX devices.
  * 
- * 2. Sender calls mscclppDevConn::waitSend() to wait for the copy to complete.
- *    When this call returns, the sender has exclusive ownership of the send_buffer again; mscclppDevConn has no ownership
- * 
- * 3. Receiver calls mscclppDevConn::waitRecv() to wait for the copy to complete.
- *    When this call returns, the receiver has exclusive ownership of the recv_buffer; mscclppDevConn has no ownership
- * 
- * 4. Receiver calls mscclppDevConn::recvDone() to indicate that it is done with the recv_buffer
+ * Memory consistency:
+ *    In general, there is no guarantee on the order in which bytes are received. MSCCL++ relies on the following
+ *    property to meet memory consistency: consecutive wirtes/reads by the CPU proxy are observed by the GPU in the same order
+ *    as they are issued in. This means that for a sequence of writes done by a CPU proxy, we need to write a synchornization
+ *    value written in flag that the receiving side of the GPU needs to poll on to ensure the arrival of writes.
+ *
+ * The communication from GPU to CPU proxy happens via trigger which is allocated on the GPU global memory and mounted on the CPU
+ * with GDR copy. The CPU proxy has a fifo of work elements which are communicated via trigger. getTrigger gets a place on the fifo
+ * (note that an atomicInc is used to enable concurrent calls to getTrigger). setTrigger rights the right work element to the fifo
+ * so that the CPU proxy can consume it.
  * 
  ***************************************/
 
@@ -93,17 +99,9 @@ struct mscclppDevConn {
 
   void* localBuff;
   uint64_t* localFlag;
-  // // remoteFlag <- localFlag
-  // virtual void pushLocalFlag();
-  // // remoteBuff[dstOffset..dstOffset+size-1] <- localBuff[srcOffset..srcOffset+size-1]
-  // virtual void pushLocalBuff(size_t srcOffset, size_t dstOffset, size_t size);
 
   void* remoteBuff;
   uint64_t* remoteFlag;
-  // // localFlag <- remoteFlag
-  // virtual void pullRmoteFlag();
-  // // localBuff[srcOffset..srcOffset+size-1] <- remoteBuff[dstOffset..dstOffset+size-1]
-  // virtual void pullRemoteBuff(size_t srcOffset, size_t dstOffset, size_t size);
 
   unsigned int* triggerFifoHead; // indicates the tail of the fifo. only accessible by the gpu. for parallel, access use atomic
   mscclppTrigger* trigger;
