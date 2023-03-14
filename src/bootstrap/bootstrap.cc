@@ -8,7 +8,6 @@
 #include "core.h"
 #include "utils.h"
 #include "bootstrap.h"
-#include "net.h"
 #include <unistd.h>
 #include <sys/types.h>
 
