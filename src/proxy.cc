@@ -35,9 +35,8 @@ static void NumaBind(int node)
 
 struct proxyArgs {
   struct mscclppComm* comm;
-  struct mscclppIbContext* ibCtx;
-  cudaStream_t stream;
   struct mscclppProxyState *proxyState;
+  cudaStream_t stream;
 };
 
 static void readTrigger(mscclppTrigger *dst, mscclppTrigger *src) {
@@ -110,7 +109,7 @@ void* mscclppProxyServiceP2P(void* _args) {
 void* mscclppProxyServiceIb(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
   struct mscclppComm *comm = args->comm;
-  struct mscclppIbContext *ibCtx = args->ibCtx;
+  struct mscclppIbContext *ibCtx = args->proxyState->ibContext;
   volatile mscclppProxyRunState_t *run = &args->proxyState->run;
   mscclppTrigger *fifo = args->proxyState->cpuTriggerFifo;
   unsigned int *fifoTail = &args->proxyState->cpuTriggerFifoTail;
@@ -270,9 +269,8 @@ void* mscclppProxyServiceIb(void* _args) {
 
 void* mscclppProxyService(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
-  struct mscclppIbContext *ibCtx = args->ibCtx;
   void *ret;
-  if (ibCtx == NULL) {
+  if (args->proxyState->ibContext == NULL) {
     ret = mscclppProxyServiceP2P(_args);
   } else {
     ret = mscclppProxyServiceIb(_args);
@@ -281,42 +279,35 @@ void* mscclppProxyService(void* _args) {
 }
 
 mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm) {
-  for (int i = 0; i < MSCCLPP_IB_MAX_DEVS + 1; ++i) {
-    // `i == MSCCLPP_IB_MAX_DEVS` is for the P2P proxy
-    bool is_p2p = (i == MSCCLPP_IB_MAX_DEVS);
-    if (!is_p2p) {
-      if (comm->ibContext[i] == NULL) continue;
-    }
-    if (comm->proxyState[i].cpuTriggerFifo == NULL) {
-      // reachable when there is no mscclppTransportP2P type connection
-      continue;
-    }
+  for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
+    struct mscclppProxyState *proxyState = comm->proxyState[i];
+    if (proxyState == NULL) break;
+    bool is_p2p = (proxyState->ibContext == NULL);
+
     struct proxyArgs *args;
     MSCCLPPCHECK(mscclppCalloc(&args, 1));
     args->comm = comm;
-    args->ibCtx = is_p2p ? NULL : comm->ibContext[i];
-    args->proxyState = &comm->proxyState[i];
+    args->proxyState = proxyState;
     if (is_p2p) {
       CUDACHECK(cudaStreamCreateWithFlags(&args->stream, cudaStreamNonBlocking));
     }
-    comm->proxyState[i].run = MSCCLPP_PROXY_RUN_STATE_RUNNING;
-    pthread_create(&comm->proxyState[i].thread, NULL, mscclppProxyService, args);
+    proxyState->run = MSCCLPP_PROXY_RUN_STATE_RUNNING;
+    pthread_create(&proxyState->thread, NULL, mscclppProxyService, args);
     if (is_p2p) {
-      mscclppSetThreadName(comm->proxyState[i].thread, "MSCCLPP Service P2P - %02d", comm->cudaDev);
+      mscclppSetThreadName(proxyState->thread, "MSCCLPP Service P2P - %02d", comm->cudaDev);
     } else {
-      mscclppSetThreadName(comm->proxyState[i].thread, "MSCCLPP Service IB - %02d", i);
+      mscclppSetThreadName(proxyState->thread, "MSCCLPP Service IB - %02d", i);
     }
   }
   return mscclppSuccess;
 }
 
 mscclppResult_t mscclppProxyDestroy(struct mscclppComm* comm) {
-  for (int i = 0; i < MSCCLPP_IB_MAX_DEVS + 1; ++i) {
-    // `i == MSCCLPP_IB_MAX_DEVS` is for the P2P proxy
-    if (i < MSCCLPP_IB_MAX_DEVS) {
-      if (comm->ibContext[i] == NULL) continue;
-    }
-    volatile int *run = (volatile int *)&comm->proxyState[i].run;
+  for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
+    struct mscclppProxyState *proxyState = comm->proxyState[i];
+    if (proxyState == NULL) break;
+
+    volatile int *run = (volatile int *)&proxyState->run;
     if (*run == MSCCLPP_PROXY_RUN_STATE_IDLE) {
       continue;
     }

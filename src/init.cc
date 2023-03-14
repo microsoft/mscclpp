@@ -202,12 +202,29 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
     }
     conn->ibCtx = comm->ibContext[ibDevIdx];
   }
-  int proxyIdx = (ibDevIdx == -1) ? MSCCLPP_IB_MAX_DEVS : ibDevIdx;
-  struct mscclppProxyState *proxyState = &comm->proxyState[proxyIdx];
-  if (proxyState->cpuTriggerFifo == NULL) {
-    MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->cpuTriggerFifo, &proxyState->gpuTriggerFifo,
-                                      MSCCLPP_PROXY_FIFO_SIZE, &proxyState->cpuTriggerFifoGdrDesc));
-    MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->gpuTriggerFifoHead, 1));
+  // Find a proxy state that uses the given IB device
+  struct mscclppProxyState *proxyState = NULL;
+  for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
+    if (comm->proxyState[i] == NULL) {
+      // Cannot find, create a new one
+      MSCCLPPCHECK(mscclppCalloc(&proxyState, 1));
+      MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->cpuTriggerFifo, &proxyState->gpuTriggerFifo,
+                                        MSCCLPP_PROXY_FIFO_SIZE, &proxyState->cpuTriggerFifoGdrDesc));
+      MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->gpuTriggerFifoHead, 1));
+      proxyState->ibContext = conn->ibCtx;
+      comm->proxyState[i] = proxyState;
+      break;
+    }
+    if (comm->proxyState[i]->ibContext == conn->ibCtx) {
+      // `conn->ibCtx == NULL` indicatess the P2P proxy.
+      proxyState = comm->proxyState[i];
+      break;
+    }
+  }
+  if (proxyState == NULL) {
+    // Cannot reach
+    WARN("Unexpected error");
+    return mscclppInternalError;
   }
   conn->devConn = devConnOut;
   conn->devConn->localBuff = localBuff;
