@@ -16,6 +16,8 @@ struct mscclppProxyState {
   mscclppProxyRunState_t run;
   mscclppTrigger *cpuTriggerFifo;
   mscclppTrigger *gpuTriggerFifo;
+  // cpuTriggerFifoTail indicates where CPU needs to read the head of the fifo.
+  unsigned int cpuTriggerFifoTail;
   unsigned int *gpuTriggerFifoHead;
   void *cpuTriggerFifoGdrDesc;
 };
