@@ -8,7 +8,7 @@
 #define MSCCLPP_INT_NET_H_
 
 #include "mscclpp.h"
-#include "mscclpp_net.h"
+// #include "mscclpp_net.h"
 // #include "comm.h"
 #include "checks.h"
 

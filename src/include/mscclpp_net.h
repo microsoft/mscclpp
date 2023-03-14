@@ -3,7 +3,7 @@
  *
  * See LICENSE.txt for license information
  ************************************************************************/
-
+// TODO(saemal): this file is to be removed.
 #ifndef MSCCLPP_NET_H_
 #define MSCCLPP_NET_H_
 
