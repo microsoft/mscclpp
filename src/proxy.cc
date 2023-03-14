@@ -12,6 +12,7 @@
 #include <vector>
 #include <thread>
 
+#define MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD 100
 // TODO(chhwang): verify if MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0 is useful, otherwise delete this option.
 #define MSCCLPP_PROXY_FLAG_SET_BY_RDMA 1
 
@@ -63,9 +64,15 @@ void* mscclppProxyServiceP2P(void* _args) {
   PROXYCUDACHECK(cudaSetDevice(comm->cudaDev));
   PROXYCUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
+  int runCheckCounter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
   // fifoTail indicates where CPU needs to read the head of the fifo.
   int fifoTail = 0;
-  while (*run == MSCCLPP_PROXY_RUN_STATE_RUNNING) {
+  for (;;) {
+    if (runCheckCounter-- == 0) {
+      runCheckCounter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
+      // Check if we need to exit
+      if (*run != MSCCLPP_PROXY_RUN_STATE_RUNNING) break;
+    }
     // Poll to see if we are ready to send anything
     readTrigger(&trigger, &fifo[fifoTail]);
     if (trigger.value[0] == 0) continue;
@@ -144,9 +151,15 @@ void* mscclppProxyServiceIb(void* _args) {
   }
 #endif
 
+  int runCheckCounter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
   // fifoTail indicates where CPU needs to read the head of the fifo.
   int fifoTail = 0;
-  while (*run == MSCCLPP_PROXY_RUN_STATE_RUNNING) {
+  for (;;) {
+    if (runCheckCounter-- == 0) {
+      runCheckCounter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
+      // Check if we need to exit
+      if (*run != MSCCLPP_PROXY_RUN_STATE_RUNNING) break;
+    }
     // Poll to see if we are ready to send anything
     readTrigger(&trigger, &fifo[fifoTail]);
 
