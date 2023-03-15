@@ -243,7 +243,9 @@ int main(int argc, const char *argv[])
       break;
     }
   }
-
+  int tmp[16];
+  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
+  
 //   // Perf test
 //   cudaEvent_t ev_start;
 //   cudaEvent_t ev_end;
