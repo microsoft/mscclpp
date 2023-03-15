@@ -215,6 +215,7 @@ void* mscclppProxyServiceIb(void* _args) {
     struct mscclppConn *conn = &comm->conns[trigger.fields.connId];
 
     if (trigger.fields.type & mscclppData) {
+      printf("offset = %d size %d\n", trigger.fields.dataOffset, trigger.fields.dataSize);
       conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
                             /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
     }
