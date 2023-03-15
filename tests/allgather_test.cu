@@ -58,6 +58,7 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
 
   uint64_t baseFlag = *localFlag;
 
+  __syncthreads();
   if (threadIdx.x == 0) {
     // Do we need a sys fence?
     // __threadfence_system();
@@ -71,7 +72,7 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   devConn.waitTrigger(trig);
 
   // Trigger sending data and flag
-  devConn.setTrigger(trig, mscclppFlag | mscclppData, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+  devConn.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag) {}
@@ -202,6 +203,7 @@ int main(int argc, const char *argv[])
       data_h[i] = 0;
     }
   }
+  CUDACHECK(cudaMemcpy(data_d, data_h, data_size, cudaMemcpyHostToDevice));
 
   mscclppDevConn_t devConns[16];
   for (int r = 0; r < world_size; ++r) {
@@ -228,7 +230,6 @@ int main(int argc, const char *argv[])
   CUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
 
-  CUDACHECK(cudaMemcpy(data_d, data_h, data_size, cudaMemcpyHostToDevice));
   CUDACHECK(cudaDeviceSynchronize());
   kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
   CUDACHECK(cudaDeviceSynchronize());

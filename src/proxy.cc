@@ -81,7 +81,6 @@ void* mscclppProxyServiceP2P(void* _args) {
     if (trigger.fields.type & mscclppData){
       void *srcBuff = (void *)((char *)conn->devConn->localBuff + trigger.fields.dataOffset);
       void *dstBuff = (void *)((char *)conn->devConn->remoteBuff + trigger.fields.dataOffset);
-      printf("size %d offset %d\n", trigger.fields.dataSize, trigger.fields.dataOffset);
       PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
     }
     if (trigger.fields.type & mscclppFlag) {
