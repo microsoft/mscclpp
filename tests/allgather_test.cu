@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <string>
 
-#define RANKS_PER_NODE 1
+#define RANKS_PER_NODE 8
 #define USE_DMA_FOR_P2P 1
 
 #define MSCCLPPCHECK(call) do { \
@@ -68,11 +68,14 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   // Each warp receives data from different ranks
 #if (USE_DMA_FOR_P2P == 1)
 
-  // Wait until the proxy have sent my data and flag
+  // Prevent overwriting trigger
   devConn.waitTrigger(trig);
 
   // Trigger sending data and flag
   devConn.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+
+  // Wait until the proxy have sent my data and flag
+  devConn.waitTrigger(trig);
 
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag) {}
@@ -187,7 +190,7 @@ int main(int argc, const char *argv[])
 
   int *data_d;
   uint64_t *flag_d;
-  size_t data_size = 1024*1024*8;
+  size_t data_size = 1024*1024*16;
   int nelemsPerGPU = data_size / sizeof(int) / world_size;
   CUDACHECK(cudaMalloc(&data_d, data_size));
   CUDACHECK(cudaMalloc(&flag_d, sizeof(uint64_t)));
@@ -253,46 +256,46 @@ int main(int argc, const char *argv[])
 //   CUDACHECK(cudaEventCreate(&ev_end));
 
   // warm up
-  int warmupiter = 1000;
-  for (int i = 0; i < warmupiter; ++i) {
-    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
+  // int warmupiter = 1000;
+  // for (int i = 0; i < warmupiter; ++i) {
+  //   kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
+  // }
+  // CUDACHECK(cudaDeviceSynchronize());
+  // MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
+
+  // cudaGraph Capture
+  cudaGraph_t graph;
+  cudaGraphExec_t instance;
+  cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
+  int cudagraphiter = 10;
+  for (int i = 0; i < cudagraphiter; ++i) {
+  	kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
   }
-  CUDACHECK(cudaDeviceSynchronize());
-  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
+  cudaStreamEndCapture(stream, &graph);
+  cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
 
-//   // cudaGraph Capture
-//   cudaGraph_t graph;
-//   cudaGraphExec_t instance;
-//   cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
-//   int cudagraphiter = 10;
-//   for (int i = 0; i < cudagraphiter; ++i) {
-//   	kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
-//   }
-//   cudaStreamEndCapture(stream, &graph);
-//   cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
+  int cudagraphwarmup = 10;
+  for (int i = 0; i < cudagraphwarmup; ++i) {
+	  cudaGraphLaunch(instance, stream);
+  }
+  CUDACHECK(cudaStreamSynchronize(stream));
 
-//   int cudagraphwarmup = 10;
-//   for (int i = 0; i < cudagraphwarmup; ++i) {
-// 	  cudaGraphLaunch(instance, stream);
-//   }
-//   CUDACHECK(cudaStreamSynchronize(stream));
+  // measure runtime 
+//  CUDACHECK(cudaEventRecord(ev_start, stream));
+  double t0 = getTime();
+  int cudagraphlaunch = 10;
+  for (int i = 0; i < cudagraphlaunch; ++i) {
+  // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+     cudaGraphLaunch(instance, stream);
+  }
+//  CUDACHECK(cudaEventRecord(ev_end, stream));
+  CUDACHECK(cudaStreamSynchronize(stream));
 
-//   // measure runtime 
-// //  CUDACHECK(cudaEventRecord(ev_start, stream));
-//   double t0 = getTime();
-//   int cudagraphlaunch = 10;
-//   for (int i = 0; i < cudagraphlaunch; ++i) {
-//   // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
-//      cudaGraphLaunch(instance, stream);
-//   }
-// //  CUDACHECK(cudaEventRecord(ev_end, stream));
-//   CUDACHECK(cudaStreamSynchronize(stream));
-
-//   double t1 = getTime();
-//   float ms = (t1-t0)*1000.0;
-// //  CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
-//   double time_in_us = ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter;
-  // printf("rank: %d, time: %f us/iter algBW %f\n", rank, time_in_us, (double) (data_size) / 1024./1024./1024./(time_in_us/1e6));
+  double t1 = getTime();
+  float ms = (t1-t0)*1000.0;
+//  CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
+  double time_in_us = ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter;
+  printf("rank: %d, time: %f us/iter algBW %f\n", rank, time_in_us, (double) (data_size) / 1024./1024./1024./(time_in_us/1e6));
 
   MSCCLPPCHECK(mscclppProxyStop(comm));
 
