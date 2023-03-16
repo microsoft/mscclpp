@@ -213,21 +213,27 @@ void* mscclppProxyServiceIb(void* _args) {
     if (trigger.value[0] == 0) continue;
 
     struct mscclppConn *conn = &comm->conns[trigger.fields.connId];
-
+    printf("QQQQQQQQQQ %llu\n", trigger.fields.type);
     if (trigger.fields.type & mscclppData) {
-      printf("offset = %d size %d\n", trigger.fields.dataOffset, trigger.fields.dataSize);
+      printf("offset = %d size %d conn->ibQp->wr %d\n", trigger.fields.dataOffset, trigger.fields.dataSize, conn->ibQp->wrn);
       conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
-                            /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
+                            /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/true);
+      int ret;
+      if ((ret = conn->ibQp->postSend()) != 0) {
+        // Return value is errno.
+        WARN("postSend failed: errno %d", ret);
+      }
     }
     if (trigger.fields.type & mscclppFlag) {
       // My local flag is copied to the peer's proxy flag
+      printf("flagWrn %d proxyFlagVal = %d tail = %d localFlag %d\n", conn->ibQp->wrn, *((volatile uint64_t *)conn->cpuProxyFlag), *fifoTail, trigger.fields.myFlag);
       conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
-                            /*wrId=*/0, /*offset=*/0, /*signaled=*/true);
-    }
-    int ret;
-    if ((ret = conn->ibQp->postSend()) != 0) {
-      // Return value is errno.
-      WARN("postSend failed: errno %d", ret);
+                            /*wrId=*/1, /*offset=*/0, /*signaled=*/true);
+      int ret;
+      if ((ret = conn->ibQp->postSend()) != 0) {
+        // Return value is errno.
+        WARN("postSend failed: errno %d", ret);
+      }
     }
 
     // Wait for completion
@@ -242,7 +248,7 @@ void* mscclppProxyServiceIb(void* _args) {
         for (int i = 0; i < wcNum; ++i) {
           struct ibv_wc *wc = &conn->ibQp->wcs[i];
           if (wc->status != IBV_WC_SUCCESS) {
-            WARN("rank %d wc status %d", rank, wc->status);
+            WARN("rank %d wc status %d on wc %d wrId %d", rank, wc->status, i, wc->wr_id);
             continue;
           }
           if (wc->qp_num != conn->ibQp->qp->qp_num) {
