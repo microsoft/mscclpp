@@ -402,3 +402,25 @@ mscclppResult_t mscclppProxyStop(mscclppComm_t comm)
   MSCCLPPCHECK(mscclppProxyDestroy(comm));
   return mscclppSuccess;
 }
+
+MSCCLPP_API(mscclppResult_t, mscclppCommRank, mscclppComm_t comm, int* rank);
+mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank)
+{
+  if (comm == NULL || rank == NULL) {
+    WARN("comm or rank cannot be null");
+    return mscclppInvalidUsage;
+  }
+  *rank = comm->rank;
+  return mscclppSuccess;
+}
+
+MSCCLPP_API(mscclppResult_t, mscclppCommSize, mscclppComm_t comm, int* size);
+mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size)
+{
+  if (comm == NULL || size == NULL) {
+    WARN("comm or size cannot be null");
+    return mscclppInvalidUsage;
+  }
+  *size = comm->nRanks;
+  return mscclppSuccess;
+}
