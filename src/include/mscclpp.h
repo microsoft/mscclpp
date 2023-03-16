@@ -26,7 +26,6 @@ typedef enum : uint64_t { mscclppData = 0x1,
 #define MSCCLPP_BITS_OFFSET 32
 #define MSCCLPP_BITS_TYPE 3
 #define MSCCLPP_BITS_CONNID 10
-#define MSCCLPP_BITS_FLAG 32
 
 // the summation of number of bits must be 128 or less
 union alignas(16) mscclppTrigger {
@@ -37,10 +36,9 @@ union alignas(16) mscclppTrigger {
     uint64_t dataOffset : MSCCLPP_BITS_OFFSET;
     uint64_t            : (64-MSCCLPP_BITS_SIZE-MSCCLPP_BITS_OFFSET); // ensure 64-bit alignment
     // second 64 bits: value[1]
-    uint64_t myFlag     : MSCCLPP_BITS_FLAG;
     uint64_t connId     : MSCCLPP_BITS_CONNID;
     uint64_t type       : MSCCLPP_BITS_TYPE;
-    uint64_t            : (64-MSCCLPP_BITS_CONNID-MSCCLPP_BITS_TYPE-MSCCLPP_BITS_FLAG); // ensure 64-bit alignment
+    uint64_t            : (64-MSCCLPP_BITS_CONNID-MSCCLPP_BITS_TYPE); // ensure 64-bit alignment
   } fields;
 };
 
@@ -83,12 +81,12 @@ struct mscclppDevConn {
     return &this->trigger[curFifoHead];
   }
 
-  __forceinline__ __device__ void setTrigger(mscclppTrigger *trig, uint64_t type, uint64_t dataOffset, uint64_t dataSize, uint32_t flag = 0) {
+  __forceinline__ __device__ void setTrigger(mscclppTrigger *trig, uint64_t type, uint64_t dataOffset, uint64_t dataSize) {
     asm volatile(
       "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(&trig->value),
       "l"((dataOffset << (MSCCLPP_BITS_SIZE)) +
           (dataSize)),
-      "l"((((type << MSCCLPP_BITS_CONNID) + this->connId) << MSCCLPP_BITS_FLAG) + flag));
+      "l"((type << MSCCLPP_BITS_CONNID) + this->connId));
   }
 
   __forceinline__ __device__ void waitTrigger(mscclppTrigger *trig) {

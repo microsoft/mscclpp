@@ -72,7 +72,7 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   devConn.waitTrigger(trig);
 
   // Trigger sending data and flag
-  devConn.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int), (uint32_t)*localFlag);
+  devConn.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag) {}
@@ -259,7 +259,7 @@ int main(int argc, const char *argv[])
   }
   CUDACHECK(cudaDeviceSynchronize());
   MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
-  printf("DONE 0!\n");
+
 //   // cudaGraph Capture
 //   cudaGraph_t graph;
 //   cudaGraphExec_t instance;
@@ -295,11 +295,8 @@ int main(int argc, const char *argv[])
   // printf("rank: %d, time: %f us/iter algBW %f\n", rank, time_in_us, (double) (data_size) / 1024./1024./1024./(time_in_us/1e6));
 
   MSCCLPPCHECK(mscclppProxyStop(comm));
-  printf("DONE 1!\n");
-  // MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
 
   MSCCLPPCHECK(mscclppCommDestroy(comm));
-  printf("DONE 2!\n");
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
   if (argc == 2) {
