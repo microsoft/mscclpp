@@ -67,8 +67,6 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
 
   // Each warp receives data from different ranks
 #if (USE_DMA_FOR_P2P == 1)
-  // Prevent overwriting trigger
-  devConn.waitTrigger(trig);
 
   // Trigger sending data and flag
   devConn.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int), (uint32_t)*localFlag);
