@@ -10,7 +10,7 @@
   mscclppResult_t res = call; \
   if (res != mscclppSuccess && res != mscclppInProgress) { \
     /* Print the back trace*/ \
-    printf("Failure at %s:%d -> %d", __FILE__, __LINE__, res);    \
+    printf("Failure at %s:%d -> %d\n", __FILE__, __LINE__, res);    \
     return res; \
   } \
 } while (0);
