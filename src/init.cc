@@ -211,6 +211,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
       MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->cpuTriggerFifo, &proxyState->gpuTriggerFifo,
                                         MSCCLPP_PROXY_FIFO_SIZE, &proxyState->cpuTriggerFifoGdrDesc));
       MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->gpuTriggerFifoHead, 1));
+      MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->gpuTriggerFifoCounter, 1));
       proxyState->ibContext = conn->ibCtx;
       comm->proxyState[i] = proxyState;
       break;
@@ -231,8 +232,9 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
   conn->devConn->localFlag = localFlag;
   conn->devConn->tag = tag;
   conn->devConn->connId = comm->nConns;
-  conn->devConn->trigger = proxyState->gpuTriggerFifo;
+  conn->devConn->triggerFifo = proxyState->gpuTriggerFifo;
   conn->devConn->triggerFifoHead = proxyState->gpuTriggerFifoHead;
+  conn->devConn->triggerFifoCounter = proxyState->gpuTriggerFifoCounter;
 
   comm->nConns++;
   return mscclppSuccess;

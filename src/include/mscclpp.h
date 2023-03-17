@@ -78,7 +78,23 @@ struct mscclppDevConn {
 #ifdef __CUDACC__
   __forceinline__ __device__ mscclppTrigger *getTrigger() {
     unsigned int curFifoHead = atomicInc(this->triggerFifoHead, MSCCLPP_PROXY_FIFO_SIZE - 1);
-    return &this->trigger[curFifoHead];
+    return &this->triggerFifo[curFifoHead];
+  }
+
+  __forceinline__ __device__ mscclppTrigger *acquireTrigger() {
+    unsigned int *cnt = this->triggerFifoCounter;
+    unsigned int old = atomicAdd(cnt, 1);
+    while (old >= MSCCLPP_PROXY_FIFO_SIZE) {
+      atomicSub(cnt, 1);
+      while (*(volatile unsigned int *)cnt >= MSCCLPP_PROXY_FIFO_SIZE) {}
+      old = atomicAdd(cnt, 1);
+    }
+    // Up to MSCCLPP_PROXY_FIFO_SIZE threads can enter here at the same time
+    return getTrigger();
+  }
+
+  __forceinline__ __device__ void releaseTrigger() {
+    atomicSub(this->triggerFifoCounter, 1);
   }
 
   __forceinline__ __device__ void setTrigger(mscclppTrigger *trig, uint64_t type, uint64_t dataOffset, uint64_t dataSize) {
@@ -104,7 +120,8 @@ struct mscclppDevConn {
   uint64_t* remoteFlag;
 
   unsigned int* triggerFifoHead; // indicates the tail of the fifo. only accessible by the gpu. for parallel, access use atomic
-  mscclppTrigger* trigger;
+  mscclppTrigger* triggerFifo;
+  unsigned int* triggerFifoCounter;
   uint64_t* proxyFlag;
   int connId;
 };

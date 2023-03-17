@@ -54,7 +54,6 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   volatile uint64_t *remoteFlag = devConn.remoteFlag;
 #endif
   volatile uint64_t *proxyFlag = devConn.proxyFlag;
-  mscclppTrigger *trig = devConn.getTrigger();
 
   uint64_t baseFlag = *localFlag;
 
@@ -65,17 +64,20 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
     *localFlag = baseFlag + 1;
   }
 
+  // Thread-safely obtain the head trigger
+  mscclppTrigger *trig = devConn.acquireTrigger();
+
   // Each warp receives data from different ranks
 #if (USE_DMA_FOR_P2P == 1)
-
-  // Prevent overwriting trigger
-  devConn.waitTrigger(trig);
 
   // Trigger sending data and flag
   devConn.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
   // Wait until the proxy have sent my data and flag
   devConn.waitTrigger(trig);
+
+  // Inform other threads that the tail trigger just became idle
+  devConn.releaseTrigger();
 
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag) {}

@@ -21,6 +21,7 @@ struct mscclppProxyState {
   // cpuTriggerFifoTail indicates where CPU needs to read the head of the fifo.
   unsigned int cpuTriggerFifoTail;
   unsigned int *gpuTriggerFifoHead;
+  unsigned int *gpuTriggerFifoCounter;
   void *cpuTriggerFifoGdrDesc;
   // NULL for the P2P proxy.
   struct mscclppIbContext *ibContext;
