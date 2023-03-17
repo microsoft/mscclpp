@@ -231,10 +231,10 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
   conn->devConn->localBuff = localBuff;
   conn->devConn->localFlag = localFlag;
   conn->devConn->tag = tag;
-  conn->devConn->connId = comm->nConns;
-  conn->devConn->triggerFifo = proxyState->gpuTriggerFifo;
-  conn->devConn->triggerFifoHead = proxyState->gpuTriggerFifoHead;
-  conn->devConn->triggerFifoCounter = proxyState->gpuTriggerFifoCounter;
+  conn->devConn->fifo.connId = comm->nConns;
+  conn->devConn->fifo.triggerFifo = proxyState->gpuTriggerFifo;
+  conn->devConn->fifo.triggerFifoHead = proxyState->gpuTriggerFifoHead;
+  conn->devConn->fifo.triggerFifoCounter = proxyState->gpuTriggerFifoCounter;
 
   comm->nConns++;
   return mscclppSuccess;
@@ -256,10 +256,10 @@ mscclppResult_t mscclppP2pConnectionSetupStart(struct connInfo* connInfo /*outpu
     return mscclppInternalError;
   }
   struct mscclppDevConn *devConn = conn->devConn;
-  MSCCLPPCHECK(mscclppCudaCalloc(&devConn->proxyFlag, 1));
+  MSCCLPPCHECK(mscclppCudaCalloc(&devConn->fifo.proxyFlag, 1));
   CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleBuff, devConn->localBuff));
   CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleFlag, devConn->localFlag));
-  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleProxyFlag, devConn->proxyFlag));
+  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleProxyFlag, devConn->fifo.proxyFlag));
   return mscclppSuccess;
 }
 
@@ -282,7 +282,7 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
   struct mscclppDevConn *devConn = conn->devConn;
   devConn->remoteBuff = NULL;
   devConn->remoteFlag = NULL;
-  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuProxyFlag, &devConn->proxyFlag, 1, &conn->cpuProxyFlagGdrDesc));
+  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuProxyFlag, &devConn->fifo.proxyFlag, 1, &conn->cpuProxyFlagGdrDesc));
 
   struct mscclppIbContext *ibCtx = conn->ibCtx;
   if (conn->ibQp == NULL) {
@@ -291,7 +291,7 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
   // TODO(chhwang): can we register only one MR for the following three?
   MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localBuff, conn->buffSize, &conn->ibBuffMr));
   MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localFlag, sizeof(uint64_t), &conn->ibLocalFlagMr));
-  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->proxyFlag, sizeof(uint64_t), &conn->ibProxyFlagMr));
+  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->fifo.proxyFlag, sizeof(uint64_t), &conn->ibProxyFlagMr));
   connInfo->infoQp = conn->ibQp->info;
   connInfo->infoBuffMr = conn->ibBuffMr->info;
   connInfo->infoLocalFlagMr = conn->ibLocalFlagMr->info;

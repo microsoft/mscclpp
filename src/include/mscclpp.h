@@ -74,7 +74,7 @@ union alignas(16) mscclppTrigger {
  * 
  ***************************************/
 
-struct mscclppDevConn {
+struct mscclppConcurrentFifo {
 #ifdef __CUDACC__
   __forceinline__ __device__ mscclppTrigger *getTrigger() {
     unsigned int curFifoHead = atomicInc(this->triggerFifoHead, MSCCLPP_PROXY_FIFO_SIZE - 1);
@@ -110,7 +110,15 @@ struct mscclppDevConn {
     while (*(volatile uint64_t *)trig->value != 0) {}
   }
 #endif // __CUDACC__
+  unsigned int* triggerFifoHead; // indicates the tail of the fifo. only accessible by the gpu. for parallel, access use atomic
+  mscclppTrigger* triggerFifo;
+  unsigned int* triggerFifoCounter;
+  uint64_t* proxyFlag;
+  int connId;
+};
 
+
+struct mscclppDevConn {
   int tag;
 
   void* localBuff;
@@ -119,11 +127,8 @@ struct mscclppDevConn {
   void* remoteBuff;
   uint64_t* remoteFlag;
 
-  unsigned int* triggerFifoHead; // indicates the tail of the fifo. only accessible by the gpu. for parallel, access use atomic
-  mscclppTrigger* triggerFifo;
-  unsigned int* triggerFifoCounter;
-  uint64_t* proxyFlag;
-  int connId;
+  // multiple threads can access the fifo concurrently
+  struct mscclppConcurrentFifo fifo;
 };
 
 typedef struct mscclppComm* mscclppComm_t;
