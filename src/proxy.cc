@@ -161,8 +161,6 @@ void* mscclppProxyServiceIb(void* _args) {
       // Check if we need to exit
       if (*run != MSCCLPP_PROXY_RUN_STATE_RUNNING) break;
     }
-    // Poll to see if we are ready to send anything
-    readTrigger(&trigger, &fifo[*fifoTail]);
 
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
     struct mscclppConn *conn = &comm->conns[trigger.fields.connId];
