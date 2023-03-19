@@ -54,8 +54,7 @@ __global__ void kernel(int rank, int world_size)
 #if (USE_DMA_FOR_P2P == 0)
   volatile uint64_t *remoteFlag = devConn.remoteFlag;
 #endif
-  volatile uint64_t *proxyFlag = devConn.fifo.proxyFlag;
-  mscclppTrigger *trig = devConn.fifo.getTrigger();
+  volatile uint64_t *proxyFlag = devConn.proxyFlag;
 
   uint64_t baseFlag = *localFlag;
 
@@ -71,14 +70,18 @@ __global__ void kernel(int rank, int world_size)
     *localFlag = baseFlag + 1;
   }
 
+  // get a thread-local trigger and a request for waiting on it
+  mscclppTrigger_t trig;
+  mscclppRequest_t req = devConn.fifo.getTrigger(&trig);
+
   // Each warp receives data from different ranks
 #if (USE_DMA_FOR_P2P == 1)
 
-  // Wait until the proxy have sent my data and flag
-  devConn.fifo.waitTrigger(trig);
+  // Trigger sending data, flag and synchronize after
+  devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * sizeof(int), sizeof(int));
 
-  // Trigger sending data and flag
-  devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData, rank * sizeof(int), sizeof(int));
+  // Wait on the request to make sure it is safe to reuse buffer and flag
+  devConn.fifo.waitTrigger(req);
 
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag) {}

@@ -87,6 +87,7 @@ mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, c
   MSCCLPPCHECKGOTO(mscclppCalloc(&_comm, 1), res, fail);
   _comm->rank = rank;
   _comm->nRanks = nranks;
+  // We assume that the user has set the device to the intended one already
   CUDACHECK(cudaGetDevice(&_comm->cudaDev));
 
   MSCCLPPCHECK(bootstrapNetInit(ip_port_pair));
@@ -179,7 +180,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
   conn->ibCtx = NULL;
   conn->ibQp = NULL;
   int ibDevIdx = -1;
-  if (ibDev != NULL) {
+  if (transportType == mscclppTransportIB) {
     // Check if an IB context exists
     int firstNullIdx = -1;
     for (int i = 0; i < MSCCLPP_IB_MAX_DEVS; ++i) {
@@ -192,6 +193,8 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
         break;
       }
     }
+
+    // If not, create a new one
     if (ibDevIdx == -1) {
       // Create a new context.
       ibDevIdx = firstNullIdx;
@@ -200,31 +203,67 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
         return mscclppInternalError;
       }
     }
+    // Set the ib context for this conn
     conn->ibCtx = comm->ibContext[ibDevIdx];
+  } else if (transportType == mscclppTransportP2P){
+    // Check if a DMA context/stream exists
+    if (comm->stream == NULL){
+      CUDACHECK(cudaStreamCreateWithFlags(&comm->stream, cudaStreamNonBlocking));
+    }
+  } else if (transportType == mscclppTransportSHM){
+    WARN("Shared memory interconnection is not implemented yet!");
+    return mscclppInternalError;
+  } else {
+    WARN("Unexpected connection type!");
+    return mscclppInvalidUsage;
   }
-  // Find a proxy state that uses the given IB device
+
+
+  // Find/create a proxy state for the given connection
   struct mscclppProxyState *proxyState = NULL;
+  // First see if there is a matching context
+  // If not, find the first empty proxy
+  int firstEmptyProxyIndex = -1;
   for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
-    if (comm->proxyState[i] == NULL) {
-      // Cannot find, create a new one
-      MSCCLPPCHECK(mscclppCalloc(&proxyState, 1));
-      MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->cpuTriggerFifo, &proxyState->gpuTriggerFifo,
-                                        MSCCLPP_PROXY_FIFO_SIZE, &proxyState->cpuTriggerFifoGdrDesc));
-      MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->gpuTriggerFifoHead, 1));
-      MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->gpuTriggerFifoCounter, 1));
+    struct mscclppProxyState *curProxy = comm->proxyState[i];
+    if (curProxy && (curProxy->transportType == transportType)){
+      if ((transportType == mscclppTransportIB && curProxy->ibContext == conn->ibCtx) || (transportType == mscclppTransportP2P)){
+        proxyState = curProxy;
+        break; // we found the matching context
+      }
+    }
+    if (curProxy == NULL && firstEmptyProxyIndex == -1){
+      firstEmptyProxyIndex = i;
+    }
+  }
+
+  if (proxyState == NULL && firstEmptyProxyIndex == -1){
+    WARN("Too many proxies have been allocated!");
+    return mscclppInvalidUsage;
+  }
+
+  // If we couldn't find a matching context, create one
+  if (proxyState == NULL){
+    MSCCLPPCHECK(mscclppCalloc(&proxyState, 1));
+    MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->triggerFifo.hostPtr, &proxyState->triggerFifo.devPtr,
+                                      MSCCLPP_PROXY_FIFO_SIZE, &proxyState->triggerFifo.desc));
+    MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->fifoHead.hostPtr, &proxyState->fifoHead.devPtr,
+                                      1, &proxyState->fifoHead.desc));
+    MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->fifoTail.hostPtr, &proxyState->fifoTail.devPtr,
+                                      1, &proxyState->fifoTail.desc));
+
+    if (transportType == mscclppTransportIB){
       proxyState->ibContext = conn->ibCtx;
-      comm->proxyState[i] = proxyState;
-      break;
+      proxyState->stream = NULL;
+    } else if (transportType == mscclppTransportP2P){
+      proxyState->ibContext = NULL;
+      proxyState->stream = comm->stream;
     }
-    if (comm->proxyState[i]->ibContext == conn->ibCtx) {
-      // `conn->ibCtx == NULL` indicatess the P2P proxy.
-      proxyState = comm->proxyState[i];
-      break;
-    }
+    comm->proxyState[firstEmptyProxyIndex] = proxyState;
   }
   if (proxyState == NULL) {
     // Cannot reach
-    WARN("Unexpected error");
+    WARN("Proxy allocation failed!");
     return mscclppInternalError;
   }
   conn->devConn = devConnOut;
@@ -232,9 +271,9 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
   conn->devConn->localFlag = localFlag;
   conn->devConn->tag = tag;
   conn->devConn->fifo.connId = comm->nConns;
-  conn->devConn->fifo.triggerFifo = proxyState->gpuTriggerFifo;
-  conn->devConn->fifo.triggerFifoHead = proxyState->gpuTriggerFifoHead;
-  conn->devConn->fifo.triggerFifoCounter = proxyState->gpuTriggerFifoCounter;
+  conn->devConn->fifo.triggerFifo = proxyState->triggerFifo.devPtr;
+  conn->devConn->fifo.triggerFifoHead = proxyState->fifoHead.devPtr;
+  conn->devConn->fifo.triggerFifoTail = proxyState->fifoTail.devPtr;
 
   comm->nConns++;
   return mscclppSuccess;
@@ -256,10 +295,10 @@ mscclppResult_t mscclppP2pConnectionSetupStart(struct connInfo* connInfo /*outpu
     return mscclppInternalError;
   }
   struct mscclppDevConn *devConn = conn->devConn;
-  MSCCLPPCHECK(mscclppCudaCalloc(&devConn->fifo.proxyFlag, 1));
+  MSCCLPPCHECK(mscclppCudaCalloc(&devConn->proxyFlag, 1));
+  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleProxyFlag, devConn->proxyFlag));
   CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleBuff, devConn->localBuff));
   CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleFlag, devConn->localFlag));
-  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleProxyFlag, devConn->fifo.proxyFlag));
   return mscclppSuccess;
 }
 
@@ -282,7 +321,7 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
   struct mscclppDevConn *devConn = conn->devConn;
   devConn->remoteBuff = NULL;
   devConn->remoteFlag = NULL;
-  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuProxyFlag, &devConn->fifo.proxyFlag, 1, &conn->cpuProxyFlagGdrDesc));
+  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuProxyFlag, &devConn->proxyFlag, 1, &conn->cpuProxyFlagGdrDesc));
 
   struct mscclppIbContext *ibCtx = conn->ibCtx;
   if (conn->ibQp == NULL) {
@@ -291,7 +330,7 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
   // TODO(chhwang): can we register only one MR for the following three?
   MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localBuff, conn->buffSize, &conn->ibBuffMr));
   MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localFlag, sizeof(uint64_t), &conn->ibLocalFlagMr));
-  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->fifo.proxyFlag, sizeof(uint64_t), &conn->ibProxyFlagMr));
+  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->proxyFlag, sizeof(uint64_t), &conn->ibProxyFlagMr));
   connInfo->infoQp = conn->ibQp->info;
   connInfo->infoBuffMr = conn->ibBuffMr->info;
   connInfo->infoLocalFlagMr = conn->ibLocalFlagMr->info;

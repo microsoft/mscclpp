@@ -7,8 +7,7 @@
 #include <unistd.h>
 #include <string>
 
-#define RANKS_PER_NODE 8
-#define USE_DMA_FOR_P2P 1
+#define RANKS_PER_NODE 2
 
 #define MSCCLPPCHECK(call) do { \
   mscclppResult_t res = call; \
@@ -50,10 +49,7 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   mscclppDevConn_t devConn = constDevConns[remoteRank];
   // volatile int *data = (volatile int *)devConn.localBuff;
   volatile uint64_t *localFlag = devConn.localFlag;
-#if (USE_DMA_FOR_P2P == 0)
-  volatile uint64_t *remoteFlag = devConn.remoteFlag;
-#endif
-  volatile uint64_t *proxyFlag = devConn.fifo.proxyFlag;
+  volatile uint64_t *proxyFlag = devConn.proxyFlag;
 
   uint64_t baseFlag = *localFlag;
 
@@ -64,47 +60,21 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
     *localFlag = baseFlag + 1;
   }
 
-  // Thread-safely obtain the head trigger
-  mscclppTrigger *trig = devConn.fifo.acquireTrigger();
-
   // Each warp receives data from different ranks
-#if (USE_DMA_FOR_P2P == 1)
 
-  // Trigger sending data and flag
+  // get a thread-local trigger and a request for waiting on it
+  mscclppTrigger_t trig;
+  mscclppRequest_t req = devConn.fifo.getTrigger(&trig);
+
+  // Trigger sending data, flag and synchronize after
   devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
-  // Wait until the proxy have sent my data and flag
-  devConn.fifo.waitTrigger(trig);
-
-  // Inform other threads that the tail trigger just became idle
-  devConn.fifo.releaseTrigger();
+  // Wait on the request to make sure it is safe to reuse buffer and flag
+  devConn.fifo.waitTrigger(req);
 
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag) {}
 
-#else // USE_DMA_FOR_P2P == 0
-
-  if (devConn.remoteBuff == NULL) { // IB
-    // Wait until the proxy have sent my data and flag
-    devConn.waitTrigger(trig);
-
-    // Trigger sending data and flag
-    devConn.setTrigger(trig, mscclppFlag | mscclppData, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
-
-    // Wait for receiving data from remote rank
-    while (*proxyFlag == baseFlag) {}
-  } else { // P2P
-    // Directly read data
-    volatile int *remoteData = (volatile int *)devConn.remoteBuff;
-
-    // Wait until the remote data is set
-    while (*remoteFlag == baseFlag) {}
-
-    // Read remote data
-    data[remoteRank] = remoteData[remoteRank];
-  }
-
-#endif
 }
 
 int rankToLocalRank(int rank)
@@ -192,7 +162,7 @@ int main(int argc, const char *argv[])
 
   int *data_d;
   uint64_t *flag_d;
-  size_t data_size = 1024*1024*16;
+  size_t data_size = 1024*1;
   int nelemsPerGPU = data_size / sizeof(int) / world_size;
   CUDACHECK(cudaMalloc(&data_d, data_size));
   CUDACHECK(cudaMalloc(&flag_d, sizeof(uint64_t)));
