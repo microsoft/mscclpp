@@ -8,7 +8,6 @@
 #include <string>
 
 #define RANKS_PER_NODE 8
-#define KERNEL 1
 
 #define MSCCLPPCHECK(call) do { \
   mscclppResult_t res = call; \
@@ -173,14 +172,14 @@ int main(int argc, const char *argv[])
   int ibNum = cudaNumToIbNum(cudaNum);
 
   CUDACHECK(cudaSetDevice(cudaNum));
-  std::string ibDevStr = "mlx5_ib" + std::to_string(ibNum);
+  std::string ibDevStr = "mlx5_ib" + std::to_string(localRank);
 
   mscclppComm_t comm;
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
 
   int *data_d;
   uint64_t *flag_d;
-  size_t data_size = 1024*1024;
+  size_t data_size = 1024*1024*1024;
   int nelemsPerGPU = data_size / sizeof(int) / world_size;
   CUDACHECK(cudaMalloc(&data_d, data_size));
   CUDACHECK(cudaMalloc(&flag_d, sizeof(uint64_t)));
@@ -287,6 +286,7 @@ int main(int argc, const char *argv[])
   double time_in_us = ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter;
   printf("rank: %d, time: %f us/iter algBW %f\n", rank, time_in_us, (double) (data_size) / 1024./1024./1024./(time_in_us/1e6));
 
+  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
   MSCCLPPCHECK(mscclppProxyStop(comm));
 
   MSCCLPPCHECK(mscclppCommDestroy(comm));
