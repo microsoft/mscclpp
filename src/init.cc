@@ -259,6 +259,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
       proxyState->ibContext = NULL;
       proxyState->stream = comm->stream;
     }
+    proxyState->transportType = transportType;
     comm->proxyState[firstEmptyProxyIndex] = proxyState;
   }
   if (proxyState == NULL) {
