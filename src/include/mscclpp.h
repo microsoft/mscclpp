@@ -42,7 +42,38 @@ union alignas(16) mscclppTrigger {
   } fields;
 };
 
-/**************************************
+typedef uint64_t mscclppRequest_t;
+typedef mscclppTrigger* mscclppTrigger_t;
+
+struct mscclppConcurrentFifo {
+#ifdef __CUDACC__
+  __forceinline__ __device__ mscclppRequest_t getTrigger(mscclppTrigger_t* trig) {
+    uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->triggerFifoHead,1);
+    while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->triggerFifoTail));
+    *trig = &this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE];
+    return curFifoHead;
+  }
+
+  __forceinline__ __device__ void setTrigger(mscclppTrigger_t trig, uint64_t type, uint64_t dataOffset, uint64_t dataSize) {
+    asm volatile(
+      "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(&trig->value),
+      "l"((dataOffset << (MSCCLPP_BITS_SIZE)) +
+          (dataSize)),
+      "l"((type << MSCCLPP_BITS_CONNID) + this->connId));
+  }
+
+  __forceinline__ __device__ void waitTrigger(mscclppRequest_t req) {
+    while (*(volatile uint64_t *)triggerFifoTail <= req);
+  }
+#endif // __CUDACC__
+  mscclppTrigger* triggerFifo;
+  uint64_t* triggerFifoTail; // read by both device and host. written only by host
+  uint64_t* triggerFifoHead; // read by both device and host. written only by device
+  int connId;
+};
+
+
+/***************************************************************************************************************
  * A mscclppDevConn provides a zero-copy connection between a sender and a receiver that are
  * connected via P2P NVLink or IB.
  * The communication API is one-sided meaning that not both side of a connection are involved
@@ -72,29 +103,8 @@ union alignas(16) mscclppTrigger {
  * (note that an atomicInc is used to enable concurrent calls to getTrigger). setTrigger rights the right work element to the fifo
  * so that the CPU proxy can consume it.
  * 
- ***************************************/
-
+ **************************************************************************************************************/
 struct mscclppDevConn {
-#ifdef __CUDACC__
-  __forceinline__ __device__ mscclppTrigger *getTrigger() {
-    unsigned int curFifoHead = atomicInc(this->triggerFifoHead, MSCCLPP_PROXY_FIFO_SIZE - 1);
-    return &this->trigger[curFifoHead];
-  }
-
-  __forceinline__ __device__ void setTrigger(mscclppTrigger *trig, uint64_t type, uint64_t dataOffset, uint64_t dataSize) {
-    asm volatile(
-      "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(&trig->value),
-      "l"((dataOffset << (MSCCLPP_BITS_SIZE)) +
-          (dataSize)),
-      "l"((type << MSCCLPP_BITS_CONNID) + this->connId));
-  }
-
-  __forceinline__ __device__ void waitTrigger(mscclppTrigger *trig) {
-    // Check only the first 64 bits
-    while (*(volatile uint64_t *)trig->value != 0) {}
-  }
-#endif // __CUDACC__
-
   int tag;
 
   void* localBuff;
@@ -102,11 +112,10 @@ struct mscclppDevConn {
 
   void* remoteBuff;
   uint64_t* remoteFlag;
+  uint64_t* proxyFlag; // this is only written by the proxy thread
 
-  unsigned int* triggerFifoHead; // indicates the tail of the fifo. only accessible by the gpu. for parallel, access use atomic
-  mscclppTrigger* trigger;
-  uint64_t* proxyFlag;
-  int connId;
+  // multiple threads can access the fifo concurrently
+  struct mscclppConcurrentFifo fifo;
 };
 
 typedef struct mscclppComm* mscclppComm_t;

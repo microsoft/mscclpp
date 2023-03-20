@@ -48,9 +48,11 @@ void* mscclppProxyServiceP2P(void* _args) {
   struct proxyArgs *args = (struct proxyArgs *)_args;
   struct mscclppComm *comm = args->comm;
   volatile mscclppProxyRunState_t *run = &args->proxyState->run;
-  mscclppTrigger *fifo = args->proxyState->cpuTriggerFifo;
-  unsigned int *fifoTail = &args->proxyState->cpuTriggerFifoTail;
-  cudaStream_t stream = args->stream;
+  mscclppTrigger *fifo = args->proxyState->triggerFifo.hostPtr;
+  volatile uint64_t *fifoTail = args->proxyState->fifoTail.hostPtr;
+  volatile uint64_t *fifoHead = args->proxyState->fifoHead.hostPtr;
+
+  cudaStream_t stream = args->proxyState->stream;
   free(_args);
 
   // int rank = comm->rank;
@@ -60,9 +62,7 @@ void* mscclppProxyServiceP2P(void* _args) {
   // TODO(saemal): either ask user or detect it automatically
   NumaBind((comm->cudaDev / 2) ^ 1);
 
-  PROXYCUDACHECK(cudaSetDevice(comm->cudaDev));
-  PROXYCUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-
+  uint64_t cachedFifoTail = *fifoTail;
   int runCheckCounter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
   // fifoTail indicates where CPU needs to read the head of the fifo.
   for (;;) {
@@ -72,9 +72,11 @@ void* mscclppProxyServiceP2P(void* _args) {
       if (*run != MSCCLPP_PROXY_RUN_STATE_RUNNING) break;
     }
     // Poll to see if we are ready to send anything
-    readTrigger(&trigger, &fifo[*fifoTail]);
-    if (trigger.value[0] == 0) continue;
-
+    if (cachedFifoTail == *fifoHead) continue; // no need trigger
+    readTrigger(&trigger, &fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]);
+    if (trigger.value[0] == 0) continue; // there is one in progreess
+    // there is a trigger value ready to be consumed
+    
     struct mscclppConn *conn = &comm->conns[trigger.fields.connId];
 
     // Iterate over what send is needed
@@ -92,15 +94,15 @@ void* mscclppProxyServiceP2P(void* _args) {
     }
 
     // Send completion: reset only the high 64 bits
-    *(volatile uint64_t *)(&fifo[*fifoTail]) = 0;
-    *fifoTail = (*fifoTail + 1) % MSCCLPP_PROXY_FIFO_SIZE;
+    *(volatile uint64_t *)(&fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
+    cachedFifoTail++;
+    *fifoTail = cachedFifoTail;
   }
 
   // Need a sync in case previous copies are not completed
   PROXYCUDACHECK(cudaStreamSynchronize(stream));
 
   *run = MSCCLPP_PROXY_RUN_STATE_IDLE;
-  PROXYCUDACHECK(cudaStreamDestroy(stream));
 
   // WARN("Proxy exits: rank %d", rank);
   return NULL;
@@ -111,8 +113,9 @@ void* mscclppProxyServiceIb(void* _args) {
   struct mscclppComm *comm = args->comm;
   struct mscclppIbContext *ibCtx = args->proxyState->ibContext;
   volatile mscclppProxyRunState_t *run = &args->proxyState->run;
-  mscclppTrigger *fifo = args->proxyState->cpuTriggerFifo;
-  unsigned int *fifoTail = &args->proxyState->cpuTriggerFifoTail;
+  mscclppTrigger *fifo = args->proxyState->triggerFifo.hostPtr;
+  volatile uint64_t *fifoTail = args->proxyState->fifoTail.hostPtr;
+  volatile uint64_t *fifoHead = args->proxyState->fifoHead.hostPtr;
   free(_args);
 
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
@@ -150,6 +153,7 @@ void* mscclppProxyServiceIb(void* _args) {
   }
 #endif
 
+  uint64_t cachedFifoTail = *fifoTail;
   int runCheckCounter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
   for (;;) {
     if (runCheckCounter-- == 0) {
@@ -157,8 +161,6 @@ void* mscclppProxyServiceIb(void* _args) {
       // Check if we need to exit
       if (*run != MSCCLPP_PROXY_RUN_STATE_RUNNING) break;
     }
-    // Poll to see if we are ready to send anything
-    readTrigger(&trigger, &fifo[*fifoTail]);
 
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
     struct mscclppConn *conn = &comm->conns[trigger.fields.connId];
@@ -210,7 +212,11 @@ void* mscclppProxyServiceIb(void* _args) {
       }
     }
 #else // (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1)
-    if (trigger.value[0] == 0) continue;
+    // Poll to see if we are ready to send anything
+    if (cachedFifoTail == *fifoHead) continue; // no need trigger
+    readTrigger(&trigger, &fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]);
+    if (trigger.value[0] == 0) continue; // there is one in progreess
+    // there is a trigger value ready to be consumed
 
     struct mscclppConn *conn = &comm->conns[trigger.fields.connId];
 
@@ -258,10 +264,14 @@ void* mscclppProxyServiceIb(void* _args) {
     }
 
     // Send completion: reset only the high 64 bits
-    *(volatile uint64_t *)(&fifo[*fifoTail]) = 0;
-    *fifoTail = (*fifoTail + 1) % MSCCLPP_PROXY_FIFO_SIZE;
+    *(volatile uint64_t *)(&fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
+    cachedFifoTail++;
+    *fifoTail = cachedFifoTail;
 #endif
   }
+
+  //TODO(saemal): we need to wait for completion of wc here too
+
   *run = MSCCLPP_PROXY_RUN_STATE_IDLE;
   // WARN("Proxy exits: rank %d", rank);
   return NULL;
@@ -282,20 +292,17 @@ mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm) {
   for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
     struct mscclppProxyState *proxyState = comm->proxyState[i];
     if (proxyState == NULL) break;
-    bool is_p2p = (proxyState->ibContext == NULL);
 
     struct proxyArgs *args;
     MSCCLPPCHECK(mscclppCalloc(&args, 1));
     args->comm = comm;
     args->proxyState = proxyState;
-    if (is_p2p) {
-      CUDACHECK(cudaStreamCreateWithFlags(&args->stream, cudaStreamNonBlocking));
-    }
+
     proxyState->run = MSCCLPP_PROXY_RUN_STATE_RUNNING;
     pthread_create(&proxyState->thread, NULL, mscclppProxyService, args);
-    if (is_p2p) {
+    if (proxyState->transportType == mscclppTransportP2P) {
       mscclppSetThreadName(proxyState->thread, "MSCCLPP Service P2P - %02d", comm->cudaDev);
-    } else {
+    } else if (proxyState->transportType == mscclppTransportIB) {
       mscclppSetThreadName(proxyState->thread, "MSCCLPP Service IB - %02d", i);
     }
   }

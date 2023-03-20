@@ -13,17 +13,25 @@ typedef enum {
   MSCCLPP_PROXY_RUN_STATE_EXITING,
 } mscclppProxyRunState_t;
 
+template <typename T>
+struct mscclppGDRState {
+  T* hostPtr;
+  T* devPtr;
+  void* desc;
+};
+
 struct mscclppProxyState {
+  mscclppTransport_t transportType;
   pthread_t thread;
   mscclppProxyRunState_t run;
-  mscclppTrigger *cpuTriggerFifo;
-  mscclppTrigger *gpuTriggerFifo;
-  // cpuTriggerFifoTail indicates where CPU needs to read the head of the fifo.
-  unsigned int cpuTriggerFifoTail;
-  unsigned int *gpuTriggerFifoHead;
-  void *cpuTriggerFifoGdrDesc;
-  // NULL for the P2P proxy.
-  struct mscclppIbContext *ibContext;
+
+  // fifo allocation that is accessible on both host and device
+  mscclppGDRState<mscclppTrigger> triggerFifo;
+  mscclppGDRState<uint64_t> fifoHead;
+  mscclppGDRState<uint64_t> fifoTail;
+
+  struct mscclppIbContext *ibContext; // For IB connection only
+  cudaStream_t stream; // for P2P DMA engine only
 };
 
 mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm);
