@@ -55,8 +55,6 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
 
   __syncthreads();
   if (threadIdx.x == 0) {
-    // Do we need a sys fence?
-    // __threadfence_system();
     *localFlag = baseFlag + 1;
   }
 
@@ -68,6 +66,7 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
 
   // Trigger sending data, flag and synchronize after
   devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+  // we cannot reuse buffer and flag until the request is completed
 
   // Wait on the request to make sure it is safe to reuse buffer and flag
   devConn.fifo.waitTrigger(req);
@@ -284,7 +283,7 @@ int main(int argc, const char *argv[])
   float ms = (t1-t0)*1000.0;
 //  CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
   double time_in_us = ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter;
-  printf("rank: %d, time: %f us/iter algBW %f\n", rank, time_in_us, (double) (data_size) / 1024./1024./1024./(time_in_us/1e6));
+  printf("rank: %d, time: %f us/iter algBW %f GBps\n", rank, time_in_us, (double) (data_size) / 1e9 /(time_in_us/1e6));
 
   MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
   MSCCLPPCHECK(mscclppProxyStop(comm));
