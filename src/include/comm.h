@@ -55,6 +55,7 @@ struct mscclppComm {
   volatile uint32_t *abortFlag;
 
   struct mscclppIbContext *ibContext[MSCCLPP_IB_MAX_DEVS];
+  cudaStream_t stream; // DMA engine stream for P2P
   struct mscclppProxyState *proxyState[MSCCLPP_PROXY_MAX_NUM];
 };
 
