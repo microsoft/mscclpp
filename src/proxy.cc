@@ -153,6 +153,8 @@ void* mscclppProxyServiceIb(void* _args) {
   }
 #endif
 
+  std::list<std::pair<uint64_t, struct mscclppConn *>> waitingReqList;
+  std::map<struct mscclppConn *, std::list<uint64_t>> waitingReqMap;
   uint64_t cachedFifoTail = *fifoTail;
   int runCheckCounter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
   for (;;) {
@@ -215,34 +217,61 @@ void* mscclppProxyServiceIb(void* _args) {
     // Poll to see if we are ready to send anything
     if (cachedFifoTail == *fifoHead) continue; // no need trigger
     readTrigger(&trigger, &fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]);
-    if (trigger.value[0] == 0) continue; // there is one in progreess
-    // there is a trigger value ready to be consumed
+    bool triggered = (trigger.value[0] != 0);
+    if (triggered) {
+      // there is a trigger value ready to be consumed
 
-    struct mscclppConn *conn = &comm->conns[trigger.fields.connId];
+      struct mscclppConn *conn = &comm->conns[trigger.fields.connId];
 
-    if (trigger.fields.type & mscclppData) {
-      conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
-                            /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
-    }
-    if (trigger.fields.type & mscclppFlag) {
-      // My local flag is copied to the peer's proxy flag
-      conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
-                            /*wrId=*/0, /*offset=*/0, /*signaled=*/true);
-    }
-    int ret;
-    if ((ret = conn->ibQp->postSend()) != 0) {
-      // Return value is errno.
-      WARN("postSend failed: errno %d", ret);
+      if (trigger.fields.type & mscclppData) {
+        conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
+                              /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
+      }
+      if (trigger.fields.type & mscclppFlag) {
+        // My local flag is copied to the peer's proxy flag
+        conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
+                              /*wrId=*/cachedFifoTail, /*offset=*/0, /*signaled=*/true);
+      }
+      int ret;
+      if ((ret = conn->ibQp->postSend()) != 0) {
+        // Return value is errno.
+        WARN("postSend failed: errno %d", ret);
+      }
+
+      if (trigger.fields.type & mscclppSync) {
+        // Reserve waiting for completion
+        waitingReqList.emplace_back(cachedFifoTail, conn);
+        waitingReqMap[conn].emplace_back(cachedFifoTail);
+      } else {
+        // No need to wait: reset the trigger immediately
+        *(volatile uint64_t *)(&fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
+      }
     }
 
-    // Wait for completion
-    if (trigger.fields.type & mscclppSync) {
-      bool waiting = true;
-      while (waiting) {
+    if (!waitingReqList.empty()) {
+      // Need to block until the smallest uncompleted request (waitingReqList.front())
+      // is not using the same trigger as the next FIFO tail.
+      uint64_t earliestReq = waitingReqList.front().first;
+      bool blocking = triggered && (earliestReq == (cachedFifoTail + 1 - MSCCLPP_PROXY_FIFO_SIZE));
+      bool blockingDone = false;
+      auto it = waitingReqMap.begin();
+      for (; it != waitingReqMap.end();) {
+        struct mscclppConn *conn = it->first;
+        std::list<uint64_t> *reqs = &it->second;
+        if (reqs->empty()) {
+          ++it;
+          continue;
+        }
+        // If blocking, poll only for the earliest uncompleted request
+        if (blocking && (conn != waitingReqList.front().second)) {
+          ++it;
+          continue;
+        }
+        // Poll if there is any completion
         wcNum = conn->ibQp->pollCq();
         if (wcNum < 0) {
           WARN("rank %d pollCq failed: errno %d", rank, errno);
-          continue;
+          break;
         }
         for (int i = 0; i < wcNum; ++i) {
           struct ibv_wc *wc = &conn->ibQp->wcs[i];
@@ -256,17 +285,38 @@ void* mscclppProxyServiceIb(void* _args) {
           }
           if (wc->opcode == IBV_WC_RDMA_WRITE) {
             // send completion
-            waiting = false;
-            break;
+            *(volatile uint64_t *)(&fifo[wc->wr_id % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
+            // reqs is small (at most MSCCLPP_PROXY_FIFO_SIZE), so linear search is fine.
+            for (auto it2 = reqs->begin(); it2 != reqs->end(); ++it2) {
+              if (*it2 == wc->wr_id) {
+                reqs->erase(it2);
+                break;
+              }
+            }
+            for (auto it2 = waitingReqList.begin(); it2 != waitingReqList.end(); ++it2) {
+              if (it2->first == wc->wr_id) {
+                waitingReqList.erase(it2);
+                break;
+              }
+            }
+            if (blocking && (wc->wr_id == earliestReq)) {
+              // We have completed the earliest uncompleted request, so we can stop polling
+              blockingDone = true;
+            }
           }
+        }
+        if (blocking) {
+          if (blockingDone) break;
+        } else {
+          ++it;
         }
       }
     }
 
-    // Send completion: reset only the high 64 bits
-    *(volatile uint64_t *)(&fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
-    cachedFifoTail++;
-    *fifoTail = cachedFifoTail;
+    if (triggered) {
+      cachedFifoTail++;
+      *fifoTail = cachedFifoTail;
+    }
 #endif
   }
 
