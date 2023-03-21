@@ -1,11 +1,10 @@
 #include "mscclpp.h"
-#ifdef MSCCLPP_USE_MPI_FOR_TESTS
-#include "mpi.h"
-#endif // MSCCLPP_USE_MPI_FOR_TESTS
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string>
+
+#include "common.h"
 
 #define RANKS_PER_NODE 8
 #define USE_DMA_FOR_P2P 1
@@ -147,42 +146,14 @@ int cudaNumToIbNum(int cudaNum)
   return ibNum;
 }
 
-void print_usage(const char *prog)
-{
-#ifdef MSCCLPP_USE_MPI_FOR_TESTS
-  printf("usage: %s IP:PORT [rank nranks]\n", prog);
-#else
-  printf("usage: %s IP:PORT rank nranks\n", prog);
-#endif
-}
-
 int main(int argc, const char *argv[])
 {
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
-  if (argc != 2 && argc != 4) {
-    print_usage(argv[0]);
-    return -1;
-  }
-  const char *ip_port = argv[1];
-  int rank;
-  int world_size;
-  if (argc == 4) {
-    rank = atoi(argv[2]);
-    world_size = atoi(argv[3]);
-  } else {
-    MPI_Init(NULL, NULL);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-  }
-#else
-  if (argc != 4) {
-    print_usage(argv[0]);
-    return -1;
-  }
-  const char *ip_port = argv[1];
-  int rank = atoi(argv[2]);
-  int world_size = atoi(argv[3]);
+  MPI_Init(NULL, NULL);
 #endif
+  const char* ip_port;
+  int rank, world_size;
+  parse_arguments(argc, argv, &ip_port, &rank, &world_size);
   int localRank = rankToLocalRank(rank);
   int thisNode = rankToNode(rank);
   int cudaNum = localRank;
