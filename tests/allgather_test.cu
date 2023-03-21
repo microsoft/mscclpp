@@ -60,24 +60,33 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
 
   // Each warp receives data from different ranks
 #if 1
-  // get a thread-local trigger and a request for waiting on it
-  mscclppTrigger_t trig;
-  mscclppRequest_t req = devConn.fifo.getTrigger(&trig);
+  // push your data asynchronously
+  devConn.fifo.push(mscclppData, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
-  // Trigger sending data, flag and synchronize after
-  devConn.fifo.setTrigger(trig, mscclppData, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
-  // we cannot reuse buffer and flag until the request is completed
+  // push with flag and sync to make sure the data is received
+  auto req = devConn.fifo.push(mscclppFlag | mscclppSync, 0, 0);
 
-  req = devConn.fifo.getTrigger(&trig);
-
-  // Trigger sending data, flag and synchronize after
-  devConn.fifo.setTrigger(trig, mscclppFlag | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
-  // we cannot reuse buffer and flag until the request is completed
-
-  // Wait on the request to make sure it is safe to reuse buffer and flag
-  devConn.fifo.waitTrigger(req);
-  // Wait for receiving data from remote rank
+  devConn.fifo.waitReq(req);
   while (*proxyFlag == baseFlag);
+
+  // // get a thread-local trigger and a request for waiting on it
+  // mscclppTrigger_t trig;
+  // mscclppRequest_t req = devConn.fifo.getTrigger(&trig);
+
+  // // Trigger sending data, flag and synchronize after
+  // devConn.fifo.setTrigger(trig, mscclppData, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+  // // we cannot reuse buffer and flag until the request is completed
+
+  // req = devConn.fifo.getTrigger(&trig);
+
+  // // Trigger sending data, flag and synchronize after
+  // devConn.fifo.setTrigger(trig, mscclppFlag | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+  // // we cannot reuse buffer and flag until the request is completed
+
+  // // Wait on the request to make sure it is safe to reuse buffer and flag
+  // devConn.fifo.waitTrigger(req);
+  // // Wait for receiving data from remote rank
+  // while (*proxyFlag == baseFlag);
 #else
   for (int i = 1; i < world_size; i++){
     __syncthreads();

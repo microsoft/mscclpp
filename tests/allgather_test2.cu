@@ -82,18 +82,24 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   for (int i = 1; i < world_size; i++){
     __syncthreads();
     if (remoteRank != ((rank+i) % world_size)) continue;
-    // get a thread-local trigger and a request for waiting on it
-    mscclppTrigger_t trig;
-    mscclppRequest_t req = devConn.fifo.getTrigger(&trig);
 
     // Trigger sending data, flag and synchronize after
     int ibPortion = nelemsPerGPU/12;//nelemsPerGPU/12;
-    if (isIB)
-      devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int) + (nelemsPerGPU - ibPortion)*sizeof(int), ibPortion*sizeof(int));
-    else 
-      devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), (nelemsPerGPU-ibPortion)*sizeof(int));
+    uint64_t dataOffset;
+    uint64_t dataSize;
+
+    if (isIB){
+      dataOffset =  rank * nelemsPerGPU * sizeof(int) + (nelemsPerGPU - ibPortion)*sizeof(int);
+      dataSize = ibPortion*sizeof(int);
+    }
+    else {
+      dataOffset = rank * nelemsPerGPU * sizeof(int);
+      dataSize = (nelemsPerGPU-ibPortion)*sizeof(int);
+    }
+
     // Wait on the request to make sure it is safe to reuse buffer and flag
-    devConn.fifo.waitTrigger(req);    
+    auto req = devConn.fifo.push(mscclppFlag | mscclppData | mscclppSync, dataOffset, dataSize); 
+    devConn.fifo.waitReq(req);    
   }
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag);

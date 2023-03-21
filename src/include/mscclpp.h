@@ -47,22 +47,35 @@ typedef mscclppTrigger* mscclppTrigger_t;
 
 struct mscclppConcurrentFifo {
 #ifdef __CUDACC__
-  __forceinline__ __device__ mscclppRequest_t getTrigger(mscclppTrigger_t* trig) {
+
+  __forceinline__ __device__ mscclppRequest_t push(uint64_t type, uint64_t dataOffset, uint64_t dataSize){
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->triggerFifoHead,1);
     while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->triggerFifoTail));
-    *trig = &this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE];
-    return curFifoHead;
-  }
-
-  __forceinline__ __device__ void setTrigger(mscclppTrigger_t trig, uint64_t type, uint64_t dataOffset, uint64_t dataSize) {
+    uint64_t* valptr = &(this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE].value[0]);
     asm volatile(
-      "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(&trig->value),
+      "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(valptr),
       "l"((dataOffset << (MSCCLPP_BITS_SIZE)) +
           (dataSize)),
       "l"((type << MSCCLPP_BITS_CONNID) + this->connId));
+    return curFifoHead;
   }
 
-  __forceinline__ __device__ void waitTrigger(mscclppRequest_t req) {
+  // __forceinline__ __device__ mscclppRequest_t getTrigger(mscclppTrigger_t* trig) {
+  //   uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->triggerFifoHead,1);
+  //   while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->triggerFifoTail));
+  //   *trig = &this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE];
+  //   return curFifoHead;
+  // }
+
+  // __forceinline__ __device__ void setTrigger(mscclppTrigger_t trig, uint64_t type, uint64_t dataOffset, uint64_t dataSize) {
+  //   asm volatile(
+  //     "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(&trig->value),
+  //     "l"((dataOffset << (MSCCLPP_BITS_SIZE)) +
+  //         (dataSize)),
+  //     "l"((type << MSCCLPP_BITS_CONNID) + this->connId));
+  // }
+
+  __forceinline__ __device__ void waitReq(mscclppRequest_t req) {
     while (*(volatile uint64_t *)triggerFifoTail <= req);
   }
 #endif // __CUDACC__
@@ -114,7 +127,7 @@ struct mscclppDevConn {
   uint64_t* remoteFlag;
   uint64_t* proxyFlag; // this is only written by the proxy thread
 
-  // multiple threads can access the fifo concurrently
+  // threads can access the fifo concurrently
   struct mscclppConcurrentFifo fifo;
 };
 
