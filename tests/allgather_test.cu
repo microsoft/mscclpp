@@ -42,8 +42,6 @@ static double getTime(void)
   return (tspec.tv_nsec / 1.0e9) + tspec.tv_sec;
 }
 
-mscclppComm_t comm;
-mscclppDevConn_t devConns[16];
 __constant__ mscclppDevConn_t constDevConns[16];
 
 __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
@@ -52,7 +50,8 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
 
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
-  mscclppDevConn_t devConn = constDevConns[remoteRank];
+  //int remoteRank = warpId;
+  mscclppDevConn_t devConn = constDevConns[warpId];
 
   // Each warp receives data from different ranks
 #if 0
@@ -134,11 +133,16 @@ mscclppResult_t setupMscclppConnections(int rank, int world_size, mscclppComm_t 
       transportType = mscclppTransportIB;
     }
     // Connect with all other ranks
-    MSCCLPPCHECK(mscclppConnect(comm, &devConns[r], r, data_d, data_size, 0, transportType, ibDev));
+    MSCCLPPCHECK(mscclppConnect(comm, r, data_d, data_size, 0, transportType, ibDev));
   }
 
   MSCCLPPCHECK(mscclppConnectionSetup(comm));
-  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * world_size));
+
+  mscclppDevConn_t *devConns;
+  int nCons;
+  MSCCLPPCHECK(mscclppGetDeviceConnections(comm, &devConns, &nCons));
+  printf("nCons = %d, %p %p %p\n", nCons, devConns[0].sendEpochId, devConns[0].localBuff, devConns[0].remoteBuff);
+  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * nCons));
 
   return mscclppSuccess;
 }
@@ -175,6 +179,7 @@ int main(int argc, const char *argv[])
   int cudaNum = rankToLocalRank(rank);
   CUDACHECK(cudaSetDevice(cudaNum));
 
+  mscclppComm_t comm;
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
 
   int *data_d;

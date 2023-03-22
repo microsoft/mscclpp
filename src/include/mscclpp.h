@@ -171,10 +171,12 @@ mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int si
 
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
-mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, size_t buffSize,
+mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, void* localBuff, size_t buffSize,
                                int tag, mscclppTransport_t transportType, const char *ibDev=NULL);
 
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);
+
+mscclppResult_t mscclppGetDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons);
 
 mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm);
 

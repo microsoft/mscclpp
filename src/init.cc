@@ -167,18 +167,22 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank,
+MSCCLPP_API(mscclppResult_t, mscclppGetDeviceConnections, mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons);
+mscclppResult_t mscclppGetDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons)
+{
+  *nCons = comm->nConns;
+  *devConns = comm->devConns;
+  return mscclppSuccess;
+}
+
+MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int remoteRank,
             void* localBuff, size_t buffSize, int tag, mscclppTransport_t transportType, const char *ibDev);
-mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, size_t buffSize,
+mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, void* localBuff, size_t buffSize,
                                int tag, mscclppTransport_t transportType, const char *ibDev)
 {
   if (comm->nConns == MAXCONNECTIONS) {
     WARN("Too many connections made");
     return mscclppInternalError;
-  }
-  if (devConnOut == NULL) {
-    WARN("devConnOut is the output of this function and needs to be allocated by the user");
-    return mscclppInvalidUsage;
   }
   struct mscclppConn *conn = &comm->conns[comm->nConns];
   conn->transport = transportType;
@@ -275,7 +279,10 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
     WARN("Proxy allocation failed!");
     return mscclppInternalError;
   }
-  conn->devConn = devConnOut;
+  
+  struct mscclppDevConn *devConn = &comm->devConns[comm->nConns];
+
+  conn->devConn = devConn;
   conn->devConn->localBuff = localBuff;
   MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->sendEpochId, 1));
   // conn->devConn->sendEpochId = localFlag;

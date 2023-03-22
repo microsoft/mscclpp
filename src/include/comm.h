@@ -41,6 +41,7 @@ struct mscclppConn {
 
 struct mscclppComm {
   struct mscclppConn conns[MAXCONNECTIONS];
+  struct mscclppDevConn devConns[MAXCONNECTIONS];
   int nConns;
 
   void* bootstrap;
