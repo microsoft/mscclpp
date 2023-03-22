@@ -51,33 +51,15 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   mscclppDevConn_t devConn = constDevConns[remoteRank];
   if (isIB) devConn = constDevConns[remoteRank + world_size];
-  // volatile int *data = (volatile int *)devConn.localBuff;
-  volatile uint64_t *localFlag = devConn.localFlag;
-  volatile uint64_t *proxyFlag = devConn.proxyFlag;
-
-  uint64_t baseFlag = *localFlag;
-
-  __syncthreads();
-  if (threadIdx.x == 0) {
-    // Do we need a sys fence?
-    // __threadfence_system();
-    *localFlag = baseFlag + 1;
-  }
 
   // Each warp receives data from different ranks
-#if 0
-  // get a thread-local trigger and a request for waiting on it
-  mscclppTrigger_t trig;
-  mscclppRequest_t req = devConn.fifo.getTrigger(&trig);
+#if 1
 
   // Trigger sending data, flag and synchronize after
-  devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+  devConn.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
-  // Wait on the request to make sure it is safe to reuse buffer and flag
-  devConn.fifo.waitTrigger(req);
+  devConn.wait();
 
-  // Wait for receiving data from remote rank
-  while (*proxyFlag == baseFlag);
 #else
   for (int i = 1; i < world_size; i++){
     __syncthreads();

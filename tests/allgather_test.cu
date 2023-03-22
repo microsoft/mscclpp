@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <string>
 
-#define RANKS_PER_NODE 1
+#define RANKS_PER_NODE 8
 
 #define MSCCLPPCHECK(call) do { \
   mscclppResult_t res = call; \
@@ -47,19 +47,9 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   mscclppDevConn_t devConn = constDevConns[remoteRank];
-  // devConn.epochIncrement();
-  // volatile int *data = (volatile int *)devConn.localBuff;
-  // volatile uint64_t *localFlag = devConn.localFlag;
-  // volatile uint64_t *proxyFlag = devConn.proxyFlag;
-
-  // uint64_t baseFlag = *localFlag;
-
-  // if (threadIdx.x == 0) {
-  //   *localFlag = baseFlag + 1;
-  // }
 
   // Each warp receives data from different ranks
-#if 1
+#if 0
   // push your data asynchronously
   devConn.put(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
@@ -73,10 +63,10 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
     __syncthreads();
     if (remoteRank != ((rank+i) % world_size)) continue;
     // push your data asynchronously
-    devConn.put(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+    devConn.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
     // push with flag and sync to make sure the data is received
-    devConn.signal();
+    // devConn.signal();
   }
 
   devConn.wait();
