@@ -114,7 +114,7 @@ struct mscclppDevConn {
   struct mscclppConcurrentFifo fifo;
 #ifdef __CUDACC__
 
- __forceinline__ __device__ void increment(){
+ __forceinline__ __device__ void epochIncrement(){
    *(volatile uint64_t*)sendEpochId += 1;
  }
 
@@ -122,12 +122,12 @@ struct mscclppDevConn {
     fifo.push(mscclppData, dataOffset, dataSize);
   }
   __forceinline__ __device__ mscclppRequest_t signal(){
-    increment();
+    epochIncrement();
     return fifo.push(mscclppFlag | mscclppSync, 1, 1);
   }
 
   __forceinline__ __device__ mscclppRequest_t putWithSignal(uint64_t dataOffset, uint64_t dataSize){
-    increment();
+    epochIncrement();
     return fifo.push(mscclppData | mscclppFlag | mscclppSync, dataOffset, dataSize);
   }
 
