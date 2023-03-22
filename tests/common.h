@@ -36,7 +36,7 @@ void parse_arguments(int argc, const char *argv[], const char** ip_port, int* ra
     print_usage(argv[0]);
     exit(-1);
   }
-  const char *ip_port = argv[1];
+  *ip_port = argv[1];
   *rank = atoi(argv[2]);
   *world_size = atoi(argv[3]);
 #endif
