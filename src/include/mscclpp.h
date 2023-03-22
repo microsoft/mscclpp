@@ -42,13 +42,12 @@ union alignas(16) mscclppTrigger {
   } fields;
 };
 
-typedef uint64_t mscclppRequest_t;
 typedef mscclppTrigger* mscclppTrigger_t;
 
 struct mscclppConcurrentFifo {
 #ifdef __CUDACC__
 
-  __forceinline__ __device__ mscclppRequest_t push(uint64_t type, uint64_t dataOffset, uint64_t dataSize){
+  __forceinline__ __device__ uint64_t push(uint64_t type, uint64_t dataOffset, uint64_t dataSize){
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->triggerFifoHead,1);
     while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->triggerFifoTail));
     auto valptr = &(this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE].value);
@@ -121,18 +120,16 @@ struct mscclppDevConn {
  __forceinline__ __device__ void put(uint64_t dataOffset, uint64_t dataSize){
     fifo.push(mscclppData, dataOffset, dataSize);
   }
-  __forceinline__ __device__ mscclppRequest_t signal(){
+  __forceinline__ __device__ void signal(){
     epochIncrement();
-    return fifo.push(mscclppFlag | mscclppSync, 1, 1);
+    uint64_t curFifoHead = fifo.push(mscclppFlag | mscclppSync, 1, 1);
+    while (*(volatile uint64_t *)fifo.triggerFifoTail <= curFifoHead);
   }
 
-  __forceinline__ __device__ mscclppRequest_t putWithSignal(uint64_t dataOffset, uint64_t dataSize){
+  __forceinline__ __device__ void putWithSignal(uint64_t dataOffset, uint64_t dataSize){
     epochIncrement();
-    return fifo.push(mscclppData | mscclppFlag | mscclppSync, dataOffset, dataSize);
-  }
-
-  __forceinline__ __device__ void sync(mscclppRequest_t req) {
-    while (*(volatile uint64_t *)fifo.triggerFifoTail <= req);
+    uint64_t curFifoHead = fifo.push(mscclppData | mscclppFlag | mscclppSync, dataOffset, dataSize);
+    while (*(volatile uint64_t *)fifo.triggerFifoTail <= curFifoHead);
   }
 
   __forceinline__ __device__ void wait(){

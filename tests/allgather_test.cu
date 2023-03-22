@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <string>
 
-#define RANKS_PER_NODE 8
+#define RANKS_PER_NODE 1
 
 #define MSCCLPPCHECK(call) do { \
   mscclppResult_t res = call; \
@@ -59,17 +59,14 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   // }
 
   // Each warp receives data from different ranks
-#if 0
+#if 1
   // push your data asynchronously
   devConn.put(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
   // push with flag and sync to make sure the data is received
-  auto req = devConn.signal();
-
-  devConn.sync(req);
+  devConn.signal();
 
   devConn.wait();
-  //while (*proxyFlag == baseFlag);
 
 #else
   for (int i = 1; i < world_size; i++){
@@ -79,11 +76,9 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
     devConn.put(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
     // push with flag and sync to make sure the data is received
-    auto req = devConn.signal();
-
-    devConn.sync(req);
-
+    devConn.signal();
   }
+
   devConn.wait();
   // Wait for receiving data from remote rank
   // while (*proxyFlag == baseFlag);
