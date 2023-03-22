@@ -47,7 +47,7 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   mscclppDevConn_t devConn = constDevConns[remoteRank];
-
+  // devConn.epochIncrement();
   // volatile int *data = (volatile int *)devConn.localBuff;
   // volatile uint64_t *localFlag = devConn.localFlag;
   // volatile uint64_t *proxyFlag = devConn.proxyFlag;
@@ -59,7 +59,7 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   // }
 
   // Each warp receives data from different ranks
-#if 1
+#if 0
   // push your data asynchronously
   devConn.put(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
@@ -175,13 +175,13 @@ int main(int argc, const char *argv[])
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
 
   int *data_d;
-  uint64_t *flag_d;
+  // uint64_t *flag_d;
   size_t data_size = 1024*1024*1024;
   int nelemsPerGPU = data_size / sizeof(int) / world_size;
   CUDACHECK(cudaMalloc(&data_d, data_size));
-  CUDACHECK(cudaMalloc(&flag_d, sizeof(uint64_t)));
+  // CUDACHECK(cudaMalloc(&flag_d, sizeof(uint64_t)));
   CUDACHECK(cudaMemset(data_d, 0, data_size));
-  CUDACHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
+  // CUDACHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
 
   int* data_h = new int[nelemsPerGPU*world_size];
   for (int i = 0; i < nelemsPerGPU*world_size; i++){
@@ -206,7 +206,7 @@ int main(int argc, const char *argv[])
       transportType = mscclppTransportIB;
     }
     // Connect with all other ranks
-    MSCCLPPCHECK(mscclppConnect(comm, &devConns[r], r, data_d, data_size, flag_d, 0, transportType, ibDev));
+    MSCCLPPCHECK(mscclppConnect(comm, &devConns[r], r, data_d, data_size, 0, transportType, ibDev));
   }
 
   MSCCLPPCHECK(mscclppConnectionSetup(comm));

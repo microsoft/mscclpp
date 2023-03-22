@@ -104,7 +104,7 @@ struct mscclppDevConn {
 
   void* localBuff;
   uint64_t* sendEpochId;  // this is read and written by the GPU
-  uint64_t recvEpochId;   // this is the copy of the remote epoch id.
+  uint64_t* recvEpochId;   // this is the copy of the remote epoch id.
 
   void* remoteBuff;
   uint64_t* remoteFlag;
@@ -136,8 +136,9 @@ struct mscclppDevConn {
   }
 
   __forceinline__ __device__ void wait(){
-    recvEpochId++;
-    while (*(volatile uint64_t*)proxyEpochId < recvEpochId);
+    (*recvEpochId) += 1;
+    // printf("%llu %llu %llu\n", (*(volatile uint64_t*)proxyEpochId), *(volatile uint64_t*)sendEpochId, *recvEpochId);
+    while (*(volatile uint64_t*)proxyEpochId < (*recvEpochId));
   }
 #endif
 };
@@ -174,7 +175,7 @@ mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int si
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
 mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, size_t buffSize,
-                               uint64_t* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev=NULL);
+                               int tag, mscclppTransport_t transportType, const char *ibDev=NULL);
 
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);
 

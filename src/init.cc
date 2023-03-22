@@ -151,6 +151,14 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
     }
   }
 
+  for (int i = 0; i < comm->nConns; i++){
+    struct mscclppConn *conn = &comm->conns[i];
+    if (conn){
+      MSCCLPPCHECK(mscclppCudaFree(conn->devConn->sendEpochId));
+      MSCCLPPCHECK(mscclppCudaFree(conn->devConn->recvEpochId));
+    }
+  }
+
   if (comm->bootstrap)
     MSCCLPPCHECK(bootstrapClose(comm->bootstrap));
 
@@ -160,9 +168,9 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
 }
 
 MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank,
-            void* localBuff, size_t buffSize, uint64_t* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev);
+            void* localBuff, size_t buffSize, int tag, mscclppTransport_t transportType, const char *ibDev);
 mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, size_t buffSize,
-                               uint64_t* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev/*=NULL*/)
+                               int tag, mscclppTransport_t transportType, const char *ibDev/*=NULL*/)
 {
   if (comm->nConns == MAXCONNECTIONS) {
     WARN("Too many connections made");
@@ -269,8 +277,10 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
   }
   conn->devConn = devConnOut;
   conn->devConn->localBuff = localBuff;
-  conn->devConn->sendEpochId = localFlag;
-  conn->devConn->recvEpochId = 0;
+  MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->sendEpochId, 1));
+  // conn->devConn->sendEpochId = localFlag;
+  MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->recvEpochId, 1));
+  // conn->devConn->recvEpochId = 0;
   conn->devConn->tag = tag;
   conn->devConn->fifo.connId = comm->nConns;
   conn->devConn->fifo.triggerFifo = proxyState->triggerFifo.devPtr;
