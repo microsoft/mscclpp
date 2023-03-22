@@ -98,8 +98,8 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
     }
 
     // Wait on the request to make sure it is safe to reuse buffer and flag
-    auto req = devConn.fifo.push(mscclppFlag | mscclppData | mscclppSync, dataOffset, dataSize); 
-    devConn.fifo.waitReq(req);    
+    auto req = devConn.fifo.putWithSignal(dataOffset, dataSize); 
+    devConn.fifo.sync(req);    
   }
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag);

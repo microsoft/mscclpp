@@ -47,13 +47,13 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   mscclppDevConn_t devConn = constDevConns[remoteRank];
+
   // volatile int *data = (volatile int *)devConn.localBuff;
   volatile uint64_t *localFlag = devConn.localFlag;
   volatile uint64_t *proxyFlag = devConn.proxyFlag;
 
   uint64_t baseFlag = *localFlag;
 
-  __syncthreads();
   if (threadIdx.x == 0) {
     *localFlag = baseFlag + 1;
   }
@@ -61,32 +61,16 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   // Each warp receives data from different ranks
 #if 1
   // push your data asynchronously
-  devConn.fifo.push(mscclppData, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+  devConn.fifo.put(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
   // push with flag and sync to make sure the data is received
-  auto req = devConn.fifo.push(mscclppFlag | mscclppSync, 0, 0);
+  auto req = devConn.fifo.signal();
 
-  devConn.fifo.waitReq(req);
-  while (*proxyFlag == baseFlag);
+  devConn.fifo.sync(req);
 
-  // // get a thread-local trigger and a request for waiting on it
-  // mscclppTrigger_t trig;
-  // mscclppRequest_t req = devConn.fifo.getTrigger(&trig);
+  devConn.wait();
+  //while (*proxyFlag == baseFlag);
 
-  // // Trigger sending data, flag and synchronize after
-  // devConn.fifo.setTrigger(trig, mscclppData, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
-  // // we cannot reuse buffer and flag until the request is completed
-
-  // req = devConn.fifo.getTrigger(&trig);
-
-  // // Trigger sending data, flag and synchronize after
-  // devConn.fifo.setTrigger(trig, mscclppFlag | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
-  // // we cannot reuse buffer and flag until the request is completed
-
-  // // Wait on the request to make sure it is safe to reuse buffer and flag
-  // devConn.fifo.waitTrigger(req);
-  // // Wait for receiving data from remote rank
-  // while (*proxyFlag == baseFlag);
 #else
   for (int i = 1; i < world_size; i++){
     __syncthreads();

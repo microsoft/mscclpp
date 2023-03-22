@@ -78,10 +78,10 @@ __global__ void kernel(int rank, int world_size)
 #if (USE_DMA_FOR_P2P == 1)
 
   // Trigger sending data, flag and synchronize after
-  auto req = devConn.fifo.push(mscclppFlag | mscclppData | mscclppSync, rank * sizeof(int), sizeof(int));
+  auto req = devConn.fifo.putWithSignal(rank * sizeof(int), sizeof(int));
 
   // Wait on the request to make sure it is safe to reuse buffer and flag
-  devConn.fifo.waitReq(req);
+  devConn.fifo.sync(req);
 
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag) {}

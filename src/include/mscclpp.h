@@ -51,7 +51,7 @@ struct mscclppConcurrentFifo {
   __forceinline__ __device__ mscclppRequest_t push(uint64_t type, uint64_t dataOffset, uint64_t dataSize){
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->triggerFifoHead,1);
     while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->triggerFifoTail));
-    uint64_t* valptr = &(this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE].value[0]);
+    auto valptr = &(this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE].value);
     asm volatile(
       "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(valptr),
       "l"((dataOffset << (MSCCLPP_BITS_SIZE)) +
@@ -60,24 +60,6 @@ struct mscclppConcurrentFifo {
     return curFifoHead;
   }
 
-  // __forceinline__ __device__ mscclppRequest_t getTrigger(mscclppTrigger_t* trig) {
-  //   uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->triggerFifoHead,1);
-  //   while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->triggerFifoTail));
-  //   *trig = &this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE];
-  //   return curFifoHead;
-  // }
-
-  // __forceinline__ __device__ void setTrigger(mscclppTrigger_t trig, uint64_t type, uint64_t dataOffset, uint64_t dataSize) {
-  //   asm volatile(
-  //     "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(&trig->value),
-  //     "l"((dataOffset << (MSCCLPP_BITS_SIZE)) +
-  //         (dataSize)),
-  //     "l"((type << MSCCLPP_BITS_CONNID) + this->connId));
-  // }
-
-  __forceinline__ __device__ void waitReq(mscclppRequest_t req) {
-    while (*(volatile uint64_t *)triggerFifoTail <= req);
-  }
 #endif // __CUDACC__
   mscclppTrigger* triggerFifo;
   uint64_t* triggerFifoTail; // read by both device and host. written only by host
@@ -121,14 +103,43 @@ struct mscclppDevConn {
   int tag;
 
   void* localBuff;
-  uint64_t* localFlag;
+  volatile uint64_t* sendEpochId;  // this is read and written by the GPU
+  uint64_t recvEpochId;   // this is the copy of the remote epoch id.
 
   void* remoteBuff;
   uint64_t* remoteFlag;
-  uint64_t* proxyFlag; // this is only written by the proxy thread
+  uint64_t* proxyEpochId; // this is only written by the proxy thread
 
   // threads can access the fifo concurrently
   struct mscclppConcurrentFifo fifo;
+#ifdef __CUDACC__
+
+ __forceinline__ __device__ void increment(){
+   *sendEpochId += 1;
+ }
+
+ __forceinline__ __device__ void put(uint64_t dataOffset, uint64_t dataSize){
+    fifo.push(mscclppData, dataOffset, dataSize);
+  }
+  __forceinline__ __device__ mscclppRequest_t signal(){
+    increment();
+    return fifo.push(mscclppFlag | mscclppSync, 1, 1);
+  }
+
+  __forceinline__ __device__ mscclppRequest_t putWithSignal(uint64_t dataOffset, uint64_t dataSize){
+    increment();
+    return fifo.push(mscclppData | mscclppFlag | mscclppSync, dataOffset, dataSize);
+  }
+
+  __forceinline__ __device__ void sync(mscclppRequest_t req) {
+    while (*(volatile uint64_t *)triggerFifoTail <= req);
+  }
+
+  __forceinline__ __device__ void wait(){
+    recvEpochId++;
+    while (*proxyEpochId < recvEpochId);
+  }
+#endif
 };
 
 typedef struct mscclppComm* mscclppComm_t;
