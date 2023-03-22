@@ -9,15 +9,6 @@
 
 #define RANKS_PER_NODE 8
 
-#define MSCCLPPCHECK(call) do { \
-  mscclppResult_t res = call; \
-  if (res != mscclppSuccess && res != mscclppInProgress) { \
-    /* Print the back trace*/ \
-    printf("Failure at %s:%d -> %d\n", __FILE__, __LINE__, res);    \
-    return res; \
-  } \
-} while (0);
-
 // Check CUDA RT calls
 #define CUDACHECK(cmd) do {                                   \
     cudaError_t err = cmd;                                    \
@@ -86,32 +77,6 @@ int rankToNode(int rank)
   return rank / RANKS_PER_NODE;
 }
 
-int cudaNumToIbNum(int cudaNum)
-{
-  int ibNum;
-  if (cudaNum == 0) {
-    ibNum = 0;
-  } else if (cudaNum == 1) {
-    ibNum = 4;
-  } else if (cudaNum == 2) {
-    ibNum = 1;
-  } else if (cudaNum == 3) {
-    ibNum = 5;
-  } else if (cudaNum == 4) {
-    ibNum = 2;
-  } else if (cudaNum == 5) {
-    ibNum = 6;
-  } else if (cudaNum == 6) {
-    ibNum = 3;
-  } else if (cudaNum == 7) {
-    ibNum = 7;
-  } else {
-    printf("Invalid cudaNum: %d\n", cudaNum);
-    exit(EXIT_FAILURE);
-  }
-  return ibNum;
-}
-
 void print_usage(const char *prog)
 {
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
@@ -119,6 +84,23 @@ void print_usage(const char *prog)
 #else
   printf("usage: %s IP:PORT rank nranks\n", prog);
 #endif
+}
+
+void initializeAndAllocateAllGatherData(int rank, int world_size, size_t data_size, int nelemsPerGPU, int** data_h, int **data_d)
+{
+  CUDACHECK(cudaMalloc(data_d, data_size));
+  CUDACHECK(cudaMemset(*data_d, 0, data_size));
+
+  *data_h = new int[nelemsPerGPU*world_size];
+  for (int i = 0; i < nelemsPerGPU*world_size; i++){
+    int val = i + 1;
+    if (i / nelemsPerGPU == rank){
+      (*data_h)[i] = val;
+    } else {
+      (*data_h)[i] = 0;
+    }
+  }
+  CUDACHECK(cudaMemcpy(*data_d, *data_h, data_size, cudaMemcpyHostToDevice));
 }
 
 int main(int argc, const char *argv[])
@@ -148,36 +130,22 @@ int main(int argc, const char *argv[])
   int rank = atoi(argv[2]);
   int world_size = atoi(argv[3]);
 #endif
-  int localRank = rankToLocalRank(rank);
+
   int thisNode = rankToNode(rank);
-  int cudaNum = localRank;
-  int ibNum = cudaNumToIbNum(cudaNum);
+  int cudaNum = rankToLocalRank(rank);
 
   CUDACHECK(cudaSetDevice(cudaNum));
-  std::string ibDevStr = "mlx5_ib" + std::to_string(localRank);
+  std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
 
   mscclppComm_t comm;
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
 
   int *data_d;
-  // uint64_t *flag_d;
+  int *data_h;
   size_t data_size = 1024*1024*1024;
   int nelemsPerGPU = data_size / sizeof(int) / world_size;
-  CUDACHECK(cudaMalloc(&data_d, data_size));
-  // CUDACHECK(cudaMalloc(&flag_d, sizeof(uint64_t)));
-  CUDACHECK(cudaMemset(data_d, 0, data_size));
-  // CUDACHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
 
-  int* data_h = new int[nelemsPerGPU*world_size];
-  for (int i = 0; i < nelemsPerGPU*world_size; i++){
-    int val = i + 1;
-    if (i / nelemsPerGPU == rank){
-      data_h[i] = val;
-    } else {
-      data_h[i] = 0;
-    }
-  }
-  CUDACHECK(cudaMemcpy(data_d, data_h, data_size, cudaMemcpyHostToDevice));
+  initializeAndAllocateAllGatherData(rank, world_size, data_size, nelemsPerGPU, &data_h, &data_d);
 
   mscclppDevConn_t devConns[16];
   for (int r = 0; r < world_size; ++r) {
