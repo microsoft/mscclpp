@@ -193,15 +193,15 @@ mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle) {
 
 mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot, const char* ip_port_pair) {
   memset(handle, 0, sizeof(mscclppBootstrapHandle));
-  // MSCCLPPCHECK(getRandomData(&handle->magic, sizeof(handle->magic)));
-  handle->magic = 0xdeadbeef;
-  const char* env;
+  const char* env = NULL;
   if (ip_port_pair) {
     env = ip_port_pair;
   } else {
     env = getenv("MSCCLPP_COMM_ID");
   }
   if (env) {
+    handle->magic = 0xdeadbeef;
+
     INFO(MSCCLPP_ENV, "MSCCLPP_COMM_ID set by environment to %s", env);
     if (mscclppSocketGetAddrFromString(&handle->addr, env) != mscclppSuccess) {
       WARN("Invalid MSCCLPP_COMM_ID, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
@@ -210,6 +210,7 @@ mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool
     if (isRoot)
       MSCCLPPCHECK(bootstrapCreateRoot(handle));
   } else {
+    MSCCLPPCHECK(getRandomData(&handle->magic, sizeof(handle->magic)));
     memcpy(&handle->addr, &bootstrapNetIfAddr, sizeof(union mscclppSocketAddress));
     MSCCLPPCHECK(bootstrapCreateRoot(handle));
   }
