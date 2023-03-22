@@ -170,7 +170,7 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
 MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank,
             void* localBuff, size_t buffSize, int tag, mscclppTransport_t transportType, const char *ibDev);
 mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, size_t buffSize,
-                               int tag, mscclppTransport_t transportType, const char *ibDev/*=NULL*/)
+                               int tag, mscclppTransport_t transportType, const char *ibDev)
 {
   if (comm->nConns == MAXCONNECTIONS) {
     WARN("Too many connections made");

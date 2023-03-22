@@ -9,15 +9,6 @@
 
 #define RANKS_PER_NODE 8
 
-#define MSCCLPPCHECK(call) do { \
-  mscclppResult_t res = call; \
-  if (res != mscclppSuccess && res != mscclppInProgress) { \
-    /* Print the back trace*/ \
-    printf("Failure at %s:%d -> %d\n", __FILE__, __LINE__, res);    \
-    return res; \
-  } \
-} while (0);
-
 // Check CUDA RT calls
 #define CUDACHECK(cmd) do {                                   \
     cudaError_t err = cmd;                                    \

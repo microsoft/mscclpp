@@ -1,4 +1,5 @@
 #include "mscclpp.h"
+
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
 #include "mpi.h"
 #endif // MSCCLPP_USE_MPI_FOR_TESTS
@@ -8,6 +9,18 @@
 #include <string>
 
 #define RANKS_PER_NODE 8
+
+// Propagate errors up
+
+#define MSCCLPPCHECK(call) do { \
+  mscclppResult_t res = call; \
+  if (res != mscclppSuccess && res != mscclppInProgress) { \
+     /* Print the back trace*/ \
+   printf("Failure at %s:%d -> %d\n", __FILE__, __LINE__, res);    \
+       return res; \
+  } \
+} while (0)
+
 
 // Check CUDA RT calls
 #define CUDACHECK(cmd) do {                                   \
@@ -29,6 +42,8 @@ static double getTime(void)
   return (tspec.tv_nsec / 1.0e9) + tspec.tv_sec;
 }
 
+mscclppComm_t comm;
+mscclppDevConn_t devConns[16];
 __constant__ mscclppDevConn_t constDevConns[16];
 
 __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
@@ -103,6 +118,31 @@ void initializeAndAllocateAllGatherData(int rank, int world_size, size_t data_si
   CUDACHECK(cudaMemcpy(*data_d, *data_h, data_size, cudaMemcpyHostToDevice));
 }
 
+mscclppResult_t setupMscclppConnections(int rank, int world_size, mscclppComm_t comm, int* data_d, size_t data_size){
+  int thisNode = rankToNode(rank);
+  int cudaNum = rankToLocalRank(rank);
+  std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
+
+  for (int r = 0; r < world_size; ++r) {
+    if (r == rank) continue;
+    mscclppTransport_t transportType;
+    const char* ibDev = ibDevStr.c_str();
+    if (rankToNode(r) == thisNode){
+      ibDev = NULL;
+      transportType = mscclppTransportP2P;
+    } else {
+      transportType = mscclppTransportIB;
+    }
+    // Connect with all other ranks
+    MSCCLPPCHECK(mscclppConnect(comm, &devConns[r], r, data_d, data_size, 0, transportType, ibDev));
+  }
+
+  MSCCLPPCHECK(mscclppConnectionSetup(comm));
+  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * world_size));
+
+  return mscclppSuccess;
+}
+
 int main(int argc, const char *argv[])
 {
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
@@ -133,11 +173,8 @@ int main(int argc, const char *argv[])
 
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
-
   CUDACHECK(cudaSetDevice(cudaNum));
-  std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
 
-  mscclppComm_t comm;
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
 
   int *data_d;
@@ -147,30 +184,12 @@ int main(int argc, const char *argv[])
 
   initializeAndAllocateAllGatherData(rank, world_size, data_size, nelemsPerGPU, &data_h, &data_d);
 
-  mscclppDevConn_t devConns[16];
-  for (int r = 0; r < world_size; ++r) {
-    if (r == rank) continue;
-    mscclppTransport_t transportType;
-    const char* ibDev = ibDevStr.c_str();
-    if (rankToNode(r) == thisNode){
-      ibDev = NULL;
-      transportType = mscclppTransportP2P;
-    } else {
-      transportType = mscclppTransportIB;
-    }
-    // Connect with all other ranks
-    MSCCLPPCHECK(mscclppConnect(comm, &devConns[r], r, data_d, data_size, 0, transportType, ibDev));
-  }
-
-  MSCCLPPCHECK(mscclppConnectionSetup(comm));
+  MSCCLPPCHECK(setupMscclppConnections(rank, world_size, comm, data_d, data_size));
 
   MSCCLPPCHECK(mscclppProxyLaunch(comm));
 
-  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * world_size));
-
   cudaStream_t stream;
   CUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-
 
   CUDACHECK(cudaDeviceSynchronize());
   kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
