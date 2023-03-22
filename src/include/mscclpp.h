@@ -103,7 +103,7 @@ struct mscclppDevConn {
   int tag;
 
   void* localBuff;
-  volatile uint64_t* sendEpochId;  // this is read and written by the GPU
+  uint64_t* sendEpochId;  // this is read and written by the GPU
   uint64_t recvEpochId;   // this is the copy of the remote epoch id.
 
   void* remoteBuff;
@@ -115,7 +115,7 @@ struct mscclppDevConn {
 #ifdef __CUDACC__
 
  __forceinline__ __device__ void increment(){
-   *sendEpochId += 1;
+   *(volatile uint64_t*)sendEpochId += 1;
  }
 
  __forceinline__ __device__ void put(uint64_t dataOffset, uint64_t dataSize){
@@ -132,12 +132,12 @@ struct mscclppDevConn {
   }
 
   __forceinline__ __device__ void sync(mscclppRequest_t req) {
-    while (*(volatile uint64_t *)triggerFifoTail <= req);
+    while (*(volatile uint64_t *)fifo.triggerFifoTail <= req);
   }
 
   __forceinline__ __device__ void wait(){
     recvEpochId++;
-    while (*proxyEpochId < recvEpochId);
+    while (*(volatile uint64_t*)proxyEpochId < recvEpochId);
   }
 #endif
 };
@@ -160,43 +160,6 @@ typedef enum { mscclppSuccess                 =  0,
                mscclppNumResults              =  8 } mscclppResult_t;
 
 mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* uniqueId);
-
-/* Reduction operation selector */
-typedef enum { mscclppNumOps_dummy = 5 } mscclppRedOp_dummy_t;
-typedef enum { mscclppSum        = 0,
-               mscclppProd       = 1,
-               mscclppMax        = 2,
-               mscclppMin        = 3,
-               mscclppAvg        = 4,
-               /* mscclppNumOps: The number of built-in mscclppRedOp_t values. Also
-                * serves as the least possible value for dynamic mscclppRedOp_t's
-                * as constructed by mscclppRedOpCreate*** functions. */
-               mscclppNumOps     = 5,
-               /* mscclppMaxRedOp: The largest valid value for mscclppRedOp_t.
-                * It is defined to be the largest signed value (since compilers
-                * are permitted to use signed enums) that won't grow
-                * sizeof(mscclppRedOp_t) when compared to previous MSCCLPP versions to
-                * maintain ABI compatibility. */
-               mscclppMaxRedOp   = 0x7fffffff>>(32-8*sizeof(mscclppRedOp_dummy_t))
-             } mscclppRedOp_t;
-
-/* Data types */
-typedef enum { mscclppInt8       = 0, mscclppChar       = 0,
-               mscclppUint8      = 1,
-               mscclppInt32      = 2, mscclppInt        = 2,
-               mscclppUint32     = 3,
-               mscclppInt64      = 4,
-               mscclppUint64     = 5,
-               mscclppFloat16    = 6, mscclppHalf       = 6,
-               mscclppFloat32    = 7, mscclppFloat      = 7,
-               mscclppFloat64    = 8, mscclppDouble     = 8,
-#if defined(__CUDA_BF16_TYPES_EXIST__)
-               mscclppBfloat16   = 9,
-               mscclppNumTypes   = 10
-#else
-               mscclppNumTypes   = 9
-#endif
-} mscclppDataType_t;
 
 /* Transport Types */
 typedef enum { mscclppTransportP2P = 0,

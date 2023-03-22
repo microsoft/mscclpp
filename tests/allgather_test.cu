@@ -49,24 +49,24 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   mscclppDevConn_t devConn = constDevConns[remoteRank];
 
   // volatile int *data = (volatile int *)devConn.localBuff;
-  volatile uint64_t *localFlag = devConn.localFlag;
-  volatile uint64_t *proxyFlag = devConn.proxyFlag;
+  // volatile uint64_t *localFlag = devConn.localFlag;
+  // volatile uint64_t *proxyFlag = devConn.proxyFlag;
 
-  uint64_t baseFlag = *localFlag;
+  // uint64_t baseFlag = *localFlag;
 
-  if (threadIdx.x == 0) {
-    *localFlag = baseFlag + 1;
-  }
+  // if (threadIdx.x == 0) {
+  //   *localFlag = baseFlag + 1;
+  // }
 
   // Each warp receives data from different ranks
 #if 1
   // push your data asynchronously
-  devConn.fifo.put(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+  devConn.put(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
   // push with flag and sync to make sure the data is received
-  auto req = devConn.fifo.signal();
+  auto req = devConn.signal();
 
-  devConn.fifo.sync(req);
+  devConn.sync(req);
 
   devConn.wait();
   //while (*proxyFlag == baseFlag);
@@ -75,18 +75,18 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   for (int i = 1; i < world_size; i++){
     __syncthreads();
     if (remoteRank != ((rank+i) % world_size)) continue;
-    // get a thread-local trigger and a request for waiting on it
-    mscclppTrigger_t trig;
-    mscclppRequest_t req = devConn.fifo.getTrigger(&trig);
+    // push your data asynchronously
+    devConn.put(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
 
-    // Trigger sending data, flag and synchronize after
-    devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+    // push with flag and sync to make sure the data is received
+    auto req = devConn.signal();
 
-    // Wait on the request to make sure it is safe to reuse buffer and flag
-    devConn.fifo.waitTrigger(req);    
+    devConn.sync(req);
+
   }
+  devConn.wait();
   // Wait for receiving data from remote rank
-  while (*proxyFlag == baseFlag);
+  // while (*proxyFlag == baseFlag);
 #endif
 
 }
