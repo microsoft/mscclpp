@@ -187,6 +187,8 @@ typedef enum { mscclppTransportP2P = 0,
 
 mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair);
 
+mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank);
+
 mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int size);
 
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);

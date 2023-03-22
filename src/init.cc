@@ -58,6 +58,7 @@ static std::string mscclppShmFileName(mscclppComm_t comm, int rank)
   return ss.str();
 }
 
+MSCCLPP_API(mscclppResult_t, mscclppGetUniqueId, mscclppUniqueId* out);
 mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* out) {
   MSCCLPPCHECK(mscclppInit());
 //   mscclppCHECK(PtrCheck(out, "GetUniqueId", "out"));
@@ -128,6 +129,39 @@ mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, c
   // }
   // _comm->node = _comm->rankToNode[rank];
   // _comm->localRank = _comm->rankToLocalRank[rank];
+
+  *comm = _comm;
+  return res;
+fail:
+  if (_comm) {
+    if (_comm->abortFlag) mscclppCudaHostFree((void *)_comm->abortFlag);
+    free(_comm);
+  }
+  if (comm) *comm = NULL;
+  return res;
+}
+
+MSCCLPP_API(mscclppResult_t, mscclppCommInitRankFromId, mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank);
+mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank) {
+  if (mscclppGdrCopy == NULL) {
+    MSCCLPPCHECK(initGdrCopy());
+  }
+
+  mscclppResult_t res = mscclppSuccess;
+  mscclppComm_t _comm = NULL;
+  mscclppBootstrapHandle* handle = (mscclppBootstrapHandle*)&id;
+
+  MSCCLPPCHECKGOTO(mscclppCalloc(&_comm, 1), res, fail);
+  _comm->rank = rank;
+  _comm->nRanks = nranks;
+  // We assume that the user has set the device to the intended one already
+  CUDACHECK(cudaGetDevice(&_comm->cudaDev));
+
+  MSCCLPPCHECK(bootstrapNetInit());
+  _comm->magic = handle->magic;
+
+  MSCCLPPCHECKGOTO(mscclppCudaHostCalloc((uint32_t **)&_comm->abortFlag, 1), res, fail);
+  MSCCLPPCHECK(bootstrapInit(handle, _comm));
 
   *comm = _comm;
   return res;
