@@ -36,12 +36,12 @@ NVTX ?= 1
 
 ifeq ($(shell test "0$(CUDA_MAJOR)" -eq 11 -a "0$(CUDA_MINOR)" -ge 8 -o "0$(CUDA_MAJOR)" -gt 11; echo $$?),0)
 # Include Hopper support if we're using CUDA11.8 or above
-  NVCC_GENCODE ?= $(CUDA8_GENCODE) $(CUDA9_GENCODE) $(CUDA11_GENCODE) $(CUDA12_GENCODE) $(CUDA12_PTX)
+  NVCC_GENCODE ?= $(CUDA9_GENCODE) $(CUDA11_GENCODE) $(CUDA12_GENCODE) $(CUDA12_PTX)
 else ifeq ($(shell test "0$(CUDA_MAJOR)" -ge 11; echo $$?),0)
-  NVCC_GENCODE ?= $(CUDA8_GENCODE) $(CUDA9_GENCODE) $(CUDA11_GENCODE) $(CUDA11_PTX)
+  NVCC_GENCODE ?= $(CUDA9_GENCODE) $(CUDA11_GENCODE) $(CUDA11_PTX)
 # Include Volta support if we're using CUDA9 or above
 else ifeq ($(shell test "0$(CUDA_MAJOR)" -ge 9; echo $$?),0)
-  NVCC_GENCODE ?= $(CUDA8_GENCODE) $(CUDA9_GENCODE) $(CUDA9_PTX)
+  NVCC_GENCODE ?= $(CUDA9_GENCODE) $(CUDA9_PTX)
 else
   NVCC_GENCODE ?= $(CUDA8_GENCODE) $(CUDA8_PTX)
 endif
@@ -108,6 +108,8 @@ LIBSRCS += $(addprefix src/bootstrap/,bootstrap.cc socket.cc)
 LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 
+HEADERS := $(wildcard src/include/*.h)
+
 INCEXPORTS := mscclpp.h
 INCTARGETS := $(INCEXPORTS:%=$(BUILDDIR)/$(INCDIR)/%)
 
@@ -134,7 +136,7 @@ lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
 tests: $(TESTSBINS)
 
 # Compile libobjs
-$(BUILDDIR)/$(OBJDIR)/%.o: %.cc
+$(BUILDDIR)/$(OBJDIR)/%.o: %.cc $(HEADERS)
 	@mkdir -p $(@D)
 	$(CXX) -o $@ $(INCLUDE) $(CXXFLAGS) -c $<
 
@@ -149,12 +151,12 @@ $(LIBTARGET): $(LIBOBJTARGETS)
 	ln -sf $(LIBTARGET) $(BUILDDIR)/$(LIBDIR)/$(LIBSONAME)
 
 # Compile .cc tests
-$(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cc
+$(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cc $(INCTARGETS)
 	@mkdir -p $(@D)
 	$(CXX) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(CXXFLAGS) -c $< $(MPI_MACRO)
 
 # Compile .cu tests
-$(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cu
+$(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cu $(INCTARGETS)
 	@mkdir -p $(@D)
 	$(NVCC) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(NVCUFLAGS) -c $< $(MPI_MACRO)
 
