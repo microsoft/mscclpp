@@ -179,6 +179,31 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
   if (comm == NULL)
     return mscclppSuccess;
 
+  for (int i = 0; i < comm->nConns; ++i) {
+    struct mscclppConn *conn = &comm->conns[i];
+    if (conn->cpuProxyFlagGdrDesc) {
+      // IB
+      MSCCLPPCHECK(mscclppGdrCudaFree(conn->cpuProxyFlagGdrDesc));
+    } else if (conn->devConn->proxyFlag) {
+      // P2P
+      MSCCLPPCHECK(mscclppCudaFree(conn->devConn->proxyFlag));
+    }
+  }
+
+  for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
+    struct mscclppProxyState *proxyState = comm->proxyState[i];
+    if (proxyState) {
+      MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->triggerFifo.desc));
+      MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->fifoHead.desc));
+      MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->fifoTail.desc));
+      free(proxyState);
+    }
+  }
+
+  if (comm->stream != NULL) {
+    CUDACHECK(cudaStreamDestroy(comm->stream));
+  }
+
   for (int i = 0; i < MSCCLPP_IB_MAX_DEVS; ++i) {
     if (comm->ibContext[i]) {
       MSCCLPPCHECK(mscclppIbContextDestroy(comm->ibContext[i]));

@@ -142,6 +142,8 @@ mscclppResult_t mscclppIbContextDestroy(struct mscclppIbContext *ctx)
     }
     ibv_destroy_cq(ctx->qps[i].cq);
     free(ctx->qps[i].wcs);
+    free(ctx->qps[i].sges);
+    free(ctx->qps[i].wrs);
   }
   if (ctx->pd != NULL) {
     ibv_dealloc_pd(ctx->pd);
