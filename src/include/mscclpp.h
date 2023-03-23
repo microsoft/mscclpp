@@ -23,32 +23,45 @@ extern "C" {
 /***************************************************************************************************************
  * A mscclppDevConn provides a zero-copy connection between a sender and a receiver that are
  * connected via P2P NVLink or IB.
- * The communication API is one-sided meaning that both side of a connection do not need to synchronize 
- * with each other for a single transfer. This is unlike NCCL/MSCCL where for each send instruction, there  
- * needs to be a matching receive instruction. MPI_Put and MPI_Get are the closest programming model 
- * in MSCCL++.
+ * The communication API is one-sided meaning that for every single data transfer, only one side
+ * needs to be execute unlike a two-sided communication stack such as NCCL where both sides 
+ * need to execute a send and a receive instruction for every transfer.
+ ***************************************************************************************************************
+ * At connection setup time, a sender and the matching receiver need to call mscclppConnect to register 
+ * their buffers locally. Once all buffers are registered via mscclppConnect, mscclppConnectionSetup is 
+ * called to setup a bidirectional connection. With every connection, there is an associated CPU 
+ * proxy thread that performs the actual data transfer.
+ ***************************************************************************************************************
+ * Before using any of functionality of connections, mscclppProxyLaunch needs to be called to spawn the 
+ * proxy threads. There are currently two types of connections:
  * 
- * At connection setup, the sender and receiver register the respective buffers through mscclppConnect.
+ * P2P via NVLink: the DMA engine can perform the copy between the buffers. DMA engine has higher latency
+ * but has a higher bandwidth and costs no compute cycles on the GPU.
  * 
- * A connection communicates with a prody thread to perform the actual data transfer.  
- *    P2P via NVLink: the DMA engine can perform the copy between the buffers. DMA engine has higher latency
- *    but has a higher bandwidth and costs no compute cycles on the GPU.
- *    InfiniBand: the RDMA engine copies the data over via MLX devices.
- * 
- * Once the connection is setup, data transfer happens using the following functions:
- * 
- *  put:  The sender initiates a data transfer to the receiver.  
+ * InfiniBand: the RDMA engine copies the data over MLX devices.
+ ***************************************************************************************************************
+ * At the runtime, a GPU kernel has access to a mscclppDevConn object that provides the following functions:
+ * put:  The sender initiates a data transfer to the receiver.  
  * 
  * signal: The sender signals the receiver that data is ready to be consumed once the reciver has performed a wait().
  * 
  * wait: the reciever waits on the signal() to start reading the data.
  * 
- *    The sender should not reuse the buffer till the signal returns.
- *    The receiver should only access the data after the wait returns. 
+ * The sender should not reuse the buffer till the signal returns.
+ * The receiver should only access the data after the wait returns. 
  *   
- *  putWithSignal: The sender initiates a data transfer and signals the receiver that data is ready to be consumed. 
- *    This is an optimized version of a put followed by a signal.
- *  
+ * putWithSignal: The sender initiates a data transfer and signals the receiver that data is ready to be consumed. 
+ * This is an optimized version of a put followed by a signal.
+ * 
+ * Example:
+ * 
+ * // sender GPU
+ * devConn.put(data1)
+ * devConn.put(data2)
+ * devConn.put(data3)                                // receiver GPU
+ * // not OK to write to data1, data2, data3         // not OK to read data1, data2, data3   
+ * devConn.signal() -------------------------------> devConn.wait()
+ * // OK to write to data1, data2, data3             // OK to read data1, data2, data3
  **************************************************************************************************************/
 struct mscclppDevConn {
 #ifdef __CUDACC__
