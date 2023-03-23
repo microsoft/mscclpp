@@ -140,8 +140,8 @@ mscclppResult_t setupMscclppConnections(int rank, int world_size, mscclppComm_t 
 
   mscclppDevConn_t *devConns;
   int nCons;
-  MSCCLPPCHECK(mscclppGetDeviceConnections(comm, &devConns, &nCons));
-  printf("nCons = %d, %p %p %p\n", nCons, devConns[0].sendEpochId, devConns[0].localBuff, devConns[0].remoteBuff);
+  MSCCLPPCHECK(mscclppGetAllDeviceConnections(comm, &devConns, &nCons));
+
   CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * nCons));
 
   return mscclppSuccess;

@@ -78,6 +78,7 @@ struct mscclppDevConn {
  }
 
 #endif
+  int remoteRank;
   int tag;
 
   void* localBuff;
@@ -128,7 +129,9 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, void* localBu
 
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);
 
-mscclppResult_t mscclppGetDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons);
+mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons);
+
+mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn);
 
 mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm);
 

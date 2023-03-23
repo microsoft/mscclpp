@@ -167,13 +167,28 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppGetDeviceConnections, mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons);
-mscclppResult_t mscclppGetDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons)
+
+MSCCLPP_API(mscclppResult_t, mscclppGetDeviceConnection, mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn);
+mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn){
+  for (int i = 0; i < comm->nConns; i++){
+    if (comm->devConns[i].remoteRank == remoteRank && comm->devConns[i].tag == tag){
+      *devConn = &comm->devConns[i];
+      return mscclppSuccess;
+    }
+  }
+
+  return mscclppInvalidArgument;
+}
+
+
+MSCCLPP_API(mscclppResult_t, mscclppGetAllDeviceConnections, mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons);
+mscclppResult_t mscclppAllGetDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons)
 {
   *nCons = comm->nConns;
   *devConns = comm->devConns;
   return mscclppSuccess;
 }
+
 
 MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int remoteRank,
             void* localBuff, size_t buffSize, int tag, mscclppTransport_t transportType, const char *ibDev);
@@ -186,7 +201,6 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, void* localBu
   }
   struct mscclppConn *conn = &comm->conns[comm->nConns];
   conn->transport = transportType;
-  conn->remoteRank = remoteRank;
   conn->buffSize = buffSize;
 
   conn->ibCtx = NULL;
@@ -288,6 +302,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, void* localBu
   // conn->devConn->sendEpochId = localFlag;
   MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->recvEpochId, 1));
   // conn->devConn->recvEpochId = 0;
+  conn->devConn->remoteRank = remoteRank;
   conn->devConn->tag = tag;
   conn->devConn->fifo.connId = comm->nConns;
   conn->devConn->fifo.triggerFifo = proxyState->triggerFifo.devPtr;
@@ -390,14 +405,14 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
       MSCCLPPCHECK(mscclppIbConnectionSetupStart(&cInfo, conn));
     }
     // TODO: from saemal: do we possibly deadlock if there are too many outstanding sends?
-    MSCCLPPCHECK(bootstrapSend(comm->bootstrap, conn->remoteRank, conn->devConn->tag, &cInfo, sizeof(cInfo)));
+    MSCCLPPCHECK(bootstrapSend(comm->bootstrap, conn->devConn->remoteRank, conn->devConn->tag, &cInfo, sizeof(cInfo)));
   }
 
   // Recv info from peers
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn *conn = &comm->conns[i];
     struct connInfo cInfo;
-    MSCCLPPCHECK(bootstrapRecv(comm->bootstrap, conn->remoteRank, conn->devConn->tag, &cInfo, sizeof(cInfo)));
+    MSCCLPPCHECK(bootstrapRecv(comm->bootstrap, conn->devConn->remoteRank, conn->devConn->tag, &cInfo, sizeof(cInfo)));
     if (conn->transport == mscclppTransportP2P) {
       MSCCLPPCHECK(mscclppP2pConnectionSetupEnd(&cInfo, conn));
     } else if (conn->transport == mscclppTransportIB) {
