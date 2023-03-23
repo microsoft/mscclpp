@@ -239,7 +239,7 @@ void* mscclppProxyServiceIb(void* _args) {
     }
 
     // Wait for completion
-    if ((trigger.fields.type & mscclppSync) && count == 4) {
+    if ((trigger.fields.type & mscclppSync) && count%2 == 0) {
       bool waiting = true;
       while (waiting) {
         wcNum = conn->ibQp->pollCq();
