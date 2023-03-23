@@ -1,2 +1,4 @@
 .vscode/
 build/
+__pycache__
+.*.swp
