@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <string>
 
-#define RANKS_PER_NODE 2
+#define RANKS_PER_NODE 4
 
 #define MSCCLPPCHECK(call) do { \
   mscclppResult_t res = call; \
@@ -40,7 +40,7 @@ static double getTime(void)
 
 __constant__ mscclppDevConn_t constDevConns[16];
 
-__global__ void kernel(int rank, int world_size, int nelemsPerGPU)
+__global__ void kernel0(int rank, int world_size, int nelemsPerGPU)
 {
   if (threadIdx.x % 32 != 0) return;
 
@@ -64,11 +64,65 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
   mscclppTrigger_t trig;
   mscclppRequest_t req;
 
-  // req = devConn.fifo.getTrigger(&trig);
+  req = devConn.fifo.getTrigger(&trig);
 
-  // // Trigger sending data, flag and synchronize after
-  // devConn.fifo.setTrigger(trig, mscclppData, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
-  // // we cannot reuse buffer and flag until the request is completed
+  // Trigger sending data, flag and synchronize after
+  devConn.fifo.setTrigger(trig, mscclppData | mscclppFlag, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+  // we cannot reuse buffer and flag until the request is completed
+
+  req = devConn.fifo.getTrigger(&trig);
+
+  // Trigger sending data, flag and synchronize after
+  devConn.fifo.setTrigger(trig, mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+  // we cannot reuse buffer and flag until the request is completed
+
+  // Wait on the request to make sure it is safe to reuse buffer and flag
+  devConn.fifo.waitTrigger(req);
+  // Wait for receiving data from remote rank
+  while (*proxyFlag == baseFlag);
+#else
+  for (int i = 1; i < world_size; i++){
+    __syncthreads();
+    if (remoteRank != ((rank+i) % world_size)) continue;
+    // get a thread-local trigger and a request for waiting on it
+    mscclppTrigger_t trig;
+    mscclppRequest_t req = devConn.fifo.getTrigger(&trig);
+
+    // Trigger sending data, flag and synchronize after
+    devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+
+    // Wait on the request to make sure it is safe to reuse buffer and flag
+    devConn.fifo.waitTrigger(req);    
+  }
+  // Wait for receiving data from remote rank
+  while (*proxyFlag == baseFlag);
+#endif
+
+}
+
+__global__ void kernel1(int rank, int world_size, int nelemsPerGPU)
+{
+  if (threadIdx.x % 32 != 0) return;
+
+  int warpId = threadIdx.x / 32;
+  int remoteRank = (warpId < rank) ? warpId : warpId + 1;
+  mscclppDevConn_t devConn = constDevConns[remoteRank];
+  // volatile int *data = (volatile int *)devConn.localBuff;
+  volatile uint64_t *localFlag = devConn.localFlag;
+  volatile uint64_t *proxyFlag = devConn.proxyFlag;
+
+  uint64_t baseFlag = *localFlag;
+
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    *localFlag = baseFlag + 1;
+  }
+
+  // Each warp receives data from different ranks
+#if 1
+  // get a thread-local trigger and a request for waiting on it
+  mscclppTrigger_t trig;
+  mscclppRequest_t req;
 
   req = devConn.fifo.getTrigger(&trig);
 
@@ -209,8 +263,8 @@ int main(int argc, const char *argv[])
     mscclppTransport_t transportType;
     const char* ibDev = ibDevStr.c_str();
     if (rankToNode(r) == thisNode){
-      ibDev = NULL;
-      transportType = mscclppTransportP2P;
+      // ibDev = NULL;
+      transportType = mscclppTransportIB;
     } else {
       transportType = mscclppTransportIB;
     }
@@ -227,9 +281,17 @@ int main(int argc, const char *argv[])
   cudaStream_t stream;
   CUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
+  int tmp[16];
+
+  ///// Dummy execution of good performing kernel0
+  CUDACHECK(cudaDeviceSynchronize());
+  kernel0<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
+  CUDACHECK(cudaDeviceSynchronize());
+  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
+
 
   CUDACHECK(cudaDeviceSynchronize());
-  kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
+  kernel1<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
   CUDACHECK(cudaDeviceSynchronize());
   CUDACHECK(cudaMemcpy(data_h, data_d, data_size, cudaMemcpyDeviceToHost));
   CUDACHECK(cudaDeviceSynchronize());
@@ -241,7 +303,6 @@ int main(int argc, const char *argv[])
       break;
     }
   }
-  int tmp[16];
   MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
 
 //   // Perf test
@@ -264,7 +325,7 @@ int main(int argc, const char *argv[])
   cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
   int cudagraphiter = 10;
   for (int i = 0; i < cudagraphiter; ++i) {
-  	kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
+  	kernel1<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
   }
   cudaStreamEndCapture(stream, &graph);
   cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
@@ -290,7 +351,7 @@ int main(int argc, const char *argv[])
   float ms = (t1-t0)*1000.0;
 //  CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
   double time_in_us = ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter;
-  printf("rank: %d, time: %f us/iter algBW %f GBps\n", rank, time_in_us, (double) (data_size) / 1e9 /(time_in_us/1e6));
+  printf("kernel1: rank: %d, time: %f us/iter algBW %f GBps\n", rank, time_in_us, (double) (data_size) / 1e9 /(time_in_us/1e6));
 
   MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
   MSCCLPPCHECK(mscclppProxyStop(comm));
