@@ -22,15 +22,16 @@ extern "C" {
 
 /***************************************************************************************************************
  * A mscclppDevConn provides a zero-copy connection between a sender and a receiver that are
- * connected via P2P NVLink or IB.
+ * connected via P2P NVLink or InfiniBand.
  * The communication API is one-sided meaning that for every single data transfer, only one side
- * needs to be execute unlike a two-sided communication stack such as NCCL where both sides 
- * need to execute a send and a receive instruction for every transfer.
+ * needs to execute unlike a two-sided communication stack such as NCCL where both sides 
+ * need to execute a send and a receive instruction respectively for every transfer.
  ***************************************************************************************************************
  * At connection setup time, a sender and the matching receiver need to call mscclppConnect to register 
  * their buffers locally. Once all buffers are registered via mscclppConnect, mscclppConnectionSetup is 
  * called to setup a bidirectional connection. With every connection, there is an associated CPU 
- * proxy thread that performs the actual data transfer.
+ * proxy thread that performs the actual data transfer using (R)DMA. DMA is optional for P2P NVLink connections
+ * where the GPU can perform the copy directly.
  ***************************************************************************************************************
  * Before using any of functionality of connections, mscclppProxyLaunch needs to be called to spawn the 
  * proxy threads. There are currently two types of connections:
@@ -41,16 +42,17 @@ extern "C" {
  * InfiniBand: the RDMA engine copies the data over MLX devices.
  ***************************************************************************************************************
  * At the runtime, a GPU kernel has access to a mscclppDevConn object that provides the following functions:
- * put:  The sender initiates a data transfer to the receiver.  
  * 
- * signal: The sender signals the receiver that data is ready to be consumed once the reciver has performed a wait().
+ * put(): the sender initiates a data transfer to the receiver.  
  * 
- * wait: the reciever waits on the signal() to start reading the data.
+ * signal(): the sender signals the receiver that data is ready to be consumed once the reciver has performed a wait().
+ * 
+ * wait(): the reciever waits on the signal() to start reading the data.
  * 
  * The sender should not reuse the buffer till the signal returns.
  * The receiver should only access the data after the wait returns. 
  *   
- * putWithSignal: The sender initiates a data transfer and signals the receiver that data is ready to be consumed. 
+ * putWithSignal(): The sender initiates a data transfer and signals the receiver that data is ready to be consumed. 
  * This is an optimized version of a put followed by a signal.
  * 
  * Example:
@@ -68,6 +70,7 @@ struct mscclppDevConn {
  __forceinline__ __device__ void put(uint64_t dataOffset, uint64_t dataSize){
     fifo.push(mscclppData, dataOffset, dataSize);
   }
+
   __forceinline__ __device__ void signal(){
     epochIncrement();
     uint64_t curFifoHead = fifo.push(mscclppFlag | mscclppSync, 1, 1);
@@ -86,9 +89,9 @@ struct mscclppDevConn {
     while (*(volatile uint64_t*)proxyEpochId < (*recvEpochId));
   }
 
-   __forceinline__ __device__ void epochIncrement(){
-   *(volatile uint64_t*)sendEpochId += 1;
- }
+  __forceinline__ __device__ void epochIncrement(){
+    *(volatile uint64_t*)sendEpochId += 1;
+  }
 
 #endif
   int tag;
