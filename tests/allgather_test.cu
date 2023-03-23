@@ -133,7 +133,7 @@ mscclppResult_t setupMscclppConnections(int rank, int world_size, mscclppComm_t 
       transportType = mscclppTransportIB;
     }
     // Connect with all other ranks
-    MSCCLPPCHECK(mscclppConnect(comm, r, data_d, data_size, 0, transportType, ibDev));
+    MSCCLPPCHECK(mscclppConnect(comm, r, 0, data_d, data_size, transportType, ibDev));
   }
 
   MSCCLPPCHECK(mscclppConnectionSetup(comm));

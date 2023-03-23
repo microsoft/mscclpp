@@ -202,7 +202,6 @@ int main(int argc, const char *argv[])
   CUDACHECK(cudaMemset(data_d, 0, data_size));
   CUDACHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
 
-  mscclppDevConn_t devConns[16];
   for (int r = 0; r < world_size; ++r) {
     if (r == rank) continue;
     mscclppTransport_t transportType = mscclppTransportIB;
@@ -214,12 +213,16 @@ int main(int argc, const char *argv[])
     }
 #endif
     // Connect with all other ranks
-    MSCCLPPCHECK(mscclppConnect(comm, &devConns[r], r, data_d, data_size, flag_d, 0, transportType, ibDev));
+    MSCCLPPCHECK(mscclppConnect(comm, r, 0, data_d, data_size, flag_d, transportType, ibDev));
   }
 
   MSCCLPPCHECK(mscclppConnectionSetup(comm));
 
   MSCCLPPCHECK(mscclppProxyLaunch(comm));
+
+  mscclppDevConn_t *devConns;
+  int nCons;
+  MSCCLPPCHECK(mscclppGetAllDeviceConnections(comm, &devConns, &nCons));
 
   CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * world_size));
 

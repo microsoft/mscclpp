@@ -190,7 +190,7 @@ int main(int argc, const char *argv[])
     const char* ibDev = NULL;
     transportType = mscclppTransportP2P;
     // Connect with all other ranks
-    MSCCLPPCHECK(mscclppConnect(comm, &devConns[r], r, data_d, data_size, flag_d, 0, transportType, ibDev));
+    MSCCLPPCHECK(mscclppConnect(comm, &devConns[r], r, 0, data_d, data_size, flag_d, transportType, ibDev));
   }
   for (int r = 0; r < world_size; ++r) {
     if (r == rank) continue;
@@ -198,7 +198,7 @@ int main(int argc, const char *argv[])
     const char* ibDev = ibDevStr.c_str();
     transportType = mscclppTransportIB;
     // Connect with all other ranks
-    MSCCLPPCHECK(mscclppConnect(comm, &devConns[r+world_size], r, data_d, data_size, flag_d, 0, transportType, ibDev));
+    MSCCLPPCHECK(mscclppConnect(comm, &devConns[r+world_size], r, 0, data_d, data_size, flag_d, transportType, ibDev));
   }
 
   MSCCLPPCHECK(mscclppConnectionSetup(comm));

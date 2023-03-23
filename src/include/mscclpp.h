@@ -124,8 +124,8 @@ mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int si
 
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
-mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, void* localBuff, size_t buffSize,
-                               int tag, mscclppTransport_t transportType, const char *ibDev=NULL);
+mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, size_t buffSize,
+                               mscclppTransport_t transportType, const char *ibDev=NULL);
 
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);
 

@@ -182,7 +182,7 @@ mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, i
 
 
 MSCCLPP_API(mscclppResult_t, mscclppGetAllDeviceConnections, mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons);
-mscclppResult_t mscclppAllGetDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons)
+mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons)
 {
   *nCons = comm->nConns;
   *devConns = comm->devConns;
@@ -190,10 +190,10 @@ mscclppResult_t mscclppAllGetDeviceConnections(mscclppComm_t comm, mscclppDevCon
 }
 
 
-MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int remoteRank,
-            void* localBuff, size_t buffSize, int tag, mscclppTransport_t transportType, const char *ibDev);
-mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, void* localBuff, size_t buffSize,
-                               int tag, mscclppTransport_t transportType, const char *ibDev)
+MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int remoteRank, int tag, 
+            void* localBuff, size_t buffSize, mscclppTransport_t transportType, const char *ibDev);
+mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, size_t buffSize,
+                               mscclppTransport_t transportType, const char *ibDev)
 {
   if (comm->nConns == MAXCONNECTIONS) {
     WARN("Too many connections made");
