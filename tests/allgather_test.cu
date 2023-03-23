@@ -8,7 +8,11 @@
 #include <unistd.h>
 #include <string>
 
+#ifdef MSCCLPP_USE_MPI_FOR_TESTS
+int RANKS_PER_NODE;
+#else
 #define RANKS_PER_NODE 8
+#endif
 
 // Propagate errors up
 
@@ -44,41 +48,51 @@ static double getTime(void)
 
 __constant__ mscclppDevConn_t constDevConns[16];
 
-__global__ void kernel(int rank, int world_size, int nelemsPerGPU)
-{
-  if (threadIdx.x % 32 != 0) return;
+__device__ void allgather0(mscclppDevConn_t devConn, int rank, int world_size, int remoteRank, int nelemsPerGPU){
+  // this allgather is really simple and implemented as an alltoall
 
-  int warpId = threadIdx.x / 32;
-  int remoteRank = (warpId < rank) ? warpId : warpId + 1;
-  //int remoteRank = warpId;
-  mscclppDevConn_t devConn = constDevConns[warpId];
-
-  // Each warp receives data from different ranks
-#if 0
-  // push your data asynchronously
+  // this thread's role is a sender role
+  // put your data asynchronously
   devConn.put(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
-
   // push with flag and sync to make sure the data is received
   devConn.signal();
-
+  
+  // this thread's role is a receiver role. wait on the semaphore to make sure the data is ready
   devConn.wait();
+}
 
-#else
+__device__ void allgather1(mscclppDevConn_t devConn, int rank, int world_size, int remoteRank, int nelemsPerGPU){
+  // this allgather algorithm works as follows:
+  // Step 1: GPU rank i sends data to GPU rank (i+1) % world_size
+  // Step 2: GPU rank i waits for data from GPU rank (i+2) % world_size
+  // ...
+  // This order is much better for DMA engine for NVLinks
+
   for (int i = 1; i < world_size; i++){
     __syncthreads();
     if (remoteRank != ((rank+i) % world_size)) continue;
-    // push your data asynchronously
+    // put your data to GPU (rank+i) % world_size and signal all in one call
     devConn.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
-
-    // push with flag and sync to make sure the data is received
-    // devConn.signal();
   }
-
+  // all connections wait for the signal from the sender
   devConn.wait();
-  // Wait for receiving data from remote rank
-  // while (*proxyFlag == baseFlag);
-#endif
+}
 
+__global__ void kernel(int rank, int world_size, int nelemsPerGPU, int kernel)
+{
+  // only use a single thread from each warp
+  if (threadIdx.x % 32 != 0) return;
+
+  // find the mapping between remoteRank and devConns
+  int warpId = threadIdx.x / 32;
+  int remoteRank = (warpId < rank) ? warpId : warpId + 1;
+  // Each warp is responsible for one of the remote ranks
+  mscclppDevConn_t devConn = constDevConns[warpId];
+
+  if (kernel == 0)
+    allgather0(devConn, rank, world_size, remoteRank, nelemsPerGPU);
+  else if (kernel == 1)
+    allgather1(devConn, rank, world_size, remoteRank, nelemsPerGPU);
 }
 
 int rankToLocalRank(int rank)
@@ -165,6 +179,14 @@ int main(int argc, const char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
   }
+  // get the local number of nodes with MPI
+  MPI_Comm shmcomm;
+  MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0,
+                      MPI_INFO_NULL, &shmcomm);
+  int shmrank;
+  MPI_Comm_size(shmcomm, &shmrank);
+  RANKS_PER_NODE = shmrank;
+  MPI_Comm_free(&shmcomm);
 #else
   if (argc != 4) {
     print_usage(argv[0]);
@@ -174,6 +196,8 @@ int main(int argc, const char *argv[])
   int rank = atoi(argv[2]);
   int world_size = atoi(argv[3]);
 #endif
+
+  int kernelNum = 1;
 
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
@@ -197,7 +221,7 @@ int main(int argc, const char *argv[])
   CUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
   CUDACHECK(cudaDeviceSynchronize());
-  kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
+  kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU, kernelNum);
   CUDACHECK(cudaDeviceSynchronize());
   CUDACHECK(cudaMemcpy(data_h, data_d, data_size, cudaMemcpyDeviceToHost));
   CUDACHECK(cudaDeviceSynchronize());
@@ -221,7 +245,7 @@ int main(int argc, const char *argv[])
   // warm up
   // int warmupiter = 1000;
   // for (int i = 0; i < warmupiter; ++i) {
-  //   kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
+  //   kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU, kernelNum);
   // }
   // CUDACHECK(cudaDeviceSynchronize());
   // MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
@@ -232,7 +256,7 @@ int main(int argc, const char *argv[])
   cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
   int cudagraphiter = 10;
   for (int i = 0; i < cudagraphiter; ++i) {
-  	kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
+  	kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU, kernelNum);
   }
   cudaStreamEndCapture(stream, &graph);
   cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
