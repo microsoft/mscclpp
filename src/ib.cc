@@ -384,11 +384,15 @@ int mscclppIbQp::stageSendWithImm(struct mscclppIbMr *ibMr, const mscclppIbMrInf
 int mscclppIbQp::postSend()
 {
   struct ibv_send_wr *bad_wr;
+  if (this->wrn == 0) {
+    return 0;
+  }
   int ret = ibv_post_send(this->qp, this->wrs, &bad_wr);
   if (ret != 0) {
     return ret;
   }
   this->wrn = 0;
+
   return 0;
 }
 

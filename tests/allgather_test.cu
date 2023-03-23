@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <string>
 
-#define RANKS_PER_NODE 4
+#define RANKS_PER_NODE 2
 
 #define MSCCLPPCHECK(call) do { \
   mscclppResult_t res = call; \
@@ -264,7 +264,7 @@ int main(int argc, const char *argv[])
     const char* ibDev = ibDevStr.c_str();
     if (rankToNode(r) == thisNode){
       // ibDev = NULL;
-      transportType = mscclppTransportIB;
+      transportType = mscclppTransportP2P;
     } else {
       transportType = mscclppTransportIB;
     }
@@ -284,10 +284,10 @@ int main(int argc, const char *argv[])
   int tmp[16];
 
   ///// Dummy execution of good performing kernel0
-  CUDACHECK(cudaDeviceSynchronize());
-  kernel0<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
-  CUDACHECK(cudaDeviceSynchronize());
-  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
+  // CUDACHECK(cudaDeviceSynchronize());
+  // kernel0<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
+  // CUDACHECK(cudaDeviceSynchronize());
+  // MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
 
 
   CUDACHECK(cudaDeviceSynchronize());

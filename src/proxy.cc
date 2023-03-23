@@ -155,6 +155,7 @@ void* mscclppProxyServiceIb(void* _args) {
 
   uint64_t cachedFifoTail = *fifoTail;
   int runCheckCounter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
+  int count = 0;
   for (;;) {
     if (runCheckCounter-- == 0) {
       runCheckCounter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
@@ -214,6 +215,7 @@ void* mscclppProxyServiceIb(void* _args) {
 #else // (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1)
     // Poll to see if we are ready to send anything
     if (cachedFifoTail == *fifoHead) continue; // no need trigger
+    count++;
     readTrigger(&trigger, &fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]);
     if (trigger.value[0] == 0) continue; // there is one in progreess
     // there is a trigger value ready to be consumed
@@ -237,7 +239,7 @@ void* mscclppProxyServiceIb(void* _args) {
     }
 
     // Wait for completion
-    if (trigger.fields.type & mscclppSync) {
+    if ((trigger.fields.type & mscclppSync) && count == 4) {
       bool waiting = true;
       while (waiting) {
         wcNum = conn->ibQp->pollCq();
