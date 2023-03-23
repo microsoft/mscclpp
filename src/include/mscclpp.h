@@ -25,7 +25,7 @@ extern "C" {
  * connected via P2P NVLink or InfiniBand.
  * The communication API is one-sided meaning that for every single data transfer, only one side
  * needs to execute unlike a two-sided communication stack such as NCCL where both sides 
- * need to execute a send and a receive instruction respectively for every transfer.
+ * need to execute a send and a receive instruction, respectively, for every transfer.
  ***************************************************************************************************************
  * At connection setup time, a sender and the matching receiver need to call mscclppConnect to register 
  * their buffers locally. Once all buffers are registered via mscclppConnect, mscclppConnectionSetup is 
@@ -33,7 +33,7 @@ extern "C" {
  * proxy thread that performs the actual data transfer using (R)DMA. DMA is optional for P2P NVLink connections
  * where the GPU can perform the copy directly.
  ***************************************************************************************************************
- * Before using any of functionality of connections, mscclppProxyLaunch needs to be called to spawn the 
+ * Before using any of functionality of connections, mscclppProxyLaunch needs to be called to spawn the
  * proxy threads. There are currently two types of connections:
  * 
  * P2P via NVLink: the DMA engine can perform the copy between the buffers. DMA engine has higher latency
@@ -43,16 +43,16 @@ extern "C" {
  ***************************************************************************************************************
  * At the runtime, a GPU kernel has access to a mscclppDevConn object that provides the following functions:
  * 
- * put(): the sender initiates a data transfer to the receiver.  
+ * put(): the sender initiates a data transfer to the receiver.
  * 
  * signal(): the sender signals the receiver that data is ready to be consumed once the reciver has performed a wait().
  * 
  * wait(): the reciever waits on the signal() to start reading the data.
  * 
  * The sender should not reuse the buffer till the signal returns.
- * The receiver should only access the data after the wait returns. 
+ * The receiver should only access the data after the wait returns.
  *   
- * putWithSignal(): The sender initiates a data transfer and signals the receiver that data is ready to be consumed. 
+ * putWithSignal(): the sender initiates a data transfer and signals the receiver that data is ready to be consumed.
  * This is an optimized version of a put followed by a signal.
  * 
  * Example:
@@ -61,7 +61,7 @@ extern "C" {
  * devConn.put(data1)
  * devConn.put(data2)
  * devConn.put(data3)                                // receiver GPU
- * // not OK to write to data1, data2, data3         // not OK to read data1, data2, data3   
+ * // not OK to write to data1, data2, data3         // not OK to read data1, data2, data3
  * devConn.signal() -------------------------------> devConn.wait()
  * // OK to write to data1, data2, data3             // OK to read data1, data2, data3
  **************************************************************************************************************/
