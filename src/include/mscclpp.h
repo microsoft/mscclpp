@@ -21,18 +21,23 @@ extern "C" {
 #endif
 
 /***************************************************************************************************************
- * A mscclppDevConn provides a zero-copy connection between a sender and a receiver that are
- * connected via P2P NVLink or InfiniBand.
+ * A mscclppDevConn provides a zero-copy connection between two GPUs connected via P2P NVLink or InfiniBand.
  * The communication API is one-sided meaning that for every single data transfer, only one side
  * needs to execute unlike a two-sided communication stack such as NCCL where both sides 
  * need to execute a send and a receive instruction, respectively, for every transfer.
+ * 
+ * A connection is uniquely identified by the (remoteRank, tag) pair at an endpoint.  
+ * The two endpoints register buffers of the same size with the connection. 
+ * 
+ * The endpoints provide the remoteRank, tag, and the buffer when registering a connection with msccppConnect().
+ * 
+ * mscllppConnectionSetup() sets up all the registered connections. 
+ * 
  ***************************************************************************************************************
- * At connection setup time, a sender and the matching receiver need to call mscclppConnect to register 
- * their buffers locally. Once all buffers are registered via mscclppConnect, mscclppConnectionSetup is 
- * called to setup a bidirectional connection. With every connection, there is an associated CPU 
- * proxy thread that performs the actual data transfer using (R)DMA. DMA is optional for P2P NVLink connections
- * where the GPU can perform the copy directly.
- ***************************************************************************************************************
+ * A proxy thread running on the CPU is necessary to perform transfers using InfiniBand or the DMA engine. 
+ * The current implementation uses a single proxy thread per context - one IB connection or DMA engine per node.
+ * Thus multiple threadblocks using different connections might use the same CPU proxy thread. 
+ *  
  * Before using any of functionality of connections, mscclppProxyLaunch needs to be called to spawn the
  * proxy threads. There are currently two types of connections:
  * 
@@ -40,12 +45,13 @@ extern "C" {
  * but has a higher bandwidth and costs no compute cycles on the GPU.
  * 
  * InfiniBand: the RDMA engine copies the data over MLX devices.
+ * 
  ***************************************************************************************************************
  * At the runtime, a GPU kernel has access to a mscclppDevConn object that provides the following functions:
  * 
  * put(): the sender initiates a data transfer to the receiver.
  * 
- * signal(): the sender signals the receiver that data is ready to be consumed once the reciver has performed a wait().
+ * signal(): the sender signals the receiver that data is ready to be consumed.
  * 
  * wait(): the reciever waits on the signal() to start reading the data.
  * 
@@ -55,15 +61,22 @@ extern "C" {
  * putWithSignal(): the sender initiates a data transfer and signals the receiver that data is ready to be consumed.
  * This is an optimized version of a put followed by a signal.
  * 
+ * These functions hide the complexity of syncrhonization between the two GPUs and the CPU proxy thread. 
  * Example:
  * 
  * // sender GPU
  * devConn.put(data1)
+ * // not OK to write to data1
  * devConn.put(data2)
+ * // not OK to write to data1, data2
  * devConn.put(data3)                                // receiver GPU
  * // not OK to write to data1, data2, data3         // not OK to read data1, data2, data3
  * devConn.signal() -------------------------------> devConn.wait()
  * // OK to write to data1, data2, data3             // OK to read data1, data2, data3
+ * 
+ * 
+ * The two endpoint can concurrently use the same connection provided they are writing (puts) on different
+ * indices in the registered buffer. 
  **************************************************************************************************************/
 struct mscclppDevConn {
 #ifdef __CUDACC__
