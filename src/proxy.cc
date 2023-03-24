@@ -90,7 +90,7 @@ void* mscclppProxyServiceP2P(void* _args) {
       PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
     }
     if (trigger.fields.type & mscclppFlag) {
-      PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->localFlag, sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
+      PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->sendEpochId, sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
     }
     // Wait for completion
     if (trigger.fields.type & mscclppSync){

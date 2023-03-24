@@ -1,6 +1,7 @@
 ######## VERSION
 MSCCLPP_MAJOR := 0
 MSCCLPP_MINOR := 1
+MSCCLPP_PATCH := 0
 
 ######## COMPILE OPTIONS
 DEBUG ?= 0
@@ -119,15 +120,15 @@ LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 
 HEADERS := $(wildcard src/include/*.h)
 
-INCEXPORTS := mscclpp.h
+INCEXPORTS := mscclpp.h mscclppfifo.h
 INCTARGETS := $(INCEXPORTS:%=$(BUILDDIR)/$(INCDIR)/%)
 
 LIBNAME   := libmscclpp.so
 LIBSONAME := $(LIBNAME).$(MSCCLPP_MAJOR)
-LIBTARGET := $(BUILDDIR)/$(LIBDIR)/$(LIBNAME).$(MSCCLPP_MAJOR).$(MSCCLPP_MINOR)
+LIBTARGET := $(BUILDDIR)/$(LIBDIR)/$(LIBNAME).$(MSCCLPP_MAJOR).$(MSCCLPP_MINOR).$(MSCCLPP_PATCH)
 
 TESTSDIR  := tests
-TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc p2p_test.cu allgather_test.cu allgather_test2.cu allreduce_allpairs_test.cu)
+TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc allgather_test.cu)
 TESTSOBJS := $(patsubst %.cc,%.o,$(TESTSSRCS)) $(patsubst %.cu,%.o,$(TESTSSRCS))
 TESTSOBJTARGETS := $(TESTSOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 TESTSBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(TESTSOBJS))

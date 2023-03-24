@@ -70,17 +70,17 @@ __global__ void kernel(int rank, int world_size)
   }
 
   // get a thread-local trigger and a request for waiting on it
-  mscclppTrigger_t trig;
-  mscclppRequest_t req = devConn.fifo.getTrigger(&trig);
+  // mscclppTrigger_t trig;
+  // mscclppRequest_t req = devConn.fifo.getTrigger(&trig);
 
   // Each warp receives data from different ranks
 #if (USE_DMA_FOR_P2P == 1)
 
   // Trigger sending data, flag and synchronize after
-  devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * sizeof(int), sizeof(int));
+  auto req = devConn.fifo.putWithSignal(rank * sizeof(int), sizeof(int));
 
   // Wait on the request to make sure it is safe to reuse buffer and flag
-  devConn.fifo.waitTrigger(req);
+  devConn.fifo.sync(req);
 
   // Wait for receiving data from remote rank
   while (*proxyFlag == baseFlag) {}
@@ -173,7 +173,6 @@ int main(int argc, const char *argv[])
   CUDACHECK(cudaMemset(data_d, 0, data_size));
   CUDACHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
 
-  mscclppDevConn_t devConns[16];
   for (int r = 0; r < world_size; ++r) {
     if (r == rank) continue;
     mscclppTransport_t transportType = mscclppTransportIB;
@@ -185,12 +184,16 @@ int main(int argc, const char *argv[])
     }
 #endif
     // Connect with all other ranks
-    MSCCLPPCHECK(mscclppConnect(comm, &devConns[r], r, data_d, data_size, flag_d, 0, transportType, ibDev));
+    MSCCLPPCHECK(mscclppConnect(comm, r, 0, data_d, data_size, flag_d, transportType, ibDev));
   }
 
   MSCCLPPCHECK(mscclppConnectionSetup(comm));
 
   MSCCLPPCHECK(mscclppProxyLaunch(comm));
+
+  mscclppDevConn_t *devConns;
+  int nCons;
+  MSCCLPPCHECK(mscclppGetAllDeviceConnections(comm, &devConns, &nCons));
 
   CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * world_size));
 

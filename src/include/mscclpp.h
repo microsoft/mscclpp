@@ -1,125 +1,125 @@
 #ifndef MSCCLPP_H_
 #define MSCCLPP_H_
 
-#include <cuda_runtime.h>
-#include <cuda_fp16.h>
-#if CUDART_VERSION >= 11000
-#include <cuda_bf16.h>
-#endif
-#include <stdint.h>
-
 #define MSCCLPP_MAJOR 0
 #define MSCCLPP_MINOR 1
+#define MSCCLPP_PATCH 0
+#define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
+
 #define MSCCLPP_PROXY_FIFO_SIZE 8
 
-#define MSCCLPP_VERSION (MSCCLPP_MAJOR * 100 + MSCCLPP_MINOR)
+#include <mscclppfifo.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef enum : uint64_t { mscclppData = 0x1,
-                          mscclppFlag = 0x2,
-                          mscclppSync = 0x4} mscclppTriggerType_t;
-
-#define MSCCLPP_BITS_SIZE 32
-#define MSCCLPP_BITS_OFFSET 32
-#define MSCCLPP_BITS_TYPE 3
-#define MSCCLPP_BITS_CONNID 10
-
-// the summation of number of bits must be 128 or less
-union alignas(16) mscclppTrigger {
-  uint64_t value[2];
-  struct {
-    // first 64 bits: value[0]
-    uint64_t dataSize      : MSCCLPP_BITS_SIZE;
-    uint64_t srcDataOffset : MSCCLPP_BITS_OFFSET;
-    uint64_t               : (64-MSCCLPP_BITS_SIZE-MSCCLPP_BITS_OFFSET); // ensure 64-bit alignment
-    // second 64 bits: value[1]
-    uint64_t dstDataOffset : MSCCLPP_BITS_OFFSET;
-    uint64_t connId        : MSCCLPP_BITS_CONNID;
-    uint64_t type          : MSCCLPP_BITS_TYPE;
-    uint64_t               : (64-MSCCLPP_BITS_OFFSET-MSCCLPP_BITS_CONNID-MSCCLPP_BITS_TYPE); // ensure 64-bit alignment
-  } fields;
-};
-
-typedef uint64_t mscclppRequest_t;
-typedef mscclppTrigger* mscclppTrigger_t;
-
-struct mscclppConcurrentFifo {
-#ifdef __CUDACC__
-  __forceinline__ __device__ mscclppRequest_t getTrigger(mscclppTrigger_t* trig) {
-    uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->triggerFifoHead,1);
-    while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->triggerFifoTail));
-    *trig = &this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE];
-    return curFifoHead;
-  }
-
-  __forceinline__ __device__ void setTrigger(mscclppTrigger_t trig, uint64_t type, uint64_t srcDataOffset, uint64_t dstDataOffset, uint64_t dataSize) {
-    asm volatile(
-      "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(&trig->value),
-      "l"((srcDataOffset << MSCCLPP_BITS_SIZE) + dataSize),
-      "l"((((type << MSCCLPP_BITS_CONNID) + this->connId) << MSCCLPP_BITS_OFFSET) + dstDataOffset)
-    );
-  }
-  
-  __forceinline__ __device__ void setTrigger(mscclppTrigger_t trig, uint64_t type, uint64_t dataOffset, uint64_t dataSize) {
-    setTrigger(trig, type, dataOffset, dataOffset, dataSize);
-  }
-
-  __forceinline__ __device__ void waitTrigger(mscclppRequest_t req) {
-    while (*(volatile uint64_t *)triggerFifoTail <= req);
-  }
-#endif // __CUDACC__
-  mscclppTrigger* triggerFifo;
-  uint64_t* triggerFifoTail; // read by both device and host. written only by host
-  uint64_t* triggerFifoHead; // read by both device and host. written only by device
-  int connId;
-};
-
-
 /***************************************************************************************************************
- * A mscclppDevConn provides a zero-copy connection between a sender and a receiver that are
- * connected via P2P NVLink or IB.
- * The communication API is one-sided meaning that not both side of a connection are involved
- * in a single transfer. This is unlike NCCL/MSCCL where for each send instruction, there needs 
- * to be a matching receive instruction. MPI_Put and MPI_Get are the closest programming model 
- * in MSCCL++.
+ * A mscclppDevConn provides a zero-copy connection between two GPUs connected via P2P NVLink or InfiniBand.
+ * The communication API is one-sided meaning that for every single data transfer, only one side
+ * needs to execute unlike a two-sided communication stack such as NCCL where both sides 
+ * need to execute a send and a receive instruction, respectively, for every transfer.
  * 
- * At connection setup, the sender and receiver register the respective buffers through mscclppConnect.
+ * A connection is uniquely identified by the (remoteRank, tag) pair at an endpoint.  
+ * The two endpoints register buffers of the same size with the connection. 
  * 
- * After connection setup, if the connection type is:
- *    P2P via NVLink: mscclppDevConn has access to remoteBuff and remoteFlag
- *    InfiniBand: mscclppDevConn has no access to remoteBuff or remoteFlag
+ * The endpoints provide the remoteRank, tag, and the buffer when registering a connection with msccppConnect().
  * 
- * For any connection, there is a proxy thread associated with it:
- *    P2P via NVLink: the DMA engine can perform the copy between the buffers. DMA engine has higher latency
- *    but has a higher bandwidth and costs no compute cycles on the GPU.
- *    InfiniBand: the RDMA engine copies the data over via MLX devices.
+ * mscllppConnectionSetup() sets up all the registered connections. 
  * 
- * Memory consistency:
- *    In general, there is no guarantee on the order in which bytes are received. MSCCL++ relies on the following
- *    property to meet memory consistency: consecutive wirtes/reads by the CPU proxy are observed by the GPU in the same order
- *    as they are issued in. This means that for a sequence of writes done by a CPU proxy, we need to write a synchornization
- *    value written in flag that the receiving side of the GPU needs to poll on to ensure the arrival of writes.
- *
- * The communication from GPU to CPU proxy happens via trigger which is allocated on the GPU global memory and mounted on the CPU
- * with GDR copy. The CPU proxy has a fifo of work elements which are communicated via trigger. getTrigger gets a place on the fifo
- * (note that an atomicInc is used to enable concurrent calls to getTrigger). setTrigger rights the right work element to the fifo
- * so that the CPU proxy can consume it.
+ ***************************************************************************************************************
+ * A proxy thread running on the CPU is necessary to perform transfers using InfiniBand or the DMA engine. 
+ * The current implementation uses a single proxy thread per context - one IB connection or DMA engine per node.
+ * Thus multiple threadblocks using different connections might use the same CPU proxy thread. 
+ *  
+ * Before using any of functionality of connections, mscclppProxyLaunch needs to be called to spawn the
+ * proxy threads. There are currently two types of connections:
  * 
+ * P2P via NVLink: the DMA engine can perform the copy between the buffers. DMA engine has higher latency
+ * but has a higher bandwidth and costs no compute cycles on the GPU.
+ * 
+ * InfiniBand: the RDMA engine copies the data over MLX devices.
+ * 
+ ***************************************************************************************************************
+ * At the runtime, a GPU kernel has access to a mscclppDevConn object that provides the following functions:
+ * 
+ * put(): the sender initiates a data transfer to the receiver.
+ * 
+ * signal(): the sender signals the receiver that data is ready to be consumed.
+ * 
+ * wait(): the reciever waits on the signal() to start reading the data.
+ * 
+ * The sender should not reuse the buffer till the signal returns.
+ * The receiver should only access the data after the wait returns.
+ *   
+ * putWithSignal(): the sender initiates a data transfer and signals the receiver that data is ready to be consumed.
+ * This is an optimized version of a put followed by a signal.
+ * 
+ * These functions hide the complexity of syncrhonization between the two GPUs and the CPU proxy thread. 
+ * Example:
+ * 
+ * // sender GPU
+ * devConn.put(data1)
+ * // not OK to write to data1
+ * devConn.put(data2)
+ * // not OK to write to data1, data2
+ * devConn.put(data3)                                // receiver GPU
+ * // not OK to write to data1, data2, data3         // not OK to read data1, data2, data3
+ * devConn.signal() -------------------------------> devConn.wait()
+ * // OK to write to data1, data2, data3             // OK to read data1, data2, data3
+ * 
+ * 
+ * The two endpoint can concurrently use the same connection provided they are writing (puts) on different
+ * indices in the registered buffer. 
  **************************************************************************************************************/
 struct mscclppDevConn {
+#ifdef __CUDACC__
+  __forceinline__ __device__ void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize){
+    fifo.push(mscclppData, dstDataOffset, srcDataOffset, dataSize);
+  }
+
+  __forceinline__ __device__ void put(uint64_t dataOffset, uint64_t dataSize){
+    put(dataOffset, dataOffset, dataSize);
+  }
+
+  __forceinline__ __device__ void signal(){
+    epochIncrement();
+    uint64_t curFifoHead = fifo.push(mscclppFlag | mscclppSync, 0, 0, 1);
+    while (*(volatile uint64_t *)fifo.triggerFifoTail <= curFifoHead);
+  }
+
+  __forceinline__ __device__ void putWithSignal(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize){
+    epochIncrement();
+    uint64_t curFifoHead = fifo.push(mscclppData | mscclppFlag | mscclppSync, dstDataOffset, srcDataOffset, dataSize);
+    while (*(volatile uint64_t *)fifo.triggerFifoTail <= curFifoHead);
+  }
+
+  __forceinline__ __device__ void putWithSignal(uint64_t dataOffset, uint64_t dataSize){
+    putWithSignal(dataOffset, dataOffset, dataSize);
+  }
+
+  __forceinline__ __device__ void wait(){
+    (*recvEpochId) += 1;
+    while (*(volatile uint64_t*)proxyEpochId < (*recvEpochId));
+  }
+
+  __forceinline__ __device__ void epochIncrement(){
+    *(volatile uint64_t*)sendEpochId += 1;
+  }
+
+#endif
+  int remoteRank;
   int tag;
 
   void* localBuff;
-  uint64_t* localFlag;
+  uint64_t* sendEpochId; // this is read and written by the GPU
+  uint64_t* recvEpochId; // this is the copy of the remote epoch id.
 
   void* remoteBuff;
   uint64_t* remoteFlag;
-  uint64_t* proxyFlag; // this is only written by the proxy thread
+  uint64_t* proxyEpochId; // this is only written by the proxy thread
 
-  // multiple threads can access the fifo concurrently
+  // threads can access the fifo concurrently
   struct mscclppConcurrentFifo fifo;
 };
 
@@ -140,44 +140,14 @@ typedef enum { mscclppSuccess                 =  0,
                mscclppInProgress              =  7,
                mscclppNumResults              =  8 } mscclppResult_t;
 
+/* Create a unique ID for communication. Only needs to be called by one process.
+ * Use with mscclppCommInitRankFromId().
+ * All processes need to provide the same ID to mscclppCommInitRankFromId().
+ *
+ * Outputs:
+ *  uniqueId: the unique ID to be created
+ */
 mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* uniqueId);
-
-/* Reduction operation selector */
-typedef enum { mscclppNumOps_dummy = 5 } mscclppRedOp_dummy_t;
-typedef enum { mscclppSum        = 0,
-               mscclppProd       = 1,
-               mscclppMax        = 2,
-               mscclppMin        = 3,
-               mscclppAvg        = 4,
-               /* mscclppNumOps: The number of built-in mscclppRedOp_t values. Also
-                * serves as the least possible value for dynamic mscclppRedOp_t's
-                * as constructed by mscclppRedOpCreate*** functions. */
-               mscclppNumOps     = 5,
-               /* mscclppMaxRedOp: The largest valid value for mscclppRedOp_t.
-                * It is defined to be the largest signed value (since compilers
-                * are permitted to use signed enums) that won't grow
-                * sizeof(mscclppRedOp_t) when compared to previous MSCCLPP versions to
-                * maintain ABI compatibility. */
-               mscclppMaxRedOp   = 0x7fffffff>>(32-8*sizeof(mscclppRedOp_dummy_t))
-             } mscclppRedOp_t;
-
-/* Data types */
-typedef enum { mscclppInt8       = 0, mscclppChar       = 0,
-               mscclppUint8      = 1,
-               mscclppInt32      = 2, mscclppInt        = 2,
-               mscclppUint32     = 3,
-               mscclppInt64      = 4,
-               mscclppUint64     = 5,
-               mscclppFloat16    = 6, mscclppHalf       = 6,
-               mscclppFloat32    = 7, mscclppFloat      = 7,
-               mscclppFloat64    = 8, mscclppDouble     = 8,
-#if defined(__CUDA_BF16_TYPES_EXIST__)
-               mscclppBfloat16   = 9,
-               mscclppNumTypes   = 10
-#else
-               mscclppNumTypes   = 9
-#endif
-} mscclppDataType_t;
 
 /* Transport Types */
 typedef enum { mscclppTransportP2P = 0,
@@ -185,25 +155,133 @@ typedef enum { mscclppTransportP2P = 0,
                mscclppTransportIB = 2,
 } mscclppTransport_t;
 
-mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair);
+/* Initialize a communicator. nranks processes with rank 0 to nranks-1 need to call this function.
+ * 
+ * Outputs:
+ *   comm: the communicator to be initialized
+ * 
+ * Inputs:
+ *   nranks:     number of ranks in the communicator
+ *   ipPortPair: a string of the form "ip:port" that represents the address of the root process
+ *   rank:       rank of the calling process
+ */
+mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank);
 
+/* Initialize a communicator from a given mscclppUniqueId. Same as mscclppCommInitRank() except that
+ * id is provided by the user by calling mscclppGetUniqueId()
+ * 
+ * Outputs:
+ *   comm: the communicator to be initialized
+ * 
+ * Inputs:
+ *   nranks: number of ranks in the communicator
+ *   id:     the unique ID to be used for communication
+ *   rank:   rank of the calling process
+ */
 mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank);
 
-mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int size);
+/* Ring-based AllGather through the bootstrap socket.
+ * 
+ * Outputs:
+ *   comm: the communicator
+ * 
+ * Inputs:
+ *   data: data array to be gathered where `[r*size, (r+1)*size)` is the data for rank `r`
+ *   size: data size per rank
+ */
+mscclppResult_t mscclppBootstrapAllGather(mscclppComm_t comm, void* data, int size);
 
+/* Destroy a communicator.
+ * 
+ * Inputs:
+ *   comm: the communicator to be destroyed
+ */
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
-mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, size_t buffSize,
-                               uint64_t* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev=NULL);
+/* Connect to a remote rank. This function only prepares metadata for connection. The actual connection
+ * is made by a following call of mscclppConnectionSetup(). Note that this function is two-way and a connection
+ * from rank i to remote rank j needs to have a counterpart from rank j to rank i.
+ * 
+ * Inputs:
+ *   comm:          the communicator
+ *   remoteRank:    the rank of the remote process
+ *   tag:           the tag of the connection. tag is copied into the corresponding mscclppDevConn_t, which can be
+ *                  used to identify the connection inside a GPU kernel.
+ *   localBuff:     the local send/receive buffer
+ *   buffSize:      the size of the local buffer
+ *   transportType: the type of transport to be used (mscclppTransportP2P or mscclppTransportIB)
+ *   ibDev:         the name of the IB device to be used. Expects a null for mscclppTransportP2P.
+ */
+mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
+                               mscclppTransport_t transportType, const char *ibDev=0);
 
+/* Establish all connections declared by mscclppConnect(). This function must be called after all mscclppConnect()
+ * calls are made. This function ensures that all remote ranks are ready to communicate when it returns.
+ * 
+ * Inputs:
+ *   comm: the communicator
+ */
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);
 
+/* Return an array of mscclppDevConn_t and the number of connections created by mscclppConnectionSetup().
+ * The order of connections matches the order of mscclppConnect() calls.
+ * 
+ * Outputs:
+ *   devConns: the array of mscclppDevConn_t. Each mscclppDevConn_t corresponds to a mscclppConnect() call in the
+ *             order of the calls.
+ *   nConns:   the number of connections
+ * 
+ * Inputs:
+ *   comm: the communicator
+ */
+mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nConns);
+
+/* Return the mscclppDevConn_t corresponding to a given tag and a remoteRank.
+ * 
+ * Outputs:
+ *   devConn: the mscclppDevConn_t corresponding to the given tag
+ * 
+ * Inputs:
+ *   comm:       the communicator
+ *   tag:        the tag of the connection
+ *   remoteRank: the remoteRank of the connection
+ */
+mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn);
+
+/* Launch proxy threads for all connections created by mscclppConnectionSetup(). This function is supposed to be called
+ * before starting a kernel that uses mscclppDevConn_t. Up to two proxy threads are launched for each (GPU + IB) pair
+ * (one for P2P NVLink and one for InfiniBand).
+ * 
+ * Inputs:
+ *  comm: the communicator
+ */
 mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm);
 
+/* Stop all proxy threads.
+ * 
+ * Inputs:
+ *  comm: the communicator
+ */
 mscclppResult_t mscclppProxyStop(mscclppComm_t comm);
 
+/* Return the rank of the calling process.
+ * 
+ * Outputs:
+ *   rank: the rank of the calling process
+ * 
+ * Inputs:
+ *   comm: the communicator
+ */
 mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank);
 
+/* Return the number of ranks of the communicator.
+ * 
+ * Outputs:
+ *   size: the number of ranks of the communicator
+ * 
+ * Inputs:
+ *   comm: the communicator
+ */
 mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size);
 
 #ifdef __cplusplus

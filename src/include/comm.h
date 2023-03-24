@@ -24,7 +24,7 @@
 struct mscclppConn {
   mscclppTransport_t transport;
   int remoteRank;
-  int buffSize;
+  uint64_t buffSize;
   uint64_t *remoteProxyFlag;
   uint64_t *cpuProxyFlag;
   void *cpuProxyFlagGdrDesc;
@@ -41,6 +41,7 @@ struct mscclppConn {
 
 struct mscclppComm {
   struct mscclppConn conns[MAXCONNECTIONS];
+  struct mscclppDevConn devConns[MAXCONNECTIONS];
   int nConns;
 
   void* bootstrap;

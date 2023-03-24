@@ -70,14 +70,14 @@ mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* out) {
   return res;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppBootStrapAllGather, mscclppComm_t comm, void* data, int size);
-mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int size){
+MSCCLPP_API(mscclppResult_t, mscclppBootstrapAllGather, mscclppComm_t comm, void* data, int size);
+mscclppResult_t mscclppBootstrapAllGather(mscclppComm_t comm, void* data, int size){
   MSCCLPPCHECK(bootstrapAllGather(comm->bootstrap, data, size));
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair);
-mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair) {
+MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank);
+mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank) {
   if (mscclppGdrCopy == NULL) {
     MSCCLPPCHECK(initGdrCopy());
   }
@@ -94,9 +94,9 @@ mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, c
   // We assume that the user has set the device to the intended one already
   CUDACHECK(cudaGetDevice(&_comm->cudaDev));
 
-  MSCCLPPCHECK(bootstrapNetInit(ip_port_pair));
+  MSCCLPPCHECK(bootstrapNetInit(ipPortPair));
   mscclppBootstrapHandle handle;
-  MSCCLPPCHECK(bootstrapGetUniqueId(&handle, rank == 0, ip_port_pair));
+  MSCCLPPCHECK(bootstrapGetUniqueId(&handle, rank == 0, ipPortPair));
   _comm->magic = handle.magic;
 
   MSCCLPPCHECKGOTO(mscclppCudaHostCalloc((uint32_t **)&_comm->abortFlag, 1), res, fail);
@@ -201,9 +201,9 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
     if (conn->cpuProxyFlagGdrDesc) {
       // IB
       MSCCLPPCHECK(mscclppGdrCudaFree(conn->cpuProxyFlagGdrDesc));
-    } else if (conn->devConn->proxyFlag) {
+    } else if (conn->devConn->proxyEpochId) {
       // P2P
-      MSCCLPPCHECK(mscclppCudaFree(conn->devConn->proxyFlag));
+      MSCCLPPCHECK(mscclppCudaFree(conn->devConn->proxyEpochId));
     }
   }
 
@@ -227,6 +227,14 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
     }
   }
 
+  for (int i = 0; i < comm->nConns; i++){
+    struct mscclppConn *conn = &comm->conns[i];
+    if (conn){
+      MSCCLPPCHECK(mscclppCudaFree(conn->devConn->sendEpochId));
+      MSCCLPPCHECK(mscclppCudaFree(conn->devConn->recvEpochId));
+    }
+  }
+
   if (comm->bootstrap)
     MSCCLPPCHECK(bootstrapClose(comm->bootstrap));
 
@@ -247,22 +255,40 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank,
-            void* localBuff, size_t buffSize, uint64_t* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev);
-mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, int remoteRank, void* localBuff, size_t buffSize,
-                               uint64_t* localFlag, int tag, mscclppTransport_t transportType, const char *ibDev/*=NULL*/)
+
+MSCCLPP_API(mscclppResult_t, mscclppGetDeviceConnection, mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn);
+mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn){
+  for (int i = 0; i < comm->nConns; i++){
+    if (comm->devConns[i].remoteRank == remoteRank && comm->devConns[i].tag == tag){
+      *devConn = &comm->devConns[i];
+      return mscclppSuccess;
+    }
+  }
+
+  return mscclppInvalidArgument;
+}
+
+
+MSCCLPP_API(mscclppResult_t, mscclppGetAllDeviceConnections, mscclppComm_t comm, mscclppDevConn_t** devConns, int* nConns);
+mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nConns)
+{
+  *nConns = comm->nConns;
+  *devConns = comm->devConns;
+  return mscclppSuccess;
+}
+
+
+MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int remoteRank, int tag, 
+            void* localBuff, uint64_t buffSize, mscclppTransport_t transportType, const char *ibDev);
+mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
+                               mscclppTransport_t transportType, const char *ibDev)
 {
   if (comm->nConns == MAXCONNECTIONS) {
     WARN("Too many connections made");
     return mscclppInternalError;
   }
-  if (devConnOut == NULL) {
-    WARN("devConnOut is the output of this function and needs to be allocated by the user");
-    return mscclppInvalidUsage;
-  }
   struct mscclppConn *conn = &comm->conns[comm->nConns];
   conn->transport = transportType;
-  conn->remoteRank = remoteRank;
   conn->buffSize = buffSize;
 
   conn->ibCtx = NULL;
@@ -355,9 +381,16 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, mscclppDevConn* devConnOut, i
     WARN("Proxy allocation failed!");
     return mscclppInternalError;
   }
-  conn->devConn = devConnOut;
+  
+  struct mscclppDevConn *devConn = &comm->devConns[comm->nConns];
+
+  conn->devConn = devConn;
   conn->devConn->localBuff = localBuff;
-  conn->devConn->localFlag = localFlag;
+  MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->sendEpochId, 1));
+  // conn->devConn->sendEpochId = localFlag;
+  MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->recvEpochId, 1));
+  // conn->devConn->recvEpochId = 0;
+  conn->devConn->remoteRank = remoteRank;
   conn->devConn->tag = tag;
   conn->devConn->fifo.connId = comm->nConns;
   conn->devConn->fifo.triggerFifo = proxyState->triggerFifo.devPtr;
@@ -384,10 +417,10 @@ mscclppResult_t mscclppP2pConnectionSetupStart(struct connInfo* connInfo /*outpu
     return mscclppInternalError;
   }
   struct mscclppDevConn *devConn = conn->devConn;
-  MSCCLPPCHECK(mscclppCudaCalloc(&devConn->proxyFlag, 1));
-  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleProxyFlag, devConn->proxyFlag));
+  MSCCLPPCHECK(mscclppCudaCalloc(&devConn->proxyEpochId, 1));
+  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleProxyFlag, devConn->proxyEpochId));
   CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleBuff, devConn->localBuff));
-  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleFlag, devConn->localFlag));
+  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleFlag, devConn->sendEpochId));
   return mscclppSuccess;
 }
 
@@ -410,7 +443,7 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
   struct mscclppDevConn *devConn = conn->devConn;
   devConn->remoteBuff = NULL;
   devConn->remoteFlag = NULL;
-  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuProxyFlag, &devConn->proxyFlag, 1, &conn->cpuProxyFlagGdrDesc));
+  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuProxyFlag, &devConn->proxyEpochId, 1, &conn->cpuProxyFlagGdrDesc));
 
   struct mscclppIbContext *ibCtx = conn->ibCtx;
   if (conn->ibQp == NULL) {
@@ -418,8 +451,8 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
   }
   // TODO(chhwang): can we register only one MR for the following three?
   MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localBuff, conn->buffSize, &conn->ibBuffMr));
-  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localFlag, sizeof(uint64_t), &conn->ibLocalFlagMr));
-  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->proxyFlag, sizeof(uint64_t), &conn->ibProxyFlagMr));
+  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->sendEpochId, sizeof(uint64_t), &conn->ibLocalFlagMr));
+  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->proxyEpochId, sizeof(uint64_t), &conn->ibProxyFlagMr));
   connInfo->infoQp = conn->ibQp->info;
   connInfo->infoBuffMr = conn->ibBuffMr->info;
   connInfo->infoLocalFlagMr = conn->ibLocalFlagMr->info;
@@ -460,14 +493,14 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
       MSCCLPPCHECK(mscclppIbConnectionSetupStart(&cInfo, conn));
     }
     // TODO: from saemal: do we possibly deadlock if there are too many outstanding sends?
-    MSCCLPPCHECK(bootstrapSend(comm->bootstrap, conn->remoteRank, conn->devConn->tag, &cInfo, sizeof(cInfo)));
+    MSCCLPPCHECK(bootstrapSend(comm->bootstrap, conn->devConn->remoteRank, conn->devConn->tag, &cInfo, sizeof(cInfo)));
   }
 
   // Recv info from peers
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn *conn = &comm->conns[i];
     struct connInfo cInfo;
-    MSCCLPPCHECK(bootstrapRecv(comm->bootstrap, conn->remoteRank, conn->devConn->tag, &cInfo, sizeof(cInfo)));
+    MSCCLPPCHECK(bootstrapRecv(comm->bootstrap, conn->devConn->remoteRank, conn->devConn->tag, &cInfo, sizeof(cInfo)));
     if (conn->transport == mscclppTransportP2P) {
       MSCCLPPCHECK(mscclppP2pConnectionSetupEnd(&cInfo, conn));
     } else if (conn->transport == mscclppTransportIB) {
@@ -487,6 +520,10 @@ mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm)
 MSCCLPP_API(mscclppResult_t, mscclppProxyStop, mscclppComm_t comm);
 mscclppResult_t mscclppProxyStop(mscclppComm_t comm)
 {
+  // a barrier to make sure all ranks are done with their work before stopping the proxy
+  int* tmp = new int[comm->nRanks];
+  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
+
   MSCCLPPCHECK(mscclppProxyDestroy(comm));
   return mscclppSuccess;
 }
