@@ -413,6 +413,12 @@ static mscclppResult_t socketTryAccept(struct mscclppSocket* sock) {
   } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
     WARN("socketTryAccept: get errno %d that is not EAGAIN or EWOULDBLOCK", errno);
     return mscclppSystemError;
+  } else if (++sock->acceptRetries == RETRY_ACCEPT_TIMES) {
+    WARN("socketTryAccept: exceeded retries (%d)", sock->acceptRetries);
+    return mscclppRemoteError;
+  } else {  
+    usleep(SLEEP_INT);
+    if (sock->acceptRetries % 1000 == 0) INFO(MSCCLPP_ALL, "socketTryAccept: Call to try accept returned %s, retrying", strerror(errno));
   }
   return mscclppSuccess;
 }
@@ -691,6 +697,7 @@ mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, union mscclppSocke
   if (sock == NULL) goto exit;
   sock->timedOutRetries = 0;
   sock->refusedRetries = 0;
+  sock->acceptRetries = 0;
   sock->abortFlag = abortFlag;
   sock->asyncFlag = asyncFlag;
   sock->state = mscclppSocketStateInitialized;
