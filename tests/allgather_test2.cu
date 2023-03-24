@@ -217,7 +217,7 @@ int main(int argc, const char *argv[])
     }
   }
   int tmp[16];
-  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
+  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
 
 //   // Perf test
 //   cudaEvent_t ev_start;
@@ -231,7 +231,7 @@ int main(int argc, const char *argv[])
   //   kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU);
   // }
   // CUDACHECK(cudaDeviceSynchronize());
-  // MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
+  // MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
 
   // cudaGraph Capture
   cudaGraph_t graph;
@@ -267,7 +267,7 @@ int main(int argc, const char *argv[])
   double time_in_us = ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter;
   printf("rank: %d, time: %f us/iter algBW %f\n", rank, time_in_us, (double) (data_size) / 1024./1024./1024./(time_in_us/1e6));
 
-  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
+  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
   MSCCLPPCHECK(mscclppProxyStop(comm));
 
   MSCCLPPCHECK(mscclppCommDestroy(comm));

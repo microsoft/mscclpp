@@ -67,14 +67,14 @@ mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* out) {
   return res;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppBootStrapAllGather, mscclppComm_t comm, void* data, int size);
-mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int size){
+MSCCLPP_API(mscclppResult_t, mscclppBootstrapAllGather, mscclppComm_t comm, void* data, int size);
+mscclppResult_t mscclppBootstrapAllGather(mscclppComm_t comm, void* data, int size){
   MSCCLPPCHECK(bootstrapAllGather(comm->bootstrap, data, size));
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nranks, int rank, const char* ipPortPair);
-mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ipPortPair) {
+MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank);
+mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank) {
   if (mscclppGdrCopy == NULL) {
     MSCCLPPCHECK(initGdrCopy());
   }
@@ -491,6 +491,10 @@ mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm)
 MSCCLPP_API(mscclppResult_t, mscclppProxyStop, mscclppComm_t comm);
 mscclppResult_t mscclppProxyStop(mscclppComm_t comm)
 {
+  // a barrier to make sure all ranks are done with their work before stopping the proxy
+  int* tmp = new int[comm->nRanks];
+  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
+
   MSCCLPPCHECK(mscclppProxyDestroy(comm));
   return mscclppSuccess;
 }

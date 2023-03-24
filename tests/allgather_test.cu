@@ -302,7 +302,7 @@ int main(int argc, const char *argv[])
 
   if (rank == 0) printf("Initializing MSCCL++\n");
   mscclppComm_t comm;
-  MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
+  MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, ip_port, rank));
 
   int *data_d;
   int *data_h;
@@ -340,7 +340,7 @@ int main(int argc, const char *argv[])
   }
   int tmp[16];
   // A simple barrier
-  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
+  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
   if (rank == 0) printf("Successfully checked the correctness\n");
 
   // Perf test
@@ -350,7 +350,7 @@ int main(int argc, const char *argv[])
     kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nelemsPerGPU, kernelNum);
   }
   CUDACHECK(cudaDeviceSynchronize());
-  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
+  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
 
   // cudaGraph Capture
   int cudagraphiter = 10;
@@ -374,7 +374,7 @@ int main(int argc, const char *argv[])
   // measure runtime 
   int cudagraphlaunch = 10;
   if (rank == 0) printf("Running %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphlaunch, cudagraphiter);
-  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
+  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
   double t0 = getTime();
   for (int i = 0; i < cudagraphlaunch; ++i) {
      cudaGraphLaunch(instance, stream);
@@ -385,7 +385,7 @@ int main(int argc, const char *argv[])
   float ms = (t1-t0)*1000.0;
   double time_in_us = ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter;
   printf("Rank %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us, (double) (dataSize) / 1e9 /(time_in_us/1e6));
-  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, tmp, sizeof(int)));
+  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
 
   if (rank == 0) printf("Stopping MSCCL++ proxy threads\n");
   MSCCLPPCHECK(mscclppProxyStop(comm));

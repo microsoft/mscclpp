@@ -66,7 +66,7 @@ int main(int argc, const char *argv[])
   mscclppComm_t comm;
 
   if (ip_port) {
-    MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
+    MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, ip_port, rank));
   } else {
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
     mscclppUniqueId id;
@@ -88,7 +88,7 @@ int main(int argc, const char *argv[])
   // each rank sets one element in the array
   buf[rank] = rank;
 
-  MSCCLPPCHECK(mscclppBootStrapAllGather(comm, buf, sizeof(int)));
+  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, buf, sizeof(int)));
 
   // check the correctness of all elements in the output of AllGather
   for (int i = 0; i < world_size; ++i) {
