@@ -255,6 +255,20 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
   return mscclppSuccess;
 }
 
+MSCCLPP_API(const char*, mscclppGetErrorString, mscclppResult_t code);
+const char* mscclppGetErrorString(mscclppResult_t code) {
+  switch (code) {
+    case mscclppSuccess                : return "no error";
+    case mscclppUnhandledCudaError     : return "unhandled cuda error";
+    case mscclppSystemError            : return "unhandled system error";
+    case mscclppInternalError          : return "internal error";
+    case mscclppInvalidArgument        : return "invalid argument";
+    case mscclppInvalidUsage           : return "invalid usage";
+    case mscclppRemoteError            : return "remote process exited or there was a network error";
+    case mscclppInProgress             : return "MSCCL++ operation in progress";
+    default                            : return "unknown result code";
+  }
+}
 
 MSCCLPP_API(mscclppResult_t, mscclppGetDeviceConnection, mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn);
 mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn){

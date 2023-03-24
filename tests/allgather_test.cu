@@ -18,9 +18,9 @@ static int nranksPerNode = 8;
 #define MSCCLPPCHECK(call) do { \
   mscclppResult_t res = call; \
   if (res != mscclppSuccess && res != mscclppInProgress) { \
-     /* Print the back trace*/ \
-   printf("Failure at %s:%d -> %d\n", __FILE__, __LINE__, res);    \
-       return res; \
+    /* Print the back trace*/ \
+    printf("Failure at %s:%d -> %s\n", __FILE__, __LINE__, mscclppGetErrorString(res));    \
+    return res; \
   } \
 } while (0)
 

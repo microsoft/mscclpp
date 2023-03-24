@@ -198,6 +198,16 @@ mscclppResult_t mscclppBootstrapAllGather(mscclppComm_t comm, void* data, int si
  */
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
+/* Return the string for the given error code.
+ * 
+ * Ouput:
+ *   returns the string
+ * 
+ * Inputs:
+ *   result: the error code that this function needs to translate
+ */
+const char*  mscclppGetErrorString(mscclppResult_t result);
+
 /* Connect to a remote rank. This function only prepares metadata for connection. The actual connection
  * is made by a following call of mscclppConnectionSetup(). Note that this function is two-way and a connection
  * from rank i to remote rank j needs to have a counterpart from rank j to rank i.

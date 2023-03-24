@@ -35,35 +35,4 @@
     ret func(args)
 #endif // end PROFAPI
 
-/*
-static __inline__ int mscclppTypeSize(mscclppDataType_t type) {
-  switch (type) {
-    case mscclppInt8:
-    case mscclppUint8:
-      return 1;
-    case mscclppFloat16:
-#if defined(__CUDA_BF16_TYPES_EXIST__)
-    case mscclppBfloat16:
-#endif
-      return 2;
-    case mscclppInt32:
-    case mscclppUint32:
-    case mscclppFloat32:
-      return 4;
-    case mscclppInt64:
-    case mscclppUint64:
-    case mscclppFloat64:
-      return 8;
-    default:
-      return -1;
-  }
-}
-
-#include "debug.h"
-#include "checks.h"
-#include "cudawrap.h"
-#include "utils.h"
-#include "nvtx.h"
-*/
-
 #endif // end include guard
