@@ -51,3 +51,22 @@ target_link_libraries(
   mscclpp
 )
 
+add_custom_target(build-package ALL DEPENDS _py_mscclpp)
+add_custom_command(
+  TARGET build-package POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/mscclpp
+  ${CMAKE_CURRENT_BINARY_DIR}/mscclpp)
+
+add_custom_command(
+  TARGET build-package POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy
+  $<TARGET_FILE:_py_mscclpp>
+  ${CMAKE_CURRENT_BINARY_DIR}/mscclpp/)
+
+add_custom_command(
+  TARGET build-package POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy
+  ${MSCCLPP_DIR}/lib/libmscclpp.so
+  ${CMAKE_CURRENT_BINARY_DIR}/mscclpp/)
+

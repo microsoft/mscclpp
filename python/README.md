@@ -1,3 +1,30 @@
+# Python bindings
+
+Test instructions:
+ * Compile the `libmscclpp.so` library.
+ * setup a python virtual env
+   * `pip install -r requirements.txt`
+ * `./tesh.sh`
+
+Rough build attemtps
+```
+# cd to this directory:
+
+# setup/enter pyenv environment for python 3.9
+
+# install nanabind and the test requirements.
+pip install -r requirements.txt
+
+# setup and build the CMake environments.
+# this requires nanobind, installed above.
+./setup.sh
+
+# test the module
+pytest build/mscclpp
+```
+
+
+## Installing `gdrcopy` and `mpi`
 This assumes that some things are built/installed
 ```
 # assumes WORKDIR has:
@@ -41,20 +68,4 @@ apt install -y numactl libnuma-dev libnuma1
 
 # if not mpi testing
 USE_MPI_FOR_TESTS=0 make -j
-```
-
-
-Rough build attemtps
-```
-# cd to this directory:
-
-cmake -S . -B build
-cmake --build build --clean-first -v
-
-# this should contain libmscclpp.so, but does not
-ldd build/py_mscclpp.cpython-39-x86_64-linux-gnu.so
-
-# this will fail due to a missing symbol
-( cd build;
-  LD_LIBRARY_PATH="$PWD/../../build/lib:$LD_LIBRARY_PATH" python -c 'import py_mscclpp' )
 ```

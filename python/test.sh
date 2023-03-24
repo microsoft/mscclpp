@@ -8,4 +8,4 @@ fi
 
 cmake --build build
 
-pytest mscclpp
+pytest build/mscclpp
