@@ -49,12 +49,6 @@ inline uint64_t clockNano() {
   return uint64_t(ts.tv_sec)*1000*1000*1000 + ts.tv_nsec;
 }
 
-inline double clockSec() {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return double(ts.tv_sec) + (double)ts.tv_nsec * 1e-9;
-}
-
 /* get any bytes of random data from /dev/urandom, return 0 if it succeeds; else
  * return -1 */
 inline mscclppResult_t getRandomData(void* buffer, size_t bytes) {
