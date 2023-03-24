@@ -3,63 +3,6 @@ import hamcrest
 
 import mscclpp
 
-class DTypeTest(unittest.TestCase):
-    def test(self) -> None:
-        for name, val in [
-            ('int8', 0),
-            ('char', 0),
-            ('uint8', 1),
-            ('int32', 2),
-            ('int', 2),
-            ('uint32', 3),
-            ('int64', 4),
-            ('uint64', 5),
-            ('float16', 6),
-            ('half', 6),
-            ('float32', 7),
-            ('float', 7),
-            ('float64', 8),
-            ('double', 8),
-        ]:
-            try:
-                dtype = getattr(mscclpp.dtype, name)
-                hamcrest.assert_that(
-                    mscclpp.dtype(val),
-                    hamcrest.equal_to(dtype),
-                    reason=(name, val),
-                )
-                hamcrest.assert_that(
-                    int(mscclpp.dtype(val)),
-                    hamcrest.equal_to(val),
-                    reason=(name, val),
-                )
-            except Exception as e:
-                raise AssertionError((name, val)) from e
-
-class ReduceOpTest(unittest.TestCase):
-    def test(self) -> None:
-        for name, val in [
-            ('sum', 0),
-            ('prod', 1),
-            ('max', 2),
-            ('min', 3),
-            ('avg', 4),
-        ]:
-            try:
-                dtype = getattr(mscclpp.reduce_op, name)
-                hamcrest.assert_that(
-                    mscclpp.reduce_op(val),
-                    hamcrest.equal_to(dtype),
-                    reason=(name, val),
-                )
-                hamcrest.assert_that(
-                    int(mscclpp.reduce_op(val)),
-                    hamcrest.equal_to(val),
-                    reason=(name, val),
-                )
-            except Exception as e:
-                raise AssertionError((name, val)) from e
-
 
 class UniqueIdTest(unittest.TestCase):
     def test_no_constructor(self) -> None:
