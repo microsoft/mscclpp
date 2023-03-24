@@ -1,18 +1,11 @@
 #ifndef MSCCLPP_H_
 #define MSCCLPP_H_
 
-#include <cuda_runtime.h>
-#include <cuda_fp16.h>
-#if CUDART_VERSION >= 11000
-#include <cuda_bf16.h>
-#endif
-#include <stdint.h>
-
 #define MSCCLPP_MAJOR 0
 #define MSCCLPP_MINOR 1
-#define MSCCLPP_PROXY_FIFO_SIZE 8
-
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 100 + MSCCLPP_MINOR)
+
+#define MSCCLPP_PROXY_FIFO_SIZE 8
 
 #include <mscclppfifo.h>
 
@@ -106,7 +99,6 @@ struct mscclppDevConn {
 
   __forceinline__ __device__ void wait(){
     (*recvEpochId) += 1;
-    // printf("%llu %llu %llu\n", (*(volatile uint64_t*)proxyEpochId), *(volatile uint64_t*)sendEpochId, *recvEpochId);
     while (*(volatile uint64_t*)proxyEpochId < (*recvEpochId));
   }
 
@@ -119,8 +111,8 @@ struct mscclppDevConn {
   int tag;
 
   void* localBuff;
-  uint64_t* sendEpochId;  // this is read and written by the GPU
-  uint64_t* recvEpochId;   // this is the copy of the remote epoch id.
+  uint64_t* sendEpochId; // this is read and written by the GPU
+  uint64_t* recvEpochId; // this is the copy of the remote epoch id.
 
   void* remoteBuff;
   uint64_t* remoteFlag;
@@ -163,12 +155,12 @@ mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int si
 
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
-mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, size_t buffSize,
-                               mscclppTransport_t transportType, const char *ibDev=NULL);
+mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
+                               mscclppTransport_t transportType, const char *ibDev=0);
 
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);
 
-mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons);
+mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nConns);
 
 mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn);
 

@@ -14,6 +14,7 @@
 #include <netdb.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stddef.h>
 
 #define MAX_IFS 16
 #define MAX_IF_NAME_SIZE 16

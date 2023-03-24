@@ -8,6 +8,7 @@
 #define MSCCLPP_CHECKS_H_
 
 #include "debug.h"
+#include <cuda_runtime.h>
 
 // Check CUDA RT calls
 #define CUDACHECK(cmd) do {                                 \
