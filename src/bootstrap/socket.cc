@@ -12,8 +12,6 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 
-#define MSCCLPP_SOCKET_ACCEPT_TIMEOUT 30
-
 static mscclppResult_t socketProgressOpt(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset, int block, int* closed) {
   int bytes = 0;
   *closed = 0;
@@ -408,19 +406,19 @@ mscclppResult_t mscclppSocketGetAddr(struct mscclppSocket* sock, union mscclppSo
 }
 
 static mscclppResult_t socketTryAccept(struct mscclppSocket* sock) {
-  static double initTime = -1;
-  if (initTime == -1) initTime = clockSec();
   socklen_t socklen = sizeof(union mscclppSocketAddress);
   sock->fd = accept(sock->acceptFd, &sock->addr.sa, &socklen);
   if (sock->fd != -1) {
     sock->state = mscclppSocketStateAccepted;
-    initTime = -1;
   } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
     WARN("socketTryAccept: get errno %d that is not EAGAIN or EWOULDBLOCK", errno);
     return mscclppSystemError;
-  } else if (clockSec() - initTime > MSCCLPP_SOCKET_ACCEPT_TIMEOUT) {
-    WARN("socketTryAccept: exceeded timeout (%d sec)", MSCCLPP_SOCKET_ACCEPT_TIMEOUT);
+  } else if (++sock->acceptRetries == RETRY_ACCEPT_TIMES) {
+    WARN("socketTryAccept: exceeded retries (%d)", sock->acceptRetries);
     return mscclppRemoteError;
+  } else {  
+    usleep(SLEEP_INT);
+    if (sock->acceptRetries % 1000 == 0) INFO(MSCCLPP_ALL, "socketTryAccept: Call to try accept returned %s, retrying", strerror(errno));
   }
   return mscclppSuccess;
 }
@@ -699,6 +697,7 @@ mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, union mscclppSocke
   if (sock == NULL) goto exit;
   sock->timedOutRetries = 0;
   sock->refusedRetries = 0;
+  sock->acceptRetries = 0;
   sock->abortFlag = abortFlag;
   sock->asyncFlag = asyncFlag;
   sock->state = mscclppSocketStateInitialized;
