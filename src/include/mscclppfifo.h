@@ -1,6 +1,8 @@
 #ifndef MSCCLPPFIFO_H_
 #define MSCCLPPFIFO_H_
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -38,7 +40,7 @@ struct mscclppConcurrentFifo {
   __forceinline__ __device__ uint64_t push(uint64_t type, uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize){
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->triggerFifoHead,1);
     while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->triggerFifoTail));
-    auto valptr = &(this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE].value);
+    uint64_t* valptr = (uint64_t*)&(this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE].value);
     asm volatile(
       "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(valptr),
       "l"((srcDataOffset << MSCCLPP_BITS_SIZE) + dataSize),

@@ -240,18 +240,18 @@ mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, i
 }
 
 
-MSCCLPP_API(mscclppResult_t, mscclppGetAllDeviceConnections, mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons);
-mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nCons)
+MSCCLPP_API(mscclppResult_t, mscclppGetAllDeviceConnections, mscclppComm_t comm, mscclppDevConn_t** devConns, int* nConns);
+mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nConns)
 {
-  *nCons = comm->nConns;
+  *nConns = comm->nConns;
   *devConns = comm->devConns;
   return mscclppSuccess;
 }
 
 
 MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int remoteRank, int tag, 
-            void* localBuff, size_t buffSize, mscclppTransport_t transportType, const char *ibDev);
-mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, size_t buffSize,
+            void* localBuff, uint64_t buffSize, mscclppTransport_t transportType, const char *ibDev);
+mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
                                mscclppTransport_t transportType, const char *ibDev)
 {
   if (comm->nConns == MAXCONNECTIONS) {

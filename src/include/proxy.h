@@ -4,6 +4,7 @@
 #include "mscclpp.h"
 #include "comm.h"
 #include <pthread.h>
+#include <cuda_runtime.h>
 
 #define MSCCLPP_PROXY_MAX_NUM (MSCCLPP_IB_MAX_DEVS + 1) // One is for a P2P proxy.
 
