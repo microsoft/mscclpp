@@ -6,6 +6,7 @@ MSCCLPP_MINOR := 1
 DEBUG ?= 0
 VERBOSE ?= 1
 TRACE ?= 0
+NPKIT ?= 0
 USE_MPI_FOR_TESTS ?= 1
 
 ######## CUDA
@@ -101,10 +102,18 @@ LIBDIR := lib
 OBJDIR := obj
 BINDIR := bin
 
+ifneq ($(NPKIT), 0)
+CXXFLAGS  += -DENABLE_NPKIT
+NVCUFLAGS += -DENABLE_NPKIT
+endif
+
 LDFLAGS := $(NVLDFLAGS) -libverbs -lgdrapi -lnuma
 
 LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc gdr.cc init.cc proxy.cc ib.cc)
 LIBSRCS += $(addprefix src/bootstrap/,bootstrap.cc socket.cc)
+ifneq ($(NPKIT), 0)
+LIBSRCS += $(addprefix src/misc/,npkit.cc)
+endif
 LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 

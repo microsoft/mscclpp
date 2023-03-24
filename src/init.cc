@@ -4,6 +4,9 @@
 #include "gdr.h"
 #include <map>
 #include <sstream>
+#if defined(ENABLE_NPKIT)
+#include "npkit/npkit.h"
+#endif
 
 static uint64_t hashUniqueId(mscclppUniqueId const &id) {
   char const *bytes = (char const*)&id;
@@ -99,6 +102,11 @@ mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, c
   MSCCLPPCHECKGOTO(mscclppCudaHostCalloc((uint32_t **)&_comm->abortFlag, 1), res, fail);
   MSCCLPPCHECK(bootstrapInit(&handle, _comm));
 
+#if defined(ENABLE_NPKIT)
+  // Init NPKit
+  MSCCLPPCHECK(NpKit::Init(_comm->rank));
+#endif
+
   // _comm->maxLocalRanks = 8;
   // MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->rankToNode, nranks), res, fail);
   // MSCCLPPCHECKGOTO(mscclppCalloc(&_comm->rankToLocalRank, nranks), res, fail);
@@ -163,6 +171,11 @@ mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, msccl
   MSCCLPPCHECKGOTO(mscclppCudaHostCalloc((uint32_t **)&_comm->abortFlag, 1), res, fail);
   MSCCLPPCHECK(bootstrapInit(handle, _comm));
 
+#if defined(ENABLE_NPKIT)
+  // Init NPKit
+  MSCCLPPCHECK(NpKit::Init(_comm->rank));
+#endif
+
   *comm = _comm;
   return res;
 fail:
@@ -176,6 +189,10 @@ fail:
 
 MSCCLPP_API(mscclppResult_t, mscclppCommDestroy, mscclppComm_t comm);
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
+#if defined(ENABLE_NPKIT)
+  const char* npkitDumpDir = nullptr;
+#endif
+
   if (comm == NULL)
     return mscclppSuccess;
 
@@ -215,6 +232,18 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
 
   mscclppCudaHostFree((void *)comm->abortFlag);
   free(comm);
+
+#if defined(ENABLE_NPKIT)
+  // Dump NPKit events and shutdown
+  npkitDumpDir = getenv("NPKIT_DUMP_DIR");
+  if (npkitDumpDir == nullptr) {
+    WARN("NPKIT_DUMP_DIR is empty");
+  } else {
+    MSCCLPPCHECK(NpKit::Dump(npkitDumpDir));
+  }
+  MSCCLPPCHECK(NpKit::Shutdown());
+#endif
+
   return mscclppSuccess;
 }
 
