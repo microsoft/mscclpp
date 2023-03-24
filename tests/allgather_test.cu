@@ -57,6 +57,8 @@ __device__ void allgather0(mscclppDevConn_t devConn, int rank, int world_size, i
   // this thread's role is a sender role
   // put your data asynchronously
   devConn.put(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU*sizeof(int));
+  // make sure everyone is put their data before some thread randomly blocks everyone else in signal
+  __syncthreads();
   // push with flag and sync to make sure the data is received
   devConn.signal();
   
