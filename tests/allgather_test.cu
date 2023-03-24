@@ -11,11 +11,7 @@
 #include <unordered_map>
 
 
-#ifdef MSCCLPP_USE_MPI_FOR_TESTS
-int nranksPerNode;
-#else
-#define nranksPerNode 8
-#endif
+static int nranksPerNode = 8;
 
 // Propagate errors up
 
@@ -169,7 +165,7 @@ mscclppResult_t setupMscclppConnections(int rank, int world_size, mscclppComm_t 
 void printUsage(const char* prog, bool isMpi) {
   if (isMpi){
     std::string st = "you are using MPI for this test\n";
-    st += "tow possilbe usages are:\n";
+    st += "two possilbe usages are:\n";
     st += "> " + std::string(prog) + "\n";
     st += "or\n";
     st += "> " + std::string(prog) + " -ip_port [ip:port]\n";      
@@ -243,6 +239,7 @@ std::unordered_map<std::string, std::string> parseArgs(int argc, const char* arg
       }
     } else if (arg == "-help" || arg == "-h") {
       printUsage(argv[0], isMpi);
+      exit(0);
     } else {
       fprintf(stderr, "Error: Unknown option %s\n", argv[i]);
       exit(-1);
@@ -282,7 +279,7 @@ int main(int argc, const char *argv[])
   }
   rank = std::stoi(parsedArgs["rank"]);
   world_size = std::stoi(parsedArgs["nranks"]);
-  if (parsedArgs.find("-rankspernode") == parsedArgs.end()) {
+  if (parsedArgs.find("rankspernode") == parsedArgs.end()) {
     printUsage(argv[0], isMpi);
     exit(-1);
   }
