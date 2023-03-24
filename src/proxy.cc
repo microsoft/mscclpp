@@ -12,6 +12,10 @@
 #include <vector>
 #include <thread>
 
+#if defined(ENABLE_NPKIT)
+#include "npkit/npkit.h"
+#endif
+
 #define MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD 100
 // TODO(chhwang): verify if MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0 is useful, otherwise delete this option.
 #define MSCCLPP_PROXY_FLAG_SET_BY_RDMA 1
@@ -224,6 +228,11 @@ void* mscclppProxyServiceIb(void* _args) {
       conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
                             /*wrId=*/0, /*srcOffset=*/trigger.fields.srcDataOffset, /*dstOffset=*/trigger.fields.dstDataOffset,
                             /*signaled=*/false);
+#if defined(ENABLE_NPKIT)
+      NpKit::CollectCpuEvent(
+        NPKIT_EVENT_IB_SEND_ENTRY, (uint32_t)trigger.fields.dataSize, 0 /* inflight request differentiator */,
+        *(volatile uint64_t*)NpKit::GetCpuTimestamp(), trigger.fields.connId /* event collection context index */);
+#endif
     }
     if (trigger.fields.type & mscclppFlag) {
       // My local flag is copied to the peer's proxy flag
@@ -258,6 +267,11 @@ void* mscclppProxyServiceIb(void* _args) {
           if (wc->opcode == IBV_WC_RDMA_WRITE) {
             // send completion
             waiting = false;
+#if defined(ENABLE_NPKIT)
+            NpKit::CollectCpuEvent(
+              NPKIT_EVENT_IB_SEND_EXIT, (uint32_t)trigger.fields.dataSize, 0 /* inflight request differentiator */,
+              *(volatile uint64_t*)NpKit::GetCpuTimestamp(), trigger.fields.connId /* event collection context index */);
+#endif
             break;
           }
         }
