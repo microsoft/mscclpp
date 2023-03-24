@@ -28,7 +28,7 @@ set(MSCCLPP_DIR ${CMAKE_CURRENT_LIST_DIR}/../build)
 nanobind_add_module(
   _py_mscclpp
   NOSTRIP
-  NB_SHARED
+  NB_STATIC
   src/_py_mscclpp.cpp
 )
 
