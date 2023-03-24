@@ -140,6 +140,12 @@ typedef enum { mscclppSuccess                 =  0,
                mscclppInProgress              =  7,
                mscclppNumResults              =  8 } mscclppResult_t;
 
+/* Create a unique ID for communication. Use with mscclppCommInitRankFromId().
+ * All processes need to provide the same ID to mscclppCommInitRankFromId().
+ *
+ * Outputs:
+ *  uniqueId: the unique ID to be created
+ */
 mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* uniqueId);
 
 /* Transport Types */
@@ -148,29 +154,129 @@ typedef enum { mscclppTransportP2P = 0,
                mscclppTransportIB = 2,
 } mscclppTransport_t;
 
-mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair);
+/* Initialize a communicator.
+ * 
+ * Outputs:
+ *   comm: the communicator to be initialized
+ * 
+ * Inputs:
+ *   nranks:     number of ranks in the communicator
+ *   rank:       rank of the calling process
+ *   ipPortPair: a string of the form "ip:port" that represents the address of the root process
+ */
+mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ipPortPair);
 
+/* Initialize a communicator from a given mscclppUniqueId.
+ * 
+ * Outputs:
+ *   comm: the communicator to be initialized
+ * 
+ * Inputs:
+ *   nranks: number of ranks in the communicator
+ *   id:     the unique ID to be used for communication
+ *   rank:   rank of the calling process
+ */
 mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank);
 
+/* Ring-based AllGather through the bootstrap socket.
+ * 
+ * Outputs:
+ *   comm: the communicator
+ * 
+ * Inputs:
+ *   data: data array to be gathered where `[r*size, (r+1)*size)` is the data for rank `r`
+ *   size: data size per rank
+ */
 mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int size);
 
+/* Destroy a communicator.
+ * 
+ * Inputs:
+ *   comm: the communicator to be destroyed
+ */
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
+/* Connect to a remote rank. This function only prepares metadata for connection. The actual connection
+ * is made by a following call of mscclppConnectionSetup().
+ * 
+ * Inputs:
+ *   comm:        the communicator
+ *   remoteRank:  the rank of the remote process
+ *   tag:         the tag of the connection. tag is copied into the corresponding mscclppDevConn_t, which can be
+ *                used to identify the connection inside a GPU kernel.
+ *   localBuff:   the local send/receive buffer
+ *   buffSize:    the size of the local buffer
+ *   transportType: the type of transport to be used (mscclppTransportP2P or mscclppTransportIB)
+ *   ibDev:       the name of the IB device to be used. Expect a null for mscclppTransportP2P.
+ */
 mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
                                mscclppTransport_t transportType, const char *ibDev=0);
 
+/* Establish all connections declared by mscclppConnect(). This function must be called after all mscclppConnect()
+ * calls are made. This function ensures that all remote ranks are ready to communicate when it returns.
+ * 
+ * Inputs:
+ *   comm: the communicator
+ */
 mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm);
 
+/* Return an array of mscclppDevConn_t and the number of connections created by mscclppConnectionSetup().
+ * 
+ * Outputs:
+ *   devConns: the array of mscclppDevConn_t. Each mscclppDevConn_t corresponds to a mscclppConnect() call in the
+ *             order of the calls.
+ *   nConns:   the number of connections
+ * 
+ * Inputs:
+ *   comm: the communicator
+ */
 mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nConns);
 
+/* Return the mscclppDevConn_t corresponding to the given tag.
+ * 
+ * Outputs:
+ *   devConn: the mscclppDevConn_t corresponding to the given tag
+ * 
+ * Inputs:
+ *   comm: the communicator
+ *   tag:  the tag of the connection
+ */
 mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn);
 
+/* Launch proxy threads for all connections created by mscclppConnectionSetup(). This function is supposed to be called
+ * before starting a kernel that uses mscclppDevConn_t. Up to two proxy threads are launched for each (GPU + IB) pair
+ * (one for P2P NVLink and one for InfiniBand).
+ * 
+ * Inputs:
+ *  comm: the communicator
+ */
 mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm);
 
+/* Stop all proxy threads.
+ * 
+ * Inputs:
+ *  comm: the communicator
+ */
 mscclppResult_t mscclppProxyStop(mscclppComm_t comm);
 
+/* Return the rank of the calling process.
+ * 
+ * Outputs:
+ *   rank: the rank of the calling process
+ * 
+ * Inputs:
+ *   comm: the communicator
+ */
 mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank);
 
+/* Return the number of ranks of the communicator.
+ * 
+ * Outputs:
+ *   size: the number of ranks of the communicator
+ * 
+ * Inputs:
+ *   comm: the communicator
+ */
 mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size);
 
 #ifdef __cplusplus

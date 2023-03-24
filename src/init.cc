@@ -73,8 +73,8 @@ mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int si
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair);
-mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair) {
+MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nranks, int rank, const char* ipPortPair);
+mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ipPortPair) {
   if (mscclppGdrCopy == NULL) {
     MSCCLPPCHECK(initGdrCopy());
   }
@@ -91,9 +91,9 @@ mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, c
   // We assume that the user has set the device to the intended one already
   CUDACHECK(cudaGetDevice(&_comm->cudaDev));
 
-  MSCCLPPCHECK(bootstrapNetInit(ip_port_pair));
+  MSCCLPPCHECK(bootstrapNetInit(ipPortPair));
   mscclppBootstrapHandle handle;
-  MSCCLPPCHECK(bootstrapGetUniqueId(&handle, rank == 0, ip_port_pair));
+  MSCCLPPCHECK(bootstrapGetUniqueId(&handle, rank == 0, ipPortPair));
   _comm->magic = handle.magic;
 
   MSCCLPPCHECKGOTO(mscclppCudaHostCalloc((uint32_t **)&_comm->abortFlag, 1), res, fail);
