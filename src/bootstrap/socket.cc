@@ -12,6 +12,8 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 
+#define MSCCLPP_SOCKET_ACCEPT_TIMEOUT 30
+
 static mscclppResult_t socketProgressOpt(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset, int block, int* closed) {
   int bytes = 0;
   *closed = 0;
@@ -406,13 +408,19 @@ mscclppResult_t mscclppSocketGetAddr(struct mscclppSocket* sock, union mscclppSo
 }
 
 static mscclppResult_t socketTryAccept(struct mscclppSocket* sock) {
+  static double initTime = -1;
+  if (initTime == -1) initTime = clockSec();
   socklen_t socklen = sizeof(union mscclppSocketAddress);
   sock->fd = accept(sock->acceptFd, &sock->addr.sa, &socklen);
   if (sock->fd != -1) {
     sock->state = mscclppSocketStateAccepted;
+    initTime = -1;
   } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
     WARN("socketTryAccept: get errno %d that is not EAGAIN or EWOULDBLOCK", errno);
     return mscclppSystemError;
+  } else if (clockSec() - initTime > MSCCLPP_SOCKET_ACCEPT_TIMEOUT) {
+    WARN("socketTryAccept: exceeded timeout (%d sec)", MSCCLPP_SOCKET_ACCEPT_TIMEOUT);
+    return mscclppRemoteError;
   }
   return mscclppSuccess;
 }
