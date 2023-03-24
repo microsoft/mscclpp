@@ -80,20 +80,28 @@ extern "C" {
  **************************************************************************************************************/
 struct mscclppDevConn {
 #ifdef __CUDACC__
- __forceinline__ __device__ void put(uint64_t dataOffset, uint64_t dataSize){
-    fifo.push(mscclppData, dataOffset, dataSize);
+  __forceinline__ __device__ void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize){
+    fifo.push(mscclppData, dstDataOffset, srcDataOffset, dataSize);
+  }
+
+  __forceinline__ __device__ void put(uint64_t dataOffset, uint64_t dataSize){
+    put(dataOffset, dataOffset, dataSize);
   }
 
   __forceinline__ __device__ void signal(){
     epochIncrement();
-    uint64_t curFifoHead = fifo.push(mscclppFlag | mscclppSync, 1, 1);
+    uint64_t curFifoHead = fifo.push(mscclppFlag | mscclppSync, 0, 0, 1);
+    while (*(volatile uint64_t *)fifo.triggerFifoTail <= curFifoHead);
+  }
+
+  __forceinline__ __device__ void putWithSignal(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize){
+    epochIncrement();
+    uint64_t curFifoHead = fifo.push(mscclppData | mscclppFlag | mscclppSync, dstDataOffset, srcDataOffset, dataSize);
     while (*(volatile uint64_t *)fifo.triggerFifoTail <= curFifoHead);
   }
 
   __forceinline__ __device__ void putWithSignal(uint64_t dataOffset, uint64_t dataSize){
-    epochIncrement();
-    uint64_t curFifoHead = fifo.push(mscclppData | mscclppFlag | mscclppSync, dataOffset, dataSize);
-    while (*(volatile uint64_t *)fifo.triggerFifoTail <= curFifoHead);
+    putWithSignal(dataOffset, dataOffset, dataSize);
   }
 
   __forceinline__ __device__ void wait(){
@@ -149,6 +157,8 @@ typedef enum { mscclppTransportP2P = 0,
 
 mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, int rank, const char* ip_port_pair);
 
+mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank);
+
 mscclppResult_t mscclppBootStrapAllGather(mscclppComm_t comm, void* data, int size);
 
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
@@ -165,6 +175,10 @@ mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, i
 mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm);
 
 mscclppResult_t mscclppProxyStop(mscclppComm_t comm);
+
+mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank);
+
+mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size);
 
 #ifdef __cplusplus
 } // end extern "C"

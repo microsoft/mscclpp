@@ -58,6 +58,7 @@ static std::string mscclppShmFileName(mscclppComm_t comm, int rank)
   return ss.str();
 }
 
+MSCCLPP_API(mscclppResult_t, mscclppGetUniqueId, mscclppUniqueId* out);
 mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* out) {
   MSCCLPPCHECK(mscclppInit());
 //   mscclppCHECK(PtrCheck(out, "GetUniqueId", "out"));
@@ -140,10 +141,68 @@ fail:
   return res;
 }
 
+MSCCLPP_API(mscclppResult_t, mscclppCommInitRankFromId, mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank);
+mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank) {
+  if (mscclppGdrCopy == NULL) {
+    MSCCLPPCHECK(initGdrCopy());
+  }
+
+  mscclppResult_t res = mscclppSuccess;
+  mscclppComm_t _comm = NULL;
+  mscclppBootstrapHandle* handle = (mscclppBootstrapHandle*)&id;
+
+  MSCCLPPCHECKGOTO(mscclppCalloc(&_comm, 1), res, fail);
+  _comm->rank = rank;
+  _comm->nRanks = nranks;
+  // We assume that the user has set the device to the intended one already
+  CUDACHECK(cudaGetDevice(&_comm->cudaDev));
+
+  MSCCLPPCHECK(bootstrapNetInit());
+  _comm->magic = handle->magic;
+
+  MSCCLPPCHECKGOTO(mscclppCudaHostCalloc((uint32_t **)&_comm->abortFlag, 1), res, fail);
+  MSCCLPPCHECK(bootstrapInit(handle, _comm));
+
+  *comm = _comm;
+  return res;
+fail:
+  if (_comm) {
+    if (_comm->abortFlag) mscclppCudaHostFree((void *)_comm->abortFlag);
+    free(_comm);
+  }
+  if (comm) *comm = NULL;
+  return res;
+}
+
 MSCCLPP_API(mscclppResult_t, mscclppCommDestroy, mscclppComm_t comm);
 mscclppResult_t mscclppCommDestroy(mscclppComm_t comm){
   if (comm == NULL)
     return mscclppSuccess;
+
+  for (int i = 0; i < comm->nConns; ++i) {
+    struct mscclppConn *conn = &comm->conns[i];
+    if (conn->cpuProxyFlagGdrDesc) {
+      // IB
+      MSCCLPPCHECK(mscclppGdrCudaFree(conn->cpuProxyFlagGdrDesc));
+    } else if (conn->devConn->proxyEpochId) {
+      // P2P
+      MSCCLPPCHECK(mscclppCudaFree(conn->devConn->proxyEpochId));
+    }
+  }
+
+  for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
+    struct mscclppProxyState *proxyState = comm->proxyState[i];
+    if (proxyState) {
+      MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->triggerFifo.desc));
+      MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->fifoHead.desc));
+      MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->fifoTail.desc));
+      free(proxyState);
+    }
+  }
+
+  if (comm->stream != NULL) {
+    CUDACHECK(cudaStreamDestroy(comm->stream));
+  }
 
   for (int i = 0; i < MSCCLPP_IB_MAX_DEVS; ++i) {
     if (comm->ibContext[i]) {
@@ -433,5 +492,27 @@ MSCCLPP_API(mscclppResult_t, mscclppProxyStop, mscclppComm_t comm);
 mscclppResult_t mscclppProxyStop(mscclppComm_t comm)
 {
   MSCCLPPCHECK(mscclppProxyDestroy(comm));
+  return mscclppSuccess;
+}
+
+MSCCLPP_API(mscclppResult_t, mscclppCommRank, mscclppComm_t comm, int* rank);
+mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank)
+{
+  if (comm == NULL || rank == NULL) {
+    WARN("comm or rank cannot be null");
+    return mscclppInvalidUsage;
+  }
+  *rank = comm->rank;
+  return mscclppSuccess;
+}
+
+MSCCLPP_API(mscclppResult_t, mscclppCommSize, mscclppComm_t comm, int* size);
+mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size)
+{
+  if (comm == NULL || size == NULL) {
+    WARN("comm or size cannot be null");
+    return mscclppInvalidUsage;
+  }
+  *size = comm->nRanks;
   return mscclppSuccess;
 }

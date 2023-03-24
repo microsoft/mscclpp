@@ -142,6 +142,8 @@ mscclppResult_t mscclppIbContextDestroy(struct mscclppIbContext *ctx)
     }
     ibv_destroy_cq(ctx->qps[i].cq);
     free(ctx->qps[i].wcs);
+    free(ctx->qps[i].sges);
+    free(ctx->qps[i].wrs);
   }
   if (ctx->pd != NULL) {
     ibv_dealloc_pd(ctx->pd);
@@ -342,7 +344,7 @@ int mscclppIbQp::rts()
 }
 
 int mscclppIbQp::stageSend(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info, uint32_t size,
-                           uint64_t wrId, uint64_t offset, bool signaled)
+                           uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled)
 {
   if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
     return -1;
@@ -357,10 +359,10 @@ int mscclppIbQp::stageSend(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info
   wr_->num_sge = 1;
   wr_->opcode = IBV_WR_RDMA_WRITE;
   wr_->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
-  wr_->wr.rdma.remote_addr = (uint64_t)(info->addr) + offset;
+  wr_->wr.rdma.remote_addr = (uint64_t)(info->addr) + dstOffset;
   wr_->wr.rdma.rkey = info->rkey;
   wr_->next = nullptr;
-  sge_->addr = (uint64_t)(ibMr->buff) + offset;
+  sge_->addr = (uint64_t)(ibMr->buff) + srcOffset;
   sge_->length = size;
   sge_->lkey = ibMr->mr->lkey;
   if (wrn > 0) {
@@ -371,9 +373,9 @@ int mscclppIbQp::stageSend(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info
 }
 
 int mscclppIbQp::stageSendWithImm(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info, uint32_t size,
-                                  uint64_t wrId, uint64_t offset, bool signaled, unsigned int immData)
+                                  uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled, unsigned int immData)
 {
-  int wrn = this->stageSend(ibMr, info, size, wrId, offset, signaled);
+  int wrn = this->stageSend(ibMr, info, size, wrId, srcOffset, dstOffset, signaled);
   this->wrs[wrn - 1].opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
   this->wrs[wrn - 1].imm_data = immData;
   return wrn;

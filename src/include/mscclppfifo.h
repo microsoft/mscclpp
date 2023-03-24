@@ -19,13 +19,14 @@ union alignas(16) mscclppTrigger {
   uint64_t value[2];
   struct {
     // first 64 bits: value[0]
-    uint64_t dataSize   : MSCCLPP_BITS_SIZE;
-    uint64_t dataOffset : MSCCLPP_BITS_OFFSET;
-    uint64_t            : (64-MSCCLPP_BITS_SIZE-MSCCLPP_BITS_OFFSET); // ensure 64-bit alignment
+    uint64_t dataSize      : MSCCLPP_BITS_SIZE;
+    uint64_t srcDataOffset : MSCCLPP_BITS_OFFSET;
+    uint64_t               : (64-MSCCLPP_BITS_SIZE-MSCCLPP_BITS_OFFSET); // ensure 64-bit alignment
     // second 64 bits: value[1]
-    uint64_t connId     : MSCCLPP_BITS_CONNID;
-    uint64_t type       : MSCCLPP_BITS_TYPE;
-    uint64_t            : (64-MSCCLPP_BITS_CONNID-MSCCLPP_BITS_TYPE); // ensure 64-bit alignment
+    uint64_t dstDataOffset : MSCCLPP_BITS_OFFSET;
+    uint64_t connId        : MSCCLPP_BITS_CONNID;
+    uint64_t type          : MSCCLPP_BITS_TYPE;
+    uint64_t               : (64-MSCCLPP_BITS_OFFSET-MSCCLPP_BITS_CONNID-MSCCLPP_BITS_TYPE); // ensure 64-bit alignment
   } fields;
 };
 
@@ -34,15 +35,15 @@ typedef mscclppTrigger* mscclppTrigger_t;
 struct mscclppConcurrentFifo {
 #ifdef __CUDACC__
 
-  __forceinline__ __device__ uint64_t push(uint64_t type, uint64_t dataOffset, uint64_t dataSize){
+  __forceinline__ __device__ uint64_t push(uint64_t type, uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize){
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->triggerFifoHead,1);
     while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->triggerFifoTail));
     auto valptr = &(this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE].value);
     asm volatile(
       "st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(valptr),
-      "l"((dataOffset << (MSCCLPP_BITS_SIZE)) +
-          (dataSize)),
-      "l"((type << MSCCLPP_BITS_CONNID) + this->connId));
+      "l"((srcDataOffset << MSCCLPP_BITS_SIZE) + dataSize),
+      "l"((((type << MSCCLPP_BITS_CONNID) + this->connId) << MSCCLPP_BITS_OFFSET) + dstDataOffset)
+    );
     return curFifoHead;
   }
 

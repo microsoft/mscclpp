@@ -58,18 +58,10 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
 
     // Trigger sending data, flag and synchronize after
     int ibPortion = nelemsPerGPU/12;//nelemsPerGPU/12;
-    uint64_t dataOffset;
-    uint64_t dataSize;
-
-    if (isIB){
-      dataOffset =  rank * nelemsPerGPU * sizeof(int) + (nelemsPerGPU - ibPortion)*sizeof(int);
-      dataSize = ibPortion*sizeof(int);
-    }
-    else {
-      dataOffset = rank * nelemsPerGPU * sizeof(int);
-      dataSize = (nelemsPerGPU-ibPortion)*sizeof(int);
-    }
-
+    if (isIB)
+      devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int) + (nelemsPerGPU - ibPortion)*sizeof(int), rank * nelemsPerGPU * sizeof(int) + (nelemsPerGPU - ibPortion)*sizeof(int), ibPortion*sizeof(int));
+    else 
+      devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync, rank * nelemsPerGPU * sizeof(int), rank * nelemsPerGPU * sizeof(int), (nelemsPerGPU-ibPortion)*sizeof(int));
     // Wait on the request to make sure it is safe to reuse buffer and flag
     auto req = devConn.fifo.putWithSignal(dataOffset, dataSize); 
     devConn.fifo.sync(req);    

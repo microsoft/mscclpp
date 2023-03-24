@@ -81,8 +81,8 @@ void* mscclppProxyServiceP2P(void* _args) {
 
     // Iterate over what send is needed
     if (trigger.fields.type & mscclppData){
-      void *srcBuff = (void *)((char *)conn->devConn->localBuff + trigger.fields.dataOffset);
-      void *dstBuff = (void *)((char *)conn->devConn->remoteBuff + trigger.fields.dataOffset);
+      void *srcBuff = (void *)((char *)conn->devConn->localBuff + trigger.fields.srcDataOffset);
+      void *dstBuff = (void *)((char *)conn->devConn->remoteBuff + trigger.fields.dstDataOffset);
       PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
     }
     if (trigger.fields.type & mscclppFlag) {
@@ -222,12 +222,13 @@ void* mscclppProxyServiceIb(void* _args) {
 
     if (trigger.fields.type & mscclppData) {
       conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
-                            /*wrId=*/0, /*offset=*/trigger.fields.dataOffset, /*signaled=*/false);
+                            /*wrId=*/0, /*srcOffset=*/trigger.fields.srcDataOffset, /*dstOffset=*/trigger.fields.dstDataOffset,
+                            /*signaled=*/false);
     }
     if (trigger.fields.type & mscclppFlag) {
       // My local flag is copied to the peer's proxy flag
       conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
-                            /*wrId=*/0, /*offset=*/0, /*signaled=*/true);
+                            /*wrId=*/0, /*srcOffset=*/0, /*dstOffset=*/0, /*signaled=*/true);
     }
     int ret;
     if ((ret = conn->ibQp->postSend()) != 0) {
