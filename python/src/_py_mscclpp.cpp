@@ -247,5 +247,16 @@ NB_MODULE(_py_mscclpp, m) {
       .def(
           "__del__",
           &MscclppComm::close,
+          nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "bootstrap_all_gather",
+          [](MscclppComm &comm, void *data, int size) {
+            comm.check_open();
+            return maybe(
+                mscclppBootstrapAllGather(comm._handle, data, size),
+                true,
+                "Failed to stop MSCCLPP proxy");
+	  },
           nb::call_guard<nb::gil_scoped_release>());
+
 }
