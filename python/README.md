@@ -36,12 +36,17 @@ uname -r
 
 # install
 
+# break /usr/sbin/policy-rc.d so we can install modules
+echo '#!/bin/sh
+exit 0' > /usr/sbin/policy-rc.d
+
 apt update
 apt install -y \
   build-essential devscripts debhelper check \
   libsubunit-dev fakeroot pkg-config dkms \
-  nvidia-dkms-525-server \
   linux-headers-5.4.0-1090-azure 
+  
+apt install -y nvidia-dkms-525-server
 
 
 cd $WORKDIR/gdrcopy
