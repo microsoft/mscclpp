@@ -2,6 +2,7 @@
 
 Test instructions:
  * Compile the `libmscclpp.so` library.
+ * Install `cmake` verion >= 3.18
  * setup a python virtual env
    * `pip install -r requirements.txt`
  * `./tesh.sh`
