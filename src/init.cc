@@ -1,7 +1,8 @@
-#include "mscclpp.h"
 #include "bootstrap.h"
+#include "config.h"
 #include "core.h"
 #include "gdr.h"
+#include "mscclpp.h"
 #include <map>
 #include <sstream>
 #if defined(ENABLE_NPKIT)
@@ -291,9 +292,8 @@ mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevCon
   return mscclppSuccess;
 }
 
-
-MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int remoteRank, int tag, 
-            void* localBuff, uint64_t buffSize, mscclppTransport_t transportType, const char *ibDev);
+MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int remoteRank, int tag, void* localBuff,
+            uint64_t buffSize, mscclppTransport_t transportType, const char* ibDev);
 mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
                                mscclppTransport_t transportType, const char *ibDev)
 {
@@ -395,7 +395,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
     WARN("Proxy allocation failed!");
     return mscclppInternalError;
   }
-  
+
   struct mscclppDevConn *devConn = &comm->devConns[comm->nConns];
 
   conn->devConn = devConn;
@@ -562,4 +562,11 @@ mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size)
   }
   *size = comm->nRanks;
   return mscclppSuccess;
+}
+
+MSCCLPP_API(void, mscclppSetBootstrapConnTimeout, time_t timeout);
+void mscclppSetBootstrapConnTimeout(time_t timeout)
+{
+  mscclppConfig* config = mscclppConfig::getInstance();
+  config->setBootstrapConnectionTimeoutConfig(timeout);
 }

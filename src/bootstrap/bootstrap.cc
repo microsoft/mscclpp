@@ -4,14 +4,16 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
-#include "mscclpp.h"
-#include "core.h"
-#include "utils.h"
 #include "bootstrap.h"
-#include <unistd.h>
+#include "config.h"
+#include "core.h"
+#include "mscclpp.h"
+#include "utils.h"
 #include <sys/types.h>
+#include <unistd.h>
 
-struct bootstrapRootArgs {
+struct bootstrapRootArgs
+{
   struct mscclppSocket* listenSock;
   uint64_t magic;
 };
@@ -107,6 +109,7 @@ static void *bootstrapRoot(void* rargs) {
   union mscclppSocketAddress *rankAddresses = NULL;
   union mscclppSocketAddress *rankAddressesRoot = NULL; // for initial rank <-> root information exchange
   union mscclppSocketAddress *zero = NULL;
+
   MSCCLPPCHECKGOTO(mscclppCalloc(&zero, 1), res, out);
   setFilesLimit();
 
@@ -145,10 +148,10 @@ static void *bootstrapRoot(void* rargs) {
   TRACE(MSCCLPP_INIT, "COLLECTED ALL %d HANDLES", nranks);
 
   // Send the connect handle for the next rank in the AllGather ring
-  for (int r=0; r<nranks; ++r) {
-    int next = (r+1) % nranks;
+  for (int r = 0; r < nranks; ++r) {
+    int next = (r + 1) % nranks;
     struct mscclppSocket sock;
-    MSCCLPPCHECKGOTO(mscclppSocketInit(&sock, rankAddressesRoot+r, magic, mscclppSocketTypeBootstrap), res, out);
+    MSCCLPPCHECKGOTO(mscclppSocketInit(&sock, rankAddressesRoot + r, magic, mscclppSocketTypeBootstrap), res, out);
     MSCCLPPCHECKGOTO(mscclppSocketConnect(&sock), res, out);
     MSCCLPPCHECKGOTO(bootstrapNetSend(&sock, rankAddresses+next, sizeof(union mscclppSocketAddress)), res, out);
     MSCCLPPCHECKGOTO(mscclppSocketClose(&sock), res, out);
@@ -169,7 +172,8 @@ out:
   return NULL;
 }
 
-mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle) {
+mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle)
+{
   struct mscclppSocket* listenSock;
   struct bootstrapRootArgs* args;
   pthread_t thread;
@@ -191,9 +195,11 @@ mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle) {
 // #include <netinet/in.h>
 // #include <arpa/inet.h>
 
-mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot, const char* ip_port_pair) {
-  memset(handle, 0, sizeof(mscclppBootstrapHandle));
+mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot, const char* ip_port_pair)
+{
   const char* env = NULL;
+
+  memset(handle, 0, sizeof(mscclppBootstrapHandle));
   if (ip_port_pair) {
     env = ip_port_pair;
   } else {
@@ -261,13 +267,16 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
 
   info.rank = rank;
   info.nranks = nranks;
+
   // Create socket for other ranks to contact me
-  MSCCLPPCHECK(mscclppSocketInit(&state->listenSock, &bootstrapNetIfAddr, comm->magic, mscclppSocketTypeBootstrap, comm->abortFlag));
+  MSCCLPPCHECK(mscclppSocketInit(&state->listenSock, &bootstrapNetIfAddr, comm->magic, mscclppSocketTypeBootstrap,
+                                 comm->abortFlag));
   MSCCLPPCHECK(mscclppSocketListen(&state->listenSock));
   MSCCLPPCHECK(mscclppSocketGetAddr(&state->listenSock, &info.extAddressListen));
 
   // Create socket for root to contact me
-  MSCCLPPCHECK(mscclppSocketInit(&listenSockRoot, &bootstrapNetIfAddr, comm->magic, mscclppSocketTypeBootstrap, comm->abortFlag));
+  MSCCLPPCHECK(
+    mscclppSocketInit(&listenSockRoot, &bootstrapNetIfAddr, comm->magic, mscclppSocketTypeBootstrap, comm->abortFlag));
   MSCCLPPCHECK(mscclppSocketListen(&listenSockRoot));
   MSCCLPPCHECK(mscclppSocketGetAddr(&listenSockRoot, &info.extAddressListenRoot));
 
@@ -294,7 +303,8 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
   MSCCLPPCHECK(mscclppSocketClose(&sock));
   MSCCLPPCHECK(mscclppSocketClose(&listenSockRoot));
 
-  MSCCLPPCHECK(mscclppSocketInit(&state->ringSendSocket, &nextAddr, comm->magic, mscclppSocketTypeBootstrap, comm->abortFlag));
+  MSCCLPPCHECK(mscclppSocketInit(&state->ringSendSocket, &nextAddr, comm->magic,
+                                 mscclppSocketTypeBootstrap, comm->abortFlag));
   MSCCLPPCHECK(mscclppSocketConnect(&state->ringSendSocket));
   // Accept the connect request from the previous rank in the AllGather ring
   MSCCLPPCHECK(mscclppSocketInit(&state->ringRecvSocket));
@@ -310,7 +320,8 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
 
   // proxy is aborted through a message; don't set abortFlag
   MSCCLPPCHECK(mscclppCalloc(&proxySocket, 1));
-  MSCCLPPCHECK(mscclppSocketInit(proxySocket, &bootstrapNetIfAddr, comm->magic, mscclppSocketTypeProxy, comm->abortFlag));
+  MSCCLPPCHECK(mscclppSocketInit(proxySocket, &bootstrapNetIfAddr, comm->magic,
+                                 mscclppSocketTypeProxy, comm->abortFlag));
   MSCCLPPCHECK(mscclppSocketListen(proxySocket));
   MSCCLPPCHECK(mscclppSocketGetAddr(proxySocket, state->peerProxyAddresses+rank));
   MSCCLPPCHECK(bootstrapAllGather(state, state->peerProxyAddresses, sizeof(union mscclppSocketAddress)));
@@ -352,7 +363,9 @@ mscclppResult_t bootstrapSend(void* commState, int peer, int tag, void* data, in
   struct bootstrapState* state = (struct bootstrapState*)commState;
   struct mscclppSocket sock;
 
-  MSCCLPPCHECKGOTO(mscclppSocketInit(&sock, state->peerCommAddresses+peer, state->magic, mscclppSocketTypeBootstrap, state->abortFlag), ret, fail);
+  MSCCLPPCHECKGOTO(mscclppSocketInit(&sock, state->peerCommAddresses + peer, state->magic, mscclppSocketTypeBootstrap,
+                                     state->abortFlag),
+                   ret, fail);
   MSCCLPPCHECKGOTO(mscclppSocketConnect(&sock), ret, fail);
   MSCCLPPCHECKGOTO(bootstrapNetSend(&sock, &state->rank, sizeof(int)), ret, fail);
   MSCCLPPCHECKGOTO(bootstrapNetSend(&sock, &tag, sizeof(int)), ret, fail);

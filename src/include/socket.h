@@ -21,7 +21,6 @@
 #define SLEEP_INT            1000 // connection retry sleep interval in usec
 #define RETRY_REFUSED_TIMES   2e4 // connection refused retry times before reporting a timeout (20 sec)
 #define RETRY_TIMEDOUT_TIMES    3 // connection timed out retry times (each one can take 20s)
-#define RETRY_ACCEPT_TIMES    2e4 // connection accept retry times (each one can take 20s)
 #define SOCKET_NAME_MAXLEN (NI_MAXHOST+NI_MAXSERV)
 #define MSCCLPP_SOCKET_MAGIC 0x564ab9f2fc4b9d6cULL
 
@@ -54,7 +53,8 @@ enum mscclppSocketType {
   mscclppSocketTypeNetIb = 4
 };
 
-struct mscclppSocket {
+struct mscclppSocket
+{
   int fd;
   int acceptFd;
   int timedOutRetries;
@@ -75,7 +75,10 @@ int mscclppFindInterfaceMatchSubnet(char* ifNames, union mscclppSocketAddress* l
 int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress *ifAddrs, int ifNameMaxSize, int maxIfs);
 
 // Initialize a socket
-mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, union mscclppSocketAddress* addr = NULL, uint64_t magic = MSCCLPP_SOCKET_MAGIC, enum mscclppSocketType type = mscclppSocketTypeUnknown, volatile uint32_t* abortFlag = NULL, int asyncFlag = 0);
+mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, union mscclppSocketAddress* addr = NULL,
+                                  uint64_t magic = MSCCLPP_SOCKET_MAGIC,
+                                  enum mscclppSocketType type = mscclppSocketTypeUnknown,
+                                  volatile uint32_t* abortFlag = NULL, int asyncFlag = 0);
 // Create a listening socket. sock->addr can be pre-filled with IP & port info. sock->fd is set after a successful call
 mscclppResult_t mscclppSocketListen(struct mscclppSocket* sock);
 mscclppResult_t mscclppSocketGetAddr(struct mscclppSocket* sock, union mscclppSocketAddress* addr);

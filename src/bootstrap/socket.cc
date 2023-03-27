@@ -5,12 +5,14 @@
  ************************************************************************/
 
 #include "socket.h"
+#include "config.h"
 #include "utils.h"
+
 #include <stdlib.h>
 
-#include <unistd.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+#include <unistd.h>
 
 static mscclppResult_t socketProgressOpt(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset, int block, int* closed) {
   int bytes = 0;
@@ -405,20 +407,29 @@ mscclppResult_t mscclppSocketGetAddr(struct mscclppSocket* sock, union mscclppSo
   return mscclppSuccess;
 }
 
-static mscclppResult_t socketTryAccept(struct mscclppSocket* sock) {
+static mscclppResult_t socketTryAccept(struct mscclppSocket* sock)
+{
+  static time_t initTime = -1;
+  if (initTime == -1)
+    initTime = time(NULL);
+
+  mscclppConfig* config = mscclppConfig::getInstance();
+  time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
   socklen_t socklen = sizeof(union mscclppSocketAddress);
   sock->fd = accept(sock->acceptFd, &sock->addr.sa, &socklen);
   if (sock->fd != -1) {
     sock->state = mscclppSocketStateAccepted;
+    initTime = -1;
   } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
     WARN("socketTryAccept: get errno %d that is not EAGAIN or EWOULDBLOCK", errno);
     return mscclppSystemError;
-  } else if (++sock->acceptRetries == RETRY_ACCEPT_TIMES) {
-    WARN("socketTryAccept: exceeded retries (%d)", sock->acceptRetries);
+  } else if (time(NULL) - initTime > acceptTimeout) {
+    WARN("socketTryAccept: exceeded timeout (%ld) sec", acceptTimeout);
     return mscclppRemoteError;
-  } else {  
+  } else {
     usleep(SLEEP_INT);
-    if (sock->acceptRetries % 1000 == 0) INFO(MSCCLPP_ALL, "socketTryAccept: Call to try accept returned %s, retrying", strerror(errno));
+    if (sock->acceptRetries % 1000 == 0)
+      INFO(MSCCLPP_ALL, "socketTryAccept: Call to try accept returned %s, retrying", strerror(errno));
   }
   return mscclppSuccess;
 }
@@ -691,7 +702,9 @@ exit:
   return ret;
 }
 
-mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, union mscclppSocketAddress* addr, uint64_t magic, enum mscclppSocketType type, volatile uint32_t* abortFlag, int asyncFlag) {
+mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, union mscclppSocketAddress* addr, uint64_t magic,
+                                  enum mscclppSocketType type, volatile uint32_t* abortFlag, int asyncFlag)
+{
   mscclppResult_t ret = mscclppSuccess;
 
   if (sock == NULL) goto exit;
@@ -712,9 +725,9 @@ mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, union mscclppSocke
     memcpy(&sock->addr, addr, sizeof(union mscclppSocketAddress));
     family = sock->addr.sa.sa_family;
     if (family != AF_INET && family != AF_INET6) {
-      char line[SOCKET_NAME_MAXLEN+1];
+      char line[SOCKET_NAME_MAXLEN + 1];
       WARN("mscclppSocketInit: connecting to address %s with family %d is neither AF_INET(%d) nor AF_INET6(%d)",
-          mscclppSocketToString(&sock->addr, line), family, AF_INET, AF_INET6);
+           mscclppSocketToString(&sock->addr, line), family, AF_INET, AF_INET6);
       ret = mscclppInternalError;
       goto fail;
     }

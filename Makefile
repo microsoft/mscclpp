@@ -110,7 +110,7 @@ endif
 
 LDFLAGS := $(NVLDFLAGS) -libverbs -lgdrapi -lnuma
 
-LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc gdr.cc init.cc proxy.cc ib.cc)
+LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc gdr.cc init.cc proxy.cc ib.cc config.cc)
 LIBSRCS += $(addprefix src/bootstrap/,bootstrap.cc socket.cc)
 ifneq ($(NPKIT), 0)
 LIBSRCS += $(addprefix src/misc/,npkit.cc)
@@ -152,7 +152,7 @@ cpplint:
 cpplint-autofix:
 	clang-format -style=file --verbose --Werror -i $(CPPSOURCES)
 
-# Run cpplint on a single file, example: make cpplint-file INPUTFILE=src/bootstrap/bootstrap.cc
+# Run cpplint on a single file, example: make cpplint-file-autofix INPUTFILE=src/bootstrap/bootstrap.cc
 cpplint-file-autofix:
 	clang-format -style=file --verbose --Werror -i $(INPUTFILE)
 
