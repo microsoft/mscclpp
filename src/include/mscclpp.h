@@ -277,9 +277,9 @@ mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevCon
  */
 mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn);
 
-/* Launch proxy threads for all connections created by mscclppConnectionSetup(). This function is supposed to be
- * called before starting a kernel that uses mscclppDevConn_t. Up to two proxy threads are launched for each (GPU +
- * IB) pair (one for P2P NVLink and one for InfiniBand).
+/* Launch proxy threads for all connections created by mscclppConnectionSetup(). This function is supposed to be called
+ * before starting a kernel that uses mscclppDevConn_t. Up to two proxy threads are launched for each (GPU + IB) pair
+ * (one for P2P NVLink and one for InfiniBand).
  *
  * Inputs:
  *  comm: the communicator
@@ -313,17 +313,18 @@ mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank);
  */
 mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size);
 
-/* Log handler type */
-typedef void (*mscclppLogHandler_t)(int level, unsigned long flags, const char* msg);
+/* Log handler type which is a callback function for 
+ * however user likes to handle the log messages. Once set,
+ * the logger will just call this function with msg.
+ */
+typedef void (*mscclppLogHandler_t)(const char* msg);
 
 /* The default log handler.
  *
  * Inputs:
- *   level(unused): the log level
- *   flags(unused): the log flags
- *   msg:           the log message
+ *   msg: the log message
  */
-void mscclppDefaultLogHandler(int level, unsigned long flags, const char* msg);
+void mscclppDefaultLogHandler(const char* msg);
 
 /* Set a custom log handler.
  *

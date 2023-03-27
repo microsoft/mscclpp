@@ -7,32 +7,24 @@
 #ifndef MSCCLPP_CORE_H_
 #define MSCCLPP_CORE_H_
 
-#include <pthread.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <algorithm> // For std::min/std::max
-#include <stdio.h>
-#include <string.h>
-#include "mscclpp.h"
-#include "debug.h"
 #include "alloc.h"
+#include "debug.h"
+#include "mscclpp.h"
 #include "param.h"
+#include <algorithm> // For std::min/std::max
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #ifdef PROFAPI
-#define MSCCLPP_API(ret, func, args...)        \
-    __attribute__ ((visibility("default"))) \
-    __attribute__ ((alias(#func)))          \
-    ret p##func (args);                     \
-    extern "C"                              \
-    __attribute__ ((visibility("default"))) \
-    __attribute__ ((weak))                  \
-    ret func(args)
+#define MSCCLPP_API(ret, func, args...)                                                                                \
+  __attribute__((visibility("default"))) __attribute__((alias(#func))) ret p##func(args);                              \
+  extern "C" __attribute__((visibility("default"))) __attribute__((weak)) ret func(args)
 #else
-#define MSCCLPP_API(ret, func, args...)        \
-    extern "C"                              \
-    __attribute__ ((visibility("default"))) \
-    ret func(args)
+#define MSCCLPP_API(ret, func, args...) extern "C" __attribute__((visibility("default"))) ret func(args)
 #endif // end PROFAPI
 
 #endif // end include guard

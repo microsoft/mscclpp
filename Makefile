@@ -147,14 +147,14 @@ lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
 tests: $(TESTSBINS)
 
 cpplint:
-	clang-format -style=file --verbose --Werror --dry-run $(CPPSOURCES)
+	clang-format-12 -style=file --verbose --Werror --dry-run $(CPPSOURCES)
 
 cpplint-autofix:
-	clang-format -style=file --verbose --Werror -i $(CPPSOURCES)
+	clang-format-12 -style=file --verbose --Werror -i $(CPPSOURCES)
 
 # Run cpplint on a single file, example: make cpplint-file INPUTFILE=src/bootstrap/bootstrap.cc
 cpplint-file-autofix:
-	clang-format -style=file --verbose --Werror -i $(INPUTFILE)
+	clang-format-12 -style=file --verbose --Werror -i $(INPUTFILE)
 
 # Compile libobjs
 $(BUILDDIR)/$(OBJDIR)/%.o: %.cc $(HEADERS)

@@ -49,7 +49,7 @@ extern pthread_mutex_t mscclppDebugLock;
 extern FILE* mscclppDebugFile;
 extern mscclppResult_t getHostName(char* hostname, int maxlen, const char delim);
 
-void mscclppDebugDefaultLogHandler(int, unsigned long, const char* msg);
+void mscclppDebugDefaultLogHandler(const char* msg);
 void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char* filefunc, int line, const char* fmt,
                      ...) __attribute__((format(printf, 5, 6)));
 mscclppResult_t mscclppDebugSetLogHandler(mscclppLogHandler_t handler);
@@ -69,6 +69,7 @@ extern std::chrono::steady_clock::time_point mscclppEpoch;
 #define TRACE(...)
 #endif
 
+void mscclppSetThreadName(pthread_t thread, const char* fmt, ...);
 void mscclppSetThreadName(pthread_t thread, const char* fmt, ...);
 
 #endif

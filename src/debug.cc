@@ -23,7 +23,7 @@ std::chrono::steady_clock::time_point mscclppEpoch;
 
 static __thread int tid = -1;
 
-void mscclppDebugDefaultLogHandler(int, unsigned long, const char* msg)
+void mscclppDebugDefaultLogHandler(const char* msg)
 {
   fwrite(msg, 1, strlen(msg), mscclppDebugFile);
 }
@@ -31,6 +31,10 @@ void mscclppDebugDefaultLogHandler(int, unsigned long, const char* msg)
 void mscclppDebugInit()
 {
   pthread_mutex_lock(&mscclppDebugLock);
+  if (mscclppDebugLevel != -1) {
+    pthread_mutex_unlock(&mscclppDebugLock);
+    return;
+  }
   if (mscclppDebugLevel != -1) {
     pthread_mutex_unlock(&mscclppDebugLock);
     return;
@@ -58,6 +62,10 @@ void mscclppDebugInit()
   char* mscclppDebugSubsysEnv = getenv("MSCCLPP_DEBUG_SUBSYS");
   if (mscclppDebugSubsysEnv != NULL) {
     int invert = 0;
+    if (mscclppDebugSubsysEnv[0] == '^') {
+      invert = 1;
+      mscclppDebugSubsysEnv++;
+    }
     if (mscclppDebugSubsysEnv[0] == '^') {
       invert = 1;
       mscclppDebugSubsysEnv++;
@@ -95,6 +103,10 @@ void mscclppDebugInit()
           mscclppDebugMask &= ~mask;
         else
           mscclppDebugMask |= mask;
+        if (invert)
+          mscclppDebugMask &= ~mask;
+        else
+          mscclppDebugMask |= mask;
       }
       subsys = strtok(NULL, ",");
     }
@@ -116,6 +128,7 @@ void mscclppDebugInit()
     char* dfn = debugFn;
     while (mscclppDebugFileEnv[c] != '\0' && c < PATH_MAX) {
       if (mscclppDebugFileEnv[c++] != '%') {
+        *dfn++ = mscclppDebugFileEnv[c - 1];
         *dfn++ = mscclppDebugFileEnv[c - 1];
         continue;
       }
@@ -165,16 +178,18 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
     level = MSCCLPP_LOG_INFO;
     flags = mscclppDebugNoWarn;
   }
-
   // Save the last error (WARN) as a human readable string
   if (level == MSCCLPP_LOG_WARN) {
     pthread_mutex_lock(&mscclppDebugLock);
     va_list vargs;
     va_start(vargs, fmt);
     (void)vsnprintf(mscclppLastError, sizeof(mscclppLastError), fmt, vargs);
+    (void)vsnprintf(mscclppLastError, sizeof(mscclppLastError), fmt, vargs);
     va_end(vargs);
     pthread_mutex_unlock(&mscclppDebugLock);
   }
+  if (mscclppDebugLevel < level || ((flags & mscclppDebugMask) == 0))
+    return;
   if (mscclppDebugLevel < level || ((flags & mscclppDebugMask) == 0))
     return;
 
@@ -209,7 +224,7 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
     len += vsnprintf(buffer + len, sizeof(buffer) - len, fmt, vargs);
     va_end(vargs);
     buffer[len++] = '\n';
-    mscclppDebugLogHandler(level, flags, buffer);
+    mscclppDebugLogHandler(buffer);
   }
 }
 
@@ -232,6 +247,8 @@ void mscclppSetThreadName(pthread_t thread, const char* fmt, ...)
   // pthread_setname_np is nonstandard GNU extension
   // needs the following feature test macro
 #ifdef _GNU_SOURCE
+  if (mscclppParamSetThreadName() != 1)
+    return;
   if (mscclppParamSetThreadName() != 1)
     return;
   char threadName[MSCCLPP_THREAD_NAMELEN];
