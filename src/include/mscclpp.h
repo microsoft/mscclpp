@@ -313,7 +313,7 @@ mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank);
  */
 mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size);
 
-/* Log handler type which is a callback function for 
+/* Log handler type which is a callback function for
  * however user likes to handle the log messages. Once set,
  * the logger will just call this function with msg.
  */
