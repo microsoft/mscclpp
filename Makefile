@@ -119,6 +119,7 @@ LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 
 HEADERS := $(wildcard src/include/*.h)
+CPPSOURCES := $(shell find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "*/build/*")
 
 INCEXPORTS := mscclpp.h mscclppfifo.h
 INCTARGETS := $(INCEXPORTS:%=$(BUILDDIR)/$(INCDIR)/%)
@@ -144,6 +145,16 @@ build: lib tests
 lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
 
 tests: $(TESTSBINS)
+
+cpplint:
+	clang-format -style=file --verbose --Werror --dry-run $(CPPSOURCES)
+
+cpplint-autofix:
+	clang-format -style=file --verbose --Werror -i $(CPPSOURCES)
+
+# Run cpplint on a single file, example: make cpplint-file INPUTFILE=src/bootstrap/bootstrap.cc
+cpplint-file-autofix:
+	clang-format -style=file --verbose --Werror -i $(INPUTFILE)
 
 # Compile libobjs
 $(BUILDDIR)/$(OBJDIR)/%.o: %.cc $(HEADERS)
