@@ -80,6 +80,7 @@ IncludeCategories:
 IncludeIsMainRegex: '(Test)?$'
 IncludeIsMainSourceRegex: ''
 IndentCaseLabels: false
+IndentExternBlock: NoIndent
 IndentGotoLabels: true
 IndentPPDirectives: None
 IndentWidth:     2
