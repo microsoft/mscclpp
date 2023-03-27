@@ -9,8 +9,9 @@
 #include "npkit/npkit_event.h"
 #include "npkit/npkit_struct.h"
 
-class NpKit {
- public:
+class NpKit
+{
+public:
   static const uint64_t kNumGpuEventBuffers = 512;
 
   static const uint64_t kNumCpuEventBuffers = 32;
@@ -24,7 +25,8 @@ class NpKit {
   static NpKitEventCollectContext* GetGpuEventCollectContexts();
 
   static inline __device__ void CollectGpuEvent(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp,
-                                                NpKitEventCollectContext* ctx) {
+                                                NpKitEventCollectContext* ctx)
+  {
     uint64_t event_buffer_head = ctx->event_buffer_head;
     if (event_buffer_head < kMaxNumGpuEventsPerBuffer) {
       NpKitEvent& event = ctx->event_buffer[event_buffer_head];
@@ -40,7 +42,7 @@ class NpKit {
 
   static uint64_t* GetCpuTimestamp();
 
- private:
+private:
   static void CpuTimestampUpdateThread();
 
   // 64K * 512 * 16B = 512MB per GPU

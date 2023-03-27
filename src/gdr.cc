@@ -3,11 +3,13 @@
 // Used to make the GDR library calls thread safe
 pthread_mutex_t gdrLock = PTHREAD_MUTEX_INITIALIZER;
 
-gdr_t wrap_gdr_open(void) {
+gdr_t wrap_gdr_open(void)
+{
   return gdr_open();
 }
 
-mscclppResult_t wrap_gdr_close(gdr_t g) {
+mscclppResult_t wrap_gdr_close(gdr_t g)
+{
   int ret = gdr_close(g);
   if (ret != 0) {
     WARN("gdr_close() failed: %d", ret);
@@ -16,7 +18,9 @@ mscclppResult_t wrap_gdr_close(gdr_t g) {
   return mscclppSuccess;
 }
 
-mscclppResult_t wrap_gdr_pin_buffer(gdr_t g, unsigned long addr, size_t size, uint64_t p2p_token, uint32_t va_space, gdr_mh_t *handle) {
+mscclppResult_t wrap_gdr_pin_buffer(gdr_t g, unsigned long addr, size_t size, uint64_t p2p_token, uint32_t va_space,
+                                    gdr_mh_t* handle)
+{
   int ret;
   GDRLOCKCALL(gdr_pin_buffer(g, addr, size, p2p_token, va_space, handle), ret);
   if (ret != 0) {
@@ -26,7 +30,8 @@ mscclppResult_t wrap_gdr_pin_buffer(gdr_t g, unsigned long addr, size_t size, ui
   return mscclppSuccess;
 }
 
-mscclppResult_t wrap_gdr_unpin_buffer(gdr_t g, gdr_mh_t handle) {
+mscclppResult_t wrap_gdr_unpin_buffer(gdr_t g, gdr_mh_t handle)
+{
   int ret;
   GDRLOCKCALL(gdr_unpin_buffer(g, handle), ret);
   if (ret != 0) {
@@ -36,7 +41,8 @@ mscclppResult_t wrap_gdr_unpin_buffer(gdr_t g, gdr_mh_t handle) {
   return mscclppSuccess;
 }
 
-mscclppResult_t wrap_gdr_get_info(gdr_t g, gdr_mh_t handle, gdr_info_t *info) {
+mscclppResult_t wrap_gdr_get_info(gdr_t g, gdr_mh_t handle, gdr_info_t* info)
+{
   int ret;
   GDRLOCKCALL(gdr_get_info(g, handle, info), ret);
   if (ret != 0) {
@@ -46,7 +52,8 @@ mscclppResult_t wrap_gdr_get_info(gdr_t g, gdr_mh_t handle, gdr_info_t *info) {
   return mscclppSuccess;
 }
 
-mscclppResult_t wrap_gdr_map(gdr_t g, gdr_mh_t handle, void **va, size_t size) {
+mscclppResult_t wrap_gdr_map(gdr_t g, gdr_mh_t handle, void** va, size_t size)
+{
   int ret;
   GDRLOCKCALL(gdr_map(g, handle, va, size), ret);
   if (ret != 0) {
@@ -56,7 +63,8 @@ mscclppResult_t wrap_gdr_map(gdr_t g, gdr_mh_t handle, void **va, size_t size) {
   return mscclppSuccess;
 }
 
-mscclppResult_t wrap_gdr_unmap(gdr_t g, gdr_mh_t handle, void *va, size_t size) {
+mscclppResult_t wrap_gdr_unmap(gdr_t g, gdr_mh_t handle, void* va, size_t size)
+{
   int ret;
   GDRLOCKCALL(gdr_unmap(g, handle, va, size), ret);
   if (ret != 0) {
