@@ -320,8 +320,8 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
 
   // proxy is aborted through a message; don't set abortFlag
   MSCCLPPCHECK(mscclppCalloc(&proxySocket, 1));
-  MSCCLPPCHECK(mscclppSocketInit(proxySocket, &bootstrapNetIfAddr, comm->magic,
-                                 mscclppSocketTypeProxy, comm->abortFlag));
+  MSCCLPPCHECK(
+    mscclppSocketInit(proxySocket, &bootstrapNetIfAddr, comm->magic, mscclppSocketTypeProxy, comm->abortFlag));
   MSCCLPPCHECK(mscclppSocketListen(proxySocket));
   MSCCLPPCHECK(mscclppSocketGetAddr(proxySocket, state->peerProxyAddresses+rank));
   MSCCLPPCHECK(bootstrapAllGather(state, state->peerProxyAddresses, sizeof(union mscclppSocketAddress)));

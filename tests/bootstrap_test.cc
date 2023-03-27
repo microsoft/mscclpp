@@ -65,7 +65,6 @@ int main(int argc, const char *argv[])
 
   mscclppComm_t comm;
 
-  mscclppSetBootstrapConnTimeout(10);
   if (ip_port) {
     MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, ip_port, rank));
   } else {
