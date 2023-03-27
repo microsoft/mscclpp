@@ -294,6 +294,25 @@ mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank);
  */
 mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size);
 
+/* Log handler type */
+typedef void (*mscclppLogHandler_t)(int level, unsigned long flags, const char* msg);
+
+/* The default log handler.
+ * 
+ * Inputs:
+ *   level(unused): the log level
+ *   flags(unused): the log flags
+ *   msg:           the log message
+ */
+void mscclppDefaultLogHandler(int level, unsigned long flags, const char *msg);
+
+/* Set a custom log handler.
+ * 
+ * Inputs:
+ *   handler: the log handler function
+ */
+mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler);
+
 #ifdef __cplusplus
 } // end extern "C"
 #endif

@@ -563,3 +563,15 @@ mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size)
   *size = comm->nRanks;
   return mscclppSuccess;
 }
+
+MSCCLPP_API(void, mscclppDefaultLogHandler, int level, unsigned long flags, const char *msg);
+void mscclppDefaultLogHandler(int level, unsigned long flags, const char *msg)
+{
+  mscclppDebugDefaultLogHandler(level, flags, msg);
+}
+
+MSCCLPP_API(mscclppResult_t, mscclppSetLogHandler, mscclppLogHandler_t handler);
+mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler)
+{
+  return mscclppDebugSetLogHandler(handler);
+}
