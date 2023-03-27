@@ -120,7 +120,7 @@ def parse_cpu_event_file(npkit_dump_dir, npkit_event_def, rank, channel, cpu_clo
     event_type_to_seq = {}
 
     fiber_is_usable = []
-    fiber_open_ts = []
+    fiber_open_info = []
     slot_to_fiber_id = {}
     channel_shift = 1000
 
@@ -147,9 +147,10 @@ def parse_cpu_event_file(npkit_dump_dir, npkit_event_def, rank, channel, cpu_clo
                     fiber_id += 1
                 if fiber_id == len(fiber_is_usable):
                     fiber_is_usable.append(True)
-                    fiber_open_ts.append(0.0)
+                    fiber_open_info.append({'ts': 0.0, 'size': 0})
                 slot_to_fiber_id[slot] = fiber_id
-                fiber_open_ts[fiber_id] = cpu_events[-1]['ts']
+                fiber_open_info[fiber_id]['ts'] = cpu_events[-1]['ts']
+                fiber_open_info[fiber_id]['size'] = parsed_cpu_event['size']
                 fiber_is_usable[fiber_id] = False
 
                 if event_type not in event_type_to_seq:
@@ -170,11 +171,12 @@ def parse_cpu_event_file(npkit_dump_dir, npkit_event_def, rank, channel, cpu_clo
                 # Close fiber event
                 fiber_id = slot_to_fiber_id[slot]
                 slot_to_fiber_id.pop(slot)
-                last_ts = fiber_open_ts[fiber_id]
+                last_ts = fiber_open_info[fiber_id]['ts']
+                last_size = fiber_open_info[fiber_id]['size']
                 fiber_is_usable[fiber_id] = True
 
                 delta_time = max(0.001, cpu_events[-1]['ts'] - last_ts)
-                cpu_events[-1]['args'] = {'size': parsed_cpu_event['size']}
+                cpu_events[-1]['args'] = {'size': max(last_size, parsed_cpu_event['size'])}
                 cpu_events[-1]['args']['bw (GB/s)'] = \
                 cpu_events[-1]['args']['size'] / delta_time / 1e3
 
