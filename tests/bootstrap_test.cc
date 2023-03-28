@@ -34,6 +34,11 @@ void print_usage(const char* prog)
 #endif
 }
 
+void myLogHandler(const char* msg)
+{
+  printf("myLogger: %s", msg);
+}
+
 int main(int argc, const char* argv[])
 {
   if (argc >= 2 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
@@ -64,8 +69,8 @@ int main(int argc, const char* argv[])
   world_size = atoi(argv[3]);
 #endif
 
+  MSCCLPPCHECK(mscclppSetLogHandler(myLogHandler));
   mscclppComm_t comm;
-
   if (ip_port) {
     MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, ip_port, rank));
   } else {
