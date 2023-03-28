@@ -118,7 +118,7 @@ void* mscclppProxyServiceP2P(void* _args)
     *(volatile uint64_t*)(&fifo[fifoTailCached % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
     fifoTailCached++;
     if (((fifoTailCached % MSCCLPP_FLUSH_FIFO_COUNTER) == 0) || (trigger.fields.type & mscclppSync))
-      PROXYCUDACHECK(cudaMemcpyAsync(fifoTailDevPtr, &fifoTail, sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
+      PROXYCUDACHECK(cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
   }
   *fifoTail = fifoTailCached;
 
