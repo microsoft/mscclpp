@@ -178,7 +178,7 @@ void* mscclppProxyService(void* _args)
 
   PROXYCUDACHECK(cudaStreamDestroy(stream));
   if (isP2pProxy) {
-    PROXYCUDACHECK(cudaStreamDestroy(p2pStream));
+    PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
   }
   *run = MSCCLPP_PROXY_RUN_STATE_IDLE;
   return NULL;
