@@ -3,7 +3,6 @@
 #include "core.h"
 #include "gdr.h"
 #include "mscclpp.h"
-#include "mscclpp.h"
 #include <map>
 #include <sstream>
 #if defined(ENABLE_NPKIT)
@@ -609,7 +608,6 @@ mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler)
 {
   return mscclppDebugSetLogHandler(handler);
 }
-
 
 MSCCLPP_API(mscclppResult_t, mscclppSetBootstrapConnTimeout, int timeout);
 mscclppResult_t mscclppSetBootstrapConnTimeout(int timeout)

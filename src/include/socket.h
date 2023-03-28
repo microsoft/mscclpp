@@ -18,8 +18,8 @@
 
 #define MAX_IFS 16
 #define MAX_IF_NAME_SIZE 16
-#define SLEEP_INT            1000 // connection retry sleep interval in usec
-#define SOCKET_NAME_MAXLEN (NI_MAXHOST+NI_MAXSERV)
+#define SLEEP_INT 1000 // connection retry sleep interval in usec
+#define SOCKET_NAME_MAXLEN (NI_MAXHOST + NI_MAXSERV)
 #define MSCCLPP_SOCKET_MAGIC 0x564ab9f2fc4b9d6cULL
 
 /* Common socket address storage structure for IPv4/IPv6 */

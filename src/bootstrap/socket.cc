@@ -13,7 +13,6 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <unistd.h>
-#include <unistd.h>
 
 static mscclppResult_t socketProgressOpt(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset,
                                          int block, int* closed)

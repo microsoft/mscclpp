@@ -319,8 +319,8 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
   MSCCLPPCHECK(mscclppSocketClose(&sock));
   MSCCLPPCHECK(mscclppSocketClose(&listenSockRoot));
 
-  MSCCLPPCHECK(mscclppSocketInit(&state->ringSendSocket, &nextAddr, comm->magic,
-                                 mscclppSocketTypeBootstrap, comm->abortFlag));
+  MSCCLPPCHECK(
+    mscclppSocketInit(&state->ringSendSocket, &nextAddr, comm->magic, mscclppSocketTypeBootstrap, comm->abortFlag));
   MSCCLPPCHECK(mscclppSocketConnect(&state->ringSendSocket));
   // Accept the connect request from the previous rank in the AllGather ring
   MSCCLPPCHECK(mscclppSocketInit(&state->ringRecvSocket));
