@@ -57,10 +57,14 @@ void* mscclppProxyServiceP2P(void* _args)
   volatile mscclppProxyRunState_t* run = &args->proxyState->run;
   mscclppTrigger* fifo = args->proxyState->triggerFifo.hostPtr;
   volatile uint64_t* fifoTail = args->proxyState->fifoTail.hostPtr;
+  uint64_t* fifoTailDevPtr = args->proxyState->fifoTail.devPtr;
   volatile uint64_t* fifoHead = args->proxyState->fifoHead.hostPtr;
 
   cudaStream_t stream = args->proxyState->stream;
   free(_args);
+
+  cudaStream_t stream2;
+  PROXYCUDACHECK(cudaStreamCreate(&stream2));
 
   // int rank = comm->rank;
   mscclppTrigger trigger;
@@ -80,8 +84,8 @@ void* mscclppProxyServiceP2P(void* _args)
         break;
     }
     // Poll to see if we are ready to send anything
-    if (cachedFifoTail == *fifoHead)
-      continue; // no need trigger
+    // if (cachedFifoTail == *fifoHead)
+    //   continue; // no need trigger
     readTrigger(&trigger, &fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]);
     if (trigger.value[0] == 0)
       continue; // there is one in progreess
@@ -118,6 +122,7 @@ void* mscclppProxyServiceP2P(void* _args)
     // Send completion: reset only the high 64 bits
     *(volatile uint64_t*)(&fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
     cachedFifoTail++;
+    PROXYCUDACHECK(cudaMemcpyAsync(fifoTailDevPtr, &cachedFifoTail, sizeof(uint64_t), cudaMemcpyHostToDevice, stream2));
     *fifoTail = cachedFifoTail;
   }
 
@@ -138,8 +143,11 @@ void* mscclppProxyServiceIb(void* _args)
   volatile mscclppProxyRunState_t* run = &args->proxyState->run;
   mscclppTrigger* fifo = args->proxyState->triggerFifo.hostPtr;
   volatile uint64_t* fifoTail = args->proxyState->fifoTail.hostPtr;
+  uint64_t* fifoTailDevPtr = args->proxyState->fifoTail.devPtr;
   volatile uint64_t* fifoHead = args->proxyState->fifoHead.hostPtr;
   free(_args);
+  cudaStream_t stream;
+  PROXYCUDACHECK(cudaStreamCreate(&stream));
 
 #if (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 0)
   enum
@@ -239,13 +247,12 @@ void* mscclppProxyServiceIb(void* _args)
     }
 #else // (MSCCLPP_PROXY_FLAG_SET_BY_RDMA == 1)
     // Poll to see if we are ready to send anything
-    if (cachedFifoTail == *fifoHead)
-      continue; // no need trigger
+    // if (cachedFifoTail == *fifoHead)
+    //   continue; // no need trigger
     readTrigger(&trigger, &fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]);
     if (trigger.value[0] == 0)
       continue; // there is one in progreess
     // there is a trigger value ready to be consumed
-
     struct mscclppConn* conn = &comm->conns[trigger.fields.connId];
 
     if (trigger.fields.type & mscclppData) {
@@ -307,6 +314,7 @@ void* mscclppProxyServiceIb(void* _args)
     // Send completion: reset only the high 64 bits
     *(volatile uint64_t*)(&fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
     cachedFifoTail++;
+    PROXYCUDACHECK(cudaMemcpyAsync(fifoTailDevPtr, &cachedFifoTail, sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
     *fifoTail = cachedFifoTail;
 #endif
   }

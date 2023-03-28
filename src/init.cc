@@ -223,9 +223,12 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
   for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
     struct mscclppProxyState* proxyState = comm->proxyState[i];
     if (proxyState) {
-      MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->triggerFifo.desc));
+      // MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->triggerFifo.desc));
+      MSCCLPPCHECK(mscclppCudaHostFree(proxyState->triggerFifo.hostPtr));
       MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->fifoHead.desc));
-      MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->fifoTail.desc));
+      // MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->fifoTail.desc));
+      MSCCLPPCHECK(mscclppCudaFree(proxyState->fifoTail.devPtr));
+      free(proxyState->fifoTail.hostPtr);
       free(proxyState);
     }
   }
@@ -399,10 +402,14 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
     MSCCLPPCHECK(mscclppCalloc(&proxyState, 1));
     MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->triggerFifo.hostPtr, &proxyState->triggerFifo.devPtr,
                                       MSCCLPP_PROXY_FIFO_SIZE, &proxyState->triggerFifo.desc));
+    MSCCLPPCHECK(mscclppCudaHostCalloc(&proxyState->triggerFifo.hostPtr, MSCCLPP_PROXY_FIFO_SIZE));
+    proxyState->triggerFifo.devPtr = proxyState->triggerFifo.hostPtr;
     MSCCLPPCHECK(
       mscclppGdrCudaCalloc(&proxyState->fifoHead.hostPtr, &proxyState->fifoHead.devPtr, 1, &proxyState->fifoHead.desc));
-    MSCCLPPCHECK(
-      mscclppGdrCudaCalloc(&proxyState->fifoTail.hostPtr, &proxyState->fifoTail.devPtr, 1, &proxyState->fifoTail.desc));
+    // MSCCLPPCHECK(
+    //   mscclppGdrCudaCalloc(&proxyState->fifoTail.hostPtr, &proxyState->fifoTail.devPtr, 1, &proxyState->fifoTail.desc));
+    MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->fifoTail.devPtr, 1));
+    MSCCLPPCHECK(mscclppCalloc(&proxyState->fifoTail.hostPtr, 1));
 
     if (transportType == mscclppTransportIB) {
       proxyState->ibContext = conn->ibCtx;
