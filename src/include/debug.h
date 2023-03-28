@@ -49,8 +49,10 @@ extern pthread_mutex_t mscclppDebugLock;
 extern FILE* mscclppDebugFile;
 extern mscclppResult_t getHostName(char* hostname, int maxlen, const char delim);
 
+void mscclppDebugDefaultLogHandler(const char* msg);
 void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char* filefunc, int line, const char* fmt,
                      ...) __attribute__((format(printf, 5, 6)));
+mscclppResult_t mscclppDebugSetLogHandler(mscclppLogHandler_t handler);
 
 // Let code temporarily downgrade WARN into INFO
 extern thread_local int mscclppDebugNoWarn;
