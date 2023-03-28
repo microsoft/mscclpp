@@ -71,7 +71,6 @@ void* mscclppProxyService(void* _args)
   cudaStream_t p2pStream;
   cudaStream_t stream;
 
-  free(_args); // allocated in mscclppProxyCreate
   PROXYCUDACHECK(cudaStreamCreate(&stream));
   bool isP2pProxy = (ibCtx == nullptr);
   if (isP2pProxy) {
@@ -83,8 +82,8 @@ void* mscclppProxyService(void* _args)
   } else {
     NumaBind(ibCtx->numaNode);
   }
+  free(_args); // allocated in mscclppProxyCreate
 
-  uint64_t cachedFifoTail = *fifoTail;
   int counter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
   for (;;) {
     if (counter-- == 0) {
@@ -94,7 +93,7 @@ void* mscclppProxyService(void* _args)
       }
     }
     // Poll to see if we are ready to send anything
-    readTrigger(&trigger, &fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]);
+    readTrigger(&trigger, &fifo[fifoTailCached % MSCCLPP_PROXY_FIFO_SIZE]);
     if (trigger.value[0] == 0) {
       continue; // there is one in progreess
     }
