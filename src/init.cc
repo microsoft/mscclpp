@@ -1,4 +1,5 @@
 #include "bootstrap.h"
+#include "config.h"
 #include "core.h"
 #include "gdr.h"
 #include "mscclpp.h"
@@ -606,4 +607,12 @@ MSCCLPP_API(mscclppResult_t, mscclppSetLogHandler, mscclppLogHandler_t handler);
 mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler)
 {
   return mscclppDebugSetLogHandler(handler);
+}
+
+MSCCLPP_API(mscclppResult_t, mscclppSetBootstrapConnTimeout, int timeout);
+mscclppResult_t mscclppSetBootstrapConnTimeout(int timeout)
+{
+  mscclppConfig* config = mscclppConfig::getInstance();
+  config->setBootstrapConnectionTimeoutConfig(timeout);
+  return mscclppSuccess;
 }
