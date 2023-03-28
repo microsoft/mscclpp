@@ -35,10 +35,6 @@ void mscclppDebugInit()
     pthread_mutex_unlock(&mscclppDebugLock);
     return;
   }
-  if (mscclppDebugLevel != -1) {
-    pthread_mutex_unlock(&mscclppDebugLock);
-    return;
-  }
   const char* mscclpp_debug = getenv("MSCCLPP_DEBUG");
   int tempNcclDebugLevel = -1;
   if (mscclpp_debug == NULL) {
@@ -149,7 +145,8 @@ void mscclppDebugInit()
     }
   }
 
-  mscclppDebugLogHandler = mscclppDefaultLogHandler;
+  if (mscclppDebugLogHandler == NULL)
+    mscclppDebugLogHandler = mscclppDefaultLogHandler;
 
   mscclppEpoch = std::chrono::steady_clock::now();
   __atomic_store_n(&mscclppDebugLevel, tempNcclDebugLevel, __ATOMIC_RELEASE);
@@ -174,7 +171,6 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
     pthread_mutex_lock(&mscclppDebugLock);
     va_list vargs;
     va_start(vargs, fmt);
-    (void)vsnprintf(mscclppLastError, sizeof(mscclppLastError), fmt, vargs);
     (void)vsnprintf(mscclppLastError, sizeof(mscclppLastError), fmt, vargs);
     va_end(vargs);
     pthread_mutex_unlock(&mscclppDebugLock);
