@@ -176,7 +176,7 @@ def parse_cpu_event_file(npkit_dump_dir, npkit_event_def, rank, channel, cpu_clo
                 fiber_is_usable[fiber_id] = True
 
                 delta_time = max(0.001, cpu_events[-1]['ts'] - last_ts)
-                cpu_events[-1]['args'] = {'size': max(last_size, parsed_cpu_event['size'])}
+                cpu_events[-1]['args'] = {'size_1': parsed_cpu_event['size'], 'size': max(last_size, parsed_cpu_event['size'])}
                 cpu_events[-1]['args']['bw (GB/s)'] = \
                 cpu_events[-1]['args']['size'] / delta_time / 1e3
 
