@@ -73,38 +73,49 @@ extern "C" {
  * The two endpoint can concurrently use the same connection provided they are writing (puts) on different
  * indices in the registered buffer.
  **************************************************************************************************************/
-struct mscclppDevConn {
+struct mscclppDevConn
+{
 #ifdef __CUDACC__
-  __forceinline__ __device__ void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize){
+  __forceinline__ __device__ void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
+  {
     fifo.push(mscclppData, dstDataOffset, srcDataOffset, dataSize);
   }
 
-  __forceinline__ __device__ void put(uint64_t dataOffset, uint64_t dataSize){
+  __forceinline__ __device__ void put(uint64_t dataOffset, uint64_t dataSize)
+  {
     put(dataOffset, dataOffset, dataSize);
   }
 
-  __forceinline__ __device__ void signal(){
+  __forceinline__ __device__ void signal()
+  {
     epochIncrement();
     uint64_t curFifoHead = fifo.push(mscclppFlag | mscclppSync, 0, 0, 1);
-    while (*(volatile uint64_t *)fifo.triggerFifoTail <= curFifoHead);
+    while (*(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
+      ;
   }
 
-  __forceinline__ __device__ void putWithSignal(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize){
+  __forceinline__ __device__ void putWithSignal(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
+  {
     epochIncrement();
     uint64_t curFifoHead = fifo.push(mscclppData | mscclppFlag | mscclppSync, dstDataOffset, srcDataOffset, dataSize);
-    while (*(volatile uint64_t *)fifo.triggerFifoTail <= curFifoHead);
+    while (*(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
+      ;
   }
 
-  __forceinline__ __device__ void putWithSignal(uint64_t dataOffset, uint64_t dataSize){
+  __forceinline__ __device__ void putWithSignal(uint64_t dataOffset, uint64_t dataSize)
+  {
     putWithSignal(dataOffset, dataOffset, dataSize);
   }
 
-  __forceinline__ __device__ void wait(){
+  __forceinline__ __device__ void wait()
+  {
     (*recvEpochId) += 1;
-    while (*(volatile uint64_t*)proxyEpochId < (*recvEpochId));
+    while (*(volatile uint64_t*)proxyEpochId < (*recvEpochId))
+      ;
   }
 
-  __forceinline__ __device__ void epochIncrement(){
+  __forceinline__ __device__ void epochIncrement()
+  {
     *(volatile uint64_t*)sendEpochId += 1;
   }
 
@@ -128,18 +139,24 @@ typedef struct mscclppComm* mscclppComm_t;
 typedef struct mscclppDevConn mscclppDevConn_t;
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
-typedef struct { char internal[MSCCLPP_UNIQUE_ID_BYTES]; } mscclppUniqueId;
+typedef struct
+{
+  char internal[MSCCLPP_UNIQUE_ID_BYTES];
+} mscclppUniqueId;
 
 /* Error type */
-typedef enum { mscclppSuccess                 =  0,
-               mscclppUnhandledCudaError      =  1,
-               mscclppSystemError             =  2,
-               mscclppInternalError           =  3,
-               mscclppInvalidArgument         =  4,
-               mscclppInvalidUsage            =  5,
-               mscclppRemoteError             =  6,
-               mscclppInProgress              =  7,
-               mscclppNumResults              =  8 } mscclppResult_t;
+typedef enum
+{
+  mscclppSuccess = 0,
+  mscclppUnhandledCudaError = 1,
+  mscclppSystemError = 2,
+  mscclppInternalError = 3,
+  mscclppInvalidArgument = 4,
+  mscclppInvalidUsage = 5,
+  mscclppRemoteError = 6,
+  mscclppInProgress = 7,
+  mscclppNumResults = 8
+} mscclppResult_t;
 
 /* Create a unique ID for communication. Only needs to be called by one process.
  * Use with mscclppCommInitRankFromId().
@@ -151,9 +168,11 @@ typedef enum { mscclppSuccess                 =  0,
 mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* uniqueId);
 
 /* Transport Types */
-typedef enum { mscclppTransportP2P = 0,
-               mscclppTransportSHM = 1, // TODO(chhwang): not implemented yet
-               mscclppTransportIB = 2,
+typedef enum
+{
+  mscclppTransportP2P = 0,
+  mscclppTransportSHM = 1, // TODO(chhwang): not implemented yet
+  mscclppTransportIB = 2,
 } mscclppTransport_t;
 
 /* Initialize a communicator. nranks processes with rank 0 to nranks-1 need to call this function.
@@ -207,7 +226,7 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
  * Inputs:
  *   result: the error code that this function needs to translate
  */
-const char*  mscclppGetErrorString(mscclppResult_t result);
+const char* mscclppGetErrorString(mscclppResult_t result);
 
 /* Connect to a remote rank. This function only prepares metadata for connection. The actual connection
  * is made by a following call of mscclppConnectionSetup(). Note that this function is two-way and a connection
@@ -224,7 +243,7 @@ const char*  mscclppGetErrorString(mscclppResult_t result);
  *   ibDev:         the name of the IB device to be used. Expects a null for mscclppTransportP2P.
  */
 mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
-                               mscclppTransport_t transportType, const char *ibDev=0);
+                               mscclppTransport_t transportType, const char* ibDev = 0);
 
 /* Establish all connections declared by mscclppConnect(). This function must be called after all mscclppConnect()
  * calls are made. This function ensures that all remote ranks are ready to communicate when it returns.
@@ -301,6 +320,26 @@ mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size);
  *   timeout: the timeout in seconds
  */
 void mscclppSetBootstrapConnTimeout(time_t timeout = 30);
+
+/* Log handler type which is a callback function for
+ * however user likes to handle the log messages. Once set,
+ * the logger will just call this function with msg.
+ */
+typedef void (*mscclppLogHandler_t)(const char* msg);
+
+/* The default log handler.
+ *
+ * Inputs:
+ *   msg: the log message
+ */
+void mscclppDefaultLogHandler(const char* msg);
+
+/* Set a custom log handler.
+ *
+ * Inputs:
+ *   handler: the log handler function
+ */
+mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler);
 
 #ifdef __cplusplus
 } // end extern "C"

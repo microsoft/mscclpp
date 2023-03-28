@@ -8,7 +8,7 @@
 #include "mpi.h"
 #endif // MSCCLPP_USE_MPI_FOR_TESTS
 
-void print_usage(const char *prog)
+void print_usage(const char* prog)
 {
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
   printf("usage: %s IP:PORT [rank nranks]\n", prog);
@@ -17,7 +17,8 @@ void print_usage(const char *prog)
 #endif
 }
 
-void parse_arguments(int argc, const char *argv[], const char** ip_port, int* rank, int* world_size) {
+void parse_arguments(int argc, const char* argv[], const char** ip_port, int* rank, int* world_size)
+{
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
   if (argc != 2 && argc != 4) {
     print_usage(argv[0]);

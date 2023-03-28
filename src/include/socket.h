@@ -8,13 +8,13 @@
 #define MSCCLPP_SOCKET_H_
 
 #include "mscclpp.h"
-#include <sys/socket.h>
 #include <arpa/inet.h>
-#include <netinet/tcp.h>
-#include <netdb.h>
 #include <fcntl.h>
+#include <netdb.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <stddef.h>
+#include <sys/socket.h>
 
 #define MAX_IFS 16
 #define MAX_IF_NAME_SIZE 16
@@ -31,7 +31,8 @@ union mscclppSocketAddress {
   struct sockaddr_in6 sin6;
 };
 
-enum mscclppSocketState {
+enum mscclppSocketState
+{
   mscclppSocketStateNone = 0,
   mscclppSocketStateInitialized = 1,
   mscclppSocketStateAccepting = 2,
@@ -45,7 +46,8 @@ enum mscclppSocketState {
   mscclppSocketStateNum = 10
 };
 
-enum mscclppSocketType {
+enum mscclppSocketType
+{
   mscclppSocketTypeUnknown = 0,
   mscclppSocketTypeBootstrap = 1,
   mscclppSocketTypeProxy = 2,
@@ -69,10 +71,11 @@ struct mscclppSocket
   enum mscclppSocketType type;
 };
 
-const char *mscclppSocketToString(union mscclppSocketAddress *addr, char *buf, const int numericHostForm = 1);
+const char* mscclppSocketToString(union mscclppSocketAddress* addr, char* buf, const int numericHostForm = 1);
 mscclppResult_t mscclppSocketGetAddrFromString(union mscclppSocketAddress* ua, const char* ip_port_pair);
-int mscclppFindInterfaceMatchSubnet(char* ifNames, union mscclppSocketAddress* localAddrs, union mscclppSocketAddress* remoteAddr, int ifNameMaxSize, int maxIfs);
-int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress *ifAddrs, int ifNameMaxSize, int maxIfs);
+int mscclppFindInterfaceMatchSubnet(char* ifNames, union mscclppSocketAddress* localAddrs,
+                                    union mscclppSocketAddress* remoteAddr, int ifNameMaxSize, int maxIfs);
+int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress* ifAddrs, int ifNameMaxSize, int maxIfs);
 
 // Initialize a socket
 mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, union mscclppSocketAddress* addr = NULL,
@@ -86,7 +89,8 @@ mscclppResult_t mscclppSocketGetAddr(struct mscclppSocket* sock, union mscclppSo
 mscclppResult_t mscclppSocketConnect(struct mscclppSocket* sock);
 // Return socket connection state.
 // mscclppResult_t mscclppSocketReady(struct mscclppSocket* sock, int *running);
-// Accept an incoming connection from listenSock->fd and keep the file descriptor in sock->fd, with the remote side IP/port in sock->addr.
+// Accept an incoming connection from listenSock->fd and keep the file descriptor in sock->fd, with the remote side
+// IP/port in sock->addr.
 mscclppResult_t mscclppSocketAccept(struct mscclppSocket* sock, struct mscclppSocket* ulistenSock);
 // mscclppResult_t mscclppSocketGetFd(struct mscclppSocket* sock, int* fd);
 // mscclppResult_t mscclppSocketSetFd(int fd, struct mscclppSocket* sock);

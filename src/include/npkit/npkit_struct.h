@@ -7,7 +7,8 @@
 
 union NpKitEvent {
   uint64_t bits[2];
-  struct {
+  struct
+  {
     uint64_t type : 8;
     uint64_t size : 32;
     uint64_t rsvd : 24;
@@ -15,7 +16,8 @@ union NpKitEvent {
   } fields;
 };
 
-struct NpKitEventCollectContext {
+struct NpKitEventCollectContext
+{
   NpKitEvent* event_buffer;
   uint64_t event_buffer_head;
 };

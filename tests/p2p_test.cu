@@ -1,8 +1,8 @@
 #include "mscclpp.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string>
+#include <unistd.h>
 
 #include "common.h"
 
@@ -10,23 +10,25 @@
 #define USE_DMA_FOR_P2P 1
 #define TEST_CONN_TYPE 0 // 0: P2P(for local)+IB(for remote), 1: IB-Only
 
-#define MSCCLPPCHECK(call) do { \
-  mscclppResult_t res = call; \
-  if (res != mscclppSuccess && res != mscclppInProgress) { \
-    /* Print the back trace*/ \
-    printf("Failure at %s:%d -> %d\n", __FILE__, __LINE__, res);    \
-    return res; \
-  } \
-} while (0);
+#define MSCCLPPCHECK(call)                                                                                             \
+  do {                                                                                                                 \
+    mscclppResult_t res = call;                                                                                        \
+    if (res != mscclppSuccess && res != mscclppInProgress) {                                                           \
+      /* Print the back trace*/                                                                                        \
+      printf("Failure at %s:%d -> %d\n", __FILE__, __LINE__, res);                                                     \
+      return res;                                                                                                      \
+    }                                                                                                                  \
+  } while (0);
 
 // Check CUDA RT calls
-#define CUDACHECK(cmd) do {                                   \
-    cudaError_t err = cmd;                                    \
-    if( err != cudaSuccess ) {                                \
-        printf("%s:%d Cuda failure '%s'\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
-        exit(EXIT_FAILURE);                                   \
-    }                                                         \
-} while(false)
+#define CUDACHECK(cmd)                                                                                                 \
+  do {                                                                                                                 \
+    cudaError_t err = cmd;                                                                                             \
+    if (err != cudaSuccess) {                                                                                          \
+      printf("%s:%d Cuda failure '%s'\n", __FILE__, __LINE__, cudaGetErrorString(err));                                \
+      exit(EXIT_FAILURE);                                                                                              \
+    }                                                                                                                  \
+  } while (false)
 
 // Measure current time in second.
 static double getTime(void)
@@ -43,17 +45,18 @@ __constant__ mscclppDevConn_t constDevConns[16];
 
 __global__ void kernel(int rank, int world_size)
 {
-  if (threadIdx.x % 32 != 0) return;
+  if (threadIdx.x % 32 != 0)
+    return;
 
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   mscclppDevConn_t devConn = constDevConns[remoteRank];
-  volatile int *data = (volatile int *)devConn.localBuff;
-  volatile uint64_t *localFlag = devConn.localFlag;
+  volatile int* data = (volatile int*)devConn.localBuff;
+  volatile uint64_t* localFlag = devConn.localFlag;
 #if (USE_DMA_FOR_P2P == 0)
-  volatile uint64_t *remoteFlag = devConn.remoteFlag;
+  volatile uint64_t* remoteFlag = devConn.remoteFlag;
 #endif
-  volatile uint64_t *proxyFlag = devConn.proxyFlag;
+  volatile uint64_t* proxyFlag = devConn.proxyFlag;
 
   uint64_t baseFlag = *localFlag;
 
@@ -83,7 +86,8 @@ __global__ void kernel(int rank, int world_size)
   devConn.fifo.sync(req);
 
   // Wait for receiving data from remote rank
-  while (*proxyFlag == baseFlag) {}
+  while (*proxyFlag == baseFlag) {
+  }
 
 #else // USE_DMA_FOR_P2P == 0
 
@@ -95,13 +99,15 @@ __global__ void kernel(int rank, int world_size)
     devConn.setTrigger(trig, mscclppFlag | mscclppData, rank * sizeof(int), sizeof(int));
 
     // Wait for receiving data from remote rank
-    while (*proxyFlag == baseFlag) {}
+    while (*proxyFlag == baseFlag) {
+    }
   } else { // P2P
     // Directly read data
-    volatile int *remoteData = (volatile int *)devConn.remoteBuff;
+    volatile int* remoteData = (volatile int*)devConn.remoteBuff;
 
     // Wait until the remote data is set
-    while (*remoteFlag == baseFlag) {}
+    while (*remoteFlag == baseFlag) {
+    }
 
     // Read remote data
     data[remoteRank] = remoteData[remoteRank];
@@ -146,7 +152,7 @@ int cudaNumToIbNum(int cudaNum)
   return ibNum;
 }
 
-int main(int argc, const char *argv[])
+int main(int argc, const char* argv[])
 {
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
   MPI_Init(NULL, NULL);
@@ -165,8 +171,8 @@ int main(int argc, const char *argv[])
   mscclppComm_t comm;
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
 
-  int *data_d;
-  uint64_t *flag_d;
+  int* data_d;
+  uint64_t* flag_d;
   size_t data_size = sizeof(int) * world_size;
   CUDACHECK(cudaMalloc(&data_d, data_size));
   CUDACHECK(cudaMalloc(&flag_d, sizeof(uint64_t)));
@@ -174,9 +180,10 @@ int main(int argc, const char *argv[])
   CUDACHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
 
   for (int r = 0; r < world_size; ++r) {
-    if (r == rank) continue;
+    if (r == rank)
+      continue;
     mscclppTransport_t transportType = mscclppTransportIB;
-    const char *ibDev = ibDevStr.c_str();
+    const char* ibDev = ibDevStr.c_str();
 #if (TEST_CONN_TYPE == 0) // P2P+IB
     if (rankToNode(r) == thisNode) {
       transportType = mscclppTransportP2P;
@@ -191,7 +198,7 @@ int main(int argc, const char *argv[])
 
   MSCCLPPCHECK(mscclppProxyLaunch(comm));
 
-  mscclppDevConn_t *devConns;
+  mscclppDevConn_t* devConns;
   int nCons;
   MSCCLPPCHECK(mscclppGetAllDeviceConnections(comm, &devConns, &nCons));
 
@@ -204,7 +211,7 @@ int main(int argc, const char *argv[])
   CUDACHECK(cudaDeviceSynchronize());
 
   // Read results from GPU
-  int *buf = (int *)calloc(world_size, sizeof(int));
+  int* buf = (int*)calloc(world_size, sizeof(int));
   if (buf == nullptr) {
     printf("calloc failed\n");
     return -1;
@@ -230,9 +237,9 @@ int main(int argc, const char *argv[])
 
   // warm up
   // int warmupiter = 10;
-//  for (int i = 0; i < warmupiter; ++i) {
-//    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
-//  }
+  //  for (int i = 0; i < warmupiter; ++i) {
+  //    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+  //  }
 
   // cudaGraph Capture
   cudaGraph_t graph;
@@ -240,32 +247,32 @@ int main(int argc, const char *argv[])
   cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
   int cudagraphiter = 100;
   for (int i = 0; i < cudagraphiter; ++i) {
-  	kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
   }
   cudaStreamEndCapture(stream, &graph);
   cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
 
   int cudagraphwarmup = 10;
   for (int i = 0; i < cudagraphwarmup; ++i) {
-	  cudaGraphLaunch(instance, stream);
+    cudaGraphLaunch(instance, stream);
   }
   CUDACHECK(cudaStreamSynchronize(stream));
 
-  // measure runtime 
-//  CUDACHECK(cudaEventRecord(ev_start, stream));
+  // measure runtime
+  //  CUDACHECK(cudaEventRecord(ev_start, stream));
   double t0 = getTime();
   int cudagraphlaunch = 10;
   for (int i = 0; i < cudagraphlaunch; ++i) {
-  // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
-     cudaGraphLaunch(instance, stream);
+    // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
+    cudaGraphLaunch(instance, stream);
   }
-//  CUDACHECK(cudaEventRecord(ev_end, stream));
+  //  CUDACHECK(cudaEventRecord(ev_end, stream));
   CUDACHECK(cudaStreamSynchronize(stream));
 
   double t1 = getTime();
-  float ms = (t1-t0)*1000.0;
-//  CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
-  printf("rank: %d, time: %f us/iter\n", rank, ms * 1000. / (float) cudagraphlaunch / (float) cudagraphiter);
+  float ms = (t1 - t0) * 1000.0;
+  //  CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
+  printf("rank: %d, time: %f us/iter\n", rank, ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter);
 
   MSCCLPPCHECK(mscclppProxyStop(comm));
 

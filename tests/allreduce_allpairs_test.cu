@@ -1,45 +1,49 @@
 #include "mscclpp.h"
+#include <cuda/barrier>
 #include <tuple>
 #include <vector>
-#include <cuda/barrier>
 
 #include "common.h"
 
-#define MSCCLPPCHECK(call) do { \
-  mscclppResult_t res = call; \
-  if (res != mscclppSuccess && res != mscclppInProgress) { \
-  /* Print the back trace*/ \
-  printf("Failure at %s:%d -> %d\n", __FILE__, __LINE__, res);    \
-  return res; \
-  } \
-} while (0);
+#define MSCCLPPCHECK(call)                                                                                             \
+  do {                                                                                                                 \
+    mscclppResult_t res = call;                                                                                        \
+    if (res != mscclppSuccess && res != mscclppInProgress) {                                                           \
+      /* Print the back trace*/                                                                                        \
+      printf("Failure at %s:%d -> %d\n", __FILE__, __LINE__, res);                                                     \
+      return res;                                                                                                      \
+    }                                                                                                                  \
+  } while (0);
 
-#define CUDACHECK(cmd) do { \
-  cudaError_t err = cmd; \
-  if( err != cudaSuccess ) { \
-    printf("%s:%d Cuda failure '%s'\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
-    exit(EXIT_FAILURE); \
-  } \
-} while(false)
+#define CUDACHECK(cmd)                                                                                                 \
+  do {                                                                                                                 \
+    cudaError_t err = cmd;                                                                                             \
+    if (err != cudaSuccess) {                                                                                          \
+      printf("%s:%d Cuda failure '%s'\n", __FILE__, __LINE__, cudaGetErrorString(err));                                \
+      exit(EXIT_FAILURE);                                                                                              \
+    }                                                                                                                  \
+  } while (false)
 
-struct Volume {
+struct Volume
+{
   size_t offset;
   size_t size;
 };
 
-__host__ __device__ Volume chunkVolume(size_t totalSize, size_t totalChunks, size_t chunkIdx, size_t chunkCount) {
+__host__ __device__ Volume chunkVolume(size_t totalSize, size_t totalChunks, size_t chunkIdx, size_t chunkCount)
+{
   size_t remainder = totalSize % totalChunks;
   size_t smallChunk = totalSize / totalChunks;
   size_t largeChunk = smallChunk + 1;
   size_t numLargeChunks = chunkIdx < remainder ? remainder - chunkIdx : 0;
   size_t numSmallChunks = chunkCount - numLargeChunks;
-  size_t offset = (remainder - numLargeChunks) * largeChunk +
-                  (chunkIdx > remainder ? chunkIdx - remainder : 0) * smallChunk;
+  size_t offset =
+    (remainder - numLargeChunks) * largeChunk + (chunkIdx > remainder ? chunkIdx - remainder : 0) * smallChunk;
   return Volume{offset, numLargeChunks * largeChunk + numSmallChunks * smallChunk};
 }
 
-template<class T, void (*reduce)(T*,T*,size_t)>
-struct AllreduceAllpairs {
+template <class T, void (*reduce)(T*, T*, size_t)> struct AllreduceAllpairs
+{
   int rank;
   int nRanks;
   T* userData;
@@ -50,7 +54,8 @@ struct AllreduceAllpairs {
   uint64_t* connFlags;
   cuda::barrier<cuda::thread_scope_device>* barrier;
 
-  __device__ void run(int idx) {
+  __device__ void run(int idx)
+  {
     int myPeer = peerRank(idx, rank);
     mscclppDevConn_t phase1SendConn = conns[phase1SendConnIdx(myPeer)];
     mscclppDevConn_t phase1RecvConn = conns[phase1RecvConnIdx(myPeer)];
@@ -92,59 +97,70 @@ struct AllreduceAllpairs {
     Volume srcVolume2 = chunkVolume(userSize, nRanks, rank, 1);
     send(phase2Conn, srcVolume2.offset, srcVolume2.offset, srcVolume2.size);
     recv(phase2Conn);
-
   }
 
-  __device__ void send(mscclppDevConn_t& conn, size_t srcOffset, size_t dstOffset, size_t size) {
+  __device__ void send(mscclppDevConn_t& conn, size_t srcOffset, size_t dstOffset, size_t size)
+  {
     if (threadIdx.x == 0) {
-      volatile uint64_t *localFlag = conn.localFlag;
+      volatile uint64_t* localFlag = conn.localFlag;
       *localFlag = 1; // 1 is used to signal the send
 
       mscclppTrigger_t trigger;
       auto request = conn.fifo.getTrigger(&trigger);
-      conn.fifo.setTrigger(trigger, mscclppData | mscclppFlag, srcOffset * sizeof(T), dstOffset * sizeof(T), size * sizeof(T));
+      conn.fifo.setTrigger(trigger, mscclppData | mscclppFlag, srcOffset * sizeof(T), dstOffset * sizeof(T),
+                           size * sizeof(T));
     }
     __syncthreads();
   }
 
-  __device__ void recv(mscclppDevConn_t& conn) {
+  __device__ void recv(mscclppDevConn_t& conn)
+  {
     if (threadIdx.x == 0) {
-      volatile uint64_t *proxyFlag = conn.proxyFlag;
-      while (*proxyFlag != 1) {}
+      volatile uint64_t* proxyFlag = conn.proxyFlag;
+      while (*proxyFlag != 1) {
+      }
       *proxyFlag = 0;
     }
     __syncthreads();
   }
 
-  __host__ __device__ int numPeers() {
+  __host__ __device__ int numPeers()
+  {
     return nRanks - 1;
   }
 
-  __host__ __device__ int numBlocks() {
+  __host__ __device__ int numBlocks()
+  {
     return numPeers();
   }
 
-  __host__ __device__ int peerIdx(int peerRank, int myRank) {
+  __host__ __device__ int peerIdx(int peerRank, int myRank)
+  {
     return peerRank < myRank ? peerRank : peerRank - 1;
   }
 
-  __host__ __device__ int peerRank(int peerIdx, int myRank) {
+  __host__ __device__ int peerRank(int peerIdx, int myRank)
+  {
     return peerIdx < myRank ? peerIdx : peerIdx + 1;
   }
 
-  __host__ __device__ int phase1SendConnIdx(int peerRank) {
+  __host__ __device__ int phase1SendConnIdx(int peerRank)
+  {
     return peerIdx(peerRank, rank) * 3;
   }
 
-  __host__ __device__ int phase1RecvConnIdx(int peerRank) {
+  __host__ __device__ int phase1RecvConnIdx(int peerRank)
+  {
     return peerIdx(peerRank, rank) * 3 + 1;
   }
 
-  __host__ __device__ int phase2ConnIdx(int peerRank) {
+  __host__ __device__ int phase2ConnIdx(int peerRank)
+  {
     return peerIdx(peerRank, rank) * 3 + 2;
   }
 
-  void freeGPUResources() {
+  void freeGPUResources()
+  {
     if (scratch)
       CUDACHECK(cudaFree(scratch));
     scratch = nullptr;
@@ -160,16 +176,16 @@ struct AllreduceAllpairs {
   }
 };
 
-// The builder class encapsulates the 
-template<class T, void (*reduce)(T*,T*,size_t)>
-class AllreduceAllpairsBuilder {
+// The builder class encapsulates the
+template <class T, void (*reduce)(T*, T*, size_t)> class AllreduceAllpairsBuilder
+{
   AllreduceAllpairs<T, reduce> d;
   std::vector<mscclppDevConn_t> hostConns;
 
 public:
-
   // The constructor is called after the user has allocated the buffer to be allreduced
-  AllreduceAllpairsBuilder(T* data, size_t size) {
+  AllreduceAllpairsBuilder(T* data, size_t size)
+  {
     d.userData = data;
     d.userSize = size;
     d.scratch = nullptr;
@@ -179,7 +195,8 @@ public:
   }
 
   // connect is called after rank initialization but before connection setup
-  mscclppResult_t connect(mscclppComm_t comm) {
+  mscclppResult_t connect(mscclppComm_t comm)
+  {
     MSCCLPPCHECK(mscclppCommRank(comm, &d.rank));
     MSCCLPPCHECK(mscclppCommSize(comm, &d.nRanks));
 
@@ -195,47 +212,55 @@ public:
       if (peer != d.rank) {
         int sendTag = d.rank < peer ? 0 : 1;
         int recvTag = d.rank < peer ? 1 : 0;
-        MSCCLPPCHECK(mscclppConnect(comm, hostConns.data() + d.phase1SendConnIdx(peer), peer, d.userData, d.userSize * sizeof(T), d.connFlags + 0, sendTag, mscclppTransportP2P, nullptr));
-        MSCCLPPCHECK(mscclppConnect(comm, hostConns.data() + d.phase1RecvConnIdx(peer), peer, d.scratch, d.scratchSize * sizeof(T), d.connFlags + 1, recvTag, mscclppTransportP2P, nullptr));
-        MSCCLPPCHECK(mscclppConnect(comm, hostConns.data() + d.phase2ConnIdx(peer), peer, d.userData, d.userSize * sizeof(T), d.connFlags + 2, 2, mscclppTransportP2P, nullptr));
+        MSCCLPPCHECK(mscclppConnect(comm, hostConns.data() + d.phase1SendConnIdx(peer), peer, d.userData,
+                                    d.userSize * sizeof(T), d.connFlags + 0, sendTag, mscclppTransportP2P, nullptr));
+        MSCCLPPCHECK(mscclppConnect(comm, hostConns.data() + d.phase1RecvConnIdx(peer), peer, d.scratch,
+                                    d.scratchSize * sizeof(T), d.connFlags + 1, recvTag, mscclppTransportP2P, nullptr));
+        MSCCLPPCHECK(mscclppConnect(comm, hostConns.data() + d.phase2ConnIdx(peer), peer, d.userData,
+                                    d.userSize * sizeof(T), d.connFlags + 2, 2, mscclppTransportP2P, nullptr));
       }
     }
 
     return mscclppSuccess;
   }
 
-  // finishSetup is called after connection setup and returns an algorithm object that is ready to be passed to a GPU kernel
-  AllreduceAllpairs<T, reduce> finishSetup() {
+  // finishSetup is called after connection setup and returns an algorithm object that is ready to be passed to a GPU
+  // kernel
+  AllreduceAllpairs<T, reduce> finishSetup()
+  {
     CUDACHECK(cudaMalloc(&d.conns, hostConns.size() * sizeof(mscclppDevConn_t)));
-    CUDACHECK(cudaMemcpy(d.conns, hostConns.data(), hostConns.size() * sizeof(mscclppDevConn_t), cudaMemcpyHostToDevice));
+    CUDACHECK(
+      cudaMemcpy(d.conns, hostConns.data(), hostConns.size() * sizeof(mscclppDevConn_t), cudaMemcpyHostToDevice));
     CUDACHECK(cudaMalloc(&d.barrier, sizeof(cuda::barrier<cuda::thread_scope_device>)));
     cuda::barrier<cuda::thread_scope_device> initBarrier(d.numBlocks());
-    CUDACHECK(cudaMemcpy(d.barrier, &initBarrier, sizeof(cuda::barrier<cuda::thread_scope_device>), cudaMemcpyHostToDevice));
+    CUDACHECK(
+      cudaMemcpy(d.barrier, &initBarrier, sizeof(cuda::barrier<cuda::thread_scope_device>), cudaMemcpyHostToDevice));
     return d;
   }
 };
 
-template<class T>
-__device__ void reduceSum(T* dst, T* src, size_t size) {
+template <class T> __device__ void reduceSum(T* dst, T* src, size_t size)
+{
   for (int i = threadIdx.x; i < size; i += blockDim.x) {
     dst[i] += src[i];
   }
 }
 
-template<class T>
-__global__ void init(T* data, size_t size, int rank) {
+template <class T> __global__ void init(T* data, size_t size, int rank)
+{
   for (int i = threadIdx.x; i < size; i += blockDim.x) {
     data[i] = rank;
   }
 }
 
 // The main test kernel
-template<class T>
-__global__ void testKernel(AllreduceAllpairs<T, reduceSum> d) {
+template <class T> __global__ void testKernel(AllreduceAllpairs<T, reduceSum> d)
+{
   d.run(blockIdx.x);
 }
 
-int main(int argc, const char *argv[]) {
+int main(int argc, const char* argv[])
+{
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
   MPI_Init(NULL, NULL);
 #endif
@@ -246,14 +271,14 @@ int main(int argc, const char *argv[]) {
   CUDACHECK(cudaSetDevice(rank));
 
   // Allocate and initialize 1 MB of data
-  int *data;
+  int* data;
   size_t dataSize = 1024 * 1024 / sizeof(int);
   CUDACHECK(cudaMalloc(&data, dataSize * sizeof(int)));
   init<<<1, 256>>>(data, dataSize, rank);
-  
+
   // Create the collective
   AllreduceAllpairsBuilder<int, reduceSum> builder(data, dataSize);
-  
+
   // Create the communicator
   mscclppComm_t comm;
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
@@ -268,7 +293,7 @@ int main(int argc, const char *argv[]) {
 
   // Run the collective
   testKernel<<<allreduce.numBlocks(), 256>>>(allreduce);
-  
+
   // Wait for kernel to finish
   CUDACHECK(cudaDeviceSynchronize());
 
