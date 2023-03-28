@@ -314,7 +314,7 @@ mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank);
  */
 mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size);
 
-/* Set the timeout for the bootstrap connection. The default value is 30 seconds.
+/* Set the timeout for the bootstrap connection.
  *
  * Inputs:
  *   timeout: the timeout in seconds
