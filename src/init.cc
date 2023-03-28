@@ -422,7 +422,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
     return mscclppInternalError;
   }
 
-  struct mscclppDevConn *devConn = &comm->devConns[comm->nConns];
+  struct mscclppDevConn* devConn = &comm->devConns[comm->nConns];
 
   conn->devConn = devConn;
   conn->devConn->localBuff = localBuff;
