@@ -7,13 +7,13 @@
 #ifndef MSCCLPP_UTILS_H_
 #define MSCCLPP_UTILS_H_
 
-#include "mscclpp.h"
 #include "alloc.h"
 #include "checks.h"
+#include "mscclpp.h"
+#include <new>
+#include <sched.h>
 #include <stdint.h>
 #include <time.h>
-#include <sched.h>
-#include <new>
 
 // int mscclppCudaCompCap();
 
@@ -21,7 +21,7 @@
 mscclppResult_t int64ToBusId(int64_t id, char* busId);
 mscclppResult_t busIdToInt64(const char* busId, int64_t* id);
 
-mscclppResult_t getBusId(int cudaDev, int64_t *busId);
+mscclppResult_t getBusId(int cudaDev, int64_t* busId);
 
 mscclppResult_t getHostName(char* hostname, int maxlen, const char delim);
 uint64_t getHash(const char* string, int n);
@@ -29,7 +29,8 @@ uint64_t getHostHash();
 uint64_t getPidHash();
 mscclppResult_t getRandomData(void* buffer, size_t bytes);
 
-struct netIf {
+struct netIf
+{
   char prefix[64];
   int port;
 };
@@ -37,27 +38,33 @@ struct netIf {
 int parseStringList(const char* string, struct netIf* ifList, int maxList);
 bool matchIfList(const char* string, int port, struct netIf* ifList, int listSize, bool matchExact);
 
-static long log2i(long n) {
- long l = 0;
- while (n>>=1) l++;
- return l;
+static long log2i(long n)
+{
+  long l = 0;
+  while (n >>= 1)
+    l++;
+  return l;
 }
 
-inline uint64_t clockNano() {
+inline uint64_t clockNano()
+{
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
-  return uint64_t(ts.tv_sec)*1000*1000*1000 + ts.tv_nsec;
+  return uint64_t(ts.tv_sec) * 1000 * 1000 * 1000 + ts.tv_nsec;
 }
 
 /* get any bytes of random data from /dev/urandom, return 0 if it succeeds; else
  * return -1 */
-inline mscclppResult_t getRandomData(void* buffer, size_t bytes) {
+inline mscclppResult_t getRandomData(void* buffer, size_t bytes)
+{
   mscclppResult_t ret = mscclppSuccess;
   if (bytes > 0) {
     const size_t one = 1UL;
     FILE* fp = fopen("/dev/urandom", "r");
-    if (buffer == NULL || fp == NULL || fread(buffer, bytes, one, fp) != one) ret = mscclppSystemError;
-    if (fp) fclose(fp);
+    if (buffer == NULL || fp == NULL || fread(buffer, bytes, one, fp) != one)
+      ret = mscclppSystemError;
+    if (fp)
+      fclose(fp);
   }
   return ret;
 }
@@ -252,7 +259,6 @@ inline mscclppResult_t getRandomData(void* buffer, size_t bytes) {
 //   me->topFrame = *me->topFrame.below; // C++ struct assignment
 // }
 
-
 ////////////////////////////////////////////////////////////////////////////////
 
 // struct mscclppMemoryPool {
@@ -441,7 +447,8 @@ inline mscclppResult_t getRandomData(void* buffer, size_t bytes) {
 //         uintptr_t expected = sleeping ? 0x1 : 0x0;
 //         uintptr_t desired = 0x1;
 //         me->waiting = waitSignal; // release done by successful compare exchange
-//         if (__atomic_compare_exchange_n(&me->tail, &expected, desired, /*weak=*/true, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+//         if (__atomic_compare_exchange_n(&me->tail, &expected, desired, /*weak=*/true, __ATOMIC_RELEASE,
+//         __ATOMIC_RELAXED)) {
 //           sleeping = true;
 //           pthread_cond_wait(&waitSignal->cond, &waitSignal->mutex);
 //         }
@@ -471,7 +478,8 @@ inline mscclppResult_t getRandomData(void* buffer, size_t bytes) {
 // template<typename T, T *T::*next>
 // T* mscclppIntruQueueMpscAbandon(mscclppIntruQueueMpsc<T,next>* me) {
 //   uintptr_t expected = 0x0;
-//   if (__atomic_compare_exchange_n(&me->tail, &expected, /*desired=*/0x2, /*weak=*/true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+//   if (__atomic_compare_exchange_n(&me->tail, &expected, /*desired=*/0x2, /*weak=*/true, __ATOMIC_RELAXED,
+//   __ATOMIC_RELAXED)) {
 //     return nullptr;
 //   } else {
 //     int spins = 0;

@@ -53,6 +53,45 @@ $ ./build/bin/tests/bootstrap_test 127.0.0.1:50000 0 2
 $ ./build/bin/tests/bootstrap_test 127.0.0.1:50000 1 2
 ```
 
+## Performance
+
+All results from NDv4. "xp-yn" means "x" total GPUs across "y" nodes.
+
+**NOTE:** NCCL AllGather leverages Ring algorithm instead of all-pairs alike algorithm, which greatly reduces inter-node transmission, causing significant higher performance. MSCCL++ should do something similar in the future
+
+### 8p-1n
+**Latency (us)**
+| Message Size | NCCL AllGather | NCCL AllToAll | MSCCL AllToAll LL | MSCCL AllToAll LL128 | MSCCL AllToAll Simple | MSCCL++ AllGather K0 | MSCCL++ AllGather K1 |
+|:------------:|:--------------:|:-------------:|:-----------------:|:--------------------:|:---------------------:|:--------------------:|:--------------------:|
+| 1K           | 13.12          | 9.61          | **7.76**          | 21.06                | 28.50                 | 157.91               | 143.21               |
+
+**BusBW (GB/s)**
+| Message Size | NCCL AllGather | NCCL AllToAll | MSCCL AllToAll LL | MSCCL AllToAll LL128 | MSCCL AllToAll Simple | MSCCL++ AllGather K0 | MSCCL++ AllGather K1 |
+|:------------:|:--------------:|:-------------:|:-----------------:|:--------------------:|:---------------------:|:--------------------:|:--------------------:|
+| 1G           | 218.27         | 220.09        | 217.05            | 216.98               | 217.15                | 93.69                | **255.06**           |
+
+### 2p-2n
+**Latency (us)**
+| Message Size | NCCL AllGather | NCCL AllToAll | MSCCL AllToAll LL | MSCCL AllToAll LL128 | MSCCL AllToAll Simple | MSCCL++ AllGather K0 | MSCCL++ AllGather K1 |
+|:------------:|:--------------:|:-------------:|:-----------------:|:--------------------:|:---------------------:|:--------------------:|:--------------------:|
+| 1K           | 15.31          | 28.36         | 14.67             | 29.12                | 35.43                 | 15.32                | **13.84**            |
+
+**BusBW (GB/s)**
+| Message Size | NCCL AllGather | NCCL AllToAll | MSCCL AllToAll LL | MSCCL AllToAll LL128 | MSCCL AllToAll Simple | MSCCL++ AllGather K0 | MSCCL++ AllGather K1 |
+|:------------:|:--------------:|:-------------:|:-----------------:|:--------------------:|:---------------------:|:--------------------:|:--------------------:|
+| 1G           | 15.69          | 16.22         | 13.94             | 13.83                | 14.10                 | **23.26**            | **23.29**            |
+
+### 16p-2n
+**Latency (us)**
+| Message Size | NCCL AllGather | NCCL AllToAll | MSCCL AllToAll LL | MSCCL AllToAll LL128 | MSCCL AllToAll Simple | MSCCL++ AllGather K0 | MSCCL++ AllGather K1 |
+|:------------:|:--------------:|:-------------:|:-----------------:|:--------------------:|:---------------------:|:--------------------:|:--------------------:|
+| 1K           | 31.70          | 45.12         | **22.55**         | 39.33                | 56.93                 | 159.14               | 230.52               |
+
+**BusBW (GB/s)**
+| Message Size | NCCL AllGather | NCCL AllToAll | MSCCL AllToAll LL | MSCCL AllToAll LL128 | MSCCL AllToAll Simple | MSCCL++ AllGather K0 | MSCCL++ AllGather K1 |
+|:------------:|:--------------:|:-------------:|:-----------------:|:--------------------:|:---------------------:|:--------------------:|:--------------------:|
+| 1G           | 174.28         | 38.30         | 40.17             | 40.18                | 40.23                 | **44.08**            | 9.31                 |
+
 
 ## Contributing
 

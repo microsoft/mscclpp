@@ -2,23 +2,23 @@
 #include <cstdlib>
 #include <cstring>
 #include <malloc.h>
-#include <vector>
 #include <unistd.h>
+#include <vector>
 
-#include "debug.h"
 #include "alloc.h"
 #include "comm.h"
+#include "debug.h"
 #include "ib.h"
 
-static int getIbDevNumaNode(const char *ibDevPath)
+static int getIbDevNumaNode(const char* ibDevPath)
 {
   if (ibDevPath == NULL) {
     WARN("ibDevPath is NULL");
     return -1;
   }
-  const char *postfix = "/device/numa_node";
-  FILE *fp = NULL;
-  char *filePath = NULL;
+  const char* postfix = "/device/numa_node";
+  FILE* fp = NULL;
+  char* filePath = NULL;
   int node = -1;
   int res;
   if (mscclppCalloc(&filePath, strlen(ibDevPath) + strlen(postfix) + 1) != mscclppSuccess) {
@@ -52,16 +52,16 @@ exit:
   return node;
 }
 
-mscclppResult_t mscclppIbContextCreate(struct mscclppIbContext **ctx, const char *ibDevName)
+mscclppResult_t mscclppIbContextCreate(struct mscclppIbContext** ctx, const char* ibDevName)
 {
-  struct mscclppIbContext *_ctx;
+  struct mscclppIbContext* _ctx;
   MSCCLPPCHECK(mscclppCalloc(&_ctx, 1));
 
   std::vector<int> ports;
 
   int num;
-  const char *ibDevPath = NULL;
-  struct ibv_device **devices = ibv_get_device_list(&num);
+  const char* ibDevPath = NULL;
+  struct ibv_device** devices = ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
     if (strncmp(devices[i]->name, ibDevName, IBV_SYSFS_NAME_MAX) == 0) {
       _ctx->ctx = ibv_open_device(devices[i]);
@@ -96,8 +96,7 @@ mscclppResult_t mscclppIbContextCreate(struct mscclppIbContext **ctx, const char
     if (portAttr.state != IBV_PORT_ACTIVE) {
       continue;
     }
-    if (portAttr.link_layer != IBV_LINK_LAYER_INFINIBAND &&
-      portAttr.link_layer != IBV_LINK_LAYER_ETHERNET) {
+    if (portAttr.link_layer != IBV_LINK_LAYER_INFINIBAND && portAttr.link_layer != IBV_LINK_LAYER_ETHERNET) {
       continue;
     }
     ports.push_back((int)i);
@@ -129,7 +128,7 @@ fail:
   return mscclppInternalError;
 }
 
-mscclppResult_t mscclppIbContextDestroy(struct mscclppIbContext *ctx)
+mscclppResult_t mscclppIbContextDestroy(struct mscclppIbContext* ctx)
 {
   for (int i = 0; i < ctx->nMrs; ++i) {
     if (ctx->mrs[i].mr) {
@@ -158,7 +157,7 @@ mscclppResult_t mscclppIbContextDestroy(struct mscclppIbContext *ctx)
   return mscclppSuccess;
 }
 
-mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext *ctx, struct mscclppIbQp **ibQp, int port/*=-1*/)
+mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext* ctx, struct mscclppIbQp** ibQp, int port /*=-1*/)
 {
   if (port < 0) {
     port = ctx->ports[0];
@@ -176,7 +175,7 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext *ctx, struct ms
     }
   }
 
-  struct ibv_cq *cq = ibv_create_cq(ctx->ctx, MSCCLPP_IB_CQ_SIZE, NULL, NULL, 0);
+  struct ibv_cq* cq = ibv_create_cq(ctx->ctx, MSCCLPP_IB_CQ_SIZE, NULL, NULL, 0);
   if (cq == NULL) {
     WARN("ibv_create_cq failed (errno %d)", errno);
     return mscclppInternalError;
@@ -193,7 +192,7 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext *ctx, struct ms
   qp_init_attr.cap.max_send_sge = 1;
   qp_init_attr.cap.max_recv_sge = 1;
   qp_init_attr.cap.max_inline_data = 0;
-  struct ibv_qp *qp = ibv_create_qp(ctx->pd, &qp_init_attr);
+  struct ibv_qp* qp = ibv_create_qp(ctx->pd, &qp_init_attr);
   if (qp == nullptr) {
     WARN("ibv_create_qp failed (errno %d)", errno);
     return mscclppInternalError;
@@ -219,7 +218,7 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext *ctx, struct ms
     WARN("too many QPs");
     return mscclppInternalError;
   }
-  struct mscclppIbQp *_ibQp = &ctx->qps[ctx->nQps - 1];
+  struct mscclppIbQp* _ibQp = &ctx->qps[ctx->nQps - 1];
   _ibQp->qp = qp;
   _ibQp->info.lid = port_attr.lid;
   _ibQp->info.port = port;
@@ -229,8 +228,8 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext *ctx, struct ms
   if (port_attr.link_layer != IBV_LINK_LAYER_INFINIBAND) {
     union ibv_gid gid;
     if (ibv_query_gid(ctx->ctx, port, 0, &gid) != 0) {
-        WARN("ibv_query_gid failed (errno %d)", errno);
-        return mscclppInternalError;
+      WARN("ibv_query_gid failed (errno %d)", errno);
+      return mscclppInternalError;
     }
     _ibQp->info.spn = gid.global.subnet_prefix;
   }
@@ -256,7 +255,8 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext *ctx, struct ms
   return mscclppSuccess;
 }
 
-mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext *ctx, void *buff, size_t size, struct mscclppIbMr **ibMr)
+mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext* ctx, void* buff, size_t size,
+                                           struct mscclppIbMr** ibMr)
 {
   if (size == 0) {
     WARN("invalid size: %zu", size);
@@ -271,8 +271,8 @@ mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext *ctx, void *b
   }
   uintptr_t addr = reinterpret_cast<uintptr_t>(buff) & -pageSize;
   size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;
-  struct ibv_mr *mr =
-    ibv_reg_mr(ctx->pd, reinterpret_cast<void *>(addr), pages * pageSize,
+  struct ibv_mr* mr =
+    ibv_reg_mr(ctx->pd, reinterpret_cast<void*>(addr), pages * pageSize,
                IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_RELAXED_ORDERING);
   if (mr == nullptr) {
     WARN("ibv_reg_mr failed (errno %d)", errno);
@@ -287,7 +287,7 @@ mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext *ctx, void *b
     WARN("too many MRs");
     return mscclppInternalError;
   }
-  struct mscclppIbMr *_ibMr = &ctx->mrs[ctx->nMrs - 1];
+  struct mscclppIbMr* _ibMr = &ctx->mrs[ctx->nMrs - 1];
   _ibMr->mr = mr;
   _ibMr->buff = buff;
   _ibMr->info.addr = (uint64_t)buff;
@@ -298,7 +298,7 @@ mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext *ctx, void *b
 
 //////////////////////////////////////////////////////////////////////////////
 
-int mscclppIbQp::rtr(const mscclppIbQpInfo *info)
+int mscclppIbQp::rtr(const mscclppIbQpInfo* info)
 {
   struct ibv_qp_attr qp_attr;
   std::memset(&qp_attr, 0, sizeof(struct ibv_qp_attr));
@@ -324,8 +324,8 @@ int mscclppIbQp::rtr(const mscclppIbQpInfo *info)
   qp_attr.ah_attr.src_path_bits = 0;
   qp_attr.ah_attr.port_num = info->port;
   return ibv_modify_qp(this->qp, &qp_attr,
-    IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
-      IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
+                       IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
+                         IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
 }
 
 int mscclppIbQp::rts()
@@ -339,19 +339,19 @@ int mscclppIbQp::rts()
   qp_attr.sq_psn = 0;
   qp_attr.max_rd_atomic = 1;
   return ibv_modify_qp(this->qp, &qp_attr,
-    IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN |
-      IBV_QP_MAX_QP_RD_ATOMIC);
+                       IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN |
+                         IBV_QP_MAX_QP_RD_ATOMIC);
 }
 
-int mscclppIbQp::stageSend(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info, uint32_t size,
-                           uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled)
+int mscclppIbQp::stageSend(struct mscclppIbMr* ibMr, const mscclppIbMrInfo* info, uint32_t size, uint64_t wrId,
+                           uint64_t srcOffset, uint64_t dstOffset, bool signaled)
 {
   if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
     return -1;
   }
   int wrn = this->wrn;
-  struct ibv_send_wr *wr_ = &this->wrs[wrn];
-  struct ibv_sge *sge_ = &this->sges[wrn];
+  struct ibv_send_wr* wr_ = &this->wrs[wrn];
+  struct ibv_sge* sge_ = &this->sges[wrn];
   // std::memset(wr_, 0, sizeof(struct ibv_send_wr));
   // std::memset(sge_, 0, sizeof(struct ibv_sge));
   wr_->wr_id = wrId;
@@ -372,8 +372,8 @@ int mscclppIbQp::stageSend(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info
   return this->wrn;
 }
 
-int mscclppIbQp::stageSendWithImm(struct mscclppIbMr *ibMr, const mscclppIbMrInfo *info, uint32_t size,
-                                  uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled, unsigned int immData)
+int mscclppIbQp::stageSendWithImm(struct mscclppIbMr* ibMr, const mscclppIbMrInfo* info, uint32_t size, uint64_t wrId,
+                                  uint64_t srcOffset, uint64_t dstOffset, bool signaled, unsigned int immData)
 {
   int wrn = this->stageSend(ibMr, info, size, wrId, srcOffset, dstOffset, signaled);
   this->wrs[wrn - 1].opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
@@ -387,7 +387,7 @@ int mscclppIbQp::postSend()
     return 0;
   }
 
-  struct ibv_send_wr *bad_wr;
+  struct ibv_send_wr* bad_wr;
   int ret = ibv_post_send(this->qp, this->wrs, &bad_wr);
   if (ret != 0) {
     return ret;
