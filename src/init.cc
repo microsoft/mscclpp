@@ -86,7 +86,7 @@ MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nrank
 mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank)
 {
   if (mscclppGdrCopy == NULL) {
-    MSCCLPPCHECK(initGdrCopy());
+    // MSCCLPPCHECK(initGdrCopy());
   }
 
   mscclppResult_t res = mscclppSuccess;
@@ -162,7 +162,7 @@ MSCCLPP_API(mscclppResult_t, mscclppCommInitRankFromId, mscclppComm_t* comm, int
 mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank)
 {
   if (mscclppGdrCopy == NULL) {
-    MSCCLPPCHECK(initGdrCopy());
+    // MSCCLPPCHECK(initGdrCopy());
   }
 
   mscclppResult_t res = mscclppSuccess;
@@ -213,7 +213,7 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
     struct mscclppConn* conn = &comm->conns[i];
     if (conn->cpuProxyFlagGdrDesc) {
       // IB
-      MSCCLPPCHECK(mscclppGdrCudaFree(conn->cpuProxyFlagGdrDesc));
+      // MSCCLPPCHECK(mscclppGdrCudaFree(conn->cpuProxyFlagGdrDesc));
     } else if (conn->devConn->proxyEpochId) {
       // P2P
       MSCCLPPCHECK(mscclppCudaFree(conn->devConn->proxyEpochId));
@@ -401,8 +401,8 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
   // If we couldn't find a matching context, create one
   if (proxyState == NULL) {
     MSCCLPPCHECK(mscclppCalloc(&proxyState, 1));
-    MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->triggerFifo.hostPtr, &proxyState->triggerFifo.devPtr,
-                                      MSCCLPP_PROXY_FIFO_SIZE, &proxyState->triggerFifo.desc));
+    // MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->triggerFifo.hostPtr, &proxyState->triggerFifo.devPtr,
+    //                                   MSCCLPP_PROXY_FIFO_SIZE, &proxyState->triggerFifo.desc));
     MSCCLPPCHECK(mscclppCudaHostCalloc(&proxyState->triggerFifo.hostPtr, MSCCLPP_PROXY_FIFO_SIZE));
     proxyState->triggerFifo.devPtr = proxyState->triggerFifo.hostPtr;
     // MSCCLPPCHECK(
@@ -497,7 +497,8 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
   struct mscclppDevConn* devConn = conn->devConn;
   devConn->remoteBuff = NULL;
   devConn->remoteFlag = NULL;
-  MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuProxyFlag, &devConn->proxyEpochId, 1, &conn->cpuProxyFlagGdrDesc));
+  // MSCCLPPCHECK(mscclppGdrCudaCalloc(&conn->cpuProxyFlag, &devConn->proxyEpochId, 1, &conn->cpuProxyFlagGdrDesc));
+  MSCCLPPCHECK(mscclppCudaCalloc(&devConn->proxyEpochId, 1));
 
   struct mscclppIbContext* ibCtx = conn->ibCtx;
   if (conn->ibQp == NULL) {

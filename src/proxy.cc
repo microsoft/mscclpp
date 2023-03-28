@@ -122,7 +122,8 @@ void* mscclppProxyServiceP2P(void* _args)
     // Send completion: reset only the high 64 bits
     *(volatile uint64_t*)(&fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
     cachedFifoTail++;
-    PROXYCUDACHECK(cudaMemcpyAsync(fifoTailDevPtr, &cachedFifoTail, sizeof(uint64_t), cudaMemcpyHostToDevice, stream2));
+    if (((cachedFifoTail % 4) == 0) || (trigger.fields.type & mscclppSync))
+      PROXYCUDACHECK(cudaMemcpyAsync(fifoTailDevPtr, &cachedFifoTail, sizeof(uint64_t), cudaMemcpyHostToDevice, stream2));
     *fifoTail = cachedFifoTail;
   }
 
@@ -314,7 +315,8 @@ void* mscclppProxyServiceIb(void* _args)
     // Send completion: reset only the high 64 bits
     *(volatile uint64_t*)(&fifo[cachedFifoTail % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
     cachedFifoTail++;
-    PROXYCUDACHECK(cudaMemcpyAsync(fifoTailDevPtr, &cachedFifoTail, sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
+    if (((cachedFifoTail % 4) == 0) || (trigger.fields.type & mscclppSync))
+      PROXYCUDACHECK(cudaMemcpyAsync(fifoTailDevPtr, &cachedFifoTail, sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
     *fifoTail = cachedFifoTail;
 #endif
   }
