@@ -58,9 +58,9 @@ struct mscclppConcurrentFifo
   }
 
 #endif // __CUDACC__
-  mscclppTrigger* triggerFifo;
-  uint64_t* triggerFifoTail; // read by both device and host. written only by host
-  uint64_t* triggerFifoHead; // read by both device and host. written only by device
+  mscclppTrigger* triggerFifo; // allocate on host via cudaHostAlloc. produced by device and consumed by host
+  uint64_t* triggerFifoTail; // allocated on device. updated only by host
+  uint64_t* triggerFifoHead; // allocated on device. update only by device
   int connId;
 };
 

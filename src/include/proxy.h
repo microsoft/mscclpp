@@ -19,7 +19,6 @@ template <typename T> struct mscclppGDRState
 {
   T* hostPtr;
   T* devPtr;
-  void* desc;
 };
 
 struct mscclppProxyState
@@ -28,10 +27,19 @@ struct mscclppProxyState
   pthread_t thread;
   mscclppProxyRunState_t run;
 
-  // fifo allocation that is accessible on both host and device
-  mscclppGDRState<mscclppTrigger> triggerFifo;
-  mscclppGDRState<uint64_t> fifoHead;
-  mscclppGDRState<uint64_t> fifoTail;
+  // fifo cudaHostCalloc'ed that is produced by device and consumed by host
+  mscclppTrigger* triggerFifo;
+  // allocated on the device and only accessed by the device
+  uint64_t* fifoHead;
+
+  // allocated on the device. Read-only by device, write-only by host
+  uint64_t* fifoTailDev;
+  // allocated on the host. Only accessed by the host. This is a copy of the
+  // value pointed to by fifoTailDev and the invariance is that
+  // *fifoTailDev <= fifoTailHost. Meaning that host's copy of tail is
+  // always ahead of the device's copy and host updates the device's copy
+  // only when it is needed.
+  uint64_t fifoTailHost;
 
   struct mscclppIbContext* ibContext; // For IB connection only
   cudaStream_t stream;                // for P2P DMA engine only
