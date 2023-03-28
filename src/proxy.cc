@@ -94,6 +94,12 @@ void* mscclppProxyServiceP2P(void* _args)
       void* srcBuff = (void*)((char*)conn->devConn->localBuff + trigger.fields.srcDataOffset);
       void* dstBuff = (void*)((char*)conn->devConn->remoteBuff + trigger.fields.dstDataOffset);
       PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, stream));
+
+#if defined(ENABLE_NPKIT)
+      NpKit::CollectCpuEvent(NPKIT_EVENT_DMA_SEND_ENTRY, (uint32_t)trigger.fields.dataSize,
+                             0 /* inflight request differentiator */, *(volatile uint64_t*)NpKit::GetCpuTimestamp(),
+                             trigger.fields.connId /* event collection context index */);
+#endif
     }
     if (trigger.fields.type & mscclppFlag) {
       PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->sendEpochId, sizeof(uint64_t),
@@ -102,6 +108,11 @@ void* mscclppProxyServiceP2P(void* _args)
     // Wait for completion
     if (trigger.fields.type & mscclppSync) {
       PROXYCUDACHECK(cudaStreamSynchronize(stream));
+#if defined(ENABLE_NPKIT)
+      NpKit::CollectCpuEvent(NPKIT_EVENT_DMA_SEND_EXIT, (uint32_t)trigger.fields.dataSize,
+                             0 /* inflight request differentiator */, *(volatile uint64_t*)NpKit::GetCpuTimestamp(),
+                             trigger.fields.connId /* event collection context index */);
+#endif
     }
 
     // Send completion: reset only the high 64 bits
