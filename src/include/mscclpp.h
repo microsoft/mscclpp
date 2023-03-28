@@ -319,7 +319,7 @@ mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size);
  * Inputs:
  *   timeout: the timeout in seconds
  */
-void mscclppSetBootstrapConnTimeout(time_t timeout = 30);
+mscclppResult_t mscclppSetBootstrapConnTimeout(int timeout = 30);
 
 /* Log handler type which is a callback function for
  * however user likes to handle the log messages. Once set,

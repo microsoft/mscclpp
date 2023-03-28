@@ -213,7 +213,6 @@ mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool
   memset(handle, 0, sizeof(mscclppBootstrapHandle));
   const char* env = NULL;
 
-  memset(handle, 0, sizeof(mscclppBootstrapHandle));
   if (ip_port_pair) {
     env = ip_port_pair;
   } else {

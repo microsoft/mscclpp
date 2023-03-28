@@ -611,9 +611,10 @@ mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler)
 }
 
 
-MSCCLPP_API(void, mscclppSetBootstrapConnTimeout, time_t timeout);
-void mscclppSetBootstrapConnTimeout(time_t timeout)
+MSCCLPP_API(mscclppResult_t, mscclppSetBootstrapConnTimeout, int timeout);
+mscclppResult_t mscclppSetBootstrapConnTimeout(int timeout)
 {
   mscclppConfig* config = mscclppConfig::getInstance();
   config->setBootstrapConnectionTimeoutConfig(timeout);
+  return mscclppSuccess;
 }

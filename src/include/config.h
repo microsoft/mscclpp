@@ -6,7 +6,7 @@
 class mscclppConfig
 {
 public:
-  time_t bootstrapConnectionTimeout;
+  time_t bootstrapConnectionTimeout = 30;
 
   static mscclppConfig* getInstance();
   time_t getBootstrapConnectionTimeoutConfig();
