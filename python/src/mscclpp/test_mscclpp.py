@@ -1,9 +1,14 @@
+import os
+import sys
 import concurrent.futures
 import unittest
 import hamcrest
+import subprocess
 
 import mscclpp
 
+MOD_DIR = os.path.dirname(__file__)
+TESTS_DIR = os.path.join(MOD_DIR, "tests")
 
 class UniqueIdTest(unittest.TestCase):
     def test_no_constructor(self) -> None:
@@ -39,41 +44,34 @@ class UniqueIdTest(unittest.TestCase):
             ),
         )
 
-def all_gather_task(rank: int, world_size: int) -> None:
-    comm_options = dict(
-        address="127.0.0.1:50000",
-        rank=rank,
-        world_size=world_size,
-    )
-    print(f'{comm_options=}', flush=True)
-
-    comm = mscclpp.MscclppComm.init_rank_from_address(**comm_options)
-
-    buf = bytearray(world_size)
-    buf[rank] = rank
-
-    if False:
-        # crashes, bad call structure..
-        comm.bootstrap_all_gather(memoryview(buf), world_size)
-        hamcrest.assert_that(
-            buf,
-            hamcrest.equal_to(b'\000\002'),
-        )
-
-    comm.close()
-
-
 class CommsTest(unittest.TestCase):
     def test_all_gather(self) -> None:
         world_size = 2
 
         tasks: list[concurrent.futures.Future[None]] = []
 
-        with concurrent.futures.ProcessPoolExecutor(max_workers=world_size) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=world_size) as pool:
             for rank in range(world_size):
-                tasks.append(pool.submit(all_gather_task, rank, world_size))
+                tasks.append(pool.submit(
+                    subprocess.check_output,
+                    [
+                        "python",
+                        "-m",
+                        "mscclpp.tests.bootstrap_test",
+                        f"--rank={rank}",
+                        f"--world_size={world_size}",
+                    ],
+                    stderr=subprocess.STDOUT,
+                ))
 
-        for f in concurrent.futures.as_completed(tasks):
-            f.result()
+        errors = []
+        for rank, f in enumerate(tasks):
+            try:
+                f.result()
+            except subprocess.CalledProcessError as e:
+                errors.append(f"{rank=}: " + e.output.decode('utf-8'))
+
+        if errors:
+            raise AssertionError("\n\n".join(errors))
 
 
