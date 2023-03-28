@@ -17,10 +17,16 @@ thread_local int mscclppDebugNoWarn = 0;
 char mscclppLastError[1024] = "";         // Global string for the last error in human readable form
 uint64_t mscclppDebugMask = MSCCLPP_INIT; // Default debug sub-system mask is INIT
 FILE* mscclppDebugFile = stdout;
+mscclppLogHandler_t mscclppDebugLogHandler = NULL;
 pthread_mutex_t mscclppDebugLock = PTHREAD_MUTEX_INITIALIZER;
 std::chrono::steady_clock::time_point mscclppEpoch;
 
 static __thread int tid = -1;
+
+void mscclppDebugDefaultLogHandler(const char* msg)
+{
+  fwrite(msg, 1, strlen(msg), mscclppDebugFile);
+}
 
 void mscclppDebugInit()
 {
@@ -139,6 +145,9 @@ void mscclppDebugInit()
     }
   }
 
+  if (mscclppDebugLogHandler == NULL)
+    mscclppDebugLogHandler = mscclppDefaultLogHandler;
+
   mscclppEpoch = std::chrono::steady_clock::now();
   __atomic_store_n(&mscclppDebugLevel, tempNcclDebugLevel, __ATOMIC_RELEASE);
   pthread_mutex_unlock(&mscclppDebugLock);
@@ -157,7 +166,6 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
     level = MSCCLPP_LOG_INFO;
     flags = mscclppDebugNoWarn;
   }
-
   // Save the last error (WARN) as a human readable string
   if (level == MSCCLPP_LOG_WARN) {
     pthread_mutex_lock(&mscclppDebugLock);
@@ -182,7 +190,7 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
   char buffer[1024];
   size_t len = 0;
   if (level == MSCCLPP_LOG_WARN) {
-    len = snprintf(buffer, sizeof(buffer), "\n%s:%d:%d [%d] %s:%d MSCCLPP WARN ", hostname, pid, tid, cudaDev, filefunc,
+    len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] %s:%d MSCCLPP WARN ", hostname, pid, tid, cudaDev, filefunc,
                    line);
   } else if (level == MSCCLPP_LOG_INFO) {
     len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] MSCCLPP INFO ", hostname, pid, tid, cudaDev);
@@ -201,8 +209,20 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
     len += vsnprintf(buffer + len, sizeof(buffer) - len, fmt, vargs);
     va_end(vargs);
     buffer[len++] = '\n';
-    fwrite(buffer, 1, len, mscclppDebugFile);
+    mscclppDebugLogHandler(buffer);
   }
+}
+
+mscclppResult_t mscclppDebugSetLogHandler(mscclppLogHandler_t handler)
+{
+  if (__atomic_load_n(&mscclppDebugLevel, __ATOMIC_ACQUIRE) == -1)
+    mscclppDebugInit();
+  if (handler == NULL)
+    return mscclppInvalidArgument;
+  pthread_mutex_lock(&mscclppDebugLock);
+  mscclppDebugLogHandler = handler;
+  pthread_mutex_unlock(&mscclppDebugLock);
+  return mscclppSuccess;
 }
 
 MSCCLPP_PARAM(SetThreadName, "SET_THREAD_NAME", 0);
