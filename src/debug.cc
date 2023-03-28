@@ -66,10 +66,6 @@ void mscclppDebugInit()
       invert = 1;
       mscclppDebugSubsysEnv++;
     }
-    if (mscclppDebugSubsysEnv[0] == '^') {
-      invert = 1;
-      mscclppDebugSubsysEnv++;
-    }
     mscclppDebugMask = invert ? ~0ULL : 0ULL;
     char* mscclppDebugSubsys = strdup(mscclppDebugSubsysEnv);
     char* subsys = strtok(mscclppDebugSubsys, ",");
@@ -103,10 +99,6 @@ void mscclppDebugInit()
           mscclppDebugMask &= ~mask;
         else
           mscclppDebugMask |= mask;
-        if (invert)
-          mscclppDebugMask &= ~mask;
-        else
-          mscclppDebugMask |= mask;
       }
       subsys = strtok(NULL, ",");
     }
@@ -128,7 +120,6 @@ void mscclppDebugInit()
     char* dfn = debugFn;
     while (mscclppDebugFileEnv[c] != '\0' && c < PATH_MAX) {
       if (mscclppDebugFileEnv[c++] != '%') {
-        *dfn++ = mscclppDebugFileEnv[c - 1];
         *dfn++ = mscclppDebugFileEnv[c - 1];
         continue;
       }
@@ -190,8 +181,6 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
   }
   if (mscclppDebugLevel < level || ((flags & mscclppDebugMask) == 0))
     return;
-  if (mscclppDebugLevel < level || ((flags & mscclppDebugMask) == 0))
-    return;
 
   if (tid == -1) {
     tid = syscall(SYS_gettid);
@@ -247,8 +236,6 @@ void mscclppSetThreadName(pthread_t thread, const char* fmt, ...)
   // pthread_setname_np is nonstandard GNU extension
   // needs the following feature test macro
 #ifdef _GNU_SOURCE
-  if (mscclppParamSetThreadName() != 1)
-    return;
   if (mscclppParamSetThreadName() != 1)
     return;
   char threadName[MSCCLPP_THREAD_NAMELEN];

@@ -70,6 +70,5 @@ extern std::chrono::steady_clock::time_point mscclppEpoch;
 #endif
 
 void mscclppSetThreadName(pthread_t thread, const char* fmt, ...);
-void mscclppSetThreadName(pthread_t thread, const char* fmt, ...);
 
 #endif
