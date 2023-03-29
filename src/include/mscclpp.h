@@ -89,22 +89,26 @@ struct mscclppDevConn
   __forceinline__ __device__ void signal()
   {
     epochIncrement();
-    uint64_t curFifoHead = fifo.push(mscclppFlag | mscclppSync, 0, 0, 1);
-    while (*(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
-      ;
+    fifo.push(mscclppFlag, 0, 0, 1);
   }
 
   __forceinline__ __device__ void putWithSignal(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
   {
     epochIncrement();
-    uint64_t curFifoHead = fifo.push(mscclppData | mscclppFlag | mscclppSync, dstDataOffset, srcDataOffset, dataSize);
-    while (*(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
-      ;
+    fifo.push(mscclppData | mscclppFlag, dstDataOffset, srcDataOffset, dataSize);
   }
 
   __forceinline__ __device__ void putWithSignal(uint64_t dataOffset, uint64_t dataSize)
   {
     putWithSignal(dataOffset, dataOffset, dataSize);
+  }
+
+  __forceinline__ __device__ void flush()
+  {
+    epochIncrement();
+    uint64_t curFifoHead = fifo.push(mscclppSync, 0, 0, 1);
+    while (*(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
+      ;
   }
 
   __forceinline__ __device__ void wait()
