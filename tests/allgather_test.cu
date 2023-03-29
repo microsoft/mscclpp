@@ -128,7 +128,7 @@ void initializeAndAllocateAllGatherData(int rank, int world_size, size_t dataSiz
   *data_h = new int[nelemsPerGPU * world_size];
   for (size_t i = 0; i < nelemsPerGPU * world_size; i++) {
     int val = i + 1;
-    if (i / nelemsPerGPU == rank) {
+    if (i / nelemsPerGPU == (size_t)rank) {
       (*data_h)[i] = val;
     } else {
       (*data_h)[i] = 0;
@@ -317,7 +317,7 @@ int main(int argc, const char* argv[])
   int* data_h;
   size_t dataSize = 1024 * 1024 * 1024;
   if (parsedArgs.find("datasize") != parsedArgs.end()) {
-    dataSize = std::stoi(parsedArgs["datasize"]);
+    dataSize = std::stoul(parsedArgs["datasize"]);
   }
   size_t nelemsPerGPU = dataSize / sizeof(int) / world_size;
 
@@ -346,7 +346,7 @@ int main(int argc, const char* argv[])
   for (size_t i = 0; i < nelemsPerGPU * world_size; i++) {
     int val = i + 1;
     if (data_h[i] != val) {
-      printf("oh uh! data_h[%d] (%d) != val (%d)\n", i, data_h[i], val);
+      printf("oh uh! data_h[%ld] (%d) != val (%d)\n", i, data_h[i], val);
       break;
     }
   }
