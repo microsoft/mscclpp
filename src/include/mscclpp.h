@@ -107,7 +107,7 @@ struct mscclppDevConn
   {
     epochIncrement();
     uint64_t curFifoHead = fifo.push(mscclppSync, 0, 0, 1);
-    while (*(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
+    while (*(volatile uint64_t*)&fifo.triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 && *(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
       ;
   }
 
