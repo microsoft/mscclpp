@@ -30,9 +30,6 @@ def main():
         ]),
     )
 
-    buf = bytearray(world_size)
-    buf[rank] = rank
-
     comm.close()
 
 if __name__ == '__main__':

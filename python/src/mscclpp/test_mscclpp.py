@@ -69,9 +69,7 @@ class CommsTest(unittest.TestCase):
             try:
                 f.result()
             except subprocess.CalledProcessError as e:
-                errors.append(f"{rank=}: " + e.output.decode('utf-8'))
+                errors.append(e.output)
 
         if errors:
-            raise AssertionError("\n\n".join(errors))
-
-
+            raise AssertionError("\n\n".join(e.decode('utf-8', errors='ignore') for e in errors))
