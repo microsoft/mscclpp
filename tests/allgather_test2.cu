@@ -32,7 +32,7 @@ static double getTime(void)
 
 __constant__ mscclppDevConn_t constDevConns[16];
 
-__global__ void kernel(int rank, int world_size, int nelemsPerGPU)
+__global__ void kernel(int rank, int world_size, size_t nelemsPerGPU)
 {
   if (threadIdx.x % 32 != 0)
     return;
@@ -63,7 +63,7 @@ __global__ void kernel(int rank, int world_size, int nelemsPerGPU)
       continue;
 
     // Trigger sending data, flag and synchronize after
-    int ibPortion = nelemsPerGPU / 12; // nelemsPerGPU/12;
+    size_t ibPortion = nelemsPerGPU / 12; // nelemsPerGPU/12;
     if (isIB)
       devConn.fifo.setTrigger(trig, mscclppFlag | mscclppData | mscclppSync,
                               rank * nelemsPerGPU * sizeof(int) + (nelemsPerGPU - ibPortion) * sizeof(int),
@@ -168,7 +168,7 @@ int main(int argc, const char* argv[])
   int* data_d;
   uint64_t* flag_d;
   size_t data_size = 1536 * 1024 * 1024;
-  int nelemsPerGPU = data_size / sizeof(int) / world_size;
+  size_t nelemsPerGPU = data_size / sizeof(int) / world_size;
   CUDACHECK(cudaMalloc(&data_d, data_size));
   CUDACHECK(cudaMalloc(&flag_d, sizeof(uint64_t)));
   CUDACHECK(cudaMemset(data_d, 0, data_size));
@@ -176,7 +176,7 @@ int main(int argc, const char* argv[])
 
   int* data_h = new int[nelemsPerGPU * world_size];
   for (int i = 0; i < nelemsPerGPU * world_size; i++) {
-    int val = i + 1;
+    size_t val = i + 1;
     if (i / nelemsPerGPU == rank) {
       data_h[i] = val;
     } else {
@@ -221,7 +221,7 @@ int main(int argc, const char* argv[])
   CUDACHECK(cudaMemcpy(data_h, data_d, data_size, cudaMemcpyDeviceToHost));
   CUDACHECK(cudaDeviceSynchronize());
 
-  for (int i = 0; i < nelemsPerGPU * world_size; i++) {
+  for (size_t i = 0; i < nelemsPerGPU * world_size; i++) {
     int val = i + 1;
     if (data_h[i] != val) {
       printf("oh uh things went wrong! data_h[%d] (%d) != val (%d)\n", i, data_h[i], val);
