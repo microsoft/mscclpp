@@ -5,6 +5,7 @@
  ************************************************************************/
 
 #include "bootstrap.h"
+#include "config.h"
 #include "core.h"
 #include "mscclpp.h"
 #include "utils.h"
@@ -211,6 +212,7 @@ mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool
 {
   memset(handle, 0, sizeof(mscclppBootstrapHandle));
   const char* env = NULL;
+
   if (ip_port_pair) {
     env = ip_port_pair;
   } else {
@@ -281,6 +283,7 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
 
   info.rank = rank;
   info.nranks = nranks;
+
   // Create socket for other ranks to contact me
   MSCCLPPCHECK(mscclppSocketInit(&state->listenSock, &bootstrapNetIfAddr, comm->magic, mscclppSocketTypeBootstrap,
                                  comm->abortFlag));

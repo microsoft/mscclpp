@@ -5,7 +5,9 @@
  ************************************************************************/
 
 #include "socket.h"
+#include "config.h"
 #include "utils.h"
+
 #include <stdlib.h>
 
 #include <ifaddrs.h>
@@ -450,15 +452,24 @@ mscclppResult_t mscclppSocketGetAddr(struct mscclppSocket* sock, union mscclppSo
 
 static mscclppResult_t socketTryAccept(struct mscclppSocket* sock)
 {
+  static time_t initTime = -1;
+  if (initTime == -1)
+    initTime = clockNano() / 1e9;
+
+  mscclppConfig* config = mscclppConfig::getInstance();
+  time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
   socklen_t socklen = sizeof(union mscclppSocketAddress);
   sock->fd = accept(sock->acceptFd, &sock->addr.sa, &socklen);
   if (sock->fd != -1) {
     sock->state = mscclppSocketStateAccepted;
+    initTime = -1;
   } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
     WARN("socketTryAccept: get errno %d that is not EAGAIN or EWOULDBLOCK", errno);
+    initTime = -1;
     return mscclppSystemError;
-  } else if (++sock->acceptRetries == RETRY_ACCEPT_TIMES) {
-    WARN("socketTryAccept: exceeded retries (%d)", sock->acceptRetries);
+  } else if ((clockNano() / 1e9) - initTime > acceptTimeout) {
+    WARN("socketTryAccept: exceeded timeout (%ld) sec", acceptTimeout);
+    initTime = -1;
     return mscclppRemoteError;
   } else {
     usleep(SLEEP_INT);
@@ -502,43 +513,51 @@ static mscclppResult_t socketFinalizeAccept(struct mscclppSocket* sock)
 
 static mscclppResult_t socketStartConnect(struct mscclppSocket* sock)
 {
+  static time_t initTime = -1;
+  if (initTime == -1) {
+    initTime = clockNano() / 1e9;
+  }
+  mscclppConfig* config = mscclppConfig::getInstance();
+  time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
+
   /* blocking/non-blocking connect() is determined by asyncFlag. */
   int ret = connect(sock->fd, &sock->addr.sa, sock->salen);
-
   if (ret == 0) {
     sock->state = mscclppSocketStateConnected;
+    initTime = -1;
     return mscclppSuccess;
   } else if (errno == EINPROGRESS) {
     sock->state = mscclppSocketStateConnectPolling;
     return mscclppSuccess;
-  } else if (errno == ECONNREFUSED) {
-    if (++sock->refusedRetries == RETRY_REFUSED_TIMES) {
+  } else if (errno == ECONNREFUSED || errno == ETIMEDOUT) {
+    if ((clockNano() / 1e9) - initTime > acceptTimeout) {
+      WARN("socketStartConnect: exceeded timeout (%ld) sec", acceptTimeout);
       sock->state = mscclppSocketStateError;
-      WARN("socketStartConnect: exceeded retries (%d)", sock->refusedRetries);
+      initTime = -1;
       return mscclppRemoteError;
     }
     usleep(SLEEP_INT);
-    if (sock->refusedRetries % 1000 == 0)
+    if (++sock->connectRetries % 1000 == 0)
       INFO(MSCCLPP_ALL, "Call to connect returned %s, retrying", strerror(errno));
-    return mscclppSuccess;
-  } else if (errno == ETIMEDOUT) {
-    if (++sock->timedOutRetries == RETRY_TIMEDOUT_TIMES) {
-      sock->state = mscclppSocketStateError;
-      WARN("socketStartConnect: exceeded timeouts (%d)", sock->timedOutRetries);
-      return mscclppRemoteError;
-    }
-    usleep(SLEEP_INT);
     return mscclppSuccess;
   } else {
     char line[SOCKET_NAME_MAXLEN + 1];
     sock->state = mscclppSocketStateError;
     WARN("socketStartConnect: Connect to %s failed : %s", mscclppSocketToString(&sock->addr, line), strerror(errno));
+    initTime = -1;
     return mscclppSystemError;
   }
 }
 
 static mscclppResult_t socketPollConnect(struct mscclppSocket* sock)
 {
+  static time_t initTime = -1;
+  if (initTime == -1) {
+    initTime = clockNano() / 1e9;
+  }
+  mscclppConfig* config = mscclppConfig::getInstance();
+  time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
+
   struct pollfd pfd;
   int timeout = 1, ret;
   socklen_t rlen = sizeof(int);
@@ -547,33 +566,26 @@ static mscclppResult_t socketPollConnect(struct mscclppSocket* sock)
   pfd.fd = sock->fd;
   pfd.events = POLLOUT;
   SYSCHECK(ret = poll(&pfd, 1, timeout), "poll");
-  if (ret == 0)
+  if (ret == 0) {
+    initTime = -1;
     return mscclppSuccess;
+  }
 
   /* check socket status */
   EQCHECK(ret == 1 && (pfd.revents & POLLOUT), 0);
   SYSCHECK(getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, (void*)&ret, &rlen), "getsockopt");
 
   if (ret == 0) {
+    initTime = -1;
     sock->state = mscclppSocketStateConnected;
-  } else if (ret == ECONNREFUSED) {
-    if (++sock->refusedRetries == RETRY_REFUSED_TIMES) {
+  } else if (ret == ECONNREFUSED || ret == ETIMEDOUT) {
+    if ((clockNano() / 1e9) - initTime > acceptTimeout) {
+      WARN("socketPollConnect: exceeded timeout (%ld) sec", acceptTimeout);
       sock->state = mscclppSocketStateError;
-      WARN("socketPollConnect: exceeded retries (%d)", sock->refusedRetries);
       return mscclppRemoteError;
     }
-    if (sock->refusedRetries % 1000 == 0)
+    if (++sock->connectRetries % 1000 == 0) {
       INFO(MSCCLPP_ALL, "Call to connect returned %s, retrying", strerror(errno));
-    usleep(SLEEP_INT);
-
-    close(sock->fd);
-    sock->fd = socket(sock->addr.sa.sa_family, SOCK_STREAM, 0);
-    sock->state = mscclppSocketStateConnecting;
-  } else if (ret == ETIMEDOUT) {
-    if (++sock->timedOutRetries == RETRY_TIMEDOUT_TIMES) {
-      sock->state = mscclppSocketStateError;
-      WARN("socketPollConnect: exceeded timeouts (%d)", sock->timedOutRetries);
-      return mscclppRemoteError;
     }
     usleep(SLEEP_INT);
 
@@ -755,8 +767,7 @@ mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, union mscclppSocke
 
   if (sock == NULL)
     goto exit;
-  sock->timedOutRetries = 0;
-  sock->refusedRetries = 0;
+  sock->connectRetries = 0;
   sock->acceptRetries = 0;
   sock->abortFlag = abortFlag;
   sock->asyncFlag = asyncFlag;

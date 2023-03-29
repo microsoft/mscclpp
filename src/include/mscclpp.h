@@ -10,6 +10,7 @@
 #define MSCCLPP_FLUSH_FIFO_COUNTER 4
 
 #include <mscclppfifo.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -329,6 +330,13 @@ mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank);
  *   comm: the communicator
  */
 mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size);
+
+/* Set the timeout for the bootstrap connection.
+ *
+ * Inputs:
+ *   timeout: the timeout in seconds
+ */
+mscclppResult_t mscclppSetBootstrapConnTimeout(int timeout);
 
 /* Log handler type which is a callback function for
  * however user likes to handle the log messages. Once set,
