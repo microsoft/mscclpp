@@ -76,8 +76,7 @@ __device__ void allgather1(mscclppDevConn_t devConn, int rank, int world_size, i
     if (remoteRank != ((rank + i) % world_size))
       continue;
     // put your data to GPU (rank+i) % world_size and signal all in one call
-    devConn.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
-    devConn.flush();
+    devConn.putWithSignalAndFlush(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
   }
   // all connections wait for the signal from the sender
   devConn.wait();
