@@ -53,11 +53,11 @@ __device__ void allgather0(mscclppDevConn_t devConn, int rank, int world_size, i
 
   // this thread's role is a sender role
   // put your data asynchronously
-  devConn.put(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+  devConn.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
   // make sure everyone is put their data before some thread randomly blocks everyone else in signal
   __syncthreads();
   // push with flag and sync to make sure the data is received
-  devConn.signal();
+  devConn.flush();
 
   // this thread's role is a receiver role. wait on the semaphore to make sure the data is ready
   devConn.wait();
@@ -76,7 +76,7 @@ __device__ void allgather1(mscclppDevConn_t devConn, int rank, int world_size, i
     if (remoteRank != ((rank + i) % world_size))
       continue;
     // put your data to GPU (rank+i) % world_size and signal all in one call
-    devConn.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+    devConn.putWithSignalAndFlush(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
   }
   // all connections wait for the signal from the sender
   devConn.wait();

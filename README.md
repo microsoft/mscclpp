@@ -7,7 +7,7 @@ GPU-driven computation & communication stack.
 ### Preliminaries
 
 - OS: tested over Ubuntu 18.04 and 20.04
-- Libraries: CUDA >= 11.1.1, [gdrcopy](https://github.com/NVIDIA/gdrcopy), [libnuma](https://github.com/numactl/numactl)
+- Libraries: CUDA >= 11.1.1, [libnuma](https://github.com/numactl/numactl)
 - GPUs: A100 (TBU: H100)
 - Azure SKUs: [ND_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/nda100-v4-series), [NDm_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series) (TBD: [NC_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/nc-a100-v4-series))
 

@@ -266,9 +266,6 @@ mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext* ctx, void* b
   if (pageSize == 0) {
     pageSize = sysconf(_SC_PAGESIZE);
   }
-  if (reinterpret_cast<uintptr_t>(buff) % pageSize != 0) {
-    WARN("buff (%p) is not aligned to the page size! Ignoring and proceeding anyway.", buff);
-  }
   uintptr_t addr = reinterpret_cast<uintptr_t>(buff) & -pageSize;
   size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;
   struct ibv_mr* mr =
