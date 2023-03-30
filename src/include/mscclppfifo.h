@@ -43,10 +43,10 @@ typedef mscclppTrigger* mscclppTrigger_t;
  * and a single host proxy thread consumes these work elements. There is a head pointer allocated on device
  * which starts with 0 and goes to 2^64-1 which is almost infinity. There are two copies of tail, one
  * that is on the deivce (triggerFifoTail) and another that is on host (proxyState->fifoTailHost).
- * The host always has the "true" tail and occasionally, pushes it to the tail version.
+ * The host always has the "true" tail and occasionally, pushes it to the copy on the device.
  * Therefore, most of the time, the device has a stale version. The invariants are:
  * triggerFifoTail <= proxyState->fifoTailHost <= triggerFifoHead.
- * push function increments triggerFifoHead, proxyState->fifoTailHost is updated in proxy.cc:mscclppProxyService
+ * push() function increments triggerFifoHead, proxyState->fifoTailHost is updated in proxy.cc:mscclppProxyService
  * and it occasionally flushes it to triggerFifoTail via a cudaMemcpyAsync.
  *
  * Why douplicating the tail is a good idea? The fifo is large engouh and we do not need frequent updates

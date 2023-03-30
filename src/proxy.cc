@@ -46,16 +46,17 @@ static void readTrigger(mscclppTrigger* dst, mscclppTrigger* src)
   _mm_store_si128((__m128i*)dst, xmm0);
 }
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
+#if defined(ENABLE_NPKIT)
 static inline void collectNpKitEvent(uint8_t type, uint32_t size, int channelId)
 {
-#if defined(ENABLE_NPKIT)
   NpKit::CollectCpuEvent(type, size, 0 /* inflight request differentiator */,
                          *(volatile uint64_t*)NpKit::GetCpuTimestamp(), channelId /* event collection context index */);
-#endif
 }
-#pragma GCC diagnostic pop
+#else
+static inline void collectNpKitEvent(uint8_t, uint32_t, int)
+{
+}
+#endif
 
 void* mscclppProxyService(void* _args)
 {
@@ -71,7 +72,7 @@ void* mscclppProxyService(void* _args)
   cudaStream_t p2pStream = NULL;
   cudaStream_t stream;
 
-  PROXYCUDACHECK(cudaStreamCreate(&stream));
+  PROXYCUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
   bool isP2pProxy = (ibCtx == nullptr);
   if (isP2pProxy) {
     // TODO(chhwang): find numa node
@@ -169,10 +170,10 @@ void* mscclppProxyService(void* _args)
     // Send completion: reset only the high 64 bits
     *(volatile uint64_t*)(&fifo[fifoTailCached % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
     fifoTailCached++;
-    // Flush the tail to device memory. This is either triggered every MSCCLPP_FLUSH_FIFO_COUNTER to make sure that
-    // the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is
-    // for flush request.
-    if (((fifoTailCached % MSCCLPP_FLUSH_FIFO_COUNTER) == 0) || (trigger.fields.type & mscclppSync)) {
+    // Flush the tail to device memory. This is either triggered every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER to make sure
+    // that the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is for flush
+    // request.
+    if (((fifoTailCached % MSCCLPP_PROXY_FIFO_FLUSH_COUNTER) == 0) || (trigger.fields.type & mscclppSync)) {
       PROXYCUDACHECK(
         cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
     }

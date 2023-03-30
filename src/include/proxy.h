@@ -15,12 +15,6 @@ typedef enum
   MSCCLPP_PROXY_RUN_STATE_EXITING,
 } mscclppProxyRunState_t;
 
-template <typename T> struct mscclppGDRState
-{
-  T* hostPtr;
-  T* devPtr;
-};
-
 struct mscclppProxyState
 {
   mscclppTransport_t transportType;

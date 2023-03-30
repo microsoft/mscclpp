@@ -6,10 +6,10 @@
 #define MSCCLPP_PATCH 0
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
-// For every MSCCLPP_FLUSH_FIFO_COUNTER, a flush of the tail to device memory is triggered.
+// For every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER, a flush of the tail to device memory is triggered.
 // As long as MSCCLPP_PROXY_FIFO_SIZE is large enough, having a stale tail is not a problem.
 #define MSCCLPP_PROXY_FIFO_SIZE 32
-#define MSCCLPP_FLUSH_FIFO_COUNTER 4
+#define MSCCLPP_PROXY_FIFO_FLUSH_COUNTER 4
 
 #include <mscclppfifo.h>
 #include <time.h>
@@ -55,11 +55,11 @@ extern "C" {
  *
  * wait(): [blocking] the reciever waits on the signal() to start reading the data.
  *
- * The sender should not reuse the buffer till the flush returns.
- * The receiver should only access the data after the wait returns.
+ * The sender should not reuse the buffer till the flush() returns.
+ * The receiver should only access the data after the wait() returns.
  *
  * putWithSignal(): the sender initiates a data transfer and signals the receiver that data is ready to be consumed.
- * This is an optimized version of a put followed by a signal.
+ * This is an optimized version of a put() followed by a signal().
  *
  * These functions hide the complexity of syncrhonization between the two GPUs and the CPU proxy thread.
  * Example:
@@ -72,7 +72,7 @@ extern "C" {
  * devConn.put(data3)                                // receiver GPU
  * // not OK to write to data1, data2, data3         // not OK to read data1, data2, data3
  * devConn.signal() -------------------------------> devConn.wait()
- * // Not OK to write to data1, data2, data3         // OK to read data1, data2, data3
+ * // not OK to write to data1, data2, data3         // OK to read data1, data2, data3
  * devConn.flush()
  * // OK to write to data1, data2, data3
  *
@@ -128,8 +128,8 @@ struct mscclppDevConn
   __forceinline__ __device__ void flush()
   {
     uint64_t curFifoHead = fifo.push(mscclppSync, 0, 0, 1);
-    // there are two ways to know if the CPU is done flushing. It is either by waiting for the tail
-    // to go pass by curFifoHead (this is safety net) or wait for the work element value to change to 0.
+    // we need to wait for two conditions to be met to ensure the CPU is done flushing. (1) wait for the tail
+    // to go pass by curFifoHead (this is safety net) and (2) wait for the work element value to change to 0.
     while (*(volatile uint64_t*)&fifo.triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
            *(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
       ;
