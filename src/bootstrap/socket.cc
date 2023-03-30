@@ -473,7 +473,7 @@ static mscclppResult_t socketTryAccept(struct mscclppSocket* sock)
     return mscclppRemoteError;
   } else {
     usleep(SLEEP_INT);
-    if (sock->acceptRetries % 10000 == 0)
+    if (++sock->acceptRetries % 1000 == 0)
       INFO(MSCCLPP_ALL, "socketTryAccept: Call to try accept returned %s, retrying", strerror(errno));
   }
   return mscclppSuccess;

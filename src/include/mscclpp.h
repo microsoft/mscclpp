@@ -6,6 +6,8 @@
 #define MSCCLPP_PATCH 0
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
+// For every MSCCLPP_FLUSH_FIFO_COUNTER, a flush of the tail to device memory is triggered.
+// As long as MSCCLPP_PROXY_FIFO_SIZE is large enough, having a stale tail is not a problem.
 #define MSCCLPP_PROXY_FIFO_SIZE 32
 #define MSCCLPP_FLUSH_FIFO_COUNTER 4
 
@@ -45,13 +47,15 @@ extern "C" {
  ***************************************************************************************************************
  * At the runtime, a GPU kernel has access to a mscclppDevConn object that provides the following functions:
  *
- * put(): the sender initiates a data transfer to the receiver.
+ * put(): [non-blocking] the sender initiates a data transfer to the receiver.
  *
- * signal(): the sender signals the receiver that data is ready to be consumed.
+ * signal(): [non-blocking] the sender signals the receiver that data is ready to be consumed.
  *
- * wait(): the reciever waits on the signal() to start reading the data.
+ * flush(): [blocking] the sender waits for all the data transfers to complete
  *
- * The sender should not reuse the buffer till the signal returns.
+ * wait(): [blocking] the reciever waits on the signal() to start reading the data.
+ *
+ * The sender should not reuse the buffer till the flush returns.
  * The receiver should only access the data after the wait returns.
  *
  * putWithSignal(): the sender initiates a data transfer and signals the receiver that data is ready to be consumed.
@@ -68,7 +72,9 @@ extern "C" {
  * devConn.put(data3)                                // receiver GPU
  * // not OK to write to data1, data2, data3         // not OK to read data1, data2, data3
  * devConn.signal() -------------------------------> devConn.wait()
- * // OK to write to data1, data2, data3             // OK to read data1, data2, data3
+ * // Not OK to write to data1, data2, data3         // OK to read data1, data2, data3
+ * devConn.flush()
+ * // OK to write to data1, data2, data3
  *
  *
  * The two endpoint can concurrently use the same connection provided they are writing (puts) on different
@@ -104,11 +110,13 @@ struct mscclppDevConn
     putWithSignal(dataOffset, dataOffset, dataSize);
   }
 
-  __forceinline__ __device__ void putWithSignalAndFlush(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
+  __forceinline__ __device__ void putWithSignalAndFlush(uint64_t dstDataOffset, uint64_t srcDataOffset,
+                                                        uint64_t dataSize)
   {
     epochIncrement();
     uint64_t curFifoHead = fifo.push(mscclppData | mscclppFlag | mscclppSync, dstDataOffset, srcDataOffset, dataSize);
-    while (*(volatile uint64_t*)&fifo.triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 && *(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
+    while (*(volatile uint64_t*)&fifo.triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
+           *(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
       ;
   }
 
@@ -120,7 +128,10 @@ struct mscclppDevConn
   __forceinline__ __device__ void flush()
   {
     uint64_t curFifoHead = fifo.push(mscclppSync, 0, 0, 1);
-    while (*(volatile uint64_t*)&fifo.triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 && *(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
+    // there are two ways to know if the CPU is done flushing. It is either by waiting for the tail
+    // to go pass by curFifoHead (this is safety net) or wait for the work element value to change to 0.
+    while (*(volatile uint64_t*)&fifo.triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
+           *(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
       ;
   }
 
@@ -148,7 +159,8 @@ struct mscclppDevConn
   uint64_t* remoteFlag;
   uint64_t* proxyEpochId; // this is only written by the proxy thread
 
-  // threads can access the fifo concurrently
+  // this is a concurrent fifo which is multiple threads from the device
+  // can produce for and the sole proxy thread consumes it.
   struct mscclppConcurrentFifo fifo;
 };
 
@@ -248,6 +260,9 @@ const char* mscclppGetErrorString(mscclppResult_t result);
 /* Connect to a remote rank. This function only prepares metadata for connection. The actual connection
  * is made by a following call of mscclppConnectionSetup(). Note that this function is two-way and a connection
  * from rank i to remote rank j needs to have a counterpart from rank j to rank i.
+ * Note that with IB, buffers are registered at a page level and if a buffer is spread through multiple pages
+ * and do not fully utilize all of them, IB's QP has to register for all involved pages. This potentially has
+ * security risks if the devConn's accesses are given to a malicious process.
  *
  * Inputs:
  *   comm:          the communicator

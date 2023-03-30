@@ -35,10 +35,12 @@ struct mscclppProxyState
   // allocated on the device. Read-only by device, write-only by host
   uint64_t* fifoTailDev;
   // allocated on the host. Only accessed by the host. This is a copy of the
-  // value pointed to by fifoTailDev and the invariance is that
+  // value pointed to by fifoTailDev and the invariant is that
   // *fifoTailDev <= fifoTailHost. Meaning that host's copy of tail is
   // always ahead of the device's copy and host updates the device's copy
-  // only when it is needed.
+  // only when it is needed. Therefore, fifoTailHost is the "true" tail
+  // and fifoTailDev is a "stale" tail. See proxy.cc to undertand how
+  // these updates are pushed to the device.
   uint64_t fifoTailHost;
 
   struct mscclppIbContext* ibContext; // For IB connection only

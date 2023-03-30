@@ -68,7 +68,7 @@ void* mscclppProxyService(void* _args)
   uint64_t fifoTailCached = *fifoTail;
   mscclppTrigger trigger;
   mscclppIbContext* ibCtx = args->proxyState->ibContext;
-  cudaStream_t p2pStream;
+  cudaStream_t p2pStream = NULL;
   cudaStream_t stream;
 
   PROXYCUDACHECK(cudaStreamCreate(&stream));
@@ -169,6 +169,9 @@ void* mscclppProxyService(void* _args)
     // Send completion: reset only the high 64 bits
     *(volatile uint64_t*)(&fifo[fifoTailCached % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
     fifoTailCached++;
+    // Flush the tail to device memory. This is either triggered every MSCCLPP_FLUSH_FIFO_COUNTER to make sure that
+    // the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is
+    // for flush request.
     if (((fifoTailCached % MSCCLPP_FLUSH_FIFO_COUNTER) == 0) || (trigger.fields.type & mscclppSync)) {
       PROXYCUDACHECK(
         cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
@@ -176,6 +179,9 @@ void* mscclppProxyService(void* _args)
   }
   *fifoTail = fifoTailCached;
 
+  // make sure the tail is flushed before we shut the proxy
+  PROXYCUDACHECK(cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
+  PROXYCUDACHECK(cudaStreamSynchronize(stream));
   PROXYCUDACHECK(cudaStreamDestroy(stream));
   if (isP2pProxy) {
     PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
