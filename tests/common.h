@@ -7,14 +7,40 @@
 #ifndef MSCCLPP_TESTS_COMMON_H_
 #define MSCCLPP_TESTS_COMMON_H_
 
+#include "mscclpp.h"
+
 #include <cstdio>
 #include <cstdlib>
 
 #include <unistd.h>
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
-#include "mpi.h"
+#include <mpi.h>
 #endif // MSCCLPP_USE_MPI_FOR_TESTS
+
+#define CUDACHECK(cmd) do {                         \
+  cudaError_t err = cmd;                            \
+  if( err != cudaSuccess ) {                        \
+    char hostname[1024];                            \
+    getHostName(hostname, 1024);                    \
+    printf("%s: Test CUDA failure %s:%d '%s'\n",    \
+         hostname,                                  \
+        __FILE__,__LINE__,cudaGetErrorString(err)); \
+    return testCudaError;                           \
+  }                                                 \
+} while(0)
+
+// Propagate errors up
+#define MSCCLPPCHECK(cmd)                                                                                              \
+  do {                                                                                                                 \
+    mscclppResult_t res = cmd;                                                                                         \
+    if (res != mscclppSuccess && res != mscclppInProgress) {                                                           \
+      char hostname[1024];                                                                                             \
+      getHostName(hostname, 1024);                                                                                     \
+      printf("%s: Failure at %s:%d -> %s\n", hostname, __FILE__, __LINE__, mscclppGetErrorString(res));                \
+      return testMcclppError;                                                                                          \
+    }                                                                                                                  \
+  } while (0);
 
 // Relay errors up and trace
 #define TESTCHECK(cmd)                                                                                                 \
@@ -65,7 +91,6 @@ struct threadArgs
   size_t stepfactor;
 
   int totalProcs;
-  int nProcs;
   int proc;
   int nThreads;
   int thread;
@@ -77,6 +102,7 @@ struct threadArgs
   size_t sendInplaceOffset;
   void** recvbuffs;
   size_t recvInplaceOffset;
+  mscclppComm_t* comms;
   cudaStream_t* streams;
 
   void** expected;
@@ -99,6 +125,9 @@ struct testThread
   testResult_t ret;
 };
 
+// Provided by common.cu
+extern testResult_t TimeTest(struct threadArgs* args, ncclDataType_t type, const char* typeName, ncclRedOp_t op,  const char* opName, int root);
+
 static void getHostName(char* hostname, int maxlen)
 {
   gethostname(hostname, maxlen);
@@ -108,48 +137,6 @@ static void getHostName(char* hostname, int maxlen)
       return;
     }
   }
-}
-
-// getHash and getHostHash are duplicated with utils.h
-// since libmscclpp not export this function, copy here to avoid link issue
-static uint64_t getHash(const char* string, size_t n) {
-  // Based on DJB2a, result = result * 33 ^ char
-  uint64_t result = 5381;
-  for (size_t c = 0; c < n; c++) {
-    result = ((result << 5) + result) ^ string[c];
-  }
-  return result;
-}
-
-/* Generate a hash of the unique identifying string for this host
- * that will be unique for both bare-metal and container instances
- * Equivalent of a hash of;
- *
- * $(hostname)$(cat /proc/sys/kernel/random/boot_id)
- *
- */
-#define HOSTID_FILE "/proc/sys/kernel/random/boot_id"
-static uint64_t getHostHash(const char* hostname) {
-  char hostHash[1024];
-
-  // Fall back is the hostname if something fails
-  (void) strncpy(hostHash, hostname, sizeof(hostHash));
-  int offset = strlen(hostHash);
-
-  FILE *file = fopen(HOSTID_FILE, "r");
-  if (file != NULL) {
-    char *p;
-    if (fscanf(file, "%ms", &p) == 1) {
-        strncpy(hostHash+offset, p, sizeof(hostHash)-offset-1);
-        free(p);
-    }
-  }
-  fclose(file);
-
-  // Make sure the string is terminated
-  hostHash[sizeof(hostHash)-1]='\0';
-
-  return getHash(hostHash, strlen(hostHash));
 }
 
 void print_usage(const char* prog)
