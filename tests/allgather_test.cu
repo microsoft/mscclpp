@@ -47,7 +47,7 @@ static double getTime(void)
 
 __constant__ mscclppDevConn_t constDevConns[16];
 
-__device__ void allgather0(mscclppDevConn_t devConn, int rank, int world_size, int remoteRank, int nelemsPerGPU)
+__device__ void allgather0(mscclppDevConn_t devConn, int rank, int world_size, int remoteRank, size_t nelemsPerGPU)
 {
   if (threadIdx.x % 32 != 0)
     return;
@@ -65,7 +65,7 @@ __device__ void allgather0(mscclppDevConn_t devConn, int rank, int world_size, i
   devConn.wait();
 }
 
-__device__ void allgather1(mscclppDevConn_t devConn, int rank, int world_size, int remoteRank, int nelemsPerGPU)
+__device__ void allgather1(mscclppDevConn_t devConn, int rank, int world_size, int remoteRank, size_t nelemsPerGPU)
 {
   if (threadIdx.x % 32 != 0)
     return;
@@ -86,7 +86,7 @@ __device__ void allgather1(mscclppDevConn_t devConn, int rank, int world_size, i
   devConn.wait();
 }
 
-__device__ void allgather2(mscclppDevConn_t devConn, int rank, int world_size, int nranksPerNode, int remoteRank, int nelemsPerGPU)
+__device__ void allgather2(mscclppDevConn_t devConn, int rank, int world_size, int nranksPerNode, int remoteRank, size_t nelemsPerGPU)
 {
   int pipelineSize = 3;
 
@@ -153,7 +153,7 @@ __device__ void allgather2(mscclppDevConn_t devConn, int rank, int world_size, i
   }  
 }
 
-__global__ void kernel(int rank, int world_size, int nranksPerNode, int nelemsPerGPU, int kernel)
+__global__ void kernel(int rank, int world_size, int nranksPerNode, size_t nelemsPerGPU, int kernel)
 {
   // only use a single thread from each warp
   // if (threadIdx.x % 32 != 0)
@@ -192,16 +192,16 @@ void print_usage(const char* prog)
 #endif
 }
 
-void initializeAndAllocateAllGatherData(int rank, int world_size, size_t dataSize, int nelemsPerGPU, int** data_h,
+void initializeAndAllocateAllGatherData(int rank, int world_size, size_t dataSize, size_t nelemsPerGPU, int** data_h,
                                         int** data_d)
 {
   CUDACHECK(cudaMalloc(data_d, dataSize));
   CUDACHECK(cudaMemset(*data_d, 0, dataSize));
 
   *data_h = new int[nelemsPerGPU * world_size];
-  for (int i = 0; i < nelemsPerGPU * world_size; i++) {
+  for (size_t i = 0; i < nelemsPerGPU * world_size; i++) {
     int val = i + 1;
-    if (i / nelemsPerGPU == rank) {
+    if (i / nelemsPerGPU == (size_t)rank) {
       (*data_h)[i] = val;
     } else {
       (*data_h)[i] = 0;
@@ -391,9 +391,9 @@ int main(int argc, const char* argv[])
   int* data_h;
   size_t dataSize = 1024 * 1024 * 1024;
   if (parsedArgs.find("datasize") != parsedArgs.end()) {
-    dataSize = std::stoi(parsedArgs["datasize"]);
+    dataSize = std::stoul(parsedArgs["datasize"]);
   }
-  int nelemsPerGPU = dataSize / sizeof(int) / world_size;
+  size_t nelemsPerGPU = dataSize / sizeof(int) / world_size;
 
   if (rank == 0)
     printf("Initializing data for allgather test\n");
@@ -416,10 +416,10 @@ int main(int argc, const char* argv[])
   CUDACHECK(cudaDeviceSynchronize());
   CUDACHECK(cudaMemcpy(data_h, data_d, dataSize, cudaMemcpyDeviceToHost));
 
-  for (int i = 0; i < nelemsPerGPU * world_size; i++) {
+  for (size_t i = 0; i < nelemsPerGPU * world_size; i++) {
     int val = i + 1;
     if (data_h[i] != val) {
-      printf("oh uh! data_h[%d] (%d) != val (%d)\n", i, data_h[i], val);
+      printf("oh uh! data_h[%ld] (%d) != val (%d)\n", i, data_h[i], val);
       break;
     }
   }
