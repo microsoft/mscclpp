@@ -203,13 +203,17 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
                    timestamp, filefunc, line);
   }
 
-  if (len) {
+  if (len > 0) {
     va_list vargs;
     va_start(vargs, fmt);
-    len += vsnprintf(buffer + len, sizeof(buffer) - len, fmt, vargs);
+    int ret = vsnprintf(buffer + len, sizeof(buffer) - len, fmt, vargs);
     va_end(vargs);
-    buffer[len++] = '\n';
-    mscclppDebugLogHandler(buffer);
+    if (ret >= 0) {
+      len += ret;
+      buffer[len++] = '\n';
+      buffer[len] = '\0';
+      mscclppDebugLogHandler(buffer);
+    }
   }
 }
 
