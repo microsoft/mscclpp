@@ -51,9 +51,9 @@ struct mscclppComm
   uint64_t
     magic; // Magic number for all network communication. Not a security key -- only goal is to detect mismatches.
 
-  int rank;    // my rank in the communicator
-  int nRanks;  // number of GPUs in communicator
-  int cudaDev; // my cuda device index
+  int rank;     // my rank in the communicator
+  int nRanks;   // number of GPUs in communicator
+  int cudaDev;  // my cuda device index
   int numaNode; // my numa node number
 
   // Flag to ask MSCCLPP kernels to abort

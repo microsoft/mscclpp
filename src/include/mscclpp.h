@@ -377,7 +377,7 @@ mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler);
  *
  * Inputs:
  *   numaNode: the NUMA node to be bound
-*/
+ */
 mscclppResult_t mscclppNumaBind(mscclppComm_t comm, int numaNode);
 
 #ifdef __cplusplus
