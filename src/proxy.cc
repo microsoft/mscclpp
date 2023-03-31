@@ -78,10 +78,12 @@ void* mscclppProxyService(void* _args)
     // TODO(chhwang): find numa node
     // Current mapping is based on NDv4: GPU [0,1,2,3,4,5,6,7] -> NUMA [1,1,0,0,3,3,2,2]
     // TODO(saemal): either ask user or detect it automatically
-    NumaBind((comm->cudaDev / 2) ^ 1);
+    // NumaBind((comm->cudaDev / 2) ^ 1);
+    NumaBind(comm->rank % 4);
     p2pStream = args->proxyState->stream;
   } else {
-    NumaBind(ibCtx->numaNode);
+    NumaBind(comm->rank % 4);
+    // NumaBind(ibCtx->numaNode);
   }
   free(_args); // allocated in mscclppProxyCreate
 

@@ -49,6 +49,8 @@ __constant__ mscclppDevConn_t constDevConns[16];
 
 __device__ void allgather0(mscclppDevConn_t devConn, int rank, int world_size, int remoteRank, int nelemsPerGPU)
 {
+  if (threadIdx.x % 32 != 0)
+    return;
   // this allgather is really simple and implemented as an alltoall
 
   // this thread's role is a sender role
@@ -65,6 +67,8 @@ __device__ void allgather0(mscclppDevConn_t devConn, int rank, int world_size, i
 
 __device__ void allgather1(mscclppDevConn_t devConn, int rank, int world_size, int remoteRank, int nelemsPerGPU)
 {
+  if (threadIdx.x % 32 != 0)
+    return;
   // this allgather algorithm works as follows:
   // Step 1: GPU rank i sends data to GPU rank (i+1) % world_size
   // Step 2: GPU rank i waits for data from GPU rank (i+2) % world_size
@@ -84,46 +88,76 @@ __device__ void allgather1(mscclppDevConn_t devConn, int rank, int world_size, i
 
 __device__ void allgather2(mscclppDevConn_t devConn, int rank, int world_size, int nranksPerNode, int remoteRank, int nelemsPerGPU)
 {
-  if (remoteRank % nranksPerNode == rank % nranksPerNode){
-    devConn.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
-    for (int i = 1; i < nranksPerNode; i++)
-      __syncthreads();
-    devConn.wait();
-    devConn.flush();
-    __syncthreads();
-  } else if (remoteRank / nranksPerNode == rank / nranksPerNode) {
-    remoteRank = remoteRank % nranksPerNode;
-    for (int i = 1; i < nranksPerNode; i++) {
-      if (remoteRank == ((rank + i) % nranksPerNode)){
-        // put your data to GPU (rank+i) % world_size and signal all in one call
-        devConn.putWithSignalAndFlush(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
-      }
-      __syncthreads();
-    }
-    // all connections wait for the signal from the sender
-    devConn.wait();
+  int pipelineSize = 3;
 
-    __syncthreads();
-    int nodeNghr = (rank + nranksPerNode) % world_size;
+  int offset = 0;
+  if (remoteRank / nranksPerNode == rank / nranksPerNode) {
     for (int i = 1; i < nranksPerNode; i++) {
-      if (remoteRank == ((rank + i) % nranksPerNode)){
-        // put your data to GPU (rank+i) % world_size and signal all in one call
-        devConn.putWithSignalAndFlush(nodeNghr * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+      if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)){
+        if ((threadIdx.x % 32) == 0)
+          devConn.putWithSignalAndFlush(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
       }
-      __syncthreads();
+      if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode))
+        if ((threadIdx.x % 32) == 0)
+          devConn.wait();
+      asm volatile("bar.sync %0, %1;" :: "r"(10), "r"((nranksPerNode-1)*32) : "memory");
     }
-    // all connections wait for the signal from the sender
-    devConn.wait();
-  } else {
-    return;
   }
+
+  if (remoteRank % nranksPerNode == rank % nranksPerNode){
+    // opposite side
+    if ((threadIdx.x % 32) == 0)
+      devConn.putWithSignalAndFlush(rank * nelemsPerGPU * sizeof(int), (nelemsPerGPU * (pipelineSize-1)) / pipelineSize * sizeof(int));
+    if ((threadIdx.x % 32) == 0)
+      devConn.wait();
+  }
+
+  __syncthreads();
+
+  if (remoteRank / nranksPerNode == rank / nranksPerNode) {
+    for (int i = 1; i < nranksPerNode; i++) {
+      int otherNghr = (rank + nranksPerNode) % world_size;
+      if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)){
+        if ((threadIdx.x % 32) == 0)
+          devConn.putWithSignalAndFlush(otherNghr * nelemsPerGPU * sizeof(int), (nelemsPerGPU * (pipelineSize-1)) / pipelineSize * sizeof(int));
+      }
+      if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode))
+        if ((threadIdx.x % 32) == 0)
+          devConn.wait();
+      asm volatile("bar.sync %0, %1;" :: "r"(11), "r"((nranksPerNode-1)*32) : "memory");
+    }
+  }
+
+  if (remoteRank % nranksPerNode == rank % nranksPerNode){
+    // opposite side
+    if ((threadIdx.x % 32) == 0)
+      devConn.putWithSignalAndFlush((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize-1)) / pipelineSize) * sizeof(int), nelemsPerGPU / pipelineSize * sizeof(int));
+    if ((threadIdx.x % 32) == 0)
+      devConn.wait();
+  }
+
+  __syncthreads();
+
+  if (remoteRank / nranksPerNode == rank / nranksPerNode) {
+    for (int i = 1; i < nranksPerNode; i++) {
+      int otherNghr = (rank + nranksPerNode) % world_size;
+      if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)){
+        if ((threadIdx.x % 32) == 0)
+          devConn.putWithSignalAndFlush((otherNghr * nelemsPerGPU + (nelemsPerGPU * (pipelineSize-1)) / pipelineSize) * sizeof(int), nelemsPerGPU / pipelineSize * sizeof(int));
+      }
+      if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode))
+        if ((threadIdx.x % 32) == 0)
+          devConn.wait();
+      asm volatile("bar.sync %0, %1;" :: "r"(11), "r"((nranksPerNode-1)*32) : "memory");
+    }
+  }  
 }
 
 __global__ void kernel(int rank, int world_size, int nranksPerNode, int nelemsPerGPU, int kernel)
 {
   // only use a single thread from each warp
-  if (threadIdx.x % 32 != 0)
-    return;
+  // if (threadIdx.x % 32 != 0)
+  //   return;
 
   // find the mapping between remoteRank and devConns
   int warpId = threadIdx.x / 32;
@@ -181,7 +215,7 @@ mscclppResult_t setupMscclppConnections(int rank, int world_size, mscclppComm_t 
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
   int map[8] = {2,0,6,4,3,1,7,5};
-  std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
+  std::string ibDevStr = "mlx5_ib" + std::to_string(map[cudaNum]);
 
   for (int r = 0; r < world_size; ++r) {
     if (r == rank)
@@ -381,7 +415,6 @@ int main(int argc, const char* argv[])
   kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
   CUDACHECK(cudaDeviceSynchronize());
   CUDACHECK(cudaMemcpy(data_h, data_d, dataSize, cudaMemcpyDeviceToHost));
-  CUDACHECK(cudaDeviceSynchronize());
 
   for (int i = 0; i < nelemsPerGPU * world_size; i++) {
     int val = i + 1;
@@ -400,10 +433,12 @@ int main(int argc, const char* argv[])
   int iterwithoutcudagraph = 10;
   if (rank == 0)
     printf("Running %d iterations of the kernel without CUDA graph\n", iterwithoutcudagraph);
+  CUDACHECK(cudaStreamSynchronize(stream));
+  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
   for (int i = 0; i < iterwithoutcudagraph; ++i) {
     kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
   }
-  CUDACHECK(cudaDeviceSynchronize());
+  CUDACHECK(cudaStreamSynchronize(stream));
   MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
 
   // cudaGraph Capture
@@ -434,15 +469,16 @@ int main(int argc, const char* argv[])
     printf("Running %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphlaunch,
            cudagraphiter);
   MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
-  double t0 = getTime();
+  double t0, t1, ms, time_in_us;
+  t0 = getTime();
   for (int i = 0; i < cudagraphlaunch; ++i) {
     cudaGraphLaunch(instance, stream);
   }
   CUDACHECK(cudaStreamSynchronize(stream));
 
-  double t1 = getTime();
-  float ms = (t1 - t0) * 1000.0;
-  double time_in_us = ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter;
+  t1 = getTime();
+  ms = (t1 - t0) * 1000.0;
+  time_in_us = ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter;
   printf("Rank %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us,
          (double)(dataSize) / 1e9 / (time_in_us / 1e6));
   MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
