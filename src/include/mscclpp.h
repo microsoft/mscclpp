@@ -373,6 +373,13 @@ void mscclppDefaultLogHandler(const char* msg);
  */
 mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler);
 
+/* Bind NUMA node for the communicator.
+ *
+ * Inputs:
+ *   numaNode: the NUMA node to be bound
+*/
+mscclppResult_t mscclppNumaBind(mscclppComm_t comm, int numaNode);
+
 #ifdef __cplusplus
 } // end extern "C"
 #endif

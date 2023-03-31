@@ -74,14 +74,19 @@ void* mscclppProxyService(void* _args)
 
   PROXYCUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
   bool isP2pProxy = (ibCtx == nullptr);
-  if (isP2pProxy) {
-    // TODO(chhwang): find numa node
-    // Current mapping is based on NDv4: GPU [0,1,2,3,4,5,6,7] -> NUMA [1,1,0,0,3,3,2,2]
-    // TODO(saemal): either ask user or detect it automatically
-    NumaBind((comm->cudaDev / 2) ^ 1);
-    p2pStream = args->proxyState->stream;
+  int numaNode = comm->numaNode;
+  if (numaNode != -1) {
+    NumaBind(numaNode);
   } else {
-    NumaBind(ibCtx->numaNode);
+    if (isP2pProxy) {
+      // TODO(chhwang): find numa node
+      // Current mapping is based on NDv4: GPU [0,1,2,3,4,5,6,7] -> NUMA [1,1,0,0,3,3,2,2]
+      // TODO(saemal): either ask user or detect it automatically
+      NumaBind((comm->cudaDev / 2) ^ 1);
+      p2pStream = args->proxyState->stream;
+    } else {
+      NumaBind(ibCtx->numaNode);
+    }
   }
   free(_args); // allocated in mscclppProxyCreate
 

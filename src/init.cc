@@ -75,6 +75,7 @@ mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, const char*
   MSCCLPPCHECKGOTO(mscclppCalloc(&_comm, 1), res, fail);
   _comm->rank = rank;
   _comm->nRanks = nranks;
+  _comm->numaNode = -1;
   // We assume that the user has set the device to the intended one already
   CUDACHECK(cudaGetDevice(&_comm->cudaDev));
 
@@ -545,5 +546,12 @@ mscclppResult_t mscclppSetBootstrapConnTimeout(int timeout)
 {
   mscclppConfig* config = mscclppConfig::getInstance();
   config->setBootstrapConnectionTimeoutConfig(timeout);
+  return mscclppSuccess;
+}
+
+MSCCLPP_API(mscclppResult_t, mscclppNumaBind, mscclppComm_t comm, int numaNode);
+mscclppResult_t mscclppNumaBind(mscclppComm_t comm, int numaNode)
+{
+  comm->numaNode = numaNode;
   return mscclppSuccess;
 }
