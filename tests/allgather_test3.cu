@@ -77,4 +77,4 @@ struct testEngine allGatherEngine = {
   AllGatherRunTest
 };
 
-#pragma weak mcclppTestEngine=allGatherEngine
+#pragma weak mscclppTestEngine=allGatherEngine

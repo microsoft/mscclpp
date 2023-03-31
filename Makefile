@@ -129,10 +129,11 @@ LIBSONAME := $(LIBNAME).$(MSCCLPP_MAJOR)
 LIBTARGET := $(BUILDDIR)/$(LIBDIR)/$(LIBNAME).$(MSCCLPP_MAJOR).$(MSCCLPP_MINOR).$(MSCCLPP_PATCH)
 
 TESTSDIR  := tests
-TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc allgather_test.cu common.cu)
+TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc allgather_test.cu)
 TESTSOBJS := $(patsubst %.cc,%.o,$(TESTSSRCS)) $(patsubst %.cu,%.o,$(TESTSSRCS))
 TESTSOBJTARGETS := $(TESTSOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 TESTSBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(TESTSOBJS))
+TESTSPERFBIN := $(BUILDDIR)/$(BINDIR)/allgather_test3
 
 INCLUDE := -Isrc -Isrc/include
 
@@ -145,6 +146,8 @@ build: lib tests
 lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
 
 tests: $(TESTSBINS)
+
+allgather_perf: $(TESTSPERFBIN)
 
 cpplint:
 	clang-format-12 -style=file --verbose --Werror --dry-run $(CPPSOURCES)
@@ -172,6 +175,9 @@ $(LIBTARGET): $(LIBOBJTARGETS)
 	ln -sf $(LIBTARGET) $(BUILDDIR)/$(LIBDIR)/$(LIBSONAME)
 
 # Compile .cc tests
+$(TESTSPERFBIN): $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/allgather_test3.o $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/common.o $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/timer.o
+	$(NVCC) -o $@ $^ $(MPI_LDFLAGS) -L$(BUILDDIR)/$(LIBDIR) -lmscclpp
+
 $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cc $(INCTARGETS)
 	@mkdir -p $(@D)
 	$(CXX) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(CXXFLAGS) -c $< $(MPI_MACRO)

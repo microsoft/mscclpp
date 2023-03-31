@@ -128,11 +128,6 @@ testResult_t startColl(struct threadArgs* args, int in_place, int iter) {
   return testSuccess;
 }
 
-testResult_t completeColl(struct threadArgs* args) {
-  TESTCHECK(testStreamSynchronize(args->nGpus, args->streams));
-  return testSuccess;
-}
-
 testResult_t testStreamSynchronize(int ngpus, cudaStream_t* streams)
 {
   cudaError_t cudaErr;
@@ -157,14 +152,19 @@ testResult_t testStreamSynchronize(int ngpus, cudaStream_t* streams)
 
       if (cudaErr != cudaErrorNotReady)
         CUDACHECK(cudaErr);
-
-      // We might want to let other threads (including NCCL threads) use the CPU.
-      if (idle)
-        sched_yield();
     }
-    free(done);
-    return testSuccess;
+
+    // We might want to let other threads (including NCCL threads) use the CPU.
+    if (idle)
+      sched_yield();
   }
+  free(done);
+  return testSuccess;
+}
+
+testResult_t completeColl(struct threadArgs* args) {
+  TESTCHECK(testStreamSynchronize(args->nGpus, args->streams));
+  return testSuccess;
 }
 
 // Inter-thread/process barrier+allreduce. The quality of the return value
@@ -531,12 +531,12 @@ testResult_t run() {
 
   const char* timeStr = report_cputime ? "cputime" : "time";
   PRINT("#\n");
-  PRINT("# %10s  %12s  %8s  %6s  %6s           out-of-place                       in-place          \n", "", "", "", "",
+  PRINT("# %10s  %12s           out-of-place                       in-place          \n", "",
         "");
-  PRINT("# %10s  %12s  %8s  %6s  %6s  %7s  %6s  %6s %6s  %7s  %6s  %6s %6s\n", "size", "count", "type", "redop", "root",
-        timeStr, "algbw", "busbw", "#wrong", timeStr, "algbw", "busbw", "#wrong");
-  PRINT("# %10s  %12s  %8s  %6s  %6s  %7s  %6s  %6s  %5s  %7s  %6s  %6s  %5s\n", "(B)", "(elements)", "", "", "",
-        "(us)", "(GB/s)", "(GB/s)", "", "(us)", "(GB/s)", "(GB/s)", "");
+  PRINT("# %10s  %12s  %7s  %6s  %6s  %6s  %7s  %6s  %6s  %6s\n", "size", "count", timeStr, "algbw", "busbw", "#wrong",
+        timeStr, "algbw", "busbw", "#wrong");
+  PRINT("# %10s  %12s  %7s  %6s  %6s  %5s  %7s  %6s  %6s  %5s\n", "(B)", "(elements)", "(us)", "(GB/s)", "(GB/s)", "",
+        "(us)", "(GB/s)", "(GB/s)", "");
 
   struct testThread thread = {0};
 
