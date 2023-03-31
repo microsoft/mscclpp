@@ -18,17 +18,18 @@
 #include <mpi.h>
 #endif // MSCCLPP_USE_MPI_FOR_TESTS
 
-#define CUDACHECK(cmd) do {                         \
-  cudaError_t err = cmd;                            \
-  if( err != cudaSuccess ) {                        \
-    char hostname[1024];                            \
-    getHostName(hostname, 1024);                    \
-    printf("%s: Test CUDA failure %s:%d '%s'\n",    \
-         hostname,                                  \
-        __FILE__,__LINE__,cudaGetErrorString(err)); \
-    return testCudaError;                           \
-  }                                                 \
-} while(0)
+__constant__ mscclppDevConn_t constDevConns[16];
+
+#define CUDACHECK(cmd)                                                                                                 \
+  do {                                                                                                                 \
+    cudaError_t err = cmd;                                                                                             \
+    if (err != cudaSuccess) {                                                                                          \
+      char hostname[1024];                                                                                             \
+      getHostName(hostname, 1024);                                                                                     \
+      printf("%s: Test CUDA failure %s:%d '%s'\n", hostname, __FILE__, __LINE__, cudaGetErrorString(err));             \
+      return testCudaError;                                                                                            \
+    }                                                                                                                  \
+  } while (0)
 
 // Propagate errors up
 #define MSCCLPPCHECK(cmd)                                                                                              \
@@ -98,6 +99,7 @@ struct threadArgs
   int nGpus;
   int* gpus;
   int localRank;
+  int ranksPerNode;
   void** sendbuffs;
   size_t sendBytes;
   size_t sendInplaceOffset;

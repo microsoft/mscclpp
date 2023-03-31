@@ -88,7 +88,7 @@ void Barrier(struct threadArgs *args) {
   if(args->thread+1 == args->nThreads) {
     while(counter[epoch] != args->nThreads)
       pthread_cond_wait(&cond[epoch], &lock[epoch]);
-    #ifdef MPI_SUPPORT
+    #ifdef MSCCLPP_USE_MPI_FOR_TESTS
       MPI_Barrier(MPI_COMM_WORLD);
     #endif
     counter[epoch] = 0;
@@ -244,6 +244,7 @@ void Allreduce(struct threadArgs* args, T* value, int average)
 testResult_t BenchTime(struct threadArgs* args, int in_place) {
   size_t count = args->nbytes;
 
+  TESTCHECK(args->collTest->initData(args, in_place));
   // Sync
   TESTCHECK(startColl(args, in_place, 0));
   TESTCHECK(completeColl(args));
@@ -322,15 +323,56 @@ testResult_t TimeTest(struct threadArgs* args) {
   for (size_t size = args->minbytes; size<=args->maxbytes; size = ((args->stepfactor > 1) ? size*args->stepfactor : size+args->stepbytes)) {
       setupArgs(size, args);
       PRINT("%12li  %12li", max(args->sendBytes, args->expectedBytes), args->nbytes);
-      TESTCHECK(BenchTime(args, 0));
+      // Don't support out-of-place for now
+      // TESTCHECK(BenchTime(args, 0));
       TESTCHECK(BenchTime(args, 1));
       PRINT("\n");
   }
   return testSuccess;
 }
 
-testResult_t threadRunTests(struct threadArgs* args) {
+testResult_t setupMscclppConnections(int rank, int ranksPerNode, int worldSize, mscclppComm_t comm, void* dataDst,
+                                        size_t dataSize)
+{
+  int thisNode = rank / ranksPerNode;
+  int localRank = rank % ranksPerNode;
+  std::string ibDevStr = "mlx5_ib" + std::to_string(localRank);
+
+  for (int r = 0; r < worldSize; ++r) {
+    if (r == rank)
+      continue;
+    mscclppTransport_t transportType;
+    const char* ibDev = ibDevStr.c_str();
+    if (r / ranksPerNode == thisNode) {
+      ibDev = NULL;
+      transportType = mscclppTransportP2P;
+    } else {
+      transportType = mscclppTransportIB;
+    }
+    // Connect with all other ranks
+    MSCCLPPCHECK(mscclppConnect(comm, r, 0, dataDst, dataSize, transportType, ibDev));
+  }
+
+  MSCCLPPCHECK(mscclppConnectionSetup(comm));
+
+  mscclppDevConn_t* devConns;
+  int nCons;
+  MSCCLPPCHECK(mscclppGetAllDeviceConnections(comm, &devConns, &nCons));
+
+  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * nCons));
+
+  return testSuccess;
+}
+
+testResult_t threadRunTests(struct threadArgs* args)
+{
+  TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->ranksPerNode, args->comms[0],
+                                    args->recvbuffs[0], args->expectedBytes));
+  PRINT("Setting up the connection in MSCCL++\n");
+  MSCCLPPCHECK(mscclppProxyLaunch(args->comms[0]));
   TESTCHECK(mscclppTestEngine.runTest(args));
+  PRINT("Stopping MSCCL++ proxy threads\n");
+  MSCCLPPCHECK(mscclppProxyStop(args->comms[0]));
   return testSuccess;
 }
 
@@ -508,7 +550,7 @@ testResult_t run() {
   void* sendbuff;
   void* recvbuff;
   void* expected;
-  size_t sendBytes = 10, recvBytes = 10;
+  size_t sendBytes, recvBytes;
 
   mscclppTestEngine.getBuffSize(&sendBytes, &recvBytes, (size_t)maxBytes, (size_t)totalProcs);
 
@@ -531,7 +573,7 @@ testResult_t run() {
 
   const char* timeStr = report_cputime ? "cputime" : "time";
   PRINT("#\n");
-  PRINT("# %10s  %12s           out-of-place                       in-place          \n", "",
+  PRINT("# %10s  %12s           in-place                       out-of-place          \n", "",
         "");
   PRINT("# %10s  %12s  %7s  %6s  %6s  %6s  %7s  %6s  %6s  %6s\n", "size", "count", timeStr, "algbw", "busbw", "#wrong",
         timeStr, "algbw", "busbw", "#wrong");
@@ -545,6 +587,7 @@ testResult_t run() {
   thread.args.stepbytes = stepBytes;
   thread.args.stepfactor = stepFactor;
   thread.args.localRank = localRank;
+  thread.args.ranksPerNode = ranksPerNode;
 
   thread.args.totalProcs = totalProcs;
   thread.args.proc = proc;
