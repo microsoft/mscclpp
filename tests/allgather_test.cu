@@ -82,19 +82,37 @@ __device__ void allgather1(mscclppDevConn_t devConn, int rank, int world_size, i
   devConn.wait();
 }
 
+__forceinline__ __device__ void barrierLocal(mscclppDevConn_t devConn, int rank, int nranksPerNode, int remoteRank)
+{
+  int localRank = rank % nranksPerNode;
+  int base = rank / nranksPerNode * nranksPerNode;
+  for (int i = 1; i < nranksPerNode; ++i) {
+    if (remoteRank == base + (localRank - 1 + nranksPerNode) % nranksPerNode) {
+      devConn.signalWithFlush();
+    }
+    if (remoteRank == base + (localRank + 1) % nranksPerNode) {
+      devConn.wait();
+    }
+    __syncthreads();
+  }
+}
+
 __device__ void allgather2(mscclppDevConn_t devConn, int rank, int world_size, int nranksPerNode, int remoteRank, int nelemsPerGPU)
 {
   if (remoteRank % nranksPerNode == rank % nranksPerNode){
     devConn.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
     for (int i = 1; i < nranksPerNode; i++)
       __syncthreads();
+    for (int i = 1; i < nranksPerNode; ++i)
+      __syncthreads();
     devConn.wait();
     devConn.flush();
     __syncthreads();
   } else if (remoteRank / nranksPerNode == rank / nranksPerNode) {
-    remoteRank = remoteRank % nranksPerNode;
+    int localRemoteRank = remoteRank % nranksPerNode;
+    barrierLocal(devConn, rank, nranksPerNode, remoteRank);
     for (int i = 1; i < nranksPerNode; i++) {
-      if (remoteRank == ((rank + i) % nranksPerNode)){
+      if (localRemoteRank == ((rank + i) % nranksPerNode)){
         // put your data to GPU (rank+i) % world_size and signal all in one call
         devConn.putWithSignalAndFlush(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
       }
@@ -105,8 +123,9 @@ __device__ void allgather2(mscclppDevConn_t devConn, int rank, int world_size, i
 
     __syncthreads();
     int nodeNghr = (rank + nranksPerNode) % world_size;
+    barrierLocal(devConn, rank, nranksPerNode, remoteRank);
     for (int i = 1; i < nranksPerNode; i++) {
-      if (remoteRank == ((rank + i) % nranksPerNode)){
+      if (localRemoteRank == ((rank + i) % nranksPerNode)){
         // put your data to GPU (rank+i) % world_size and signal all in one call
         devConn.putWithSignalAndFlush(nodeNghr * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
       }
