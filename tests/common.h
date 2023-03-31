@@ -69,7 +69,7 @@ struct testColl {
       size_t *sendcount, size_t *recvcount, size_t *paramcount,
       size_t *sendInplaceOffset, size_t *recvInplaceOffset,
       size_t count, int nranks);
-  testResult_t (*initData)(struct threadArgs* args, int root, int rep, int in_place);
+  testResult_t (*initData)(struct threadArgs* args, int in_place);
   void (*getBw)(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
   testResult_t (*runColl)(void* sendbuff, void* recvbuff, size_t count);
 };
@@ -77,7 +77,8 @@ struct testColl {
 struct testEngine
 {
   void (*getBuffSize)(size_t* sendcount, size_t* recvcount, size_t count, int nranks);
-  testResult_t (*runTest)(struct threadArgs* args, int root, const char* typeName, const char* opName);
+  // We can add more parameters for other communication primitives
+  testResult_t (*runTest)(struct threadArgs* args);
 };
 
 extern struct testEngine mscclppTestEngine;
@@ -126,7 +127,7 @@ struct testThread
 };
 
 // Provided by common.cu
-extern testResult_t TimeTest(struct threadArgs* args, ncclDataType_t type, const char* typeName, ncclRedOp_t op,  const char* opName, int root);
+extern testResult_t TimeTest(struct threadArgs* args);
 
 static void getHostName(char* hostname, int maxlen)
 {
