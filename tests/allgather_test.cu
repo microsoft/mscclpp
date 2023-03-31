@@ -86,28 +86,30 @@ __device__ void allgather1(mscclppDevConn_t devConn, int rank, int world_size, i
   devConn.wait();
 }
 
-__device__ void allgather2(mscclppDevConn_t devConn, int rank, int world_size, int nranksPerNode, int remoteRank, size_t nelemsPerGPU)
+__device__ void allgather2(mscclppDevConn_t devConn, int rank, int world_size, int nranksPerNode, int remoteRank,
+                           size_t nelemsPerGPU)
 {
   int pipelineSize = 3;
 
   int offset = 0;
   if (remoteRank / nranksPerNode == rank / nranksPerNode) {
     for (int i = 1; i < nranksPerNode; i++) {
-      if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)){
+      if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)) {
         if ((threadIdx.x % 32) == 0)
           devConn.putWithSignalAndFlush(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
       }
       if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode))
         if ((threadIdx.x % 32) == 0)
           devConn.wait();
-      asm volatile("bar.sync %0, %1;" :: "r"(10), "r"((nranksPerNode-1)*32) : "memory");
+      asm volatile("bar.sync %0, %1;" ::"r"(10), "r"((nranksPerNode - 1) * 32) : "memory");
     }
   }
 
-  if (remoteRank % nranksPerNode == rank % nranksPerNode){
+  if (remoteRank % nranksPerNode == rank % nranksPerNode) {
     // opposite side
     if ((threadIdx.x % 32) == 0)
-      devConn.putWithSignalAndFlush(rank * nelemsPerGPU * sizeof(int), (nelemsPerGPU * (pipelineSize-1)) / pipelineSize * sizeof(int));
+      devConn.putWithSignalAndFlush(rank * nelemsPerGPU * sizeof(int),
+                                    (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
     if ((threadIdx.x % 32) == 0)
       devConn.wait();
   }
@@ -117,21 +119,24 @@ __device__ void allgather2(mscclppDevConn_t devConn, int rank, int world_size, i
   if (remoteRank / nranksPerNode == rank / nranksPerNode) {
     for (int i = 1; i < nranksPerNode; i++) {
       int otherNghr = (rank + nranksPerNode) % world_size;
-      if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)){
+      if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)) {
         if ((threadIdx.x % 32) == 0)
-          devConn.putWithSignalAndFlush(otherNghr * nelemsPerGPU * sizeof(int), (nelemsPerGPU * (pipelineSize-1)) / pipelineSize * sizeof(int));
+          devConn.putWithSignalAndFlush(otherNghr * nelemsPerGPU * sizeof(int),
+                                        (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
       }
       if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode))
         if ((threadIdx.x % 32) == 0)
           devConn.wait();
-      asm volatile("bar.sync %0, %1;" :: "r"(11), "r"((nranksPerNode-1)*32) : "memory");
+      asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nranksPerNode - 1) * 32) : "memory");
     }
   }
 
-  if (remoteRank % nranksPerNode == rank % nranksPerNode){
+  if (remoteRank % nranksPerNode == rank % nranksPerNode) {
     // opposite side
     if ((threadIdx.x % 32) == 0)
-      devConn.putWithSignalAndFlush((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize-1)) / pipelineSize) * sizeof(int), nelemsPerGPU / pipelineSize * sizeof(int));
+      devConn.putWithSignalAndFlush((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) *
+                                      sizeof(int),
+                                    nelemsPerGPU / pipelineSize * sizeof(int));
     if ((threadIdx.x % 32) == 0)
       devConn.wait();
   }
@@ -141,16 +146,18 @@ __device__ void allgather2(mscclppDevConn_t devConn, int rank, int world_size, i
   if (remoteRank / nranksPerNode == rank / nranksPerNode) {
     for (int i = 1; i < nranksPerNode; i++) {
       int otherNghr = (rank + nranksPerNode) % world_size;
-      if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)){
+      if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)) {
         if ((threadIdx.x % 32) == 0)
-          devConn.putWithSignalAndFlush((otherNghr * nelemsPerGPU + (nelemsPerGPU * (pipelineSize-1)) / pipelineSize) * sizeof(int), nelemsPerGPU / pipelineSize * sizeof(int));
+          devConn.putWithSignalAndFlush(
+            (otherNghr * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
+            nelemsPerGPU / pipelineSize * sizeof(int));
       }
       if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode))
         if ((threadIdx.x % 32) == 0)
           devConn.wait();
-      asm volatile("bar.sync %0, %1;" :: "r"(11), "r"((nranksPerNode-1)*32) : "memory");
+      asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nranksPerNode - 1) * 32) : "memory");
     }
-  }  
+  }
 }
 
 __global__ void kernel(int rank, int world_size, int nranksPerNode, size_t nelemsPerGPU, int kernel)
@@ -214,7 +221,7 @@ mscclppResult_t setupMscclppConnections(int rank, int world_size, mscclppComm_t 
 {
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
-  int map[8] = {2,0,6,4,3,1,7,5};
+  int map[8] = {2, 0, 6, 4, 3, 1, 7, 5};
   std::string ibDevStr = "mlx5_ib" + std::to_string(map[cudaNum]);
 
   for (int r = 0; r < world_size; ++r) {
