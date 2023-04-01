@@ -7,9 +7,8 @@
 #include "utils.h"
 #include "core.h"
 
-// #include "nvmlwrap.h"
-
 #include <stdlib.h>
+#include <string>
 
 // Get current Compute Capability
 // int mscclppCudaCompCap() {
@@ -46,14 +45,37 @@ mscclppResult_t busIdToInt64(const char* busId, int64_t* id)
 }
 
 // Convert a logical cudaDev index to the NVML device minor number
-mscclppResult_t getBusId(int cudaDev, int64_t* busId)
+mscclppResult_t getBusId(int cudaDev, std::string* busId)
 {
   // On most systems, the PCI bus ID comes back as in the 0000:00:00.0
   // format. Still need to allocate proper space in case PCI domain goes
   // higher.
-  char busIdStr[] = "00000000:00:00.0";
-  CUDACHECK(cudaDeviceGetPCIBusId(busIdStr, sizeof(busIdStr), cudaDev));
-  MSCCLPPCHECK(busIdToInt64(busIdStr, busId));
+  char busIdChar[] = "00000000:00:00.0";
+  CUDACHECK(cudaDeviceGetPCIBusId(busIdChar, sizeof(busIdChar), cudaDev));
+  // we need the hex in lower case format
+  for (int i = 0; i < sizeof(busIdChar); i++) {
+    busIdChar[i] = std::tolower(busIdChar[i]);
+  }
+  *busId = busIdChar;
+  return mscclppSuccess;
+}
+
+mscclppResult_t getDeviceNumaNode(int cudaDev, int* numaNode){
+  std::string busId;
+  MSCCLPPCHECK(getBusId(cudaDev, &busId));
+
+  std::string pci_str = "/sys/bus/pci/devices/" + busId + "/numa_node";
+  FILE* file = fopen(pci_str.c_str(), "r");
+  if (file == NULL) {
+    WARN("Could not open %s to detect the NUMA node for device %d", pci_str.c_str(), cudaDev);
+    return mscclppSystemError;
+  }
+  int ret = fscanf(file, "%d", numaNode);
+  if (ret != 1) {
+    WARN("Could not read NUMA node for device %d", cudaDev);
+    return mscclppSystemError;
+  }
+  fclose(file);
   return mscclppSuccess;
 }
 
@@ -212,100 +234,36 @@ bool matchIfList(const char* string, int port, struct netIf* ifList, int listSiz
   return false;
 }
 
-// __thread struct mscclppThreadSignal mscclppThreadSignalLocalInstance = mscclppThreadSignalStaticInitializer();
+mscclppResult_t numaBind(int node)
+{
+  int totalNumNumaNodes = numa_num_configured_nodes();
+  if (node < 0 || node >= totalNumNumaNodes){
+    WARN("Invalid NUMA node %d, must be between 0 and %d", node, totalNumNumaNodes);
+    return mscclppInvalidUsage;
+  }
+  nodemask_t mask;
+  nodemask_zero(&mask);
+  nodemask_set_compat(&mask, node);
+  numa_bind_compat(&mask);
+  return mscclppSuccess;
+}
 
-// void* mscclppMemoryStack::allocateSpilled(struct mscclppMemoryStack* me, size_t size, size_t align) {
-//   // `me->hunks` points to the top of the stack non-empty hunks. Hunks above
-//   // this (reachable via `->above`) are empty.
-//   struct Hunk* top = me->topFrame.hunk;
-//   size_t mallocSize = 0;
+mscclppResult_t getNumaState(mscclppNumaState* state){
 
-//   // If we have lots of space left in hunk but that wasn't enough then we'll
-//   // allocate the object unhunked.
-//   if (me->topFrame.end - me->topFrame.bumper >= 8<<10)
-//     goto unhunked;
+  mscclppNumaState state_ = numa_get_run_node_mask();
+  if (state_ == NULL){
+    WARN("Failed to get NUMA node mask of the running process");
+    return mscclppSystemError;
+  }
+  *state = state_;
+  return mscclppSuccess;
+}
 
-//   // If we have another hunk (which must be empty) waiting above this one and
-//   // the object fits then use that.
-//   if (top && top->above) {
-//     struct Hunk* top1 = top->above;
-//     uintptr_t uobj = (reinterpret_cast<uintptr_t>(top1) + sizeof(struct Hunk) + align-1) & -uintptr_t(align);
-//     if (uobj + size <= reinterpret_cast<uintptr_t>(top1) + top1->size) {
-//       me->topFrame.hunk = top1;
-//       me->topFrame.bumper = uobj + size;
-//       me->topFrame.end = reinterpret_cast<uintptr_t>(top1) + top1->size;
-//       return reinterpret_cast<void*>(uobj);
-//     }
-//   }
-
-//   { // If the next hunk we're going to allocate wouldn't be big enough but the
-//     // Unhunk proxy fits in the current hunk then go allocate as unhunked.
-//     size_t nextSize = (top ? top->size : 0) + (64<<10);
-//     constexpr size_t maxAlign = 64;
-//     if (nextSize < sizeof(struct Hunk) + maxAlign + size) {
-//       uintptr_t uproxy = (me->topFrame.bumper + alignof(Unhunk)-1) & -uintptr_t(alignof(Unhunk));
-//       if (uproxy + sizeof(struct Unhunk) <= me->topFrame.end)
-//         goto unhunked;
-//     }
-
-//     // At this point we must need another hunk, either to fit the object
-//     // itself or its Unhunk proxy.
-//     mallocSize = nextSize;
-//     INFO(MSCCLPP_ALLOC, "%s:%d memory stack hunk malloc(%llu)", __FILE__, __LINE__, (unsigned long long)mallocSize);
-//     struct Hunk *top1 = (struct Hunk*)malloc(mallocSize);
-//     if (top1 == nullptr) goto malloc_exhausted;
-//     top1->size = nextSize;
-//     top1->above = nullptr;
-//     if (top) top->above = top1;
-//     top = top1;
-//     me->topFrame.hunk = top;
-//     me->topFrame.end = reinterpret_cast<uintptr_t>(top) + nextSize;
-//     me->topFrame.bumper = reinterpret_cast<uintptr_t>(top) + sizeof(struct Hunk);
-//   }
-
-//   { // Try to fit object in the new top hunk.
-//     uintptr_t uobj = (me->topFrame.bumper + align-1) & -uintptr_t(align);
-//     if (uobj + size <= me->topFrame.end) {
-//       me->topFrame.bumper = uobj + size;
-//       return reinterpret_cast<void*>(uobj);
-//     }
-//   }
-
-// unhunked:
-//   { // We need to allocate the object out-of-band and put an Unhunk proxy in-band
-//     // to keep track of it.
-//     uintptr_t uproxy = (me->topFrame.bumper + alignof(Unhunk)-1) & -uintptr_t(alignof(Unhunk));
-//     Unhunk* proxy = reinterpret_cast<Unhunk*>(uproxy);
-//     me->topFrame.bumper = uproxy + sizeof(Unhunk);
-//     proxy->next = me->topFrame.unhunks;
-//     me->topFrame.unhunks = proxy;
-//     mallocSize = size;
-//     proxy->obj = malloc(mallocSize);
-//     INFO(MSCCLPP_ALLOC, "%s:%d memory stack non-hunk malloc(%llu)", __FILE__, __LINE__, (unsigned long
-//     long)mallocSize); if (proxy->obj == nullptr) goto malloc_exhausted; return proxy->obj;
-//   }
-
-// malloc_exhausted:
-//   WARN("%s:%d Unrecoverable error detected: malloc(size=%llu) returned null.", __FILE__, __LINE__, (unsigned long
-//   long)mallocSize); abort();
-// }
-
-// void mscclppMemoryStackDestruct(struct mscclppMemoryStack* me) {
-//   // Free unhunks first because both the frames and unhunk proxies lie within the hunks.
-//   struct mscclppMemoryStack::Frame* f = &me->topFrame;
-//   while (f != nullptr) {
-//     struct mscclppMemoryStack::Unhunk* u = f->unhunks;
-//     while (u != nullptr) {
-//       free(u->obj);
-//       u = u->next;
-//     }
-//     f = f->below;
-//   }
-//   // Free hunks
-//   struct mscclppMemoryStack::Hunk* h = me->stub.above;
-//   while (h != nullptr) {
-//     struct mscclppMemoryStack::Hunk *h1 = h->above;
-//     free(h);
-//     h = h1;
-//   }
-// }
+mscclppResult_t setNumaState(mscclppNumaState state){
+  if (state == NULL){
+    WARN("Invalid NUMA state");
+    return mscclppInvalidUsage;
+  }
+  numa_bind(state);
+  return mscclppSuccess;
+}
