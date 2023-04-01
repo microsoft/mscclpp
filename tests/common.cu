@@ -353,7 +353,7 @@ testResult_t TimeTest(struct threadArgs* args) {
   return testSuccess;
 }
 
-testResult_t setupMscclppConnections(int rank, int ranksPerNode, int worldSize, mscclppComm_t comm, void* dataDst,
+testResult_t setupMscclppConnections(int rank, int worldSize, int ranksPerNode, mscclppComm_t comm, void* dataDst,
                                         size_t dataSize)
 {
   int thisNode = rank / ranksPerNode;
@@ -382,9 +382,10 @@ testResult_t setupMscclppConnections(int rank, int ranksPerNode, int worldSize, 
 
 testResult_t threadRunTests(struct threadArgs* args)
 {
+  PRINT("# Setting up the connection in MSCCL++\n");
   TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->ranksPerNode, args->comms[0],
-                                    args->recvbuffs[0], args->expectedBytes));
-  PRINT("Setting up the connection in MSCCL++\n");
+                                    args->recvbuffs[0], args->maxbytes));
+  PRINT("# Launching MSCCL++ proxy threads\n");
   MSCCLPPCHECK(mscclppProxyLaunch(args->comms[0]));
   TESTCHECK(mscclppTestEngine.runTest(args));
   PRINT("Stopping MSCCL++ proxy threads\n");
@@ -577,7 +578,7 @@ testResult_t run() {
   PRINT("# Initializing MSCCL++\n");
 
   mscclppComm_t comms;
-  MSCCLPPCHECK(mscclppCommInitRank(&comms, totalProcs, ip_port.c_str(), localRank));
+  MSCCLPPCHECK(mscclppCommInitRank(&comms, totalProcs, ip_port.c_str(), rank));
 
   int error = 0;
   double bw = 0.0;
