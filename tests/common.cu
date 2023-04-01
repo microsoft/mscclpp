@@ -123,7 +123,8 @@ testResult_t startColl(struct threadArgs* args, int in_place, int iter) {
     char* sendBuff = ((char*)args->sendbuffs[i]) + shift;
 
     TESTCHECK(args->collTest->runColl((void*)(in_place ? recvBuff + args->sendInplaceOffset * rank : sendBuff),
-                                      (void*)(in_place ? recvBuff + args->recvInplaceOffset * rank : recvBuff), count));
+                                      (void*)(in_place ? recvBuff + args->recvInplaceOffset * rank : recvBuff), count,
+                                      args->comms[0], args->streams[i]));
   }
   return testSuccess;
 }
@@ -252,10 +253,20 @@ testResult_t BenchTime(struct threadArgs* args, int in_place) {
   Barrier(args);
 
   // Performance Benchmark
+  cudaGraph_t graph;
+  cudaGraphExec_t graphExec;
+  CUDACHECK(cudaStreamBeginCapture(args->streams[0], cudaStreamCaptureModeGlobal));
   timer tim;
   for (int iter = 0; iter < iters; iter++) {
     TESTCHECK(startColl(args, in_place, iter));
   }
+  CUDACHECK(cudaStreamEndCapture(args->streams[0], &graph));
+  CUDACHECK(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
+
+  // Launch the graph
+  Barrier(args);
+  tim.reset();
+  CUDACHECK(cudaGraphLaunch(graphExec, args->streams[0]));
 
   double cputimeSec = tim.elapsed()/(iters);
   TESTCHECK(completeColl(args));
@@ -263,6 +274,9 @@ testResult_t BenchTime(struct threadArgs* args, int in_place) {
   double deltaSec = tim.elapsed();
   deltaSec = deltaSec/(iters);
   Allreduce(args, &deltaSec, average);
+
+  CUDACHECK(cudaGraphExecDestroy(graphExec));
+  CUDACHECK(cudaGraphDestroy(graph));
 
   double algBw, busBw;
   args->collTest->getBw(count, 1, deltaSec, &algBw, &busBw, args->totalProcs * args->nThreads * args->nGpus);
@@ -307,18 +321,26 @@ testResult_t TimeTest(struct threadArgs* args) {
 
   // Warm-up for large size
   setupArgs(args->maxbytes, args);
+  TESTCHECK(args->collTest->initData(args, 1));
   for (int iter = 0; iter < warmup_iters; iter++) {
-    TESTCHECK(startColl(args, 0, iter));
+    TESTCHECK(startColl(args, 1, iter));
   }
   TESTCHECK(completeColl(args));
 
   // Warm-up for small size
   setupArgs(args->minbytes, args);
   for (int iter = 0; iter < warmup_iters; iter++) {
-    TESTCHECK(startColl(args, 0, iter));
+    TESTCHECK(startColl(args, 1, iter));
   }
   TESTCHECK(completeColl(args));
 
+  PRINT("#\n");
+  PRINT("# %10s  %12s           in-place                       out-of-place          \n", "",
+        "");
+  PRINT("# %10s  %12s  %7s  %6s  %6s  %6s  %7s  %6s  %6s  %6s\n", "size", "count", "time", "algbw", "busbw", "#wrong",
+        "time", "algbw", "busbw", "#wrong");
+  PRINT("# %10s  %12s  %7s  %6s  %6s  %5s  %7s  %6s  %6s  %5s\n", "(B)", "(elements)", "(us)", "(GB/s)", "(GB/s)", "",
+        "(us)", "(GB/s)", "(GB/s)", "");
   // Benchmark
   for (size_t size = args->minbytes; size<=args->maxbytes; size = ((args->stepfactor > 1) ? size*args->stepfactor : size+args->stepbytes)) {
       setupArgs(size, args);
@@ -354,12 +376,6 @@ testResult_t setupMscclppConnections(int rank, int ranksPerNode, int worldSize, 
   }
 
   MSCCLPPCHECK(mscclppConnectionSetup(comm));
-
-  mscclppDevConn_t* devConns;
-  int nCons;
-  MSCCLPPCHECK(mscclppGetAllDeviceConnections(comm, &devConns, &nCons));
-
-  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * nCons));
 
   return testSuccess;
 }
@@ -570,15 +586,6 @@ testResult_t run() {
   int bw_count = 0;
 
   fflush(stdout);
-
-  const char* timeStr = report_cputime ? "cputime" : "time";
-  PRINT("#\n");
-  PRINT("# %10s  %12s           in-place                       out-of-place          \n", "",
-        "");
-  PRINT("# %10s  %12s  %7s  %6s  %6s  %6s  %7s  %6s  %6s  %6s\n", "size", "count", timeStr, "algbw", "busbw", "#wrong",
-        timeStr, "algbw", "busbw", "#wrong");
-  PRINT("# %10s  %12s  %7s  %6s  %6s  %5s  %7s  %6s  %6s  %5s\n", "(B)", "(elements)", "(us)", "(GB/s)", "(GB/s)", "",
-        "(us)", "(GB/s)", "(GB/s)", "");
 
   struct testThread thread = {0};
 

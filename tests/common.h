@@ -18,8 +18,6 @@
 #include <mpi.h>
 #endif // MSCCLPP_USE_MPI_FOR_TESTS
 
-__constant__ mscclppDevConn_t constDevConns[16];
-
 #define CUDACHECK(cmd)                                                                                                 \
   do {                                                                                                                 \
     cudaError_t err = cmd;                                                                                             \
@@ -72,7 +70,7 @@ struct testColl {
       size_t count, int nranks);
   testResult_t (*initData)(struct threadArgs* args, int in_place);
   void (*getBw)(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
-  testResult_t (*runColl)(void* sendbuff, void* recvbuff, size_t count);
+  testResult_t (*runColl)(void* sendbuff, void* recvbuff, size_t count, mscclppComm_t comm, cudaStream_t stream);
 };
 
 struct testEngine

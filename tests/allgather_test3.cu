@@ -4,12 +4,14 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
+#include "comm.h"
 #include "common.h"
-#include "cuda_runtime.h"
 
+#include <cuda_runtime.h>
 #include <string>
 
 #define ALIGN 4
+__constant__ mscclppDevConn_t constDevConns[16];
 
 __device__ void allgather0(mscclppDevConn_t devConn, int rank, int world_size, int remoteRank, int nelemsPerGPU)
 {
@@ -98,7 +100,6 @@ testResult_t AllGatherInitData(struct threadArgs* args, int in_place) {
   delete dataHost;
   // TODO: need to init expected data here
   CUDACHECK(cudaDeviceSynchronize());
-
   return testSuccess;
 }
 
@@ -110,9 +111,10 @@ void AllGatherGetBw(size_t count, int typesize, double sec, double* algBw, doubl
   *busBw = baseBw * factor;
 }
 
-testResult_t AllGatherRunColl(void* sendbuff, void* recvbuff, size_t count)
+testResult_t AllGatherRunColl(void* sendbuff, void* recvbuff, size_t count, mscclppComm_t comm, cudaStream_t stream)
 {
-  // NCCLCHECK(ncclAllGather(sendbuff, recvbuff, count, type, comm, stream));
+  int worldSize = comm->nRanks;
+  kernel<<<1, 32 * (worldSize - 1), 0, stream>>>(comm->rank , worldSize, count / sizeof(int), 0);
   return testSuccess;
 }
 
@@ -127,7 +129,10 @@ void AllGatherGetBuffSize(size_t *sendcount, size_t *recvcount, size_t count, in
 testResult_t AllGatherRunTest(struct threadArgs* args)
 {
   args->collTest = &allGatherTest;
-
+    mscclppDevConn_t* devConns;
+  int nCons;
+  MSCCLPPCHECK(mscclppGetAllDeviceConnections(args->comms[0], &devConns, &nCons));
+  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * nCons));
   TESTCHECK(TimeTest(args));
   return testSuccess;
 }
