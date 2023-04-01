@@ -24,17 +24,16 @@
     }                                                                                                                  \
   } while (false)
 
-#define PROXYMSCCLPPCHECK(call)                                                                                             \
+#define PROXYMSCCLPPCHECK(call)                                                                                        \
   do {                                                                                                                 \
     mscclppResult_t res = call;                                                                                        \
     if (res != mscclppSuccess && res != mscclppInProgress) {                                                           \
       /* Print the back trace*/                                                                                        \
       if (mscclppDebugNoWarn == 0)                                                                                     \
         INFO(MSCCLPP_ALL, "%s:%d -> %d", __FILE__, __LINE__, res);                                                     \
-      return NULL;                                                                                                      \
+      return NULL;                                                                                                     \
     }                                                                                                                  \
   } while (0);
-
 
 struct proxyArgs
 {
@@ -80,7 +79,6 @@ void* mscclppProxyService(void* _args)
   cudaStream_t fifoStream = args->proxyState->fifoStream;
   bool isP2pProxy = (ibCtx == nullptr);
   free(_args); // allocated in mscclppProxyCreate
-
 
   int counter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
   for (;;) {
@@ -178,7 +176,8 @@ void* mscclppProxyService(void* _args)
   *fifoTail = fifoTailCached;
 
   // make sure the tail is flushed before we shut the proxy
-  PROXYCUDACHECK(cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, fifoStream));
+  PROXYCUDACHECK(
+    cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, fifoStream));
   PROXYCUDACHECK(cudaStreamSynchronize(fifoStream));
   if (isP2pProxy) {
     PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));

@@ -60,7 +60,8 @@ mscclppResult_t getBusId(int cudaDev, std::string* busId)
   return mscclppSuccess;
 }
 
-mscclppResult_t getDeviceNumaNode(int cudaDev, int* numaNode){
+mscclppResult_t getDeviceNumaNode(int cudaDev, int* numaNode)
+{
   std::string busId;
   MSCCLPPCHECK(getBusId(cudaDev, &busId));
 
@@ -237,7 +238,7 @@ bool matchIfList(const char* string, int port, struct netIf* ifList, int listSiz
 mscclppResult_t numaBind(int node)
 {
   int totalNumNumaNodes = numa_num_configured_nodes();
-  if (node < 0 || node >= totalNumNumaNodes){
+  if (node < 0 || node >= totalNumNumaNodes) {
     WARN("Invalid NUMA node %d, must be between 0 and %d", node, totalNumNumaNodes);
     return mscclppInvalidUsage;
   }
@@ -248,10 +249,11 @@ mscclppResult_t numaBind(int node)
   return mscclppSuccess;
 }
 
-mscclppResult_t getNumaState(mscclppNumaState* state){
+mscclppResult_t getNumaState(mscclppNumaState* state)
+{
 
   mscclppNumaState state_ = numa_get_run_node_mask();
-  if (state_ == NULL){
+  if (state_ == NULL) {
     WARN("Failed to get NUMA node mask of the running process");
     return mscclppSystemError;
   }
@@ -259,8 +261,9 @@ mscclppResult_t getNumaState(mscclppNumaState* state){
   return mscclppSuccess;
 }
 
-mscclppResult_t setNumaState(mscclppNumaState state){
-  if (state == NULL){
+mscclppResult_t setNumaState(mscclppNumaState state)
+{
+  if (state == NULL) {
     WARN("Invalid NUMA state");
     return mscclppInvalidUsage;
   }

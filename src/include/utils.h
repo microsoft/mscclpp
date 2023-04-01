@@ -11,11 +11,10 @@
 #include "checks.h"
 #include "mscclpp.h"
 #include <new>
+#include <numa.h>
 #include <sched.h>
 #include <stdint.h>
 #include <time.h>
-#include <numa.h>
-
 
 // int mscclppCudaCompCap();
 

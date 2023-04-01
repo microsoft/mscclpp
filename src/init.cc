@@ -256,7 +256,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
 {
   // save this processes numa binding and set it to the one closest to the device
   // so that all the allocation are close to the device
-  if (comm->devNumaNode == -1){
+  if (comm->devNumaNode == -1) {
     // in case this is our first time
     MSCCLPPCHECK(getDeviceNumaNode(comm->cudaDev, &comm->devNumaNode));
     INFO(MSCCLPP_INIT, "NUMA node of device %d is set to %d", comm->cudaDev, comm->devNumaNode);
