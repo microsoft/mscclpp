@@ -91,7 +91,6 @@ __device__ void allgather2(mscclppDevConn_t devConn, int rank, int world_size, i
 {
   int pipelineSize = 3;
 
-  int offset = 0;
   if (remoteRank / nranksPerNode == rank / nranksPerNode) {
     for (int i = 1; i < nranksPerNode; i++) {
       if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)) {
@@ -221,8 +220,7 @@ mscclppResult_t setupMscclppConnections(int rank, int world_size, mscclppComm_t 
 {
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
-  int map[8] = {2, 0, 6, 4, 3, 1, 7, 5};
-  std::string ibDevStr = "mlx5_ib" + std::to_string(map[cudaNum]);
+  std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
 
   for (int r = 0; r < world_size; ++r) {
     if (r == rank)
