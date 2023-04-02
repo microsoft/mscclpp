@@ -60,23 +60,16 @@ mscclppResult_t mscclppIbContextCreate(struct mscclppIbContext** ctx, const char
   std::vector<int> ports;
 
   int num;
-  const char* ibDevPath = NULL;
   struct ibv_device** devices = ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
     if (strncmp(devices[i]->name, ibDevName, IBV_SYSFS_NAME_MAX) == 0) {
       _ctx->ctx = ibv_open_device(devices[i]);
-      ibDevPath = devices[i]->ibdev_path;
       break;
     }
   }
   ibv_free_device_list(devices);
   if (_ctx->ctx == nullptr) {
     WARN("ibv_open_device failed (errno %d, device name %s)", errno, ibDevName);
-    goto fail;
-  }
-
-  _ctx->numaNode = getIbDevNumaNode(ibDevPath);
-  if (_ctx->numaNode < 0) {
     goto fail;
   }
 
@@ -265,9 +258,6 @@ mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext* ctx, void* b
   static __thread uintptr_t pageSize = 0;
   if (pageSize == 0) {
     pageSize = sysconf(_SC_PAGESIZE);
-  }
-  if (reinterpret_cast<uintptr_t>(buff) % pageSize != 0) {
-    WARN("buff (%p) is not aligned to the page size! Ignoring and proceeding anyway.", buff);
   }
   uintptr_t addr = reinterpret_cast<uintptr_t>(buff) & -pageSize;
   size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;

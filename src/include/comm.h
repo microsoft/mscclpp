@@ -19,7 +19,7 @@
 // #define MSCCLPP_LL128_THREAD_THRESHOLD 8
 // #define MSCCLPP_SIMPLE_THREAD_THRESHOLD 64
 
-#define MAXCONNECTIONS 1024
+#define MAXCONNECTIONS 64
 
 struct mscclppConn
 {
@@ -51,15 +51,15 @@ struct mscclppComm
   uint64_t
     magic; // Magic number for all network communication. Not a security key -- only goal is to detect mismatches.
 
-  int rank;    // my rank in the communicator
-  int nRanks;  // number of GPUs in communicator
-  int cudaDev; // my cuda device index
+  int rank;        // my rank in the communicator
+  int nRanks;      // number of GPUs in communicator
+  int cudaDev;     // my cuda device index
+  int devNumaNode; // my device's NUMA node
 
   // Flag to ask MSCCLPP kernels to abort
   volatile uint32_t* abortFlag;
 
   struct mscclppIbContext* ibContext[MSCCLPP_IB_MAX_DEVS];
-  cudaStream_t stream; // DMA engine stream for P2P
   struct mscclppProxyState* proxyState[MSCCLPP_PROXY_MAX_NUM];
 };
 
