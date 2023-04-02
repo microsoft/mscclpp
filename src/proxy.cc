@@ -39,7 +39,6 @@ struct proxyArgs
 {
   struct mscclppComm* comm;
   struct mscclppProxyState* proxyState;
-  cudaStream_t stream;
 };
 
 static void readTrigger(mscclppTrigger* dst, mscclppTrigger* src)

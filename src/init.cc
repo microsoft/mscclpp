@@ -163,6 +163,10 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
       MSCCLPPCHECK(mscclppCudaHostFree(proxyState->triggerFifo));
       MSCCLPPCHECK(mscclppCudaFree(proxyState->fifoHead));
       MSCCLPPCHECK(mscclppCudaFree(proxyState->fifoTailDev));
+
+      if (proxyState->p2pStream)
+        CUDACHECK(cudaStreamDestroy(proxyState->p2pStream));
+      CUDACHECK(cudaStreamDestroy(proxyState->fifoStream));
       free(proxyState);
     }
   }
