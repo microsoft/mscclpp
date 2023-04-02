@@ -70,7 +70,8 @@ struct testColl {
       size_t count, int nranks);
   testResult_t (*initData)(struct threadArgs* args, int in_place);
   void (*getBw)(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
-  testResult_t (*runColl)(void* sendbuff, void* recvbuff, size_t count, mscclppComm_t comm, cudaStream_t stream);
+  testResult_t (*runColl)(void* sendbuff, void* recvbuff, int nranksPerNode, size_t count, mscclppComm_t comm,
+                          cudaStream_t stream);
 };
 
 struct testEngine
@@ -97,14 +98,14 @@ struct threadArgs
   int nGpus;
   int* gpus;
   int localRank;
-  int ranksPerNode;
+  int nranksPerNode;
   void** sendbuffs;
   size_t sendBytes;
   size_t sendInplaceOffset;
   void** recvbuffs;
   size_t recvInplaceOffset;
-  mscclppComm_t* comms;
-  cudaStream_t* streams;
+  mscclppComm_t comm;
+  cudaStream_t stream;
 
   void** expected;
   size_t expectedBytes;
@@ -123,7 +124,6 @@ struct testThread
   pthread_t thread;
   threadFunc_t func;
   struct threadArgs args;
-  testResult_t ret;
 };
 
 // Provided by common.cu

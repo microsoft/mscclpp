@@ -29,13 +29,14 @@ static size_t maxBytes = 32*1024*1024;
 static size_t stepBytes = 1*1024*1024;
 static size_t stepFactor = 1;
 static int datacheck = 1;
-static int warmup_iters = 5;
+static int warmup_iters = 10;
 static int iters = 20;
 static int timeout = 0;
 static int report_cputime = 0;
 // Report average iteration time: (0=RANK0,1=AVG,2=MIN,3=MAX)
 static int average = 1;
 static std::string ip_port;
+static int cudaGraphLaunches = 10;
 
 #define NUM_BLOCKS 32
 
@@ -117,54 +118,46 @@ testResult_t startColl(struct threadArgs* args, int in_place, int iter) {
   size_t steps = totalnbytes ? args->maxbytes / totalnbytes : 1;
   size_t shift = totalnbytes * (iter % steps);
 
-  for (int i = 0; i < args->nGpus; i++) {
-    int rank = ((args->proc*args->nThreads + args->thread)*args->nGpus + i);
-    char* recvBuff = ((char*)args->recvbuffs[i]) + shift;
-    char* sendBuff = ((char*)args->sendbuffs[i]) + shift;
+  int rank = ((args->proc * args->nThreads + args->thread) * args->nGpus);
+  char* recvBuff = ((char*)args->recvbuffs[0]) + shift;
+  char* sendBuff = ((char*)args->sendbuffs[0]) + shift;
 
-    TESTCHECK(args->collTest->runColl((void*)(in_place ? recvBuff + args->sendInplaceOffset * rank : sendBuff),
-                                      (void*)(in_place ? recvBuff + args->recvInplaceOffset * rank : recvBuff), count,
-                                      args->comms[0], args->streams[i]));
-  }
+  TESTCHECK(args->collTest->runColl((void*)(in_place ? recvBuff + args->sendInplaceOffset * rank : sendBuff),
+                                    (void*)(in_place ? recvBuff + args->recvInplaceOffset * rank : recvBuff),
+                                    args->nranksPerNode, count, args->comm, args->stream));
   return testSuccess;
 }
 
-testResult_t testStreamSynchronize(int ngpus, cudaStream_t* streams)
+testResult_t testStreamSynchronize(cudaStream_t stream)
 {
   cudaError_t cudaErr;
-  int remaining = ngpus;
-  int* done = (int*)malloc(sizeof(int) * ngpus);
-  memset(done, 0, sizeof(int) * ngpus);
   timer tim;
 
-  while (remaining) {
-    int idle = 1;
-    for (int i = 0; i < ngpus; i++) {
-      if (done[i])
-        continue;
-
-      cudaErr = cudaStreamQuery(streams[i]);
-      if (cudaErr == cudaSuccess) {
-        done[i] = 1;
-        remaining--;
-        idle = 0;
-        continue;
-      }
-
-      if (cudaErr != cudaErrorNotReady)
-        CUDACHECK(cudaErr);
+  while (true) {
+    cudaErr = cudaStreamQuery(stream);
+    if (cudaErr == cudaSuccess) {
+      break;
     }
 
-    // We might want to let other threads (including NCCL threads) use the CPU.
-    if (idle)
-      sched_yield();
+    if (cudaErr != cudaErrorNotReady)
+      CUDACHECK(cudaErr);
+
+    double delta = tim.elapsed();
+    if (delta > timeout && timeout > 0) {
+      char hostname[1024];
+      getHostName(hostname, 1024);
+      printf("%s: Test timeout (%ds) %s:%d\n", hostname, timeout, __FILE__, __LINE__);
+      return testTimeout;
+    }
+
+    // We might want to let other threads (including MSCCLPP threads) use the CPU.
+    sched_yield();
   }
-  free(done);
   return testSuccess;
 }
 
 testResult_t completeColl(struct threadArgs* args) {
-  TESTCHECK(testStreamSynchronize(args->nGpus, args->streams));
+  TESTCHECK(testStreamSynchronize(args->stream));
   return testSuccess;
 }
 
@@ -255,24 +248,26 @@ testResult_t BenchTime(struct threadArgs* args, int in_place) {
   // Performance Benchmark
   cudaGraph_t graph;
   cudaGraphExec_t graphExec;
-  CUDACHECK(cudaStreamBeginCapture(args->streams[0], cudaStreamCaptureModeGlobal));
+  CUDACHECK(cudaStreamBeginCapture(args->stream, cudaStreamCaptureModeGlobal));
   timer tim;
   for (int iter = 0; iter < iters; iter++) {
     TESTCHECK(startColl(args, in_place, iter));
   }
-  CUDACHECK(cudaStreamEndCapture(args->streams[0], &graph));
+  CUDACHECK(cudaStreamEndCapture(args->stream, &graph));
   CUDACHECK(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
 
   // Launch the graph
   Barrier(args);
   tim.reset();
-  CUDACHECK(cudaGraphLaunch(graphExec, args->streams[0]));
+  for (int l = 0; l < cudaGraphLaunches; ++l) {
+    CUDACHECK(cudaGraphLaunch(graphExec, args->stream));
+  }
 
   double cputimeSec = tim.elapsed()/(iters);
   TESTCHECK(completeColl(args));
 
   double deltaSec = tim.elapsed();
-  deltaSec = deltaSec/(iters);
+  deltaSec = deltaSec/(iters)/(cudaGraphLaunches);
   Allreduce(args, &deltaSec, average);
 
   CUDACHECK(cudaGraphExecDestroy(graphExec));
@@ -383,13 +378,13 @@ testResult_t setupMscclppConnections(int rank, int worldSize, int ranksPerNode, 
 testResult_t threadRunTests(struct threadArgs* args)
 {
   PRINT("# Setting up the connection in MSCCL++\n");
-  TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->ranksPerNode, args->comms[0],
+  TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm,
                                     args->recvbuffs[0], args->maxbytes));
   PRINT("# Launching MSCCL++ proxy threads\n");
-  MSCCLPPCHECK(mscclppProxyLaunch(args->comms[0]));
+  MSCCLPPCHECK(mscclppProxyLaunch(args->comm));
   TESTCHECK(mscclppTestEngine.runTest(args));
   PRINT("Stopping MSCCL++ proxy threads\n");
-  MSCCLPPCHECK(mscclppProxyStop(args->comms[0]));
+  MSCCLPPCHECK(mscclppProxyStop(args->comm));
   return testSuccess;
 }
 
@@ -411,6 +406,7 @@ int main(int argc, char* argv[]) {
     {"warmup_iters", required_argument, 0, 'w'},
     {"check", required_argument, 0, 'c'},
     {"timeout", required_argument, 0, 'T'},
+    {"cudagraph", required_argument, 0, 'G'},
     {"report_cputime", required_argument, 0, 'C'},
     {"average", required_argument, 0, 'a'},
     {"ip_port", required_argument, 0, 'P'},
@@ -460,6 +456,9 @@ int main(int argc, char* argv[]) {
       case 'T':
         timeout = strtol(optarg, NULL, 0);
         break;
+      case 'G':
+        cudaGraphLaunches = strtol(optarg, NULL, 0);
+        break;
       case 'C':
         report_cputime = strtol(optarg, NULL, 0);
         break;
@@ -481,6 +480,7 @@ int main(int argc, char* argv[]) {
             "[-w,--warmup_iters <warmup iteration count>] \n\t"
             "[-c,--check <0/1>] \n\t"
             "[-T,--timeout <time in seconds>] \n\t"
+            "[-G,--cudagraph <num graph launches>] \n\t"
             "[-C,--report_cputime <0/1>] \n\t"
             "[-a,--average <0/1/2/3> report average iteration time <0=RANK0/1=AVG/2=MIN/3=MAX>] \n\t"
             "[-P,--ip_port <ip port for bootstrap>] \n\t"
@@ -507,7 +507,7 @@ int main(int argc, char* argv[]) {
 
 testResult_t run() {
   int totalProcs = 1, proc = 0;
-  int ranksPerNode = 0, localRank = 0;
+  int nranksPerNode = 0, localRank = 0;
   char hostname[1024];
   getHostName(hostname, 1024);
 
@@ -516,16 +516,16 @@ testResult_t run() {
   MPI_Comm_rank(MPI_COMM_WORLD, &proc);
   MPI_Comm shmcomm;
   MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
-  MPI_Comm_size(shmcomm, &ranksPerNode);
+  MPI_Comm_size(shmcomm, &nranksPerNode);
   MPI_Comm_free(&shmcomm);
-  localRank = proc % ranksPerNode;
+  localRank = proc % nranksPerNode;
 #endif
   is_main_thread = is_main_proc = (proc == 0) ? 1 : 0;
   is_main_thread = is_main_proc = (proc == 0) ? 1 : 0;
 
-  PRINT("# minBytes %ld maxBytes %ld step: %ld(%s) warmup iters: %d iters: %d validation: %d ip port: %s\n", minBytes,
-        maxBytes, (stepFactor > 1) ? stepFactor : stepBytes, (stepFactor > 1) ? "factor" : "bytes", warmup_iters, iters,
-        datacheck, ip_port.c_str());
+  PRINT("# minBytes %ld maxBytes %ld step: %ld(%s) warmup iters: %d iters: %d validation: %d ip port: %s graph: %d\n",
+        minBytes, maxBytes, (stepFactor > 1) ? stepFactor : stepBytes, (stepFactor > 1) ? "factor" : "bytes",
+        warmup_iters, iters, datacheck, ip_port.c_str(), cudaGraphLaunches);
   PRINT("#\n");
   PRINT("# Using devices\n");
 
@@ -537,9 +537,11 @@ testResult_t run() {
   int cudaDev = localRank;
   int rank = proc;
   cudaDeviceProp prop;
+  char busIdChar[] = "00000000:00:00.0";
   CUDACHECK(cudaGetDeviceProperties(&prop, cudaDev));
-  len += snprintf(line + len, MAX_LINE - len, "#  Rank %2d Pid %6d on %10s device %2d [0x%02x] %s\n", rank, getpid(),
-                  hostname, cudaDev, prop.pciBusID, prop.name);
+  CUDACHECK(cudaDeviceGetPCIBusId(busIdChar, sizeof(busIdChar), cudaDev));
+  len += snprintf(line + len, MAX_LINE - len, "#  Rank %2d Pid %6d on %10s device %2d [%s] %s\n", rank, getpid(),
+                  hostname, cudaDev, busIdChar, prop.name);
   maxMem = std::min(maxMem, prop.totalGlobalMem);
 
 #if MSCCLPP_USE_MPI_FOR_TESTS
@@ -577,8 +579,8 @@ testResult_t run() {
   PRINT("#\n");
   PRINT("# Initializing MSCCL++\n");
 
-  mscclppComm_t comms;
-  MSCCLPPCHECK(mscclppCommInitRank(&comms, totalProcs, ip_port.c_str(), rank));
+  mscclppComm_t comm;
+  MSCCLPPCHECK(mscclppCommInitRank(&comm, totalProcs, ip_port.c_str(), rank));
 
   int error = 0;
   double bw = 0.0;
@@ -588,14 +590,14 @@ testResult_t run() {
 
   fflush(stdout);
 
-  struct testThread thread = {0};
+  struct testThread thread;
 
   thread.args.minbytes = minBytes;
   thread.args.maxbytes = maxBytes;
   thread.args.stepbytes = stepBytes;
   thread.args.stepfactor = stepFactor;
   thread.args.localRank = localRank;
-  thread.args.ranksPerNode = ranksPerNode;
+  thread.args.nranksPerNode = nranksPerNode;
 
   thread.args.totalProcs = totalProcs;
   thread.args.proc = proc;
@@ -606,8 +608,8 @@ testResult_t run() {
   thread.args.sendbuffs = &sendbuff;
   thread.args.recvbuffs = &recvbuff;
   thread.args.expected = &expected;
-  thread.args.comms = &comms;
-  thread.args.streams = &stream;
+  thread.args.comm = comm;
+  thread.args.stream = stream;
 
   thread.args.errors = &error;
   thread.args.bw = &bw;
@@ -618,9 +620,7 @@ testResult_t run() {
   thread.func = threadRunTests;
   TESTCHECK(thread.func(&thread.args));
 
-  // Wait for other threads and accumulate stats and errors
-  TESTCHECK(thread.ret);
-  MSCCLPPCHECK(mscclppCommDestroy(comms));
+  MSCCLPPCHECK(mscclppCommDestroy(comm));
 
   // Free off CUDA allocated memory
   if (sendbuff)
