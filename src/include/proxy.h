@@ -37,8 +37,10 @@ struct mscclppProxyState
   // these updates are pushed to the device.
   uint64_t fifoTailHost;
 
+  int numaNodeToBind;
   struct mscclppIbContext* ibContext; // For IB connection only
-  cudaStream_t stream;                // for P2P DMA engine only
+  cudaStream_t p2pStream;             // for P2P DMA engine only
+  cudaStream_t fifoStream;            // for transferring fifo tail
 };
 
 mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm);

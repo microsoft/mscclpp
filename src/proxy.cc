@@ -7,7 +7,6 @@
 
 #include <emmintrin.h>
 #include <map>
-#include <numa.h>
 #include <sys/syscall.h>
 #include <thread>
 #include <vector>
@@ -25,19 +24,21 @@
     }                                                                                                                  \
   } while (false)
 
-static void NumaBind(int node)
-{
-  nodemask_t mask;
-  nodemask_zero(&mask);
-  nodemask_set_compat(&mask, node);
-  numa_bind_compat(&mask);
-}
+#define PROXYMSCCLPPCHECK(call)                                                                                        \
+  do {                                                                                                                 \
+    mscclppResult_t res = call;                                                                                        \
+    if (res != mscclppSuccess && res != mscclppInProgress) {                                                           \
+      /* Print the back trace*/                                                                                        \
+      if (mscclppDebugNoWarn == 0)                                                                                     \
+        INFO(MSCCLPP_ALL, "%s:%d -> %d", __FILE__, __LINE__, res);                                                     \
+      return NULL;                                                                                                     \
+    }                                                                                                                  \
+  } while (0);
 
 struct proxyArgs
 {
   struct mscclppComm* comm;
   struct mscclppProxyState* proxyState;
-  cudaStream_t stream;
 };
 
 static void readTrigger(mscclppTrigger* dst, mscclppTrigger* src)
@@ -62,6 +63,10 @@ void* mscclppProxyService(void* _args)
 {
   struct proxyArgs* args = (struct proxyArgs*)_args;
   struct mscclppComm* comm = args->comm;
+
+  // from this point on, proxy thread will stay close to the device
+  PROXYMSCCLPPCHECK(numaBind(comm->devNumaNode));
+
   volatile mscclppProxyRunState_t* run = &args->proxyState->run;
   mscclppTrigger* fifo = args->proxyState->triggerFifo;
   uint64_t* fifoTail = &args->proxyState->fifoTailHost;
@@ -69,20 +74,9 @@ void* mscclppProxyService(void* _args)
   uint64_t fifoTailCached = *fifoTail;
   mscclppTrigger trigger;
   mscclppIbContext* ibCtx = args->proxyState->ibContext;
-  cudaStream_t p2pStream = NULL;
-  cudaStream_t stream;
-
-  PROXYCUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+  cudaStream_t p2pStream = args->proxyState->p2pStream;
+  cudaStream_t fifoStream = args->proxyState->fifoStream;
   bool isP2pProxy = (ibCtx == nullptr);
-  if (isP2pProxy) {
-    // TODO(chhwang): find numa node
-    // Current mapping is based on NDv4: GPU [0,1,2,3,4,5,6,7] -> NUMA [1,1,0,0,3,3,2,2]
-    // TODO(saemal): either ask user or detect it automatically
-    NumaBind((comm->cudaDev / 2) ^ 1);
-    p2pStream = args->proxyState->stream;
-  } else {
-    NumaBind(ibCtx->numaNode);
-  }
   free(_args); // allocated in mscclppProxyCreate
 
   int counter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
@@ -175,15 +169,15 @@ void* mscclppProxyService(void* _args)
     // request.
     if (((fifoTailCached % MSCCLPP_PROXY_FIFO_FLUSH_COUNTER) == 0) || (trigger.fields.type & mscclppSync)) {
       PROXYCUDACHECK(
-        cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
+        cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, fifoStream));
     }
   }
   *fifoTail = fifoTailCached;
 
   // make sure the tail is flushed before we shut the proxy
-  PROXYCUDACHECK(cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
-  PROXYCUDACHECK(cudaStreamSynchronize(stream));
-  PROXYCUDACHECK(cudaStreamDestroy(stream));
+  PROXYCUDACHECK(
+    cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, fifoStream));
+  PROXYCUDACHECK(cudaStreamSynchronize(fifoStream));
   if (isP2pProxy) {
     PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
   }

@@ -24,7 +24,8 @@ template <typename T> mscclppResult_t mscclppCudaHostCallocDebug(T** ptr, size_t
   cudaStreamCaptureMode mode = cudaStreamCaptureModeRelaxed;
   *ptr = nullptr;
   CUDACHECK(cudaThreadExchangeStreamCaptureMode(&mode));
-  CUDACHECKGOTO(cudaHostAlloc(ptr, nelem * sizeof(T), cudaHostAllocMapped), result, finish);
+  CUDACHECKGOTO(cudaHostAlloc(ptr, nelem * sizeof(T), cudaHostAllocMapped | cudaHostAllocWriteCombined), result,
+                finish);
   memset(*ptr, 0, nelem * sizeof(T));
 finish:
   CUDACHECK(cudaThreadExchangeStreamCaptureMode(&mode));
