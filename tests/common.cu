@@ -4,8 +4,6 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
-#define MSCCLPP_USE_MPI_FOR_TESTS 1
-
 #include "common.h"
 #include "cuda.h"
 #include "mscclpp.h"
