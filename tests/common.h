@@ -53,7 +53,8 @@
     }                                                                                                                  \
   } while (0)
 
-typedef enum {
+typedef enum
+{
   testSuccess = 0,
   testInternalError = 1,
   testCudaError = 2,
@@ -62,12 +63,11 @@ typedef enum {
   testNumResults = 5
 } testResult_t;
 
-struct testColl {
+struct testColl
+{
   const char name[20];
-  void (*getCollByteCount)(
-      size_t *sendcount, size_t *recvcount, size_t *paramcount,
-      size_t *sendInplaceOffset, size_t *recvInplaceOffset,
-      size_t count, int nranks);
+  void (*getCollByteCount)(size_t* sendcount, size_t* recvcount, size_t* paramcount, size_t* sendInplaceOffset,
+                           size_t* recvInplaceOffset, size_t count, int nranks);
   testResult_t (*initData)(struct threadArgs* args, int in_place);
   void (*getBw)(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
   testResult_t (*runColl)(void* sendbuff, void* recvbuff, int nranksPerNode, size_t count, mscclppComm_t comm,
