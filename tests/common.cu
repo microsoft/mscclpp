@@ -30,13 +30,13 @@ static size_t stepBytes = 1*1024*1024;
 static size_t stepFactor = 1;
 static int datacheck = 1;
 static int warmup_iters = 10;
-static int iters = 20;
+static int iters = 100;
 static int timeout = 0;
 static int report_cputime = 0;
 // Report average iteration time: (0=RANK0,1=AVG,2=MIN,3=MAX)
 static int average = 1;
 static std::string ip_port;
-static int cudaGraphLaunches = 10;
+static int cudaGraphLaunches = 15;
 
 #define NUM_BLOCKS 32
 
