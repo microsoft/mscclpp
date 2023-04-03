@@ -24,9 +24,9 @@ int is_main_proc = 0;
 thread_local int is_main_thread = 0;
 
 // Command line parameter defaults
-static size_t minBytes = 32*1024*1024;
-static size_t maxBytes = 32*1024*1024;
-static size_t stepBytes = 1*1024*1024;
+static size_t minBytes = 32 * 1024 * 1024;
+static size_t maxBytes = 32 * 1024 * 1024;
+static size_t stepBytes = 1 * 1024 * 1024;
 static size_t stepFactor = 1;
 static int datacheck = 1;
 static int warmup_iters = 10;
@@ -40,77 +40,82 @@ static int cudaGraphLaunches = 15;
 
 #define NUM_BLOCKS 32
 
-static double parsesize(const char *value) {
-    long long int units;
-    double size;
-    char size_lit;
+static double parsesize(const char* value)
+{
+  long long int units;
+  double size;
+  char size_lit;
 
-    int count = sscanf(value, "%lf %1s", &size, &size_lit);
+  int count = sscanf(value, "%lf %1s", &size, &size_lit);
 
-    switch (count) {
-    case 2:
-      switch (size_lit) {
-      case 'G':
-      case 'g':
-        units = 1024*1024*1024;
-        break;
-      case 'M':
-      case 'm':
-        units = 1024*1024;
-        break;
-      case 'K':
-      case 'k':
-        units = 1024;
-        break;
-      default:
-        return -1.0;
-      };
+  switch (count) {
+  case 2:
+    switch (size_lit) {
+    case 'G':
+    case 'g':
+      units = 1024 * 1024 * 1024;
       break;
-    case 1:
-      units = 1;
+    case 'M':
+    case 'm':
+      units = 1024 * 1024;
+      break;
+    case 'K':
+    case 'k':
+      units = 1024;
       break;
     default:
       return -1.0;
-    }
+    };
+    break;
+  case 1:
+    units = 1;
+    break;
+  default:
+    return -1.0;
+  }
 
-    return size * units;
+  return size * units;
 }
 
-void Barrier(struct threadArgs *args) {
+void Barrier(struct threadArgs* args)
+{
   thread_local int epoch = 0;
   static pthread_mutex_t lock[2] = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER};
   static pthread_cond_t cond[2] = {PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER};
   static int counter[2] = {0, 0};
 
   pthread_mutex_lock(&lock[epoch]);
-  if(++counter[epoch] == args->nThreads)
+  if (++counter[epoch] == args->nThreads)
     pthread_cond_broadcast(&cond[epoch]);
 
-  if(args->thread+1 == args->nThreads) {
-    while(counter[epoch] != args->nThreads)
+  if (args->thread + 1 == args->nThreads) {
+    while (counter[epoch] != args->nThreads)
       pthread_cond_wait(&cond[epoch], &lock[epoch]);
-    #ifdef MSCCLPP_USE_MPI_FOR_TESTS
-      MPI_Barrier(MPI_COMM_WORLD);
-    #endif
+#ifdef MSCCLPP_USE_MPI_FOR_TESTS
+    MPI_Barrier(MPI_COMM_WORLD);
+#endif
     counter[epoch] = 0;
     pthread_cond_broadcast(&cond[epoch]);
-  }
-  else {
-    while(counter[epoch] != 0)
+  } else {
+    while (counter[epoch] != 0)
       pthread_cond_wait(&cond[epoch], &lock[epoch]);
   }
   pthread_mutex_unlock(&lock[epoch]);
   epoch ^= 1;
 }
 
-testResult_t AllocateBuffs(void **sendbuff, size_t sendBytes, void **recvbuff, size_t recvBytes, void **expected, size_t nbytes) {
-    CUDACHECK(cudaMalloc(sendbuff, nbytes));
-    CUDACHECK(cudaMalloc(recvbuff, nbytes));
-    if (datacheck) CUDACHECK(cudaMalloc(expected, recvBytes));
-    return testSuccess;
+testResult_t AllocateBuffs(void** sendbuff, size_t sendBytes, void** recvbuff, size_t recvBytes, void** expected,
+                           size_t nbytes)
+{
+  CUDACHECK(cudaMalloc(sendbuff, nbytes));
+  CUDACHECK(cudaMalloc(recvbuff, nbytes));
+  if (datacheck)
+    CUDACHECK(cudaMalloc(expected, recvBytes));
+  return testSuccess;
 }
 
-testResult_t startColl(struct threadArgs* args, int in_place, int iter) {
+testResult_t startColl(struct threadArgs* args, int in_place, int iter)
+{
   size_t count = args->nbytes;
 
   // Try to change offset for each iteration so that we avoid cache effects and catch race conditions in ptrExchange
@@ -156,7 +161,8 @@ testResult_t testStreamSynchronize(cudaStream_t stream)
   return testSuccess;
 }
 
-testResult_t completeColl(struct threadArgs* args) {
+testResult_t completeColl(struct threadArgs* args)
+{
   TESTCHECK(testStreamSynchronize(args->stream));
   return testSuccess;
 }
@@ -164,8 +170,7 @@ testResult_t completeColl(struct threadArgs* args) {
 // Inter-thread/process barrier+allreduce. The quality of the return value
 // for average=0 (which means broadcast from rank=0) is dubious. The returned
 // value will actually be the result of process-local broadcast from the local thread=0.
-template<typename T>
-void Allreduce(struct threadArgs* args, T* value, int average)
+template <typename T> void Allreduce(struct threadArgs* args, T* value, int average)
 {
   thread_local int epoch = 0;
   static pthread_mutex_t lock[2] = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER};
@@ -235,7 +240,8 @@ void Allreduce(struct threadArgs* args, T* value, int average)
   epoch ^= 1;
 }
 
-testResult_t BenchTime(struct threadArgs* args, int in_place) {
+testResult_t BenchTime(struct threadArgs* args, int in_place)
+{
   size_t count = args->nbytes;
 
   TESTCHECK(args->collTest->initData(args, in_place));
@@ -263,11 +269,11 @@ testResult_t BenchTime(struct threadArgs* args, int in_place) {
     CUDACHECK(cudaGraphLaunch(graphExec, args->stream));
   }
 
-  double cputimeSec = tim.elapsed()/(iters);
+  double cputimeSec = tim.elapsed() / (iters);
   TESTCHECK(completeColl(args));
 
   double deltaSec = tim.elapsed();
-  deltaSec = deltaSec/(iters)/(cudaGraphLaunches);
+  deltaSec = deltaSec / (iters) / (cudaGraphLaunches);
   Allreduce(args, &deltaSec, average);
 
   CUDACHECK(cudaGraphExecDestroy(graphExec));
@@ -278,7 +284,7 @@ testResult_t BenchTime(struct threadArgs* args, int in_place) {
 
   Barrier(args);
 
-  double timeUsec = (report_cputime ? cputimeSec : deltaSec)*1.0E6;
+  double timeUsec = (report_cputime ? cputimeSec : deltaSec) * 1.0E6;
   char timeStr[100];
   if (timeUsec >= 10000.0) {
     sprintf(timeStr, "%7.0f", timeUsec);
@@ -294,14 +300,16 @@ testResult_t BenchTime(struct threadArgs* args, int in_place) {
   return testSuccess;
 }
 
-void setupArgs(size_t size, struct threadArgs* args) {
-  int nranks = args->totalProcs*args->nGpus*args->nThreads;
+void setupArgs(size_t size, struct threadArgs* args)
+{
+  int nranks = args->totalProcs * args->nGpus * args->nThreads;
   size_t count, sendCount, recvCount, paramCount, sendInplaceOffset, recvInplaceOffset;
 
   // TODO: support more data types
   int typeSize = sizeof(char);
   count = size / typeSize;
-  args->collTest->getCollByteCount(&sendCount, &recvCount, &paramCount, &sendInplaceOffset, &recvInplaceOffset, (size_t)count, (size_t)nranks);
+  args->collTest->getCollByteCount(&sendCount, &recvCount, &paramCount, &sendInplaceOffset, &recvInplaceOffset,
+                                   (size_t)count, (size_t)nranks);
 
   args->nbytes = paramCount * typeSize;
   args->sendBytes = sendCount * typeSize;
@@ -310,7 +318,8 @@ void setupArgs(size_t size, struct threadArgs* args) {
   args->recvInplaceOffset = recvInplaceOffset * typeSize;
 }
 
-testResult_t TimeTest(struct threadArgs* args) {
+testResult_t TimeTest(struct threadArgs* args)
+{
   // Sync to avoid first-call timeout
   Barrier(args);
 
@@ -330,26 +339,26 @@ testResult_t TimeTest(struct threadArgs* args) {
   TESTCHECK(completeColl(args));
 
   PRINT("#\n");
-  PRINT("# %10s  %12s           in-place                       out-of-place          \n", "",
-        "");
+  PRINT("# %10s  %12s           in-place                       out-of-place          \n", "", "");
   PRINT("# %10s  %12s  %7s  %6s  %6s  %6s  %7s  %6s  %6s  %6s\n", "size", "count", "time", "algbw", "busbw", "#wrong",
         "time", "algbw", "busbw", "#wrong");
   PRINT("# %10s  %12s  %7s  %6s  %6s  %5s  %7s  %6s  %6s  %5s\n", "(B)", "(elements)", "(us)", "(GB/s)", "(GB/s)", "",
         "(us)", "(GB/s)", "(GB/s)", "");
   // Benchmark
-  for (size_t size = args->minbytes; size<=args->maxbytes; size = ((args->stepfactor > 1) ? size*args->stepfactor : size+args->stepbytes)) {
-      setupArgs(size, args);
-      PRINT("%12li  %12li", max(args->sendBytes, args->expectedBytes), args->nbytes);
-      // Don't support out-of-place for now
-      // TESTCHECK(BenchTime(args, 0));
-      TESTCHECK(BenchTime(args, 1));
-      PRINT("\n");
+  for (size_t size = args->minbytes; size <= args->maxbytes;
+       size = ((args->stepfactor > 1) ? size * args->stepfactor : size + args->stepbytes)) {
+    setupArgs(size, args);
+    PRINT("%12li  %12li", max(args->sendBytes, args->expectedBytes), args->nbytes);
+    // Don't support out-of-place for now
+    // TESTCHECK(BenchTime(args, 0));
+    TESTCHECK(BenchTime(args, 1));
+    PRINT("\n");
   }
   return testSuccess;
 }
 
 testResult_t setupMscclppConnections(int rank, int worldSize, int ranksPerNode, mscclppComm_t comm, void* dataDst,
-                                        size_t dataSize)
+                                     size_t dataSize)
 {
   int thisNode = rank / ranksPerNode;
   int localRank = rank % ranksPerNode;
@@ -378,8 +387,8 @@ testResult_t setupMscclppConnections(int rank, int worldSize, int ranksPerNode, 
 testResult_t threadRunTests(struct threadArgs* args)
 {
   PRINT("# Setting up the connection in MSCCL++\n");
-  TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm,
-                                    args->recvbuffs[0], args->maxbytes));
+  TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm, args->recvbuffs[0],
+                                    args->maxbytes));
   PRINT("# Launching MSCCL++ proxy threads\n");
   MSCCLPPCHECK(mscclppProxyLaunch(args->comm));
   TESTCHECK(mscclppTestEngine.runTest(args));
@@ -390,103 +399,103 @@ testResult_t threadRunTests(struct threadArgs* args)
 
 testResult_t run(); // Main function
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[])
+{
   // Make sure everyline is flushed so that we see the progress of the test
   setlinebuf(stdout);
 
   // Parse args
   double parsed;
   int longindex;
-  static struct option longopts[] = {
-    {"minbytes", required_argument, 0, 'b'},
-    {"maxbytes", required_argument, 0, 'e'},
-    {"stepbytes", required_argument, 0, 'i'},
-    {"stepfactor", required_argument, 0, 'f'},
-    {"iters", required_argument, 0, 'n'},
-    {"warmup_iters", required_argument, 0, 'w'},
-    {"check", required_argument, 0, 'c'},
-    {"timeout", required_argument, 0, 'T'},
-    {"cudagraph", required_argument, 0, 'G'},
-    {"report_cputime", required_argument, 0, 'C'},
-    {"average", required_argument, 0, 'a'},
-    {"ip_port", required_argument, 0, 'P'},
-    {"help", no_argument, 0, 'h'},
-    {}
-  };
+  static struct option longopts[] = {{"minbytes", required_argument, 0, 'b'},
+                                     {"maxbytes", required_argument, 0, 'e'},
+                                     {"stepbytes", required_argument, 0, 'i'},
+                                     {"stepfactor", required_argument, 0, 'f'},
+                                     {"iters", required_argument, 0, 'n'},
+                                     {"warmup_iters", required_argument, 0, 'w'},
+                                     {"check", required_argument, 0, 'c'},
+                                     {"timeout", required_argument, 0, 'T'},
+                                     {"cudagraph", required_argument, 0, 'G'},
+                                     {"report_cputime", required_argument, 0, 'C'},
+                                     {"average", required_argument, 0, 'a'},
+                                     {"ip_port", required_argument, 0, 'P'},
+                                     {"help", no_argument, 0, 'h'},
+                                     {}};
 
-  while(1) {
+  while (1) {
     int c;
     c = getopt_long(argc, argv, "b:e:i:f:n:w:c:T:C:a:P:h:", longopts, &longindex);
 
     if (c == -1)
       break;
 
-    switch(c) {
-      case 'b':
-        parsed = parsesize(optarg);
-        if (parsed < 0) {
-          fprintf(stderr, "invalid size specified for 'minbytes'\n");
-          return -1;
-        }
-        minBytes = (size_t)parsed;
-        break;
-      case 'e':
-        parsed = parsesize(optarg);
-        if (parsed < 0) {
-          fprintf(stderr, "invalid size specified for 'maxbytes'\n");
-          return -1;
-        }
-        maxBytes = (size_t)parsed;
-        break;
-      case 'i':
-        stepBytes = strtol(optarg, NULL, 0);
-        break;
-      case 'f':
-        stepFactor = strtol(optarg, NULL, 0);
-        break;
-      case 'n':
-        iters = (int)strtol(optarg, NULL, 0);
-        break;
-      case 'w':
-        warmup_iters = (int)strtol(optarg, NULL, 0);
-        break;
-      case 'c':
-        datacheck = (int)strtol(optarg, NULL, 0);
-        break;
-      case 'T':
-        timeout = strtol(optarg, NULL, 0);
-        break;
-      case 'G':
-        cudaGraphLaunches = strtol(optarg, NULL, 0);
-        break;
-      case 'C':
-        report_cputime = strtol(optarg, NULL, 0);
-        break;
-      case 'a':
-        average = (int)strtol(optarg, NULL, 0);
-        break;
-      case 'P':
-        ip_port = optarg;
-        break;
-      case 'h':
-      default:
-        if (c != 'h') printf("invalid option '%c'\n", c);
-        printf("USAGE: %s \n\t"
-            "[-b,--minbytes <min size in bytes>] \n\t"
-            "[-e,--maxbytes <max size in bytes>] \n\t"
-            "[-i,--stepbytes <increment size>] \n\t"
-            "[-f,--stepfactor <increment factor>] \n\t"
-            "[-n,--iters <iteration count>] \n\t"
-            "[-w,--warmup_iters <warmup iteration count>] \n\t"
-            "[-c,--check <0/1>] \n\t"
-            "[-T,--timeout <time in seconds>] \n\t"
-            "[-G,--cudagraph <num graph launches>] \n\t"
-            "[-C,--report_cputime <0/1>] \n\t"
-            "[-a,--average <0/1/2/3> report average iteration time <0=RANK0/1=AVG/2=MIN/3=MAX>] \n\t"
-            "[-P,--ip_port <ip port for bootstrap>] \n\t"
-            "[-h,--help]\n",
-          basename(argv[0]));
-        return 0;
+    switch (c) {
+    case 'b':
+      parsed = parsesize(optarg);
+      if (parsed < 0) {
+        fprintf(stderr, "invalid size specified for 'minbytes'\n");
+        return -1;
+      }
+      minBytes = (size_t)parsed;
+      break;
+    case 'e':
+      parsed = parsesize(optarg);
+      if (parsed < 0) {
+        fprintf(stderr, "invalid size specified for 'maxbytes'\n");
+        return -1;
+      }
+      maxBytes = (size_t)parsed;
+      break;
+    case 'i':
+      stepBytes = strtol(optarg, NULL, 0);
+      break;
+    case 'f':
+      stepFactor = strtol(optarg, NULL, 0);
+      break;
+    case 'n':
+      iters = (int)strtol(optarg, NULL, 0);
+      break;
+    case 'w':
+      warmup_iters = (int)strtol(optarg, NULL, 0);
+      break;
+    case 'c':
+      datacheck = (int)strtol(optarg, NULL, 0);
+      break;
+    case 'T':
+      timeout = strtol(optarg, NULL, 0);
+      break;
+    case 'G':
+      cudaGraphLaunches = strtol(optarg, NULL, 0);
+      break;
+    case 'C':
+      report_cputime = strtol(optarg, NULL, 0);
+      break;
+    case 'a':
+      average = (int)strtol(optarg, NULL, 0);
+      break;
+    case 'P':
+      ip_port = optarg;
+      break;
+    case 'h':
+    default:
+      if (c != 'h')
+        printf("invalid option '%c'\n", c);
+      printf("USAGE: %s \n\t"
+             "[-b,--minbytes <min size in bytes>] \n\t"
+             "[-e,--maxbytes <max size in bytes>] \n\t"
+             "[-i,--stepbytes <increment size>] \n\t"
+             "[-f,--stepfactor <increment factor>] \n\t"
+             "[-n,--iters <iteration count>] \n\t"
+             "[-w,--warmup_iters <warmup iteration count>] \n\t"
+             "[-c,--check <0/1>] \n\t"
+             "[-T,--timeout <time in seconds>] \n\t"
+             "[-G,--cudagraph <num graph launches>] \n\t"
+             "[-C,--report_cputime <0/1>] \n\t"
+             "[-a,--average <0/1/2/3> report average iteration time <0=RANK0/1=AVG/2=MIN/3=MAX>] \n\t"
+             "[-P,--ip_port <ip port for bootstrap>] \n\t"
+             "[-h,--help]\n",
+             basename(argv[0]));
+      return 0;
     }
   }
   if (minBytes > maxBytes) {
@@ -505,7 +514,8 @@ int main(int argc, char* argv[]) {
   return 0;
 }
 
-testResult_t run() {
+testResult_t run()
+{
   int totalProcs = 1, proc = 0;
   int nranksPerNode = 0, localRank = 0;
   char hostname[1024];
@@ -550,7 +560,7 @@ testResult_t run() {
   MPI_Gather(line, MAX_LINE, MPI_BYTE, lines, MAX_LINE, MPI_BYTE, 0, MPI_COMM_WORLD);
   if (proc == 0) {
     for (int p = 0; p < totalProcs; p++)
-        PRINT("%s", lines + MAX_LINE * p);
+      PRINT("%s", lines + MAX_LINE * p);
     free(lines);
   }
   MPI_Allreduce(MPI_IN_PLACE, &maxMem, 1, MPI_LONG, MPI_MIN, MPI_COMM_WORLD);
@@ -558,10 +568,11 @@ testResult_t run() {
   PRINT("%s", line);
 #endif
   // We need sendbuff, recvbuff, expected (when datacheck enabled), plus 1G for the rest.
-  size_t memMaxBytes = (maxMem - (1<<30)) / (datacheck ? 3 : 2);
+  size_t memMaxBytes = (maxMem - (1 << 30)) / (datacheck ? 3 : 2);
   if (maxBytes > memMaxBytes) {
     maxBytes = memMaxBytes;
-    if (proc == 0) printf("#\n# Reducing maxBytes to %ld due to memory limitation\n", maxBytes);
+    if (proc == 0)
+      printf("#\n# Reducing maxBytes to %ld due to memory limitation\n", maxBytes);
   }
 
   int gpu = cudaDev;

@@ -153,7 +153,8 @@ void AllGatherGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* par
   *paramcount = base;
 }
 
-testResult_t AllGatherInitData(struct threadArgs* args, int in_place) {
+testResult_t AllGatherInitData(struct threadArgs* args, int in_place)
+{
   // size_t sendcount = args->sendBytes;
   size_t recvcount = args->expectedBytes;
   // int nranks = args->totalProcs;
@@ -179,11 +180,12 @@ testResult_t AllGatherInitData(struct threadArgs* args, int in_place) {
   return testSuccess;
 }
 
-void AllGatherGetBw(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks) {
+void AllGatherGetBw(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks)
+{
   double baseBw = (double)(count * typesize * nranks) / 1.0E9 / sec;
 
   *algBw = baseBw;
-  double factor = ((double)(nranks - 1))/((double)nranks);
+  double factor = ((double)(nranks - 1)) / ((double)nranks);
   *busBw = baseBw * factor;
 }
 
@@ -198,7 +200,8 @@ testResult_t AllGatherRunColl(void* sendbuff, void* recvbuff, int nranksPerNode,
 struct testColl allGatherTest = {"AllGather", AllGatherGetCollByteCount, AllGatherInitData, AllGatherGetBw,
                                  AllGatherRunColl};
 
-void AllGatherGetBuffSize(size_t *sendcount, size_t *recvcount, size_t count, int nranks) {
+void AllGatherGetBuffSize(size_t* sendcount, size_t* recvcount, size_t count, int nranks)
+{
   size_t paramcount, sendInplaceOffset, recvInplaceOffset;
   AllGatherGetCollByteCount(sendcount, recvcount, &paramcount, &sendInplaceOffset, &recvInplaceOffset, count, nranks);
 }
