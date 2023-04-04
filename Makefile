@@ -150,7 +150,7 @@ lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
 
 tests: $(TESTSBINS)
 
-mscclpp_test: $(LIBTARGET) $(MSCLLPPTESTBINS)
+mscclpp-test: $(LIBTARGET) $(MSCLLPPTESTBINS)
 
 cpplint:
 	clang-format-12 -style=file --verbose --Werror --dry-run $(CPPSOURCES)

@@ -19,16 +19,16 @@ __device__ void allgather0(mscclppDevConn_t devConn, int rank, int world_size, i
 
   // this thread's role is a sender role
   // put your data asynchronously
-  if (threadIdx.x % 32 != 0)
+  if (threadIdx.x % 32 == 0)
     devConn.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
   // make sure everyone is put their data before some thread randomly blocks everyone else in signal
   __syncthreads();
   // push with flag and sync to make sure the data is received
-  if (threadIdx.x % 32 != 0)
+  if (threadIdx.x % 32 == 0)
     devConn.flush();
 
   // this thread's role is a receiver role. wait on the semaphore to make sure the data is ready
-  if (threadIdx.x % 32 != 0)
+  if (threadIdx.x % 32 == 0)
     devConn.wait();
 }
 
@@ -155,8 +155,8 @@ void AllGatherGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* par
 
 testResult_t AllGatherInitData(struct threadArgs* args, int in_place)
 {
-  // size_t sendcount = args->sendBytes;
-  size_t recvcount = args->expectedBytes;
+  size_t sendcount = args->sendBytes / sizeof(int);
+  size_t recvcount = args->expectedBytes / sizeof(int);
   // int nranks = args->totalProcs;
 
   CUDACHECK(cudaSetDevice(args->gpus[0]));
@@ -165,17 +165,20 @@ testResult_t AllGatherInitData(struct threadArgs* args, int in_place)
   // void* data = in_place ? ((char*)args->recvbuffs[0]) + rank * args->sendBytes : args->sendbuffs[0];
 
   int* dataHost = new int[recvcount];
-  for (int i = 0; i < static_cast<int>(recvcount); i++) {
+  for (size_t i = 0; i < recvcount; i++) {
     int val = i + 1;
-    if (i / args->nranksPerNode == rank) {
+    if (i / sendcount == (size_t)rank) {
       dataHost[i] = val;
     } else {
       dataHost[i] = 0;
     }
   }
   CUDACHECK(cudaMemcpy(args->recvbuffs[0], dataHost, recvcount, cudaMemcpyHostToDevice));
+  for (int i = 0; i < static_cast<int>(recvcount); i++) {
+    dataHost[i] = i + 1;
+  }
+  CUDACHECK(cudaMemcpy(args->expected[0], dataHost, recvcount, cudaMemcpyHostToDevice));
   delete dataHost;
-  // TODO: need to init expected data here
   CUDACHECK(cudaDeviceSynchronize());
   return testSuccess;
 }

@@ -238,6 +238,29 @@ template <typename T> void Allreduce(struct threadArgs* args, T* value, int aver
   epoch ^= 1;
 }
 
+testResult_t CheckData(struct threadArgs* args, int in_place, int64_t *wrongElts) {
+  if (in_place == 0) {
+    return testInternalError;
+  }
+  size_t count = args->expectedBytes / sizeof(int);
+
+  int* dataHostRecv = new int[count];
+  int* dataHostExpected = new int[count];
+  CUDACHECK(cudaMemcpy(dataHostRecv, args->recvbuffs[0], args->expectedBytes, cudaMemcpyDeviceToHost));
+  CUDACHECK(cudaMemcpy(dataHostExpected, args->expected[0], args->expectedBytes, cudaMemcpyDeviceToHost));
+
+  for (size_t i = 0; i < count; i++) {
+    if (dataHostRecv[i] != dataHostExpected[i]) {
+      *wrongElts += 1;
+    }
+  }
+
+  if (args->reportErrors && *wrongElts) {
+    (*args->errors)++;
+  }
+  return testSuccess;
+}
+
 testResult_t BenchTime(struct threadArgs* args, int in_place)
 {
   size_t count = args->nbytes;
@@ -279,8 +302,36 @@ testResult_t BenchTime(struct threadArgs* args, int in_place)
 
   double algBw, busBw;
   args->collTest->getBw(count, 1, deltaSec, &algBw, &busBw, args->totalProcs * args->nThreads * args->nGpus);
-
   Barrier(args);
+
+  int64_t wrongElts = 0;
+  if (datacheck) {
+    // Initialize sendbuffs, recvbuffs and expected
+    TESTCHECK(args->collTest->initData(args, in_place));
+    // Begin cuda graph capture for data check
+    CUDACHECK(cudaStreamBeginCapture(args->stream, cudaStreamCaptureModeGlobal));
+    // test validation in single itertion, should ideally be included into the multi-iteration run
+    TESTCHECK(startColl(args, in_place, 0));
+    // End cuda graph capture
+    CUDACHECK(cudaStreamEndCapture(args->stream, &graph));
+    // Instantiate cuda graph
+    CUDACHECK(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
+    // Launch cuda graph
+    CUDACHECK(cudaGraphLaunch(graphExec, args->stream));
+
+    TESTCHECK(completeColl(args));
+
+    // destroy cuda graph
+    CUDACHECK(cudaGraphExecDestroy(graphExec));
+    CUDACHECK(cudaGraphDestroy(graph));
+
+    TESTCHECK(CheckData(args, in_place, &wrongElts));
+
+    // aggregate delta from all threads and procs
+    long long wrongElts1 = wrongElts;
+    Allreduce(args, &wrongElts1, /*sum*/ 4);
+    wrongElts = wrongElts1;
+  }
 
   double timeUsec = (report_cputime ? cputimeSec : deltaSec) * 1.0E6;
   char timeStr[100];
@@ -291,7 +342,11 @@ testResult_t BenchTime(struct threadArgs* args, int in_place)
   } else {
     sprintf(timeStr, "%7.2f", timeUsec);
   }
-  PRINT("  %7s  %6.2f  %6.2f  %5s", timeStr, algBw, busBw, "N/A");
+  if (args->reportErrors) {
+    PRINT("  %7s  %6.2f  %6.2f  %5g", timeStr, algBw, busBw, (double)wrongElts);
+  } else {
+    PRINT("  %7s  %6.2f  %6.2f  %5s", timeStr, algBw, busBw, "N/A");
+  }
 
   args->bw[0] += busBw;
   args->bw_count[0]++;
@@ -304,7 +359,7 @@ void setupArgs(size_t size, struct threadArgs* args)
   size_t count, sendCount, recvCount, paramCount, sendInplaceOffset, recvInplaceOffset;
 
   // TODO: support more data types
-  int typeSize = sizeof(char);
+  int typeSize = sizeof(int);
   count = size / typeSize;
   args->collTest->getCollByteCount(&sendCount, &recvCount, &paramCount, &sendInplaceOffset, &recvInplaceOffset,
                                    (size_t)count, (size_t)nranks);
@@ -346,7 +401,7 @@ testResult_t TimeTest(struct threadArgs* args)
   for (size_t size = args->minbytes; size <= args->maxbytes;
        size = ((args->stepfactor > 1) ? size * args->stepfactor : size + args->stepbytes)) {
     setupArgs(size, args);
-    PRINT("%12li  %12li", max(args->sendBytes, args->expectedBytes), args->nbytes);
+    PRINT("%12li  %12li", max(args->sendBytes, args->expectedBytes), args->nbytes / sizeof(int));
     // Don't support out-of-place for now
     // TESTCHECK(BenchTime(args, 0));
     TESTCHECK(BenchTime(args, 1));
