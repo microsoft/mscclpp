@@ -478,7 +478,7 @@ int main(int argc, char* argv[])
 
   while (1) {
     int c;
-    c = getopt_long(argc, argv, "b:e:i:f:n:w:c:T:C:a:P:h:", longopts, &longindex);
+    c = getopt_long(argc, argv, "b:e:i:f:n:w:c:T:G:C:a:P:h:", longopts, &longindex);
 
     if (c == -1)
       break;
@@ -520,6 +520,10 @@ int main(int argc, char* argv[])
       break;
     case 'G':
       cudaGraphLaunches = strtol(optarg, NULL, 0);
+      if (cudaGraphLaunches <= 0) {
+        fprintf(stderr, "invalid number for 'cudaGraphLaunches'\n");
+        return -1;
+      }
       break;
     case 'C':
       report_cputime = strtol(optarg, NULL, 0);

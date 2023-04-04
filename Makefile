@@ -144,7 +144,7 @@ INCLUDE := -Isrc -Isrc/include
 
 all: build
 
-build: lib tests mscclpp_test
+build: lib tests mscclpp-test
 
 lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
 
