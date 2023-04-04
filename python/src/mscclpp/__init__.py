@@ -1,4 +1,5 @@
 import os
+import re
 import atexit
 from typing import Any
 import json
@@ -19,9 +20,19 @@ _Comm = _py_mscclpp._Comm
 MscclppUniqueId = _py_mscclpp.MscclppUniqueId
 MSCCLPP_UNIQUE_ID_BYTES = _py_mscclpp.MSCCLPP_UNIQUE_ID_BYTES
 
-def _setup_logging(level='INFO'):
+def _mscclpp_log_cb(msg: str) -> None:
+    logging.info
+    level = logging.INFO
+    if match := re.search(r'MSCCLPP (\w+)', msg):
+        level = logging._nameToLevel.get(match.group(1), logging.INFO)
+    logger.log(level, msg)
+
+def _set_mscclpp_debug_log_level(level: str ='INFO'):
     os.environ['MSCCLPP_DEBUG'] = level
-    _py_mscclpp._bind_log_handler(logger.info)
+
+def _setup_logging(level='INFO'):
+    _set_mscclpp_debug_log_level(level)
+    _py_mscclpp._bind_log_handler(_mscclpp_log_cb)
     # needed to prevent a segfault at exit.
     atexit.register(_py_mscclpp._release_log_handler)
 
