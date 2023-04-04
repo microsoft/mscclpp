@@ -1,6 +1,11 @@
+import os
+import atexit
 from typing import Any
 import json
 import pickle
+import logging
+
+logger = logging.getLogger(__file__)
 
 from . import _py_mscclpp
 
@@ -12,7 +17,15 @@ __all__ = (
 _Comm = _py_mscclpp._Comm
 
 MscclppUniqueId = _py_mscclpp.MscclppUniqueId
-MSCCLPP_UNIQUE_ID_BYTES = _py_mscclpp.MSCCLPP_UNIQUE_ID_BYTES 
+MSCCLPP_UNIQUE_ID_BYTES = _py_mscclpp.MSCCLPP_UNIQUE_ID_BYTES
+
+def _setup_logging(level='INFO'):
+    os.environ['MSCCLPP_DEBUG'] = level
+    _py_mscclpp._bind_log_handler(logger.info)
+    # needed to prevent a segfault at exit.
+    atexit.register(_py_mscclpp._release_log_handler)
+
+_setup_logging()
 
 class Comm:
     _comm: _Comm
