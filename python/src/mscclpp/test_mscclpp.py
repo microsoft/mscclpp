@@ -1,14 +1,16 @@
-import os
-import sys
 import concurrent.futures
-import unittest
-import hamcrest
+import os
 import subprocess
+import sys
+import unittest
+
+import hamcrest
 
 import mscclpp
 
 MOD_DIR = os.path.dirname(__file__)
 TESTS_DIR = os.path.join(MOD_DIR, "tests")
+
 
 class UniqueIdTest(unittest.TestCase):
     def test_no_constructor(self) -> None:
@@ -37,12 +39,13 @@ class UniqueIdTest(unittest.TestCase):
 
         # bad size
         hamcrest.assert_that(
-            hamcrest.calling(mscclpp.MscclppUniqueId.from_bytes).with_args(b'abc'),
+            hamcrest.calling(mscclpp.MscclppUniqueId.from_bytes).with_args(b"abc"),
             hamcrest.raises(
                 ValueError,
-                f"Requires exactly {mscclpp.MSCCLPP_UNIQUE_ID_BYTES} bytes; found 3"
+                f"Requires exactly {mscclpp.MSCCLPP_UNIQUE_ID_BYTES} bytes; found 3",
             ),
         )
+
 
 class CommsTest(unittest.TestCase):
     def test_all_gather(self) -> None:
@@ -52,17 +55,19 @@ class CommsTest(unittest.TestCase):
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=world_size) as pool:
             for rank in range(world_size):
-                tasks.append(pool.submit(
-                    subprocess.check_output,
-                    [
-                        "python",
-                        "-m",
-                        "mscclpp.tests.bootstrap_test",
-                        f"--rank={rank}",
-                        f"--world_size={world_size}",
-                    ],
-                    stderr=subprocess.STDOUT,
-                ))
+                tasks.append(
+                    pool.submit(
+                        subprocess.check_output,
+                        [
+                            "python",
+                            "-m",
+                            "mscclpp.tests.bootstrap_test",
+                            f"--rank={rank}",
+                            f"--world_size={world_size}",
+                        ],
+                        stderr=subprocess.STDOUT,
+                    )
+                )
 
         errors = []
         for rank, f in enumerate(tasks):
@@ -72,4 +77,6 @@ class CommsTest(unittest.TestCase):
                 errors.append(e.output)
 
         if errors:
-            raise AssertionError("\n\n".join(e.decode('utf-8', errors='ignore') for e in errors))
+            raise AssertionError(
+                "\n\n".join(e.decode("utf-8", errors="ignore") for e in errors)
+            )
