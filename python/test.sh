@@ -9,4 +9,4 @@ fi
 cmake --build build
 
 cd build
-MSCCLPP_DEBUG=INFO pytest -s mscclpp
+pytest -s mscclpp
