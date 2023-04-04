@@ -238,7 +238,8 @@ template <typename T> void Allreduce(struct threadArgs* args, T* value, int aver
   epoch ^= 1;
 }
 
-testResult_t CheckData(struct threadArgs* args, int in_place, int64_t *wrongElts) {
+testResult_t CheckData(struct threadArgs* args, int in_place, int64_t* wrongElts)
+{
   if (in_place == 0) {
     return testInternalError;
   }
