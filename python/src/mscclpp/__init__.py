@@ -11,11 +11,14 @@ logger = logging.getLogger(__file__)
 from . import _py_mscclpp
 
 __all__ = (
+    "Comm",
     "MscclppUniqueId",
     "MSCCLPP_UNIQUE_ID_BYTES",
+    "TransportType",
 )
 
 _Comm = _py_mscclpp._Comm
+TransportType = _py_mscclpp.TransportType
 
 MscclppUniqueId = _py_mscclpp.MscclppUniqueId
 MSCCLPP_UNIQUE_ID_BYTES = _py_mscclpp.MSCCLPP_UNIQUE_ID_BYTES
@@ -100,8 +103,9 @@ class Comm:
 
     def close(self) -> None:
         """Close the connection."""
-        self._comm.close()
-        self._comm = None
+        if self._comm:
+            self._comm.close()
+            self._comm = None
 
     @property
     def rank(self) -> int:
@@ -149,3 +153,17 @@ class Comm:
         :return: a list of de-pickled objects. Note, the ret[rank] item will be a new copy.
         """
         return [pickle.loads(b) for b in self.all_gather_bytes(pickle.dumps(item))]
+
+    def connect(
+        self, remote_rank: int, tag: int, data_ptr, data_size, transport: int
+    ) -> None:
+        self._comm.connect(
+            remote_rank,
+            tag,
+            data_ptr,
+            data_size,
+            transport,
+        )
+
+    def connection_setup(self) -> None:
+        self._comm.connection_setup()

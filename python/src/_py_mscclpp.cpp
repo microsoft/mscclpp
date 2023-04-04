@@ -136,6 +136,11 @@ NB_MODULE(_py_mscclpp, m) {
     mscclppSetLogHandler(mscclppDefaultLogHandler);
   });
 
+  nb::enum_<mscclppTransport_t>(m, "TransportType")
+      .value("P2P", mscclppTransport_t::mscclppTransportP2P)
+      .value("SHM", mscclppTransport_t::mscclppTransportSHM)
+      .value("IB", mscclppTransport_t::mscclppTransportIB);
+
   nb::class_<mscclppUniqueId>(m, "MscclppUniqueId")
       .def_ro_static("__doc__", &DOC_MscclppUniqueId)
       .def_static(
@@ -216,13 +221,40 @@ NB_MODULE(_py_mscclpp, m) {
       .def_ro("rank", &_Comm::_rank)
       .def_ro("world_size", &_Comm::_world_size)
       .def(
+          "connect",
+          [](_Comm& self,
+             int remote_rank,
+             int tag,
+             uint64_t local_buff,
+             uint64_t buff_size,
+             mscclppTransport_t transport_type) -> void {
+            checkResult(
+                mscclppConnect(
+                    self._handle,
+                    remote_rank,
+                    tag,
+                    reinterpret_cast<void*>(local_buff),
+                    buff_size,
+                    transport_type,
+                    0  // ibDev
+                    ),
+                "Connect failed");
+          },
+          "remote_rank"_a,
+          "tag"_a,
+          "local_buf"_a,
+          "buff_size"_a,
+          "transport_type"_a,
+          nb::call_guard<nb::gil_scoped_release>(),
+          "Attach a local buffer to a remote connection.")
+      .def(
           "connection_setup",
           [](_Comm& comm) {
             comm.check_open();
             return maybe(
                 mscclppConnectionSetup(comm._handle),
                 true,
-                "Failed to settup MSCCLPP connection");
+                "Failed to setup MSCCLPP connection");
           },
           nb::call_guard<nb::gil_scoped_release>(),
           "Run connection setup for MSCCLPP.")
