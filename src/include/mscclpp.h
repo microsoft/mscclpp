@@ -241,6 +241,9 @@ mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, msccl
  */
 mscclppResult_t mscclppBootstrapAllGather(mscclppComm_t comm, void* data, int size);
 
+/* A no-op function that is used to synchronize all processes via a bootstrap allgather*/
+mscclppResult_t mscclppBootstrapBarrier(mscclppComm_t comm);
+
 /* Destroy a communicator.
  *
  * Inputs:

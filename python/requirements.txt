@@ -1,3 +1,7 @@
-nanobind
+black
+isort
+
 pytest
 PyHamcrest
+
+nanobind

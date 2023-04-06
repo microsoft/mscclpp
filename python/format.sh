@@ -1,9 +1,9 @@
 #!/bin/bash
 
-clang-format -style='{
-    "BasedOnStyle": "google",
-    "BinPackParameters": false,
-    "BinPackArguments": false,
-    "AlignAfterOpenBracket": "AlwaysBreak"
-}' -i src/*.cpp
+set -ex
+
+isort src
+black src
+
+clang-format -i $(find src -name '*.cpp' -or -name '*.h')
 
