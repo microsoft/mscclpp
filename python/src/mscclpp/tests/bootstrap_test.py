@@ -6,6 +6,7 @@ import hamcrest
 import torch
 
 import mscclpp
+import time
 
 
 @dataclass
@@ -74,19 +75,29 @@ def _test_allgather_pickle(options: argparse.Namespace, comm: mscclpp.Comm):
 
 
 def _test_allgather_torch(options: argparse.Namespace, comm: mscclpp.Comm):
-    buf = torch.zeros(
-        [options.world_size], dtype=torch.int64, device="cuda"
-    ).contiguous()
     rank = options.rank
+
+    buf = torch.zeros([options.world_size], dtype=torch.int64)
+    buf[rank] = 42 + rank
+    buf = buf.cuda().contiguous()
+
     tag = 0
-    remote_rank = (options.rank + 1) % options.world_size
+
+    if rank:
+        remote_rank = 0
+    else:
+        remote_rank = 1
+
     comm.connect(
         remote_rank,
         tag,
         buf.data_ptr(),
         buf.element_size() * buf.numel(),
-        mscclpp._py_mscclpp.TransportType.P2P,
+        mscclpp.TransportType.P2P,
     )
+
+    torch.cuda.synchronize()
+    # time.sleep(3)
 
     comm.connection_setup()
 

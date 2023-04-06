@@ -3,6 +3,8 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <cuda_runtime.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -67,6 +69,15 @@ void checkResult(
           string_format(format, args...) + " : " +
           std::string(mscclppGetErrorString(status)));
   }
+}
+
+#define RETRY(C, ...) \
+{ \
+  mscclppResult_t res; \
+  do { \
+	  res = (C); \
+  } while (res == mscclppInProgress); \
+  checkResult(res, __VA_ARGS__); \
 }
 
 // Maybe return the value, maybe throw an exception.
@@ -135,6 +146,11 @@ NB_MODULE(_py_mscclpp, m) {
     _log_callback.reset();
     mscclppSetLogHandler(mscclppDefaultLogHandler);
   });
+
+  m.def("_setup", []() {
+    int device;
+    cudaGetDevice(&device);
+   });
 
   nb::enum_<mscclppTransport_t>(m, "TransportType")
       .value("P2P", mscclppTransport_t::mscclppTransportP2P)
@@ -228,7 +244,7 @@ NB_MODULE(_py_mscclpp, m) {
              uint64_t local_buff,
              uint64_t buff_size,
              mscclppTransport_t transport_type) -> void {
-            checkResult(
+            RETRY(
                 mscclppConnect(
                     self._handle,
                     remote_rank,
@@ -236,7 +252,7 @@ NB_MODULE(_py_mscclpp, m) {
                     reinterpret_cast<void*>(local_buff),
                     buff_size,
                     transport_type,
-                    0  // ibDev
+                    NULL  // ibDev
                     ),
                 "Connect failed");
           },
@@ -249,12 +265,10 @@ NB_MODULE(_py_mscclpp, m) {
           "Attach a local buffer to a remote connection.")
       .def(
           "connection_setup",
-          [](_Comm& comm) {
+          [](_Comm& comm) -> void {
             comm.check_open();
-            return maybe(
-                mscclppConnectionSetup(comm._handle),
-                true,
-                "Failed to setup MSCCLPP connection");
+            RETRY(mscclppConnectionSetup(comm._handle),
+            "Failed to setup MSCCLPP connection");
           },
           nb::call_guard<nb::gil_scoped_release>(),
           "Run connection setup for MSCCLPP.")

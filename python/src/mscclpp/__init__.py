@@ -10,6 +10,8 @@ logger = logging.getLogger(__file__)
 
 from . import _py_mscclpp
 
+_py_mscclpp._setup()
+
 __all__ = (
     "Comm",
     "MscclppUniqueId",
@@ -45,7 +47,6 @@ MSCCLPP_LOG_LEVELS: set[str] = {
     "ABORT",
     "TRACE",
 }
-
 
 def _setup_logging(level: str = "INFO"):
     """Setup log hooks for the C library."""
