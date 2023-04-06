@@ -116,7 +116,7 @@ void* mscclppProxyService(void* _args)
     }
     if (trigger.fields.type & mscclppFlag) {
       if (isP2pProxy) {
-        PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->sendEpochId, sizeof(uint64_t),
+        PROXYCUDACHECK(cudaMemcpyAsync(conn->devConn->remoteProxyEpochId, conn->devConn->sendEpochId, sizeof(uint64_t),
                                        cudaMemcpyDeviceToDevice, p2pStream));
       } else {
         // My local flag is copied to the peer's proxy flag

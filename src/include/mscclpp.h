@@ -135,6 +135,34 @@ struct mscclppDevConn
       ;
   }
 
+  // Version that uses the SM directly to do the copy, instead of using the proxy thread like the functions above.
+  __forceinline__ __device__ void putDirect(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize, int threadIdx, int numThreads)
+  {
+    char* src = (char*)localBuff + srcDataOffset;
+    char* dst = (char*)remoteBuff + dstDataOffset;
+    for (char i = threadIdx; i < dataSize; i += numThreads)
+    {
+      dst[i] = src[i];
+    }
+  }
+
+  __forceinline__ __device__ void putDirect(uint64_t dataOffset, uint64_t dataSize, int threadIdx, int numThreads)
+  {
+    putDirect(dataOffset, dataOffset, dataSize, threadIdx, numThreads);
+  }
+
+  __forceinline__ __device__ void signalDirect(int threadIdx, int numThreads)
+  {
+    // This fence ensures that the writes from a preceding putDirect() are visible on the peer GPU before the incremented epoch id is visible.
+    __threadfence_system();
+    __syncthreads();
+    if (threadIdx == 0)
+    {
+      epochIncrement();
+      *(volatile uint64_t*)proxyEpochId = *sendEpochId;
+    }
+  }
+
   __forceinline__ __device__ void wait()
   {
     (*recvEpochId) += 1;
@@ -158,6 +186,7 @@ struct mscclppDevConn
 
   void* remoteBuff;
   uint64_t* remoteFlag;
+  uint64_t* remoteProxyEpochId;
   uint64_t* proxyEpochId; // this is only written by the proxy thread
 
   // this is a concurrent fifo which is multiple threads from the device
