@@ -505,7 +505,7 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
       MSCCLPPCHECK(mscclppIbConnectionSetupEnd(&cInfo, conn));
     }
   }
-  
+
   // a barrier to ensure setup on all gpus are done and we can return to the user
   MSCCLPPCHECK(mscclppBootstrapBarrier(comm));
   return mscclppSuccess;
@@ -526,7 +526,6 @@ mscclppResult_t mscclppBootstrapBarrier(mscclppComm_t comm)
   delete[] tmp;
   return mscclppSuccess;
 }
-
 
 MSCCLPP_API(mscclppResult_t, mscclppProxyStop, mscclppComm_t comm);
 mscclppResult_t mscclppProxyStop(mscclppComm_t comm)
