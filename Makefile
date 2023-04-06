@@ -119,7 +119,8 @@ LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 
 HEADERS := $(wildcard src/include/*.h)
-CPPSOURCES := $(shell find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "*/build/*")
+CPPSOURCES := $(shell find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*" -not -path "./python/*")
+PYTHONCPPSOURCES := $(shell find ./python/src/ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
 
 INCEXPORTS := mscclpp.h mscclppfifo.h
 INCTARGETS := $(INCEXPORTS:%=$(BUILDDIR)/$(INCDIR)/%)
@@ -148,9 +149,11 @@ tests: $(TESTSBINS)
 
 cpplint:
 	clang-format-12 -style=file --verbose --Werror --dry-run $(CPPSOURCES)
+	clang-format --dry-run $(CPPSOURCES)
 
 cpplint-autofix:
 	clang-format-12 -style=file --verbose --Werror -i $(CPPSOURCES)
+	clang-format -i $(PYTHONCPPSOURCES)
 
 # Run cpplint on a single file, example: make cpplint-file-autofix INPUTFILE=src/bootstrap/bootstrap.cc
 cpplint-file-autofix:
