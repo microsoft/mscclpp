@@ -75,6 +75,7 @@ mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, const char*
   MSCCLPPCHECKGOTO(mscclppCalloc(&_comm, 1), res, fail);
   _comm->rank = rank;
   _comm->nRanks = nranks;
+  _comm->devNumaNode = -1;
   // We assume that the user has set the device to the intended one already
   CUDACHECK(cudaGetDevice(&_comm->cudaDev));
 
@@ -162,12 +163,12 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
       MSCCLPPCHECK(mscclppCudaHostFree(proxyState->triggerFifo));
       MSCCLPPCHECK(mscclppCudaFree(proxyState->fifoHead));
       MSCCLPPCHECK(mscclppCudaFree(proxyState->fifoTailDev));
+
+      if (proxyState->p2pStream)
+        CUDACHECK(cudaStreamDestroy(proxyState->p2pStream));
+      CUDACHECK(cudaStreamDestroy(proxyState->fifoStream));
       free(proxyState);
     }
-  }
-
-  if (comm->stream != NULL) {
-    CUDACHECK(cudaStreamDestroy(comm->stream));
   }
 
   for (int i = 0; i < MSCCLPP_IB_MAX_DEVS; ++i) {
@@ -257,6 +258,19 @@ MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int remoteRank,
 mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
                                mscclppTransport_t transportType, const char* ibDev)
 {
+  // save this processes numa binding and set it to the one closest to the device
+  // so that all the allocation are close to the device
+  if (comm->devNumaNode == -1) {
+    // in case this is our first time
+    MSCCLPPCHECK(getDeviceNumaNode(comm->cudaDev, &comm->devNumaNode));
+    INFO(MSCCLPP_INIT, "NUMA node of device %d is set to %d", comm->cudaDev, comm->devNumaNode);
+  }
+  // save numa node bitmask to change it back to user's numa node
+  mscclppNumaState curProcessState;
+  MSCCLPPCHECK(getNumaState(&curProcessState));
+  // change to device's numa node so that the following allocation are close to the device
+  MSCCLPPCHECK(numaBind(comm->devNumaNode));
+
   if (comm->nConns == MAXCONNECTIONS) {
     WARN("Too many connections made");
     return mscclppInternalError;
@@ -294,10 +308,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
     // Set the ib context for this conn
     conn->ibCtx = comm->ibContext[ibDevIdx];
   } else if (transportType == mscclppTransportP2P) {
-    // Check if a DMA context/stream exists
-    if (comm->stream == NULL) {
-      CUDACHECK(cudaStreamCreateWithFlags(&comm->stream, cudaStreamNonBlocking));
-    }
+    // No allocation needed for P2P proxy
   } else if (transportType == mscclppTransportSHM) {
     WARN("Shared memory interconnection is not implemented yet!");
     return mscclppInternalError;
@@ -336,15 +347,20 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
     MSCCLPPCHECK(mscclppCudaHostCalloc(&proxyState->triggerFifo, MSCCLPP_PROXY_FIFO_SIZE));
     MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->fifoHead, 1));
     MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->fifoTailDev, 1));
+
     proxyState->fifoTailHost = 0;
 
     if (transportType == mscclppTransportIB) {
       proxyState->ibContext = conn->ibCtx;
-      proxyState->stream = NULL;
+      proxyState->p2pStream = NULL;
     } else if (transportType == mscclppTransportP2P) {
       proxyState->ibContext = NULL;
-      proxyState->stream = comm->stream;
+      CUDACHECK(cudaStreamCreateWithFlags(&proxyState->p2pStream, cudaStreamNonBlocking));
     }
+    CUDACHECK(cudaStreamCreateWithFlags(&proxyState->fifoStream, cudaStreamNonBlocking));
+    proxyState->numaNodeToBind = comm->devNumaNode;
+
+    // INFO(MSCCLPP_INIT, "NUMA node for device %d is %d", cudaDev, *numaNode);
     proxyState->transportType = transportType;
     comm->proxyState[firstEmptyProxyIndex] = proxyState;
   }
@@ -368,6 +384,10 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
   conn->devConn->fifo.triggerFifoTail = proxyState->fifoTailDev;
 
   comm->nConns++;
+
+  // change the numa binding back to user's
+  MSCCLPPCHECK(setNumaState(curProcessState));
+
   return mscclppSuccess;
 }
 

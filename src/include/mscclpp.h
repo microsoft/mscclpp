@@ -8,7 +8,7 @@
 
 // For every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER, a flush of the tail to device memory is triggered.
 // As long as MSCCLPP_PROXY_FIFO_SIZE is large enough, having a stale tail is not a problem.
-#define MSCCLPP_PROXY_FIFO_SIZE 32
+#define MSCCLPP_PROXY_FIFO_SIZE 128
 #define MSCCLPP_PROXY_FIFO_FLUSH_COUNTER 4
 
 #include <mscclppfifo.h>
@@ -138,6 +138,7 @@ struct mscclppDevConn
   __forceinline__ __device__ void wait()
   {
     (*recvEpochId) += 1;
+    // printf("%llu %llu %llu\n", *(volatile uint64_t*)proxyEpochId, (*recvEpochId), *(volatile uint64_t*)sendEpochId);
     while (*(volatile uint64_t*)proxyEpochId < (*recvEpochId))
       ;
   }
