@@ -106,7 +106,7 @@ void* mscclppProxyService(void* _args)
         conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
                               /*wrId=*/0, /*srcOffset=*/trigger.fields.srcDataOffset,
                               /*dstOffset=*/trigger.fields.dstDataOffset,
-                              /*signaled=*/false);
+                              /*signaled=*/false, /*inlineFlag=*/false);
         if ((ret = conn->ibQp->postSend()) != 0) {
           // Return value is errno.
           WARN("data postSend failed: errno %d", ret);
@@ -121,7 +121,7 @@ void* mscclppProxyService(void* _args)
       } else {
         // My local flag is copied to the peer's proxy flag
         conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
-                              /*wrId=*/0, /*srcOffset=*/0, /*dstOffset=*/0, /*signaled=*/true);
+                              /*wrId=*/0, /*srcOffset=*/0, /*dstOffset=*/0, /*signaledFlag=*/true, /*inlineFlag=*/true);
         if ((ret = conn->ibQp->postSend()) != 0) {
           WARN("flag postSend failed: errno %d", ret);
         }

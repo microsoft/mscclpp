@@ -180,7 +180,7 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
   for (int i = 0; i < comm->nConns; i++) {
     struct mscclppConn* conn = &comm->conns[i];
     if (conn) {
-      MSCCLPPCHECK(mscclppCudaFree(conn->devConn->sendEpochId));
+      MSCCLPPCHECK(mscclppCudaHostFree(conn->devConn->sendEpochId));
       MSCCLPPCHECK(mscclppCudaFree(conn->devConn->recvEpochId));
     }
   }
@@ -374,7 +374,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
 
   conn->devConn = devConn;
   conn->devConn->localBuff = localBuff;
-  MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->sendEpochId, 1));
+  MSCCLPPCHECK(mscclppCudaHostCalloc(&conn->devConn->sendEpochId, 1));
   MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->recvEpochId, 1));
   conn->devConn->remoteRank = remoteRank;
   conn->devConn->tag = tag;

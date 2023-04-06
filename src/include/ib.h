@@ -8,9 +8,10 @@
 #include <string>
 
 #define MSCCLPP_IB_CQ_SIZE 1024
-#define MSCCLPP_IB_CQ_POLL_NUM 4
+#define MSCCLPP_IB_CQ_POLL_NUM 1
 #define MSCCLPP_IB_MAX_SENDS 64
 #define MSCCLPP_IB_MAX_DEVS 8
+#define MSCCLPP_IB_MAX_INLINE_DATA 8
 
 // MR info to be shared with the remote peer
 struct mscclppIbMrInfo
@@ -52,9 +53,10 @@ struct mscclppIbQp
   int rtr(const mscclppIbQpInfo* info);
   int rts();
   int stageSend(struct mscclppIbMr* ibMr, const mscclppIbMrInfo* info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                uint64_t dstOffset, bool signaled);
+                uint64_t dstOffset, bool signaledFlag, bool inlineFlag);
   int stageSendWithImm(struct mscclppIbMr* ibMr, const mscclppIbMrInfo* info, uint32_t size, uint64_t wrId,
-                       uint64_t srcOffset, uint64_t dstOffset, bool signaled, unsigned int immData);
+                       uint64_t srcOffset, uint64_t dstOffset, bool signaledFlag, bool inlineFlag,
+                       unsigned int immData);
   int postSend();
   int postRecv(uint64_t wrId);
   int pollCq();

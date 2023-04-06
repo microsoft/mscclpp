@@ -181,10 +181,10 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext* ctx, struct ms
   qp_init_attr.recv_cq = cq;
   qp_init_attr.qp_type = IBV_QPT_RC;
   qp_init_attr.cap.max_send_wr = MAXCONNECTIONS * MSCCLPP_PROXY_FIFO_SIZE;
-  qp_init_attr.cap.max_recv_wr = MAXCONNECTIONS * MSCCLPP_PROXY_FIFO_SIZE;
+  qp_init_attr.cap.max_recv_wr = 0;
   qp_init_attr.cap.max_send_sge = 1;
   qp_init_attr.cap.max_recv_sge = 1;
-  qp_init_attr.cap.max_inline_data = 0;
+  qp_init_attr.cap.max_inline_data = MSCCLPP_IB_MAX_INLINE_DATA;
   struct ibv_qp* qp = ibv_create_qp(ctx->pd, &qp_init_attr);
   if (qp == nullptr) {
     WARN("ibv_create_qp failed (errno %d)", errno);
@@ -334,21 +334,22 @@ int mscclppIbQp::rts()
 }
 
 int mscclppIbQp::stageSend(struct mscclppIbMr* ibMr, const mscclppIbMrInfo* info, uint32_t size, uint64_t wrId,
-                           uint64_t srcOffset, uint64_t dstOffset, bool signaled)
+                           uint64_t srcOffset, uint64_t dstOffset, bool signaledFlag, bool inlineFlag)
 {
   if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
+    return -1;
+  }
+  if (inlineFlag && (size > MSCCLPP_IB_MAX_INLINE_DATA)) {
     return -1;
   }
   int wrn = this->wrn;
   struct ibv_send_wr* wr_ = &this->wrs[wrn];
   struct ibv_sge* sge_ = &this->sges[wrn];
-  // std::memset(wr_, 0, sizeof(struct ibv_send_wr));
-  // std::memset(sge_, 0, sizeof(struct ibv_sge));
   wr_->wr_id = wrId;
   wr_->sg_list = sge_;
   wr_->num_sge = 1;
   wr_->opcode = IBV_WR_RDMA_WRITE;
-  wr_->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
+  wr_->send_flags = (signaledFlag ? IBV_SEND_SIGNALED : 0) | (inlineFlag ? IBV_SEND_INLINE : 0);
   wr_->wr.rdma.remote_addr = (uint64_t)(info->addr) + dstOffset;
   wr_->wr.rdma.rkey = info->rkey;
   wr_->next = nullptr;
@@ -363,9 +364,10 @@ int mscclppIbQp::stageSend(struct mscclppIbMr* ibMr, const mscclppIbMrInfo* info
 }
 
 int mscclppIbQp::stageSendWithImm(struct mscclppIbMr* ibMr, const mscclppIbMrInfo* info, uint32_t size, uint64_t wrId,
-                                  uint64_t srcOffset, uint64_t dstOffset, bool signaled, unsigned int immData)
+                                  uint64_t srcOffset, uint64_t dstOffset, bool signaledFlag, bool inlineFlag,
+                                  unsigned int immData)
 {
-  int wrn = this->stageSend(ibMr, info, size, wrId, srcOffset, dstOffset, signaled);
+  int wrn = this->stageSend(ibMr, info, size, wrId, srcOffset, dstOffset, signaledFlag, inlineFlag);
   this->wrs[wrn - 1].opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
   this->wrs[wrn - 1].imm_data = immData;
   return wrn;
