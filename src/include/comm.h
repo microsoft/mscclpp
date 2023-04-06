@@ -10,6 +10,8 @@
 #include "ib.h"
 #include "proxy.h"
 
+#include <vector>
+
 // #define CACHE_LINE_SIZE 128
 // #define MEM_ALIGN 4096
 // #define CUDA_IPC_MIN 2097152UL
@@ -38,6 +40,10 @@ struct mscclppConn
   struct mscclppIbMrInfo ibBuffMrInfo;
   struct mscclppIbMrInfo ibLocalFlagMrInfo;
   struct mscclppIbMrInfo ibProxyFlagMrInfo;
+#if defined(ENABLE_NPKIT)
+  std::vector<uint64_t> npkitUsedReqIds;
+  std::vector<uint64_t> npkitFreeReqIds;
+#endif
 };
 
 struct mscclppComm
