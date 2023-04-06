@@ -48,7 +48,8 @@ static void readTrigger(mscclppTrigger* dst, mscclppTrigger* src)
 
 #if defined(ENABLE_NPKIT)
 
-static void npkitInitReqIds(struct mscclppComm* comm) {
+static void npkitInitReqIds(struct mscclppComm* comm)
+{
   for (int i = 0; i < comm->nConns; i++) {
     struct mscclppConn* conn = &comm->conns[i];
     conn->npkitUsedReqIds.resize(0);
@@ -59,7 +60,8 @@ static void npkitInitReqIds(struct mscclppComm* comm) {
   }
 }
 
-static void npkitCollectEntryEvent(struct mscclppConn* conn, uint8_t type, uint32_t size, int channelId) {
+static void npkitCollectEntryEvent(struct mscclppConn* conn, uint8_t type, uint32_t size, int channelId)
+{
   uint64_t ts = *(volatile uint64_t*)NpKit::GetCpuTimestamp();
   uint64_t reqId = 0;
   if (conn->npkitFreeReqIds.size() == 0) {
@@ -72,7 +74,8 @@ static void npkitCollectEntryEvent(struct mscclppConn* conn, uint8_t type, uint3
   NpKit::CollectCpuEvent(type, size, (uint32_t)reqId, ts, channelId);
 }
 
-static void npkitCollectExitEvents(struct mscclppConn* conn, uint8_t type, int channelId) {
+static void npkitCollectExitEvents(struct mscclppConn* conn, uint8_t type, int channelId)
+{
   uint64_t ts = *(volatile uint64_t*)NpKit::GetCpuTimestamp();
   while (conn->npkitUsedReqIds.size()) {
     uint64_t reqId = conn->npkitUsedReqIds.back();
@@ -136,7 +139,8 @@ void* mscclppProxyService(void* _args)
         void* srcBuff = (void*)((char*)conn->devConn->localBuff + trigger.fields.srcDataOffset);
         void* dstBuff = (void*)((char*)conn->devConn->remoteBuff + trigger.fields.dstDataOffset);
         PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, p2pStream));
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_ENTRY, (uint32_t)trigger.fields.dataSize, trigger.fields.connId);
+        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_ENTRY, (uint32_t)trigger.fields.dataSize,
+                               trigger.fields.connId);
       } else {
         conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
                               /*wrId=*/0, /*srcOffset=*/trigger.fields.srcDataOffset,
@@ -146,7 +150,8 @@ void* mscclppProxyService(void* _args)
           // Return value is errno.
           WARN("data postSend failed: errno %d", ret);
         }
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_ENTRY, (uint32_t)trigger.fields.dataSize, trigger.fields.connId);
+        npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_ENTRY, (uint32_t)trigger.fields.dataSize,
+                               trigger.fields.connId);
       }
     }
     if (trigger.fields.type & mscclppFlag) {
