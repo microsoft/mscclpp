@@ -505,6 +505,9 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
       MSCCLPPCHECK(mscclppIbConnectionSetupEnd(&cInfo, conn));
     }
   }
+  
+  // a barrier to ensure setup on all gpus are done and we can return to the user
+  MSCCLPPCHECK(mscclppBootstrapBarrier(comm));
   return mscclppSuccess;
 }
 
@@ -515,12 +518,21 @@ mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm)
   return mscclppSuccess;
 }
 
+MSCCLPP_API(mscclppResult_t, mscclppBootstrapBarrier, mscclppComm_t comm);
+mscclppResult_t mscclppBootstrapBarrier(mscclppComm_t comm)
+{
+  int* tmp = new int[comm->nRanks];
+  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
+  delete[] tmp;
+  return mscclppSuccess;
+}
+
+
 MSCCLPP_API(mscclppResult_t, mscclppProxyStop, mscclppComm_t comm);
 mscclppResult_t mscclppProxyStop(mscclppComm_t comm)
 {
   // a barrier to make sure all ranks are done with their work before stopping the proxy
-  int* tmp = new int[comm->nRanks];
-  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
+  MSCCLPPCHECK(mscclppBootstrapBarrier(comm));
 
   MSCCLPPCHECK(mscclppProxyDestroy(comm));
   return mscclppSuccess;
