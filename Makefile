@@ -8,6 +8,7 @@ DEBUG ?= 0
 VERBOSE ?= 1
 TRACE ?= 0
 NPKIT ?= 0
+GDRCOPY ?= 0
 USE_MPI_FOR_TESTS ?= 1
 
 ######## CUDA
@@ -96,6 +97,15 @@ MPI_LDFLAGS :=
 MPI_MACRO   :=
 endif
 
+#### GDRCOPY
+ifeq ($(GDRCOPY), 1)
+GDRCOPY_LDFLAGS := -lgdrapi
+CXXFLAGS  += -DMSCCLPP_USE_GDRCOPY
+NVCUFLAGS += -DMSCCLPP_USE_GDRCOPY
+else
+GDRCOPY_LDFLAGS :=
+endif
+
 #### MSCCL++
 BUILDDIR ?= $(abspath ./build)
 INCDIR := include
@@ -108,12 +118,15 @@ CXXFLAGS  += -DENABLE_NPKIT
 NVCUFLAGS += -DENABLE_NPKIT
 endif
 
-LDFLAGS := $(NVLDFLAGS) -libverbs -lnuma
+LDFLAGS := $(NVLDFLAGS) $(GDRCOPY_LDFLAGS) -libverbs -lnuma
 
 LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc init.cc proxy.cc ib.cc config.cc)
 LIBSRCS += $(addprefix src/bootstrap/,bootstrap.cc socket.cc)
 ifneq ($(NPKIT), 0)
 LIBSRCS += $(addprefix src/misc/,npkit.cc)
+endif
+ifeq ($(GDRCOPY), 1)
+LIBSRCS += $(addprefix src/,gdr.cc)
 endif
 LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
