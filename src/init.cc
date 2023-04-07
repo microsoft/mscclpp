@@ -195,8 +195,11 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
       MSCCLPPCHECK(mscclppCudaHostFree(proxyState->triggerFifo));
 #endif
       MSCCLPPCHECK(mscclppCudaFree(proxyState->fifoHead));
+#if defined(MSCCLPP_USE_GDR)
+      MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->fifoTailDesc));
+#else
       MSCCLPPCHECK(mscclppCudaFree(proxyState->fifoTailDev));
-
+#endif
       if (proxyState->p2pStream)
         CUDACHECK(cudaStreamDestroy(proxyState->p2pStream));
       CUDACHECK(cudaStreamDestroy(proxyState->fifoStream));
@@ -384,8 +387,12 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
     MSCCLPPCHECK(mscclppCudaHostCalloc(&proxyState->triggerFifo, MSCCLPP_PROXY_FIFO_SIZE));
 #endif
     MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->fifoHead, 1));
+#if defined(MSCCLPP_USE_GDR)
+    MSCCLPPCHECK(
+      mscclppGdrCudaCalloc(&proxyState->fifoTailDevHostPtr, &proxyState->fifoTailDev, 1, &proxyState->fifoTailDesc));
+#else
     MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->fifoTailDev, 1));
-
+#endif
     proxyState->fifoTailHost = 0;
 
     if (transportType == mscclppTransportIB) {
