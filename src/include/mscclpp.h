@@ -13,9 +13,11 @@
 
 #include <mscclppfifo.h>
 #include <time.h>
+#include <vector>
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /***************************************************************************************************************
@@ -173,6 +175,32 @@ typedef struct
 {
   char internal[MSCCLPP_UNIQUE_ID_BYTES];
 } mscclppUniqueId;
+
+// MR info to be shared with the remote peer
+struct mscclppIbMrInfo
+{
+  uint64_t addr;
+  uint32_t rkey;
+};
+
+// IB memory region
+struct mscclppIbMr
+{
+  struct ibv_mr* mr;
+  void* buff;
+  struct mscclppIbMrInfo info;
+};
+
+struct mscclppRegisteredMemoryP2P
+{
+  void* remoteBuff;
+  mscclppIbMr* IbMr;
+};
+
+struct mscclppRegisteredMemory
+{
+  std::vector<mscclppRegisteredMemoryP2P> p2p;
+};
 
 /* Error type */
 typedef enum

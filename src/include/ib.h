@@ -12,21 +12,6 @@
 #define MSCCLPP_IB_MAX_SENDS 64
 #define MSCCLPP_IB_MAX_DEVS 8
 
-// MR info to be shared with the remote peer
-struct mscclppIbMrInfo
-{
-  uint64_t addr;
-  uint32_t rkey;
-};
-
-// IB memory region
-struct mscclppIbMr
-{
-  struct ibv_mr* mr;
-  void* buff;
-  struct mscclppIbMrInfo info;
-};
-
 // QP info to be shared with the remote peer
 struct mscclppIbQpInfo
 {
