@@ -128,6 +128,12 @@ LIBNAME   := libmscclpp.so
 LIBSONAME := $(LIBNAME).$(MSCCLPP_MAJOR)
 LIBTARGET := $(BUILDDIR)/$(LIBDIR)/$(LIBNAME).$(MSCCLPP_MAJOR).$(MSCCLPP_MINOR).$(MSCCLPP_PATCH)
 
+UTDIR  := tests/unittests
+UTSRCS := $(addprefix $(UTDIR)/,ib_test.cc)
+UTOBJS := $(patsubst %.cc,%.o,$(UTSRCS))
+UTOBJTARGETS := $(UTOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
+UTBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(UTOBJS))
+
 TESTSDIR  := tests
 TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc allgather_test.cu)
 TESTSOBJS := $(patsubst %.cc,%.o,$(TESTSSRCS)) $(patsubst %.cu,%.o,$(TESTSSRCS))
@@ -144,7 +150,9 @@ build: lib tests
 
 lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
 
-tests: $(TESTSBINS)
+unittests: $(UTBINS)
+
+tests: unittests $(TESTSBINS)
 
 cpplint:
 	clang-format-12 -style=file --verbose --Werror --dry-run $(CPPSOURCES)
@@ -161,6 +169,11 @@ $(BUILDDIR)/$(OBJDIR)/%.o: %.cc $(HEADERS)
 	@mkdir -p $(@D)
 	$(CXX) -o $@ $(INCLUDE) $(CXXFLAGS) -c $<
 
+# Compile utobjs
+$(BUILDDIR)/$(OBJDIR)/$(UTDIR)/%.o: $(UTDIR)/%.cc $(HEADERS)
+	@mkdir -p $(@D)
+	$(CXX) -o $@ $(INCLUDE) $(CXXFLAGS) -c $<
+
 $(BUILDDIR)/$(INCDIR)/%.h: src/$(INCDIR)/%.h
 	@mkdir -p $(@D)
 	cp $< $@
@@ -170,6 +183,11 @@ $(LIBTARGET): $(LIBOBJTARGETS)
 	$(CXX) -shared -Wl,--no-as-needed -Wl,-soname,$(LIBSONAME) -o $@ $^ $(CXXFLAGS) $(LDFLAGS)
 	ln -sf $(LIBTARGET) $(BUILDDIR)/$(LIBDIR)/$(LIBNAME)
 	ln -sf $(LIBTARGET) $(BUILDDIR)/$(LIBDIR)/$(LIBSONAME)
+
+# UT bins
+$(BUILDDIR)/$(BINDIR)/$(UTDIR)/%: $(BUILDDIR)/$(OBJDIR)/$(UTDIR)/%.o $(LIBOBJTARGETS)
+	@mkdir -p $(@D)
+	$(NVCC) -o $@ $+ $(MPI_LDFLAGS) $(LDFLAGS)
 
 # Compile .cc tests
 $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cc $(INCTARGETS)
@@ -182,7 +200,7 @@ $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cu $(INCTARGETS)
 	$(NVCC) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(NVCUFLAGS) -c $< $(MPI_MACRO)
 
 # Test bins
-$(BUILDDIR)/$(BINDIR)/%: $(BUILDDIR)/$(OBJDIR)/%.o $(LIBTARGET)
+$(BUILDDIR)/$(BINDIR)/$(TESTSDIR)/%: $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o $(LIBTARGET)
 	@mkdir -p $(@D)
 	$(NVCC) -o $@ $< $(MPI_LDFLAGS) -L$(BUILDDIR)/$(LIBDIR) -lmscclpp
 
