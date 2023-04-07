@@ -58,10 +58,8 @@ CXXFLAGS   := -DCUDA_MAJOR=$(CUDA_MAJOR) -DCUDA_MINOR=$(CUDA_MINOR) -fPIC -fvisi
 ifneq ($(TRACE), 0)
 CXXFLAGS  += -DENABLE_TRACE
 endif
-# Maxrregcount needs to be set accordingly to MSCCLPP_MAX_NTHREADS (otherwise it will cause kernel launch errors)
-# 512 : 120, 640 : 96, 768 : 80, 1024 : 60
-# We would not have to set this if we used __launch_bounds__, but this only works on kernels, not on functions.
-NVCUFLAGS  := -ccbin $(CXX) $(NVCC_GENCODE) -std=c++11 --expt-extended-lambda -Xptxas -maxrregcount=96 -Xfatbin -compress-all
+
+NVCUFLAGS  := -ccbin $(CXX) $(NVCC_GENCODE) -std=c++11 --expt-extended-lambda -Xfatbin -compress-all
 # Use addprefix so that we can specify more than one path
 NVLDFLAGS  := -L$(CUDA_LIB) -lcudart -lrt
 
@@ -162,11 +160,11 @@ tests: $(TESTSBINS)
 
 cpplint:
 	clang-format-12 -style=file --verbose --Werror --dry-run $(CPPSOURCES)
-	clang-format --dry-run $(CPPSOURCES)
+	clang-format-12 --dry-run $(CPPSOURCES)
 
 cpplint-autofix:
 	clang-format-12 -style=file --verbose --Werror -i $(CPPSOURCES)
-	clang-format -i $(PYTHONCPPSOURCES)
+	clang-format-12 -i $(PYTHONCPPSOURCES)
 
 # Run cpplint on a single file, example: make cpplint-file-autofix INPUTFILE=src/bootstrap/bootstrap.cc
 cpplint-file-autofix:
