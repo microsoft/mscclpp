@@ -99,6 +99,10 @@ def _test_p2p_connect(options: argparse.Namespace, comm: mscclpp.Comm):
 
     comm.connection_setup()
 
+    comm.launch_proxies()
+    comm.stop_proxies()
+
+
 
 def main():
     p = argparse.ArgumentParser()

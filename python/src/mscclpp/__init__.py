@@ -10,8 +10,6 @@ logger = logging.getLogger(__file__)
 
 from . import _py_mscclpp
 
-_py_mscclpp._setup()
-
 __all__ = (
     "Comm",
     "MscclppUniqueId",
@@ -156,7 +154,12 @@ class Comm:
         return [pickle.loads(b) for b in self.all_gather_bytes(pickle.dumps(item))]
 
     def connect(
-        self, remote_rank: int, tag: int, data_ptr, data_size, transport: int
+        self,
+        remote_rank: int,
+        tag: int,
+        data_ptr,
+        data_size: int,
+        transport: int,
     ) -> None:
         self._comm.connect(
             remote_rank,
@@ -168,3 +171,9 @@ class Comm:
 
     def connection_setup(self) -> None:
         self._comm.connection_setup()
+
+    def launch_proxies(self) -> None:
+        self._comm.launch_proxies()
+
+    def stop_proxies(self) -> None:
+        self._comm.stop_proxies()
