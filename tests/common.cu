@@ -7,8 +7,9 @@
 #include "common.h"
 #include "cuda.h"
 #include "mscclpp.h"
-#include "timer.h"
 
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -16,29 +17,45 @@
 
 #include <getopt.h>
 #include <libgen.h>
-#include <pthread.h>
+
+#define NUM_BLOCKS 32
 
 int is_main_proc = 0;
 thread_local int is_main_thread = 0;
 
+namespace {
+class timer
+{
+  std::uint64_t t0;
+
+public:
+  timer();
+  double elapsed() const;
+  double reset();
+};
+
+std::uint64_t now()
+{
+  using clock = std::chrono::steady_clock;
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now().time_since_epoch()).count();
+}
+
 // Command line parameter defaults
-static size_t minBytes = 32 * 1024 * 1024;
-static size_t maxBytes = 32 * 1024 * 1024;
-static size_t stepBytes = 1 * 1024 * 1024;
-static size_t stepFactor = 1;
-static int datacheck = 1;
-static int warmup_iters = 10;
-static int iters = 100;
-static int timeout = 0;
-static int report_cputime = 0;
+size_t minBytes = 32 * 1024 * 1024;
+size_t maxBytes = 32 * 1024 * 1024;
+size_t stepBytes = 1 * 1024 * 1024;
+size_t stepFactor = 1;
+int datacheck = 1;
+int warmup_iters = 10;
+int iters = 100;
+int timeout = 0;
+int report_cputime = 0;
 // Report average iteration time: (0=RANK0,1=AVG,2=MIN,3=MAX)
-static int average = 1;
-static std::string ip_port;
-static int cudaGraphLaunches = 15;
+int average = 1;
+std::string ip_port;
+int cudaGraphLaunches = 15;
 
-#define NUM_BLOCKS 32
-
-static double parsesize(const char* value)
+double parsesize(const char* value)
 {
   long long int units;
   double size;
@@ -75,31 +92,32 @@ static double parsesize(const char* value)
   return size * units;
 }
 
-void Barrier(struct threadArgs* args)
+inline testResult_t Barrier(struct threadArgs* args)
 {
-  thread_local int epoch = 0;
-  static pthread_mutex_t lock[2] = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER};
-  static pthread_cond_t cond[2] = {PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER};
-  static int counter[2] = {0, 0};
+  int tmp[16];
+  // A simple barrier
+  MSCCLPPCHECK(mscclppBootstrapAllGather(args->comm, tmp, sizeof(int)));
+  return testSuccess;
+}
+} // namespace
 
-  pthread_mutex_lock(&lock[epoch]);
-  if (++counter[epoch] == args->nThreads)
-    pthread_cond_broadcast(&cond[epoch]);
+timer::timer()
+{
+  t0 = now();
+}
 
-  if (args->thread + 1 == args->nThreads) {
-    while (counter[epoch] != args->nThreads)
-      pthread_cond_wait(&cond[epoch], &lock[epoch]);
-#ifdef MSCCLPP_USE_MPI_FOR_TESTS
-    MPI_Barrier(MPI_COMM_WORLD);
-#endif
-    counter[epoch] = 0;
-    pthread_cond_broadcast(&cond[epoch]);
-  } else {
-    while (counter[epoch] != 0)
-      pthread_cond_wait(&cond[epoch], &lock[epoch]);
-  }
-  pthread_mutex_unlock(&lock[epoch]);
-  epoch ^= 1;
+double timer::elapsed() const
+{
+  std::uint64_t t1 = now();
+  return 1.e-9 * (t1 - t0);
+}
+
+double timer::reset()
+{
+  std::uint64_t t1 = now();
+  double ans = 1.e-9 * (t1 - t0);
+  t0 = t1;
+  return ans;
 }
 
 testResult_t AllocateBuffs(void** sendbuff, size_t sendBytes, void** recvbuff, size_t recvBytes, void** expected,
@@ -165,77 +183,33 @@ testResult_t completeColl(struct threadArgs* args)
   return testSuccess;
 }
 
-// Inter-thread/process barrier+allreduce. The quality of the return value
-// for average=0 (which means broadcast from rank=0) is dubious. The returned
-// value will actually be the result of process-local broadcast from the local thread=0.
+// Inter process barrier+allreduce. The quality of the return value
+// for average=0 is just value itself.
+// Inter process barrier+allreduce. The quality of the return value
+// for average=0 is just value itself.
 template <typename T> void Allreduce(struct threadArgs* args, T* value, int average)
 {
-  thread_local int epoch = 0;
-  static pthread_mutex_t lock[2] = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER};
-  static pthread_cond_t cond[2] = {PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER};
-  static T accumulator[2];
-  static int counter[2] = {0, 0};
-
-  pthread_mutex_lock(&lock[epoch]);
-  if (counter[epoch] == 0) {
-    if (average != 0 || args->thread == 0)
-      accumulator[epoch] = *value;
-  } else {
-    switch (average) {
-    case /*r0*/ 0:
-      if (args->thread == 0)
-        accumulator[epoch] = *value;
-      break;
-    case /*avg*/ 1:
-      accumulator[epoch] += *value;
-      break;
-    case /*min*/ 2:
-      accumulator[epoch] = std::min<T>(accumulator[epoch], *value);
-      break;
-    case /*max*/ 3:
-      accumulator[epoch] = std::max<T>(accumulator[epoch], *value);
-      break;
-    case /*sum*/ 4:
-      accumulator[epoch] += *value;
-      break;
-    }
-  }
-
-  if (++counter[epoch] == args->nThreads)
-    pthread_cond_broadcast(&cond[epoch]);
-
-  if (args->thread + 1 == args->nThreads) {
-    while (counter[epoch] != args->nThreads)
-      pthread_cond_wait(&cond[epoch], &lock[epoch]);
+  T accumulator = *value;
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
-    if (average != 0) {
-      static_assert(std::is_same<T, long long>::value || std::is_same<T, double>::value,
-                    "Allreduce<T> only for T in {long long, double}");
-      MPI_Datatype ty = std::is_same<T, long long>::value ? MPI_LONG_LONG
-                        : std::is_same<T, double>::value  ? MPI_DOUBLE
-                                                          : MPI_Datatype();
-      MPI_Op op = average == 1   ? MPI_SUM
-                  : average == 2 ? MPI_MIN
-                  : average == 3 ? MPI_MAX
-                  : average == 4 ? MPI_SUM
-                                 : MPI_Op();
-      MPI_Allreduce(MPI_IN_PLACE, (void*)&accumulator[epoch], 1, ty, op, MPI_COMM_WORLD);
-    }
+  if (average != 0) {
+    static_assert(std::is_same<T, long long>::value || std::is_same<T, double>::value,
+                  "Allreduce<T> only for T in {long long, double}");
+    MPI_Datatype ty = std::is_same<T, long long>::value ? MPI_LONG_LONG
+                      : std::is_same<T, double>::value  ? MPI_DOUBLE
+                                                        : MPI_Datatype();
+    MPI_Op op = average == 1   ? MPI_SUM
+                : average == 2 ? MPI_MIN
+                : average == 3 ? MPI_MAX
+                : average == 4 ? MPI_SUM
+                               : MPI_Op();
+    MPI_Allreduce(MPI_IN_PLACE, (void*)&accumulator, 1, ty, op, MPI_COMM_WORLD);
+  }
 #endif
 
-    if (average == 1)
-      accumulator[epoch] /= args->totalProcs * args->nThreads;
-    counter[epoch] = 0;
-    pthread_cond_broadcast(&cond[epoch]);
-  } else {
-    while (counter[epoch] != 0)
-      pthread_cond_wait(&cond[epoch], &lock[epoch]);
-  }
-  pthread_mutex_unlock(&lock[epoch]);
-
-  *value = accumulator[epoch];
-  epoch ^= 1;
+  if (average == 1)
+    accumulator /= args->totalProcs;
+  *value = accumulator;
 }
 
 testResult_t CheckData(struct threadArgs* args, int in_place, int64_t* wrongElts)
@@ -271,7 +245,7 @@ testResult_t BenchTime(struct threadArgs* args, int in_place)
   TESTCHECK(startColl(args, in_place, 0));
   TESTCHECK(completeColl(args));
 
-  Barrier(args);
+  TESTCHECK(Barrier(args));
 
   // Performance Benchmark
   cudaGraph_t graph;
@@ -285,7 +259,7 @@ testResult_t BenchTime(struct threadArgs* args, int in_place)
   CUDACHECK(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
 
   // Launch the graph
-  Barrier(args);
+  TESTCHECK(Barrier(args));
   tim.reset();
   for (int l = 0; l < cudaGraphLaunches; ++l) {
     CUDACHECK(cudaGraphLaunch(graphExec, args->stream));
@@ -303,7 +277,7 @@ testResult_t BenchTime(struct threadArgs* args, int in_place)
 
   double algBw, busBw;
   args->collTest->getBw(count, 1, deltaSec, &algBw, &busBw, args->totalProcs * args->nThreads * args->nGpus);
-  Barrier(args);
+  TESTCHECK(Barrier(args));
 
   int64_t wrongElts = 0;
   if (datacheck) {
@@ -375,7 +349,7 @@ void setupArgs(size_t size, struct threadArgs* args)
 testResult_t TimeTest(struct threadArgs* args)
 {
   // Sync to avoid first-call timeout
-  Barrier(args);
+  TESTCHECK(Barrier(args));
 
   // Warm-up for large size
   setupArgs(args->maxbytes, args);

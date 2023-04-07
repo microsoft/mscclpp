@@ -1,9 +1,3 @@
-/*************************************************************************
- * Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
- *
- * See LICENSE.txt for license information
- ************************************************************************/
-
 #include "comm.h"
 #include "common.h"
 
@@ -173,11 +167,11 @@ testResult_t AllGatherInitData(struct threadArgs* args, int in_place)
       dataHost[i] = 0;
     }
   }
-  CUDACHECK(cudaMemcpy(args->recvbuffs[0], dataHost, recvcount, cudaMemcpyHostToDevice));
+  CUDACHECK(cudaMemcpy(args->recvbuffs[0], dataHost, recvcount * sizeof(int), cudaMemcpyHostToDevice));
   for (int i = 0; i < static_cast<int>(recvcount); i++) {
     dataHost[i] = i + 1;
   }
-  CUDACHECK(cudaMemcpy(args->expected[0], dataHost, recvcount, cudaMemcpyHostToDevice));
+  CUDACHECK(cudaMemcpy(args->expected[0], dataHost, recvcount * sizeof(int), cudaMemcpyHostToDevice));
   delete dataHost;
   CUDACHECK(cudaDeviceSynchronize());
   return testSuccess;
