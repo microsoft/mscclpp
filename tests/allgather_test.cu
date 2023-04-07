@@ -147,15 +147,15 @@ void AllGatherGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* par
   *paramcount = base;
 }
 
-testResult_t AllGatherInitData(struct threadArgs* args, int in_place)
+testResult_t AllGatherInitData(struct testArgs* args, int in_place)
 {
   size_t sendcount = args->sendBytes / sizeof(int);
   size_t recvcount = args->expectedBytes / sizeof(int);
   // int nranks = args->totalProcs;
 
-  CUDACHECK(cudaSetDevice(args->gpus[0]));
+  CUDACHECK(cudaSetDevice(args->gpuNum));
   int rank = args->proc;
-  CUDACHECK(cudaMemset(args->recvbuffs[0], 0, args->expectedBytes));
+  CUDACHECK(cudaMemset(args->recvbuff, 0, args->expectedBytes));
   // void* data = in_place ? ((char*)args->recvbuffs[0]) + rank * args->sendBytes : args->sendbuffs[0];
 
   int* dataHost = new int[recvcount];
@@ -167,11 +167,11 @@ testResult_t AllGatherInitData(struct threadArgs* args, int in_place)
       dataHost[i] = 0;
     }
   }
-  CUDACHECK(cudaMemcpy(args->recvbuffs[0], dataHost, recvcount * sizeof(int), cudaMemcpyHostToDevice));
+  CUDACHECK(cudaMemcpy(args->recvbuff, dataHost, recvcount * sizeof(int), cudaMemcpyHostToDevice));
   for (int i = 0; i < static_cast<int>(recvcount); i++) {
     dataHost[i] = i + 1;
   }
-  CUDACHECK(cudaMemcpy(args->expected[0], dataHost, recvcount * sizeof(int), cudaMemcpyHostToDevice));
+  CUDACHECK(cudaMemcpy(args->expected, dataHost, recvcount * sizeof(int), cudaMemcpyHostToDevice));
   delete dataHost;
   CUDACHECK(cudaDeviceSynchronize());
   return testSuccess;
@@ -187,10 +187,10 @@ void AllGatherGetBw(size_t count, int typesize, double sec, double* algBw, doubl
 }
 
 testResult_t AllGatherRunColl(void* sendbuff, void* recvbuff, int nranksPerNode, size_t count, mscclppComm_t comm,
-                              cudaStream_t stream)
+                              cudaStream_t stream, int kernel_num)
 {
   int worldSize = comm->nRanks;
-  kernel<<<1, 32 * (worldSize - 1), 0, stream>>>(comm->rank, worldSize, nranksPerNode, count / sizeof(int), 1);
+  kernel<<<1, 32 * (worldSize - 1), 0, stream>>>(comm->rank, worldSize, nranksPerNode, count / sizeof(int), kernel_num);
   return testSuccess;
 }
 
@@ -203,7 +203,7 @@ void AllGatherGetBuffSize(size_t* sendcount, size_t* recvcount, size_t count, in
   AllGatherGetCollByteCount(sendcount, recvcount, &paramcount, &sendInplaceOffset, &recvInplaceOffset, count, nranks);
 }
 
-testResult_t AllGatherRunTest(struct threadArgs* args)
+testResult_t AllGatherRunTest(struct testArgs* args)
 {
   args->collTest = &allGatherTest;
   mscclppDevConn_t* devConns;

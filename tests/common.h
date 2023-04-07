@@ -69,22 +69,22 @@ struct testColl
   const char name[20];
   void (*getCollByteCount)(size_t* sendcount, size_t* recvcount, size_t* paramcount, size_t* sendInplaceOffset,
                            size_t* recvInplaceOffset, size_t count, int nranks);
-  testResult_t (*initData)(struct threadArgs* args, int in_place);
+  testResult_t (*initData)(struct testArgs* args, int in_place);
   void (*getBw)(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
   testResult_t (*runColl)(void* sendbuff, void* recvbuff, int nranksPerNode, size_t count, mscclppComm_t comm,
-                          cudaStream_t stream);
+                          cudaStream_t stream, int kernel_num);
 };
 
 struct testEngine
 {
   void (*getBuffSize)(size_t* sendcount, size_t* recvcount, size_t count, int nranks);
   // We can add more parameters for other communication primitives
-  testResult_t (*runTest)(struct threadArgs* args);
+  testResult_t (*runTest)(struct testArgs* args);
 };
 
 extern struct testEngine mscclppTestEngine;
 
-struct threadArgs
+struct testArgs
 {
   size_t nbytes;
   size_t minbytes;
@@ -94,40 +94,38 @@ struct threadArgs
 
   int totalProcs;
   int proc;
-  int nThreads;
-  int thread;
-  int nGpus;
-  int* gpus;
+  int gpuNum;
   int localRank;
   int nranksPerNode;
-  void** sendbuffs;
+  int kernel_num;
+  void* sendbuff;
   size_t sendBytes;
   size_t sendInplaceOffset;
-  void** recvbuffs;
+  void* recvbuff;
   size_t recvInplaceOffset;
   mscclppComm_t comm;
   cudaStream_t stream;
 
-  void** expected;
+  void* expected;
   size_t expectedBytes;
-  int* errors;
-  double* bw;
-  int* bw_count;
+  int error;
+  double bw;
+  int bw_count;
 
   int reportErrors;
 
   struct testColl* collTest;
 };
 
-typedef testResult_t (*threadFunc_t)(struct threadArgs* args);
-struct testThread
+typedef testResult_t (*entryFunc_t)(struct testArgs* args);
+struct testWorker
 {
-  threadFunc_t func;
-  struct threadArgs args;
+  entryFunc_t func;
+  struct testArgs args;
 };
 
 // Provided by common.cu
-extern testResult_t TimeTest(struct threadArgs* args);
+extern testResult_t TimeTest(struct testArgs* args);
 
 static void getHostName(char* hostname, int maxlen)
 {
