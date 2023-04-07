@@ -124,6 +124,7 @@ void* mscclppProxyService(void* _args)
   npkitInitReqIds(comm);
 
   int counter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
+  bool p2pDirty = false;
   for (;;) {
     if (counter-- == 0) {
       counter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
@@ -147,6 +148,7 @@ void* mscclppProxyService(void* _args)
         PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, p2pStream));
         npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_ENTRY, (uint32_t)trigger.fields.dataSize,
                                trigger.fields.connId);
+        p2pDirty = true;
       } else {
         conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
                               /*wrId=*/0, /*srcOffset=*/trigger.fields.srcDataOffset,
@@ -165,6 +167,7 @@ void* mscclppProxyService(void* _args)
         PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->sendEpochId, sizeof(uint64_t),
                                        cudaMemcpyDeviceToDevice, p2pStream));
         npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_ENTRY, (uint32_t)sizeof(uint64_t), trigger.fields.connId);
+        p2pDirty = true;
       } else {
         // My local flag is copied to the peer's proxy flag
         conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
@@ -178,7 +181,10 @@ void* mscclppProxyService(void* _args)
     // Wait for completion
     if (trigger.fields.type & mscclppSync) {
       if (isP2pProxy) {
-        PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
+        if (p2pDirty) {
+          PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
+          p2pDirty = false;
+        }
         npkitCollectExitEvents(conn, NPKIT_EVENT_DMA_SEND_EXIT, trigger.fields.connId);
       } else {
         int rank = comm->rank;
@@ -234,7 +240,7 @@ void* mscclppProxyService(void* _args)
     cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, fifoStream));
   PROXYCUDACHECK(cudaStreamSynchronize(fifoStream));
 #endif
-  if (isP2pProxy) {
+  if (p2pDirty) {
     PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
   }
   *run = MSCCLPP_PROXY_RUN_STATE_IDLE;
