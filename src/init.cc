@@ -1,7 +1,7 @@
 #include "bootstrap.h"
 #include "config.h"
 #include "core.h"
-#if defined(MSCCLPP_USE_GDR)
+#if defined(MSCCLPP_USE_GDRCOPY)
 #include "gdr.h"
 #endif
 #include "mscclpp.h"
@@ -27,7 +27,7 @@ pthread_mutex_t initLock = PTHREAD_MUTEX_INITIALIZER;
 static bool initialized = false;
 // static size_t maxLocalSizeBytes = 0;
 
-#if defined(MSCCLPP_USE_GDR)
+#if defined(MSCCLPP_USE_GDRCOPY)
 
 gdr_t mscclppGdrCopy = NULL;
 
@@ -87,7 +87,7 @@ mscclppResult_t mscclppBootstrapAllGather(mscclppComm_t comm, void* data, int si
 MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank);
 mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank)
 {
-#if defined(MSCCLPP_USE_GDR)
+#if defined(MSCCLPP_USE_GDRCOPY)
   MSCCLPPCHECK(initGdrCopy());
 #endif
 
@@ -133,7 +133,7 @@ fail:
 MSCCLPP_API(mscclppResult_t, mscclppCommInitRankFromId, mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank);
 mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank)
 {
-#if defined(MSCCLPP_USE_GDR)
+#if defined(MSCCLPP_USE_GDRCOPY)
   MSCCLPPCHECK(initGdrCopy());
 #endif
 
@@ -189,13 +189,13 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
   for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
     struct mscclppProxyState* proxyState = comm->proxyState[i];
     if (proxyState) {
-#if defined(MSCCLPP_USE_GDR)
+#if defined(MSCCLPP_USE_GDRCOPY)
       MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->triggerFifoDesc));
 #else
       MSCCLPPCHECK(mscclppCudaHostFree(proxyState->triggerFifo));
 #endif
       MSCCLPPCHECK(mscclppCudaFree(proxyState->fifoHead));
-#if defined(MSCCLPP_USE_GDR)
+#if defined(MSCCLPP_USE_GDRCOPY)
       MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->fifoTailDesc));
 #else
       MSCCLPPCHECK(mscclppCudaFree(proxyState->fifoTailDev));
@@ -380,14 +380,14 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
   // If we couldn't find a matching context, create one
   if (proxyState == NULL) {
     MSCCLPPCHECK(mscclppCalloc(&proxyState, 1));
-#if defined(MSCCLPP_USE_GDR)
+#if defined(MSCCLPP_USE_GDRCOPY)
     MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->triggerFifo, &proxyState->triggerFifoDev, MSCCLPP_PROXY_FIFO_SIZE,
                                       &proxyState->triggerFifoDesc));
 #else
     MSCCLPPCHECK(mscclppCudaHostCalloc(&proxyState->triggerFifo, MSCCLPP_PROXY_FIFO_SIZE));
 #endif
     MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->fifoHead, 1));
-#if defined(MSCCLPP_USE_GDR)
+#if defined(MSCCLPP_USE_GDRCOPY)
     MSCCLPPCHECK(
       mscclppGdrCudaCalloc(&proxyState->fifoTailDevHostPtr, &proxyState->fifoTailDev, 1, &proxyState->fifoTailDesc));
 #else
@@ -424,7 +424,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
   conn->devConn->remoteRank = remoteRank;
   conn->devConn->tag = tag;
   conn->devConn->fifo.connId = comm->nConns;
-#if defined(MSCCLPP_USE_GDR)
+#if defined(MSCCLPP_USE_GDRCOPY)
   conn->devConn->fifo.triggerFifo = proxyState->triggerFifoDev;
 #else
   conn->devConn->fifo.triggerFifo = proxyState->triggerFifo;
