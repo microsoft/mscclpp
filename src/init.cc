@@ -621,9 +621,8 @@ mscclppResult_t mscclppRegisteredBufferWrite(mscclppComm_t comm, mscclppRegister
     struct mscclppConn* conn = &comm->conns[i];
     // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
     if (conn->transport == mscclppTransportP2P) {
-      // TODO: check errors
       void* dstBuff = regMem->p2p[i].remoteBuff;
-      cudaMemcpyAsync(dstBuff, srcBuff, size, cudaMemcpyDeviceToDevice, (cudaStream_t)stream);
+      CUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, size, cudaMemcpyDeviceToDevice, (cudaStream_t)stream));
     } else {
       conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)size,
                             /*wrId=*/0, /*srcOffset=*/srcOffset,
