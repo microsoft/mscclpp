@@ -128,18 +128,18 @@ struct _Comm {
 };
 
 struct _P2PHandle {
-    struct mscclppRegisteredMemoryP2P _rmP2P;
-    struct mscclppIbMr _ibmr;
+  struct mscclppRegisteredMemoryP2P _rmP2P;
+  struct mscclppIbMr _ibmr;
 
-    _P2PHandle() : _rmP2P({0}), _ibmr({0}) {}
+  _P2PHandle() : _rmP2P({0}), _ibmr({0}) {}
 
-    _P2PHandle(const mscclppRegisteredMemoryP2P &p2p): _ibmr({0}) {
-        _rmP2P = p2p;
-        if (_rmP2P.IbMr != nullptr) {
-            _ibmr = *_rmP2P.IbMr;
-            _rmP2P.IbMr = &_ibmr;
-        }
+  _P2PHandle(const mscclppRegisteredMemoryP2P& p2p) : _ibmr({0}) {
+    _rmP2P = p2p;
+    if (_rmP2P.IbMr != nullptr) {
+      _ibmr = *_rmP2P.IbMr;
+      _rmP2P.IbMr = &_ibmr;
     }
+  }
 };
 
 nb::callable _log_callback;
@@ -261,7 +261,9 @@ NB_MODULE(_py_mscclpp, m) {
       .def_ro("world_size", &_Comm::_world_size)
       .def(
           "register_buffer",
-          [](_Comm& comm, uint64_t local_buff, uint64_t buff_size) -> std::vector<_P2PHandle> {
+          [](_Comm& comm,
+             uint64_t local_buff,
+             uint64_t buff_size) -> std::vector<_P2PHandle> {
             comm.check_open();
             mscclppRegisteredMemory regMem;
             checkResult(
@@ -273,8 +275,8 @@ NB_MODULE(_py_mscclpp, m) {
                 "Registering buffer failed");
 
             std::vector<_P2PHandle> handles;
-            for (const auto &p2p : regMem.p2p) {
-                handles.push_back(_P2PHandle(p2p));
+            for (const auto& p2p : regMem.p2p) {
+              handles.push_back(_P2PHandle(p2p));
             }
             return handles;
           },

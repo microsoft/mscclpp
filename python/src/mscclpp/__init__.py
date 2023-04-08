@@ -71,11 +71,11 @@ class Comm:
 
     @staticmethod
     def init_rank_from_address(
-            address: str,
-            rank: int,
-            world_size: int,
-            *,
-            port: Optional[int] = None,
+        address: str,
+        rank: int,
+        world_size: int,
+        *,
+        port: Optional[int] = None,
     ):
         """Initialize a Comm from an address.
 
@@ -156,12 +156,12 @@ class Comm:
         return [pickle.loads(b) for b in self.all_gather_bytes(pickle.dumps(item))]
 
     def connect(
-            self,
-            remote_rank: int,
-            tag: int,
-            data_ptr,
-            data_size: int,
-            transport: int,
+        self,
+        remote_rank: int,
+        tag: int,
+        data_ptr,
+        data_size: int,
+        transport: int,
     ) -> None:
         self._comm.connect(
             remote_rank,
@@ -181,12 +181,13 @@ class Comm:
         self._comm.stop_proxies()
 
     def register_buffer(
-            self,
-            data_ptr,
-            data_size: int,
+        self,
+        data_ptr,
+        data_size: int,
     ) -> list[_P2PHandle]:
         return [
-            P2PHandle(self, h) for h in self._comm.register_buffer(
+            P2PHandle(self, h)
+            for h in self._comm.register_buffer(
                 data_ptr,
                 data_size,
             )
@@ -197,8 +198,6 @@ class P2PHandle:
     _comm: Comm
     _handle: _P2PHandle
 
-    def __init__(self,
-                 comm: Comm,
-                 handle: _P2PHandle):
+    def __init__(self, comm: Comm, handle: _P2PHandle):
         self._comm = comm
         self._handle = handle
