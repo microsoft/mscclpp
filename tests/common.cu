@@ -619,7 +619,8 @@ testResult_t run()
   PRINT("# Initializing MSCCL++\n");
 
   mscclppUniqueId mscclppId;
-  if (proc == 0) MSCCLPPCHECK(mscclppGetUniqueId(&mscclppId));
+  if (proc == 0)
+    MSCCLPPCHECK(mscclppGetUniqueId(&mscclppId));
   MPI_Bcast((void*)&mscclppId, sizeof(mscclppId), MPI_BYTE, 0, MPI_COMM_WORLD);
   mscclppComm_t comm;
   MSCCLPPCHECK(mscclppCommInitRankFromId(&comm, totalProcs, mscclppId, rank));

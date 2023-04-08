@@ -16,7 +16,6 @@
 #include <stdint.h>
 #include <time.h>
 
-
 // int mscclppCudaCompCap();
 
 // PCI Bus ID <-> int64 conversion functions

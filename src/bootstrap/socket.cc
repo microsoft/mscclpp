@@ -454,7 +454,7 @@ static mscclppResult_t socketTryAccept(struct mscclppSocket* sock)
 {
   static bool timeInitialized = false;
   static mscclppTime_t initTime;
-  if (!timeInitialized){
+  if (!timeInitialized) {
     timeInitialized = true;
     initTime = getClock();
   }
@@ -518,7 +518,7 @@ static mscclppResult_t socketStartConnect(struct mscclppSocket* sock)
 {
   static bool timeInitialized = false;
   static mscclppTime_t initTime;
-  if (!timeInitialized){
+  if (!timeInitialized) {
     timeInitialized = true;
     initTime = getClock();
   }
@@ -559,7 +559,7 @@ static mscclppResult_t socketPollConnect(struct mscclppSocket* sock)
 {
   static bool timeInitialized = false;
   static mscclppTime_t initTime;
-  if (!timeInitialized){
+  if (!timeInitialized) {
     timeInitialized = true;
     initTime = getClock();
   }
