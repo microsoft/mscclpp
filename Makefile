@@ -8,6 +8,7 @@ DEBUG ?= 0
 VERBOSE ?= 1
 TRACE ?= 0
 NPKIT ?= 0
+GDRCOPY ?= 0
 USE_MPI_FOR_TESTS ?= 1
 
 ######## CUDA
@@ -57,10 +58,8 @@ CXXFLAGS   := -DCUDA_MAJOR=$(CUDA_MAJOR) -DCUDA_MINOR=$(CUDA_MINOR) -fPIC -fvisi
 ifneq ($(TRACE), 0)
 CXXFLAGS  += -DENABLE_TRACE
 endif
-# Maxrregcount needs to be set accordingly to MSCCLPP_MAX_NTHREADS (otherwise it will cause kernel launch errors)
-# 512 : 120, 640 : 96, 768 : 80, 1024 : 60
-# We would not have to set this if we used __launch_bounds__, but this only works on kernels, not on functions.
-NVCUFLAGS  := -ccbin $(CXX) $(NVCC_GENCODE) -std=c++11 --expt-extended-lambda -Xptxas -maxrregcount=96 -Xfatbin -compress-all
+
+NVCUFLAGS  := -ccbin $(CXX) $(NVCC_GENCODE) -std=c++11 --expt-extended-lambda -Xfatbin -compress-all
 # Use addprefix so that we can specify more than one path
 NVLDFLAGS  := -L$(CUDA_LIB) -lcudart -lrt
 
@@ -96,6 +95,15 @@ MPI_LDFLAGS :=
 MPI_MACRO   :=
 endif
 
+#### GDRCOPY
+ifeq ($(GDRCOPY), 1)
+GDRCOPY_LDFLAGS := -lgdrapi
+CXXFLAGS  += -DMSCCLPP_USE_GDRCOPY
+NVCUFLAGS += -DMSCCLPP_USE_GDRCOPY
+else
+GDRCOPY_LDFLAGS :=
+endif
+
 #### MSCCL++
 BUILDDIR ?= $(abspath ./build)
 INCDIR := include
@@ -108,18 +116,22 @@ CXXFLAGS  += -DENABLE_NPKIT
 NVCUFLAGS += -DENABLE_NPKIT
 endif
 
-LDFLAGS := $(NVLDFLAGS) -libverbs -lnuma
+LDFLAGS := $(NVLDFLAGS) $(GDRCOPY_LDFLAGS) -libverbs -lnuma
 
 LIBSRCS := $(addprefix src/,debug.cc utils.cc param.cc init.cc proxy.cc ib.cc config.cc)
 LIBSRCS += $(addprefix src/bootstrap/,bootstrap.cc socket.cc)
 ifneq ($(NPKIT), 0)
 LIBSRCS += $(addprefix src/misc/,npkit.cc)
 endif
+ifeq ($(GDRCOPY), 1)
+LIBSRCS += $(addprefix src/,gdr.cc)
+endif
 LIBOBJS := $(patsubst %.cc,%.o,$(LIBSRCS))
 LIBOBJTARGETS := $(LIBOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 
 HEADERS := $(wildcard src/include/*.h)
-CPPSOURCES := $(shell find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "*/build/*")
+CPPSOURCES := $(shell find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*" -not -path "./python/*")
+PYTHONCPPSOURCES := $(shell find ./python/src/ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
 
 INCEXPORTS := mscclpp.h mscclppfifo.h
 INCTARGETS := $(INCEXPORTS:%=$(BUILDDIR)/$(INCDIR)/%)
@@ -127,6 +139,12 @@ INCTARGETS := $(INCEXPORTS:%=$(BUILDDIR)/$(INCDIR)/%)
 LIBNAME   := libmscclpp.so
 LIBSONAME := $(LIBNAME).$(MSCCLPP_MAJOR)
 LIBTARGET := $(BUILDDIR)/$(LIBDIR)/$(LIBNAME).$(MSCCLPP_MAJOR).$(MSCCLPP_MINOR).$(MSCCLPP_PATCH)
+
+UTDIR  := tests/unittests
+UTSRCS := $(addprefix $(UTDIR)/,ib_test.cc)
+UTOBJS := $(patsubst %.cc,%.o,$(UTSRCS))
+UTOBJTARGETS := $(UTOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
+UTBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(UTOBJS))
 
 TESTSDIR  := tests
 TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc allgather_test_standalone.cu)
@@ -148,15 +166,19 @@ build: lib tests mscclpp-test
 
 lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
 
-tests: $(TESTSBINS)
+unittests: $(UTBINS)
+
+tests: unittests $(TESTSBINS)
 
 mscclpp-test: $(LIBTARGET) $(MSCLLPPTESTBINS)
 
 cpplint:
 	clang-format-12 -style=file --verbose --Werror --dry-run $(CPPSOURCES)
+	clang-format-12 --dry-run $(CPPSOURCES)
 
 cpplint-autofix:
 	clang-format-12 -style=file --verbose --Werror -i $(CPPSOURCES)
+	clang-format-12 -i $(PYTHONCPPSOURCES)
 
 # Run cpplint on a single file, example: make cpplint-file-autofix INPUTFILE=src/bootstrap/bootstrap.cc
 cpplint-file-autofix:
@@ -164,6 +186,11 @@ cpplint-file-autofix:
 
 # Compile libobjs
 $(BUILDDIR)/$(OBJDIR)/%.o: %.cc $(HEADERS)
+	@mkdir -p $(@D)
+	$(CXX) -o $@ $(INCLUDE) $(CXXFLAGS) -c $<
+
+# Compile utobjs
+$(BUILDDIR)/$(OBJDIR)/$(UTDIR)/%.o: $(UTDIR)/%.cc $(HEADERS)
 	@mkdir -p $(@D)
 	$(CXX) -o $@ $(INCLUDE) $(CXXFLAGS) -c $<
 
@@ -177,6 +204,11 @@ $(LIBTARGET): $(LIBOBJTARGETS)
 	ln -sf $(LIBTARGET) $(BUILDDIR)/$(LIBDIR)/$(LIBNAME)
 	ln -sf $(LIBTARGET) $(BUILDDIR)/$(LIBDIR)/$(LIBSONAME)
 
+# UT bins
+$(BUILDDIR)/$(BINDIR)/$(UTDIR)/%: $(BUILDDIR)/$(OBJDIR)/$(UTDIR)/%.o $(LIBOBJTARGETS)
+	@mkdir -p $(@D)
+	$(NVCC) -o $@ $+ $(MPI_LDFLAGS) $(LDFLAGS)
+
 # Compile .cc tests
 $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cc $(INCTARGETS)
 	@mkdir -p $(@D)
@@ -188,7 +220,7 @@ $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cu $(INCTARGETS)
 	$(NVCC) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(NVCUFLAGS) $(INCLUDE) -c $< $(MPI_MACRO)
 
 # Test bins
-$(BUILDDIR)/$(BINDIR)/%: $(BUILDDIR)/$(OBJDIR)/%.o $(LIBTARGET)
+$(BUILDDIR)/$(BINDIR)/$(TESTSDIR)/%: $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o $(LIBTARGET)
 	@mkdir -p $(@D)
 	$(NVCC) -o $@ $< $(MPI_LDFLAGS) -L$(BUILDDIR)/$(LIBDIR) -lmscclpp
 
