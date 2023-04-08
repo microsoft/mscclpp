@@ -16,8 +16,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-uint64_t clockNano(); // from utils.h with which we have a circular dependency
-
 template <typename T> mscclppResult_t mscclppCudaHostCallocDebug(T** ptr, size_t nelem, const char* filefunc, int line)
 {
   mscclppResult_t result = mscclppSuccess;
