@@ -143,7 +143,7 @@ void* mscclppProxyService(void* _args)
         void* srcBuff = (void*)((char*)conn->devConn->localBuff + trigger.fields.srcDataOffset);
         void* dstBuff = (void*)((char*)conn->devConn->remoteBuff + trigger.fields.dstDataOffset);
         PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, p2pStream));
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_ENTRY, (uint32_t)trigger.fields.dataSize,
+        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)trigger.fields.dataSize,
                                trigger.fields.connId);
       } else {
         conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
@@ -154,7 +154,7 @@ void* mscclppProxyService(void* _args)
           // Return value is errno.
           WARN("data postSend failed: errno %d", ret);
         }
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_ENTRY, (uint32_t)trigger.fields.dataSize,
+        npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)trigger.fields.dataSize,
                                trigger.fields.connId);
       }
     }
@@ -162,7 +162,7 @@ void* mscclppProxyService(void* _args)
       if (isP2pProxy) {
         PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->sendEpochId, sizeof(uint64_t),
                                        cudaMemcpyDeviceToDevice, p2pStream));
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_ENTRY, (uint32_t)sizeof(uint64_t), trigger.fields.connId);
+        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_FLAG_ENTRY, (uint32_t)sizeof(uint64_t), trigger.fields.connId);
       } else {
         // My local flag is copied to the peer's proxy flag
         conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
@@ -170,7 +170,7 @@ void* mscclppProxyService(void* _args)
         if ((ret = conn->ibQp->postSend()) != 0) {
           WARN("flag postSend failed: errno %d", ret);
         }
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_ENTRY, (uint32_t)sizeof(uint64_t), trigger.fields.connId);
+        npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_FLAG_ENTRY, (uint32_t)sizeof(uint64_t), trigger.fields.connId);
       }
     }
     // Wait for completion
