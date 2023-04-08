@@ -62,7 +62,6 @@ static void npkitInitReqIds(struct mscclppComm* comm)
 
 static void npkitCollectEntryEvent(struct mscclppConn* conn, uint8_t type, uint32_t size, int channelId)
 {
-  uint64_t ts = *(volatile uint64_t*)NpKit::GetCpuTimestamp();
   uint64_t reqId = 0;
   if (conn->npkitFreeReqIds.size() == 0) {
     reqId = conn->npkitUsedReqIds.size();
@@ -71,15 +70,14 @@ static void npkitCollectEntryEvent(struct mscclppConn* conn, uint8_t type, uint3
     conn->npkitFreeReqIds.pop_back();
   }
   conn->npkitUsedReqIds.push_back(reqId);
-  NpKit::CollectCpuEvent(type, size, (uint32_t)reqId, ts, channelId);
+  NpKit::CollectCpuEvent(type, size, (uint32_t)reqId, NpKit::GetCpuTimestamp(), channelId);
 }
 
 static void npkitCollectExitEvents(struct mscclppConn* conn, uint8_t type, int channelId)
 {
-  uint64_t ts = *(volatile uint64_t*)NpKit::GetCpuTimestamp();
   while (conn->npkitUsedReqIds.size()) {
     uint64_t reqId = conn->npkitUsedReqIds.back();
-    NpKit::CollectCpuEvent(type, 0, (uint32_t)reqId, ts, channelId);
+    NpKit::CollectCpuEvent(type, 0, (uint32_t)reqId, NpKit::GetCpuTimestamp(), channelId);
     conn->npkitFreeReqIds.push_back(reqId);
     conn->npkitUsedReqIds.pop_back();
   }
