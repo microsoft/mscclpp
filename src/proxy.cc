@@ -162,8 +162,8 @@ void* mscclppProxyService(void* _args)
       if (isP2pProxy) {
         PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->sendEpochId, sizeof(uint64_t),
                                        cudaMemcpyDeviceToDevice, p2pStream));
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_FLAG_ENTRY,
-                               (uint32_t)sizeof(uint64_t), trigger.fields.connId);
+        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_FLAG_ENTRY, (uint32_t)sizeof(uint64_t),
+                               trigger.fields.connId);
       } else {
         // My local flag is copied to the peer's proxy flag
         conn->ibQp->stageSend(conn->ibLocalFlagMr, &conn->ibProxyFlagMrInfo, sizeof(uint64_t),
