@@ -40,11 +40,9 @@ public:
 
   static void CollectCpuEvent(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp, int channel_id);
 
-  static uint64_t* GetCpuTimestamp();
+  static uint64_t GetCpuTimestamp();
 
 private:
-  static void CpuTimestampUpdateThread();
-
   // 64K * 512 * 16B = 512MB per GPU
   static const uint64_t kMaxNumGpuEventsPerBuffer = 1ULL << 16;
 
@@ -56,12 +54,11 @@ private:
 
   static NpKitEventCollectContext* gpu_collect_contexts_;
   static NpKitEventCollectContext* cpu_collect_contexts_;
-  static uint64_t* cpu_timestamp_;
+
+  static uint64_t cpu_base_system_timestamp_;
+  static uint64_t cpu_base_steady_timestamp_;
 
   static uint64_t rank_;
-
-  static std::thread* cpu_timestamp_update_thread_;
-  static volatile bool cpu_timestamp_update_thread_should_stop_;
 };
 
 #endif
