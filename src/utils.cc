@@ -270,3 +270,13 @@ mscclppResult_t setNumaState(mscclppNumaState state)
   numa_bind(state);
   return mscclppSuccess;
 }
+
+inline mscclppTime_t getClock()
+{
+  return std::chrono::steady_clock::now();
+}
+
+inline int64_t elapsedClock(mscclppTime_t start, mscclppTime_t end)
+{
+  return std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
+}

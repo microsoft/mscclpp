@@ -174,6 +174,7 @@ testResult_t AllGatherInitData(struct testArgs* args, int in_place)
   CUDACHECK(cudaMemcpy(args->expected, dataHost, recvcount * sizeof(int), cudaMemcpyHostToDevice));
   delete dataHost;
   CUDACHECK(cudaDeviceSynchronize());
+  MSCCLPPCHECK(mscclppBootstrapBarrier(args->comm));
   return testSuccess;
 }
 
