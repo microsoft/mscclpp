@@ -147,24 +147,30 @@ UTOBJTARGETS := $(UTOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 UTBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(UTOBJS))
 
 TESTSDIR  := tests
-TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc allgather_test.cu)
+TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc allgather_test_standalone.cu)
 TESTSOBJS := $(patsubst %.cc,%.o,$(TESTSSRCS)) $(patsubst %.cu,%.o,$(TESTSSRCS))
 TESTSOBJTARGETS := $(TESTSOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 TESTSBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(TESTSOBJS))
 
+MSCLLPPTESTSOBJSDIR:= $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)
+MSCLLPPTESTBINFILESLIST := allgather_test
+MSCLLPPTESTBINS         := $(MSCLLPPTESTBINFILESLIST:%=$(BUILDDIR)/$(BINDIR)/$(TESTSDIR)/%_perf)
+
 INCLUDE := -Isrc -Isrc/include
 
-.PHONY: all build lib tests clean
+.PHONY: all build lib tests mscclpp_test clean
 
 all: build
 
-build: lib tests
+build: lib tests mscclpp-test
 
 lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
 
 unittests: $(UTBINS)
 
 tests: unittests $(TESTSBINS)
+
+mscclpp-test: $(LIBTARGET) $(MSCLLPPTESTBINS)
 
 cpplint:
 	clang-format-12 -style=file --verbose --Werror --dry-run $(CPPSOURCES)
@@ -211,12 +217,17 @@ $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cc $(INCTARGETS)
 # Compile .cu tests
 $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cu $(INCTARGETS)
 	@mkdir -p $(@D)
-	$(NVCC) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(NVCUFLAGS) -c $< $(MPI_MACRO)
+	$(NVCC) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(NVCUFLAGS) $(INCLUDE) -c $< $(MPI_MACRO)
 
 # Test bins
 $(BUILDDIR)/$(BINDIR)/$(TESTSDIR)/%: $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o $(LIBTARGET)
 	@mkdir -p $(@D)
 	$(NVCC) -o $@ $< $(MPI_LDFLAGS) -L$(BUILDDIR)/$(LIBDIR) -lmscclpp
+
+# Compile mscclpp_test
+$(BUILDDIR)/$(BINDIR)/$(TESTSDIR)/%_perf: $(MSCLLPPTESTSOBJSDIR)/%.o $(MSCLLPPTESTSOBJSDIR)/common.o
+	@mkdir -p $(@D)
+	$(NVCC) -o $@ $^ $(MPI_LDFLAGS) -L$(BUILDDIR)/$(LIBDIR) -lmscclpp
 
 clean:
 	rm -rf $(BUILDDIR)
