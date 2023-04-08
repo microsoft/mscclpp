@@ -52,7 +52,6 @@ int timeout = 0;
 int report_cputime = 0;
 // Report average iteration time: (0=RANK0,1=AVG,2=MIN,3=MAX)
 int average = 1;
-std::string ip_port;
 int kernel_num = 0;
 int cudaGraphLaunches = 15;
 
@@ -447,7 +446,6 @@ int main(int argc, char* argv[])
                                      {"cudagraph", required_argument, 0, 'G'},
                                      {"report_cputime", required_argument, 0, 'C'},
                                      {"average", required_argument, 0, 'a'},
-                                     {"ip_port", required_argument, 0, 'P'},
                                      {"kernel_num", required_argument, 0, 'k'},
                                      {"help", no_argument, 0, 'h'},
                                      {}};
@@ -507,9 +505,6 @@ int main(int argc, char* argv[])
     case 'a':
       average = (int)strtol(optarg, NULL, 0);
       break;
-    case 'P':
-      ip_port = optarg;
-      break;
     case 'k':
       kernel_num = (int)strtol(optarg, NULL, 0);
       break;
@@ -529,7 +524,6 @@ int main(int argc, char* argv[])
              "[-G,--cudagraph <num graph launches>] \n\t"
              "[-C,--report_cputime <0/1>] \n\t"
              "[-a,--average <0/1/2/3> report average iteration time <0=RANK0/1=AVG/2=MIN/3=MAX>] \n\t"
-             "[-P,--ip_port <ip port for bootstrap>] \n\t"
              "[-k,--kernel_num <kernel number of commnication primitive>] \n\t"
              "[-h,--help]\n",
              basename(argv[0]));
@@ -539,10 +533,6 @@ int main(int argc, char* argv[])
   if (minBytes > maxBytes) {
     fprintf(stderr, "invalid sizes for 'minbytes' and 'maxbytes': %llu > %llu\n", (unsigned long long)minBytes,
             (unsigned long long)maxBytes);
-    return -1;
-  }
-  if (ip_port.empty()) {
-    fprintf(stderr, "--ip_port is required'\n");
     return -1;
   }
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
@@ -571,10 +561,10 @@ testResult_t run()
   is_main_thread = is_main_proc = (proc == 0) ? 1 : 0;
   is_main_thread = is_main_proc = (proc == 0) ? 1 : 0;
 
-  PRINT("# minBytes %ld maxBytes %ld step: %ld(%s) warmup iters: %d iters: %d validation: %d ip port: %s graph: %d, "
+  PRINT("# minBytes %ld maxBytes %ld step: %ld(%s) warmup iters: %d iters: %d validation: %d graph: %d, "
         "kernel num: %d\n",
         minBytes, maxBytes, (stepFactor > 1) ? stepFactor : stepBytes, (stepFactor > 1) ? "factor" : "bytes",
-        warmup_iters, iters, datacheck, ip_port.c_str(), cudaGraphLaunches, kernel_num);
+        warmup_iters, iters, datacheck, cudaGraphLaunches, kernel_num);
   PRINT("#\n");
   PRINT("# Using devices\n");
 
@@ -628,8 +618,11 @@ testResult_t run()
   PRINT("#\n");
   PRINT("# Initializing MSCCL++\n");
 
+  mscclppUniqueId mscclppId;
+  if (proc == 0) MSCCLPPCHECK(mscclppGetUniqueId(&mscclppId));
+  MPI_Bcast((void*)&mscclppId, sizeof(mscclppId), MPI_BYTE, 0, MPI_COMM_WORLD);
   mscclppComm_t comm;
-  MSCCLPPCHECK(mscclppCommInitRank(&comm, totalProcs, ip_port.c_str(), rank));
+  MSCCLPPCHECK(mscclppCommInitRankFromId(&comm, totalProcs, mscclppId, rank));
 
   double* delta;
   CUDACHECK(cudaHostAlloc(&delta, sizeof(double) * NUM_BLOCKS, cudaHostAllocPortable | cudaHostAllocMapped));
