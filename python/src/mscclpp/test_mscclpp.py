@@ -79,6 +79,8 @@ class CommsTest(unittest.TestCase):
         if errors:
             parts = []
             for rank, content in errors:
-                parts.append(f"[rank {rank}]: " + content.decode('utf-8', errors='ignore'))
+                parts.append(
+                    f"[rank {rank}]: " + content.decode("utf-8", errors="ignore")
+                )
 
             raise AssertionError("\n\n".join(parts))
