@@ -3,6 +3,8 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <cuda_runtime.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -69,6 +71,15 @@ void checkResult(
   }
 }
 
+#define RETRY(C, ...) \
+{ \
+  mscclppResult_t res; \
+  do { \
+	  res = (C); \
+  } while (res == mscclppInProgress); \
+  checkResult(res, __VA_ARGS__); \
+}
+
 // Maybe return the value, maybe throw an exception.
 template <typename Val, typename... Args>
 Val maybe(
@@ -83,16 +94,21 @@ struct _Comm {
   int _world_size;
   mscclppComm_t _handle;
   bool _is_open;
+  bool _proxies_running;
 
  public:
   _Comm(int rank, int world_size, mscclppComm_t handle)
-      : _rank(rank), _world_size(world_size), _handle(handle), _is_open(true) {}
+      : _rank(rank), _world_size(world_size), _handle(handle), _is_open(true), _proxies_running(false) {}
 
   ~_Comm() { close(); }
 
   // Close should be safe to call on a closed handle.
   void close() {
     if (_is_open) {
+      if (_proxies_running) {
+          mscclppProxyStop(_handle);
+          _proxies_running = false;
+      }
       checkResult(mscclppCommDestroy(_handle), "Failed to close comm channel");
       _handle = NULL;
       _is_open = false;
@@ -127,20 +143,25 @@ NB_MODULE(_py_mscclpp, m) {
 
   m.attr("MSCCLPP_UNIQUE_ID_BYTES") = MSCCLPP_UNIQUE_ID_BYTES;
 
-  m.def("_bind_log_handler", [](nb::callable cb) {
+  m.def("_bind_log_handler", [](nb::callable cb) -> void {
     _log_callback = nb::borrow<nb::callable>(cb);
     mscclppSetLogHandler(_LogHandler);
   });
-  m.def("_release_log_handler", []() {
+  m.def("_release_log_handler", []() -> void {
     _log_callback.reset();
     mscclppSetLogHandler(mscclppDefaultLogHandler);
   });
+
+  nb::enum_<mscclppTransport_t>(m, "TransportType")
+      .value("P2P", mscclppTransport_t::mscclppTransportP2P)
+      .value("SHM", mscclppTransport_t::mscclppTransportSHM)
+      .value("IB", mscclppTransport_t::mscclppTransportIB);
 
   nb::class_<mscclppUniqueId>(m, "MscclppUniqueId")
       .def_ro_static("__doc__", &DOC_MscclppUniqueId)
       .def_static(
           "from_context",
-          []() {
+          []() -> mscclppUniqueId {
             mscclppUniqueId uniqueId;
             return maybe(
                 mscclppGetUniqueId(&uniqueId),
@@ -150,7 +171,7 @@ NB_MODULE(_py_mscclpp, m) {
           nb::call_guard<nb::gil_scoped_release>())
       .def_static(
           "from_bytes",
-          [](nb::bytes source) {
+          [](nb::bytes source) -> mscclppUniqueId {
             if (source.size() != MSCCLPP_UNIQUE_ID_BYTES) {
               throw std::invalid_argument(string_format(
                   "Requires exactly %d bytes; found %d",
@@ -171,7 +192,7 @@ NB_MODULE(_py_mscclpp, m) {
       .def_ro_static("__doc__", &DOC__Comm)
       .def_static(
           "init_rank_from_address",
-          [](const std::string& address, int rank, int world_size) {
+          [](const std::string& address, int rank, int world_size) -> _Comm* {
             mscclppComm_t handle;
             checkResult(
                 mscclppCommInitRank(&handle, world_size, address.c_str(), rank),
@@ -189,7 +210,7 @@ NB_MODULE(_py_mscclpp, m) {
           "Initialize comms given an IP address, rank, and world_size")
       .def_static(
           "init_rank_from_id",
-          [](const mscclppUniqueId& id, int rank, int world_size) {
+          [](const mscclppUniqueId& id, int rank, int world_size) -> _Comm* {
             mscclppComm_t handle;
             checkResult(
                 mscclppCommInitRankFromId(&handle, world_size, id, rank),
@@ -207,44 +228,77 @@ NB_MODULE(_py_mscclpp, m) {
           "Initialize comms given u UniqueID, rank, and world_size")
       .def(
           "opened",
-          [](_Comm& comm) { return comm._is_open; },
+          [](_Comm& comm) -> bool { return comm._is_open; },
           "Is this comm object opened?")
       .def(
           "closed",
-          [](_Comm& comm) { return !comm._is_open; },
+          [](_Comm& comm) -> bool { return !comm._is_open; },
           "Is this comm object closed?")
       .def_ro("rank", &_Comm::_rank)
       .def_ro("world_size", &_Comm::_world_size)
       .def(
+          "connect",
+          [](_Comm& comm,
+             int remote_rank,
+             int tag,
+             uint64_t local_buff,
+             uint64_t buff_size,
+             mscclppTransport_t transport_type) -> void {
+            if (comm._proxies_running) {
+                throw std::invalid_argument("Proxy Threads Already Running");
+            }
+            RETRY(
+                mscclppConnect(
+                    comm._handle,
+                    remote_rank,
+                    tag,
+                    reinterpret_cast<void*>(local_buff),
+                    buff_size,
+                    transport_type,
+                    NULL  // ibDev
+                    ),
+                "Connect failed");
+          },
+          "remote_rank"_a,
+          "tag"_a,
+          "local_buf"_a,
+          "buff_size"_a,
+          "transport_type"_a,
+          nb::call_guard<nb::gil_scoped_release>(),
+          "Attach a local buffer to a remote connection.")
+      .def(
           "connection_setup",
-          [](_Comm& comm) {
+          [](_Comm& comm) -> void {
             comm.check_open();
-            return maybe(
-                mscclppConnectionSetup(comm._handle),
-                true,
-                "Failed to settup MSCCLPP connection");
+            RETRY(mscclppConnectionSetup(comm._handle),
+            "Failed to setup MSCCLPP connection");
           },
           nb::call_guard<nb::gil_scoped_release>(),
           "Run connection setup for MSCCLPP.")
       .def(
-          "launch_proxy",
-          [](_Comm& comm) {
+          "launch_proxies",
+          [](_Comm& comm) -> void {
             comm.check_open();
-            return maybe(
+            if (comm._proxies_running) {
+              throw std::invalid_argument("Proxy Threads Already Running");
+            }
+            checkResult(
                 mscclppProxyLaunch(comm._handle),
-                true,
                 "Failed to launch MSCCLPP proxy");
+            comm._proxies_running = true;
           },
           nb::call_guard<nb::gil_scoped_release>(),
           "Start the MSCCLPP proxy.")
       .def(
-          "stop_proxy",
-          [](_Comm& comm) {
+          "stop_proxies",
+          [](_Comm& comm) -> void {
             comm.check_open();
-            return maybe(
-                mscclppProxyStop(comm._handle),
-                true,
-                "Failed to stop MSCCLPP proxy");
+            if (comm._proxies_running) {
+              checkResult(
+                  mscclppProxyStop(comm._handle),
+                  "Failed to stop MSCCLPP proxy");
+              comm._proxies_running = false;
+            }
           },
           nb::call_guard<nb::gil_scoped_release>(),
           "Start the MSCCLPP proxy.")
@@ -272,7 +326,7 @@ NB_MODULE(_py_mscclpp, m) {
           "all-gather ints over the bootstrap connection.")
       .def(
           "all_gather_bytes",
-          [](_Comm& comm, nb::bytes& item) {
+          [](_Comm& comm, nb::bytes& item) -> std::vector<nb::bytes> {
             // First, all-gather the sizes of all bytes.
             std::vector<size_t> sizes(comm._world_size);
             sizes[comm._rank] = item.size();
