@@ -1,10 +1,16 @@
 #include "mscclpp.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
 #include <unistd.h>
 
 #include "common.h"
+
+#define MSCCLPP_USE_MPI_FOR_TESTS
+#ifdef MSCCLPP_USE_MPI_FOR_TESTS
+#include <mpi.h>
+#endif // MSCCLPP_USE_MPI_FOR_TESTS
 
 #define RANKS_PER_NODE 8
 #define USE_DMA_FOR_P2P 1
@@ -65,7 +71,7 @@ __global__ void smKernel(bool root, size_t dataSize)
   else
   {
     recvConn.wait();
-    sendConn.putDirect(0, dataSize, threadIdx.x, blockDim.x);
+    // sendConn.putDirect(0, dataSize, threadIdx.x, blockDim.x);
     sendConn.signalDirect(threadIdx.x, blockDim.x);
   }
 }
@@ -101,17 +107,21 @@ void resetData(char* data_d, size_t data_size, bool isRoot)
 
 int main(int argc, const char* argv[])
 {
-#ifdef MSCCLPP_USE_MPI_FOR_TESTS
-  MPI_Init(NULL, NULL);
-#endif
   const char* ip_port;
   int rank, world_size;
+#ifdef MSCCLPP_USE_MPI_FOR_TESTS
+  MPI_Init(NULL, NULL);
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+#endif
   parse_arguments(argc, argv, &ip_port, &rank, &world_size);
 
   bool isRoot = rank == 0;
-  
+
   CUDACHECK(cudaSetDevice(rank));
 
+  if (rank == 0)
+    printf("Initializing MSCCL++\n");
   mscclppComm_t comm;
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, ip_port, rank));
 
@@ -121,17 +131,33 @@ int main(int argc, const char* argv[])
   CUDACHECK(cudaMalloc(&data_d, data_size));
   resetData(data_d, data_size, isRoot);
 
-  MSCCLPPCHECK(mscclppConnect(comm, (rank + 1) % world_size, 0, data_d, data_size, mscclppTransportP2P));
-  MSCCLPPCHECK(mscclppConnect(comm, (rank - 1) % world_size, 0, data_d, data_size, mscclppTransportP2P));
+  if (rank == 0) {
+    MSCCLPPCHECK(mscclppConnect(comm, 1, 0, data_d, data_size, mscclppTransportP2P));
+  } else {
+    MSCCLPPCHECK(mscclppConnect(comm, 0, 0, data_d, data_size, mscclppTransportP2P));
+  }
+  if (rank == 0)
+    printf("Finished connection\n");
 
   MSCCLPPCHECK(mscclppConnectionSetup(comm));
+  if (rank == 0)
+    printf("Finished Setup\n");
 
   MSCCLPPCHECK(mscclppProxyLaunch(comm));
+  if (rank == 0)
+    printf("Finished proxy launch\n");
 
   mscclppDevConn_t *sendDevConn;
   mscclppDevConn_t *recvDevConn;
-  MSCCLPPCHECK(mscclppGetDeviceConnection(comm, rank + 1 % world_size, 0, &sendDevConn));
-  MSCCLPPCHECK(mscclppGetDeviceConnection(comm, rank - 1 % world_size, 0, &recvDevConn));
+  if (rank == 0) {
+    MSCCLPPCHECK(mscclppGetDeviceConnection(comm, 1, 0, &sendDevConn));
+    MSCCLPPCHECK(mscclppGetDeviceConnection(comm, 1, 0, &recvDevConn));
+  } else {
+    MSCCLPPCHECK(mscclppGetDeviceConnection(comm, 0, 0, &sendDevConn));
+    MSCCLPPCHECK(mscclppGetDeviceConnection(comm, 0, 0, &recvDevConn));
+  }
+  if (rank == 0)
+    printf("Finished device connection\n");
 
   CUDACHECK(cudaMemcpyToSymbol(sendConnConst, sendDevConn, sizeof(mscclppDevConn_t)));
   CUDACHECK(cudaMemcpyToSymbol(recvConnConst, recvDevConn, sizeof(mscclppDevConn_t)));
@@ -139,6 +165,8 @@ int main(int argc, const char* argv[])
   cudaStream_t stream;
   CUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
+  if (rank == 0)
+    printf("Start running kernel\n");
   smKernel<<<1, 256, 0, stream>>>(isRoot, data_size);
   CUDACHECK(cudaDeviceSynchronize());
 

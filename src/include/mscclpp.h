@@ -140,7 +140,7 @@ struct mscclppDevConn
   {
     char* src = (char*)localBuff + srcDataOffset;
     char* dst = (char*)remoteBuff + dstDataOffset;
-    for (char i = threadIdx; i < dataSize; i += numThreads)
+    for (size_t i = threadIdx; i < dataSize; i += numThreads)
     {
       dst[i] = src[i];
     }
@@ -159,15 +159,16 @@ struct mscclppDevConn
     if (threadIdx == 0)
     {
       epochIncrement();
-      *(volatile uint64_t*)proxyEpochId = *sendEpochId;
+      *(volatile uint64_t*)remoteEpochId = *sendEpochId;
     }
   }
 
   __forceinline__ __device__ void wait()
   {
-    (*recvEpochId) += 1;
-    // printf("%llu %llu %llu\n", *(volatile uint64_t*)proxyEpochId, (*recvEpochId), *(volatile uint64_t*)sendEpochId);
-    while (*(volatile uint64_t*)proxyEpochId < (*recvEpochId))
+    if (threadIdx.x == 0 ) {
+      (*recvEpochId) += 1;
+    }
+    while (*(volatile uint64_t*)directRecvEpochId < (*recvEpochId))
       ;
   }
 
@@ -182,10 +183,12 @@ struct mscclppDevConn
 
   void* localBuff;
   uint64_t* sendEpochId; // this is read and written by the GPU
-  uint64_t* recvEpochId; // this is the copy of the remote epoch id.
+  uint64_t* recvEpochId; // this is the expected recv epoch id.
+  uint64_t* directRecvEpochId; // this is read amd written by remote GPU.
 
   void* remoteBuff;
   uint64_t* remoteFlag;
+  uint64_t* remoteEpochId;
   uint64_t* remoteProxyEpochId;
   uint64_t* proxyEpochId; // this is only written by the proxy thread
 
