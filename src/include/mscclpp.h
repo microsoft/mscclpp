@@ -168,6 +168,7 @@ struct mscclppDevConn
     if (threadIdx.x == 0 ) {
       (*recvEpochId) += 1;
     }
+    __threadfence_system();
     while (*(volatile uint64_t*)directRecvEpochId < (*recvEpochId))
       ;
   }

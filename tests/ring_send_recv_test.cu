@@ -47,6 +47,33 @@ static double getTime(void)
   return (tspec.tv_nsec / 1.0e9) + tspec.tv_sec;
 }
 
+
+void parse_arguments(int argc, const char* argv[], const char** ip_port, int* rank, int* world_size)
+{
+#ifdef MSCCLPP_USE_MPI_FOR_TESTS
+  if (argc != 2 && argc != 4) {
+    print_usage(argv[0]);
+    exit(-1);
+  }
+  *ip_port = argv[1];
+  if (argc == 4) {
+    *rank = atoi(argv[2]);
+    *world_size = atoi(argv[3]);
+  } else {
+    MPI_Comm_rank(MPI_COMM_WORLD, rank);
+    MPI_Comm_size(MPI_COMM_WORLD, world_size);
+  }
+#else
+  if (argc != 4) {
+    print_usage(argv[0]);
+    exit(-1);
+  }
+  *ip_port = argv[1];
+  *rank = atoi(argv[2]);
+  *world_size = atoi(argv[3]);
+#endif
+}
+
 __global__ void initKernel(char* data_d, int dataSize)
 {
   for (size_t i = threadIdx.x; i < dataSize; i += blockDim.x) {
@@ -71,7 +98,7 @@ __global__ void smKernel(bool root, size_t dataSize)
   else
   {
     recvConn.wait();
-    // sendConn.putDirect(0, dataSize, threadIdx.x, blockDim.x);
+    sendConn.putDirect(0, dataSize, threadIdx.x, blockDim.x);
     sendConn.signalDirect(threadIdx.x, blockDim.x);
   }
 }
@@ -126,8 +153,9 @@ int main(int argc, const char* argv[])
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, ip_port, rank));
 
   char* data_d;
-  size_t data_size = 1 << 20; // Megabyte
-  // size_t data_size = 1 << 30; // Gigabyte
+  // size_t data_size = 1 << 10; // Kilobyte
+  // size_t data_size = 1 << 20; // Megabyte
+  size_t data_size = 1 << 30; // Gigabyte
   CUDACHECK(cudaMalloc(&data_d, data_size));
   resetData(data_d, data_size, isRoot);
 
