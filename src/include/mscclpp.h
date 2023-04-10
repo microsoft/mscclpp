@@ -167,10 +167,10 @@ struct mscclppDevConn
   {
     if (threadIdx.x == 0 ) {
       (*recvEpochId) += 1;
+      while (*(volatile uint64_t*)directRecvEpochId < (*recvEpochId))
+        ;
     }
-    __threadfence_system();
-    while (*(volatile uint64_t*)directRecvEpochId < (*recvEpochId))
-      ;
+    __syncthreads();
   }
 
   __forceinline__ __device__ void epochIncrement()
