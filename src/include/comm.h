@@ -28,6 +28,7 @@ struct mscclppConn
   mscclppTransport_t transport;
   int remoteRank;
   uint64_t buffSize;
+  uint64_t* remoteProxyFlag;
   uint64_t* cpuProxyFlag;
   void* cpuProxyFlagGdrDesc;
   struct mscclppDevConn* devConn;

@@ -15,6 +15,7 @@
 #define RANKS_PER_NODE 8
 #define USE_DMA_FOR_P2P 1
 #define TEST_CONN_TYPE 0 // 0: P2P(for local)+IB(for remote), 1: IB-Only
+#define BLOCK_THREADS_NUM 256
 
 #define MSCCLPPCHECK(call)                                                                                             \
   do {                                                                                                                 \
@@ -92,41 +93,32 @@ __global__ void smKernel(bool root, size_t dataSize)
   if (root)
   {
     sendConn.putDirect(0, dataSize, threadIdx.x, blockDim.x);
-    sendConn.signalDirect(threadIdx.x, blockDim.x);
-    recvConn.wait();
+    // make sure all the threads have put their data
+    __syncthreads();
+    if (threadIdx.x == 0){
+      sendConn.signalDirect();
+      recvConn.waitDirectSingal();
+    }
   }
   else
   {
-    recvConn.wait();
+    if (threadIdx.x == 0) {
+      recvConn.waitDirectSingal();
+    }
+    // make sure we get the latest data
+    __syncthreads();
     sendConn.putDirect(0, dataSize, threadIdx.x, blockDim.x);
-    sendConn.signalDirect(threadIdx.x, blockDim.x);
-  }
-}
-
-__global__ void dmaKernel(bool root, size_t dataSize)
-{
-  if (threadIdx.x != 0)
-    return;
-
-  mscclppDevConn_t sendConn = sendConnConst;
-  mscclppDevConn_t recvConn = recvConnConst;
-
-  if (root)
-  {
-    sendConn.putWithSignal(0, dataSize);
-    recvConn.wait();
-  }
-  else
-  {
-    recvConn.wait();
-    sendConn.putWithSignal(0, dataSize);
+    __syncthreads();
+    if (threadIdx.x == 0) {
+      sendConn.signalDirect();
+    }
   }
 }
 
 void resetData(char* data_d, size_t data_size, bool isRoot)
 {
   if (isRoot) {
-    initKernel<<<1, 256>>>(data_d, data_size);
+    initKernel<<<1, BLOCK_THREADS_NUM>>>(data_d, data_size);
   } else {
     CUDACHECK(cudaMemset(data_d, 0, data_size));
   }
@@ -195,7 +187,7 @@ int main(int argc, const char* argv[])
 
   if (rank == 0)
     printf("Start running kernel\n");
-  smKernel<<<1, 256, 0, stream>>>(isRoot, data_size);
+  smKernel<<<1, BLOCK_THREADS_NUM, 0, stream>>>(isRoot, data_size);
   CUDACHECK(cudaDeviceSynchronize());
 
   // Read results from GPU
@@ -217,54 +209,6 @@ int main(int argc, const char* argv[])
   if (failed) {
     return -1;
   }
-
-/*
-  // Perf test
-  cudaEvent_t ev_start;
-  cudaEvent_t ev_end;
-  CUDACHECK(cudaEventCreate(&ev_start));
-  CUDACHECK(cudaEventCreate(&ev_end));
-
-  // warm up
-  // int warmupiter = 10;
-  //  for (int i = 0; i < warmupiter; ++i) {
-  //    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
-  //  }
-
-  // cudaGraph Capture
-  cudaGraph_t graph;
-  cudaGraphExec_t instance;
-  cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
-  int cudagraphiter = 100;
-  for (int i = 0; i < cudagraphiter; ++i) {
-    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
-  }
-  cudaStreamEndCapture(stream, &graph);
-  cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
-
-  int cudagraphwarmup = 10;
-  for (int i = 0; i < cudagraphwarmup; ++i) {
-    cudaGraphLaunch(instance, stream);
-  }
-  CUDACHECK(cudaStreamSynchronize(stream));
-
-  // measure runtime
-  //  CUDACHECK(cudaEventRecord(ev_start, stream));
-  double t0 = getTime();
-  int cudagraphlaunch = 10;
-  for (int i = 0; i < cudagraphlaunch; ++i) {
-    // kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size);
-    cudaGraphLaunch(instance, stream);
-  }
-  //  CUDACHECK(cudaEventRecord(ev_end, stream));
-  CUDACHECK(cudaStreamSynchronize(stream));
-
-  double t1 = getTime();
-  float ms = (t1 - t0) * 1000.0;
-  //  CUDACHECK(cudaEventElapsedTime(&ms, ev_start, ev_end));
-  printf("rank: %d, time: %f us/iter\n", rank, ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter);
-
-*/
 
   MSCCLPPCHECK(mscclppProxyStop(comm));
 

@@ -160,7 +160,7 @@ void* mscclppProxyService(void* _args)
     }
     if (trigger.fields.type & mscclppFlag) {
       if (isP2pProxy) {
-        PROXYCUDACHECK(cudaMemcpyAsync(conn->devConn->remoteProxyEpochId, conn->devConn->sendEpochId, sizeof(uint64_t),
+        PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->sendEpochId, sizeof(uint64_t),
                                        cudaMemcpyDeviceToDevice, p2pStream));
         npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_FLAG_ENTRY, (uint32_t)sizeof(uint64_t),
                                trigger.fields.connId);

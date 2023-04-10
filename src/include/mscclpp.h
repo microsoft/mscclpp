@@ -136,41 +136,44 @@ struct mscclppDevConn
   }
 
   // Version that uses the SM directly to do the copy, instead of using the proxy thread like the functions above.
-  __forceinline__ __device__ void putDirect(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize, int threadIdx, int numThreads)
+  __forceinline__ __device__ void putDirect(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize,
+                                            uint32_t threadId, uint32_t numThreads)
   {
     char* src = (char*)localBuff + srcDataOffset;
     char* dst = (char*)remoteBuff + dstDataOffset;
-    for (size_t i = threadIdx; i < dataSize; i += numThreads)
-    {
+    for (size_t i = threadId; i < dataSize; i += numThreads) {
       dst[i] = src[i];
     }
   }
 
-  __forceinline__ __device__ void putDirect(uint64_t dataOffset, uint64_t dataSize, int threadIdx, int numThreads)
+  __forceinline__ __device__ void putDirect(uint64_t dataOffset, uint64_t dataSize, uint32_t threadId,
+                                            uint32_t numThreads)
   {
-    putDirect(dataOffset, dataOffset, dataSize, threadIdx, numThreads);
+    putDirect(dataOffset, dataOffset, dataSize, threadId, numThreads);
   }
 
-  __forceinline__ __device__ void signalDirect(int threadIdx, int numThreads)
+  __forceinline__ __device__ void signalDirect()
   {
-    // This fence ensures that the writes from a preceding putDirect() are visible on the peer GPU before the incremented epoch id is visible.
+    // This fence ensures that the writes from a preceding putDirect() are visible on the peer GPU before the
+    // incremented epoch id is visible.
     __threadfence_system();
-    __syncthreads();
-    if (threadIdx == 0)
-    {
-      epochIncrement();
-      *(volatile uint64_t*)remoteEpochId = *sendEpochId;
-    }
+    epochIncrement();
+    *(volatile uint64_t*)remoteEpochId = *sendEpochId;
   }
 
   __forceinline__ __device__ void wait()
   {
-    if (threadIdx.x == 0 ) {
-      (*recvEpochId) += 1;
-      while (*(volatile uint64_t*)directRecvEpochId < (*recvEpochId))
-        ;
-    }
-    __syncthreads();
+    (*recvEpochId) += 1;
+    // printf("%llu %llu %llu\n", *(volatile uint64_t*)proxyEpochId, (*recvEpochId), *(volatile uint64_t*)sendEpochId);
+    while (*(volatile uint64_t*)proxyEpochId < (*recvEpochId))
+      ;
+  }
+
+  __forceinline__ __device__ void waitDirectSingal()
+  {
+    (*recvEpochId) += 1;
+    while (*(volatile uint64_t*)directRecvEpochId < (*recvEpochId))
+      ;
   }
 
   __forceinline__ __device__ void epochIncrement()
@@ -185,12 +188,11 @@ struct mscclppDevConn
   void* localBuff;
   uint64_t* sendEpochId; // this is read and written by the GPU
   uint64_t* recvEpochId; // this is the expected recv epoch id.
-  uint64_t* directRecvEpochId; // this is read amd written by remote GPU.
+  uint64_t* directRecvEpochId; // this is read and written by remote GPU.
 
   void* remoteBuff;
   uint64_t* remoteFlag;
   uint64_t* remoteEpochId;
-  uint64_t* remoteProxyEpochId;
   uint64_t* proxyEpochId; // this is only written by the proxy thread
 
   // this is a concurrent fifo which is multiple threads from the device
