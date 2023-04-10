@@ -48,12 +48,9 @@ static long log2i(long n)
   return l;
 }
 
-inline uint64_t clockNano()
-{
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return uint64_t(ts.tv_sec) * 1000 * 1000 * 1000 + ts.tv_nsec;
-}
+typedef std::chrono::steady_clock::time_point mscclppTime_t;
+mscclppTime_t getClock();
+int64_t elapsedClock(mscclppTime_t start, mscclppTime_t end);
 
 /* get any bytes of random data from /dev/urandom, return 0 if it succeeds; else
  * return -1 */

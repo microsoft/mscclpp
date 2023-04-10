@@ -62,7 +62,6 @@ static void npkitInitReqIds(struct mscclppComm* comm)
 
 static void npkitCollectEntryEvent(struct mscclppConn* conn, uint8_t type, uint32_t size, int channelId)
 {
-  uint64_t ts = *(volatile uint64_t*)NpKit::GetCpuTimestamp();
   uint64_t reqId = 0;
   if (conn->npkitFreeReqIds.size() == 0) {
     reqId = conn->npkitUsedReqIds.size();
@@ -71,15 +70,14 @@ static void npkitCollectEntryEvent(struct mscclppConn* conn, uint8_t type, uint3
     conn->npkitFreeReqIds.pop_back();
   }
   conn->npkitUsedReqIds.push_back(reqId);
-  NpKit::CollectCpuEvent(type, size, (uint32_t)reqId, ts, channelId);
+  NpKit::CollectCpuEvent(type, size, (uint32_t)reqId, NpKit::GetCpuTimestamp(), channelId);
 }
 
 static void npkitCollectExitEvents(struct mscclppConn* conn, uint8_t type, int channelId)
 {
-  uint64_t ts = *(volatile uint64_t*)NpKit::GetCpuTimestamp();
   while (conn->npkitUsedReqIds.size()) {
     uint64_t reqId = conn->npkitUsedReqIds.back();
-    NpKit::CollectCpuEvent(type, 0, (uint32_t)reqId, ts, channelId);
+    NpKit::CollectCpuEvent(type, 0, (uint32_t)reqId, NpKit::GetCpuTimestamp(), channelId);
     conn->npkitFreeReqIds.push_back(reqId);
     conn->npkitUsedReqIds.pop_back();
   }
@@ -146,7 +144,7 @@ void* mscclppProxyService(void* _args)
         void* srcBuff = (void*)((char*)conn->devConn->localBuff + trigger.fields.srcDataOffset);
         void* dstBuff = (void*)((char*)conn->devConn->remoteBuff + trigger.fields.dstDataOffset);
         PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, p2pStream));
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_ENTRY, (uint32_t)trigger.fields.dataSize,
+        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)trigger.fields.dataSize,
                                trigger.fields.connId);
         p2pDirty = true;
       } else {
@@ -158,7 +156,7 @@ void* mscclppProxyService(void* _args)
           // Return value is errno.
           WARN("data postSend failed: errno %d", ret);
         }
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_ENTRY, (uint32_t)trigger.fields.dataSize,
+        npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)trigger.fields.dataSize,
                                trigger.fields.connId);
       }
     }
@@ -166,7 +164,8 @@ void* mscclppProxyService(void* _args)
       if (isP2pProxy) {
         PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->sendEpochId, sizeof(uint64_t),
                                        cudaMemcpyDeviceToDevice, p2pStream));
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_ENTRY, (uint32_t)sizeof(uint64_t), trigger.fields.connId);
+        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_FLAG_ENTRY, (uint32_t)sizeof(uint64_t),
+                               trigger.fields.connId);
         p2pDirty = true;
       } else {
         // My local flag is copied to the peer's proxy flag
@@ -175,7 +174,7 @@ void* mscclppProxyService(void* _args)
         if ((ret = conn->ibQp->postSend()) != 0) {
           WARN("flag postSend failed: errno %d", ret);
         }
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_ENTRY, (uint32_t)sizeof(uint64_t), trigger.fields.connId);
+        npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_FLAG_ENTRY, (uint32_t)sizeof(uint64_t), trigger.fields.connId);
       }
     }
     // Wait for completion

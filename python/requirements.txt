@@ -1,7 +1,12 @@
 black
 isort
 
+wheel
+
 pytest
 PyHamcrest
 
 nanobind
+
+torch
+numpy

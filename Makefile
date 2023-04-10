@@ -58,10 +58,8 @@ CXXFLAGS   := -DCUDA_MAJOR=$(CUDA_MAJOR) -DCUDA_MINOR=$(CUDA_MINOR) -fPIC -fvisi
 ifneq ($(TRACE), 0)
 CXXFLAGS  += -DENABLE_TRACE
 endif
-# Maxrregcount needs to be set accordingly to MSCCLPP_MAX_NTHREADS (otherwise it will cause kernel launch errors)
-# 512 : 120, 640 : 96, 768 : 80, 1024 : 60
-# We would not have to set this if we used __launch_bounds__, but this only works on kernels, not on functions.
-NVCUFLAGS  := -ccbin $(CXX) $(NVCC_GENCODE) -std=c++11 --expt-extended-lambda -Xptxas -maxrregcount=96 -Xfatbin -compress-all
+
+NVCUFLAGS  := -ccbin $(CXX) $(NVCC_GENCODE) -std=c++11 --expt-extended-lambda -Xfatbin -compress-all
 # Use addprefix so that we can specify more than one path
 NVLDFLAGS  := -L$(CUDA_LIB) -lcudart -lrt
 
@@ -142,31 +140,45 @@ LIBNAME   := libmscclpp.so
 LIBSONAME := $(LIBNAME).$(MSCCLPP_MAJOR)
 LIBTARGET := $(BUILDDIR)/$(LIBDIR)/$(LIBNAME).$(MSCCLPP_MAJOR).$(MSCCLPP_MINOR).$(MSCCLPP_PATCH)
 
+UTDIR  := tests/unittests
+UTSRCS := $(addprefix $(UTDIR)/,ib_test.cc)
+UTOBJS := $(patsubst %.cc,%.o,$(UTSRCS))
+UTOBJTARGETS := $(UTOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
+UTBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(UTOBJS))
+
 TESTSDIR  := tests
-TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc allgather_test.cu)
+TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc allgather_test_standalone.cu)
 TESTSOBJS := $(patsubst %.cc,%.o,$(TESTSSRCS)) $(patsubst %.cu,%.o,$(TESTSSRCS))
 TESTSOBJTARGETS := $(TESTSOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 TESTSBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(TESTSOBJS))
 
+MSCLLPPTESTSOBJSDIR:= $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)
+MSCLLPPTESTBINFILESLIST := allgather_test
+MSCLLPPTESTBINS         := $(MSCLLPPTESTBINFILESLIST:%=$(BUILDDIR)/$(BINDIR)/$(TESTSDIR)/%_perf)
+
 INCLUDE := -Isrc -Isrc/include
 
-.PHONY: all build lib tests clean
+.PHONY: all build lib tests mscclpp_test clean
 
 all: build
 
-build: lib tests
+build: lib tests mscclpp-test
 
 lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
 
-tests: $(TESTSBINS)
+unittests: $(UTBINS)
+
+tests: unittests $(TESTSBINS)
+
+mscclpp-test: $(LIBTARGET) $(MSCLLPPTESTBINS)
 
 cpplint:
 	clang-format-12 -style=file --verbose --Werror --dry-run $(CPPSOURCES)
-	clang-format --dry-run $(CPPSOURCES)
+	clang-format-12 --dry-run $(CPPSOURCES)
 
 cpplint-autofix:
 	clang-format-12 -style=file --verbose --Werror -i $(CPPSOURCES)
-	clang-format -i $(PYTHONCPPSOURCES)
+	clang-format-12 -i $(PYTHONCPPSOURCES)
 
 # Run cpplint on a single file, example: make cpplint-file-autofix INPUTFILE=src/bootstrap/bootstrap.cc
 cpplint-file-autofix:
@@ -174,6 +186,11 @@ cpplint-file-autofix:
 
 # Compile libobjs
 $(BUILDDIR)/$(OBJDIR)/%.o: %.cc $(HEADERS)
+	@mkdir -p $(@D)
+	$(CXX) -o $@ $(INCLUDE) $(CXXFLAGS) -c $<
+
+# Compile utobjs
+$(BUILDDIR)/$(OBJDIR)/$(UTDIR)/%.o: $(UTDIR)/%.cc $(HEADERS)
 	@mkdir -p $(@D)
 	$(CXX) -o $@ $(INCLUDE) $(CXXFLAGS) -c $<
 
@@ -187,6 +204,11 @@ $(LIBTARGET): $(LIBOBJTARGETS)
 	ln -sf $(LIBTARGET) $(BUILDDIR)/$(LIBDIR)/$(LIBNAME)
 	ln -sf $(LIBTARGET) $(BUILDDIR)/$(LIBDIR)/$(LIBSONAME)
 
+# UT bins
+$(BUILDDIR)/$(BINDIR)/$(UTDIR)/%: $(BUILDDIR)/$(OBJDIR)/$(UTDIR)/%.o $(LIBOBJTARGETS)
+	@mkdir -p $(@D)
+	$(NVCC) -o $@ $+ $(MPI_LDFLAGS) $(LDFLAGS)
+
 # Compile .cc tests
 $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cc $(INCTARGETS)
 	@mkdir -p $(@D)
@@ -195,12 +217,17 @@ $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cc $(INCTARGETS)
 # Compile .cu tests
 $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cu $(INCTARGETS)
 	@mkdir -p $(@D)
-	$(NVCC) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(NVCUFLAGS) -c $< $(MPI_MACRO)
+	$(NVCC) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(NVCUFLAGS) $(INCLUDE) -c $< $(MPI_MACRO)
 
 # Test bins
-$(BUILDDIR)/$(BINDIR)/%: $(BUILDDIR)/$(OBJDIR)/%.o $(LIBTARGET)
+$(BUILDDIR)/$(BINDIR)/$(TESTSDIR)/%: $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o $(LIBTARGET)
 	@mkdir -p $(@D)
 	$(NVCC) -o $@ $< $(MPI_LDFLAGS) -L$(BUILDDIR)/$(LIBDIR) -lmscclpp
+
+# Compile mscclpp_test
+$(BUILDDIR)/$(BINDIR)/$(TESTSDIR)/%_perf: $(MSCLLPPTESTSOBJSDIR)/%.o $(MSCLLPPTESTSOBJSDIR)/common.o
+	@mkdir -p $(@D)
+	$(NVCC) -o $@ $^ $(MPI_LDFLAGS) -L$(BUILDDIR)/$(LIBDIR) -lmscclpp
 
 clean:
 	rm -rf $(BUILDDIR)
