@@ -1,91 +1,26 @@
-#include "mscclpp.h"
+#include "common.h"
+#include "comm.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
 #include <unistd.h>
 
-#include "common.h"
-
-#define MSCCLPP_USE_MPI_FOR_TESTS
-#ifdef MSCCLPP_USE_MPI_FOR_TESTS
-#include <mpi.h>
-#endif // MSCCLPP_USE_MPI_FOR_TESTS
-
-#define RANKS_PER_NODE 8
-#define USE_DMA_FOR_P2P 1
-#define TEST_CONN_TYPE 0 // 0: P2P(for local)+IB(for remote), 1: IB-Only
 #define BLOCK_THREADS_NUM 256
 
-#define MSCCLPPCHECK(call)                                                                                             \
-  do {                                                                                                                 \
-    mscclppResult_t res = call;                                                                                        \
-    if (res != mscclppSuccess && res != mscclppInProgress) {                                                           \
-      /* Print the back trace*/                                                                                        \
-      printf("Failure at %s:%d -> %d\n", __FILE__, __LINE__, res);                                                     \
-      return res;                                                                                                      \
-    }                                                                                                                  \
-  } while (0);
+#define ALIGN 4
 
-// Check CUDA RT calls
-#define CUDACHECK(cmd)                                                                                                 \
-  do {                                                                                                                 \
-    cudaError_t err = cmd;                                                                                             \
-    if (err != cudaSuccess) {                                                                                          \
-      printf("%s:%d Cuda failure '%s'\n", __FILE__, __LINE__, cudaGetErrorString(err));                                \
-      exit(EXIT_FAILURE);                                                                                              \
-    }                                                                                                                  \
-  } while (false)
-
-// Measure current time in second.
-static double getTime(void)
+__global__ void initKernel(int* dataDst, int dataCount)
 {
-  struct timespec tspec;
-  if (clock_gettime(CLOCK_MONOTONIC, &tspec) == -1) {
-    printf("clock_gettime failed\n");
-    exit(EXIT_FAILURE);
-  }
-  return (tspec.tv_nsec / 1.0e9) + tspec.tv_sec;
-}
-
-
-void parse_arguments(int argc, const char* argv[], const char** ip_port, int* rank, int* world_size)
-{
-#ifdef MSCCLPP_USE_MPI_FOR_TESTS
-  if (argc != 2 && argc != 4) {
-    print_usage(argv[0]);
-    exit(-1);
-  }
-  *ip_port = argv[1];
-  if (argc == 4) {
-    *rank = atoi(argv[2]);
-    *world_size = atoi(argv[3]);
-  } else {
-    MPI_Comm_rank(MPI_COMM_WORLD, rank);
-    MPI_Comm_size(MPI_COMM_WORLD, world_size);
-  }
-#else
-  if (argc != 4) {
-    print_usage(argv[0]);
-    exit(-1);
-  }
-  *ip_port = argv[1];
-  *rank = atoi(argv[2]);
-  *world_size = atoi(argv[3]);
-#endif
-}
-
-__global__ void initKernel(char* data_d, int dataSize)
-{
-  for (size_t i = threadIdx.x; i < dataSize; i += blockDim.x) {
-    data_d[i] = i % 256;
+  for (size_t i = threadIdx.x; i < dataCount; i += blockDim.x) {
+    dataDst[i] = i % 256;
   }
 }
 
 __constant__ mscclppDevConn_t sendConnConst;
 __constant__ mscclppDevConn_t recvConnConst;
 
-__global__ void smKernel(bool root, size_t dataSize)
+__global__ void kernel(bool root, size_t dataSize)
 {
   mscclppDevConn_t sendConn = sendConnConst;
   mscclppDevConn_t recvConn = recvConnConst;
@@ -115,103 +50,88 @@ __global__ void smKernel(bool root, size_t dataSize)
   }
 }
 
-void resetData(char* data_d, size_t data_size, bool isRoot)
+testResult_t resetData(int* dataDst, size_t dataCount, bool isRoot)
 {
   if (isRoot) {
-    initKernel<<<1, BLOCK_THREADS_NUM>>>(data_d, data_size);
+    initKernel<<<1, BLOCK_THREADS_NUM>>>(dataDst, dataCount);
   } else {
-    CUDACHECK(cudaMemset(data_d, 0, data_size));
+    CUDACHECK(cudaMemset(dataDst, 0, dataCount * sizeof(int)));
   }
+  return testSuccess;
 }
 
-int main(int argc, const char* argv[])
+void RingSendRecvGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* paramcount, size_t* sendInplaceOffset,
+                               size_t* recvInplaceOffset, size_t count, int nranks)
 {
-  const char* ip_port;
-  int rank, world_size;
-#ifdef MSCCLPP_USE_MPI_FOR_TESTS
-  MPI_Init(NULL, NULL);
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-#endif
-  parse_arguments(argc, argv, &ip_port, &rank, &world_size);
+  size_t base = (count / ALIGN) * ALIGN;
+  *sendcount = base;
+  *recvcount = base;
+  *sendInplaceOffset = base;
+  *recvInplaceOffset = 0;
+  *paramcount = base;
+}
 
-  bool isRoot = rank == 0;
+testResult_t RingSendRecvInitData(struct testArgs* args, int in_place)
+{
+  size_t recvcount = args->expectedBytes / sizeof(int);
 
-  CUDACHECK(cudaSetDevice(rank));
+  CUDACHECK(cudaSetDevice(args->gpuNum));
+  int rank = args->proc;
+  CUDACHECK(cudaMemset(args->recvbuff, 0, args->expectedBytes));
+  resetData((int*)args->recvbuff, recvcount, rank == 0);
 
-  if (rank == 0)
-    printf("Initializing MSCCL++\n");
-  mscclppComm_t comm;
-  MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, ip_port, rank));
+  int* dataHost = new int[recvcount];
+  for (size_t i = 0; i < recvcount; i++) {
+    dataHost[i] = i % 256;
+  }
+  CUDACHECK(cudaMemcpy(args->expected, dataHost, recvcount * sizeof(int), cudaMemcpyHostToDevice));
+  delete dataHost;
+  CUDACHECK(cudaDeviceSynchronize());
+  MSCCLPPCHECK(mscclppBootstrapBarrier(args->comm));
+  return testSuccess;
+}
 
-  char* data_d;
-  size_t data_size = 1 << 10; // Kilobyte
-  // size_t data_size = 1 << 20; // Megabyte
-  // size_t data_size = 1 << 30; // Gigabyte
-  CUDACHECK(cudaMalloc(&data_d, data_size));
-  resetData(data_d, data_size, isRoot);
+void RingSendRecvGetBw(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks)
+{
+  double baseBw = (double)(count * typesize * nranks) / 1.0E9 / sec;
 
-  MSCCLPPCHECK(mscclppConnect(comm, (rank + 1) % world_size, 0, data_d, data_size, mscclppTransportP2P));
-  MSCCLPPCHECK(mscclppConnect(comm, (rank - 1 + world_size) % world_size, 0, data_d, data_size, mscclppTransportP2P));
-  if (rank == 0)
-    printf("Finished connection\n");
+  *algBw = baseBw;
+  double factor = ((double)(nranks - 1)) / ((double)nranks);
+  *busBw = baseBw * factor;
+}
 
-  MSCCLPPCHECK(mscclppConnectionSetup(comm));
-  if (rank == 0)
-    printf("Finished Setup\n");
+testResult_t RingSendRecvRunColl(void* sendbuff, void* recvbuff, int nranksPerNode, size_t count, mscclppComm_t comm,
+                              cudaStream_t stream, int kernel_num)
+{
+  kernel<<<1, BLOCK_THREADS_NUM, 0, stream>>>(comm->rank == 0, count);
+  return testSuccess;
+}
 
-  MSCCLPPCHECK(mscclppProxyLaunch(comm));
-  if (rank == 0)
-    printf("Finished proxy launch\n");
+struct testColl ringSendRecvTest = {"RingSendRecvTest", RingSendRecvGetCollByteCount, RingSendRecvInitData,
+                                    RingSendRecvGetBw, RingSendRecvRunColl};
+
+void RingSendRecvGetBuffSize(size_t* sendcount, size_t* recvcount, size_t count, int nranks)
+{
+  size_t paramcount, sendInplaceOffset, recvInplaceOffset;
+  RingSendRecvGetCollByteCount(sendcount, recvcount, &paramcount, &sendInplaceOffset, &recvInplaceOffset, count,
+                               nranks);
+}
+
+testResult_t RingSendRecvRunTest(struct testArgs* args)
+{
+  args->collTest = &ringSendRecvTest;
+  int rank = args->proc, worldSize = args->totalProcs;
 
   mscclppDevConn_t *sendDevConn;
   mscclppDevConn_t *recvDevConn;
-  MSCCLPPCHECK(mscclppGetDeviceConnection(comm, (rank + 1) % world_size, 0, &sendDevConn));
-  MSCCLPPCHECK(mscclppGetDeviceConnection(comm, (rank - 1 + world_size) % world_size, 0, &recvDevConn));
-
-  if (rank == 0)
-    printf("Finished device connection\n");
-
+  MSCCLPPCHECK(mscclppGetDeviceConnection(args->comm, (rank + 1) % worldSize, 0, &sendDevConn));
+  MSCCLPPCHECK(mscclppGetDeviceConnection(args->comm, (rank - 1 + worldSize) % worldSize, 0, &recvDevConn));
   CUDACHECK(cudaMemcpyToSymbol(sendConnConst, sendDevConn, sizeof(mscclppDevConn_t)));
   CUDACHECK(cudaMemcpyToSymbol(recvConnConst, recvDevConn, sizeof(mscclppDevConn_t)));
-
-  cudaStream_t stream;
-  CUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-
-  if (rank == 0)
-    printf("Start running kernel\n");
-  smKernel<<<1, BLOCK_THREADS_NUM, 0, stream>>>(isRoot, data_size);
-  CUDACHECK(cudaDeviceSynchronize());
-
-  // Read results from GPU
-  char* buf = (char*)calloc(data_size, 1);
-  if (buf == nullptr) {
-    printf("calloc failed\n");
-    return -1;
-  }
-  CUDACHECK(cudaMemcpy(buf, data_d, data_size, cudaMemcpyDeviceToHost));
-
-  bool failed = false;
-  for (size_t i = 0; i < data_size; ++i) {
-    char expected = (char)(i % 256);
-    if (buf[i] != expected) {
-      printf("rank: %d, wrong data: %d, expected %d\n", rank, buf[i], expected);
-      failed = true;
-    }
-  }
-  if (failed) {
-    return -1;
-  }
-
-  MSCCLPPCHECK(mscclppProxyStop(comm));
-
-  MSCCLPPCHECK(mscclppCommDestroy(comm));
-
-#ifdef MSCCLPP_USE_MPI_FOR_TESTS
-  if (argc == 2) {
-    MPI_Finalize();
-  }
-#endif
-  printf("Succeeded! %d\n", rank);
-  return 0;
+  TESTCHECK(TimeTest(args));
+  return testSuccess;
 }
+
+struct testEngine ringSendRecvTestEngine = {RingSendRecvGetBuffSize, RingSendRecvRunTest};
+
+#pragma weak mscclppTestEngine = ringSendRecvTestEngine
