@@ -145,17 +145,14 @@ int main(int argc, const char* argv[])
   MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, ip_port, rank));
 
   char* data_d;
-  // size_t data_size = 1 << 10; // Kilobyte
+  size_t data_size = 1 << 10; // Kilobyte
   // size_t data_size = 1 << 20; // Megabyte
-  size_t data_size = 1 << 30; // Gigabyte
+  // size_t data_size = 1 << 30; // Gigabyte
   CUDACHECK(cudaMalloc(&data_d, data_size));
   resetData(data_d, data_size, isRoot);
 
-  if (rank == 0) {
-    MSCCLPPCHECK(mscclppConnect(comm, 1, 0, data_d, data_size, mscclppTransportP2P));
-  } else {
-    MSCCLPPCHECK(mscclppConnect(comm, 0, 0, data_d, data_size, mscclppTransportP2P));
-  }
+  MSCCLPPCHECK(mscclppConnect(comm, (rank + 1) % world_size, 0, data_d, data_size, mscclppTransportP2P));
+  MSCCLPPCHECK(mscclppConnect(comm, (rank - 1 + world_size) % world_size, 0, data_d, data_size, mscclppTransportP2P));
   if (rank == 0)
     printf("Finished connection\n");
 
@@ -169,13 +166,9 @@ int main(int argc, const char* argv[])
 
   mscclppDevConn_t *sendDevConn;
   mscclppDevConn_t *recvDevConn;
-  if (rank == 0) {
-    MSCCLPPCHECK(mscclppGetDeviceConnection(comm, 1, 0, &sendDevConn));
-    MSCCLPPCHECK(mscclppGetDeviceConnection(comm, 1, 0, &recvDevConn));
-  } else {
-    MSCCLPPCHECK(mscclppGetDeviceConnection(comm, 0, 0, &sendDevConn));
-    MSCCLPPCHECK(mscclppGetDeviceConnection(comm, 0, 0, &recvDevConn));
-  }
+  MSCCLPPCHECK(mscclppGetDeviceConnection(comm, (rank + 1) % world_size, 0, &sendDevConn));
+  MSCCLPPCHECK(mscclppGetDeviceConnection(comm, (rank - 1 + world_size) % world_size, 0, &recvDevConn));
+
   if (rank == 0)
     printf("Finished device connection\n");
 
