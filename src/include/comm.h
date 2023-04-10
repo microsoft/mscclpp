@@ -36,10 +36,8 @@ struct mscclppConn
   struct mscclppIbQp* ibQp;
   struct mscclppIbMr* ibBuffMr;
   struct mscclppIbMr* ibSignalEpochIdMr;
-  struct mscclppIbMr* ibProxySignalEpochIdMr;
   struct mscclppIbMrInfo ibBuffMrInfo;
   struct mscclppIbMrInfo ibSignalEpochIdMrInfo;
-  struct mscclppIbMrInfo ibProxySignalEpochIdMrInfo;
 #if defined(ENABLE_NPKIT)
   std::vector<uint64_t> npkitUsedReqIds;
   std::vector<uint64_t> npkitFreeReqIds;

@@ -162,13 +162,13 @@ void* mscclppProxyService(void* _args)
     }
     if (trigger.fields.type & mscclppFlag) {
       if (isP2pProxy) {
-        PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->signalEpochId, sizeof(uint64_t),
+        PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, &(conn->devConn->localSignalEpochId->device), sizeof(uint64_t),
                                        cudaMemcpyDeviceToDevice, p2pStream));
         npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_ENTRY, (uint32_t)sizeof(uint64_t), trigger.fields.connId);
       } else {
-        // My local flag is copied to the peer's proxy flag
-        conn->ibQp->stageSend(conn->ibSignalEpochIdMr, &conn->ibProxySignalEpochIdMrInfo, sizeof(uint64_t),
-                              /*wrId=*/0, /*srcOffset=*/0, /*dstOffset=*/0, /*signaled=*/true);
+        // My local device flag is copied to the remote's proxy flag
+        conn->ibQp->stageSend(conn->ibSignalEpochIdMr, &conn->ibSignalEpochIdMrInfo, sizeof(uint64_t),
+                              /*wrId=*/0, /*srcOffset=*/0, /*dstOffset=*/sizeof(uint64_t), /*signaled=*/true);
         if ((ret = conn->ibQp->postSend()) != 0) {
           WARN("flag postSend failed: errno %d", ret);
         }

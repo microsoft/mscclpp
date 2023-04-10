@@ -20,6 +20,16 @@ extern "C"
 {
 #endif
 
+struct alignas(16) mscclppDevConnSignalEpochId
+{
+  // every signal(), increaments this and either:
+  // 1) proxy thread pushes it to the remote peer's localSignalEpochId->proxy
+  // 2) gpu thread directly writes it to remoteSignalEpochId->device
+  uint64_t device;
+  // signal() function triggers the cpu proxy thread to write to it
+  uint64_t proxy;
+};
+
 /***************************************************************************************************************
  * A mscclppDevConn provides a zero-copy connection between two GPUs connected via P2P NVLink or InfiniBand.
  * The communication API is one-sided meaning that for every single data transfer, only one side
@@ -140,14 +150,13 @@ struct mscclppDevConn
   __forceinline__ __device__ void wait()
   {
     (*waitEpochId) += 1;
-    // printf("%llu %llu %llu\n", *(volatile uint64_t*)proxySignalEpochId, (*waitEpochId), *(volatile uint64_t*)signalEpochId);
-    while (*(volatile uint64_t*)proxySignalEpochId < (*waitEpochId))
+    while (*(volatile uint64_t*)&(localSignalEpochId->proxy) < (*waitEpochId))
       ;
   }
 
   __forceinline__ __device__ void epochIncrement()
   {
-    *(volatile uint64_t*)signalEpochId += 1;
+    *(volatile uint64_t*)&(localSignalEpochId->device) += 1;
   }
 
 #endif
@@ -156,22 +165,19 @@ struct mscclppDevConn
 
   // my local buffer
   void* localBuff;
-  // every signal(), increaments this and either:
-  // 1) proxy thread pushes it to the remote peer's proxySignalEpochId
-  // 2) gpu thread directly writes it to remoteSignalEpochId
-  uint64_t* signalEpochId;
+
+  struct mscclppDevConnSignalEpochId* localSignalEpochId;
+  // used by the signal() function directly from gpu
+  struct mscclppDevConnSignalEpochId* remoteSignalEpochId;
+
   // every wait(), increaments this and then the gpu waits for either:
-  // 1) proxySignalEpochId to be >= this in case of a proxy thread
-  // 2) remoteSignalEpochId to be >= this in case of a gpu thread
+  // 1) localSignalEpochId->proxy to be >= this in case of a proxy thread
+  // 2) remoteSignalEpochId->device to be >= this in case of a gpu thread
   uint64_t* waitEpochId;
 
   // my remote peer's buffer. only non-NULL with gpu's direct access
   // gpu can directly write into it
   void* remoteBuff;
-  // used by the signal() function directly from gpu
-  uint64_t* remoteSignalEpochId;
-  // signal() function triggers the cpu proxy thread to write to it
-  uint64_t* proxySignalEpochId;
 
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
