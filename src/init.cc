@@ -1,6 +1,9 @@
 #include "bootstrap.h"
 #include "config.h"
 #include "core.h"
+#if defined(MSCCLPP_USE_GDRCOPY)
+#include "gdr.h"
+#endif
 #include "mscclpp.h"
 #include <map>
 #include <sstream>
@@ -23,6 +26,24 @@ static uint64_t hashUniqueId(mscclppUniqueId const& id)
 pthread_mutex_t initLock = PTHREAD_MUTEX_INITIALIZER;
 static bool initialized = false;
 // static size_t maxLocalSizeBytes = 0;
+
+#if defined(MSCCLPP_USE_GDRCOPY)
+
+gdr_t mscclppGdrCopy = NULL;
+
+mscclppResult_t initGdrCopy()
+{
+  if (mscclppGdrCopy == NULL) {
+    mscclppGdrCopy = mscclppGdrInit();
+    if (mscclppGdrCopy == NULL) {
+      WARN("GDR init failed");
+      return mscclppSystemError;
+    }
+  }
+  return mscclppSuccess;
+}
+
+#endif
 
 static mscclppResult_t mscclppInit()
 {
@@ -66,6 +87,10 @@ mscclppResult_t mscclppBootstrapAllGather(mscclppComm_t comm, void* data, int si
 MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank);
 mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank)
 {
+#if defined(MSCCLPP_USE_GDRCOPY)
+  MSCCLPPCHECK(initGdrCopy());
+#endif
+
   mscclppResult_t res = mscclppSuccess;
   mscclppComm_t _comm = NULL;
   // uint64_t hash = getHostHash();
@@ -108,6 +133,10 @@ fail:
 MSCCLPP_API(mscclppResult_t, mscclppCommInitRankFromId, mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank);
 mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank)
 {
+#if defined(MSCCLPP_USE_GDRCOPY)
+  MSCCLPPCHECK(initGdrCopy());
+#endif
+
   mscclppResult_t res = mscclppSuccess;
   mscclppComm_t _comm = NULL;
   mscclppBootstrapHandle* handle = (mscclppBootstrapHandle*)&id;
@@ -160,10 +189,17 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
   for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
     struct mscclppProxyState* proxyState = comm->proxyState[i];
     if (proxyState) {
+#if defined(MSCCLPP_USE_GDRCOPY)
+      MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->triggerFifoDesc));
+#else
       MSCCLPPCHECK(mscclppCudaHostFree(proxyState->triggerFifo));
+#endif
       MSCCLPPCHECK(mscclppCudaFree(proxyState->fifoHead));
+#if defined(MSCCLPP_USE_GDRCOPY)
+      MSCCLPPCHECK(mscclppGdrCudaFree(proxyState->fifoTailDesc));
+#else
       MSCCLPPCHECK(mscclppCudaFree(proxyState->fifoTailDev));
-
+#endif
       if (proxyState->p2pStream)
         CUDACHECK(cudaStreamDestroy(proxyState->p2pStream));
       CUDACHECK(cudaStreamDestroy(proxyState->fifoStream));
@@ -345,10 +381,19 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
   // If we couldn't find a matching context, create one
   if (proxyState == NULL) {
     MSCCLPPCHECK(mscclppCalloc(&proxyState, 1));
+#if defined(MSCCLPP_USE_GDRCOPY)
+    MSCCLPPCHECK(mscclppGdrCudaCalloc(&proxyState->triggerFifo, &proxyState->triggerFifoDev, MSCCLPP_PROXY_FIFO_SIZE,
+                                      &proxyState->triggerFifoDesc));
+#else
     MSCCLPPCHECK(mscclppCudaHostCalloc(&proxyState->triggerFifo, MSCCLPP_PROXY_FIFO_SIZE));
+#endif
     MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->fifoHead, 1));
+#if defined(MSCCLPP_USE_GDRCOPY)
+    MSCCLPPCHECK(
+      mscclppGdrCudaCalloc(&proxyState->fifoTailDevHostPtr, &proxyState->fifoTailDev, 1, &proxyState->fifoTailDesc));
+#else
     MSCCLPPCHECK(mscclppCudaCalloc(&proxyState->fifoTailDev, 1));
-
+#endif
     proxyState->fifoTailHost = 0;
 
     if (transportType == mscclppTransportIB) {
@@ -383,7 +428,11 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
   conn->remoteRank = remoteRank;
   conn->devConn->tag = tag;
   conn->devConn->fifo.connId = comm->nConns;
+#if defined(MSCCLPP_USE_GDRCOPY)
+  conn->devConn->fifo.triggerFifo = proxyState->triggerFifoDev;
+#else
   conn->devConn->fifo.triggerFifo = proxyState->triggerFifo;
+#endif
   conn->devConn->fifo.triggerFifoHead = proxyState->fifoHead;
   conn->devConn->fifo.triggerFifoTail = proxyState->fifoTailDev;
 
@@ -510,6 +559,9 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
       MSCCLPPCHECK(mscclppIbConnectionSetupEnd(&cInfo, conn));
     }
   }
+
+  // a barrier to ensure setup on all gpus are done and we can return to the user
+  MSCCLPPCHECK(mscclppBootstrapBarrier(comm));
   return mscclppSuccess;
 }
 
@@ -520,12 +572,20 @@ mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm)
   return mscclppSuccess;
 }
 
+MSCCLPP_API(mscclppResult_t, mscclppBootstrapBarrier, mscclppComm_t comm);
+mscclppResult_t mscclppBootstrapBarrier(mscclppComm_t comm)
+{
+  int* tmp = new int[comm->nRanks];
+  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
+  delete[] tmp;
+  return mscclppSuccess;
+}
+
 MSCCLPP_API(mscclppResult_t, mscclppProxyStop, mscclppComm_t comm);
 mscclppResult_t mscclppProxyStop(mscclppComm_t comm)
 {
   // a barrier to make sure all ranks are done with their work before stopping the proxy
-  int* tmp = new int[comm->nRanks];
-  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
+  MSCCLPPCHECK(mscclppBootstrapBarrier(comm));
 
   MSCCLPPCHECK(mscclppProxyDestroy(comm));
   return mscclppSuccess;

@@ -23,11 +23,19 @@ struct mscclppProxyState
 
   // fifo cudaHostCalloc'ed that is produced by device and consumed by host
   mscclppTrigger* triggerFifo;
+#if defined(MSCCLPP_USE_GDRCOPY)
+  mscclppTrigger* triggerFifoDev;
+  void* triggerFifoDesc;
+#endif
   // allocated on the device and only accessed by the device
   uint64_t* fifoHead;
 
   // allocated on the device. Read-only by device, write-only by host
   uint64_t* fifoTailDev;
+#if defined(MSCCLPP_USE_GDRCOPY)
+  uint64_t* fifoTailDevHostPtr;
+  void* fifoTailDesc;
+#endif
   // allocated on the host. Only accessed by the host. This is a copy of the
   // value pointed to by fifoTailDev and the invariant is that
   // *fifoTailDev <= fifoTailHost. Meaning that host's copy of tail is
