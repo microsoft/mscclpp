@@ -95,11 +95,22 @@ def _test_rm(options: argparse.Namespace, comm: mscclpp.Comm):
         mscclpp.TransportType.P2P,
     )
 
-    handles = comm.register_buffer(buf.data_ptr(), buf.element_size() * buf.numel())
+    rm = comm.register_buffer(buf.data_ptr(), buf.element_size() * buf.numel())
+    handles = rm.handles()
     hamcrest.assert_that(
         handles,
         hamcrest.has_length(options.world_size - 1),
     )
+    for handle in handles:
+        hamcrest.assert_that(
+            handle.transport(),
+            hamcrest.equal_to(mscclpp.TransportType.P2P),
+        )
+        # assuming P2P ...
+        hamcrest.assert_that(
+            handle.data_ptr(),
+            hamcrest.greater_than(0),
+        )
 
     torch.cuda.synchronize()
 

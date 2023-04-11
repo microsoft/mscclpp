@@ -10,14 +10,8 @@ logger = logging.getLogger(__file__)
 
 from . import _py_mscclpp
 
-__all__ = (
-    "Comm",
-    "MscclppUniqueId",
-    "MSCCLPP_UNIQUE_ID_BYTES",
-    "TransportType",
-)
-
 _Comm = _py_mscclpp._Comm
+_RegisteredMemory = _py_mscclpp._RegisteredMemory
 _P2PHandle = _py_mscclpp._P2PHandle
 TransportType = _py_mscclpp.TransportType
 
@@ -67,7 +61,7 @@ _setup_logging()
 class Comm:
     """Comm object; represents a mscclpp connection."""
 
-    _comm: _Comm
+    _c_comm: _Comm
 
     @staticmethod
     def init_rank_from_address(
@@ -97,16 +91,16 @@ class Comm:
 
     def __init__(self, *, _comm: _Comm):
         """Construct a Comm object wrapping an internal _Comm handle."""
-        self._comm = _comm
+        self._c_comm = _comm
 
     def __del__(self) -> None:
         self.close()
 
     def close(self) -> None:
         """Close the connection."""
-        if self._comm:
-            self._comm.close()
-            self._comm = None
+        if self._c_comm:
+            self._c_comm.close()
+            self._c_comm = None
 
     @property
     def rank(self) -> int:
@@ -114,7 +108,7 @@ class Comm:
 
         Assumes the Comm is open.
         """
-        return self._comm.rank
+        return self._c_comm.rank
 
     @property
     def world_size(self) -> int:
@@ -122,11 +116,11 @@ class Comm:
 
         Assumes the Comm is open.
         """
-        return self._comm.world_size
+        return self._c_comm.world_size
 
     def bootstrap_all_gather_int(self, val: int) -> list[int]:
         """AllGather an int value through the bootstrap interface."""
-        return self._comm.bootstrap_all_gather_int(val)
+        return self._c_comm.bootstrap_all_gather_int(val)
 
     def all_gather_bytes(self, item: bytes) -> list[bytes]:
         """AllGather bytes (of different sizes) through the bootstrap interface.
@@ -134,7 +128,7 @@ class Comm:
         :param item: the bytes object for this rank.
         :return: a list of bytes objects; the ret[rank] object will be a new copy.
         """
-        return self._comm.all_gather_bytes(item)
+        return self._c_comm.all_gather_bytes(item)
 
     def all_gather_json(self, item: Any) -> list[Any]:
         """AllGather JSON objects through the bootstrap interface.
@@ -163,7 +157,7 @@ class Comm:
         data_size: int,
         transport: int,
     ) -> None:
-        self._comm.connect(
+        self._c_comm.connect(
             remote_rank,
             tag,
             data_ptr,
@@ -172,32 +166,79 @@ class Comm:
         )
 
     def connection_setup(self) -> None:
-        self._comm.connection_setup()
+        self._c_comm.connection_setup()
 
     def launch_proxies(self) -> None:
-        self._comm.launch_proxies()
+        self._c_comm.launch_proxies()
 
     def stop_proxies(self) -> None:
-        self._comm.stop_proxies()
+        self._c_comm.stop_proxies()
 
     def register_buffer(
         self,
-        data_ptr,
-        data_size: int,
-    ) -> list[_P2PHandle]:
+        data_ptr: int,
+        size: int,
+    ) -> "RegisteredMemory":
+        return RegisteredMemory(
+            comm=self._c_comm,
+            rm=self._c_comm.register_buffer(
+                data_ptr=data_ptr,
+                size=size,
+            ),
+        )
+
+
+class RegisteredMemory:
+    _comm: Comm
+    _c_rm: _RegisteredMemory
+
+    def __init__(
+        self,
+        *,
+        comm: Comm,
+        rm: _RegisteredMemory,
+    ):
+        self._comm = comm
+        self._c_rm = rm
+
+    def handles(self) -> list["P2PHandle"]:
         return [
-            P2PHandle(self, h)
-            for h in self._comm.register_buffer(
-                data_ptr,
-                data_size,
+            P2PHandle(
+                comm=self._comm,
+                handle=h,
             )
+            for h in self._c_rm.handles()
         ]
+
+    def _write(
+        self,
+        src_ptr: int,
+        size: int,
+        *,
+        src_offset: int = 0,
+        dst_offset: int = 0,
+        stream: int = 0,
+    ) -> None:
+        self._c_rm.write_all(
+            comm=self._comm._c_comm,
+            src_data=src_ptr,
+            size=size,
+            src_offset=src_offset,
+            dst_offset=dst_offset,
+            stream=stream,
+        )
 
 
 class P2PHandle:
     _comm: Comm
-    _handle: _P2PHandle
+    _c_handle: _P2PHandle
 
-    def __init__(self, comm: Comm, handle: _P2PHandle):
+    def __init__(self, *, comm: Comm, handle: _P2PHandle):
         self._comm = comm
-        self._handle = handle
+        self._c_handle = handle
+
+    def transport(self) -> TransportType:
+        return self._c_handle.transport()
+
+    def data_ptr(self) -> int:
+        return self._c_handle.data_ptr()
