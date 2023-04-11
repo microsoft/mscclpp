@@ -466,7 +466,6 @@ mscclppResult_t mscclppP2pConnectionSetupEnd(struct connInfo* connInfo /*input*/
     cudaIpcOpenMemHandle((void**)&conn->devConn->remoteBuff, connInfo->handleBuff, cudaIpcMemLazyEnablePeerAccess));
   CUDACHECK(
     cudaIpcOpenMemHandle((void**)&conn->devConn->remoteSignalEpochId, connInfo->handleSignalEpochId, cudaIpcMemLazyEnablePeerAccess));
-  conn->remoteProxyFlag = &(conn->devConn->remoteSignalEpochId->proxy);
   return mscclppSuccess;
 }
 
