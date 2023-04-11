@@ -61,7 +61,7 @@ endif
 
 NVCUFLAGS  := -ccbin $(CXX) $(NVCC_GENCODE) -std=c++11 --expt-extended-lambda -Xfatbin -compress-all
 # Use addprefix so that we can specify more than one path
-NVLDFLAGS  := -L$(CUDA_LIB) -lcudart -lrt
+NVLDFLAGS  := -L$(CUDA_LIB) -lcudart -lrt -lcuda
 
 ifeq ($(DEBUG), 0)
 NVCUFLAGS += -O3
