@@ -1,4 +1,5 @@
 #include "alloc.h"
+#include "api.h"
 #include "bootstrap.h"
 #include "checks.h"
 #include "config.h"
@@ -11,8 +12,6 @@
 #if defined(ENABLE_NPKIT)
 #include "npkit/npkit.h"
 #endif
-
-#define MSCCLPP_API(ret, func, args...) extern "C" __attribute__((visibility("default"))) ret func(args)
 
 static uint64_t hashUniqueId(mscclppUniqueId const& id)
 {
@@ -70,8 +69,7 @@ static std::string mscclppShmFileName(mscclppComm_t comm, int rank)
   return ss.str();
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppGetUniqueId, mscclppUniqueId* out);
-mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* out)
+MSCCLPP_API mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* out)
 {
   MSCCLPPCHECK(mscclppInit());
   //   mscclppCHECK(PtrCheck(out, "GetUniqueId", "out"));
@@ -80,15 +78,13 @@ mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* out)
   return res;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppBootstrapAllGather, mscclppComm_t comm, void* data, int size);
-mscclppResult_t mscclppBootstrapAllGather(mscclppComm_t comm, void* data, int size)
+MSCCLPP_API mscclppResult_t mscclppBootstrapAllGather(mscclppComm_t comm, void* data, int size)
 {
   MSCCLPPCHECK(bootstrapAllGather(comm->bootstrap, data, size));
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppCommInitRank, mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank);
-mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank)
+MSCCLPP_API mscclppResult_t mscclppCommInitRank(mscclppComm_t* comm, int nranks, const char* ipPortPair, int rank)
 {
 #if defined(MSCCLPP_USE_GDRCOPY)
   MSCCLPPCHECK(initGdrCopy());
@@ -133,8 +129,7 @@ fail:
   return res;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppCommInitRankFromId, mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank);
-mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank)
+MSCCLPP_API mscclppResult_t mscclppCommInitRankFromId(mscclppComm_t* comm, int nranks, mscclppUniqueId id, int rank)
 {
 #if defined(MSCCLPP_USE_GDRCOPY)
   MSCCLPPCHECK(initGdrCopy());
@@ -174,8 +169,7 @@ fail:
   return res;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppCommDestroy, mscclppComm_t comm);
-mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
+MSCCLPP_API mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
 {
 #if defined(ENABLE_NPKIT)
   const char* npkitDumpDir = nullptr;
@@ -187,7 +181,8 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
   for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
     struct mscclppProxyState* proxyState = comm->proxyState[i];
     if (proxyState) {
-      MSCCLPPCHECK(proxyState->fifo.destroy());
+      MSCCLPPCHECK(proxyState->devFifo.destroy());
+      MSCCLPPCHECK(proxyState->hostFifo.destroy());
       if (proxyState->p2pStream)
         CUDACHECK(cudaStreamDestroy(proxyState->p2pStream));
       free(proxyState);
@@ -228,8 +223,7 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
   return mscclppSuccess;
 }
 
-MSCCLPP_API(const char*, mscclppGetErrorString, mscclppResult_t code);
-const char* mscclppGetErrorString(mscclppResult_t code)
+MSCCLPP_API const char* mscclppGetErrorString(mscclppResult_t code)
 {
   switch (code) {
   case mscclppSuccess:
@@ -253,9 +247,7 @@ const char* mscclppGetErrorString(mscclppResult_t code)
   }
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppGetDeviceConnection, mscclppComm_t comm, int remoteRank, int tag,
-            mscclppDevConn_t** devConn);
-mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn)
+MSCCLPP_API mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, int tag, mscclppDevConn_t** devConn)
 {
   for (int i = 0; i < comm->nConns; i++) {
     if (comm->devConns[i].remoteRank == remoteRank && comm->devConns[i].tag == tag) {
@@ -267,18 +259,14 @@ mscclppResult_t mscclppGetDeviceConnection(mscclppComm_t comm, int remoteRank, i
   return mscclppInvalidArgument;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppGetAllDeviceConnections, mscclppComm_t comm, mscclppDevConn_t** devConns,
-            int* nConns);
-mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nConns)
+MSCCLPP_API mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, mscclppDevConn_t** devConns, int* nConns)
 {
   *nConns = comm->nConns;
   *devConns = comm->devConns;
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppConnect, mscclppComm_t comm, int remoteRank, int tag, void* localBuff,
-            uint64_t buffSize, mscclppTransport_t transportType, const char* ibDev);
-mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
+MSCCLPP_API mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
                                mscclppTransport_t transportType, const char* ibDev)
 {
   // save this processes numa binding and set it to the one closest to the device
@@ -367,7 +355,8 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
   // If we couldn't find a matching context, create one
   if (proxyState == NULL) {
     MSCCLPPCHECK(mscclppCalloc(&proxyState, 1));
-    MSCCLPPCHECK(proxyState->fifo.create());
+    MSCCLPPCHECK(proxyState->devFifo.create());
+    MSCCLPPCHECK(proxyState->hostFifo.create());
 
     if (transportType == mscclppTransportIB) {
       proxyState->ibContext = conn->ibCtx;
@@ -398,12 +387,12 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
   conn->devConn->tag = tag;
   conn->devConn->fifo.connId = comm->nConns;
 #if defined(MSCCLPP_USE_GDRCOPY)
-  conn->devConn->fifo.triggerFifo = proxyState->fifo.triggerFifoDev;
+  conn->devConn->fifo.triggerFifo = proxyState->devFifo.triggerFifoDev;
 #else
-  conn->devConn->fifo.triggerFifo = proxyState->fifo.triggerFifo;
+  conn->devConn->fifo.triggerFifo = proxyState->devFifo.triggerFifo;
 #endif
-  conn->devConn->fifo.triggerFifoHead = proxyState->fifo.fifoHead;
-  conn->devConn->fifo.triggerFifoTail = proxyState->fifo.fifoTailDev;
+  conn->devConn->fifo.triggerFifoHead = proxyState->devFifo.fifoHead;
+  conn->devConn->fifo.triggerFifoTail = proxyState->devFifo.fifoTailDev;
 
   comm->nConns++;
 
@@ -489,8 +478,7 @@ mscclppResult_t mscclppIbConnectionSetupEnd(struct connInfo* connInfo /*input*/,
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppConnectionSetup, mscclppComm_t comm);
-mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
+MSCCLPP_API mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
 {
   // Send info to peers
   for (int i = 0; i < comm->nConns; ++i) {
@@ -529,9 +517,7 @@ struct bufferInfo
   mscclppIbMrInfo infoBuffMr;
 };
 
-MSCCLPP_API(mscclppResult_t, mscclppRegisterBuffer, mscclppComm_t comm, void* local_memory, size_t size,
-            mscclppRegisteredMemory* regMem);
-mscclppResult_t mscclppRegisterBuffer(mscclppComm_t comm, void* local_memory, size_t size,
+MSCCLPP_API mscclppResult_t mscclppRegisterBuffer(mscclppComm_t comm, void* local_memory, size_t size,
                                       mscclppRegisteredMemory* regMem)
 {
   std::vector<struct mscclppIbMr*> ibMrs;
@@ -573,9 +559,7 @@ mscclppResult_t mscclppRegisterBuffer(mscclppComm_t comm, void* local_memory, si
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppRegisteredBufferWrite, mscclppComm_t comm, mscclppRegisteredMemory* regMem,
-            void* srcBuff, size_t size, uint32_t srcOffset, uint32_t dstOffset, int64_t stream);
-mscclppResult_t mscclppRegisteredBufferWrite(mscclppComm_t comm, mscclppRegisteredMemory* regMem, void* srcBuff,
+MSCCLPP_API mscclppResult_t mscclppRegisteredBufferWrite(mscclppComm_t comm, mscclppRegisteredMemory* regMem, void* srcBuff,
                                              size_t size, uint32_t srcOffset, uint32_t dstOffset, int64_t stream)
 {
   int ret = 0;
@@ -605,15 +589,13 @@ mscclppResult_t mscclppRegisteredBufferWrite(mscclppComm_t comm, mscclppRegister
 
 // TODO: destroy registered buffer
 
-MSCCLPP_API(mscclppResult_t, mscclppProxyLaunch, mscclppComm_t comm);
-mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm)
+MSCCLPP_API mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm)
 {
   MSCCLPPCHECK(mscclppProxyCreate(comm));
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppBootstrapBarrier, mscclppComm_t comm);
-mscclppResult_t mscclppBootstrapBarrier(mscclppComm_t comm)
+MSCCLPP_API mscclppResult_t mscclppBootstrapBarrier(mscclppComm_t comm)
 {
   int* tmp = new int[comm->nRanks];
   MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
@@ -621,8 +603,7 @@ mscclppResult_t mscclppBootstrapBarrier(mscclppComm_t comm)
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppProxyStop, mscclppComm_t comm);
-mscclppResult_t mscclppProxyStop(mscclppComm_t comm)
+MSCCLPP_API mscclppResult_t mscclppProxyStop(mscclppComm_t comm)
 {
   // a barrier to make sure all ranks are done with their work before stopping the proxy
   MSCCLPPCHECK(mscclppBootstrapBarrier(comm));
@@ -631,8 +612,7 @@ mscclppResult_t mscclppProxyStop(mscclppComm_t comm)
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppCommRank, mscclppComm_t comm, int* rank);
-mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank)
+MSCCLPP_API mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank)
 {
   if (comm == NULL || rank == NULL) {
     WARN("comm or rank cannot be null");
@@ -642,8 +622,7 @@ mscclppResult_t mscclppCommRank(mscclppComm_t comm, int* rank)
   return mscclppSuccess;
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppCommSize, mscclppComm_t comm, int* size);
-mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size)
+MSCCLPP_API mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size)
 {
   if (comm == NULL || size == NULL) {
     WARN("comm or size cannot be null");
@@ -653,22 +632,76 @@ mscclppResult_t mscclppCommSize(mscclppComm_t comm, int* size)
   return mscclppSuccess;
 }
 
-MSCCLPP_API(void, mscclppDefaultLogHandler, const char* msg);
-void mscclppDefaultLogHandler(const char* msg)
+MSCCLPP_API void mscclppDefaultLogHandler(const char* msg)
 {
   mscclppDebugDefaultLogHandler(msg);
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppSetLogHandler, mscclppLogHandler_t handler);
-mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler)
+MSCCLPP_API mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler)
 {
   return mscclppDebugSetLogHandler(handler);
 }
 
-MSCCLPP_API(mscclppResult_t, mscclppSetBootstrapConnTimeout, int timeout);
-mscclppResult_t mscclppSetBootstrapConnTimeout(int timeout)
+MSCCLPP_API mscclppResult_t mscclppSetBootstrapConnTimeout(int timeout)
 {
   mscclppConfig* config = mscclppConfig::getInstance();
   config->setBootstrapConnectionTimeoutConfig(timeout);
   return mscclppSuccess;
 }
+
+static inline uint64_t hostFifoPush(uint64_t type, uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
+{
+
+}
+
+MSCCLPP_API void mscclppHostConn::put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
+{
+
+}
+
+
+MSCCLPP_API void mscclppHostConn::put(uint64_t dataOffset, uint64_t dataSize)
+{
+
+}
+
+MSCCLPP_API void mscclppHostConn::signal()
+{
+
+}
+
+MSCCLPP_API void mscclppHostConn::putWithSignal(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
+{
+
+}
+
+MSCCLPP_API void mscclppHostConn::putWithSignal(uint64_t dataOffset, uint64_t dataSize)
+{
+
+}
+
+MSCCLPP_API void mscclppHostConn::putWithSignalAndFlush(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
+{
+
+}
+
+MSCCLPP_API void mscclppHostConn::putWithSignalAndFlush(uint64_t dataOffset, uint64_t dataSize)
+{
+
+}
+
+MSCCLPP_API void mscclppHostConn::flush()
+{
+
+}
+
+MSCCLPP_API void mscclppHostConn::wait()
+{
+
+}
+
+MSCCLPP_API void mscclppHostConn::epochIncrement()
+{
+
+}
+

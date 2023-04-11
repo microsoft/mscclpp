@@ -40,12 +40,6 @@ struct proxyArgs
   struct mscclppProxyState* proxyState;
 };
 
-static void readTrigger(mscclppTrigger* dst, mscclppTrigger* src)
-{
-  __m128i xmm0 = _mm_load_si128((__m128i*)src);
-  _mm_store_si128((__m128i*)dst, xmm0);
-}
-
 #if defined(ENABLE_NPKIT)
 
 static void npkitInitReqIds(struct mscclppComm* comm)
@@ -93,7 +87,7 @@ static void npkitCollectExitEvents(struct mscclppConn* conn, uint8_t type, int c
 
 #endif
 
-mscclppResult_t mscclppProxyFifo::create()
+mscclppResult_t mscclppProxyDevFifo::create()
 {
   MSCCLPPCHECK(mscclppCudaCalloc(&this->fifoHead, 1));
 #if defined(MSCCLPP_USE_GDRCOPY)
@@ -110,7 +104,7 @@ mscclppResult_t mscclppProxyFifo::create()
   return mscclppSuccess;
 }
 
-mscclppResult_t mscclppProxyFifo::destroy()
+mscclppResult_t mscclppProxyDevFifo::destroy()
 {
   MSCCLPPCHECK(mscclppCudaFree(this->fifoHead));
 #if defined(MSCCLPP_USE_GDRCOPY)
@@ -125,21 +119,21 @@ mscclppResult_t mscclppProxyFifo::destroy()
 }
 
 // return true if the trigger is valid
-mscclppResult_t mscclppProxyFifo::poll(mscclppTrigger* trigger)
+mscclppResult_t mscclppProxyDevFifo::poll(mscclppTrigger* trigger)
 {
   __m128i xmm0 = _mm_load_si128((__m128i*)&this->triggerFifo[this->fifoTailHost % MSCCLPP_PROXY_FIFO_SIZE]);
   _mm_store_si128((__m128i*)trigger, xmm0);
   return mscclppSuccess;
 }
 
-mscclppResult_t mscclppProxyFifo::pop()
+mscclppResult_t mscclppProxyDevFifo::pop()
 {
   *(volatile uint64_t*)(&this->triggerFifo[this->fifoTailHost % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
   (this->fifoTailHost)++;
   return mscclppSuccess;
 }
 
-mscclppResult_t mscclppProxyFifo::flushTail(bool sync)
+mscclppResult_t mscclppProxyDevFifo::flushTail(bool sync)
 {
   // Flush the tail to device memory. This is either triggered every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER to make sure
   // that the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is for flush
@@ -156,6 +150,40 @@ mscclppResult_t mscclppProxyFifo::flushTail(bool sync)
   return mscclppSuccess;
 }
 
+mscclppResult_t mscclppProxyHostFifo::create()
+{
+  MSCCLPPCHECK(mscclppCalloc(&this->fifoHead, 1));
+  MSCCLPPCHECK(mscclppCalloc(&this->triggerFifo, MSCCLPP_PROXY_FIFO_SIZE));
+  this->fifoTailHost = 0;
+  return mscclppSuccess;
+}
+
+mscclppResult_t mscclppProxyHostFifo::destroy()
+{
+  free(this->fifoHead);
+  free(this->triggerFifo);
+  return mscclppSuccess;
+}
+
+mscclppResult_t mscclppProxyHostFifo::poll(mscclppTrigger* trigger)
+{
+  __m128i xmm0 = _mm_load_si128((__m128i*)&this->triggerFifo[this->fifoTailHost % MSCCLPP_PROXY_FIFO_SIZE]);
+  _mm_store_si128((__m128i*)trigger, xmm0);
+  return mscclppSuccess;
+}
+
+mscclppResult_t mscclppProxyHostFifo::pop()
+{
+  *(volatile uint64_t*)(&this->triggerFifo[this->fifoTailHost % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
+  (this->fifoTailHost)++;
+  return mscclppSuccess;
+}
+
+mscclppResult_t mscclppProxyHostFifo::flushTail(bool)
+{
+  return mscclppSuccess;
+}
+
 void* mscclppProxyService(void* _args)
 {
   struct proxyArgs* args = (struct proxyArgs*)_args;
@@ -164,9 +192,8 @@ void* mscclppProxyService(void* _args)
   // from this point on, proxy thread will stay close to the device
   PROXYMSCCLPPCHECK(numaBind(comm->devNumaNode));
 
-  struct mscclppProxyFifo* fifo = &args->proxyState->fifo;
+  struct mscclppProxyDevFifo* fifo = &args->proxyState->devFifo;
   volatile mscclppProxyRunState_t* run = &args->proxyState->run;
-
   mscclppTrigger trigger;
   mscclppIbContext* ibCtx = args->proxyState->ibContext;
   cudaStream_t p2pStream = args->proxyState->p2pStream;

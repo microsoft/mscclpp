@@ -186,8 +186,23 @@ struct mscclppDevConn : mscclppBaseConn
   struct mscclppConcurrentFifo fifo;
 };
 
+struct mscclppHostConn : mscclppBaseConn
+{
+  void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize);
+  void put(uint64_t dataOffset, uint64_t dataSize);
+  void signal();
+  void putWithSignal(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize);
+  void putWithSignal(uint64_t dataOffset, uint64_t dataSize);
+  void putWithSignalAndFlush(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize);
+  void putWithSignalAndFlush(uint64_t dataOffset, uint64_t dataSize);
+  void flush();
+  void wait();
+  void epochIncrement();
+};
+
 typedef struct mscclppComm* mscclppComm_t;
 typedef struct mscclppDevConn mscclppDevConn_t;
+typedef struct mscclppHostConn mscclppHostConn_t;
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
 typedef struct
