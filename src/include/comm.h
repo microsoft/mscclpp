@@ -10,16 +10,9 @@
 #include "ib.h"
 #include "proxy.h"
 
+#if defined(ENABLE_NPKIT)
 #include <vector>
-
-// #define CACHE_LINE_SIZE 128
-// #define MEM_ALIGN 4096
-// #define CUDA_IPC_MIN 2097152UL
-
-// // Channels / LL tuning
-// #define MSCCLPP_LL_THREAD_THRESHOLD 8
-// #define MSCCLPP_LL128_THREAD_THRESHOLD 8
-// #define MSCCLPP_SIMPLE_THREAD_THRESHOLD 64
+#endif
 
 #define MAXCONNECTIONS 64
 

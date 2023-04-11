@@ -49,7 +49,7 @@ typedef mscclppTrigger* mscclppTrigger_t;
  * push() function increments triggerFifoHead, proxyState->fifoTailHost is updated in proxy.cc:mscclppProxyService
  * and it occasionally flushes it to triggerFifoTail via a cudaMemcpyAsync.
  *
- * Why douplicating the tail is a good idea? The fifo is large engouh and we do not need frequent updates
+ * Why duplicating the tail is a good idea? The fifo is large engouh and we do not need frequent updates
  * for the tail as there is usually enough space for device threads to push their work into.
  */
 struct mscclppConcurrentFifo

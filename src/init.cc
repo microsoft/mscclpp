@@ -1,6 +1,7 @@
+#include "alloc.h"
 #include "bootstrap.h"
+#include "checks.h"
 #include "config.h"
-#include "core.h"
 #if defined(MSCCLPP_USE_GDRCOPY)
 #include "gdr.h"
 #endif
@@ -10,6 +11,8 @@
 #if defined(ENABLE_NPKIT)
 #include "npkit/npkit.h"
 #endif
+
+#define MSCCLPP_API(ret, func, args...) extern "C" __attribute__((visibility("default"))) ret func(args)
 
 static uint64_t hashUniqueId(mscclppUniqueId const& id)
 {

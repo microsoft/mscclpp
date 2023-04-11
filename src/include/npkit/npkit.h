@@ -2,9 +2,6 @@
 #define NPKIT_H_
 
 #include <string>
-#include <thread>
-
-#include <cuda_runtime.h>
 
 #include "npkit/npkit_event.h"
 #include "npkit/npkit_struct.h"

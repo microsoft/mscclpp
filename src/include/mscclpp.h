@@ -12,7 +12,6 @@
 #define MSCCLPP_PROXY_FIFO_FLUSH_COUNTER 4
 
 #include <mscclppfifo.h>
-#include <time.h>
 #include <vector>
 
 #ifdef __cplusplus
@@ -180,7 +179,8 @@ struct mscclppDevConn : mscclppBaseConn
     *(volatile uint64_t*)&(localSignalEpochId->device) += 1;
   }
 
-#endif
+#endif // __CUDACC__
+
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
   struct mscclppConcurrentFifo fifo;

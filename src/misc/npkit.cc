@@ -4,6 +4,7 @@
 
 #include "alloc.h"
 #include "npkit/npkit.h"
+#include <cuda_runtime.h>
 
 uint64_t NpKit::rank_ = 0;
 

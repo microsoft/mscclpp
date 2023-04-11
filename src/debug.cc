@@ -5,10 +5,11 @@
  ************************************************************************/
 
 #include "debug.h"
-#include "core.h"
+#include <cuda_runtime.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <sys/syscall.h>
+#include <unistd.h>
 
 int mscclppDebugLevel = -1;
 static int pid = -1;
@@ -229,15 +230,11 @@ mscclppResult_t mscclppDebugSetLogHandler(mscclppLogHandler_t handler)
   return mscclppSuccess;
 }
 
-MSCCLPP_PARAM(SetThreadName, "SET_THREAD_NAME", 0);
-
 void mscclppSetThreadName(pthread_t thread, const char* fmt, ...)
 {
   // pthread_setname_np is nonstandard GNU extension
   // needs the following feature test macro
 #ifdef _GNU_SOURCE
-  if (mscclppParamSetThreadName() != 1)
-    return;
   char threadName[MSCCLPP_THREAD_NAMELEN];
   va_list vargs;
   va_start(vargs, fmt);

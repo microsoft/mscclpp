@@ -6,7 +6,6 @@
 
 #include "bootstrap.h"
 #include "config.h"
-#include "core.h"
 #include "mscclpp.h"
 #include "utils.h"
 #include <sys/types.h>

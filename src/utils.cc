@@ -5,8 +5,8 @@
  ************************************************************************/
 
 #include "utils.h"
-#include "core.h"
 
+#include <numa.h>
 #include <stdlib.h>
 #include <string>
 

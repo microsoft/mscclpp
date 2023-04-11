@@ -8,13 +8,9 @@
 #define MSCCLPP_UTILS_H_
 
 #include "alloc.h"
-#include "checks.h"
 #include "mscclpp.h"
-#include <new>
-#include <numa.h>
-#include <sched.h>
+#include <chrono>
 #include <stdint.h>
-#include <time.h>
 
 // int mscclppCudaCompCap();
 
