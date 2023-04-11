@@ -16,8 +16,7 @@
 #include <vector>
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
 struct alignas(16) mscclppDevConnSignalEpochId

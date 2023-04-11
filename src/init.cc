@@ -464,8 +464,8 @@ mscclppResult_t mscclppP2pConnectionSetupEnd(struct connInfo* connInfo /*input*/
   }
   CUDACHECK(
     cudaIpcOpenMemHandle((void**)&conn->devConn->remoteBuff, connInfo->handleBuff, cudaIpcMemLazyEnablePeerAccess));
-  CUDACHECK(
-    cudaIpcOpenMemHandle((void**)&conn->devConn->remoteSignalEpochId, connInfo->handleSignalEpochId, cudaIpcMemLazyEnablePeerAccess));
+  CUDACHECK(cudaIpcOpenMemHandle((void**)&conn->devConn->remoteSignalEpochId, connInfo->handleSignalEpochId,
+                                 cudaIpcMemLazyEnablePeerAccess));
   return mscclppSuccess;
 }
 
@@ -484,7 +484,8 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
     MSCCLPPCHECK(mscclppIbContextCreateQp(ibCtx, &conn->ibQp));
   }
   MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localBuff, conn->buffSize, &conn->ibBuffMr));
-  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localSignalEpochId, sizeof(struct mscclppDevConnSignalEpochId), &conn->ibSignalEpochIdMr));
+  MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, devConn->localSignalEpochId,
+                                          sizeof(struct mscclppDevConnSignalEpochId), &conn->ibSignalEpochIdMr));
   connInfo->infoQp = conn->ibQp->info;
   connInfo->infoBuffMr = conn->ibBuffMr->info;
   connInfo->infoSignalEpochIdMr = conn->ibSignalEpochIdMr->info;
