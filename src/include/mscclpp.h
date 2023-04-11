@@ -139,9 +139,13 @@ struct mscclppDevConn
   __forceinline__ __device__ void putDirect(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize,
                                             uint32_t threadId, uint32_t numThreads)
   {
-    char* src = (char*)localBuff + srcDataOffset;
-    char* dst = (char*)remoteBuff + dstDataOffset;
-    for (size_t i = threadId; i < dataSize; i += numThreads) {
+    uint64_t* src = (uint64_t*)localBuff + srcDataOffset;
+    uint64_t* dst = (uint64_t*)remoteBuff + dstDataOffset;
+    // assume the memory is aligned to 8 bytes
+    size_t nElem =
+      dataSize % sizeof(uint64_t) ? (dataSize + sizeof(uint64_t)) / sizeof(uint64_t) : dataSize / sizeof(uint64_t);
+#pragma unroll
+    for (size_t i = threadId; i < nElem; i += numThreads) {
       dst[i] = src[i];
     }
   }

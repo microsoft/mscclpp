@@ -1,12 +1,12 @@
-#include "common.h"
 #include "comm.h"
+#include "common.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
 #include <unistd.h>
 
-#define BLOCK_THREADS_NUM 256
+#define BLOCK_THREADS_NUM 128
 
 #define ALIGN 4
 
@@ -25,18 +25,15 @@ __global__ void kernel(bool root, size_t dataSize)
   mscclppDevConn_t sendConn = sendConnConst;
   mscclppDevConn_t recvConn = recvConnConst;
 
-  if (root)
-  {
+  if (root) {
     sendConn.putDirect(0, dataSize, threadIdx.x, blockDim.x);
     // make sure all the threads have put their data
     __syncthreads();
-    if (threadIdx.x == 0){
+    if (threadIdx.x == 0) {
       sendConn.signalDirect();
       recvConn.waitDirectSingal();
     }
-  }
-  else
-  {
+  } else {
     if (threadIdx.x == 0) {
       recvConn.waitDirectSingal();
     }
@@ -61,7 +58,7 @@ testResult_t resetData(int* dataDst, size_t dataCount, bool isRoot)
 }
 
 void RingSendRecvGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* paramcount, size_t* sendInplaceOffset,
-                               size_t* recvInplaceOffset, size_t count, int nranks)
+                                  size_t* recvInplaceOffset, size_t count, int nranks)
 {
   size_t base = (count / ALIGN) * ALIGN;
   *sendcount = base;
@@ -101,7 +98,7 @@ void RingSendRecvGetBw(size_t count, int typesize, double sec, double* algBw, do
 }
 
 testResult_t RingSendRecvRunColl(void* sendbuff, void* recvbuff, int nranksPerNode, size_t count, mscclppComm_t comm,
-                              cudaStream_t stream, int kernel_num)
+                                 cudaStream_t stream, int kernel_num)
 {
   kernel<<<1, BLOCK_THREADS_NUM, 0, stream>>>(comm->rank == 0, count);
   return testSuccess;
@@ -122,8 +119,8 @@ testResult_t RingSendRecvRunTest(struct testArgs* args)
   args->collTest = &ringSendRecvTest;
   int rank = args->proc, worldSize = args->totalProcs;
 
-  mscclppDevConn_t *sendDevConn;
-  mscclppDevConn_t *recvDevConn;
+  mscclppDevConn_t* sendDevConn;
+  mscclppDevConn_t* recvDevConn;
   MSCCLPPCHECK(mscclppGetDeviceConnection(args->comm, (rank + 1) % worldSize, 0, &sendDevConn));
   MSCCLPPCHECK(mscclppGetDeviceConnection(args->comm, (rank - 1 + worldSize) % worldSize, 0, &recvDevConn));
   CUDACHECK(cudaMemcpyToSymbol(sendConnConst, sendDevConn, sizeof(mscclppDevConn_t)));
