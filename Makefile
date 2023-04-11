@@ -158,7 +158,7 @@ MSCLLPPTESTBINS         := $(MSCLLPPTESTBINFILESLIST:%=$(BUILDDIR)/$(BINDIR)/$(T
 
 INCLUDE := -Isrc -Isrc/include
 
-.PHONY: all build lib tests mscclpp_test clean
+.PHONY: all build lib unittests tests mscclpp-test cpplint cpplint-autofix cpplint-file-autofix clean
 
 all: build
 

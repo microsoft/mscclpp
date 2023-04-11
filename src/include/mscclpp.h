@@ -29,8 +29,8 @@ struct alignas(16) mscclppDevConnSignalEpochId
   uint64_t proxy;
 };
 
-
-struct mscclppBaseConn {
+struct mscclppBaseConn
+{
   int remoteRank;
   int tag;
 
