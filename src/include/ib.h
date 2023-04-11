@@ -65,5 +65,7 @@ mscclppResult_t mscclppIbContextDestroy(struct mscclppIbContext* ctx);
 mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext* ctx, struct mscclppIbQp** ibQp, int port = -1);
 mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext* ctx, void* buff, size_t size,
                                            struct mscclppIbMr** ibMr);
+mscclppResult_t mscclppIbContextRegisterMr2(struct mscclppIbContext* ctx, void* buff, size_t size,
+                                           struct mscclppIbMr* ibMr);
 
 #endif

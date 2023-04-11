@@ -129,20 +129,13 @@ struct _Comm {
 
 struct _P2PHandle {
   struct mscclppRegisteredMemoryP2P _rm;
-  struct mscclppIbMr _local_ibmr;
 
-  _P2PHandle() : _rm({0}), _local_ibmr({0}) {}
+  _P2PHandle() : _rm({0}) {}
 
-  _P2PHandle(const mscclppRegisteredMemoryP2P& p2p) : _local_ibmr({0}) {
-    _rm = p2p;
-    if (_rm.IbMr != nullptr) {
-      _local_ibmr = *_rm.IbMr;
-      _rm.IbMr = &_local_ibmr;
-    }
-  }
+  _P2PHandle(const mscclppRegisteredMemoryP2P& p2p) : _rm(p2p) {}
 
   mscclppTransport_t transport() const {
-    if (_rm.IbMr != nullptr) {
+    if (_rm.remoteBuff == nullptr) {
       return mscclppTransport_t::mscclppTransportIB;
     } else {
       return mscclppTransport_t::mscclppTransportP2P;
@@ -248,7 +241,7 @@ NB_MODULE(_py_mscclpp, m) {
           "write_all",
           [](const mscclppRegisteredMemory& self,
              const _Comm& comm,
-             uint64_t src_data,
+             mscclppRegisteredMemory& src_data,
              size_t size,
              uint32_t src_offset = 0,
              uint32_t dst_offset = 0,
@@ -257,7 +250,7 @@ NB_MODULE(_py_mscclpp, m) {
                 mscclppRegisteredBufferWrite(
                     comm._handle,
                     const_cast<mscclppRegisteredMemory*>(&self),
-                    reinterpret_cast<void*>(src_data),
+                    &src_data,
                     size,
                     src_offset,
                     dst_offset,
@@ -341,6 +334,27 @@ NB_MODULE(_py_mscclpp, m) {
           "size"_a,
           nb::call_guard<nb::gil_scoped_release>(),
           "Register a buffer for P2P transfers.")
+        .def(
+          "register_source_buffer",
+          [](_Comm& self,
+             uint64_t data_ptr,
+             uint64_t size) -> mscclppRegisteredMemory {
+            self.check_open();
+            mscclppRegisteredMemory regMem;
+            checkResult(
+                mscclppRegisterSourceBuffer(
+                    self._handle,
+                    reinterpret_cast<void*>(data_ptr),
+                    size,
+                    &regMem),
+                "Registering buffer failed");
+            return regMem;
+            ;
+          },
+          "data_ptr"_a,
+          "size"_a,
+          nb::call_guard<nb::gil_scoped_release>(),
+          "Register a buffer for P2P transfers.")
       .def(
           "connect",
           [](_Comm& self,
@@ -348,7 +362,8 @@ NB_MODULE(_py_mscclpp, m) {
              int tag,
              uint64_t data_ptr,
              uint64_t size,
-             mscclppTransport_t transport_type) -> void {
+             mscclppTransport_t transport_type,
+             const char* ib_dev) -> void {
             self.check_open();
             RETRY(
                 mscclppConnect(
@@ -358,7 +373,7 @@ NB_MODULE(_py_mscclpp, m) {
                     reinterpret_cast<void*>(data_ptr),
                     size,
                     transport_type,
-                    NULL  // ibDev
+                    ib_dev
                     ),
                 "Connect failed");
           },
@@ -367,6 +382,7 @@ NB_MODULE(_py_mscclpp, m) {
           "data_ptr"_a,
           "size"_a,
           "transport_type"_a,
+          "ib_dev"_a,
           nb::call_guard<nb::gil_scoped_release>(),
           "Attach a local buffer to a remote connection.")
       .def(

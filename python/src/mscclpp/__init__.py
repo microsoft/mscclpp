@@ -156,13 +156,17 @@ class Comm:
         data_ptr,
         data_size: int,
         transport: int,
+        ib_dev: str = "",
     ) -> None:
+        local_rank = self.rank % 8
+        ib_dev = f"mlx5_ib{local_rank}"
         self._c_comm.connect(
             remote_rank,
             tag,
             data_ptr,
             data_size,
             transport,
+            ib_dev,
         )
 
     @classmethod
@@ -190,7 +194,9 @@ class Comm:
                 data_ptr=data_ptr,
                 data_size=data_size,
                 transport=transport,
+
             )
+        comm.connection_setup()
         return comm
 
     def connection_setup(self) -> None:
@@ -210,6 +216,19 @@ class Comm:
         return RegisteredMemory(
             comm=self,
             rm=self._c_comm.register_buffer(
+                data_ptr=data_ptr,
+                size=size,
+            ),
+        )
+
+    def register_source_buffer(
+        self,
+        data_ptr: int,
+        size: int,
+    ) -> "RegisteredMemory":
+        return RegisteredMemory(
+            comm=self,
+            rm=self._c_comm.register_source_buffer(
                 data_ptr=data_ptr,
                 size=size,
             ),
@@ -240,7 +259,7 @@ class RegisteredMemory:
 
     def _write(
         self,
-        src_ptr: int,
+        src_ptr: "RegisteredMemory",
         size: int,
         *,
         src_offset: int = 0,
@@ -249,7 +268,7 @@ class RegisteredMemory:
     ) -> None:
         self._c_rm.write_all(
             comm=self._comm._c_comm,
-            src_data=src_ptr,
+            src_data=src_ptr._c_rm,
             size=size,
             src_offset=src_offset,
             dst_offset=dst_offset,

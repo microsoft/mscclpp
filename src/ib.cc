@@ -251,6 +251,24 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext* ctx, struct ms
 mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext* ctx, void* buff, size_t size,
                                            struct mscclppIbMr** ibMr)
 {
+  if (ctx->mrs == NULL) {
+    MSCCLPPCHECK(mscclppCalloc(&ctx->mrs, MAXCONNECTIONS));
+    ctx->maxMrs = MAXCONNECTIONS;
+  }
+  ctx->nMrs++;
+  if (ctx->maxMrs < ctx->nMrs) {
+    WARN("too many MRs");
+    return mscclppInternalError;
+  }
+  struct mscclppIbMr* _ibMr = &ctx->mrs[ctx->nMrs - 1];
+  *ibMr = _ibMr;
+  return mscclppIbContextRegisterMr2(ctx, buff, size, _ibMr);
+}
+
+
+mscclppResult_t mscclppIbContextRegisterMr2(struct mscclppIbContext* ctx, void* buff, size_t size,
+                                           struct mscclppIbMr* ibMr)
+{
   if (size == 0) {
     WARN("invalid size: %zu", size);
     return mscclppInvalidArgument;
@@ -268,21 +286,10 @@ mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext* ctx, void* b
     WARN("ibv_reg_mr failed (errno %d)", errno);
     return mscclppInternalError;
   }
-  ctx->nMrs++;
-  if (ctx->mrs == NULL) {
-    MSCCLPPCHECK(mscclppCalloc(&ctx->mrs, MAXCONNECTIONS));
-    ctx->maxMrs = MAXCONNECTIONS;
-  }
-  if (ctx->maxMrs < ctx->nMrs) {
-    WARN("too many MRs");
-    return mscclppInternalError;
-  }
-  struct mscclppIbMr* _ibMr = &ctx->mrs[ctx->nMrs - 1];
-  _ibMr->mr = mr;
-  _ibMr->buff = buff;
-  _ibMr->info.addr = (uint64_t)buff;
-  _ibMr->info.rkey = mr->rkey;
-  *ibMr = _ibMr;
+  ibMr->mr = mr;
+  ibMr->buff = buff;
+  ibMr->info.addr = (uint64_t)buff;
+  ibMr->info.rkey = mr->rkey;
   return mscclppSuccess;
 }
 
@@ -377,6 +384,8 @@ int mscclppIbQp::postSend()
     return 0;
   }
 
+  INFO(MSCCLPP_INIT, "not empty");
+  return 0;
   struct ibv_send_wr* bad_wr;
   int ret = ibv_post_send(this->qp, this->wrs, &bad_wr);
   if (ret != 0) {
