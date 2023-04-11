@@ -20,6 +20,8 @@
     }                                                                                                                  \
   } while (false)
 
+#define CUDA_CHECK(cmd) (cmd)
+
 #define CUDACHECKGOTO(cmd, res, label)                                                                                 \
   do {                                                                                                                 \
     cudaError_t err = cmd;                                                                                             \

@@ -11,6 +11,8 @@
 #include "npkit/npkit.h"
 #endif
 
+#include <cuda.h>
+
 static uint64_t hashUniqueId(mscclppUniqueId const& id)
 {
   char const* bytes = (char const*)&id;
@@ -563,6 +565,7 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
 struct bufferInfo
 {
   cudaIpcMemHandle_t handleBuff;
+  int64_t handleBuffOffset;
   mscclppIbMrInfo infoBuffMr;
 };
 
@@ -579,7 +582,10 @@ mscclppResult_t mscclppRegisterBuffer(mscclppComm_t comm, void* local_memory, si
 
     // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
     if (conn->transport == mscclppTransportP2P) {
-      CUDACHECK(cudaIpcGetMemHandle(&bInfo.handleBuff, local_memory));
+      int64_t base;
+      CUDA_CHECK(cuMemGetAddressRange((CUdeviceptr*)&base, NULL, (CUdeviceptr)local_memory));
+      bInfo.handleBuffOffset = (int64_t)local_memory - base;
+      CUDACHECK(cudaIpcGetMemHandle(&bInfo.handleBuff, (void*)base));
     } else if (conn->transport == mscclppTransportIB) {
       MSCCLPPCHECK(mscclppIbContextRegisterMr(conn->ibCtx, local_memory, size, &ibBuffMr));
       bInfo.infoBuffMr = ibBuffMr->info;
@@ -602,6 +608,7 @@ mscclppResult_t mscclppRegisterBuffer(mscclppComm_t comm, void* local_memory, si
     // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
     if (conn->transport == mscclppTransportP2P) {
       CUDACHECK(cudaIpcOpenMemHandle((void**)&p2p.remoteBuff, bInfo.handleBuff, cudaIpcMemLazyEnablePeerAccess));
+      p2p.remoteBuff = (void*)((int64_t)p2p.remoteBuff + bInfo.handleBuffOffset);
     } else if (conn->transport == mscclppTransportIB) {
       p2p.IbMr = ibMrs[i];
     }
@@ -621,8 +628,10 @@ mscclppResult_t mscclppRegisteredBufferWrite(mscclppComm_t comm, mscclppRegister
     struct mscclppConn* conn = &comm->conns[i];
     // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
     if (conn->transport == mscclppTransportP2P) {
-      void* dstBuff = regMem->p2p[i].remoteBuff;
-      CUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, size, cudaMemcpyDeviceToDevice, (cudaStream_t)stream));
+      void* dstBuff = regMem->p2p[i].remoteBuff  + dstOffset;
+      void* src = srcBuff + srcOffset;
+      CUDACHECK(cudaMemcpyAsync(dstBuff, src, size, cudaMemcpyDeviceToDevice, (cudaStream_t)stream));
+      // INFO(MSCCLPP_INIT, "data memcpyAsync %p -> %p, size %zu", src, dstBuff, size);
     } else {
       conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)size,
                             /*wrId=*/0, /*srcOffset=*/srcOffset,

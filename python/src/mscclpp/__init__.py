@@ -165,6 +165,34 @@ class Comm:
             transport,
         )
 
+    @classmethod
+    def connect_rank_from_address(
+        cls,
+        address: str,
+        rank: int,
+        world_size: int,
+        data_ptr: int,
+        data_size: int,
+        transport=TransportType.P2P,
+    ):
+        comm = cls.init_rank_from_address(
+            address=address,
+            rank=rank,
+            world_size=world_size,
+        )
+    
+        for i in range(world_size):
+            if i == rank:
+                continue
+            comm.connect(
+                remote_rank=i,
+                tag=0,
+                data_ptr=data_ptr,
+                data_size=data_size,
+                transport=transport,
+            )
+        return comm
+
     def connection_setup(self) -> None:
         self._c_comm.connection_setup()
 
@@ -180,7 +208,7 @@ class Comm:
         size: int,
     ) -> "RegisteredMemory":
         return RegisteredMemory(
-            comm=self._c_comm,
+            comm=self,
             rm=self._c_comm.register_buffer(
                 data_ptr=data_ptr,
                 size=size,
