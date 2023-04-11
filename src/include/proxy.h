@@ -15,11 +15,14 @@ typedef enum
   MSCCLPP_PROXY_RUN_STATE_EXITING,
 } mscclppProxyRunState_t;
 
-struct mscclppProxyState
+struct mscclppProxyFifo
 {
-  mscclppTransport_t transportType;
-  pthread_t thread;
-  mscclppProxyRunState_t run;
+  mscclppResult_t create();
+  mscclppResult_t destroy();
+
+  mscclppResult_t poll(mscclppTrigger* trigger);
+  mscclppResult_t pop();
+  mscclppResult_t flushTail(bool sync = false);
 
   // fifo cudaHostCalloc'ed that is produced by device and consumed by host
   mscclppTrigger* triggerFifo;
@@ -45,10 +48,21 @@ struct mscclppProxyState
   // these updates are pushed to the device.
   uint64_t fifoTailHost;
 
+  // for transferring fifo tail
+  cudaStream_t stream;
+};
+
+struct mscclppProxyState
+{
+  mscclppTransport_t transportType;
+  pthread_t thread;
+  mscclppProxyRunState_t run;
+
   int numaNodeToBind;
   struct mscclppIbContext* ibContext; // For IB connection only
   cudaStream_t p2pStream;             // for P2P DMA engine only
-  cudaStream_t fifoStream;            // for transferring fifo tail
+
+  struct mscclppProxyFifo fifo;
 };
 
 mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm);

@@ -93,6 +93,69 @@ static void npkitCollectExitEvents(struct mscclppConn* conn, uint8_t type, int c
 
 #endif
 
+mscclppResult_t mscclppProxyFifo::create()
+{
+  MSCCLPPCHECK(mscclppCudaCalloc(&this->fifoHead, 1));
+#if defined(MSCCLPP_USE_GDRCOPY)
+  MSCCLPPCHECK(mscclppGdrCudaCalloc(&this->triggerFifo, &this->triggerFifoDev, MSCCLPP_PROXY_FIFO_SIZE,
+                                    &this->triggerFifoDesc));
+  MSCCLPPCHECK(
+    mscclppGdrCudaCalloc(&this->fifoTailDevHostPtr, &this->fifoTailDev, 1, &this->fifoTailDesc));
+#else
+  MSCCLPPCHECK(mscclppCudaHostCalloc(&this->triggerFifo, MSCCLPP_PROXY_FIFO_SIZE));
+  MSCCLPPCHECK(mscclppCudaCalloc(&this->fifoTailDev, 1));
+#endif
+  CUDACHECK(cudaStreamCreateWithFlags(&this->stream, cudaStreamNonBlocking));
+  this->fifoTailHost = 0;
+  return mscclppSuccess;
+}
+
+mscclppResult_t mscclppProxyFifo::destroy()
+{
+  MSCCLPPCHECK(mscclppCudaFree(this->fifoHead));
+#if defined(MSCCLPP_USE_GDRCOPY)
+  MSCCLPPCHECK(mscclppGdrCudaFree(this->triggerFifoDesc));
+  MSCCLPPCHECK(mscclppGdrCudaFree(this->fifoTailDesc));
+#else
+  MSCCLPPCHECK(mscclppCudaHostFree(this->triggerFifo));
+  MSCCLPPCHECK(mscclppCudaFree(this->fifoTailDev));
+#endif
+  CUDACHECK(cudaStreamDestroy(this->stream));
+  return mscclppSuccess;
+}
+
+// return true if the trigger is valid
+mscclppResult_t mscclppProxyFifo::poll(mscclppTrigger* trigger)
+{
+  __m128i xmm0 = _mm_load_si128((__m128i*)&this->triggerFifo[this->fifoTailHost % MSCCLPP_PROXY_FIFO_SIZE]);
+  _mm_store_si128((__m128i*)trigger, xmm0);
+  return mscclppSuccess;
+}
+
+mscclppResult_t mscclppProxyFifo::pop()
+{
+  *(volatile uint64_t*)(&this->triggerFifo[this->fifoTailHost % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
+  (this->fifoTailHost)++;
+  return mscclppSuccess;
+}
+
+mscclppResult_t mscclppProxyFifo::flushTail(bool sync)
+{
+  // Flush the tail to device memory. This is either triggered every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER to make sure
+  // that the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is for flush
+  // request.
+#if defined(MSCCLPP_USE_GDRCOPY)
+  *(volatile uint64_t*)(this->fifoTailDevHostPtr) = this->fifoTailHost;
+#else
+  CUDACHECK(
+    cudaMemcpyAsync(this->fifoTailDev, &(this->fifoTailHost), sizeof(uint64_t), cudaMemcpyHostToDevice, this->stream));
+  if (sync) {
+    CUDACHECK(cudaStreamSynchronize(this->stream));
+  }
+#endif
+  return mscclppSuccess;
+}
+
 void* mscclppProxyService(void* _args)
 {
   struct proxyArgs* args = (struct proxyArgs*)_args;
@@ -101,36 +164,28 @@ void* mscclppProxyService(void* _args)
   // from this point on, proxy thread will stay close to the device
   PROXYMSCCLPPCHECK(numaBind(comm->devNumaNode));
 
+  struct mscclppProxyFifo* fifo = &args->proxyState->fifo;
   volatile mscclppProxyRunState_t* run = &args->proxyState->run;
-  mscclppTrigger* fifo = args->proxyState->triggerFifo;
-  uint64_t* fifoTail = &args->proxyState->fifoTailHost;
-#if defined(MSCCLPP_USE_GDRCOPY)
-  volatile uint64_t* fifoTailDevPtr = args->proxyState->fifoTailDevHostPtr;
-#else
-  uint64_t* fifoTailDevPtr = args->proxyState->fifoTailDev;
-#endif
-  uint64_t fifoTailCached = *fifoTail;
+
   mscclppTrigger trigger;
   mscclppIbContext* ibCtx = args->proxyState->ibContext;
   cudaStream_t p2pStream = args->proxyState->p2pStream;
-#if !defined(MSCCLPP_USE_GDRCOPY)
-  cudaStream_t fifoStream = args->proxyState->fifoStream;
-#endif
   bool isP2pProxy = (ibCtx == nullptr);
   free(_args); // allocated in mscclppProxyCreate
 
   npkitInitReqIds(comm);
 
-  int counter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
+  int runCnt = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
+  uint64_t flushCnt = 0;
   for (;;) {
-    if (counter-- == 0) {
-      counter = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
+    if (runCnt-- == 0) {
+      runCnt = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
       if (*run != MSCCLPP_PROXY_RUN_STATE_RUNNING) {
         break;
       }
     }
     // Poll to see if we are ready to send anything
-    readTrigger(&trigger, &fifo[fifoTailCached % MSCCLPP_PROXY_FIFO_SIZE]);
+    PROXYMSCCLPPCHECK(fifo->poll(&trigger));
     if (trigger.value[0] == 0) {
       continue; // there is one in progreess
     }
@@ -210,30 +265,17 @@ void* mscclppProxyService(void* _args)
     }
 
     // Send completion: reset only the high 64 bits
-    *(volatile uint64_t*)(&fifo[fifoTailCached % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
-    fifoTailCached++;
+    PROXYMSCCLPPCHECK(fifo->pop());
     // Flush the tail to device memory. This is either triggered every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER to make sure
     // that the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is for flush
     // request.
-    if (((fifoTailCached % MSCCLPP_PROXY_FIFO_FLUSH_COUNTER) == 0) || (trigger.fields.type & mscclppSync)) {
-#if defined(MSCCLPP_USE_GDRCOPY)
-      *fifoTailDevPtr = fifoTailCached;
-#else
-      PROXYCUDACHECK(
-        cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, fifoStream));
-#endif
+    if (((++flushCnt % MSCCLPP_PROXY_FIFO_FLUSH_COUNTER) == 0) || (trigger.fields.type & mscclppSync)) {
+      PROXYMSCCLPPCHECK(fifo->flushTail());
     }
   }
-  *fifoTail = fifoTailCached;
 
   // make sure the tail is flushed before we shut the proxy
-#if defined(MSCCLPP_USE_GDRCOPY)
-  *fifoTailDevPtr = fifoTailCached;
-#else
-  PROXYCUDACHECK(
-    cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, fifoStream));
-  PROXYCUDACHECK(cudaStreamSynchronize(fifoStream));
-#endif
+  PROXYMSCCLPPCHECK(fifo->flushTail(/*sync=*/true));
   if (isP2pProxy) {
     PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
   }
