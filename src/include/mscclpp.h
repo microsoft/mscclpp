@@ -29,6 +29,28 @@ struct alignas(16) mscclppDevConnSignalEpochId
   uint64_t proxy;
 };
 
+
+struct mscclppBaseConn {
+  int remoteRank;
+  int tag;
+
+  // my local buffer
+  void* localBuff;
+
+  struct mscclppDevConnSignalEpochId* localSignalEpochId;
+  // used by the signal() function directly from gpu
+  struct mscclppDevConnSignalEpochId* remoteSignalEpochId;
+
+  // every wait(), increaments this and then the gpu waits for either:
+  // 1) localSignalEpochId->proxy to be >= this in case of a proxy thread
+  // 2) remoteSignalEpochId->device to be >= this in case of a gpu thread
+  uint64_t* waitEpochId;
+
+  // my remote peer's buffer. only non-NULL with gpu's direct access
+  // gpu can directly write into it
+  void* remoteBuff;
+};
+
 /***************************************************************************************************************
  * A mscclppDevConn provides a zero-copy connection between two GPUs connected via P2P NVLink or InfiniBand.
  * The communication API is one-sided meaning that for every single data transfer, only one side
@@ -91,7 +113,7 @@ struct alignas(16) mscclppDevConnSignalEpochId
  * The two endpoint can concurrently use the same connection provided they are writing (puts) on different
  * indices in the registered buffer.
  **************************************************************************************************************/
-struct mscclppDevConn
+struct mscclppDevConn : mscclppBaseConn
 {
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
@@ -159,25 +181,6 @@ struct mscclppDevConn
   }
 
 #endif
-  int remoteRank;
-  int tag;
-
-  // my local buffer
-  void* localBuff;
-
-  struct mscclppDevConnSignalEpochId* localSignalEpochId;
-  // used by the signal() function directly from gpu
-  struct mscclppDevConnSignalEpochId* remoteSignalEpochId;
-
-  // every wait(), increaments this and then the gpu waits for either:
-  // 1) localSignalEpochId->proxy to be >= this in case of a proxy thread
-  // 2) remoteSignalEpochId->device to be >= this in case of a gpu thread
-  uint64_t* waitEpochId;
-
-  // my remote peer's buffer. only non-NULL with gpu's direct access
-  // gpu can directly write into it
-  void* remoteBuff;
-
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
   struct mscclppConcurrentFifo fifo;
