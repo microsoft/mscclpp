@@ -15,7 +15,8 @@
 #include <time.h>
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /***************************************************************************************************************
@@ -190,8 +191,8 @@ struct mscclppDevConn
   int tag;
 
   void* localBuff;
-  uint64_t* sendEpochId; // this is read and written by the GPU
-  uint64_t* recvEpochId; // this is the expected recv epoch id.
+  uint64_t* sendEpochId;       // this is read and written by the GPU
+  uint64_t* recvEpochId;       // this is the expected recv epoch id.
   uint64_t* directRecvEpochId; // this is read and written by remote GPU.
 
   void* remoteBuff;
