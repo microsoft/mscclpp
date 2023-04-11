@@ -13,6 +13,7 @@
 
 #include <mscclppfifo.h>
 #include <vector>
+#includa <cuda_runtime.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -188,9 +189,23 @@ struct mscclppDevConn : mscclppBaseConn
 
 struct mscclppHostConn : mscclppBaseConn
 {
-  void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize);
-  void put(uint64_t dataOffset, uint64_t dataSize);
-  void signal();
+  void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize){
+    conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)dataSize,
+                              /*wrId=*/0, /*srcOffset=*/srcDataOffset,
+                              /*dstOffset=*/dstDataOffset,
+                              /*signaled=*/false);
+    int ret = conn->ibQp->postSend();
+    if (ret != 0) {
+      // Return value is errno.
+      WARN("data postSend failed: errno %d", ret);
+    }                         
+  }
+  void put(uint64_t dataOffset, uint64_t dataSize){
+    put(dataOffset, dataOffset, dataSize);
+  }
+  void signal(){
+    
+  }
   void putWithSignal(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize);
   void putWithSignal(uint64_t dataOffset, uint64_t dataSize);
   void putWithSignalAndFlush(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize);
@@ -198,6 +213,8 @@ struct mscclppHostConn : mscclppBaseConn
   void flush();
   void wait();
   void epochIncrement();
+  struct mscclppConn* conn;
+  cudaStream_t p2pStream;
 };
 
 typedef struct mscclppComm* mscclppComm_t;
