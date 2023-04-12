@@ -2,11 +2,7 @@
 
 set -ex
 
-if ! [ -d build ] ; then
-  ./setup.sh
-fi
+pip install -e .
 
-cmake --build build
-
-cd build
-pytest -s mscclpp
+cd src
+pytest -vs mscclpp

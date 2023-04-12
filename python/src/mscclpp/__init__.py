@@ -180,7 +180,7 @@ class Comm:
             rank=rank,
             world_size=world_size,
         )
-    
+
         for i in range(world_size):
             if i == rank:
                 continue
