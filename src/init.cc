@@ -352,6 +352,7 @@ struct mscclppHostIBConn : mscclppHostConn
 {
   mscclppHostIBConn(mscclppConn* conn) : conn(conn)
   {
+    this->ibQp = NULL;
   }
 
   void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
