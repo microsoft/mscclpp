@@ -356,7 +356,7 @@ struct mscclppHostIBConn : mscclppHostConn
 
   void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
   {
-    this->ibQp->stageSend(this->ibBuffMr, &this->ibBuffMrInfo, (uint32_t)dataSize,
+    this->ibQp->stageSend(this->ibBuffMr, &this->ibBuffMrRemoteInfo, (uint32_t)dataSize,
                           /*wrId=*/0, /*srcOffset=*/srcDataOffset, /*dstOffset=*/dstDataOffset, /*signaled=*/false);
     int ret = this->ibQp->postSend();
     if (ret != 0) {
@@ -368,7 +368,7 @@ struct mscclppHostIBConn : mscclppHostConn
   void signal()
   {
     // My local device flag is copied to the remote's proxy flag
-    this->ibQp->stageSend(this->ibSignalEpochIdMr, &this->ibSignalEpochIdMrInfo, sizeof(uint64_t),
+    this->ibQp->stageSend(this->ibSignalEpochIdMr, &this->ibSignalEpochIdMrRemoteInfo, sizeof(uint64_t),
                           /*wrId=*/0, /*srcOffset=*/0, /*dstOffset=*/sizeof(uint64_t), /*signaled=*/true);
     int ret = this->ibQp->postSend();
     if (ret != 0) {
@@ -411,8 +411,8 @@ struct mscclppHostIBConn : mscclppHostConn
   struct mscclppIbQp* ibQp;
   struct mscclppIbMr* ibBuffMr;
   struct mscclppIbMr* ibSignalEpochIdMr;
-  struct mscclppIbMrInfo ibBuffMrInfo;
-  struct mscclppIbMrInfo ibSignalEpochIdMrInfo;
+  struct mscclppIbMrInfo ibBuffMrRemoteInfo;
+  struct mscclppIbMrInfo ibSignalEpochIdMrRemoteInfo;
 };
 
 MSCCLPP_API mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff,
@@ -631,8 +631,8 @@ mscclppResult_t mscclppIbConnectionSetupEnd(struct connInfo* connInfo /*input*/,
     WARN("Failed to transition QP to RTS");
     return mscclppInvalidUsage;
   }
-  hostConn->ibBuffMrInfo = connInfo->infoBuffMr;
-  hostConn->ibSignalEpochIdMrInfo = connInfo->infoSignalEpochIdMr;
+  hostConn->ibBuffMrRemoteInfo = connInfo->infoBuffMr;
+  hostConn->ibSignalEpochIdMrRemoteInfo = connInfo->infoSignalEpochIdMr;
   return mscclppSuccess;
 }
 
