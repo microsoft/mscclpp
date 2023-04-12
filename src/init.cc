@@ -200,6 +200,8 @@ MSCCLPP_API mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
     if (conn) {
       MSCCLPPCHECK(mscclppCudaFree(conn->devConn->localSignalEpochId));
       MSCCLPPCHECK(mscclppCudaFree(conn->devConn->waitEpochId));
+      if (conn->hostConn)
+        delete conn->hostConn;
     }
   }
 
