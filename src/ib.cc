@@ -305,7 +305,7 @@ int mscclppIbQp::rtr(const mscclppIbQpInfo* info)
   qp_attr.rq_psn = 0;
   qp_attr.max_dest_rd_atomic = 1;
   qp_attr.min_rnr_timer = 0x12;
-  if (info->linkLayer == IBV_LINK_LAYER_ETHERNET) {
+  if (info->linkLayer == IBV_LINK_LAYER_ETHERNET || 1) {
     qp_attr.ah_attr.is_global = 1;
     qp_attr.ah_attr.grh.dgid.global.subnet_prefix = info->spn;
     qp_attr.ah_attr.grh.dgid.global.interface_id = info->lid;
@@ -384,13 +384,12 @@ int mscclppIbQp::postSend()
     return 0;
   }
 
-  INFO(MSCCLPP_INIT, "not empty");
-  return 0;
   struct ibv_send_wr* bad_wr;
   int ret = ibv_post_send(this->qp, this->wrs, &bad_wr);
   if (ret != 0) {
     return ret;
   }
+  WARN("sent %d wrs", this->wrn);
   this->wrn = 0;
   return 0;
 }

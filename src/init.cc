@@ -585,15 +585,16 @@ mscclppResult_t mscclppRegisterBuffer(mscclppComm_t comm, void* local_memory, si
     struct bufferInfo bInfo;
     struct mscclppIbMr ibBuffMr;
 
+    int64_t base;
+    CUDA_CHECK(cuMemGetAddressRange((CUdeviceptr*)&base, NULL, (CUdeviceptr)local_memory));
+    bInfo.handleBuffOffset = (int64_t)local_memory - base;
     // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
     if (conn->transport == mscclppTransportP2P) {
-      int64_t base;
-      CUDA_CHECK(cuMemGetAddressRange((CUdeviceptr*)&base, NULL, (CUdeviceptr)local_memory));
-      bInfo.handleBuffOffset = (int64_t)local_memory - base;
       CUDACHECK(cudaIpcGetMemHandle(&bInfo.handleBuff, (void*)base));
     } else if (conn->transport == mscclppTransportIB) {
-      MSCCLPPCHECK(mscclppIbContextRegisterMr2(conn->ibCtx, local_memory, size, &ibBuffMr));
+      MSCCLPPCHECK(mscclppIbContextRegisterMr2(conn->ibCtx, (void*)base, size + bInfo.handleBuffOffset, &ibBuffMr));
       bInfo.infoBuffMr = ibBuffMr.info;
+      bInfo.infoBuffMr.addr += bInfo.handleBuffOffset;
       ibMrs.push_back(ibBuffMr);
     }
 
@@ -631,12 +632,16 @@ mscclppResult_t mscclppRegisterSourceBuffer(mscclppComm_t comm, void* local_memo
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn* conn = &comm->conns[i];
     mscclppRegisteredMemoryP2P p2p;
+    int64_t base;
+    CUDA_CHECK(cuMemGetAddressRange((CUdeviceptr*)&base, NULL, (CUdeviceptr)local_memory));
+    auto handleBuffOffset = (int64_t)local_memory - base;
     // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
     if (conn->transport == mscclppTransportP2P) {
       p2p.remoteBuff = local_memory;
     } else if (conn->transport == mscclppTransportIB) {
-      MSCCLPPCHECK(mscclppIbContextRegisterMr2(conn->ibCtx, local_memory, size, &p2p.IbMr));
+      MSCCLPPCHECK(mscclppIbContextRegisterMr2(conn->ibCtx, (void*)base, size + handleBuffOffset, &p2p.IbMr));
       p2p.infoBuffMr = p2p.IbMr.info;
+      p2p.IbMr.buff += handleBuffOffset;
     }
     regMem->p2p.push_back(p2p);
   }
@@ -654,25 +659,27 @@ mscclppResult_t mscclppRegisteredBufferWrite(mscclppComm_t comm, mscclppRegister
   for (int i = 0; i < comm->nConns; ++i) {
     struct mscclppConn* conn = &comm->conns[i];
     // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
+
     if (conn->transport == mscclppTransportP2P) {
       void* dstBuff = regMem->p2p[i].remoteBuff + dstOffset;
       void* src = srcBuff->p2p[i].remoteBuff + srcOffset;
       CUDACHECK(cudaMemcpyAsync(dstBuff, src, size, cudaMemcpyDeviceToDevice, (cudaStream_t)stream));
       // INFO(MSCCLPP_INIT, "data memcpyAsync %p -> %p, size %zu", src, dstBuff, size);
     } else {
-      // INFO(MSCCLPP_INIT, "data stageSend %p -> %p, size %zu", srcBuff, regMem->p2p[i].IbMr->info.addr, size);
-      // conn->ibQp->stageSend(&srcBuff->p2p[i].IbMr, &regMem->p2p[i].infoBuffMr, (uint32_t)size,
-      //                       /*wrId=*/0, /*srcOffset=*/srcOffset,
-      //                       /*dstOffset=*/dstOffset,
-      //                       /*signaled=*/false);
+      INFO(MSCCLPP_INIT, "data stageSend %p -> %p, size %zu", srcBuff->p2p[i].IbMr.buff, regMem->p2p[i].IbMr.info.addr, size);
       if( conn->ibQp == NULL) {
         WARN("data postSend failed: conn->ibQp is NULL");
-        return mscclppSuccess;
+        return mscclppInvalidUsage;
       }
-      conn->ibQp->wrn = 0;
+      conn->ibQp->stageSend(&srcBuff->p2p[i].IbMr, &regMem->p2p[i].infoBuffMr, (uint32_t)size,
+                            /*wrId=*/0, /*srcOffset=*/srcOffset,
+                            /*dstOffset=*/dstOffset,
+                            /*signaled=*/false);
+      
       if ((ret = conn->ibQp->postSend()) != 0) {
         // Return value is errno.
         WARN("data postSend failed: errno %d", ret);
+        return mscclppInvalidUsage;
       }
       // ??
       // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_ENTRY, (uint32_t)trigger.fields.dataSize,
