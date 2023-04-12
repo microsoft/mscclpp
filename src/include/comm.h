@@ -28,7 +28,6 @@ struct mscclppConn
   struct mscclppHostConn* hostConn;
 
   struct mscclppIbContext* ibCtx;
-  struct mscclppIbQp* ibQp;
 #if defined(ENABLE_NPKIT)
   std::vector<uint64_t> npkitUsedReqIds;
   std::vector<uint64_t> npkitFreeReqIds;
