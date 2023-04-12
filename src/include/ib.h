@@ -20,7 +20,9 @@ struct mscclppIbQpInfo
   uint8_t linkLayer;
   uint32_t qpn;
   uint64_t spn;
+  uint64_t iid;
   ibv_mtu mtu;
+  bool is_global;
 };
 
 // IB queue pair
