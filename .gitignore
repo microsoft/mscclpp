@@ -1,5 +1,7 @@
 .vscode/
+.hypothesis/
 build/
+dist/
 __pycache__
 .*.swp
 .idea/
