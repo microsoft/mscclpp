@@ -29,7 +29,6 @@ struct alignas(16) mscclppDevConnSignalEpochId
   uint64_t proxy;
 };
 
-
 /***************************************************************************************************************
  * A mscclppDevConn provides a zero-copy connection between two GPUs connected via P2P NVLink or InfiniBand.
  * The communication API is one-sided meaning that for every single data transfer, only one side
@@ -183,11 +182,11 @@ struct mscclppDevConn
   // my remote peer's buffer. only non-NULL with gpu's direct access
   // gpu can directly write into it
   void* remoteBuff;
-
 };
 
 // Host interface for mscclppDevCon functionality
-struct mscclppHostConn{
+struct mscclppHostConn
+{
   virtual ~mscclppHostConn() = default;
   virtual void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize) = 0;
   virtual void signal() = 0;

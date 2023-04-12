@@ -16,8 +16,6 @@
 
 #define MAXCONNECTIONS 64
 
-
-
 struct mscclppConn
 {
   int connId;
@@ -42,8 +40,8 @@ struct mscclppComm
 
   void* bootstrap;
 
-  uint64_t
-    magic; // Magic number for all network communication. Not a security key -- only goal is to detect mismatches.
+  // Magic number for all network communication. Not a security key -- only goal is to detect mismatches.
+  uint64_t magic;
 
   int rank;        // my rank in the communicator
   int nRanks;      // number of GPUs in communicator

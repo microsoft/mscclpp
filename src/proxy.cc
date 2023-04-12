@@ -42,10 +42,9 @@ mscclppResult_t mscclppProxyFifo::create()
 {
   MSCCLPPCHECK(mscclppCudaCalloc(&this->fifoHead, 1));
 #if defined(MSCCLPP_USE_GDRCOPY)
-  MSCCLPPCHECK(mscclppGdrCudaCalloc(&this->triggerFifo, &this->triggerFifoDev, MSCCLPP_PROXY_FIFO_SIZE,
-                                    &this->triggerFifoDesc));
   MSCCLPPCHECK(
-    mscclppGdrCudaCalloc(&this->fifoTailDevHostPtr, &this->fifoTailDev, 1, &this->fifoTailDesc));
+    mscclppGdrCudaCalloc(&this->triggerFifo, &this->triggerFifoDev, MSCCLPP_PROXY_FIFO_SIZE, &this->triggerFifoDesc));
+  MSCCLPPCHECK(mscclppGdrCudaCalloc(&this->fifoTailDevHostPtr, &this->fifoTailDev, 1, &this->fifoTailDesc));
 #else
   MSCCLPPCHECK(mscclppCudaHostCalloc(&this->triggerFifo, MSCCLPP_PROXY_FIFO_SIZE));
   MSCCLPPCHECK(mscclppCudaCalloc(&this->fifoTailDev, 1));
@@ -118,7 +117,6 @@ static void processTrigger(const mscclppTrigger trigger, mscclppConn* conn)
   }
 }
 
-
 void* mscclppProxyService(void* _args)
 {
   struct proxyArgs* args = (struct proxyArgs*)_args;
@@ -147,7 +145,7 @@ void* mscclppProxyService(void* _args)
     if (trigger.value[0] == 0) {
       continue; // there is one in progreess
     }
-    
+
     mscclppConn* conn = &comm->conns[trigger.fields.connId];
     processTrigger(trigger, conn);
 
