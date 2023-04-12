@@ -13,11 +13,9 @@
 
 #include <mscclppfifo.h>
 #include <time.h>
-#include <vector>
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
 /***************************************************************************************************************
@@ -175,32 +173,6 @@ typedef struct
 {
   char internal[MSCCLPP_UNIQUE_ID_BYTES];
 } mscclppUniqueId;
-
-// MR info to be shared with the remote peer
-struct mscclppIbMrInfo
-{
-  uint64_t addr;
-  uint32_t rkey;
-};
-
-// IB memory region
-struct mscclppIbMr
-{
-  struct ibv_mr* mr;
-  void* buff;
-  struct mscclppIbMrInfo info;
-};
-
-struct mscclppRegisteredMemoryP2P
-{
-  void* remoteBuff;
-  mscclppIbMr* IbMr;
-};
-
-struct mscclppRegisteredMemory
-{
-  std::vector<mscclppRegisteredMemoryP2P> p2p;
-};
 
 /* Error type */
 typedef enum
@@ -404,33 +376,6 @@ void mscclppDefaultLogHandler(const char* msg);
  *   handler: the log handler function
  */
 mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler);
-
-/* Register a buffer for RDMA.
- *
- * Outputs:
- *   regMem: the registered memory
- *
- * Inputs:
- *   comm:        the communicator
- *   local_memory: the local buffer to be registered
- *   size:        the size of the buffer
- */
-mscclppResult_t mscclppRegisterBuffer(mscclppComm_t comm, void* local_memory, size_t size,
-                                      mscclppRegisteredMemory* regMem);
-
-/* Write to a registered buffer.
- *
- * Inputs:
- *   comm:        the communicator
- *   regMem:      the registered memory
- *   srcBuff:     the source buffer
- *   size:        the size of the buffer
- *   srcOffset:   the offset of the source buffer
- *   dstOffset:   the offset of the destination buffer
- *   stream:      the CUDA stream
- */
-mscclppResult_t mscclppRegisteredBufferWrite(mscclppComm_t comm, mscclppRegisteredMemory* regMem, void* srcBuff,
-                                             size_t size, uint32_t srcOffset, uint32_t dstOffset, int64_t stream);
 
 #ifdef __cplusplus
 } // end extern "C"

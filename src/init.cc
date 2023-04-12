@@ -11,8 +11,6 @@
 #include "npkit/npkit.h"
 #endif
 
-#include <cuda.h>
-
 static uint64_t hashUniqueId(mscclppUniqueId const& id)
 {
   char const* bytes = (char const*)&id;
@@ -561,95 +559,6 @@ mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
   MSCCLPPCHECK(mscclppBootstrapBarrier(comm));
   return mscclppSuccess;
 }
-
-struct bufferInfo
-{
-  cudaIpcMemHandle_t handleBuff;
-  int64_t handleBuffOffset;
-  mscclppIbMrInfo infoBuffMr;
-};
-
-MSCCLPP_API(mscclppResult_t, mscclppRegisterBuffer, mscclppComm_t comm, void* local_memory, size_t size,
-            mscclppRegisteredMemory* regMem);
-mscclppResult_t mscclppRegisterBuffer(mscclppComm_t comm, void* local_memory, size_t size,
-                                      mscclppRegisteredMemory* regMem)
-{
-  std::vector<struct mscclppIbMr*> ibMrs;
-  for (int i = 0; i < comm->nConns; ++i) {
-    struct mscclppConn* conn = &comm->conns[i];
-    struct bufferInfo bInfo;
-    struct mscclppIbMr* ibBuffMr;
-
-    // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
-    if (conn->transport == mscclppTransportP2P) {
-      int64_t base;
-      CUDA_CHECK(cuMemGetAddressRange((CUdeviceptr*)&base, NULL, (CUdeviceptr)local_memory));
-      bInfo.handleBuffOffset = (int64_t)local_memory - base;
-      CUDACHECK(cudaIpcGetMemHandle(&bInfo.handleBuff, (void*)base));
-    } else if (conn->transport == mscclppTransportIB) {
-      MSCCLPPCHECK(mscclppIbContextRegisterMr(conn->ibCtx, local_memory, size, &ibBuffMr));
-      bInfo.infoBuffMr = ibBuffMr->info;
-      ibMrs.push_back(ibBuffMr);
-    }
-
-    MSCCLPPCHECK(bootstrapSend(comm->bootstrap, conn->devConn->remoteRank, conn->devConn->tag, &bInfo, sizeof(bInfo)));
-  }
-
-  // Recv info from peers
-  for (int i = 0; i < comm->nConns; ++i) {
-    struct mscclppConn* conn = &comm->conns[i];
-    struct bufferInfo bInfo;
-
-    mscclppRegisteredMemoryP2P p2p;
-    p2p.IbMr = NULL;
-    p2p.remoteBuff = NULL;
-    MSCCLPPCHECK(bootstrapRecv(comm->bootstrap, conn->devConn->remoteRank, conn->devConn->tag, &bInfo, sizeof(bInfo)));
-
-    // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
-    if (conn->transport == mscclppTransportP2P) {
-      CUDACHECK(cudaIpcOpenMemHandle((void**)&p2p.remoteBuff, bInfo.handleBuff, cudaIpcMemLazyEnablePeerAccess));
-      p2p.remoteBuff = (void*)((int64_t)p2p.remoteBuff + bInfo.handleBuffOffset);
-    } else if (conn->transport == mscclppTransportIB) {
-      p2p.IbMr = ibMrs[i];
-    }
-    regMem->p2p.push_back(p2p);
-  }
-  return mscclppSuccess;
-}
-
-MSCCLPP_API(mscclppResult_t, mscclppRegisteredBufferWrite, mscclppComm_t comm, mscclppRegisteredMemory* regMem,
-            void* srcBuff, size_t size, uint32_t srcOffset, uint32_t dstOffset, int64_t stream);
-mscclppResult_t mscclppRegisteredBufferWrite(mscclppComm_t comm, mscclppRegisteredMemory* regMem, void* srcBuff,
-                                             size_t size, uint32_t srcOffset, uint32_t dstOffset, int64_t stream)
-{
-  int ret = 0;
-  // TODO: transport should be an argument too so user can decide which transport to use
-  for (int i = 0; i < comm->nConns; ++i) {
-    struct mscclppConn* conn = &comm->conns[i];
-    // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
-    if (conn->transport == mscclppTransportP2P) {
-      void* dstBuff = regMem->p2p[i].remoteBuff  + dstOffset;
-      void* src = srcBuff + srcOffset;
-      CUDACHECK(cudaMemcpyAsync(dstBuff, src, size, cudaMemcpyDeviceToDevice, (cudaStream_t)stream));
-      // INFO(MSCCLPP_INIT, "data memcpyAsync %p -> %p, size %zu", src, dstBuff, size);
-    } else {
-      conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)size,
-                            /*wrId=*/0, /*srcOffset=*/srcOffset,
-                            /*dstOffset=*/dstOffset,
-                            /*signaled=*/false);
-      if ((ret = conn->ibQp->postSend()) != 0) {
-        // Return value is errno.
-        WARN("data postSend failed: errno %d", ret);
-      }
-      // ??
-      // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_ENTRY, (uint32_t)trigger.fields.dataSize,
-      // trigger.fields.connId);
-    }
-  }
-  return mscclppSuccess;
-}
-
-// TODO: destroy registered buffer
 
 MSCCLPP_API(mscclppResult_t, mscclppProxyLaunch, mscclppComm_t comm);
 mscclppResult_t mscclppProxyLaunch(mscclppComm_t comm)
