@@ -10,8 +10,6 @@
 #include <sys/syscall.h>
 #include <thread>
 
-#include "npkit/npkit.h"
-
 #define MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD 100
 
 #define PROXYCUDACHECK(cmd)                                                                                            \
@@ -39,53 +37,6 @@ struct proxyArgs
   struct mscclppComm* comm;
   struct mscclppProxyState* proxyState;
 };
-
-#if defined(ENABLE_NPKIT)
-
-static void npkitInitReqIds(struct mscclppComm* comm)
-{
-  for (int i = 0; i < comm->nConns; i++) {
-    struct mscclppConn* conn = &comm->conns[i];
-    conn->npkitUsedReqIds.resize(0);
-    conn->npkitFreeReqIds.resize(MSCCLPP_IB_MAX_SENDS);
-    for (uint64_t j = 0; j < MSCCLPP_IB_MAX_SENDS; j++) {
-      conn->npkitFreeReqIds[j] = MSCCLPP_IB_MAX_SENDS - j - 1;
-    }
-  }
-}
-
-static void npkitCollectEntryEvent(struct mscclppConn* conn, uint8_t type, uint32_t size, int channelId)
-{
-  uint64_t reqId = 0;
-  if (conn->npkitFreeReqIds.size() == 0) {
-    reqId = conn->npkitUsedReqIds.size();
-  } else {
-    reqId = conn->npkitFreeReqIds.back();
-    conn->npkitFreeReqIds.pop_back();
-  }
-  conn->npkitUsedReqIds.push_back(reqId);
-  NpKit::CollectCpuEvent(type, size, (uint32_t)reqId, NpKit::GetCpuTimestamp(), channelId);
-}
-
-static void npkitCollectExitEvents(struct mscclppConn* conn, uint8_t type, int channelId)
-{
-  while (conn->npkitUsedReqIds.size()) {
-    uint64_t reqId = conn->npkitUsedReqIds.back();
-    NpKit::CollectCpuEvent(type, 0, (uint32_t)reqId, NpKit::GetCpuTimestamp(), channelId);
-    conn->npkitFreeReqIds.push_back(reqId);
-    conn->npkitUsedReqIds.pop_back();
-  }
-}
-
-#else
-
-#define npkitInitReqIds(comm)
-
-#define npkitCollectEntryEvent(conn, type, size, channelId)
-
-#define npkitCollectExitEvents(conn, type, channelId)
-
-#endif
 
 mscclppResult_t mscclppProxyFifo::create()
 {
@@ -150,29 +101,20 @@ mscclppResult_t mscclppProxyFifo::flushTail(bool sync)
   return mscclppSuccess;
 }
 
-void processTrigger(const mscclppTrigger trigger, mscclppConn* conn, mscclppProxyState* proxyState){  
-  mscclppIbContext* ibCtx = proxyState->ibContext;
-  bool isP2pProxy = (ibCtx == nullptr);
-
+static void processTrigger(const mscclppTrigger trigger, mscclppConn* conn)
+{
   // Iterate over what send is needed
   if (trigger.fields.type & mscclppData) {
     conn->hostConn->put(trigger.fields.dstDataOffset, trigger.fields.srcDataOffset, trigger.fields.dataSize);
-  
-    npkitCollectEntryEvent(conn, isP2pProxy ? NPKIT_EVENT_DMA_SEND_DATA_ENTRY : NPKIT_EVENT_IB_SEND_DATA_ENTRY, 
-                           (uint32_t)trigger.fields.dataSize, trigger.fields.connId);
   }
 
   if (trigger.fields.type & mscclppFlag) {
     conn->hostConn->signal();
-
-    npkitCollectEntryEvent(conn, isP2pProxy ? NPKIT_EVENT_P2P_SEND_FLAG_ENTRY : NPKIT_EVENT_IB_SEND_FLAG_ENTRY, 
-                           (uint32_t)sizeof(uint64_t), trigger.fields.connId);
   }
 
   // Wait for completion
   if (trigger.fields.type & mscclppSync) {
     conn->hostConn->flush();
-    npkitCollectExitEvents(conn, isP2pProxy? NPKIT_EVENT_DMA_SEND_EXIT : NPKIT_EVENT_IB_SEND_EXIT, trigger.fields.connId);
   }
 }
 
@@ -191,8 +133,6 @@ void* mscclppProxyService(void* _args)
   volatile mscclppProxyRunState_t* run = &proxyState->run;
   mscclppTrigger trigger;
 
-  npkitInitReqIds(comm);
-
   int runCnt = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
   uint64_t flushCnt = 0;
   for (;;) {
@@ -209,7 +149,7 @@ void* mscclppProxyService(void* _args)
     }
     
     mscclppConn* conn = &comm->conns[trigger.fields.connId];
-    processTrigger(trigger, conn, proxyState);
+    processTrigger(trigger, conn);
 
     // Send completion: reset only the high 64 bits
     PROXYMSCCLPPCHECK(fifo->pop());

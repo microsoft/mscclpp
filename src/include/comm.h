@@ -20,6 +20,7 @@
 
 struct mscclppConn
 {
+  int connId;
   mscclppTransport_t transport;
   int remoteRank;
   uint64_t buffSize;
@@ -28,10 +29,6 @@ struct mscclppConn
 
   struct mscclppIbContext* ibCtx;
   struct mscclppIbQp* ibQp;
-  struct mscclppIbMr* ibBuffMr;
-  struct mscclppIbMr* ibSignalEpochIdMr;
-  struct mscclppIbMrInfo ibBuffMrInfo;
-  struct mscclppIbMrInfo ibSignalEpochIdMrInfo;
 #if defined(ENABLE_NPKIT)
   std::vector<uint64_t> npkitUsedReqIds;
   std::vector<uint64_t> npkitFreeReqIds;

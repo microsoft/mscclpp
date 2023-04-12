@@ -188,6 +188,7 @@ struct mscclppDevConn
 
 // Host interface for mscclppDevCon functionality
 struct mscclppHostConn{
+  virtual ~mscclppHostConn() = default;
   virtual void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize) = 0;
   virtual void signal() = 0;
   virtual void wait() = 0;
