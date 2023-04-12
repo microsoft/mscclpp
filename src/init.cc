@@ -181,8 +181,7 @@ MSCCLPP_API mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
   for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
     struct mscclppProxyState* proxyState = comm->proxyState[i];
     if (proxyState) {
-      MSCCLPPCHECK(proxyState->devFifo.destroy());
-      MSCCLPPCHECK(proxyState->hostFifo.destroy());
+      MSCCLPPCHECK(proxyState->fifo.destroy());
       if (proxyState->p2pStream)
         CUDACHECK(cudaStreamDestroy(proxyState->p2pStream));
       free(proxyState);
@@ -436,8 +435,7 @@ MSCCLPP_API mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, i
   // If we couldn't find a matching context, create one
   if (proxyState == NULL) {
     MSCCLPPCHECK(mscclppCalloc(&proxyState, 1));
-    MSCCLPPCHECK(proxyState->devFifo.create());
-    MSCCLPPCHECK(proxyState->hostFifo.create());
+    MSCCLPPCHECK(proxyState->fifo.create());
 
     if (transportType == mscclppTransportIB) {
       proxyState->ibContext = conn->ibCtx;
@@ -476,12 +474,12 @@ MSCCLPP_API mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, i
   conn->devConn->tag = tag;
   conn->devConn->fifo.connId = comm->nConns;
 #if defined(MSCCLPP_USE_GDRCOPY)
-  conn->devConn->fifo.triggerFifo = proxyState->devFifo.triggerFifoDev;
+  conn->devConn->fifo.triggerFifo = proxyState->fifo.triggerFifoDev;
 #else
-  conn->devConn->fifo.triggerFifo = proxyState->devFifo.triggerFifo;
+  conn->devConn->fifo.triggerFifo = proxyState->fifo.triggerFifo;
 #endif
-  conn->devConn->fifo.triggerFifoHead = proxyState->devFifo.fifoHead;
-  conn->devConn->fifo.triggerFifoTail = proxyState->devFifo.fifoTailDev;
+  conn->devConn->fifo.triggerFifoHead = proxyState->fifo.fifoHead;
+  conn->devConn->fifo.triggerFifoTail = proxyState->fifo.fifoTailDev;
 
   comm->nConns++;
 
@@ -737,10 +735,3 @@ MSCCLPP_API mscclppResult_t mscclppSetBootstrapConnTimeout(int timeout)
   config->setBootstrapConnectionTimeoutConfig(timeout);
   return mscclppSuccess;
 }
-
-static inline uint64_t hostFifoPush(uint64_t type, uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
-{
-
-}
-
-

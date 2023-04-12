@@ -16,17 +16,7 @@ typedef enum
   MSCCLPP_PROXY_RUN_STATE_EXITING,
 } mscclppProxyRunState_t;
 
-// TODO: virtual functions
 struct mscclppProxyFifo
-{
-  // virtual mscclppResult_t create() = 0;
-  // virtual mscclppResult_t destroy() = 0;
-  // virtual mscclppResult_t poll(mscclppTrigger*) = 0;
-  // virtual mscclppResult_t pop() = 0;
-  // virtual mscclppResult_t flushTail(bool) = 0;
-};
-
-struct mscclppProxyDevFifo : mscclppProxyFifo
 {
   mscclppResult_t create();
   mscclppResult_t destroy();
@@ -62,24 +52,6 @@ struct mscclppProxyDevFifo : mscclppProxyFifo
   cudaStream_t stream;
 };
 
-struct mscclppProxyHostFifo : mscclppProxyFifo
-{
-  mscclppResult_t create();
-  mscclppResult_t destroy();
-  mscclppResult_t poll(mscclppTrigger* trigger);
-  mscclppResult_t pop();
-  mscclppResult_t flushTail(bool sync = false);
-
-  // fifo cudaHostCalloc'ed that is produced by device and consumed by host
-  mscclppTrigger* triggerFifo;
-
-  // allocated on the device and only accessed by the device
-  std::atomic<uint64_t>* fifoHead;
-
-  //
-  uint64_t fifoTailHost;
-};
-
 struct mscclppProxyState
 {
   mscclppTransport_t transportType;
@@ -90,8 +62,7 @@ struct mscclppProxyState
   struct mscclppIbContext* ibContext; // For IB connection only
   cudaStream_t p2pStream;             // for P2P DMA engine only
 
-  struct mscclppProxyDevFifo devFifo;
-  struct mscclppProxyHostFifo hostFifo;
+  struct mscclppProxyFifo fifo;
 };
 
 mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm);
