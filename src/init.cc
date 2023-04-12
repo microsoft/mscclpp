@@ -425,7 +425,6 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
   MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->directRecvEpochId, 1));
 
   conn->devConn->remoteRank = remoteRank;
-  conn->remoteRank = remoteRank;
   conn->devConn->tag = tag;
   conn->devConn->fifo.connId = comm->nConns;
 #if defined(MSCCLPP_USE_GDRCOPY)

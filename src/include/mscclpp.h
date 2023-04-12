@@ -15,8 +15,7 @@
 #include <time.h>
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
 /***************************************************************************************************************
@@ -145,7 +144,6 @@ struct mscclppDevConn
     // assume the memory is aligned to 8 bytes
     size_t nElem =
       dataSize % sizeof(uint64_t) ? (dataSize + sizeof(uint64_t)) / sizeof(uint64_t) : dataSize / sizeof(uint64_t);
-#pragma unroll
     for (size_t i = threadId; i < nElem; i += numThreads) {
       dst[i] = src[i];
     }
@@ -174,7 +172,7 @@ struct mscclppDevConn
       ;
   }
 
-  __forceinline__ __device__ void waitDirectSingal()
+  __forceinline__ __device__ void waitDirect()
   {
     (*recvEpochId) += 1;
     while (*(volatile uint64_t*)directRecvEpochId < (*recvEpochId))

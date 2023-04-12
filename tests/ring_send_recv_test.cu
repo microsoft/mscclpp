@@ -31,11 +31,11 @@ __global__ void kernel(bool root, size_t dataSize)
     __syncthreads();
     if (threadIdx.x == 0) {
       sendConn.signalDirect();
-      recvConn.waitDirectSingal();
+      recvConn.waitDirect();
     }
   } else {
     if (threadIdx.x == 0) {
-      recvConn.waitDirectSingal();
+      recvConn.waitDirect();
     }
     // make sure we get the latest data
     __syncthreads();
