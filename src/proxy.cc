@@ -184,21 +184,47 @@ mscclppResult_t mscclppProxyHostFifo::flushTail(bool)
   return mscclppSuccess;
 }
 
+
+void processTrigger(const mscclppTrigger trigger, mscclppConn* conn, mscclppProxyState* proxyState){  
+  mscclppIbContext* ibCtx = proxyState->ibContext;
+  bool isP2pProxy = (ibCtx == nullptr);
+
+  // Iterate over what send is needed
+  if (trigger.fields.type & mscclppData) {
+    conn->hostConn->put(trigger.fields.dstDataOffset, trigger.fields.srcDataOffset, trigger.fields.dataSize);
+  
+    npkitCollectEntryEvent(conn, isP2pProxy ? NPKIT_EVENT_DMA_SEND_DATA_ENTRY : NPKIT_EVENT_IB_SEND_DATA_ENTRY, 
+                           (uint32_t)trigger.fields.dataSize, trigger.fields.connId);
+  }
+
+  if (trigger.fields.type & mscclppFlag) {
+    conn->hostConn->signal();
+
+    npkitCollectEntryEvent(conn, isP2pProxy ? NPKIT_EVENT_P2P_SEND_FLAG_ENTRY : NPKIT_EVENT_IB_SEND_FLAG_ENTRY, 
+                           (uint32_t)sizeof(uint64_t), trigger.fields.connId);
+  }
+
+  // Wait for completion
+  if (trigger.fields.type & mscclppSync) {
+    conn->hostConn->flush();
+    npkitCollectExitEvents(conn, isP2pProxy? NPKIT_EVENT_DMA_SEND_EXIT : NPKIT_EVENT_IB_SEND_EXIT, trigger.fields.connId);
+  }
+}
+
+
 void* mscclppProxyService(void* _args)
 {
   struct proxyArgs* args = (struct proxyArgs*)_args;
   struct mscclppComm* comm = args->comm;
+  struct mscclppProxyState* proxyState = args->proxyState;
+  free(_args); // allocated in mscclppProxyCreate
 
   // from this point on, proxy thread will stay close to the device
   PROXYMSCCLPPCHECK(numaBind(comm->devNumaNode));
 
-  struct mscclppProxyDevFifo* fifo = &args->proxyState->devFifo;
-  volatile mscclppProxyRunState_t* run = &args->proxyState->run;
+  struct mscclppProxyDevFifo* fifo = &proxyState->devFifo;
+  volatile mscclppProxyRunState_t* run = &proxyState->run;
   mscclppTrigger trigger;
-  mscclppIbContext* ibCtx = args->proxyState->ibContext;
-  cudaStream_t p2pStream = args->proxyState->p2pStream;
-  bool isP2pProxy = (ibCtx == nullptr);
-  free(_args); // allocated in mscclppProxyCreate
 
   npkitInitReqIds(comm);
 
@@ -216,80 +242,9 @@ void* mscclppProxyService(void* _args)
     if (trigger.value[0] == 0) {
       continue; // there is one in progreess
     }
-
-    struct mscclppConn* conn = &comm->conns[trigger.fields.connId];
-    int ret = 0;
-    // Iterate over what send is needed
-    if (trigger.fields.type & mscclppData) {
-      if (isP2pProxy) {
-        void* srcBuff = (void*)((char*)conn->devConn->localBuff + trigger.fields.srcDataOffset);
-        void* dstBuff = (void*)((char*)conn->devConn->remoteBuff + trigger.fields.dstDataOffset);
-        PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, p2pStream));
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)trigger.fields.dataSize,
-                               trigger.fields.connId);
-      } else {
-        conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)trigger.fields.dataSize,
-                              /*wrId=*/0, /*srcOffset=*/trigger.fields.srcDataOffset,
-                              /*dstOffset=*/trigger.fields.dstDataOffset,
-                              /*signaled=*/false);
-        if ((ret = conn->ibQp->postSend()) != 0) {
-          // Return value is errno.
-          WARN("data postSend failed: errno %d", ret);
-        }
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)trigger.fields.dataSize,
-                               trigger.fields.connId);
-      }
-    }
-    if (trigger.fields.type & mscclppFlag) {
-      if (isP2pProxy) {
-        PROXYCUDACHECK(cudaMemcpyAsync(&conn->devConn->remoteSignalEpochId->proxy,
-                                       &(conn->devConn->localSignalEpochId->device), sizeof(uint64_t),
-                                       cudaMemcpyDeviceToDevice, p2pStream));
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_FLAG_ENTRY, (uint32_t)sizeof(uint64_t),
-                               trigger.fields.connId);
-      } else {
-        // My local device flag is copied to the remote's proxy flag
-        conn->ibQp->stageSend(conn->ibSignalEpochIdMr, &conn->ibSignalEpochIdMrInfo, sizeof(uint64_t),
-                              /*wrId=*/0, /*srcOffset=*/0, /*dstOffset=*/sizeof(uint64_t), /*signaled=*/true);
-        if ((ret = conn->ibQp->postSend()) != 0) {
-          WARN("flag postSend failed: errno %d", ret);
-        }
-        npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_FLAG_ENTRY, (uint32_t)sizeof(uint64_t), trigger.fields.connId);
-      }
-    }
-    // Wait for completion
-    if (trigger.fields.type & mscclppSync) {
-      if (isP2pProxy) {
-        PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
-        npkitCollectExitEvents(conn, NPKIT_EVENT_DMA_SEND_EXIT, trigger.fields.connId);
-      } else {
-        int rank = comm->rank;
-        bool isWaiting = true;
-        while (isWaiting) {
-          int wcNum = conn->ibQp->pollCq();
-          if (wcNum < 0) {
-            WARN("rank %d pollCq failed: errno %d", rank, errno);
-            continue;
-          }
-          for (int i = 0; i < wcNum; ++i) {
-            struct ibv_wc* wc = &conn->ibQp->wcs[i];
-            if (wc->status != IBV_WC_SUCCESS) {
-              WARN("rank %d wc status %d", rank, wc->status);
-              continue;
-            }
-            if (wc->qp_num != conn->ibQp->qp->qp_num) {
-              WARN("rank %d got wc of unknown qp_num %d", rank, wc->qp_num);
-              continue;
-            }
-            if (wc->opcode == IBV_WC_RDMA_WRITE) {
-              isWaiting = false;
-              break;
-            }
-          }
-        }
-        npkitCollectExitEvents(conn, NPKIT_EVENT_IB_SEND_EXIT, trigger.fields.connId);
-      }
-    }
+    
+    mscclppConn* conn = &comm->conns[trigger.fields.connId];
+    processTrigger(trigger, conn, proxyState);
 
     // Send completion: reset only the high 64 bits
     PROXYMSCCLPPCHECK(fifo->pop());
@@ -303,7 +258,9 @@ void* mscclppProxyService(void* _args)
 
   // make sure the tail is flushed before we shut the proxy
   PROXYMSCCLPPCHECK(fifo->flushTail(/*sync=*/true));
+  bool isP2pProxy = (proxyState->ibContext == nullptr);
   if (isP2pProxy) {
+    cudaStream_t p2pStream = proxyState->p2pStream;
     PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
   }
   *run = MSCCLPP_PROXY_RUN_STATE_IDLE;

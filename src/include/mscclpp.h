@@ -13,7 +13,7 @@
 
 #include <mscclppfifo.h>
 #include <vector>
-#includa <cuda_runtime.h>
+// #includa <cuda_runtime.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,27 +29,6 @@ struct alignas(16) mscclppDevConnSignalEpochId
   uint64_t proxy;
 };
 
-struct mscclppBaseConn
-{
-  int remoteRank;
-  int tag;
-
-  // my local buffer
-  void* localBuff;
-
-  struct mscclppDevConnSignalEpochId* localSignalEpochId;
-  // used by the signal() function directly from gpu
-  struct mscclppDevConnSignalEpochId* remoteSignalEpochId;
-
-  // every wait(), increaments this and then the gpu waits for either:
-  // 1) localSignalEpochId->proxy to be >= this in case of a proxy thread
-  // 2) remoteSignalEpochId->device to be >= this in case of a gpu thread
-  uint64_t* waitEpochId;
-
-  // my remote peer's buffer. only non-NULL with gpu's direct access
-  // gpu can directly write into it
-  void* remoteBuff;
-};
 
 /***************************************************************************************************************
  * A mscclppDevConn provides a zero-copy connection between two GPUs connected via P2P NVLink or InfiniBand.
@@ -113,7 +92,7 @@ struct mscclppBaseConn
  * The two endpoint can concurrently use the same connection provided they are writing (puts) on different
  * indices in the registered buffer.
  **************************************************************************************************************/
-struct mscclppDevConn : mscclppBaseConn
+struct mscclppDevConn
 {
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
@@ -185,36 +164,34 @@ struct mscclppDevConn : mscclppBaseConn
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
   struct mscclppConcurrentFifo fifo;
+
+  int remoteRank;
+  int tag;
+
+  // my local buffer
+  void* localBuff;
+
+  struct mscclppDevConnSignalEpochId* localSignalEpochId;
+  // used by the signal() function directly from gpu
+  struct mscclppDevConnSignalEpochId* remoteSignalEpochId;
+
+  // every wait(), increaments this and then the gpu waits for either:
+  // 1) localSignalEpochId->proxy to be >= this in case of a proxy thread
+  // 2) remoteSignalEpochId->device to be >= this in case of a gpu thread
+  uint64_t* waitEpochId;
+
+  // my remote peer's buffer. only non-NULL with gpu's direct access
+  // gpu can directly write into it
+  void* remoteBuff;
+
 };
 
-struct mscclppHostConn : mscclppBaseConn
-{
-  void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize){
-    conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)dataSize,
-                              /*wrId=*/0, /*srcOffset=*/srcDataOffset,
-                              /*dstOffset=*/dstDataOffset,
-                              /*signaled=*/false);
-    int ret = conn->ibQp->postSend();
-    if (ret != 0) {
-      // Return value is errno.
-      WARN("data postSend failed: errno %d", ret);
-    }                         
-  }
-  void put(uint64_t dataOffset, uint64_t dataSize){
-    put(dataOffset, dataOffset, dataSize);
-  }
-  void signal(){
-    
-  }
-  void putWithSignal(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize);
-  void putWithSignal(uint64_t dataOffset, uint64_t dataSize);
-  void putWithSignalAndFlush(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize);
-  void putWithSignalAndFlush(uint64_t dataOffset, uint64_t dataSize);
-  void flush();
-  void wait();
-  void epochIncrement();
-  struct mscclppConn* conn;
-  cudaStream_t p2pStream;
+// Host interface for mscclppDevCon functionality
+struct mscclppHostConn{
+  virtual void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize) = 0;
+  virtual void signal() = 0;
+  virtual void wait() = 0;
+  virtual void flush() = 0;
 };
 
 typedef struct mscclppComm* mscclppComm_t;

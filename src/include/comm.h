@@ -16,12 +16,16 @@
 
 #define MAXCONNECTIONS 64
 
+
+
 struct mscclppConn
 {
   mscclppTransport_t transport;
   int remoteRank;
   uint64_t buffSize;
   struct mscclppDevConn* devConn;
+  struct mscclppHostConn* hostConn;
+
   struct mscclppIbContext* ibCtx;
   struct mscclppIbQp* ibQp;
   struct mscclppIbMr* ibBuffMr;

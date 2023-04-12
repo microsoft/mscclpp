@@ -266,6 +266,84 @@ MSCCLPP_API mscclppResult_t mscclppGetAllDeviceConnections(mscclppComm_t comm, m
   return mscclppSuccess;
 }
 
+
+struct mscclppHostP2PConn : mscclppHostConn{
+  mscclppHostP2PConn(mscclppConn* _conn, cudaStream_t _stream) : conn(_conn), p2pStream(_stream){}
+
+  void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize){
+      void* srcBuff = (void*)((char*)conn->devConn->localBuff + srcDataOffset);
+      void* dstBuff = (void*)((char*)conn->devConn->remoteBuff + dstDataOffset);
+      CUDACHECKNORET(cudaMemcpyAsync(dstBuff, srcBuff, dataSize, cudaMemcpyDeviceToDevice, p2pStream));
+  }
+  void signal(){
+      CUDACHECKNORET(cudaMemcpyAsync(&conn->devConn->remoteSignalEpochId->proxy,
+                                      &(conn->devConn->localSignalEpochId->device), sizeof(uint64_t),
+                                      cudaMemcpyDeviceToDevice, p2pStream));
+  }
+  void wait(){}
+  void flush(){
+      CUDACHECKNORET(cudaStreamSynchronize(p2pStream));
+  }
+
+  mscclppConn* conn;
+  cudaStream_t p2pStream;
+};
+
+struct mscclppHostIBConn : mscclppHostConn{
+  mscclppHostIBConn(mscclppConn* conn) : conn(conn) {}
+
+  void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize){
+        conn->ibQp->stageSend(conn->ibBuffMr, &conn->ibBuffMrInfo, (uint32_t)dataSize,
+                            /*wrId=*/0, /*srcOffset=*/srcDataOffset,
+                            /*dstOffset=*/dstDataOffset,
+                            /*signaled=*/false);
+      int ret = conn->ibQp->postSend();
+      if (ret != 0) {
+        // Return value is errno.
+        WARN("data postSend failed: errno %d", ret);
+      }
+  }
+  void signal(){
+      // My local device flag is copied to the remote's proxy flag
+      conn->ibQp->stageSend(conn->ibSignalEpochIdMr, &conn->ibSignalEpochIdMrInfo, sizeof(uint64_t),
+                            /*wrId=*/0, /*srcOffset=*/0, /*dstOffset=*/sizeof(uint64_t), /*signaled=*/true);
+      int ret = conn->ibQp->postSend();
+      if (ret != 0) {
+        WARN("flag postSend failed: errno %d", ret);
+      }
+  }
+  void wait(){}
+  void flush(){
+    bool isWaiting = true;
+    while (isWaiting) {
+      int wcNum = conn->ibQp->pollCq();
+      if (wcNum < 0) {
+        WARN("pollCq failed: errno %d", errno);
+        continue;
+      }
+      for (int i = 0; i < wcNum; ++i) {
+        struct ibv_wc* wc = &conn->ibQp->wcs[i];
+        if (wc->status != IBV_WC_SUCCESS) {
+          WARN("wc status %d", wc->status);
+          continue;
+        }
+        if (wc->qp_num != conn->ibQp->qp->qp_num) {
+          WARN("got wc of unknown qp_num %d", wc->qp_num);
+          continue;
+        }
+        if (wc->opcode == IBV_WC_RDMA_WRITE) {
+          isWaiting = false;
+          break;
+        }
+      }
+    }
+  }
+
+  mscclppConn* conn;
+};
+
+
+
 MSCCLPP_API mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
                                mscclppTransport_t transportType, const char* ibDev)
 {
@@ -318,8 +396,9 @@ MSCCLPP_API mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, i
     }
     // Set the ib context for this conn
     conn->ibCtx = comm->ibContext[ibDevIdx];
+
   } else if (transportType == mscclppTransportP2P) {
-    // No allocation needed for P2P proxy
+    // do the rest of the initialization later
   } else if (transportType == mscclppTransportSHM) {
     WARN("Shared memory interconnection is not implemented yet!");
     return mscclppInternalError;
@@ -376,6 +455,14 @@ MSCCLPP_API mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, i
     WARN("Proxy allocation failed!");
     return mscclppInternalError;
   }
+
+  if (transportType == mscclppTransportIB) {
+    conn->hostConn = new mscclppHostIBConn(conn);
+  }
+  else if (transportType == mscclppTransportP2P) {
+    conn->hostConn = new mscclppHostP2PConn(conn, proxyState->p2pStream);
+  }
+
 
   struct mscclppDevConn* devConn = &comm->devConns[comm->nConns];
 
@@ -654,54 +741,4 @@ static inline uint64_t hostFifoPush(uint64_t type, uint64_t dstDataOffset, uint6
 
 }
 
-MSCCLPP_API void mscclppHostConn::put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
-{
-
-}
-
-
-MSCCLPP_API void mscclppHostConn::put(uint64_t dataOffset, uint64_t dataSize)
-{
-
-}
-
-MSCCLPP_API void mscclppHostConn::signal()
-{
-
-}
-
-MSCCLPP_API void mscclppHostConn::putWithSignal(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
-{
-
-}
-
-MSCCLPP_API void mscclppHostConn::putWithSignal(uint64_t dataOffset, uint64_t dataSize)
-{
-
-}
-
-MSCCLPP_API void mscclppHostConn::putWithSignalAndFlush(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
-{
-
-}
-
-MSCCLPP_API void mscclppHostConn::putWithSignalAndFlush(uint64_t dataOffset, uint64_t dataSize)
-{
-
-}
-
-MSCCLPP_API void mscclppHostConn::flush()
-{
-
-}
-
-MSCCLPP_API void mscclppHostConn::wait()
-{
-
-}
-
-MSCCLPP_API void mscclppHostConn::epochIncrement()
-{
-
-}
 

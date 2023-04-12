@@ -20,6 +20,15 @@
     }                                                                                                                  \
   } while (false)
 
+#define CUDACHECKNORET(cmd)                                                                                                 \
+  do {                                                                                                                 \
+    cudaError_t err = cmd;                                                                                             \
+    if (err != cudaSuccess) {                                                                                          \
+      WARN("Cuda failure '%s'", cudaGetErrorString(err));                                                              \
+      return;                                                                                \
+    }                                                                                                                  \
+  } while (false)
+
 #define CUDACHECKGOTO(cmd, res, label)                                                                                 \
   do {                                                                                                                 \
     cudaError_t err = cmd;                                                                                             \
