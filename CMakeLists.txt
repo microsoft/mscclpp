@@ -1,0 +1,23 @@
+cmake_minimum_required(VERSION 3.26)
+
+project(mscclpp LANGUAGES CUDA CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CUDA_STANDARD 17)
+
+list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/modules)
+
+find_package(CUDAToolkit REQUIRED)
+find_package(IBVerbs REQUIRED)
+find_package(NUMA REQUIRED)
+find_package(GDRCopy)
+
+option(USE_MPI_FOR_TESTS "Use MPI for tests" ON)
+if(USE_MPI_FOR_TESTS)
+    find_package(MPI REQUIRED)
+endif()
+
+include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+
+add_subdirectory(src)
+add_subdirectory(tests)
