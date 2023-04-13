@@ -54,7 +54,8 @@ def _setup_logging(level: str = "INFO"):
     atexit.register(_py_mscclpp._release_log_handler)
 
 
-_setup_logging()
+print("no logging")
+# _setup_logging()
 
 
 @final
@@ -184,7 +185,7 @@ class Comm:
             rank=rank,
             world_size=world_size,
         )
-    
+
         for i in range(world_size):
             if i == rank:
                 continue
@@ -194,7 +195,6 @@ class Comm:
                 data_ptr=data_ptr,
                 data_size=data_size,
                 transport=transport,
-
             )
         comm.connection_setup()
         return comm

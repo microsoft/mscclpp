@@ -146,10 +146,10 @@ struct _P2PHandle {
 nb::callable _log_callback;
 
 void _LogHandler(const char* msg) {
-  if (_log_callback) {
-    nb::gil_scoped_acquire guard;
-    _log_callback(msg);
-  }
+  // if (_log_callback) {
+  //   nb::gil_scoped_acquire guard;
+  //   _log_callback(msg);
+  // }
 }
 
 static const std::string DOC_MscclppUniqueId =
@@ -334,7 +334,7 @@ NB_MODULE(_py_mscclpp, m) {
           "size"_a,
           nb::call_guard<nb::gil_scoped_release>(),
           "Register a buffer for P2P transfers.")
-        .def(
+      .def(
           "register_source_buffer",
           [](_Comm& self,
              uint64_t data_ptr,
@@ -373,8 +373,7 @@ NB_MODULE(_py_mscclpp, m) {
                     reinterpret_cast<void*>(data_ptr),
                     size,
                     transport_type,
-                    ib_dev
-                    ),
+                    ib_dev),
                 "Connect failed");
           },
           "remote_rank"_a,

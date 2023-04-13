@@ -267,9 +267,8 @@ mscclppResult_t mscclppIbContextRegisterMr(struct mscclppIbContext* ctx, void* b
   return mscclppIbContextRegisterMr2(ctx, buff, size, _ibMr);
 }
 
-
 mscclppResult_t mscclppIbContextRegisterMr2(struct mscclppIbContext* ctx, void* buff, size_t size,
-                                           struct mscclppIbMr* ibMr)
+                                            struct mscclppIbMr* ibMr)
 {
   if (size == 0) {
     WARN("invalid size: %zu", size);
@@ -288,6 +287,7 @@ mscclppResult_t mscclppIbContextRegisterMr2(struct mscclppIbContext* ctx, void* 
     WARN("ibv_reg_mr failed (errno %d)", errno);
     return mscclppInternalError;
   }
+  // WARN("Registered MR buff %p size %zu addr %p rkey %d addr %p", buff, size, mr->addr, mr->rkey, addr);
   ibMr->mr = mr;
   ibMr->buff = buff;
   ibMr->info.addr = (uint64_t)buff;
@@ -347,6 +347,38 @@ int mscclppIbQp::stageSend(struct mscclppIbMr* ibMr, const mscclppIbMrInfo* info
                            uint64_t srcOffset, uint64_t dstOffset, bool signaled)
 {
   if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
+    WARN("stageSend failed due to MSCCLPP_IB_MAX_SENDS");
+    return -1;
+  }
+  int wrn = this->wrn;
+  struct ibv_send_wr* wr_ = &this->wrs[wrn];
+  struct ibv_sge* sge_ = &this->sges[wrn];
+  // std::memset(wr_, 0, sizeof(struct ibv_send_wr));
+  // std::memset(sge_, 0, sizeof(struct ibv_sge));
+  wr_->wr_id = (uint64_t)(info->addr) + dstOffset;
+  wr_->sg_list = sge_;
+  wr_->num_sge = 1;
+  wr_->opcode = IBV_WR_RDMA_WRITE;
+  wr_->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
+  wr_->wr.rdma.remote_addr = (uint64_t)(info->addr) + dstOffset;
+  wr_->wr.rdma.rkey = info->rkey;
+  wr_->next = nullptr;
+  sge_->addr = (uint64_t)(ibMr->buff) + srcOffset;
+  sge_->length = size;
+  sge_->lkey = ibMr->mr->lkey;
+  // WARN("Seding remote_addr %lx rkey %x", wr_->wr.rdma.remote_addr, wr_->wr.rdma.rkey);
+  if (wrn > 0) {
+    this->wrs[wrn - 1].next = wr_;
+  }
+  this->wrn++;
+  return this->wrn;
+}
+
+int mscclppIbQp::stageSendInline(void* src, const mscclppIbMrInfo* info, uint32_t size, uint64_t wrId,
+                                 uint64_t dstOffset, bool signaled)
+{
+  if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
+    WARN("wrn >= MSCCLPP_IB_MAX_SENDS");
     return -1;
   }
   int wrn = this->wrn;
@@ -358,13 +390,13 @@ int mscclppIbQp::stageSend(struct mscclppIbMr* ibMr, const mscclppIbMrInfo* info
   wr_->sg_list = sge_;
   wr_->num_sge = 1;
   wr_->opcode = IBV_WR_RDMA_WRITE;
-  wr_->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
+  wr_->send_flags = (signaled ? IBV_SEND_SIGNALED : 0) | IBV_SEND_INLINE;
   wr_->wr.rdma.remote_addr = (uint64_t)(info->addr) + dstOffset;
   wr_->wr.rdma.rkey = info->rkey;
   wr_->next = nullptr;
-  sge_->addr = (uint64_t)(ibMr->buff) + srcOffset;
+  sge_->addr = (uint64_t)src;
   sge_->length = size;
-  sge_->lkey = ibMr->mr->lkey;
+  // sge_->lkey = ibMr->mr->lkey;
   if (wrn > 0) {
     this->wrs[wrn - 1].next = wr_;
   }
@@ -408,5 +440,14 @@ int mscclppIbQp::postRecv(uint64_t wrId)
 
 int mscclppIbQp::pollCq()
 {
-  return ibv_poll_cq(this->cq, MSCCLPP_IB_CQ_POLL_NUM, this->wcs);
+  auto c = ibv_poll_cq(this->cq, MSCCLPP_IB_CQ_POLL_NUM, this->wcs);
+  if (c < 0)
+    WARN("ibv_poll_cq failed, returned %d", c);
+  for (int i = 0; i < c; i++) {
+    if (this->wcs[i].status != IBV_WC_SUCCESS) {
+      WARN("ibv_poll_cq work failed, wr_id %lx returned %s", this->wcs[i].wr_id,
+           ibv_wc_status_str(this->wcs[i].status));
+    }
+  }
+  return c;
 }

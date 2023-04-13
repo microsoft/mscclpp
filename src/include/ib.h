@@ -40,6 +40,8 @@ struct mscclppIbQp
   int rts();
   int stageSend(struct mscclppIbMr* ibMr, const mscclppIbMrInfo* info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                 uint64_t dstOffset, bool signaled);
+  int stageSendInline(void* src, const mscclppIbMrInfo* info, uint32_t size, uint64_t wrId,
+                uint64_t dstOffset, bool signaled);
   int stageSendWithImm(struct mscclppIbMr* ibMr, const mscclppIbMrInfo* info, uint32_t size, uint64_t wrId,
                        uint64_t srcOffset, uint64_t dstOffset, bool signaled, unsigned int immData);
   int postSend();

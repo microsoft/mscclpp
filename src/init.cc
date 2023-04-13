@@ -586,13 +586,17 @@ mscclppResult_t mscclppRegisterBuffer(mscclppComm_t comm, void* local_memory, si
     struct mscclppIbMr ibBuffMr;
 
     int64_t base;
-    CUDA_CHECK(cuMemGetAddressRange((CUdeviceptr*)&base, NULL, (CUdeviceptr)local_memory));
+    CU_CHECK(cuMemGetAddressRange((CUdeviceptr*)&base, NULL, (CUdeviceptr)local_memory));
     bInfo.handleBuffOffset = (int64_t)local_memory - base;
+    // base = (int64_t)local_memory;
+    // WARN("handleBuffOffset: %ld", bInfo.handleBuffOffset);
+    // bInfo.handleBuffOffset = 0;
     // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
     if (conn->transport == mscclppTransportP2P) {
       CUDACHECK(cudaIpcGetMemHandle(&bInfo.handleBuff, (void*)base));
     } else if (conn->transport == mscclppTransportIB) {
       MSCCLPPCHECK(mscclppIbContextRegisterMr2(conn->ibCtx, (void*)base, size + bInfo.handleBuffOffset, &ibBuffMr));
+      // WARN("Registered memory region addr: %p, size: %ld", ibBuffMr.info.addr, size + bInfo.handleBuffOffset);
       bInfo.infoBuffMr = ibBuffMr.info;
       bInfo.infoBuffMr.addr += bInfo.handleBuffOffset;
       ibMrs.push_back(ibBuffMr);
@@ -633,8 +637,11 @@ mscclppResult_t mscclppRegisterSourceBuffer(mscclppComm_t comm, void* local_memo
     struct mscclppConn* conn = &comm->conns[i];
     mscclppRegisteredMemoryP2P p2p;
     int64_t base;
-    CUDA_CHECK(cuMemGetAddressRange((CUdeviceptr*)&base, NULL, (CUdeviceptr)local_memory));
+    CU_CHECK(cuMemGetAddressRange((CUdeviceptr*)&base, NULL, (CUdeviceptr)local_memory));
     auto handleBuffOffset = (int64_t)local_memory - base;
+    // WARN("handleBuffOffset: %ld", handleBuffOffset);
+    // base = (int64_t)local_memory;
+    // handleBuffOffset = 0;
     // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
     if (conn->transport == mscclppTransportP2P) {
       p2p.remoteBuff = local_memory;
@@ -642,6 +649,7 @@ mscclppResult_t mscclppRegisterSourceBuffer(mscclppComm_t comm, void* local_memo
       MSCCLPPCHECK(mscclppIbContextRegisterMr2(conn->ibCtx, (void*)base, size + handleBuffOffset, &p2p.IbMr));
       p2p.infoBuffMr = p2p.IbMr.info;
       p2p.IbMr.buff += handleBuffOffset;
+      p2p.infoBuffMr.addr += handleBuffOffset;
     }
     regMem->p2p.push_back(p2p);
   }
@@ -666,21 +674,90 @@ mscclppResult_t mscclppRegisteredBufferWrite(mscclppComm_t comm, mscclppRegister
       CUDACHECK(cudaMemcpyAsync(dstBuff, src, size, cudaMemcpyDeviceToDevice, (cudaStream_t)stream));
       // INFO(MSCCLPP_INIT, "data memcpyAsync %p -> %p, size %zu", src, dstBuff, size);
     } else {
-      INFO(MSCCLPP_INIT, "data stageSend %p -> %p, size %zu", srcBuff->p2p[i].IbMr.buff, regMem->p2p[i].IbMr.info.addr, size);
-      if( conn->ibQp == NULL) {
+      // INFO(MSCCLPP_INIT, "data stageSend %p -> %p, size %zu", srcBuff->p2p[i].IbMr.buff,
+      // regMem->p2p[i].IbMr.info.addr, size);
+      if (conn->ibQp == NULL) {
         WARN("data postSend failed: conn->ibQp is NULL");
         return mscclppInvalidUsage;
       }
+      // WARN("size = %zu src offset = %u dst offset = %u", size, srcOffset, dstOffset);
       conn->ibQp->stageSend(&srcBuff->p2p[i].IbMr, &regMem->p2p[i].infoBuffMr, (uint32_t)size,
                             /*wrId=*/0, /*srcOffset=*/srcOffset,
                             /*dstOffset=*/dstOffset,
                             /*signaled=*/false);
-      
+      // if ((ret = conn->ibQp->postSend()) != 0) {
+      //   // Return value is errno.
+      //   WARN("data postSend failed: errno %d", ret);
+      //   return mscclppInvalidUsage;
+      // }
+      // for (int i = 0; i < 1000000; ++i) {
+      //   if (conn->ibQp->pollCq() > 0) {
+      //     return mscclppSuccess;
+      //   }
+      // }
+      // WARN("data stageSendInline: pollCq == 0");
+      return mscclppSuccess;
+      // ??
+      // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_ENTRY, (uint32_t)trigger.fields.dataSize,
+      // trigger.fields.connId);
+    }
+  }
+  return mscclppSuccess;
+}
+
+MSCCLPP_API(mscclppResult_t, mscclppRegisteredBufferWriteInline, mscclppComm_t comm, mscclppRegisteredMemory* regMem,
+            void* srcBuff, size_t size, uint32_t dstOffset, bool include_self, int64_t stream);
+mscclppResult_t mscclppRegisteredBufferWriteInline(mscclppComm_t comm, mscclppRegisteredMemory* regMem, void* srcBuff,
+                                                   size_t size, uint32_t dstOffset, bool include_self, int64_t stream)
+{
+  int ret = 0;
+  // TODO: transport should be an argument too so user can decide which transport to use
+  for (int i = 0; i < comm->nConns; ++i) {
+    struct mscclppConn* conn = &comm->conns[i];
+    // TODO: (conn->transport & mscclppTransportP2P) to support both P2P and IB
+
+    if (i == 0 && include_self) {
+      WARN("TODO support");
+      return mscclppInvalidUsage;
+    }
+
+    if (conn->transport == mscclppTransportP2P) {
+      return mscclppInvalidUsage;
+      // void* dstBuff = regMem->p2p[i].remoteBuff + dstOffset;
+      // void* src = srcBuff->p2p[i].remoteBuff + srcOffset;
+      // CUDACHECK(cudaMemcpyAsync(dstBuff, src, size, cudaMemcpyDeviceToDevice, (cudaStream_t)stream));
+      // INFO(MSCCLPP_INIT, "data memcpyAsync %p -> %p, size %zu", src, dstBuff, size);
+    } else {
+      // INFO(MSCCLPP_INIT, "data stageSendInline %p -> %p, size %zu", srcBuff->p2p[i].IbMr.buff,
+      // regMem->p2p[i].IbMr.info.addr, size);
+      if (conn->ibQp == NULL) {
+        WARN("data postSend failed: conn->ibQp is NULL");
+        return mscclppInvalidUsage;
+      }
+      // if (conn->ibQp->pollCq() > 0)
+      //   WARN("data stageSendInline: pollCq > 0");
+
+      conn->ibQp->stageSendInline(srcBuff, &regMem->p2p[i].infoBuffMr, (uint32_t)size,
+                                  /*wrId=*/0,
+                                  /*dstOffset=*/dstOffset,
+                                  /*signaled=*/true);
+
       if ((ret = conn->ibQp->postSend()) != 0) {
         // Return value is errno.
         WARN("data postSend failed: errno %d", ret);
         return mscclppInvalidUsage;
       }
+      conn->ibQp->pollCq();
+
+      // for (int i = 0; i < 1000000; ++i) {
+      //   if (conn->ibQp->pollCq() > 0) {
+      //     return mscclppSuccess;
+      //   }
+      // }
+      // WARN("data stageSendInline: pollCq == 0");
+      return mscclppSuccess;
+      // while (conn->ibQp->pollCq() == 0)
+      //   ;
       // ??
       // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_ENTRY, (uint32_t)trigger.fields.dataSize,
       // trigger.fields.connId);
