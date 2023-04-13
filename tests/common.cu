@@ -415,8 +415,12 @@ testResult_t setupMscclppConnections(int rank, int worldSize, int ranksPerNode, 
 testResult_t runTests(struct testArgs* args)
 {
   PRINT("# Setting up the connection in MSCCL++\n");
-  TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm, args->recvbuff,
-                                    args->maxbytes));
+  if (mscclppTestEngine.setupMscclppConnections != nullptr) {
+    TESTCHECK(mscclppTestEngine.setupMscclppConnections(args));
+  } else {
+    TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm, args->recvbuff,
+                                      args->maxbytes));
+  }
   PRINT("# Launching MSCCL++ proxy threads\n");
   MSCCLPPCHECK(mscclppProxyLaunch(args->comm));
   TESTCHECK(mscclppTestEngine.runTest(args));

@@ -5,24 +5,9 @@
 
 #include "common.h"
 
-#define MSCCLPPCHECK(call)                                                                                             \
-  do {                                                                                                                 \
-    mscclppResult_t res = call;                                                                                        \
-    if (res != mscclppSuccess && res != mscclppInProgress) {                                                           \
-      /* Print the back trace*/                                                                                        \
-      printf("Failure at %s:%d -> %d\n", __FILE__, __LINE__, res);                                                     \
-      return res;                                                                                                      \
-    }                                                                                                                  \
-  } while (0);
+#define ALIGN 4
 
-#define CUDACHECK(cmd)                                                                                                 \
-  do {                                                                                                                 \
-    cudaError_t err = cmd;                                                                                             \
-    if (err != cudaSuccess) {                                                                                          \
-      printf("%s:%d Cuda failure '%s'\n", __FILE__, __LINE__, cudaGetErrorString(err));                                \
-      exit(EXIT_FAILURE);                                                                                              \
-    }                                                                                                                  \
-  } while (false)
+__constant__ mscclppDevConn_t constDevConns[16];
 
 struct Volume
 {
@@ -42,7 +27,7 @@ __host__ __device__ Volume chunkVolume(size_t totalSize, size_t totalChunks, siz
   return Volume{offset, numLargeChunks * largeChunk + numSmallChunks * smallChunk};
 }
 
-template <class T, void (*reduce)(T*, T*, size_t)> struct AllreduceAllpairs
+template <typename T, void (*reduce)(T*, T*, size_t)> struct AllreduceAllpairs
 {
   int rank;
   int nRanks;
@@ -53,6 +38,7 @@ template <class T, void (*reduce)(T*, T*, size_t)> struct AllreduceAllpairs
   mscclppDevConn_t* conns;
   uint64_t* connFlags;
   cuda::barrier<cuda::thread_scope_device>* barrier;
+  typedef T valueType;
 
   __device__ void run(int idx)
   {
@@ -102,13 +88,7 @@ template <class T, void (*reduce)(T*, T*, size_t)> struct AllreduceAllpairs
   __device__ void send(mscclppDevConn_t& conn, size_t srcOffset, size_t dstOffset, size_t size)
   {
     if (threadIdx.x == 0) {
-      volatile uint64_t* localFlag = conn.localFlag;
-      *localFlag = 1; // 1 is used to signal the send
-
-      mscclppTrigger_t trigger;
-      auto request = conn.fifo.getTrigger(&trigger);
-      conn.fifo.setTrigger(trigger, mscclppData | mscclppFlag, srcOffset * sizeof(T), dstOffset * sizeof(T),
-                           size * sizeof(T));
+      conn.putWithSignalAndFlush(dstOffset * sizeof(T), srcOffset * sizeof(T), size * sizeof(T));
     }
     __syncthreads();
   }
@@ -116,10 +96,7 @@ template <class T, void (*reduce)(T*, T*, size_t)> struct AllreduceAllpairs
   __device__ void recv(mscclppDevConn_t& conn)
   {
     if (threadIdx.x == 0) {
-      volatile uint64_t* proxyFlag = conn.proxyFlag;
-      while (*proxyFlag != 1) {
-      }
-      *proxyFlag = 0;
+      conn.wait();
     }
     __syncthreads();
   }
@@ -254,69 +231,68 @@ template <class T> __global__ void init(T* data, size_t size, int rank)
 }
 
 // The main test kernel
-template <class T> __global__ void testKernel(AllreduceAllpairs<T, reduceSum> d)
+template <class T> __global__ void kernel0(AllreduceAllpairs<T, reduceSum> d)
 {
   d.run(blockIdx.x);
 }
 
-int main(int argc, const char* argv[])
+void AllReduceGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* paramcount, size_t* sendInplaceOffset,
+                               size_t* recvInplaceOffset, size_t count, int nranks)
 {
-#ifdef MSCCLPP_USE_MPI_FOR_TESTS
-  MPI_Init(NULL, NULL);
-#endif
-  const char* ip_port;
-  int rank, world_size;
-  parse_arguments(argc, argv, &ip_port, &rank, &world_size);
+  size_t base = (count / (ALIGN * nranks)) * ALIGN;
+  *sendcount = base;
+  *recvcount = base * nranks;
+  *sendInplaceOffset = base;
+  *recvInplaceOffset = 0;
+  *paramcount = base;
+}
 
-  CUDACHECK(cudaSetDevice(rank));
+void AllReduceGetBuffSize(size_t* sendcount, size_t* recvcount, size_t count, int nranks)
+{
+  size_t paramcount, sendInplaceOffset, recvInplaceOffset;
+  AllReduceGetCollByteCount(sendcount, recvcount, &paramcount, &sendInplaceOffset, &recvInplaceOffset, count, nranks);
+}
 
-  // Allocate and initialize 1 MB of data
-  int* data;
-  size_t dataSize = 1024 * 1024 / sizeof(int);
-  CUDACHECK(cudaMalloc(&data, dataSize * sizeof(int)));
-  init<<<1, 256>>>(data, dataSize, rank);
+struct testColl allReduceTest = {"AllReduce", AllGatherGetCollByteCount, AllGatherInitData, AllGatherGetBw,
+                                 AllGatherRunColl};
 
-  // Create the collective
-  AllreduceAllpairsBuilder<int, reduceSum> builder(data, dataSize);
+testResult_t AllReduceSetupMscclppConnections(struct testArgs* args)
+{
+  Volume myChunks = chunkVolume(args->nbytes, args->totalProcs, args->proc, 1);
+  d.scratchSize = myChunks.size * d.numPeers();
 
-  // Create the communicator
-  mscclppComm_t comm;
-  MSCCLPPCHECK(mscclppCommInitRank(&comm, world_size, rank, ip_port));
+  CUDACHECK(cudaMalloc(&d.scratch, d.scratchSize * sizeof(T)));
+  CUDACHECK(cudaMalloc(&d.connFlags, 3 * sizeof(uint64_t)));
+  CUDACHECK(cudaMemset(d.connFlags, 0, 3 * sizeof(uint64_t)));
 
-  // Connect the collective
-  builder.connect(comm);
-
-  // Finish the setup
-  MSCCLPPCHECK(mscclppConnectionSetup(comm));
-  MSCCLPPCHECK(mscclppProxyLaunch(comm));
-  auto allreduce = builder.finishSetup();
-
-  // Run the collective
-  testKernel<<<allreduce.numBlocks(), 256>>>(allreduce);
-
-  // Wait for kernel to finish
-  CUDACHECK(cudaDeviceSynchronize());
-
-  // Check the result
-  int* hostData = new int[dataSize];
-  CUDACHECK(cudaMemcpy(hostData, data, dataSize * sizeof(int), cudaMemcpyDeviceToHost));
-  int expectedValue = world_size * (world_size - 1) / 2;
-  for (size_t i = 0; i < dataSize; ++i) {
-    if (hostData[i] != expectedValue) {
-      printf("Error at index %lu: %d != %d\n", i, hostData[i], expectedValue);
-      return 1;
+  hostConns.resize(d.numPeers() * 3);
+  for (int peer = 0; peer < d.nRanks; ++peer) {
+    if (peer != d.rank) {
+      int sendTag = d.rank < peer ? 0 : 1;
+      int recvTag = d.rank < peer ? 1 : 0;
+      MSCCLPPCHECK(mscclppConnect(args->comm, hostConns.data() + d.phase1SendConnIdx(peer), peer, d.userData,
+                                  d.userSize * sizeof(T), d.connFlags + 0, sendTag, mscclppTransportP2P, nullptr));
+      MSCCLPPCHECK(mscclppConnect(args->comm, hostConns.data() + d.phase1RecvConnIdx(peer), peer, d.scratch,
+                                  d.scratchSize * sizeof(T), d.connFlags + 1, recvTag, mscclppTransportP2P, nullptr));
+      MSCCLPPCHECK(mscclppConnect(args->comm, hostConns.data() + d.phase2ConnIdx(peer), peer, d.userData,
+                                  d.userSize * sizeof(T), d.connFlags + 2, 2, mscclppTransportP2P, nullptr));
     }
   }
 
-  MSCCLPPCHECK(mscclppProxyStop(comm));
-
-  MSCCLPPCHECK(mscclppCommDestroy(comm));
-
-#ifdef MSCCLPP_USE_MPI_FOR_TESTS
-  if (argc == 2) {
-    MPI_Finalize();
-  }
-#endif
-  printf("Succeeded! %d\n", rank);
-  return 0;
+  return testSuccess;
 }
+
+testResult_t AllReduceRunTest(struct testArgs* args)
+{
+  args->collTest = &allReduceTest;
+  mscclppDevConn_t* devConns;
+  int nCons;
+  MSCCLPPCHECK(mscclppGetAllDeviceConnections(args->comm, &devConns, &nCons));
+  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns, sizeof(mscclppDevConn_t) * nCons));
+  TESTCHECK(TimeTest(args));
+  return testSuccess;
+}
+
+struct testEngine allReduceEngine = {AllReduceGetBuffSize, AllReduceRunTest, AllReduceSetupMscclppConnections};
+
+#pragma weak mscclppTestEngine = allReduceEngine
