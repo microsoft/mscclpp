@@ -422,6 +422,7 @@ int mscclppIbQp::postSend()
   struct ibv_send_wr* bad_wr;
   int ret = ibv_post_send(this->qp, this->wrs, &bad_wr);
   if (ret != 0) {
+    WARN("ibv_post_send failed, returned %s", strerror(errno));
     return ret;
   }
   this->wrn = 0;
