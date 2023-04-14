@@ -331,21 +331,15 @@ public:
   *   remoteRank:    the rank of the remote process
   *   tag:           the tag of the connection. tag is copied into the corresponding mscclppDevConn_t, which can be
   *                  used to identify the connection inside a GPU kernel.
-  *   localBuff:     the local send/receive buffer
-  *   buffSize:      the size of the local buffer
   *   transportType: the type of transport to be used (mscclppTransportP2P or mscclppTransportIB)
   *   ibDev:         the name of the IB device to be used. Expects a null for mscclppTransportP2P.
   */
-  std::shared_ptr<HostConnection> connect(int remoteRank, int tag, void* localBuff, uint64_t buffSize,
-                                          TransportType transportType, const char* ibDev = 0);
+  std::shared_ptr<HostConnection> connect(int remoteRank, int tag, TransportType transportType, const char* ibDev = 0);
 
   /* Establish all connections created by mscclppConnect(). This function must be called after all mscclppConnect()
   * calls are made. This function ensures that all remote ranks are ready to communicate when it returns.
   */
   void connectionSetup();
-
-  /* Destroy the communicator. */
-  void destroy();
   
   /* Return the rank of the calling process.
   *
@@ -361,37 +355,10 @@ public:
   */
   int size();
 
-  /* Set the timeout for the bootstrap connection.
-  *
-  * Inputs:
-  *   timeout: the timeout in seconds
-  */
-  void setBootstrapConnTimeout(unsigned timeout);
-
 private:
   struct impl;
   std::unique_ptr<impl> pimpl;
 };
-
-/* Log handler type which is a callback function for
- * however user likes to handle the log messages. Once set,
- * the logger will just call this function with msg.
- */
-typedef void (*LogHandler)(const char* msg);
-
-/* The default log handler.
- *
- * Inputs:
- *   msg: the log message
- */
-void defaultLogHandler(const char* msg);
-
-/* Set a custom log handler.
- *
- * Inputs:
- *   handler: the log handler function
- */
-void setLogHandler(LogHandler handler);
 
 } // namespace mscclpp
 
