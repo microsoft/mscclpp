@@ -1,5 +1,5 @@
-#ifndef MSCCLPPFIFO_H_
-#define MSCCLPPFIFO_H_
+#ifndef MSCCLPPFIFO_HPP_
+#define MSCCLPPFIFO_HPP_
 
 #include <stdint.h>
 #include <functional>

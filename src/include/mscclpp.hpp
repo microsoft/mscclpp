@@ -264,8 +264,8 @@ public:
   void epochIncrement();
 
 private:
-  struct impl;
-  std::unique_ptr<impl> pimpl;
+  struct Impl;
+  std::unique_ptr<Impl> pimpl;
 };
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
@@ -356,8 +356,8 @@ public:
   int size();
 
 private:
-  struct impl;
-  std::unique_ptr<impl> pimpl;
+  struct Impl;
+  std::unique_ptr<Impl> pimpl;
 };
 
 } // namespace mscclpp

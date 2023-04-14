@@ -29,6 +29,8 @@ struct alignas(16) mscclppDevConnSignalEpochId
   uint64_t proxy;
 };
 
+using mscclppBufferHandle_t = uint8_t;
+
 /***************************************************************************************************************
  * A mscclppDevConn provides a zero-copy connection between two GPUs connected via P2P NVLink or InfiniBand.
  * The communication API is one-sided meaning that for every single data transfer, only one side
@@ -189,6 +191,7 @@ struct mscclppHostConn
 {
   virtual ~mscclppHostConn() = default;
   virtual void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize) = 0;
+  virtual void put(mscclppBufferHandle_t dst, uint64_t dstDataOffset, mscclppBufferHandle_t src, uint64_t srcDataOffset, uint64_t dataSize) = 0;
   virtual void signal() = 0;
   virtual void wait() = 0;
   virtual void flush() = 0;
@@ -336,6 +339,38 @@ const char* mscclppGetErrorString(mscclppResult_t result);
  */
 mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
                                mscclppTransport_t transportType, const char* ibDev = 0);
+
+/* Connect to a remote rank. This function only prepares metadata for connection. The actual connection
+ * is made by a following call of mscclppConnectionSetup(). Note that this function is two-way and a connection
+ * from rank i to remote rank j needs to have a counterpart from rank j to rank i.
+ * Note that with IB, buffers are registered at a page level and if a buffer is spread through multiple pages
+ * and do not fully utilize all of them, IB's QP has to register for all involved pages. This potentially has
+ * security risks if the devConn's accesses are given to a malicious process.
+ * 
+ * This version does not register a buffer. Buffers should instead be registered with mscclppRegisterBuffer().
+ *
+ * Inputs:
+ *   comm:          the communicator
+ *   remoteRank:    the rank of the remote process
+ *   tag:           the tag of the connection. tag is copied into the corresponding mscclppDevConn_t, which can be
+ *                  used to identify the connection inside a GPU kernel.
+ *   transportType: the type of transport to be used (mscclppTransportP2P or mscclppTransportIB)
+ *   ibDev:         the name of the IB device to be used. Expects a null for mscclppTransportP2P.
+ */
+mscclppResult_t mscclppConnectWithoutBuffer(mscclppComm_t comm, int remoteRank, int tag, mscclppTransport_t transportType, const char* ibDev = 0);
+
+/* Register a buffer for use with a connection.
+ *
+ * Inputs:
+ *   comm:          the communicator
+ *   connIdx:       the index of the connection by order of calls to mscclppConnect/mscclppConnectWithoutBuffer
+ *   localBuff:     the local send/receive buffer
+ *   buffSize:      the size of the local buffer
+ * 
+ * Outputs:
+ *   handle:        a handle to the buffer registration
+ */
+mscclppResult_t mscclppRegisterBuffer(mscclppComm_t comm, int connIdx, void* localBuff, uint64_t buffSize, mscclppBufferHandle_t *handle);
 
 /* Establish all connections declared by mscclppConnect(). This function must be called after all mscclppConnect()
  * calls are made. This function ensures that all remote ranks are ready to communicate when it returns.

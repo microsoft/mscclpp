@@ -14,13 +14,13 @@ mscclppTransport_t transportTypeToCStyle(TransportType type) {
   }
 }
 
-struct Communicator::impl {
+struct Communicator::Impl {
     mscclppComm_t comm;
     std::vector<std::shared_ptr<HostConnection>> connections;
 
-    impl() : comm(nullptr) {}
+    Impl() : comm(nullptr) {}
 
-    ~impl() {
+    ~Impl() {
       if (comm) {
         mscclppCommDestroy(comm);
       }
@@ -31,7 +31,7 @@ void Communicator::initRank(int nranks, const char* ipPortPair, int rank) {
   if (pimpl) {
     throw std::runtime_error("Communicator already initialized");
   }
-  pimpl = std::make_unique<impl>();
+  pimpl = std::make_unique<Impl>();
   mscclppCommInitRank(&pimpl->comm, nranks, ipPortPair, rank);
 }
 
@@ -39,7 +39,7 @@ void Communicator::initRankFromId(int nranks, UniqueId id, int rank) {
   if (pimpl) {
     throw std::runtime_error("Communicator already initialized");
   }
-  pimpl = std::make_unique<impl>();
+  pimpl = std::make_unique<Impl>();
   static_assert(sizeof(mscclppUniqueId) == sizeof(UniqueId), "UniqueId size mismatch");
   mscclppUniqueId *cstyle_id = reinterpret_cast<mscclppUniqueId*>(&id);
   mscclppCommInitRankFromId(&pimpl->comm, nranks, *cstyle_id, rank);
@@ -55,18 +55,23 @@ void Communicator::bootstrapBarrier() {
 
 std::shared_ptr<HostConnection> Communicator::connect(int remoteRank, int tag,
                                                       TransportType transportType, const char* ibDev = 0) {
-  mscclppConnect(pimpl->comm, remoteRank, tag, transportTypeToCStyle(transportType), ibDev);
+  mscclppConnectWithoutBuffer(pimpl->comm, remoteRank, tag, transportTypeToCStyle(transportType), ibDev);
   auto conn = std::make_shared<HostConnection>();
-  auto connId = pimpl->connections.size();
-  conn->pimpl->init(connId);
+  auto connIdx = pimpl->connections.size();
   pimpl->connections.push_back(conn);
   return conn;
 }
 
 void Communicator::connectionSetup() {
   mscclppConnectionSetup(pimpl->comm);
+  mscclppHostConn_t *hostConns;
+  int numHostConns;
+  mscclppGetAllHostConnections(pimpl->comm, &hostConns, &numHostConns);
+  if (numHostConns != pimpl->connections.size()) {
+    throw std::logic_error("Number of HostConnections didn't match number of mscclppHostConns");
+  }
   for (int connIdx = 0; connIdx < pimpl->connections.size(); ++connIdx) {
-    pimpl->connections[connIdx]->pimpl->setup();
+    pimpl->connections[connIdx]->pimpl->setup(hostConns[connIdx]);
   }
 }
 
