@@ -218,13 +218,16 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext* ctx, struct ms
   _ibQp->info.linkLayer = port_attr.link_layer;
   _ibQp->info.qpn = qp->qp_num;
   _ibQp->info.mtu = port_attr.active_mtu;
-  if (port_attr.link_layer != IBV_LINK_LAYER_INFINIBAND) {
+  _ibQp->info.is_grh = (port_attr.flags & IBV_QPF_GRH_REQUIRED);
+
+  if (port_attr.link_layer != IBV_LINK_LAYER_INFINIBAND || _ibQp->info.is_grh) {
     union ibv_gid gid;
     if (ibv_query_gid(ctx->ctx, port, 0, &gid) != 0) {
       WARN("ibv_query_gid failed (errno %d)", errno);
       return mscclppInternalError;
     }
     _ibQp->info.spn = gid.global.subnet_prefix;
+    _ibQp->info.iid = gid.global.interface_id;
   }
 
   struct ibv_qp_attr qp_attr;
