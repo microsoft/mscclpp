@@ -9,12 +9,15 @@
 
 #include "ib.h"
 #include "proxy.h"
-
-#if defined(ENABLE_NPKIT)
 #include <vector>
-#endif
 
 #define MAXCONNECTIONS 64
+
+struct mscclppBufferRegistration
+{
+  void *data;
+  uint64_t size;
+};
 
 struct mscclppConn
 {
@@ -24,6 +27,9 @@ struct mscclppConn
   uint64_t buffSize;
   struct mscclppDevConn* devConn;
   struct mscclppHostConn* hostConn;
+
+  std::vector<mscclppBufferRegistration> bufferRegistrations;
+  std::vector<mscclppBufferRegistration> remoteBufferRegistrations;
 
   struct mscclppIbContext* ibCtx;
 #if defined(ENABLE_NPKIT)
