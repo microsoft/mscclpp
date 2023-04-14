@@ -583,7 +583,7 @@ MSCCLPP_API mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, i
   conn->devConn->localBuff = localBuff;
 
   mscclppBufferHandle_t localBuffHandle = -1;
-  MSCCLPPCHECK(mscclppRegisterBufferForConnection(comm, connId, conn->devConn->localSignalEpochId, buffSize, &localBuffHandle));
+  MSCCLPPCHECK(mscclppRegisterBufferForConnection(comm, connId, localBuff, buffSize, &localBuffHandle));
   if (localBuffHandle != 1) {
     WARN("data buffer handle should be 1");
     return mscclppInternalError;
