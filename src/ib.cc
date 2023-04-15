@@ -301,18 +301,19 @@ int mscclppIbQp::rtr(const mscclppIbQpInfo* info)
   qp_attr.rq_psn = 0;
   qp_attr.max_dest_rd_atomic = 1;
   qp_attr.min_rnr_timer = 0x12;
-  if (info->linkLayer == IBV_LINK_LAYER_ETHERNET) {
+  if (info->linkLayer == IBV_LINK_LAYER_ETHERNET || info->is_grh) {
     qp_attr.ah_attr.is_global = 1;
     qp_attr.ah_attr.grh.dgid.global.subnet_prefix = info->spn;
     qp_attr.ah_attr.grh.dgid.global.interface_id = info->lid;
+    qp_attr.ah_attr.grh.dgid.global.interface_id = info->iid;
     qp_attr.ah_attr.grh.flow_label = 0;
     qp_attr.ah_attr.grh.sgid_index = 0;
     qp_attr.ah_attr.grh.hop_limit = 255;
     qp_attr.ah_attr.grh.traffic_class = 0;
   } else {
     qp_attr.ah_attr.is_global = 0;
-    qp_attr.ah_attr.dlid = info->lid;
   }
+  qp_attr.ah_attr.dlid = info->lid;
   qp_attr.ah_attr.sl = 0;
   qp_attr.ah_attr.src_path_bits = 0;
   qp_attr.ah_attr.port_num = info->port;
