@@ -163,8 +163,8 @@ INCLUDE := -Isrc -Isrc/include
 all: build
 
 build: lib tests
-ifeq ($(USE_MPI_FOR_TESTS), 0)
-build += mscclpp-test
+ifeq ($(USE_MPI_FOR_TESTS), 1)
+build: lib tests mscclpp-test
 endif
 
 lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
