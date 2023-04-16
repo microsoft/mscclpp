@@ -460,6 +460,11 @@ mscclppResult_t mscclppP2pConnectionSetupStart(struct connInfo* connInfo /*outpu
   struct mscclppDevConn* devConn = conn->devConn;
   MSCCLPPCHECK(mscclppCudaCalloc(&devConn->proxyEpochId, 1));
   CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleProxyFlag, devConn->proxyEpochId));
+  printf("handleProxyFlag is with rank %d:", devConn->remoteRank);
+  for (int i = 0; i < sizeof(cudaIpcMemHandle_t); ++i) {
+    printf("%02x", connInfo->handleProxyFlag.reserved[i]);
+  }
+  printf("\n");
   CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleBuff, devConn->localBuff));
   CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleFlag, devConn->sendEpochId));
   return mscclppSuccess;
@@ -477,6 +482,11 @@ mscclppResult_t mscclppP2pConnectionSetupEnd(struct connInfo* connInfo /*input*/
     cudaIpcOpenMemHandle((void**)&conn->devConn->remoteFlag, connInfo->handleFlag, cudaIpcMemLazyEnablePeerAccess));
   CUDACHECK(
     cudaIpcOpenMemHandle((void**)&conn->remoteProxyFlag, connInfo->handleProxyFlag, cudaIpcMemLazyEnablePeerAccess));
+  printf("handleProxyFlag recv with rank %d, addr %p ", conn->devConn->remoteRank, conn->remoteProxyFlag);
+  for (int i = 0; i < sizeof(cudaIpcMemHandle_t); ++i) {
+    printf("%02x", connInfo->handleProxyFlag.reserved[i]);
+  }
+  printf("\n");
   return mscclppSuccess;
 }
 

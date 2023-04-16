@@ -158,14 +158,15 @@ MSCLLPPTESTBINS         := $(MSCLLPPTESTBINFILESLIST:%=$(BUILDDIR)/$(BINDIR)/$(T
 
 INCLUDE := -Isrc -Isrc/include
 
-.PHONY: all build lib tests mscclpp_test clean
+.PHONY: all build lib tests mscclpp-test clean
 
 all: build
 
-build: lib tests
-ifeq ($(USE_MPI_FOR_TESTS), 0)
-build += mscclpp-test
+BUILDLIST = lib tests
+ifeq ($(USE_MPI_FOR_TESTS), 1)
+BUILDLIST += mscclpp-test
 endif
+build: $(BUILDLIST)
 
 lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
 

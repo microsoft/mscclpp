@@ -138,7 +138,7 @@ struct mscclppDevConn
   __forceinline__ __device__ void wait()
   {
     (*recvEpochId) += 1;
-    // printf("%llu %llu %llu\n", *(volatile uint64_t*)proxyEpochId, (*recvEpochId), *(volatile uint64_t*)sendEpochId);
+    printf("%llu %llu %llu\n", *(volatile uint64_t*)proxyEpochId, (*recvEpochId), *(volatile uint64_t*)sendEpochId);
     while (*(volatile uint64_t*)proxyEpochId < (*recvEpochId))
       ;
   }

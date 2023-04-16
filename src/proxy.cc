@@ -99,6 +99,7 @@ void* mscclppProxyService(void* _args)
   struct mscclppComm* comm = args->comm;
 
   // from this point on, proxy thread will stay close to the device
+  PROXYCUDACHECK(cudaSetDevice(comm->cudaDev));
   PROXYMSCCLPPCHECK(numaBind(comm->devNumaNode));
 
   volatile mscclppProxyRunState_t* run = &args->proxyState->run;
@@ -142,7 +143,10 @@ void* mscclppProxyService(void* _args)
       if (isP2pProxy) {
         void* srcBuff = (void*)((char*)conn->devConn->localBuff + trigger.fields.srcDataOffset);
         void* dstBuff = (void*)((char*)conn->devConn->remoteBuff + trigger.fields.dstDataOffset);
+        WARN("srcBuff: %p, dstBuff: %p, data size: %ld, remove rank is %d", srcBuff, dstBuff, trigger.fields.dataSize,
+             conn->remoteRank);
         PROXYCUDACHECK(cudaMemcpyAsync(dstBuff, srcBuff, trigger.fields.dataSize, cudaMemcpyDeviceToDevice, p2pStream));
+        WARN("send data finished");
         npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)trigger.fields.dataSize,
                                trigger.fields.connId);
       } else {
@@ -160,6 +164,7 @@ void* mscclppProxyService(void* _args)
     }
     if (trigger.fields.type & mscclppFlag) {
       if (isP2pProxy) {
+        WARN("Waiting for sending flag for rank %d, remote flag addr: %p", conn->remoteRank, conn->remoteProxyFlag);
         PROXYCUDACHECK(cudaMemcpyAsync(conn->remoteProxyFlag, conn->devConn->sendEpochId, sizeof(uint64_t),
                                        cudaMemcpyDeviceToDevice, p2pStream));
         npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_FLAG_ENTRY, (uint32_t)sizeof(uint64_t),
@@ -177,6 +182,7 @@ void* mscclppProxyService(void* _args)
     // Wait for completion
     if (trigger.fields.type & mscclppSync) {
       if (isP2pProxy) {
+        WARN("Sync stream");
         PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
         npkitCollectExitEvents(conn, NPKIT_EVENT_DMA_SEND_EXIT, trigger.fields.connId);
       } else {
@@ -218,6 +224,7 @@ void* mscclppProxyService(void* _args)
 #if defined(MSCCLPP_USE_GDRCOPY)
       *fifoTailDevPtr = fifoTailCached;
 #else
+      WARN("Update tail to device: %lu, device addr: %p", fifoTailCached, fifoTailDevPtr);
       PROXYCUDACHECK(
         cudaMemcpyAsync(fifoTailDevPtr, &fifoTailCached, sizeof(uint64_t), cudaMemcpyHostToDevice, fifoStream));
 #endif
