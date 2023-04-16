@@ -359,29 +359,29 @@ testResult_t TimeTest(struct testArgs* args)
   }
   TESTCHECK(completeColl(args));
 
-  // // Warm-up for small size
-  // setupArgs(args->minbytes, args);
-  // for (int iter = 0; iter < warmup_iters; iter++) {
-  //   TESTCHECK(startColl(args, 1, iter));
-  // }
-  // TESTCHECK(completeColl(args));
+  // Warm-up for small size
+  setupArgs(args->minbytes, args);
+  for (int iter = 0; iter < warmup_iters; iter++) {
+    TESTCHECK(startColl(args, 1, iter));
+  }
+  TESTCHECK(completeColl(args));
 
-  // PRINT("#\n");
-  // PRINT("# %10s  %12s           in-place                       out-of-place          \n", "", "");
-  // PRINT("# %10s  %12s  %7s  %6s  %6s  %6s  %7s  %6s  %6s  %6s\n", "size", "count", "time", "algbw", "busbw", "#wrong",
-  //       "time", "algbw", "busbw", "#wrong");
-  // PRINT("# %10s  %12s  %7s  %6s  %6s  %5s  %7s  %6s  %6s  %5s\n", "(B)", "(elements)", "(us)", "(GB/s)", "(GB/s)", "",
-  //       "(us)", "(GB/s)", "(GB/s)", "");
-  // // Benchmark
-  // for (size_t size = args->minbytes; size <= args->maxbytes;
-  //      size = ((args->stepfactor > 1) ? size * args->stepfactor : size + args->stepbytes)) {
-  //   setupArgs(size, args);
-  //   PRINT("%12li  %12li", max(args->sendBytes, args->expectedBytes), args->nbytes / sizeof(int));
-  //   // Don't support out-of-place for now
-  //   // TESTCHECK(BenchTime(args, 0));
-  //   TESTCHECK(BenchTime(args, 1));
-  //   PRINT("\n");
-  // }
+  PRINT("#\n");
+  PRINT("# %10s  %12s           in-place                       out-of-place          \n", "", "");
+  PRINT("# %10s  %12s  %7s  %6s  %6s  %6s  %7s  %6s  %6s  %6s\n", "size", "count", "time", "algbw", "busbw", "#wrong",
+        "time", "algbw", "busbw", "#wrong");
+  PRINT("# %10s  %12s  %7s  %6s  %6s  %5s  %7s  %6s  %6s  %5s\n", "(B)", "(elements)", "(us)", "(GB/s)", "(GB/s)", "",
+        "(us)", "(GB/s)", "(GB/s)", "");
+  // Benchmark
+  for (size_t size = args->minbytes; size <= args->maxbytes;
+       size = ((args->stepfactor > 1) ? size * args->stepfactor : size + args->stepbytes)) {
+    setupArgs(size, args);
+    PRINT("%12li  %12li", max(args->sendBytes, args->expectedBytes), args->nbytes / sizeof(int));
+    // Don't support out-of-place for now
+    // TESTCHECK(BenchTime(args, 0));
+    TESTCHECK(BenchTime(args, 1));
+    PRINT("\n");
+  }
   return testSuccess;
 }
 

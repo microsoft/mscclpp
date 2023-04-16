@@ -77,14 +77,14 @@ __device__ void recv(mscclppDevConn_t& conn)
   __syncthreads();
 }
 
-template <typename T> __device__ void reduceSum(T* dst, T* src, size_t size)
+__device__ void reduceSum(int* dst, int* src, size_t size)
 {
   for (int i = threadIdx.x; i < size; i += blockDim.x) {
     dst[i] += src[i];
   }
 }
 
-template <typename T> __global__ void initData(T* data, size_t size, int rank)
+__global__ void initData(int* data, size_t size, int rank)
 {
   for (int i = threadIdx.x; i < size; i += blockDim.x) {
     data[i] = rank;
@@ -92,8 +92,7 @@ template <typename T> __global__ void initData(T* data, size_t size, int rank)
 }
 
 __global__ void allReduceKernel0(int rank, int nRanks, size_t dataCount, size_t scratchDataCount, mscclppDevConn_t* conns,
-                                 void* scratch, void* sendRecvData, cuda::barrier<cuda::thread_scope_device>* barrier,
-                                 reduceFunc reduce)
+                                 void* scratch, void* sendRecvData, cuda::barrier<cuda::thread_scope_device>* barrier)
 {
   int idx = blockIdx.x;
   int peer = peerRank(idx, rank);
@@ -108,48 +107,36 @@ __global__ void allReduceKernel0(int rank, int nRanks, size_t dataCount, size_t 
   // inside that each of the destination's peers send to the nth chunk, where n is the index of the
   // source peer from the destination's perspective.
   size_t dstOffset = peerIdx(rank, peer) * toPeer.size;
-  if (idx == 0 && threadIdx.x == 0) {
-    printf(
-      "srcOffset: %ld, dstOffset: %ld, connId : %d, toPeerSize: %ld, remote rank: %d, send tag: %d, recv tag: %d\n",
-      toPeer.offset * sizeof(int), dstOffset * sizeof(int), phase1SendConnIdx(peer, rank), toPeer.size, peer,
-      phase1SendConn.tag, phase1RecvConn.tag);
-  }
-  if (idx == 0 && threadIdx.x == 0) {
-    printf("send to rank %d, with tag %d\n", phase1SendConn.remoteRank, phase1SendConn.tag);
-  }
   send(phase1SendConn, toPeer.offset * sizeof(int), dstOffset * sizeof(int), toPeer.size * sizeof(int));
-  // if (idx == 0 && threadIdx.x == 0) {
-  //   printf("recv from rank %d, with tag %d\n", phase1RecvConn.remoteRank, phase1RecvConn.tag);
-  // }
   recv(phase1RecvConn);
 
   if (threadIdx.x == 0)
     barrier->arrive_and_wait();
   __syncthreads();
 
-  // // Local reduction: every block reduces a slice of each chunk in the scratch buffer into the user buffer
-  // Volume rankChunk = chunkVolume(dataCount, nRanks, rank, 1);
-  // int* chunk = (int*)sendRecvData + rankChunk.offset;
-  // int numPeers = nRanks - 1, numBlocks = nRanks - 1;
-  // Volume blockUserChunk = chunkVolume(rankChunk.size, numBlocks, idx, 1);
-  // for (int peerIdx = 0; peerIdx < numPeers; ++peerIdx) {
-  //   assert(scratchDataCount % numPeers == 0);
-  //   assert(scratchDataCount / numPeers == rankChunk.size);
-  //   size_t scratchDataCountPerPeer = scratchDataCount / numPeers;
-  //   int* scratchChunk = (int*)scratch + peerIdx * scratchDataCountPerPeer;
-  //   Volume blockScratchChunk = chunkVolume(scratchDataCountPerPeer, numBlocks, idx, 1);
-  //   assert(blockScratchChunk.size == blockUserChunk.size);
-  //   reduce(chunk + blockUserChunk.offset, scratchChunk + blockScratchChunk.offset, blockScratchChunk.size);
-  // }
+  // Local reduction: every block reduces a slice of each chunk in the scratch buffer into the user buffer
+  Volume rankChunk = chunkVolume(dataCount, nRanks, rank, 1);
+  int* chunk = (int*)sendRecvData + rankChunk.offset;
+  int numPeers = nRanks - 1, numBlocks = nRanks - 1;
+  Volume blockUserChunk = chunkVolume(rankChunk.size, numBlocks, idx, 1);
+  for (int peerIdx = 0; peerIdx < numPeers; ++peerIdx) {
+    assert(scratchDataCount % numPeers == 0);
+    assert(scratchDataCount / numPeers == rankChunk.size);
+    size_t scratchDataCountPerPeer = scratchDataCount / numPeers;
+    int* scratchChunk = (int*)scratch + peerIdx * scratchDataCountPerPeer;
+    Volume blockScratchChunk = chunkVolume(scratchDataCountPerPeer, numBlocks, idx, 1);
+    assert(blockScratchChunk.size == blockUserChunk.size);
+    reduceSum(chunk + blockUserChunk.offset, scratchChunk + blockScratchChunk.offset, blockScratchChunk.size);
+  }
 
-  // if (threadIdx.x == 0)
-  //   barrier->arrive_and_wait();
-  // __syncthreads();
+  if (threadIdx.x == 0)
+    barrier->arrive_and_wait();
+  __syncthreads();
 
-  // // 2nd communication phase: send the now reduced data between the user buffers
-  // Volume srcVolume2 = chunkVolume(dataCount, nRanks, rank, 1);
-  // send(phase2Conn, srcVolume2.offset, srcVolume2.offset, srcVolume2.size);
-  // recv(phase2Conn);
+  // 2nd communication phase: send the now reduced data between the user buffers
+  Volume srcVolume2 = chunkVolume(dataCount, nRanks, rank, 1);
+  send(phase2Conn, srcVolume2.offset, srcVolume2.offset, srcVolume2.size);
+  recv(phase2Conn);
 }
 
 void AllReduceGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* paramcount, size_t* sendInplaceOffset,
@@ -205,16 +192,9 @@ testResult_t AllReduceRunColl(void* sendbuff, void* recvbuff, int nranksPerNode,
   int nPeers = worldSize - 1;
   int dataCount = nBytes / sizeof(int);
   Volume chunk = chunkVolume(dataCount, worldSize, comm->rank, 1);
-  if (comm->rank == 0) {
-    printf("chunk size is %ld, sendBytes is %ld, offset is %ld\n", chunk.size, nBytes, chunk.offset);
-  }
   size_t scratchDataCount = chunk.size * nPeers;
-  if (comm->rank == 0) {
-    printf("Start running kernel, rank=%d, worldSize=%d, nBytes=%zu, kernel_num=%d, scratchDataCount=%zu\n", comm->rank,
-           worldSize, nBytes, kernel_num, scratchDataCount);
-  }
-  allReduceKernel0<<<worldSize - 1, 256>>>(comm->rank, worldSize, dataCount, scratchDataCount, conns,
-                                           scratch, sendRecvData, barrier, reduceSum<int>);
+  allReduceKernel0<<<worldSize - 1, 256, 0, stream>>>(comm->rank, worldSize, dataCount, scratchDataCount, conns,
+                                           scratch, sendRecvData, barrier);
   return testSuccess;
 }
 
@@ -229,7 +209,6 @@ testResult_t AllReduceSetupMscclppConnections(struct testArgs* args)
   int nPeers = args->totalProcs - 1;
   size_t scratchBytes = chunk.size * nPeers * sizeof(int);
 
-  printf("scratchBytes is %ld\n", scratchBytes);
   CUDACHECK(cudaMalloc(&scratch, scratchBytes));
   int phase2Tag = 2;
 
