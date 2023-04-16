@@ -166,7 +166,6 @@ build: lib tests
 ifeq ($(USE_MPI_FOR_TESTS), 1)
 build: lib tests mscclpp-test
 endif
-build: $(BUILDLIST)
 
 lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
 
