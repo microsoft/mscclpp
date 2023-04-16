@@ -162,9 +162,9 @@ INCLUDE := -Isrc -Isrc/include
 
 all: build
 
-BUILDLIST = lib tests
+build: lib tests
 ifeq ($(USE_MPI_FOR_TESTS), 1)
-BUILDLIST += mscclpp-test
+build: lib tests mscclpp-test
 endif
 build: $(BUILDLIST)
 
