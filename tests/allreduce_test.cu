@@ -19,6 +19,16 @@ struct Chunk
   size_t size;
 };
 
+inline int getSendTag(int rank, int peer)
+{
+  return rank < peer ? 0 : 1;
+}
+
+inline int getRecvTag(int rank, int peer)
+{
+  return rank < peer ? 1 : 0;
+}
+
 __host__ __device__ Chunk getChunk(size_t dataCount, size_t numChunks, size_t chunkIdx, size_t chunkCount)
 {
   size_t remainder = dataCount % numChunks;
@@ -209,8 +219,8 @@ testResult_t AllReduceSetupMscclppConnections(struct testArgs* args)
 
   for (int peer = 0; peer < worldSize; ++peer) {
     if (peer != args->proc) {
-      int sendTag = args->proc < peer ? 0 : 1;
-      int recvTag = args->proc < peer ? 1 : 0;
+      int sendTag = getSendTag(args->proc, peer);
+      int recvTag = getRecvTag(args->proc, peer);
       MSCCLPPCHECK(
         mscclppConnect(args->comm, peer, sendTag, args->recvbuff, bufferSize, mscclppTransportP2P, nullptr));
       MSCCLPPCHECK(mscclppConnect(args->comm, peer, recvTag, scratch, scratchBytes, mscclppTransportP2P, nullptr));
@@ -239,8 +249,8 @@ testResult_t AllReduceRunTest(struct testArgs* args)
   for (int peer = 0; peer < args->totalProcs; ++peer) {
     mscclppDevConn_t* devConn;
     if (peer != rank) {
-      int sendTag = args->proc < peer ? 0 : 1;
-      int recvTag = args->proc < peer ? 1 : 0;
+      int sendTag = getSendTag(args->proc, peer);
+      int recvTag = getRecvTag(args->proc, peer);
       MSCCLPPCHECK(mscclppGetDeviceConnection(args->comm, peer, sendTag, &devConn));
       hostConns[phase1SendConnIdx(peer, rank)] = *devConn;
       MSCCLPPCHECK(mscclppGetDeviceConnection(args->comm, peer, recvTag, &devConn));
