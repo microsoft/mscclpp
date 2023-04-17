@@ -304,7 +304,6 @@ int mscclppIbQp::rtr(const mscclppIbQpInfo* info)
   if (info->linkLayer == IBV_LINK_LAYER_ETHERNET || info->is_grh) {
     qp_attr.ah_attr.is_global = 1;
     qp_attr.ah_attr.grh.dgid.global.subnet_prefix = info->spn;
-    qp_attr.ah_attr.grh.dgid.global.interface_id = info->lid;
     qp_attr.ah_attr.grh.dgid.global.interface_id = info->iid;
     qp_attr.ah_attr.grh.flow_label = 0;
     qp_attr.ah_attr.grh.sgid_index = 0;

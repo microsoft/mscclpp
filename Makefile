@@ -177,7 +177,7 @@ mscclpp-test: $(LIBTARGET) $(MSCLLPPTESTBINS)
 
 cpplint:
 	clang-format-12 -style=file --verbose --Werror --dry-run $(CPPSOURCES)
-	clang-format-12 --dry-run $(CPPSOURCES)
+	clang-format-12 --dry-run $(PYTHONCPPSOURCES)
 
 cpplint-autofix:
 	clang-format-12 -style=file --verbose --Werror -i $(CPPSOURCES)
