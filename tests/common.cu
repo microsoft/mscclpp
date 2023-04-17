@@ -420,6 +420,9 @@ testResult_t runTests(struct testArgs* args)
   TESTCHECK(mscclppTestEngine.runTest(args));
   PRINT("Stopping MSCCL++ proxy threads\n");
   MSCCLPPCHECK(mscclppProxyStop(args->comm));
+  if (mscclppTestEngine.teardownMscclppConnections != nullptr) {
+    TESTCHECK(mscclppTestEngine.teardownMscclppConnections());
+  }
   return testSuccess;
 }
 

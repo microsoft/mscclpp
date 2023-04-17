@@ -96,8 +96,9 @@ __global__ void initData(int* data, size_t size, int rank)
   }
 }
 
-__global__ void allReduceKernel0(int rank, int nRanks, size_t dataCount, size_t scratchDataCount, mscclppDevConn_t* conns,
-                                 void* scratch, void* sendRecvData, cuda::barrier<cuda::thread_scope_device>* barrier)
+__global__ void allReduceKernel0(int rank, int nRanks, size_t dataCount, size_t scratchDataCount,
+                                 mscclppDevConn_t* conns, void* scratch, void* sendRecvData,
+                                 cuda::barrier<cuda::thread_scope_device>* barrier)
 {
   int idx = blockIdx.x;
   int peer = peerRank(idx, rank);
@@ -200,7 +201,7 @@ testResult_t AllReduceRunColl(void* sendbuff, void* recvbuff, int nranksPerNode,
   Chunk chunk = getChunk(dataCount, worldSize, comm->rank, 1);
   size_t scratchDataCount = chunk.size * nPeers;
   allReduceKernel0<<<worldSize - 1, 256, 0, stream>>>(comm->rank, worldSize, dataCount, scratchDataCount, conns,
-                                           scratch, sendRecvData, barrier);
+                                                      scratch, sendRecvData, barrier);
   return testSuccess;
 }
 
@@ -221,8 +222,7 @@ testResult_t AllReduceSetupMscclppConnections(struct testArgs* args)
     if (peer != args->proc) {
       int sendTag = getSendTag(args->proc, peer);
       int recvTag = getRecvTag(args->proc, peer);
-      MSCCLPPCHECK(
-        mscclppConnect(args->comm, peer, sendTag, args->recvbuff, bufferSize, mscclppTransportP2P, nullptr));
+      MSCCLPPCHECK(mscclppConnect(args->comm, peer, sendTag, args->recvbuff, bufferSize, mscclppTransportP2P, nullptr));
       MSCCLPPCHECK(mscclppConnect(args->comm, peer, recvTag, scratch, scratchBytes, mscclppTransportP2P, nullptr));
       MSCCLPPCHECK(
         mscclppConnect(args->comm, peer, phase2Tag, args->recvbuff, bufferSize, mscclppTransportP2P, nullptr));
@@ -230,6 +230,15 @@ testResult_t AllReduceSetupMscclppConnections(struct testArgs* args)
   }
   MSCCLPPCHECK(mscclppConnectionSetup(args->comm));
 
+  return testSuccess;
+}
+
+testResult_t AllReduceTeardownMscclppConnections()
+{
+  if (scratch != nullptr) {
+    CUDACHECK(cudaFree(scratch));
+    scratch = nullptr;
+  }
   return testSuccess;
 }
 
@@ -266,14 +275,11 @@ testResult_t AllReduceRunTest(struct testArgs* args)
 
   CUDACHECK(cudaFree(barrier));
   CUDACHECK(cudaFree(conns));
-  if (scratch != nullptr) {
-    CUDACHECK(cudaFree(scratch));
-    scratch = nullptr;
-  }
 
   return testSuccess;
 }
 
-struct testEngine allReduceEngine = {AllReduceGetBuffSize, AllReduceRunTest, AllReduceSetupMscclppConnections};
+struct testEngine allReduceEngine = {AllReduceGetBuffSize, AllReduceRunTest, AllReduceSetupMscclppConnections,
+                                     AllReduceTeardownMscclppConnections};
 
 #pragma weak mscclppTestEngine = allReduceEngine
