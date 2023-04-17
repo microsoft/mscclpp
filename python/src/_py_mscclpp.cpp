@@ -1,9 +1,8 @@
+#include <cuda_runtime.h>
 #include <mscclpp.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
-
-#include <cuda_runtime.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -71,14 +70,14 @@ void checkResult(
   }
 }
 
-#define RETRY(C, ...) \
-{ \
-  mscclppResult_t res; \
-  do { \
-	  res = (C); \
-  } while (res == mscclppInProgress); \
-  checkResult(res, __VA_ARGS__); \
-}
+#define RETRY(C, ...)                   \
+  {                                     \
+    mscclppResult_t res;                \
+    do {                                \
+      res = (C);                        \
+    } while (res == mscclppInProgress); \
+    checkResult(res, __VA_ARGS__);      \
+  }
 
 // Maybe return the value, maybe throw an exception.
 template <typename Val, typename... Args>
@@ -98,7 +97,11 @@ struct _Comm {
 
  public:
   _Comm(int rank, int world_size, mscclppComm_t handle)
-      : _rank(rank), _world_size(world_size), _handle(handle), _is_open(true), _proxies_running(false) {}
+      : _rank(rank),
+        _world_size(world_size),
+        _handle(handle),
+        _is_open(true),
+        _proxies_running(false) {}
 
   ~_Comm() { close(); }
 
@@ -106,8 +109,8 @@ struct _Comm {
   void close() {
     if (_is_open) {
       if (_proxies_running) {
-          mscclppProxyStop(_handle);
-          _proxies_running = false;
+        mscclppProxyStop(_handle);
+        _proxies_running = false;
       }
       checkResult(mscclppCommDestroy(_handle), "Failed to close comm channel");
       _handle = NULL;
@@ -245,7 +248,7 @@ NB_MODULE(_py_mscclpp, m) {
              uint64_t buff_size,
              mscclppTransport_t transport_type) -> void {
             if (comm._proxies_running) {
-                throw std::invalid_argument("Proxy Threads Already Running");
+              throw std::invalid_argument("Proxy Threads Already Running");
             }
             RETRY(
                 mscclppConnect(
@@ -270,8 +273,9 @@ NB_MODULE(_py_mscclpp, m) {
           "connection_setup",
           [](_Comm& comm) -> void {
             comm.check_open();
-            RETRY(mscclppConnectionSetup(comm._handle),
-            "Failed to setup MSCCLPP connection");
+            RETRY(
+                mscclppConnectionSetup(comm._handle),
+                "Failed to setup MSCCLPP connection");
           },
           nb::call_guard<nb::gil_scoped_release>(),
           "Run connection setup for MSCCLPP.")

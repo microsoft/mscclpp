@@ -218,13 +218,16 @@ mscclppResult_t mscclppIbContextCreateQp(struct mscclppIbContext* ctx, struct ms
   _ibQp->info.linkLayer = port_attr.link_layer;
   _ibQp->info.qpn = qp->qp_num;
   _ibQp->info.mtu = port_attr.active_mtu;
-  if (port_attr.link_layer != IBV_LINK_LAYER_INFINIBAND) {
+  _ibQp->info.is_grh = (port_attr.flags & IBV_QPF_GRH_REQUIRED);
+
+  if (port_attr.link_layer != IBV_LINK_LAYER_INFINIBAND || _ibQp->info.is_grh) {
     union ibv_gid gid;
     if (ibv_query_gid(ctx->ctx, port, 0, &gid) != 0) {
       WARN("ibv_query_gid failed (errno %d)", errno);
       return mscclppInternalError;
     }
     _ibQp->info.spn = gid.global.subnet_prefix;
+    _ibQp->info.iid = gid.global.interface_id;
   }
 
   struct ibv_qp_attr qp_attr;
@@ -298,18 +301,18 @@ int mscclppIbQp::rtr(const mscclppIbQpInfo* info)
   qp_attr.rq_psn = 0;
   qp_attr.max_dest_rd_atomic = 1;
   qp_attr.min_rnr_timer = 0x12;
-  if (info->linkLayer == IBV_LINK_LAYER_ETHERNET) {
+  if (info->linkLayer == IBV_LINK_LAYER_ETHERNET || info->is_grh) {
     qp_attr.ah_attr.is_global = 1;
     qp_attr.ah_attr.grh.dgid.global.subnet_prefix = info->spn;
-    qp_attr.ah_attr.grh.dgid.global.interface_id = info->lid;
+    qp_attr.ah_attr.grh.dgid.global.interface_id = info->iid;
     qp_attr.ah_attr.grh.flow_label = 0;
     qp_attr.ah_attr.grh.sgid_index = 0;
     qp_attr.ah_attr.grh.hop_limit = 255;
     qp_attr.ah_attr.grh.traffic_class = 0;
   } else {
     qp_attr.ah_attr.is_global = 0;
-    qp_attr.ah_attr.dlid = info->lid;
   }
+  qp_attr.ah_attr.dlid = info->lid;
   qp_attr.ah_attr.sl = 0;
   qp_attr.ah_attr.src_path_bits = 0;
   qp_attr.ah_attr.port_num = info->port;
