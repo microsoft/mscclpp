@@ -166,7 +166,6 @@ void AllReduceGetBuffSize(size_t* sendcount, size_t* recvcount, size_t count, in
 testResult_t AllReduceInitData(struct testArgs* args, int in_place)
 {
   size_t recvcount = args->expectedBytes / sizeof(int);
-  // int nranks = args->totalProcs;
 
   CUDACHECK(cudaSetDevice(args->gpuNum));
   CUDACHECK(cudaMemset(args->recvbuff, 0, args->expectedBytes));
@@ -193,7 +192,7 @@ void AllReduceGetBw(size_t count, int typesize, double sec, double* algBw, doubl
 }
 
 testResult_t AllReduceRunColl(void* sendbuff, void* recvbuff, int nranksPerNode, size_t nBytes, mscclppComm_t comm,
-                              cudaStream_t stream, int kernel_num)
+                              cudaStream_t stream, int kernelNum)
 {
   int worldSize = comm->nRanks;
   int nPeers = worldSize - 1;
