@@ -20,6 +20,20 @@ struct mscclppBootstrapHandle
 static_assert(sizeof(struct mscclppBootstrapHandle) <= sizeof(mscclppUniqueId),
               "Bootstrap handle is too large to fit inside MSCCLPP unique ID");
 
+class mscclppBootstrap : Bootstrap {
+public:
+  mscclppBootstrap(std::string ip_port_pair, int rank, int nranks);
+  mscclppBootstrap(mscclppBootstrapHandle handle, int rank, int nranks);
+  mscclppBootstrapHandle mscclppGetUniqueId();
+  void Send(void* data, int size, int peer, int tag);
+  void Recv(void* data, int size, int peer, int tag);
+  void AllGather(void* allData, int size);
+  void Barrier();
+private:
+  struct impl;
+  std::unique_ptr<impl> pimpl;
+};
+
 mscclppResult_t bootstrapNetInit(const char* ip_port_pair = NULL);
 mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle);
 mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot = true,
