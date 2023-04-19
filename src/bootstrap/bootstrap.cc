@@ -8,54 +8,20 @@
 #include "config.h"
 #include "mscclpp.h"
 #include "utils.h"
+
+#include <atomic>
+#include <cstring>
+#include <mutex>
+#include <thread>
+
+#include <sys/resource.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-struct mscclppBootstrap::impl{
-  void NetInit(std::string ipPortPair = ""){
-    static bool initialized = false;
-    static pthread_mutex_t initLock = PTHREAD_MUTEX_INITIALIZER;
-    if (__atomic_load_n(&initialized, __ATOMIC_ACQUIRE))
-      return;
-    pthread_mutex_lock(&initLock);
-    if (!initialized) {
-      
-      if (ipPortPair != "") {
-        union mscclppSocketAddress remoteAddr;
-        if (mscclppSocketGetAddrFromString(&remoteAddr, ipPortPair.c_str()) != mscclppSuccess) {
-          throw std::runtime_error("Invalid ip:port, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
-        }
-        if (mscclppFindInterfaceMatchSubnet(bootstrapNetIfName, &bootstrapNetIfAddr, &remoteAddr, MAX_IF_NAME_SIZE,
-                                            1) <= 0) {
-          throw std::runtime_error("NET/Socket : No usable listening interface found");
-        }
-      } else {
-        int nIfs = mscclppFindInterfaces(this->bootstrapNetIfName, &this->bootstrapNetIfAddr, MAX_IF_NAME_SIZE, 1);
-        if (nIfs <= 0) {
-          throw std::runtime_error("Bootstrap : no socket interface found");
-        }
-      }
-      char line[SOCKET_NAME_MAXLEN + MAX_IF_NAME_SIZE + 2];
-      sprintf(line, " %s:", bootstrapNetIfName);
-      mscclppSocketToString(&bootstrapNetIfAddr, line + strlen(line));
-      INFO(MSCCLPP_INIT, "Bootstrap : Using%s", line);
-      __atomic_store_n(&initialized, true, __ATOMIC_RELEASE);
-    }
-    pthread_mutex_unlock(&initLock);
-  }
-
-  static char bootstrapNetIfName[MAX_IF_NAME_SIZE + 1];
-  static union mscclppSocketAddress bootstrapNetIfAddr;
-};
-
-struct mscclppBootstrap::UniqueId{
-  uint64_t magic;
-  union mscclppSocketAddress addr;
-};
-
-static uint64_t hashUniqueId(mscclppBootstrapHandle const& id)
+namespace {
+uint64_t hashUniqueId(const mscclppBootstrapHandle& id)
 {
-  char const* bytes = (char const*)&id;
+  const char* bytes = (const char*)&id;
   uint64_t h = 0xdeadbeef;
   for (int i = 0; i < (int)sizeof(mscclppBootstrapHandle); i++) {
     h ^= h >> 32;
@@ -65,25 +31,16 @@ static uint64_t hashUniqueId(mscclppBootstrapHandle const& id)
   return h;
 }
 
-std::unique_ptr<mscclppBootstrap::UniqueId> mscclppBootstrap::GetUniqueId(){
-  pimpl->NetInit();
-
-  mscclppBootstrap::UniqueId handle;
-  auto ret = getRandomData(&handle.magic, sizeof(handle.magic));
-  if (ret != mscclppSuccess) {
-    throw std::runtime_error("getting random data failed");
-  }
-  memcpy(&handle.addr, &pimpl->bootstrapNetIfAddr, sizeof(union mscclppSocketAddress));
-  // ret = bootstrapCreateRoot(handle);
-
-  // mscclppResult_t res = bootstrapGetUniqueId(&handle);
-  // if (res != mscclppSuccess) {
-  //   throw std::runtime_error("Bootstrap : failed to get unique ID");
-  // }
-  // TRACE_CALL("mscclppGetUniqueId(0x%llx)", (unsigned long long)hashUniqueId(handle));
-  // return *(mscclppUniqueId*)&handle;
+mscclppResult_t setFilesLimit()
+{
+  struct rlimit filesLimit;
+  SYSCHECK(getrlimit(RLIMIT_NOFILE, &filesLimit), "getrlimit");
+  filesLimit.rlim_cur = filesLimit.rlim_max;
+  SYSCHECK(setrlimit(RLIMIT_NOFILE, &filesLimit), "setrlimit");
+  return mscclppSuccess;
 }
 
+} // namespace
 
 struct bootstrapRootArgs
 {
@@ -91,48 +48,82 @@ struct bootstrapRootArgs
   uint64_t magic;
 };
 
-/* Init functions */
-static char bootstrapNetIfName[MAX_IF_NAME_SIZE + 1];
-static union mscclppSocketAddress bootstrapNetIfAddr;
-static int bootstrapNetInitDone = 0;
-pthread_mutex_t bootstrapNetLock = PTHREAD_MUTEX_INITIALIZER;
-
-mscclppResult_t bootstrapNetInit(const char* ip_port_pair)
+struct mscclppBootstrap::UniqueId
 {
-  if (bootstrapNetInitDone == 0) {
-    pthread_mutex_lock(&bootstrapNetLock);
-    if (bootstrapNetInitDone == 0) {
-      const char* env;
-      if (ip_port_pair) {
-        env = ip_port_pair;
-      } else {
-        env = getenv("MSCCLPP_COMM_ID");
+  uint64_t magic;
+  union mscclppSocketAddress addr;
+};
+
+struct unexConn
+{
+  int peer;
+  int tag;
+  struct mscclppSocket sock;
+  struct unexConn* next;
+};
+
+struct bootstrapState
+{
+  struct mscclppSocket listenSock;
+  struct mscclppSocket ringRecvSocket;
+  struct mscclppSocket ringSendSocket;
+  union mscclppSocketAddress* peerCommAddresses;
+  union mscclppSocketAddress* peerProxyAddresses;
+  struct unexConn* unexpectedConnections;
+  int cudaDev;
+  int rank;
+  int nranks;
+  uint64_t magic;
+  volatile uint32_t* abortFlag;
+};
+
+class mscclppBootstrap::Impl
+{
+public:
+  static char bootstrapNetIfName[MAX_IF_NAME_SIZE + 1];
+  static union mscclppSocketAddress bootstrapNetIfAddr;
+
+  Impl() = default;
+
+  static void* bootstrapRoot(void* args);
+  mscclppResult_t NetInit(std::string ipPortPair = "");
+  mscclppResult_t CreateRoot(mscclppBootstrap::UniqueId& handle);
+};
+
+mscclppResult_t mscclppBootstrap::Impl::NetInit(std::string ipPortPair)
+{
+  static std::atomic_bool initialized(false);
+  static std::mutex initLock;
+
+  if (initialized.load(std::memory_order_acquire)) {
+    return mscclppSuccess;
+  }
+  std::lock_guard<std::mutex> lock(initLock);
+  if (!initialized) {
+    if (ipPortPair != "") {
+      union mscclppSocketAddress remoteAddr;
+      if (mscclppSocketGetAddrFromString(&remoteAddr, ipPortPair.c_str()) != mscclppSuccess) {
+        WARN("Invalid MSCCLPP_COMM_ID, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
+        return mscclppInvalidArgument;
       }
-      if (env) {
-        union mscclppSocketAddress remoteAddr;
-        if (mscclppSocketGetAddrFromString(&remoteAddr, env) != mscclppSuccess) {
-          WARN("Invalid MSCCLPP_COMM_ID, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
-          return mscclppInvalidArgument;
-        }
-        if (mscclppFindInterfaceMatchSubnet(bootstrapNetIfName, &bootstrapNetIfAddr, &remoteAddr, MAX_IF_NAME_SIZE,
-                                            1) <= 0) {
-          WARN("NET/Socket : No usable listening interface found");
-          return mscclppSystemError;
-        }
-      } else {
-        int nIfs = mscclppFindInterfaces(bootstrapNetIfName, &bootstrapNetIfAddr, MAX_IF_NAME_SIZE, 1);
-        if (nIfs <= 0) {
-          WARN("Bootstrap : no socket interface found");
-          return mscclppInternalError;
-        }
+      if (mscclppFindInterfaceMatchSubnet(bootstrapNetIfName, &bootstrapNetIfAddr, &remoteAddr, MAX_IF_NAME_SIZE, 1) <=
+          0) {
+        WARN("NET/Socket : No usable listening interface found");
+        return mscclppSystemError;
       }
-      char line[SOCKET_NAME_MAXLEN + MAX_IF_NAME_SIZE + 2];
-      sprintf(line, " %s:", bootstrapNetIfName);
-      mscclppSocketToString(&bootstrapNetIfAddr, line + strlen(line));
-      INFO(MSCCLPP_INIT, "Bootstrap : Using%s", line);
-      bootstrapNetInitDone = 1;
+    } else {
+      int nIfs = mscclppFindInterfaces(this->bootstrapNetIfName, &this->bootstrapNetIfAddr, MAX_IF_NAME_SIZE, 1);
+      if (nIfs <= 0) {
+        WARN("Bootstrap : no socket interface found");
+        return mscclppInternalError;
+      }
     }
-    pthread_mutex_unlock(&bootstrapNetLock);
+
+    char line[SOCKET_NAME_MAXLEN + MAX_IF_NAME_SIZE + 2];
+    sprintf(line, " %s:", bootstrapNetIfName);
+    mscclppSocketToString(&bootstrapNetIfAddr, line + strlen(line));
+    INFO(MSCCLPP_INIT, "Bootstrap : Using%s", line);
+    initialized.store(true, std::memory_order_release);
   }
   return mscclppSuccess;
 }
@@ -171,20 +162,9 @@ struct extInfo
   union mscclppSocketAddress extAddressListen;
 };
 
-#include <sys/resource.h>
-
-static mscclppResult_t setFilesLimit()
+void* mscclppBootstrap::Impl::bootstrapRoot(void* bootstrapArgs)
 {
-  struct rlimit filesLimit;
-  SYSCHECK(getrlimit(RLIMIT_NOFILE, &filesLimit), "getrlimit");
-  filesLimit.rlim_cur = filesLimit.rlim_max;
-  SYSCHECK(setrlimit(RLIMIT_NOFILE, &filesLimit), "setrlimit");
-  return mscclppSuccess;
-}
-
-static void* bootstrapRoot(void* rargs)
-{
-  struct bootstrapRootArgs* args = (struct bootstrapRootArgs*)rargs;
+  struct bootstrapRootArgs* args = (struct bootstrapRootArgs*)bootstrapArgs;
   struct mscclppSocket* listenSock = args->listenSock;
   uint64_t magic = args->magic;
   mscclppResult_t res = mscclppSuccess;
@@ -252,88 +232,48 @@ out:
     free(rankAddressesRoot);
   if (zero)
     free(zero);
-  free(rargs);
+  free(bootstrapArgs);
 
   TRACE(MSCCLPP_INIT, "DONE");
   return NULL;
 }
 
-mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle)
+mscclppResult_t mscclppBootstrap::Impl::CreateRoot(mscclppBootstrap::UniqueId& handle)
 {
   struct mscclppSocket* listenSock;
   struct bootstrapRootArgs* args;
-  pthread_t thread;
 
   MSCCLPPCHECK(mscclppCalloc(&listenSock, 1));
-  MSCCLPPCHECK(mscclppSocketInit(listenSock, &handle->addr, handle->magic, mscclppSocketTypeBootstrap, NULL, 0));
+  MSCCLPPCHECK(mscclppSocketInit(listenSock, &handle.addr, handle.magic, mscclppSocketTypeBootstrap, NULL, 0));
   MSCCLPPCHECK(mscclppSocketListen(listenSock));
-  MSCCLPPCHECK(mscclppSocketGetAddr(listenSock, &handle->addr));
+  MSCCLPPCHECK(mscclppSocketGetAddr(listenSock, &handle.addr));
 
   MSCCLPPCHECK(mscclppCalloc(&args, 1));
   args->listenSock = listenSock;
-  args->magic = handle->magic;
-  NEQCHECK(pthread_create(&thread, NULL, bootstrapRoot, (void*)args), 0);
-  mscclppSetThreadName(thread, "MSCCLPP BootstrapR");
-  NEQCHECK(pthread_detach(thread), 0); // will not be pthread_join()'d
+  args->magic = handle.magic;
+
+  std::thread thread(bootstrapRoot, (void*)args);
+  mscclppSetThreadName(thread.native_handle(), "MSCCLPP BootstrapR");
+  thread.detach();
   return mscclppSuccess;
 }
 
-// #include <netinet/in.h>
-// #include <arpa/inet.h>
-
-mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot, const char* ip_port_pair)
+std::unique_ptr<mscclppBootstrap::UniqueId> mscclppBootstrap::GetUniqueId()
 {
-  memset(handle, 0, sizeof(mscclppBootstrapHandle));
-  const char* env = NULL;
+  pimpl->NetInit();
 
-  if (ip_port_pair) {
-    env = ip_port_pair;
-  } else {
-    env = getenv("MSCCLPP_COMM_ID");
+  mscclppBootstrap::UniqueId handle;
+  mscclppResult_t ret = getRandomData(&handle.magic, sizeof(handle.magic));
+  if (ret != mscclppSuccess) {
+    throw std::runtime_error("getting random data failed");
   }
-  if (env) {
-    handle->magic = 0xdeadbeef;
-
-    INFO(MSCCLPP_ENV, "MSCCLPP_COMM_ID set by environment to %s", env);
-    if (mscclppSocketGetAddrFromString(&handle->addr, env) != mscclppSuccess) {
-      WARN("Invalid MSCCLPP_COMM_ID, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
-      return mscclppInvalidArgument;
-    }
-    if (isRoot)
-      MSCCLPPCHECK(bootstrapCreateRoot(handle));
-  } else {
-    MSCCLPPCHECK(getRandomData(&handle->magic, sizeof(handle->magic)));
-    memcpy(&handle->addr, &bootstrapNetIfAddr, sizeof(union mscclppSocketAddress));
-    MSCCLPPCHECK(bootstrapCreateRoot(handle));
+  std::memcpy(&handle.addr, &pimpl->bootstrapNetIfAddr, sizeof(union mscclppSocketAddress));
+  ret = pimpl->CreateRoot(handle);
+  if (ret != mscclppSuccess) {
+    throw std::runtime_error("Bootstrap : failed to get unique ID");
   }
-  // printf("addr = %s port = %d\n", inet_ntoa(handle->addr.sin.sin_addr), (int)ntohs(handle->addr.sin.sin_port));
-  // printf("addr = %s\n", inet_ntoa((*(struct sockaddr_in*)&handle->addr.sa).sin_addr));
-
-  return mscclppSuccess;
+  return std::make_unique<mscclppBootstrap::UniqueId>(handle);
 }
-
-struct unexConn
-{
-  int peer;
-  int tag;
-  struct mscclppSocket sock;
-  struct unexConn* next;
-};
-
-struct bootstrapState
-{
-  struct mscclppSocket listenSock;
-  struct mscclppSocket ringRecvSocket;
-  struct mscclppSocket ringSendSocket;
-  union mscclppSocketAddress* peerCommAddresses;
-  union mscclppSocketAddress* peerProxyAddresses;
-  struct unexConn* unexpectedConnections;
-  int cudaDev;
-  int rank;
-  int nranks;
-  uint64_t magic;
-  volatile uint32_t* abortFlag;
-};
 
 mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscclppComm* comm)
 {
