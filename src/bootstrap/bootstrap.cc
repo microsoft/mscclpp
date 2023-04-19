@@ -11,6 +11,80 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+struct mscclppBootstrap::impl{
+  void NetInit(std::string ipPortPair = ""){
+    static bool initialized = false;
+    static pthread_mutex_t initLock = PTHREAD_MUTEX_INITIALIZER;
+    if (__atomic_load_n(&initialized, __ATOMIC_ACQUIRE))
+      return;
+    pthread_mutex_lock(&initLock);
+    if (!initialized) {
+      
+      if (ipPortPair != "") {
+        union mscclppSocketAddress remoteAddr;
+        if (mscclppSocketGetAddrFromString(&remoteAddr, ipPortPair.c_str()) != mscclppSuccess) {
+          throw std::runtime_error("Invalid ip:port, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
+        }
+        if (mscclppFindInterfaceMatchSubnet(bootstrapNetIfName, &bootstrapNetIfAddr, &remoteAddr, MAX_IF_NAME_SIZE,
+                                            1) <= 0) {
+          throw std::runtime_error("NET/Socket : No usable listening interface found");
+        }
+      } else {
+        int nIfs = mscclppFindInterfaces(this->bootstrapNetIfName, &this->bootstrapNetIfAddr, MAX_IF_NAME_SIZE, 1);
+        if (nIfs <= 0) {
+          throw std::runtime_error("Bootstrap : no socket interface found");
+        }
+      }
+      char line[SOCKET_NAME_MAXLEN + MAX_IF_NAME_SIZE + 2];
+      sprintf(line, " %s:", bootstrapNetIfName);
+      mscclppSocketToString(&bootstrapNetIfAddr, line + strlen(line));
+      INFO(MSCCLPP_INIT, "Bootstrap : Using%s", line);
+      __atomic_store_n(&initialized, true, __ATOMIC_RELEASE);
+    }
+    pthread_mutex_unlock(&initLock);
+  }
+
+  static char bootstrapNetIfName[MAX_IF_NAME_SIZE + 1];
+  static union mscclppSocketAddress bootstrapNetIfAddr;
+};
+
+struct mscclppBootstrap::UniqueId{
+  uint64_t magic;
+  union mscclppSocketAddress addr;
+};
+
+static uint64_t hashUniqueId(mscclppBootstrapHandle const& id)
+{
+  char const* bytes = (char const*)&id;
+  uint64_t h = 0xdeadbeef;
+  for (int i = 0; i < (int)sizeof(mscclppBootstrapHandle); i++) {
+    h ^= h >> 32;
+    h *= 0x8db3db47fa2994ad;
+    h += bytes[i];
+  }
+  return h;
+}
+
+std::unique_ptr<mscclppBootstrap::UniqueId> mscclppBootstrap::GetUniqueId(){
+  pimpl->NetInit();
+
+  mscclppBootstrap::UniqueId handle;
+  auto ret = getRandomData(&handle.magic, sizeof(handle.magic));
+  if (ret != mscclppSuccess) {
+    throw std::runtime_error("getting random data failed");
+  }
+  memcpy(&handle.addr, &pimpl->bootstrapNetIfAddr, sizeof(union mscclppSocketAddress));
+  // ret = bootstrapCreateRoot(handle);
+
+  // mscclppResult_t res = bootstrapGetUniqueId(&handle);
+  // if (res != mscclppSuccess) {
+  //   throw std::runtime_error("Bootstrap : failed to get unique ID");
+  // }
+  // TRACE_CALL("mscclppGetUniqueId(0x%llx)", (unsigned long long)hashUniqueId(handle));
+  // return *(mscclppUniqueId*)&handle;
+}
+
+
 struct bootstrapRootArgs
 {
   struct mscclppSocket* listenSock;

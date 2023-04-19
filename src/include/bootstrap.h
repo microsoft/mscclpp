@@ -24,11 +24,13 @@ class mscclppBootstrap : Bootstrap {
 public:
   mscclppBootstrap(std::string ip_port_pair, int rank, int nranks);
   mscclppBootstrap(mscclppBootstrapHandle handle, int rank, int nranks);
-  mscclppBootstrapHandle mscclppGetUniqueId();
   void Send(void* data, int size, int peer, int tag);
   void Recv(void* data, int size, int peer, int tag);
   void AllGather(void* allData, int size);
   void Barrier();
+  struct UniqueId;
+  std::unique_ptr<UniqueId> GetUniqueId();
+
 private:
   struct impl;
   std::unique_ptr<impl> pimpl;
