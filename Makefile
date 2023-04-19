@@ -141,8 +141,8 @@ LIBSONAME := $(LIBNAME).$(MSCCLPP_MAJOR)
 LIBTARGET := $(BUILDDIR)/$(LIBDIR)/$(LIBNAME).$(MSCCLPP_MAJOR).$(MSCCLPP_MINOR).$(MSCCLPP_PATCH)
 
 UTDIR  := tests/unittests
-UTSRCS := $(addprefix $(UTDIR)/,ib_test.cc)
-UTOBJS := $(patsubst %.cc,%.o,$(UTSRCS))
+UTSRCS := $(addprefix $(UTDIR)/,ib_test.cc hostconn_multibuff_test.cu)
+UTOBJS := $(patsubst %.cc,%.o,$(UTSRCS)) $(patsubst %.cu,%.o,$(UTSRCS))
 UTOBJTARGETS := $(UTOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 UTBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(UTOBJS))
 

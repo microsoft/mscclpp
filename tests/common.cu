@@ -559,7 +559,6 @@ testResult_t run()
   localRank = proc % nranksPerNode;
 #endif
   is_main_thread = is_main_proc = (proc == 0) ? 1 : 0;
-  is_main_thread = is_main_proc = (proc == 0) ? 1 : 0;
 
   PRINT("# minBytes %ld maxBytes %ld step: %ld(%s) warmup iters: %d iters: %d validation: %d graph: %d, "
         "kernel num: %d\n",
