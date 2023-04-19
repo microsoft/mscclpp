@@ -135,11 +135,47 @@ struct mscclppDevConn
       ;
   }
 
+  // Version that uses the SM directly to do the copy, instead of using the proxy thread like the functions above.
+  __forceinline__ __device__ void putDirect(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize,
+                                            uint32_t threadId, uint32_t numThreads)
+  {
+    uint64_t* src = (uint64_t*)localBuff + srcDataOffset;
+    uint64_t* dst = (uint64_t*)remoteBuff + dstDataOffset;
+    // assume the memory is aligned to 8 bytes
+    size_t nElem =
+      dataSize % sizeof(uint64_t) ? (dataSize + sizeof(uint64_t)) / sizeof(uint64_t) : dataSize / sizeof(uint64_t);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      dst[i] = src[i];
+    }
+  }
+
+  __forceinline__ __device__ void putDirect(uint64_t dataOffset, uint64_t dataSize, uint32_t threadId,
+                                            uint32_t numThreads)
+  {
+    putDirect(dataOffset, dataOffset, dataSize, threadId, numThreads);
+  }
+
+  __forceinline__ __device__ void signalDirect()
+  {
+    // This fence ensures that the writes from a preceding putDirect() are visible on the peer GPU before the
+    // incremented epoch id is visible.
+    __threadfence_system();
+    epochIncrement();
+    *(volatile uint64_t*)remoteEpochId = *sendEpochId;
+  }
+
   __forceinline__ __device__ void wait()
   {
     (*recvEpochId) += 1;
     // printf("%llu %llu %llu\n", *(volatile uint64_t*)proxyEpochId, (*recvEpochId), *(volatile uint64_t*)sendEpochId);
     while (*(volatile uint64_t*)proxyEpochId < (*recvEpochId))
+      ;
+  }
+
+  __forceinline__ __device__ void waitDirect()
+  {
+    (*recvEpochId) += 1;
+    while (*(volatile uint64_t*)directRecvEpochId < (*recvEpochId))
       ;
   }
 
@@ -153,11 +189,13 @@ struct mscclppDevConn
   int tag;
 
   void* localBuff;
-  uint64_t* sendEpochId; // this is read and written by the GPU
-  uint64_t* recvEpochId; // this is the copy of the remote epoch id.
+  uint64_t* sendEpochId;       // this is read and written by the GPU
+  uint64_t* recvEpochId;       // this is the expected recv epoch id.
+  uint64_t* directRecvEpochId; // this is read and written by remote GPU.
 
   void* remoteBuff;
   uint64_t* remoteFlag;
+  uint64_t* remoteEpochId;
   uint64_t* proxyEpochId; // this is only written by the proxy thread
 
   // this is a concurrent fifo which is multiple threads from the device

@@ -218,6 +218,7 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm)
     if (conn) {
       MSCCLPPCHECK(mscclppCudaFree(conn->devConn->sendEpochId));
       MSCCLPPCHECK(mscclppCudaFree(conn->devConn->recvEpochId));
+      MSCCLPPCHECK(mscclppCudaFree(conn->devConn->directRecvEpochId));
     }
   }
 
@@ -421,6 +422,8 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
   conn->devConn->localBuff = localBuff;
   MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->sendEpochId, 1));
   MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->recvEpochId, 1));
+  MSCCLPPCHECK(mscclppCudaCalloc(&conn->devConn->directRecvEpochId, 1));
+
   conn->devConn->remoteRank = remoteRank;
   conn->devConn->tag = tag;
   conn->devConn->fifo.connId = comm->nConns;
@@ -433,7 +436,6 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
   conn->devConn->fifo.triggerFifoTail = proxyState->fifoTailDev;
 
   comm->nConns++;
-
   // change the numa binding back to user's
   MSCCLPPCHECK(setNumaState(curProcessState));
 
@@ -445,6 +447,7 @@ struct connInfo
   cudaIpcMemHandle_t handleBuff;
   cudaIpcMemHandle_t handleFlag;
   cudaIpcMemHandle_t handleProxyFlag;
+  cudaIpcMemHandle_t handleRemoteEpochId;
   mscclppIbQpInfo infoQp;
   mscclppIbMrInfo infoBuffMr;
   mscclppIbMrInfo infoLocalFlagMr;
@@ -462,6 +465,7 @@ mscclppResult_t mscclppP2pConnectionSetupStart(struct connInfo* connInfo /*outpu
   CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleProxyFlag, devConn->proxyEpochId));
   CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleBuff, devConn->localBuff));
   CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleFlag, devConn->sendEpochId));
+  CUDACHECK(cudaIpcGetMemHandle(&connInfo->handleRemoteEpochId, devConn->directRecvEpochId));
   return mscclppSuccess;
 }
 
@@ -475,6 +479,8 @@ mscclppResult_t mscclppP2pConnectionSetupEnd(struct connInfo* connInfo /*input*/
     cudaIpcOpenMemHandle((void**)&conn->devConn->remoteBuff, connInfo->handleBuff, cudaIpcMemLazyEnablePeerAccess));
   CUDACHECK(
     cudaIpcOpenMemHandle((void**)&conn->devConn->remoteFlag, connInfo->handleFlag, cudaIpcMemLazyEnablePeerAccess));
+  CUDACHECK(cudaIpcOpenMemHandle((void**)&conn->devConn->remoteEpochId, connInfo->handleRemoteEpochId,
+                                 cudaIpcMemLazyEnablePeerAccess));
   CUDACHECK(
     cudaIpcOpenMemHandle((void**)&conn->remoteProxyFlag, connInfo->handleProxyFlag, cudaIpcMemLazyEnablePeerAccess));
   return mscclppSuccess;
