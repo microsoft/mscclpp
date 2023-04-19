@@ -22,8 +22,9 @@ static_assert(sizeof(struct mscclppBootstrapHandle) <= sizeof(mscclppUniqueId),
 
 class mscclppBootstrap : Bootstrap {
 public:
-  mscclppBootstrap(std::string ip_port_pair, int rank, int nranks);
-  mscclppBootstrap(mscclppBootstrapHandle handle, int rank, int nranks);
+  mscclppBootstrap();
+  void Initliaze(std::string ipPortPair, int rank, int nranks);
+  void Initliaze(mscclppBootstrapHandle handle, int rank, int nranks);
   void Send(void* data, int size, int peer, int tag);
   void Recv(void* data, int size, int peer, int tag);
   void AllGather(void* allData, int size);

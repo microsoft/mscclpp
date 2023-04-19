@@ -44,8 +44,27 @@ struct mscclppBootstrap::impl{
     pthread_mutex_unlock(&initLock);
   }
 
-  static char bootstrapNetIfName[MAX_IF_NAME_SIZE + 1];
-  static union mscclppSocketAddress bootstrapNetIfAddr;
+  void CreateRoot(){
+    auto listenSock = std::make_shared<struct mscclppSocket>();
+    auto args = std::make_shared<struct bootstrapRootArgs>();
+    pthread_t thread;
+
+    MSCCLPPCHECK(mscclppSocketInit(listenSock, &handle->addr, handle->magic, mscclppSocketTypeBootstrap, NULL, 0));
+    MSCCLPPCHECK(mscclppSocketListen(listenSock));
+    MSCCLPPCHECK(mscclppSocketGetAddr(listenSock, &handle->addr));
+
+    MSCCLPPCHECK(mscclppCalloc(&args, 1));
+    args->listenSock = listenSock;
+    args->magic = handle->magic;
+    NEQCHECK(pthread_create(&thread, NULL, bootstrapRoot, (void*)args), 0);
+    mscclppSetThreadName(thread, "MSCCLPP BootstrapR");
+    NEQCHECK(pthread_detach(thread), 0); // will not be pthread_join()'d
+    return mscclppSuccess;
+  }
+
+  char bootstrapNetIfName[MAX_IF_NAME_SIZE + 1];
+  union mscclppSocketAddress bootstrapNetIfAddr;
+  int rank, nranks;
 };
 
 struct mscclppBootstrap::UniqueId{
@@ -53,8 +72,8 @@ struct mscclppBootstrap::UniqueId{
   union mscclppSocketAddress addr;
 };
 
-static uint64_t hashUniqueId(mscclppBootstrapHandle const& id)
 {
+static uint64_t hashUniqueId(mscclppBootstrapHandle const& id)
   char const* bytes = (char const*)&id;
   uint64_t h = 0xdeadbeef;
   for (int i = 0; i < (int)sizeof(mscclppBootstrapHandle); i++) {
@@ -74,16 +93,28 @@ std::unique_ptr<mscclppBootstrap::UniqueId> mscclppBootstrap::GetUniqueId(){
     throw std::runtime_error("getting random data failed");
   }
   memcpy(&handle.addr, &pimpl->bootstrapNetIfAddr, sizeof(union mscclppSocketAddress));
-  // ret = bootstrapCreateRoot(handle);
-
-  // mscclppResult_t res = bootstrapGetUniqueId(&handle);
-  // if (res != mscclppSuccess) {
-  //   throw std::runtime_error("Bootstrap : failed to get unique ID");
-  // }
-  // TRACE_CALL("mscclppGetUniqueId(0x%llx)", (unsigned long long)hashUniqueId(handle));
-  // return *(mscclppUniqueId*)&handle;
+  return std::make_unique<mscclppBootstrap::UniqueId>(handle);
 }
 
+mscclppBootstrap::mscclppBootstrap(){
+  pimpl = std::make_unique<impl>();
+}
+
+std::unique_ptr<mscclppBootstrap::UniqueId> mscclppBootstrap::GetUniqueId(){
+  pimpl->NetInit();
+
+  mscclppBootstrap::UniqueId handle;
+  auto ret = getRandomData(&handle.magic, sizeof(handle.magic));
+  if (ret != mscclppSuccess) {
+    throw std::runtime_error("getting random data failed");
+  }
+  memcpy(&handle.addr, &pimpl->bootstrapNetIfAddr, sizeof(union mscclppSocketAddress));
+  return std::make_unique<mscclppBootstrap::UniqueId>(handle);
+}
+
+void mscclppBootstrap::Initliaze(std::string ipPortPair, int _rank, int _nranks) : rank(_rank), nranks(_nranks) {
+  pimpl->NetInit(ipPortPair);
+}
 
 struct bootstrapRootArgs
 {
