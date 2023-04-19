@@ -23,7 +23,6 @@ struct mscclppConn
 {
   int connId;
   mscclppTransport_t transport;
-  int remoteRank;
   uint64_t buffSize;
   struct mscclppDevConn* devConn;
   struct mscclppHostConn* hostConn;
