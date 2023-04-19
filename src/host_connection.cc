@@ -15,7 +15,13 @@ HostConnection::Impl::~Impl() {
   // TODO: figure out memory ownership. Does this deallocate the mscclppHostConn? Likely not.
 }
 
+MSCCLPP_API_CPP HostConnection::~HostConnection() = default;
+
 MSCCLPP_API_CPP HostConnection::HostConnection(std::unique_ptr<Impl> p) : pimpl(std::move(p)) {}
+
+MSCCLPP_API_CPP int HostConnection::getId() {
+  return pimpl->conn->connId;
+}
 
 MSCCLPP_API_CPP BufferHandle HostConnection::registerBuffer(void* data, uint64_t size) {
   BufferHandle result;
@@ -24,10 +30,15 @@ MSCCLPP_API_CPP BufferHandle HostConnection::registerBuffer(void* data, uint64_t
   return result;
 }
 
+MSCCLPP_API_CPP int HostConnection::numLocalBuffers() {
+  return pimpl->conn->bufferRegistrations.size() - 1;
+}
+
+MSCCLPP_API_CPP BufferHandle HostConnection::getLocalBuffer(int index) {
+  return index + 1;
+}
+
 MSCCLPP_API_CPP int HostConnection::numRemoteBuffers() {
-  if (!pimpl->conn) {
-    throw std::runtime_error("HostConnection not initialized");
-  }
   return pimpl->conn->remoteBufferRegistrations.size() - 1;
 }
 
@@ -35,16 +46,18 @@ MSCCLPP_API_CPP BufferHandle HostConnection::getRemoteBuffer(int index) {
   return index + 1;
 }
 
-MSCCLPP_API_CPP DeviceConnection HostConnection::toDevice() {
-  DeviceConnection devConn;
+MSCCLPP_API_CPP ConnectionEpoch HostConnection::getEpoch() {
+  ConnectionEpoch epoch;
   static_assert(sizeof(SignalEpochId) == sizeof(mscclppDevConnSignalEpochId));
-  devConn.connectionId = pimpl->conn->connId;
-  devConn.localSignalEpochId = reinterpret_cast<SignalEpochId*>(pimpl->conn->devConn->localSignalEpochId);
-  devConn.remoteSignalEpochId = reinterpret_cast<SignalEpochId*>(pimpl->conn->devConn->remoteSignalEpochId);
-  devConn.waitEpochId = pimpl->conn->devConn->waitEpochId;
-  devConn.fifo = pimpl->comm->pimpl->proxy.fifo().toDevice();
+  epoch.localSignalEpochId = reinterpret_cast<SignalEpochId*>(pimpl->conn->devConn->localSignalEpochId);
+  epoch.remoteSignalEpochId = reinterpret_cast<SignalEpochId*>(pimpl->conn->devConn->remoteSignalEpochId);
+  epoch.waitEpochId = pimpl->conn->devConn->waitEpochId;
+  return epoch;
+}
 
-  return devConn;
+
+MSCCLPP_API_CPP DeviceProxyFifo HostConnection::getDeviceFifo() {
+  return pimpl->comm->pimpl->proxy.fifo().toDevice();
 }
 
 MSCCLPP_API_CPP void HostConnection::put(BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset, uint64_t size) {

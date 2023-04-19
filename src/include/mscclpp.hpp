@@ -72,6 +72,99 @@ union ChannelTrigger {
 #endif // __CUDACC__
 };
 
+struct ConnectionEpoch {
+#ifdef __CUDACC__
+  __forceinline__ __device__ void wait()
+  {
+    (*waitEpochId) += 1;
+    while (*(volatile uint64_t*)&(localSignalEpochId->proxy) < (*waitEpochId))
+      ;
+  }
+
+  __forceinline__ __device__ void epochIncrement()
+  {
+    *(volatile uint64_t*)&(localSignalEpochId->device) += 1;
+  }
+#endif // __CUDACC__
+
+  SignalEpochId* localSignalEpochId;
+  // used by the signal() function directly from gpu
+  SignalEpochId* remoteSignalEpochId;
+
+  // every wait(), increments this and then the gpu waits for either:
+  // 1) localSignalEpochId->proxy to be >= this in case of a proxy thread
+  // 2) remoteSignalEpochId->device to be >= this in case of a gpu thread
+  uint64_t* waitEpochId;
+};
+
+class HostConnection {
+  struct Impl;
+public:
+  /* HostConnection can not be constructed from user code and must instead be created through Communicator::connect */
+  HostConnection(std::unique_ptr<Impl>);
+
+  ~HostConnection();
+
+  int getId();
+
+  /* Register a region of GPU memory for use with this connection. Must be called before connectionSetup()
+   * in the communicator.
+   *
+   * Inputs:
+   *  data: base pointer to the memory
+   *  size: size of the memory region in bytes
+   * 
+   * Returns: a handle to the buffer
+   */
+  BufferHandle registerBuffer(void* data, uint64_t size);
+
+  /* Get the number of times registerBuffer(...) was called.
+   *
+   * Returns: the number of buffers registered
+   */
+  int numLocalBuffers();
+
+  /* Get the BufferHandle returned by a call to registerBuffer(...) as identified by the index
+   *
+   * Inputs:
+   *  index: the index of the handle to get
+   * 
+   * Returns: a handle to the buffer
+   */
+  BufferHandle getLocalBuffer(int index);
+
+  /* Get the number of times registerBuffer(...) was called on the remote peer.
+   *
+   * Returns: the number of buffers registered on the remote peer
+   */
+  int numRemoteBuffers();
+
+  /* Get the BufferHandle returned by a call to registerBuffer(...) on the remote peer as identified by the index
+   *
+   * Inputs:
+   *  index: the index of the handle to get
+   * 
+   * Returns: a handle to the buffer on the remote peer
+   */
+  BufferHandle getRemoteBuffer(int index);
+
+  ConnectionEpoch getEpoch();
+
+  DeviceProxyFifo getDeviceFifo();
+
+  void put(BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset, uint64_t size);
+
+  void signal();
+
+  void flush();
+
+  void wait();
+
+private:
+  std::unique_ptr<Impl> pimpl;
+  friend class Communicator;
+};
+
 /***************************************************************************************************************
  * A mscclppDevConn provides a zero-copy connection between two GPUs connected via P2P NVLink or InfiniBand.
  * The communication API is one-sided meaning that for every single data transfer, only one side
@@ -135,9 +228,17 @@ union ChannelTrigger {
  * indices in the registered buffer.
  **************************************************************************************************************/
 struct DeviceConnection {
-#ifdef __CUDACC__
-  // TODO: add buffer handles
+  DeviceConnection() = default;
 
+  DeviceConnection(HostConnection& hostConn)
+    : connectionId(hostConn.getId()), epoch(hostConn.getEpoch()),
+      fifo(hostConn.getDeviceFifo()) {}
+
+  DeviceConnection(const DeviceConnection& other) = default;
+
+  DeviceConnection& operator=(DeviceConnection& other) = default;
+
+#ifdef __CUDACC__
   __forceinline__ __device__ void put(BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset, uint64_t size)
   {
     fifo.push(ChannelTrigger(channelTriggerData, dst, dstOffset, src, srcOffset, size, connectionId).value);
@@ -191,28 +292,18 @@ struct DeviceConnection {
 
   __forceinline__ __device__ void wait()
   {
-    (*waitEpochId) += 1;
-    while (*(volatile uint64_t*)&(localSignalEpochId->proxy) < (*waitEpochId))
-      ;
+    epoch.wait();
   }
 
   __forceinline__ __device__ void epochIncrement()
   {
-    *(volatile uint64_t*)&(localSignalEpochId->device) += 1;
+    epoch.epochIncrement();
   }
-
 #endif // __CUDACC__
 
   int connectionId;
 
-  SignalEpochId* localSignalEpochId;
-  // used by the signal() function directly from gpu
-  SignalEpochId* remoteSignalEpochId;
-
-  // every wait(), increments this and then the gpu waits for either:
-  // 1) localSignalEpochId->proxy to be >= this in case of a proxy thread
-  // 2) remoteSignalEpochId->device to be >= this in case of a gpu thread
-  uint64_t* waitEpochId;
+  ConnectionEpoch epoch;
 
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
@@ -220,9 +311,15 @@ struct DeviceConnection {
 };
 
 struct SimpleDeviceConnection {
-  SimpleDeviceConnection() {}
-  SimpleDeviceConnection(DeviceConnection devConn, BufferHandle dst, BufferHandle src) : devConn(devConn), dst(dst), src(src) {}
+  SimpleDeviceConnection() = default;
+
+  SimpleDeviceConnection(HostConnection& hostConn) : devConn(hostConn) {
+    dst = hostConn.getRemoteBuffer(0);
+    src = hostConn.getLocalBuffer(0);
+  }
+
   SimpleDeviceConnection(const SimpleDeviceConnection& other) = default;
+
   SimpleDeviceConnection& operator=(SimpleDeviceConnection& other) = default;
 
 #ifdef __CUDACC__
@@ -284,59 +381,6 @@ struct SimpleDeviceConnection {
   BufferHandle src;
 };
 
-class HostConnection {
-  struct Impl;
-public:
-  /* HostConnection can not be constructed from user code and must instead be created through Communicator::connect */
-  HostConnection(std::unique_ptr<Impl>);
-
-  /* Register a region of GPU memory for use with this connection. Must be called before connectionSetup()
-   * in the communicator.
-   *
-   * Inputs:
-   *  data: base pointer to the memory
-   *  size: size of the memory region in bytes
-   * 
-   * Returns: a handle to the buffer
-   */
-  BufferHandle registerBuffer(void* data, uint64_t size);
-
-  /* Get the number of times registerBuffer(...) was called on the remote peer.
-   *
-   * Returns: the number of buffers registered on the remote peer
-   */
-  int numRemoteBuffers();
-
-  /* Get the BufferHandle returned by a call to registerBuffer(...) on the remote peer as identified by the index
-   *
-   * Inputs:
-   *  index: the index of the handle to get
-   * 
-   * Returns: a handle to the buffer on the remote peer
-   */
-  BufferHandle getRemoteBuffer(int index);
-
-  /* Create a DeviceConnection paired with this HostConnection. A background proxy thread will
-   * trigger operations on this HostConnection corresponding to put/signal/etc. calls made to the
-   * DeviceConnection.
-   * 
-   * Returns: the newly created DeviceConnection
-   */
-  DeviceConnection toDevice();
-
-  void put(BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset, uint64_t size);
-
-  void signal();
-
-  void flush();
-
-  void wait();
-
-private:
-  std::unique_ptr<Impl> pimpl;
-  friend class Communicator;
-};
-
 #define MSCCLPP_UNIQUE_ID_BYTES 128
 struct UniqueId {
   char internal[MSCCLPP_UNIQUE_ID_BYTES];
@@ -359,8 +403,6 @@ enum class TransportType : uint8_t {
 
 class Communicator {
 public:
-  Communicator();
-  ~Communicator();
 
   /* Initialize the communicator. nranks processes with rank 0 to nranks-1 need to call this function.
   *
@@ -369,7 +411,7 @@ public:
   *   ipPortPair: a string of the form "ip:port" that represents the address of the root process
   *   rank:       rank of the calling process
   */
-  void initRank(int nranks, const char* ipPortPair, int rank);
+  Communicator(int nranks, const char* ipPortPair, int rank);
   
   /* Initialize the communicator from a given UniqueId. Same as mscclppCommInitRank() except that
   * id is provided by the user by calling getUniqueId()
@@ -379,7 +421,9 @@ public:
   *   id:     the unique ID to be used for communication
   *   rank:   rank of the calling process
   */
-  void initRankFromId(int nranks, UniqueId id, int rank);
+  Communicator(int nranks, UniqueId id, int rank);
+
+  ~Communicator();
   
   /* Ring-based AllGather through the bootstrap socket.
   *
@@ -441,7 +485,7 @@ private:
 
 enum class ProxyHandlerResult {
   Continue,
-  FlushAndContinue,
+  FlushFifoTailAndContinue,
   Stop,
 };
 

@@ -19,7 +19,7 @@ ProxyHandler makeBasicProxyHandler(Communicator::Impl &comm) {
 
     if (trigger->fields.type & mscclppSync) {
       conn.flush();
-      result = ProxyHandlerResult::FlushAndContinue;
+      result = ProxyHandlerResult::FlushFifoTailAndContinue;
     }
 
     return result;

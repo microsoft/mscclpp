@@ -62,9 +62,13 @@ MSCCLPP_API_CPP void Proxy::start() {
       // Flush the tail to device memory. This is either triggered every ProxyFlushPeriod to make sure
       // that the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is for flush
       // request.
-      if ((++flushCnt % ProxyFlushPeriod) == 0 || result == ProxyHandlerResult::FlushAndContinue) {
+      if ((++flushCnt % ProxyFlushPeriod) == 0 || result == ProxyHandlerResult::FlushFifoTailAndContinue) {
         // TODO: relocate this check: || (trigger.fields.type & mscclppSync)
         fifo.flushTail();
+      }
+
+      if (result == ProxyHandlerResult::Stop) {
+        break;
       }
     }
 

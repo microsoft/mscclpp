@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <cassert>
+#include <algorithm>
 
 static int nranksPerNode = 8;
 
@@ -220,7 +221,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
   std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
-  std::vector<std::pair<std::shared_ptr<mscclpp::HostConnection>, mscclpp::BufferHandle>> hostConns;
+  std::vector<std::shared_ptr<mscclpp::HostConnection>> hostConns;
 
   for (int r = 0; r < world_size; ++r) {
     if (r == rank)
@@ -235,19 +236,17 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
     }
     // Connect with all other ranks
     auto hostConn = comm.connect(r, 0, transportType, ibDev);
-    auto localBuffer = hostConn->registerBuffer(data_d, dataSize);
-    hostConns.emplace_back(hostConn, localBuffer);
+    hostConn->registerBuffer(data_d, dataSize);
+    hostConns.push_back(hostConn);
   }
 
   comm.connectionSetup();
 
   std::vector<mscclpp::SimpleDeviceConnection> devConns;
-  for (auto& entry : hostConns) {
-    assert(entry.first);
-    assert(entry.first->numRemoteBuffers() == 1);
-    auto remoteBuffer = entry.first->getRemoteBuffer(0);
-    devConns.emplace_back(entry.first->toDevice(), entry.second, remoteBuffer);
-  }
+  std::transform(hostConns.begin(), hostConns.end(), std::back_inserter(devConns),
+                 [](std::shared_ptr<mscclpp::HostConnection>& hostConn) {
+    return mscclpp::SimpleDeviceConnection(*hostConn);
+  });
 
   assert(devConns.size() < sizeof(constDevConns) / sizeof(mscclpp::SimpleDeviceConnection));
   CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns.data(), sizeof(mscclpp::SimpleDeviceConnection) * devConns.size() ));
@@ -401,12 +400,9 @@ int main(int argc, const char* argv[])
   size_t nelemsPerGPU = dataSize / sizeof(int) / world_size;
 
   try{
-    mscclpp::Communicator comm;
-
     if (rank == 0)
         printf("Initializing MSCCL++\n");
-
-    comm.initRank(world_size, ip_port, rank);
+    mscclpp::Communicator comm(world_size, ip_port, rank);
 
     if (rank == 0)
         printf("Initializing data for allgather test\n");
