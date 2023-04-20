@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cstring>
 #include <mutex>
+#include <queue>
 #include <thread>
 
 #include <sys/resource.h>
@@ -42,10 +43,11 @@ mscclppResult_t setFilesLimit()
 
 } // namespace
 
-struct bootstrapRootArgs
+/* Socket Interface Selection type */
+enum bootstrapInterface_t
 {
-  struct mscclppSocket* listenSock;
-  uint64_t magic;
+  findSubnetIf = -1,
+  dontCareIf = -2
 };
 
 struct mscclppBootstrap::UniqueId
@@ -54,27 +56,19 @@ struct mscclppBootstrap::UniqueId
   union mscclppSocketAddress addr;
 };
 
-struct unexConn
+struct unexpectedConn
 {
   int peer;
   int tag;
   struct mscclppSocket sock;
-  struct unexConn* next;
 };
 
-struct bootstrapState
+struct extInfo
 {
-  struct mscclppSocket listenSock;
-  struct mscclppSocket ringRecvSocket;
-  struct mscclppSocket ringSendSocket;
-  union mscclppSocketAddress* peerCommAddresses;
-  union mscclppSocketAddress* peerProxyAddresses;
-  struct unexConn* unexpectedConnections;
-  int cudaDev;
   int rank;
-  int nranks;
-  uint64_t magic;
-  volatile uint32_t* abortFlag;
+  int nRanks;
+  union mscclppSocketAddress extAddressListenRoot;
+  union mscclppSocketAddress extAddressListen;
 };
 
 class mscclppBootstrap::Impl
@@ -85,9 +79,31 @@ public:
 
   Impl() = default;
 
-  static void* bootstrapRoot(void* args);
+  static void bootstrapRoot(mscclppSocket* listenSock, uint64_t magic, int nRanks);
+
+  mscclppResult_t init(const mscclppComm& comm);
+  mscclppResult_t createRoot(mscclppBootstrap::UniqueId& handle);
+  mscclppResult_t allGather(void* allData, int size);
+
+  void startBootstrapThread();
+
+private:
+  int cudaDev;
+  int rank;
+  int nRanks;
+  mscclppSocket listenSock;
+  mscclppSocket ringRecvSocket;
+  mscclppSocket ringSendSocket;
+  mscclppBootstrapHandle handle;
+  std::vector<mscclppSocketAddress> peerCommAddresses;
+  std::vector<mscclppSocketAddress> peerProxyAddresses;
+  std::queue<unexpectedConn> unexpectedConnections;
+  volatile uint32_t* abortFlag;
+
+  static mscclppResult_t netSend(mscclppSocket* sock, void* data, int size);
+  static mscclppResult_t netRecv(mscclppSocket* sock, void* data, int size);
+
   mscclppResult_t NetInit(std::string ipPortPair = "");
-  mscclppResult_t CreateRoot(mscclppBootstrap::UniqueId& handle);
 };
 
 mscclppResult_t mscclppBootstrap::Impl::NetInit(std::string ipPortPair)
@@ -99,166 +115,112 @@ mscclppResult_t mscclppBootstrap::Impl::NetInit(std::string ipPortPair)
     return mscclppSuccess;
   }
   std::lock_guard<std::mutex> lock(initLock);
-  if (!initialized) {
-    if (ipPortPair != "") {
-      union mscclppSocketAddress remoteAddr;
-      if (mscclppSocketGetAddrFromString(&remoteAddr, ipPortPair.c_str()) != mscclppSuccess) {
-        WARN("Invalid MSCCLPP_COMM_ID, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
-        return mscclppInvalidArgument;
-      }
-      if (mscclppFindInterfaceMatchSubnet(bootstrapNetIfName, &bootstrapNetIfAddr, &remoteAddr, MAX_IF_NAME_SIZE, 1) <=
-          0) {
-        WARN("NET/Socket : No usable listening interface found");
-        return mscclppSystemError;
-      }
-    } else {
-      int nIfs = mscclppFindInterfaces(this->bootstrapNetIfName, &this->bootstrapNetIfAddr, MAX_IF_NAME_SIZE, 1);
-      if (nIfs <= 0) {
-        WARN("Bootstrap : no socket interface found");
-        return mscclppInternalError;
-      }
+  if (initialized.load(std::memory_order_acquire)) {
+    return mscclppSuccess;
+  }
+
+  if (!ipPortPair.empty()) {
+    union mscclppSocketAddress remoteAddr;
+    if (mscclppSocketGetAddrFromString(&remoteAddr, ipPortPair.c_str()) != mscclppSuccess) {
+      WARN("Invalid MSCCLPP_COMM_ID, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
+      return mscclppInvalidArgument;
     }
-
-    char line[SOCKET_NAME_MAXLEN + MAX_IF_NAME_SIZE + 2];
-    sprintf(line, " %s:", bootstrapNetIfName);
-    mscclppSocketToString(&bootstrapNetIfAddr, line + strlen(line));
-    INFO(MSCCLPP_INIT, "Bootstrap : Using%s", line);
-    initialized.store(true, std::memory_order_release);
+    if (mscclppFindInterfaceMatchSubnet(this->bootstrapNetIfName, &this->bootstrapNetIfAddr, &remoteAddr,
+                                        MAX_IF_NAME_SIZE, 1) <= 0) {
+      WARN("NET/Socket : No usable listening interface found");
+      return mscclppSystemError;
+    }
+  } else {
+    int ret = mscclppFindInterfaces(this->bootstrapNetIfName, &this->bootstrapNetIfAddr, MAX_IF_NAME_SIZE, 1);
+    if (ret <= 0) {
+      WARN("Bootstrap : no socket interface found");
+      return mscclppInternalError;
+    }
   }
+
+  char line[SOCKET_NAME_MAXLEN + MAX_IF_NAME_SIZE + 2];
+  sprintf(line, " %s:", bootstrapNetIfName);
+  mscclppSocketToString(&bootstrapNetIfAddr, line + strlen(line));
+  INFO(MSCCLPP_INIT, "Bootstrap : Using%s", line);
+  initialized.store(true, std::memory_order_release);
   return mscclppSuccess;
 }
 
-/* Socket Interface Selection type */
-enum bootstrapInterface_t
+void mscclppBootstrap::Impl::bootstrapRoot(mscclppSocket* listenSock, uint64_t magic, int nRanks)
 {
-  findSubnetIf = -1,
-  dontCareIf = -2
-};
-
-// Additional sync functions
-static mscclppResult_t bootstrapNetSend(struct mscclppSocket* sock, void* data, int size)
-{
-  MSCCLPPCHECK(mscclppSocketSend(sock, &size, sizeof(int)));
-  MSCCLPPCHECK(mscclppSocketSend(sock, data, size));
-  return mscclppSuccess;
-}
-static mscclppResult_t bootstrapNetRecv(struct mscclppSocket* sock, void* data, int size)
-{
-  int recvSize;
-  MSCCLPPCHECK(mscclppSocketRecv(sock, &recvSize, sizeof(int)));
-  if (recvSize > size) {
-    WARN("Message truncated : received %d bytes instead of %d", recvSize, size);
-    return mscclppInternalError;
-  }
-  MSCCLPPCHECK(mscclppSocketRecv(sock, data, std::min(recvSize, size)));
-  return mscclppSuccess;
-}
-
-struct extInfo
-{
-  int rank;
-  int nranks;
-  union mscclppSocketAddress extAddressListenRoot;
-  union mscclppSocketAddress extAddressListen;
-};
-
-void* mscclppBootstrap::Impl::bootstrapRoot(void* bootstrapArgs)
-{
-  struct bootstrapRootArgs* args = (struct bootstrapRootArgs*)bootstrapArgs;
-  struct mscclppSocket* listenSock = args->listenSock;
-  uint64_t magic = args->magic;
+  extInfo info;
   mscclppResult_t res = mscclppSuccess;
-  int nranks = 0, c = 0;
-  struct extInfo info;
-  union mscclppSocketAddress* rankAddresses = NULL;
-  union mscclppSocketAddress* rankAddressesRoot = NULL; // for initial rank <-> root information exchange
-  union mscclppSocketAddress* zero = NULL;
-  MSCCLPPCHECKGOTO(mscclppCalloc(&zero, 1), res, out);
+  int numCollected = 0;
+  std::vector<mscclppSocketAddress> rankAddresses(nRanks, mscclppSocketAddress());
+  // for initial rank <-> root information exchange
+  std::vector<mscclppSocketAddress> rankAddressesRoot(nRanks, mscclppSocketAddress());
+
+  mscclppSocketAddress zero;
+  std::memset(rankAddresses.data(), 0, sizeof(mscclppSocketAddress) * nRanks);
+  std::memset(rankAddressesRoot.data(), 0, sizeof(mscclppSocketAddress) * nRanks);
+  std::memset(&zero, 0, sizeof(mscclppSocketAddress));
   setFilesLimit();
 
   TRACE(MSCCLPP_INIT, "BEGIN");
   /* Receive addresses from all ranks */
   do {
-    struct mscclppSocket sock;
+    mscclppSocket sock;
     MSCCLPPCHECKGOTO(mscclppSocketInit(&sock), res, out);
     MSCCLPPCHECKGOTO(mscclppSocketAccept(&sock, listenSock), res, out);
-    MSCCLPPCHECKGOTO(bootstrapNetRecv(&sock, &info, sizeof(info)), res, out);
+    MSCCLPPCHECKGOTO(NetRecv(&sock, &info, sizeof(info)), res, out);
     MSCCLPPCHECKGOTO(mscclppSocketClose(&sock), res, out);
 
-    if (c == 0) {
-      nranks = info.nranks;
-      MSCCLPPCHECKGOTO(mscclppCalloc(&rankAddresses, nranks), res, out);
-      MSCCLPPCHECKGOTO(mscclppCalloc(&rankAddressesRoot, nranks), res, out);
+    if (nRanks != info.nRanks) {
+      WARN("Bootstrap Root : mismatch in rank count from procs %d : %d", nRanks, info.nRanks);
+      return;
     }
 
-    if (nranks != info.nranks) {
-      WARN("Bootstrap Root : mismatch in rank count from procs %d : %d", nranks, info.nranks);
-      goto out;
-    }
-
-    if (memcmp(zero, &rankAddressesRoot[info.rank], sizeof(union mscclppSocketAddress)) != 0) {
-      WARN("Bootstrap Root : rank %d of %d ranks has already checked in", info.rank, nranks);
-      goto out;
+    if (std::memcmp(&zero, &rankAddressesRoot[info.rank], sizeof(mscclppSocketAddress)) != 0) {
+      WARN("Bootstrap Root : rank %d of %d ranks has already checked in", info.rank, nRanks);
+      return;
     }
 
     // Save the connection handle for that rank
-    memcpy(rankAddressesRoot + info.rank, &info.extAddressListenRoot, sizeof(union mscclppSocketAddress));
-    memcpy(rankAddresses + info.rank, &info.extAddressListen, sizeof(union mscclppSocketAddress));
+    rankAddressesRoot[info.rank] = info.extAddressListenRoot;
+    rankAddresses[info.rank] = info.extAddressListen;
 
-    ++c;
+    ++numCollected;
     TRACE(MSCCLPP_INIT, "Received connect from rank %d total %d/%d", info.rank, c, nranks);
-  } while (c < nranks);
+  } while (numCollected < nRanks);
   TRACE(MSCCLPP_INIT, "COLLECTED ALL %d HANDLES", nranks);
 
   // Send the connect handle for the next rank in the AllGather ring
-  for (int r = 0; r < nranks; ++r) {
-    int next = (r + 1) % nranks;
-    struct mscclppSocket sock;
-    MSCCLPPCHECKGOTO(mscclppSocketInit(&sock, rankAddressesRoot + r, magic, mscclppSocketTypeBootstrap), res, out);
+  for (int r = 0; r < nRanks; ++r) {
+    int next = (r + 1) % nRanks;
+    mscclppSocket sock;
+    MSCCLPPCHECKGOTO(mscclppSocketInit(&sock, &rankAddressesRoot[r], magic, mscclppSocketTypeBootstrap), res, out);
     MSCCLPPCHECKGOTO(mscclppSocketConnect(&sock), res, out);
-    MSCCLPPCHECKGOTO(bootstrapNetSend(&sock, rankAddresses + next, sizeof(union mscclppSocketAddress)), res, out);
+    MSCCLPPCHECKGOTO(NetSend(&sock, &rankAddresses[next], sizeof(mscclppSocketAddress)), res, out);
     MSCCLPPCHECKGOTO(mscclppSocketClose(&sock), res, out);
   }
-  TRACE(MSCCLPP_INIT, "SENT OUT ALL %d HANDLES", nranks);
+  TRACE(MSCCLPP_INIT, "SENT OUT ALL %d HANDLES", nRanks);
 
 out:
-  if (listenSock != NULL) {
+  if (listenSock != nullptr) {
     mscclppSocketClose(listenSock);
     free(listenSock);
   }
-  if (rankAddresses)
-    free(rankAddresses);
-  if (rankAddressesRoot)
-    free(rankAddressesRoot);
-  if (zero)
-    free(zero);
-  free(bootstrapArgs);
-
   TRACE(MSCCLPP_INIT, "DONE");
-  return NULL;
 }
 
-mscclppResult_t mscclppBootstrap::Impl::CreateRoot(mscclppBootstrap::UniqueId& handle)
+mscclppResult_t mscclppBootstrap::Impl::createRoot(mscclppBootstrap::UniqueId& handle)
 {
-  struct mscclppSocket* listenSock;
-  struct bootstrapRootArgs* args;
+  MSCCLPPCHECK(mscclppSocketInit(&this->listenSock, &handle.addr, handle.magic, mscclppSocketTypeBootstrap, NULL, 0));
+  MSCCLPPCHECK(mscclppSocketListen(&this->listenSock));
+  MSCCLPPCHECK(mscclppSocketGetAddr(&this->listenSock, &handle.addr));
 
-  MSCCLPPCHECK(mscclppCalloc(&listenSock, 1));
-  MSCCLPPCHECK(mscclppSocketInit(listenSock, &handle.addr, handle.magic, mscclppSocketTypeBootstrap, NULL, 0));
-  MSCCLPPCHECK(mscclppSocketListen(listenSock));
-  MSCCLPPCHECK(mscclppSocketGetAddr(listenSock, &handle.addr));
-
-  MSCCLPPCHECK(mscclppCalloc(&args, 1));
-  args->listenSock = listenSock;
-  args->magic = handle.magic;
-
-  std::thread thread(bootstrapRoot, (void*)args);
+  std::thread thread(BootstrapRoot, listenSock, handle.magic, nRanks);
   mscclppSetThreadName(thread.native_handle(), "MSCCLPP BootstrapR");
   thread.detach();
   return mscclppSuccess;
 }
 
-std::unique_ptr<mscclppBootstrap::UniqueId> mscclppBootstrap::GetUniqueId()
+mscclppBootstrap::UniqueId mscclppBootstrap::getUniqueId()
 {
   pimpl->NetInit();
 
@@ -272,45 +234,59 @@ std::unique_ptr<mscclppBootstrap::UniqueId> mscclppBootstrap::GetUniqueId()
   if (ret != mscclppSuccess) {
     throw std::runtime_error("Bootstrap : failed to get unique ID");
   }
-  return std::make_unique<mscclppBootstrap::UniqueId>(handle);
+  return handle;
 }
 
-mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscclppComm* comm)
+// Additional sync functions
+mscclppResult_t mscclppBootstrap::Impl::netSend(mscclppSocket* sock, void* data, int size)
 {
-  int rank = comm->rank;
-  int nranks = comm->nRanks;
-  struct bootstrapState* state;
-  struct mscclppSocket* proxySocket;
-  mscclppSocketAddress nextAddr;
-  struct mscclppSocket sock, listenSockRoot;
-  struct extInfo info;
+  MSCCLPPCHECK(mscclppSocketSend(sock, &size, sizeof(int)));
+  MSCCLPPCHECK(mscclppSocketSend(sock, data, size));
+  return mscclppSuccess;
+}
 
-  MSCCLPPCHECK(mscclppCalloc(&state, 1));
-  state->rank = rank;
-  state->nranks = nranks;
-  state->abortFlag = comm->abortFlag;
-  comm->bootstrap = state;
-  comm->magic = state->magic = handle->magic;
+mscclppResult_t mscclppBootstrap::Impl::netRecv(mscclppSocket* sock, void* data, int size)
+{
+  int recvSize;
+  MSCCLPPCHECK(mscclppSocketRecv(sock, &recvSize, sizeof(int)));
+  if (recvSize > size) {
+    WARN("Message truncated : received %d bytes instead of %d", recvSize, size);
+    return mscclppInternalError;
+  }
+  MSCCLPPCHECK(mscclppSocketRecv(sock, data, std::min(recvSize, size)));
+  return mscclppSuccess;
+}
+
+mscclppResult_t mscclppBootstrap::Impl::init(const mscclppComm& comm)
+{
+  this->rank = comm.rank;
+  this->nRanks = comm.nRanks;
+
+  mscclppSocket* proxySocket;
+  mscclppSocketAddress nextAddr;
+  mscclppSocket sock, listenSockRoot;
+  extInfo info;
 
   TRACE(MSCCLPP_INIT, "rank %d nranks %d", rank, nranks);
 
   info.rank = rank;
-  info.nranks = nranks;
+  info.nRanks = this->nRanks;
 
+  uint64_t magic = this->handle.magic;
   // Create socket for other ranks to contact me
-  MSCCLPPCHECK(mscclppSocketInit(&state->listenSock, &bootstrapNetIfAddr, comm->magic, mscclppSocketTypeBootstrap,
-                                 comm->abortFlag));
-  MSCCLPPCHECK(mscclppSocketListen(&state->listenSock));
-  MSCCLPPCHECK(mscclppSocketGetAddr(&state->listenSock, &info.extAddressListen));
+  MSCCLPPCHECK(
+    mscclppSocketInit(&this->listenSock, &bootstrapNetIfAddr, magic, mscclppSocketTypeBootstrap, this->abortFlag));
+  MSCCLPPCHECK(mscclppSocketListen(&this->listenSock));
+  MSCCLPPCHECK(mscclppSocketGetAddr(&this->listenSock, &info.extAddressListen));
 
   // Create socket for root to contact me
   MSCCLPPCHECK(
-    mscclppSocketInit(&listenSockRoot, &bootstrapNetIfAddr, comm->magic, mscclppSocketTypeBootstrap, comm->abortFlag));
+    mscclppSocketInit(&listenSockRoot, &bootstrapNetIfAddr, magic, mscclppSocketTypeBootstrap, this->abortFlag));
   MSCCLPPCHECK(mscclppSocketListen(&listenSockRoot));
   MSCCLPPCHECK(mscclppSocketGetAddr(&listenSockRoot, &info.extAddressListenRoot));
 
   // stagger connection times to avoid an overload of the root
-  if (nranks > 128) {
+  if (this->nRanks > 128) {
     long msec = rank;
     struct timespec tv;
     tv.tv_sec = msec / 1000;
@@ -320,68 +296,66 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
   }
 
   // send info on my listening socket to root
-  MSCCLPPCHECK(mscclppSocketInit(&sock, &handle->addr, comm->magic, mscclppSocketTypeBootstrap, comm->abortFlag));
+  MSCCLPPCHECK(mscclppSocketInit(&sock, &this->handle.addr, magic, mscclppSocketTypeBootstrap, this->abortFlag));
   MSCCLPPCHECK(mscclppSocketConnect(&sock));
-  MSCCLPPCHECK(bootstrapNetSend(&sock, &info, sizeof(info)));
+  MSCCLPPCHECK(NetSend(&sock, &info, sizeof(info)));
   MSCCLPPCHECK(mscclppSocketClose(&sock));
 
   // get info on my "next" rank in the bootstrap ring from root
   MSCCLPPCHECK(mscclppSocketInit(&sock));
   MSCCLPPCHECK(mscclppSocketAccept(&sock, &listenSockRoot));
-  MSCCLPPCHECK(bootstrapNetRecv(&sock, &nextAddr, sizeof(union mscclppSocketAddress)));
+  MSCCLPPCHECK(NetRecv(&sock, &nextAddr, sizeof(union mscclppSocketAddress)));
   MSCCLPPCHECK(mscclppSocketClose(&sock));
   MSCCLPPCHECK(mscclppSocketClose(&listenSockRoot));
 
   MSCCLPPCHECK(
-    mscclppSocketInit(&state->ringSendSocket, &nextAddr, comm->magic, mscclppSocketTypeBootstrap, comm->abortFlag));
-  MSCCLPPCHECK(mscclppSocketConnect(&state->ringSendSocket));
+    mscclppSocketInit(&this->ringSendSocket, &nextAddr, magic, mscclppSocketTypeBootstrap, this->abortFlag));
+  MSCCLPPCHECK(mscclppSocketConnect(&this->ringSendSocket));
   // Accept the connect request from the previous rank in the AllGather ring
-  MSCCLPPCHECK(mscclppSocketInit(&state->ringRecvSocket));
-  MSCCLPPCHECK(mscclppSocketAccept(&state->ringRecvSocket, &state->listenSock));
+  MSCCLPPCHECK(mscclppSocketInit(&this->ringRecvSocket));
+  MSCCLPPCHECK(mscclppSocketAccept(&this->ringRecvSocket, &this->listenSock));
 
   // AllGather all listen handlers
-  MSCCLPPCHECK(mscclppCalloc(&state->peerCommAddresses, nranks));
-  MSCCLPPCHECK(mscclppSocketGetAddr(&state->listenSock, state->peerCommAddresses + rank));
-  MSCCLPPCHECK(bootstrapAllGather(state, state->peerCommAddresses, sizeof(union mscclppSocketAddress)));
+  MSCCLPPCHECK(mscclppCalloc(&this->peerCommAddresses, this->nRanks));
+  MSCCLPPCHECK(mscclppSocketGetAddr(&this->listenSock, this->peerCommAddresses + rank));
+  MSCCLPPCHECK(bootstrapAllGather(state, this->peerCommAddresses, sizeof(union mscclppSocketAddress)));
 
   // Create the service proxy
-  MSCCLPPCHECK(mscclppCalloc(&state->peerProxyAddresses, nranks));
+  MSCCLPPCHECK(mscclppCalloc(&this->peerProxyAddresses, this->nRanks));
 
   // proxy is aborted through a message; don't set abortFlag
   MSCCLPPCHECK(mscclppCalloc(&proxySocket, 1));
   MSCCLPPCHECK(
     mscclppSocketInit(proxySocket, &bootstrapNetIfAddr, comm->magic, mscclppSocketTypeProxy, comm->abortFlag));
   MSCCLPPCHECK(mscclppSocketListen(proxySocket));
-  MSCCLPPCHECK(mscclppSocketGetAddr(proxySocket, state->peerProxyAddresses + rank));
+  MSCCLPPCHECK(mscclppSocketGetAddr(proxySocket, &this->peerProxyAddresses[rank]));
   MSCCLPPCHECK(bootstrapAllGather(state, state->peerProxyAddresses, sizeof(union mscclppSocketAddress)));
-  // MSCCLPPCHECK(mscclppProxyInit(comm, proxySocket, state->peerProxyAddresses));
 
   TRACE(MSCCLPP_INIT, "rank %d nranks %d - DONE", rank, nranks);
 
   return mscclppSuccess;
 }
 
-mscclppResult_t bootstrapAllGather(void* commState, void* allData, int size)
+mscclppResult_t mscclppBootstrap::Impl::allGather(void* allData, int size)
 {
-  struct bootstrapState* state = (struct bootstrapState*)commState;
-  char* data = (char*)allData;
-  int rank = state->rank;
-  int nranks = state->nranks;
+  char* data = static_cast<char*>(allData);
+  int rank = this->rank;
+  int nRanks = this->nRanks;
 
-  TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d", rank, nranks, size);
+  TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d", rank, nRanks, size);
 
   /* Simple ring based AllGather
    * At each step i receive data from (rank-i-1) from left
    * and send previous step's data from (rank-i) to right
    */
-  for (int i = 0; i < nranks - 1; i++) {
-    size_t rslice = (rank - i - 1 + nranks) % nranks;
-    size_t sslice = (rank - i + nranks) % nranks;
+  for (int i = 0; i < nRanks - 1; i++) {
+    size_t rSlice = (rank - i - 1 + nRanks) % nRanks;
+    size_t sSlice = (rank - i + nRanks) % nRanks;
 
     // Send slice to the right
-    MSCCLPPCHECK(bootstrapNetSend(&state->ringSendSocket, data + sslice * size, size));
+    MSCCLPPCHECK(NetSend(&this->ringSendSocket, data + sSlice * size, size));
     // Recv slice from the left
-    MSCCLPPCHECK(bootstrapNetRecv(&state->ringRecvSocket, data + rslice * size, size));
+    MSCCLPPCHECK(bootstrapNetRecv(&this->ringRecvSocket, data + rSlice * size, size));
   }
 
   TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d - DONE", rank, nranks, size);
@@ -547,7 +521,7 @@ fail:
 mscclppResult_t bootstrapClose(void* commState)
 {
   struct bootstrapState* state = (struct bootstrapState*)commState;
-  if (state->unexpectedConnections != NULL) {
+  if (state->unexpectedConnections != nullptr) {
     unexpectedFree(state);
     if (*state->abortFlag == 0) {
       WARN("Unexpected connections are not empty");
@@ -568,7 +542,7 @@ mscclppResult_t bootstrapClose(void* commState)
 mscclppResult_t bootstrapAbort(void* commState)
 {
   struct bootstrapState* state = (struct bootstrapState*)commState;
-  if (commState == NULL)
+  if (commState == nullptr)
     return mscclppSuccess;
   MSCCLPPCHECK(mscclppSocketClose(&state->listenSock));
   MSCCLPPCHECK(mscclppSocketClose(&state->ringSendSocket));

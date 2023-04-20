@@ -21,14 +21,16 @@ static_assert(sizeof(struct mscclppBootstrapHandle) <= sizeof(mscclppUniqueId),
 
 class mscclppBootstrap : Bootstrap {
 public:
-  mscclppBootstrap(std::string ip_port_pair, int rank, int nranks);
-  mscclppBootstrap(mscclppBootstrapHandle handle, int rank, int nranks);
-  void Send(void* data, int size, int peer, int tag);
-  void Recv(void* data, int size, int peer, int tag);
-  void AllGather(void* allData, int size);
-  void Barrier();
+  mscclppBootstrap(std::string ipPortPair, int rank, int nRanks);
+  mscclppBootstrap(mscclppBootstrapHandle handle, int rank, int nRanks);
+  void send(void* data, int size, int peer, int tag);
+  void recv(void* data, int size, int peer, int tag);
+  void allGather(void* allData, int size);
+  void barrier();
+  void close();
+  void initialize(const mscclppComm& comm);
   struct UniqueId;
-  std::unique_ptr<UniqueId> GetUniqueId();
+  UniqueId getUniqueId();
 
 private:
   struct Impl;
