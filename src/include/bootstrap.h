@@ -1,9 +1,3 @@
-/*************************************************************************
- * Copyright (c) 2015-2022, NVIDIA CORPORATION. All rights reserved.
- *
- * See LICENSE.txt for license information
- ************************************************************************/
-
 #pragma once
 
 #include "mscclpp.h"
@@ -16,24 +10,25 @@ struct mscclppBootstrapHandle
   uint64_t magic;
   union mscclppSocketAddress addr;
 };
+
 static_assert(sizeof(struct mscclppBootstrapHandle) <= sizeof(mscclppUniqueId),
               "Bootstrap handle is too large to fit inside MSCCLPP unique ID");
 
-class mscclppBootstrap : Bootstrap {
+class MscclppBootstrap : Bootstrap {
 public:
-  mscclppBootstrap(std::string ipPortPair, int rank, int nRanks);
-  mscclppBootstrap(mscclppBootstrapHandle handle, int rank, int nRanks);
+  MscclppBootstrap(std::string ipPortPair, int rank, int nRanks);
+  MscclppBootstrap(mscclppBootstrapHandle handle, int rank, int nRanks);
+  void initialize(const mscclppComm& comm);
   void send(void* data, int size, int peer, int tag);
   void recv(void* data, int size, int peer, int tag);
   void allGather(void* allData, int size);
   void barrier();
   void close();
-  void initialize(const mscclppComm& comm);
   struct UniqueId;
   UniqueId getUniqueId();
 
 private:
-  struct Impl;
+  class Impl;
   std::unique_ptr<Impl> pimpl;
 };
 
