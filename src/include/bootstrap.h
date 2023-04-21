@@ -1,11 +1,4 @@
-/*************************************************************************
- * Copyright (c) 2015-2022, NVIDIA CORPORATION. All rights reserved.
- *
- * See LICENSE.txt for license information
- ************************************************************************/
-
-#ifndef MSCCLPP_BOOTSTRAP_H_
-#define MSCCLPP_BOOTSTRAP_H_
+#pragma once
 
 #include "mscclpp.h"
 #include "socket.h"
@@ -17,27 +10,28 @@ struct mscclppBootstrapHandle
   uint64_t magic;
   union mscclppSocketAddress addr;
 };
+
 static_assert(sizeof(struct mscclppBootstrapHandle) <= sizeof(mscclppUniqueId),
               "Bootstrap handle is too large to fit inside MSCCLPP unique ID");
 
-class mscclppBootstrap : Bootstrap {
+class MscclppBootstrap : Bootstrap {
 public:
-  mscclppBootstrap();
-  void Initliaze(std::string ipPortPair, int rank, int nranks);
-  void Initliaze(mscclppBootstrapHandle handle, int rank, int nranks);
+  MscclppBootstrap(std::string ipPortPair, int rank, int nRanks);
+  MscclppBootstrap(mscclppBootstrapHandle handle, int rank, int nRanks);
+  void Initialize(const mscclppComm& comm);
   void Send(void* data, int size, int peer, int tag);
   void Recv(void* data, int size, int peer, int tag);
   void AllGather(void* allData, int size);
   void Barrier();
+  void Close();
   struct UniqueId;
-  std::unique_ptr<UniqueId> GetUniqueId();
+  UniqueId getUniqueId();
 
 private:
-  struct impl;
-  std::unique_ptr<impl> pimpl;
+  class Impl;
+  std::unique_ptr<Impl> pimpl;
 };
 
-mscclppResult_t bootstrapNetInit(const char* ip_port_pair = NULL);
 mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle);
 mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot = true,
                                      const char* ip_port_pair = NULL);
@@ -49,4 +43,3 @@ mscclppResult_t bootstrapBarrier(void* commState, int* ranks, int rank, int nran
 mscclppResult_t bootstrapIntraNodeAllGather(void* commState, int* ranks, int rank, int nranks, void* allData, int size);
 mscclppResult_t bootstrapClose(void* commState);
 mscclppResult_t bootstrapAbort(void* commState);
-#endif
