@@ -926,3 +926,6 @@ MSCCLPP_API mscclppResult_t mscclppSetBootstrapConnTimeout(int timeout)
   config->setBootstrapConnectionTimeoutConfig(timeout);
   return mscclppSuccess;
 }
+
+Bootstrap::~Bootstrap() {
+}

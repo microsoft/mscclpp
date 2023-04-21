@@ -44,7 +44,7 @@ struct mscclppComm
   struct mscclppDevConn devConns[MAXCONNECTIONS];
   int nConns;
 
-  MscclppBootstrap bootstrap;
+  void* bootstrap;
 
   // Magic number for all network communication. Not a security key -- only goal is to detect mismatches.
   uint64_t magic;

@@ -18,11 +18,13 @@ class MscclppBootstrap : Bootstrap {
 public:
   MscclppBootstrap(std::string ipPortPair, int rank, int nRanks);
   MscclppBootstrap(mscclppBootstrapHandle handle, int rank, int nRanks);
+  ~MscclppBootstrap() = default;
+
   void Initialize();
-  void Send(void* data, int size, int peer, int tag);
-  void Recv(void* data, int size, int peer, int tag);
-  void AllGather(void* allData, int size);
-  void Barrier();
+  void Send(void* data, int size, int peer, int tag) override;
+  void Recv(void* data, int size, int peer, int tag) override;
+  void AllGather(void* allData, int size) override;
+  void Barrier() override;
   void Close();
   struct UniqueId;
   UniqueId GetUniqueId();
@@ -32,6 +34,7 @@ private:
   std::unique_ptr<Impl> pimpl_;
 };
 
+mscclppResult_t bootstrapNetInit(const char* ip_port_pair = NULL);
 mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle);
 mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot = true,
                                      const char* ip_port_pair = NULL);
