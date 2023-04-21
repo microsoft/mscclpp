@@ -18,18 +18,18 @@ class MscclppBootstrap : Bootstrap {
 public:
   MscclppBootstrap(std::string ipPortPair, int rank, int nRanks);
   MscclppBootstrap(mscclppBootstrapHandle handle, int rank, int nRanks);
-  void Initialize(const mscclppComm& comm);
+  void Initialize();
   void Send(void* data, int size, int peer, int tag);
   void Recv(void* data, int size, int peer, int tag);
   void AllGather(void* allData, int size);
   void Barrier();
   void Close();
   struct UniqueId;
-  UniqueId getUniqueId();
+  UniqueId GetUniqueId();
 
 private:
   class Impl;
-  std::unique_ptr<Impl> pimpl;
+  std::unique_ptr<Impl> pimpl_;
 };
 
 mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle);
