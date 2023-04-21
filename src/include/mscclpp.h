@@ -357,7 +357,7 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
  * Note that with IB, buffers are registered at a page level and if a buffer is spread through multiple pages
  * and do not fully utilize all of them, IB's QP has to register for all involved pages. This potentially has
  * security risks if the devConn's accesses are given to a malicious process.
- * 
+ *
  * This version does not register a buffer. Buffers should instead be registered with mscclppRegisterBuffer().
  *
  * Inputs:
@@ -377,7 +377,7 @@ mscclppResult_t mscclppConnectWithoutBuffer(mscclppComm_t comm, int remoteRank, 
  *   connIdx:       the index of the connection by order of calls to mscclppConnect/mscclppConnectWithoutBuffer
  *   localBuff:     the local send/receive buffer
  *   buffSize:      the size of the local buffer
- * 
+ *
  * Outputs:
  *   handle:        a handle to the buffer registration
  */

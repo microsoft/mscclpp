@@ -1,9 +1,3 @@
-/*************************************************************************
- * Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
- *
- * See LICENSE.txt for license information
- ************************************************************************/
-
 #include "bootstrap.h"
 #include "config.h"
 #include "mscclpp.h"
@@ -120,9 +114,13 @@ MscclppBootstrap::Impl::Impl(std::string ipPortPair, int rank, int nRanks, const
     return;
   }
 
-  mscclppResult_t ret = getRandomData(&uniqueId_.magic, sizeof(uniqueId_.magic));
-  if (ret != mscclppSuccess) {
-    throw std::runtime_error("getting random data failed");
+  if (!ipPortPair.empty()) {
+    uniqueId_.magic = 0xdeadbeef;
+  } else {
+    mscclppResult_t ret = getRandomData(&uniqueId_.magic, sizeof(uniqueId_.magic));
+    if (ret != mscclppSuccess) {
+      throw std::runtime_error("getting random data failed");
+    }
   }
   std::memcpy(&uniqueId_.addr, &bootstrapNetIfAddr, sizeof(union mscclppSocketAddress));
 }
@@ -155,6 +153,10 @@ mscclppResult_t MscclppBootstrap::Impl::netInit(std::string ipPortPair)
   return mscclppSuccess;
 }
 
+mscclppResult_t MscclppBootstrap::Impl::init(const mscclppComm& comm)
+{
+  return mscclppSuccess;
+}
 
 MscclppBootstrap::MscclppBootstrap(std::string ipPortPair, int rank, int nRanks)
 {
