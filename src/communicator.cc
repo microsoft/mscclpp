@@ -1,3 +1,4 @@
+#include "mscclpp.hpp"
 #include "communicator.hpp"
 #include "host_connection.hpp"
 #include "comm.h"
@@ -16,14 +17,14 @@ Communicator::Impl::~Impl() {
 
 MSCCLPP_API_CPP Communicator::~Communicator() = default;
 
-mscclppTransport_t transportTypeToCStyle(TransportType type) {
-  switch (type) {
-    case TransportType::IB:
+static mscclppTransport_t transportFlagsToCStyle(TransportFlags flags) {
+  switch (flags) {
+    case TransportIB:
       return mscclppTransportIB;
-    case TransportType::P2P:
+    case TransportCudaIpc:
       return mscclppTransportP2P;
     default:
-      throw std::runtime_error("Unknown transport type");
+      throw std::runtime_error("Unsupported conversion");
   }
 }
 
@@ -45,9 +46,8 @@ MSCCLPP_API_CPP void Communicator::bootstrapBarrier() {
   mscclppBootstrapBarrier(pimpl->comm);
 }
 
-MSCCLPP_API_CPP std::shared_ptr<HostConnection> Communicator::connect(int remoteRank, int tag,
-                                                      TransportType transportType, const char* ibDev) {
-  mscclppConnectWithoutBuffer(pimpl->comm, remoteRank, tag, transportTypeToCStyle(transportType), ibDev);
+MSCCLPP_API_CPP std::shared_ptr<HostConnection> Communicator::connect(int remoteRank, int tag, TransportFlags transportFlags, const char* ibDev) {
+  mscclppConnectWithoutBuffer(pimpl->comm, remoteRank, tag, transportFlagsToCStyle(transportFlags), ibDev);
   auto connIdx = pimpl->connections.size();
   auto conn = std::make_shared<HostConnection>(std::make_unique<HostConnection::Impl>(this, &pimpl->comm->conns[connIdx]));
   pimpl->connections.push_back(conn);

@@ -3,6 +3,8 @@
 
 #include "mscclpp.hpp"
 #include "mscclpp.h"
+#include "channel.hpp"
+#include "proxy.hpp"
 
 namespace mscclpp {
 
@@ -20,4 +22,4 @@ struct Communicator::Impl {
 
 } // namespace mscclpp
 
-#endif
+#endif // MSCCL_COMMUNICATOR_HPP_

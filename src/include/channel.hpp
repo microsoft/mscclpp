@@ -2,6 +2,7 @@
 #define MSCCLPP_CHANNEL_HPP_
 
 #include "mscclpp.hpp"
+#include "epoch.hpp"
 #include "proxy.hpp"
 
 namespace mscclpp {
@@ -88,7 +89,7 @@ public:
 
   ~HostConnection();
 
-  void write()
+  void write();
 
   int getId();
 
@@ -293,3 +294,6 @@ struct SimpleDeviceConnection {
   BufferHandle src;
 };
 
+} // namespace mscclpp
+
+#endif // MSCCLPP_CHANNEL_HPP_
