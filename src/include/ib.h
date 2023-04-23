@@ -36,6 +36,8 @@ struct mscclppIbQpInfo
   uint32_t qpn;
   uint64_t spn;
   ibv_mtu mtu;
+  uint64_t iid;
+  bool is_grh;
 };
 
 // IB queue pair
