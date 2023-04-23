@@ -5,6 +5,7 @@
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <vector>
 
 #include <sys/resource.h>
 #include <sys/types.h>
@@ -40,12 +41,6 @@ enum bootstrapInterface_t
   dontCareIf = -2
 };
 
-struct MscclppBootstrap::UniqueId
-{
-  uint64_t magic;
-  union mscclppSocketAddress addr;
-};
-
 struct unexpectedConn
 {
   int peer;
@@ -64,7 +59,7 @@ struct extInfo
 class MscclppBootstrap::Impl
 {
 public:
-  Impl(std::string ipPortPair, int rank, int nRanks, const mscclppBootstrapHandle handle);
+  Impl(std::string ipPortPair, int rank, int nRanks, const UniqueId uniqueId);
   ~Impl();
   mscclppResult_t initialize();
   mscclppResult_t allGather(void* allData, int size);
@@ -73,7 +68,7 @@ public:
   mscclppResult_t barrier();
   mscclppResult_t close();
 
-  MscclppBootstrap::UniqueId uniqueId_;
+  static UniqueId uniqueId_;
 
 private:
   int rank_;
@@ -100,7 +95,9 @@ private:
   mscclppResult_t netInit(std::string ipPortPair);
 };
 
-MscclppBootstrap::Impl::Impl(std::string ipPortPair, int rank, int nRanks, const mscclppBootstrapHandle handle)
+UniqueId MscclppBootstrap::Impl::uniqueId_;
+
+MscclppBootstrap::Impl::Impl(std::string ipPortPair, int rank, int nRanks, const UniqueId uniqueId)
   : rank_(rank), nRanks_(nRanks), peerCommAddresses_(nRanks, mscclppSocketAddress()),
     peerProxyAddresses_(nRanks, mscclppSocketAddress()), abortFlag_(nullptr)
 {
@@ -109,10 +106,11 @@ MscclppBootstrap::Impl::Impl(std::string ipPortPair, int rank, int nRanks, const
     throw std::runtime_error("Failed to initialize network");
   }
 
-  mscclppBootstrapHandle zeroHandle = {0};
-  if (memcmp(&handle, &zeroHandle, sizeof(mscclppBootstrapHandle)) != 0) {
-    uniqueId_.magic = handle.magic;
-    uniqueId_.addr = handle.addr;
+  UniqueId zeroId;
+  std::memset(&zeroId, 0, sizeof(UniqueId));
+  if (std::memcmp(&uniqueId, &zeroId, sizeof(UniqueId)) != 0) {
+    uniqueId_.magic = uniqueId.magic;
+    uniqueId_.addr = uniqueId.addr;
     return;
   }
 
@@ -275,8 +273,7 @@ mscclppResult_t MscclppBootstrap::Impl::netInit(std::string ipPortPair)
       return mscclppSystemError;
     }
   } else {
-    int ret =
-      mscclppFindInterfaces(netIfName_, &netIfAddr_, MAX_IF_NAME_SIZE, 1);
+    int ret = mscclppFindInterfaces(netIfName_, &netIfAddr_, MAX_IF_NAME_SIZE, 1);
     if (ret <= 0) {
       WARN("Bootstrap : no socket interface found");
       return mscclppInternalError;
@@ -304,14 +301,12 @@ mscclppResult_t MscclppBootstrap::Impl::initialize()
 
   uint64_t magic = this->uniqueId_.magic;
   // Create socket for other ranks to contact me
-  MSCCLPPCHECK(
-    mscclppSocketInit(&this->listenSock_, &netIfAddr_, magic, mscclppSocketTypeBootstrap, this->abortFlag_));
+  MSCCLPPCHECK(mscclppSocketInit(&this->listenSock_, &netIfAddr_, magic, mscclppSocketTypeBootstrap, this->abortFlag_));
   MSCCLPPCHECK(mscclppSocketListen(&this->listenSock_));
   MSCCLPPCHECK(mscclppSocketGetAddr(&this->listenSock_, &info.extAddressListen));
 
   // Create socket for root to contact me
-  MSCCLPPCHECK(
-    mscclppSocketInit(&listenSockRoot, &netIfAddr_, magic, mscclppSocketTypeBootstrap, this->abortFlag_));
+  MSCCLPPCHECK(mscclppSocketInit(&listenSockRoot, &netIfAddr_, magic, mscclppSocketTypeBootstrap, this->abortFlag_));
   MSCCLPPCHECK(mscclppSocketListen(&listenSockRoot));
   MSCCLPPCHECK(mscclppSocketGetAddr(&listenSockRoot, &info.extAddressListenRoot));
 
@@ -439,17 +434,21 @@ mscclppResult_t MscclppBootstrap::Impl::close()
 
 MscclppBootstrap::MscclppBootstrap(std::string ipPortPair, int rank, int nRanks)
 {
-  pimpl_ = std::make_unique<Impl>(ipPortPair, rank, nRanks, mscclppBootstrapHandle{0});
+  UniqueId uniqueId;
+  std::memset(&uniqueId, 0, sizeof(uniqueId));
+  // pimpl_ = std::make_unique<Impl>(ipPortPair, rank, nRanks, uniqueId);
+  pimpl_ = new Impl(ipPortPair, rank, nRanks, uniqueId);
 }
 
-MscclppBootstrap::MscclppBootstrap(mscclppBootstrapHandle handle, int rank, int nRanks)
+MscclppBootstrap::MscclppBootstrap(UniqueId uniqueId, int rank, int nRanks)
 {
-  pimpl_ = std::make_unique<Impl>("", rank, nRanks, handle);
+  pimpl_ = new Impl("", rank, nRanks, uniqueId);
+ //  pimpl_ = std::make_unique<Impl>("", rank, nRanks, uniqueId);
 }
 
-MscclppBootstrap::UniqueId MscclppBootstrap::GetUniqueId()
+UniqueId MscclppBootstrap::GetUniqueId()
 {
-  return pimpl_->uniqueId_;
+  return Impl::uniqueId_;
 }
 
 void MscclppBootstrap::Send(void* data, int size, int peer, int tag)
@@ -499,8 +498,6 @@ void MscclppBootstrap::Close()
     throw std::runtime_error("MscclppBootstrap::Close failed");
   }
 }
-
-
 
 // ------------------- Old bootstrap functions -------------------
 struct bootstrapRootArgs

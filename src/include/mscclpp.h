@@ -251,7 +251,7 @@ typedef enum
 class Bootstrap {
 public:
   Bootstrap(){};
-  virtual ~Bootstrap() = 0;
+  virtual ~Bootstrap() = default;
   virtual void Send(void* data, int size, int peer, int tag) = 0;
   virtual void Recv(void* data, int size, int peer, int tag) = 0;
   virtual void AllGather(void* allData, int size) = 0;

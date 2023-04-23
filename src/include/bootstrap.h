@@ -5,20 +5,23 @@
 
 #include "comm.h"
 
-struct mscclppBootstrapHandle
+struct UniqueId
 {
   uint64_t magic;
   union mscclppSocketAddress addr;
 };
 
-static_assert(sizeof(struct mscclppBootstrapHandle) <= sizeof(mscclppUniqueId),
+static_assert(sizeof(UniqueId) <= sizeof(mscclppUniqueId),
               "Bootstrap handle is too large to fit inside MSCCLPP unique ID");
 
-class MscclppBootstrap : Bootstrap {
+class __attribute__((visibility("default"))) MscclppBootstrap : public Bootstrap
+{
 public:
   MscclppBootstrap(std::string ipPortPair, int rank, int nRanks);
-  MscclppBootstrap(mscclppBootstrapHandle handle, int rank, int nRanks);
-  ~MscclppBootstrap() = default;
+  MscclppBootstrap(UniqueId uniqueId, int rank, int nRanks);
+  ~MscclppBootstrap() override = default;
+
+  static UniqueId GetUniqueId();
 
   void Initialize();
   void Send(void* data, int size, int peer, int tag) override;
@@ -26,14 +29,17 @@ public:
   void AllGather(void* allData, int size) override;
   void Barrier() override;
   void Close();
-  struct UniqueId;
-  UniqueId GetUniqueId();
 
 private:
   class Impl;
-  std::unique_ptr<Impl> pimpl_;
+  Impl* pimpl_;
 };
 
+struct mscclppBootstrapHandle
+{
+  uint64_t magic;
+  union mscclppSocketAddress addr;
+};
 mscclppResult_t bootstrapNetInit(const char* ip_port_pair = NULL);
 mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle);
 mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool isRoot = true,
