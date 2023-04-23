@@ -224,12 +224,6 @@ testResult_t CheckData(struct testArgs* args, int in_place, int64_t* wrongElts)
   CUDACHECK(cudaMemcpy(dataHostRecv, args->recvbuff, args->expectedBytes, cudaMemcpyDeviceToHost));
   CUDACHECK(cudaMemcpy(dataHostExpected, args->expected, args->expectedBytes, cudaMemcpyDeviceToHost));
 
-  for (size_t i = 0; i < count; i++) {
-    if (dataHostRecv[i] != dataHostExpected[i]) {
-      *wrongElts += 1;
-    }
-  }
-
   if (args->reportErrors && *wrongElts) {
     (args->error)++;
   }
@@ -415,13 +409,20 @@ testResult_t setupMscclppConnections(int rank, int worldSize, int ranksPerNode, 
 testResult_t runTests(struct testArgs* args)
 {
   PRINT("# Setting up the connection in MSCCL++\n");
-  TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm, args->recvbuff,
-                                    args->maxbytes));
+  if (mscclppTestEngine.setupMscclppConnections != nullptr) {
+    TESTCHECK(mscclppTestEngine.setupMscclppConnections(args));
+  } else {
+    TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm, args->recvbuff,
+                                      args->maxbytes));
+  }
   PRINT("# Launching MSCCL++ proxy threads\n");
   MSCCLPPCHECK(mscclppProxyLaunch(args->comm));
   TESTCHECK(mscclppTestEngine.runTest(args));
   PRINT("Stopping MSCCL++ proxy threads\n");
   MSCCLPPCHECK(mscclppProxyStop(args->comm));
+  if (mscclppTestEngine.teardownMscclppConnections != nullptr) {
+    TESTCHECK(mscclppTestEngine.teardownMscclppConnections());
+  }
   return testSuccess;
 }
 

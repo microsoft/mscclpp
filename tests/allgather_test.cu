@@ -215,6 +215,6 @@ testResult_t AllGatherRunTest(struct testArgs* args)
   return testSuccess;
 }
 
-struct testEngine allGatherEngine = {AllGatherGetBuffSize, AllGatherRunTest};
+struct testEngine allGatherEngine = {AllGatherGetBuffSize, AllGatherRunTest, nullptr, nullptr};
 
 #pragma weak mscclppTestEngine = allGatherEngine

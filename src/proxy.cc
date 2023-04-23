@@ -99,6 +99,7 @@ void* mscclppProxyService(void* _args)
   struct mscclppComm* comm = args->comm;
 
   // from this point on, proxy thread will stay close to the device
+  PROXYCUDACHECK(cudaSetDevice(comm->cudaDev));
   PROXYMSCCLPPCHECK(numaBind(comm->devNumaNode));
 
   volatile mscclppProxyRunState_t* run = &args->proxyState->run;

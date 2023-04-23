@@ -80,6 +80,8 @@ struct testEngine
   void (*getBuffSize)(size_t* sendcount, size_t* recvcount, size_t count, int nranks);
   // We can add more parameters for other communication primitives
   testResult_t (*runTest)(struct testArgs* args);
+  testResult_t (*setupMscclppConnections)(struct testArgs* args);
+  testResult_t (*teardownMscclppConnections)();
 };
 
 extern struct testEngine mscclppTestEngine;

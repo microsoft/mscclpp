@@ -153,7 +153,7 @@ TESTSOBJTARGETS := $(TESTSOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 TESTSBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(TESTSOBJS))
 
 MSCLLPPTESTSOBJSDIR:= $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)
-MSCLLPPTESTBINFILESLIST := allgather_test ring_send_recv_test
+MSCLLPPTESTBINFILESLIST := allgather_test allreduce_test ring_send_recv_test
 MSCLLPPTESTBINS         := $(MSCLLPPTESTBINFILESLIST:%=$(BUILDDIR)/$(BINDIR)/$(TESTSDIR)/%_perf)
 
 INCLUDE := -Isrc -Isrc/include
