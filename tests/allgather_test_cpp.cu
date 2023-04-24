@@ -240,7 +240,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
 
   comm.connectionSetup();
   assert(devConns.size() < sizeof(constDevConns) / sizeof(mscclpp::DeviceConnection));
-  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns.data(), sizeof(mscclpp::DeviceConnection) * devConns.size() ));
+  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns.data(), sizeof(mscclpp::DeviceConnection) * devConns.size()));
 }
 
 void printUsage(const char* prog, bool isMpi)
@@ -390,20 +390,20 @@ int main(int argc, const char* argv[])
   }
   size_t nelemsPerGPU = dataSize / sizeof(int) / world_size;
 
-  try{
+  try {
     mscclpp::Communicator comm;
 
     if (rank == 0)
-        printf("Initializing MSCCL++\n");
+      printf("Initializing MSCCL++\n");
 
     comm.initRank(world_size, ip_port, rank);
 
     if (rank == 0)
-        printf("Initializing data for allgather test\n");
+      printf("Initializing data for allgather test\n");
     initializeAndAllocateAllGatherData(rank, world_size, dataSize, nelemsPerGPU, &data_h, &data_d);
 
     if (rank == 0)
-        printf("Setting up the connection in MSCCL++\n");
+      printf("Setting up the connection in MSCCL++\n");
     setupMscclppConnections(rank, world_size, comm, data_d, dataSize);
 
   } catch (std::exception& e) {

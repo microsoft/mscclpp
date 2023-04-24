@@ -11,14 +11,15 @@
 #define MSCCLPP_PROXY_FIFO_SIZE 128
 #define MSCCLPP_PROXY_FIFO_FLUSH_COUNTER 4
 
-#include <vector>
 #include <memory>
+#include <vector>
 
 #include <mscclppfifo.hpp>
 
 namespace mscclpp {
 
-struct alignas(16) SignalEpochId {
+struct alignas(16) SignalEpochId
+{
   // every signal(), increaments this and either:
   // 1) proxy thread pushes it to the remote peer's localSignalEpochId->proxy
   // 2) gpu thread directly writes it to remoteSignalEpochId->device
@@ -27,14 +28,15 @@ struct alignas(16) SignalEpochId {
   uint64_t proxy;
 };
 
-enum ChannelTriggerType : uint64_t {
+enum ChannelTriggerType : uint64_t
+{
   channelTriggerData = 0x1,
   channelTriggerFlag = 0x2,
   channelTriggerSync = 0x4
 };
 
 // This is just a numeric ID. Each HostConnection will have an internal array indexed by these handles
-// mapping to the actual 
+// mapping to the actual
 using BufferHandle = uint8_t;
 
 #define MSCCLPP_BITS_SIZE 32
@@ -58,14 +60,23 @@ union ChannelTrigger {
     uint64_t srcBufferHandle : MSCCLPP_BITS_BUFFER_HANDLE;
     uint64_t dstBufferHandle : MSCCLPP_BITS_BUFFER_HANDLE;
     uint64_t type : MSCCLPP_BITS_TYPE;
-    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_BUFFER_HANDLE - MSCCLPP_BITS_BUFFER_HANDLE - MSCCLPP_BITS_TYPE); // ensure 64-bit alignment
+    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_BUFFER_HANDLE - MSCCLPP_BITS_BUFFER_HANDLE -
+                MSCCLPP_BITS_TYPE); // ensure 64-bit alignment
   } fields;
 
-  ChannelTrigger() {}
-  ChannelTrigger(ProxyTrigger value) : value(value) {}
-  ChannelTrigger(ChannelTriggerType type, BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset, uint64_t size) {
+  ChannelTrigger()
+  {
+  }
+  ChannelTrigger(ProxyTrigger value) : value(value)
+  {
+  }
+  ChannelTrigger(ChannelTriggerType type, BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset,
+                 uint64_t size)
+  {
     value.fst = ((srcOffset << MSCCLPP_BITS_SIZE) + size);
-    value.snd = (((((((uint64_t)type << MSCCLPP_BITS_BUFFER_HANDLE) + dst) << MSCCLPP_BITS_BUFFER_HANDLE) + src) << MSCCLPP_BITS_OFFSET) + dstOffset);
+    value.snd = (((((((uint64_t)type << MSCCLPP_BITS_BUFFER_HANDLE) + dst) << MSCCLPP_BITS_BUFFER_HANDLE) + src)
+                  << MSCCLPP_BITS_OFFSET) +
+                 dstOffset);
   }
 };
 
@@ -131,11 +142,13 @@ union ChannelTrigger {
  * The two endpoint can concurrently use the same connection provided they are writing (puts) on different
  * indices in the registered buffer.
  **************************************************************************************************************/
-struct DeviceConnection {
+struct DeviceConnection
+{
 #ifdef __CUDACC__
   // TODO: add buffer handles
 
-  __forceinline__ __device__ void put(BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset, uint64_t size)
+  __forceinline__ __device__ void put(BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset,
+                                      uint64_t size)
   {
     fifo.push(ChannelTrigger(channelTriggerData, dst, dstOffset, src, srcOffset, size).value);
   }
@@ -151,7 +164,8 @@ struct DeviceConnection {
     fifo.push(ChannelTrigger(channelTriggerFlag, 0, 0, 0, 0, 1).value);
   }
 
-  __forceinline__ __device__ void putWithSignal(BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset, uint64_t size)
+  __forceinline__ __device__ void putWithSignal(BufferHandle dst, uint64_t dstOffset, BufferHandle src,
+                                                uint64_t srcOffset, uint64_t size)
   {
     epochIncrement();
     fifo.push(ChannelTrigger(channelTriggerData | channelTriggerFlag, dst, dstOffset, src, srcOffset, size).value);
@@ -162,16 +176,19 @@ struct DeviceConnection {
     putWithSignal(dst, offset, src, offset, size);
   }
 
-  __forceinline__ __device__ void putWithSignalAndFlush(BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset, uint64_t size)
+  __forceinline__ __device__ void putWithSignalAndFlush(BufferHandle dst, uint64_t dstOffset, BufferHandle src,
+                                                        uint64_t srcOffset, uint64_t size)
   {
     epochIncrement();
-    uint64_t curFifoHead = fifo.push(channelTriggerData | channelTriggerFlag | channelTriggerSync, dstOffset, srcOffset, size);
+    uint64_t curFifoHead =
+      fifo.push(channelTriggerData | channelTriggerFlag | channelTriggerSync, dstOffset, srcOffset, size);
     while (*(volatile uint64_t*)&fifo.triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
            *(volatile uint64_t*)fifo.triggerFifoTail <= curFifoHead)
       ;
   }
 
-  __forceinline__ __device__ void putWithSignalAndFlush(BufferHandle dst, BufferHandle src, uint64_t offset, uint64_t size)
+  __forceinline__ __device__ void putWithSignalAndFlush(BufferHandle dst, BufferHandle src, uint64_t offset,
+                                                        uint64_t size)
   {
     putWithSignalAndFlush(offset, offset, size);
   }
@@ -217,7 +234,8 @@ struct DeviceConnection {
   ProxyFifo fifo;
 };
 
-class HostConnection {
+class HostConnection
+{
 public:
   /* Register a region of GPU memory for use with this connection. Must be called before connectionSetup()
    * in the communicator.
@@ -225,7 +243,7 @@ public:
    * Inputs:
    *  data: base pointer to the memory
    *  size: size of the memory region in bytes
-   * 
+   *
    * Returns: a handle to the buffer
    */
   BufferHandle registerBuffer(void* data, uint64_t size);
@@ -240,7 +258,7 @@ public:
    *
    * Inputs:
    *  index: the index of the handle to get
-   * 
+   *
    * Returns: a handle to the buffer on the remote peer
    */
   BufferHandle getRemoteBuffer(int index);
@@ -248,10 +266,10 @@ public:
   /* Create a DeviceConnection paired with this HostConnection. A background proxy thread will
    * trigger operations on this HostConnection corresponding to put/signal/etc. calls made to the
    * DeviceConnection.
-   * 
+   *
    * Inputs:
    *  startProxyThread: whether to start the proxy thread (default is true)
-   * 
+   *
    * Returns: the newly created DeviceConnection
    */
   DeviceConnection toDevice(bool startProxyThread = true);
@@ -269,7 +287,8 @@ private:
 };
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
-struct UniqueId {
+struct UniqueId
+{
   char internal[MSCCLPP_UNIQUE_ID_BYTES];
 };
 
@@ -283,76 +302,78 @@ struct UniqueId {
 std::unique_ptr<UniqueId> getUniqueId();
 
 /* Transport Types */
-enum class TransportType : uint8_t {
+enum class TransportType : uint8_t
+{
   P2P = 0,
   IB = 1,
 };
 
-class Communicator {
+class Communicator
+{
 public:
   /* Initialize the communicator. nranks processes with rank 0 to nranks-1 need to call this function.
-  *
-  * Inputs:
-  *   nranks:     number of ranks in the communicator
-  *   ipPortPair: a string of the form "ip:port" that represents the address of the root process
-  *   rank:       rank of the calling process
-  */
+   *
+   * Inputs:
+   *   nranks:     number of ranks in the communicator
+   *   ipPortPair: a string of the form "ip:port" that represents the address of the root process
+   *   rank:       rank of the calling process
+   */
   void initRank(int nranks, const char* ipPortPair, int rank);
-  
+
   /* Initialize the communicator from a given UniqueId. Same as mscclppCommInitRank() except that
-  * id is provided by the user by calling getUniqueId()
-  *
-  * Inputs:
-  *   nranks: number of ranks in the communicator
-  *   id:     the unique ID to be used for communication
-  *   rank:   rank of the calling process
-  */
+   * id is provided by the user by calling getUniqueId()
+   *
+   * Inputs:
+   *   nranks: number of ranks in the communicator
+   *   id:     the unique ID to be used for communication
+   *   rank:   rank of the calling process
+   */
   void initRankFromId(int nranks, UniqueId id, int rank);
-  
+
   /* Ring-based AllGather through the bootstrap socket.
-  *
-  * Inputs:
-  *   data: data array to be gathered where `[r*size, (r+1)*size)` is the data for rank `r`
-  *   size: data size per rank
-  */
+   *
+   * Inputs:
+   *   data: data array to be gathered where `[r*size, (r+1)*size)` is the data for rank `r`
+   *   size: data size per rank
+   */
   void bootstrapAllGather(void* data, int size);
 
   /* A no-op function that is used to synchronize all processes via a bootstrap allgather*/
   void bootstrapBarrier();
 
   /* Connect to a remote rank. This function only prepares metadata for connection. The actual connection
-  * is made by a following call of mscclppConnectionSetup(). Note that this function is two-way and a connection
-  * from rank i to remote rank j needs to have a counterpart from rank j to rank i.
-  * Note that with IB, buffers are registered at a page level and if a buffer is spread through multiple pages
-  * and do not fully utilize all of them, IB's QP has to register for all involved pages. This potentially has
-  * security risks if the devConn's accesses are given to a malicious process.
-  *
-  * Inputs:
-  *   remoteRank:    the rank of the remote process
-  *   tag:           the tag of the connection. tag is copied into the corresponding mscclppDevConn_t, which can be
-  *                  used to identify the connection inside a GPU kernel.
-  *   transportType: the type of transport to be used (mscclppTransportP2P or mscclppTransportIB)
-  *   ibDev:         the name of the IB device to be used. Expects a null for mscclppTransportP2P.
-  */
+   * is made by a following call of mscclppConnectionSetup(). Note that this function is two-way and a connection
+   * from rank i to remote rank j needs to have a counterpart from rank j to rank i.
+   * Note that with IB, buffers are registered at a page level and if a buffer is spread through multiple pages
+   * and do not fully utilize all of them, IB's QP has to register for all involved pages. This potentially has
+   * security risks if the devConn's accesses are given to a malicious process.
+   *
+   * Inputs:
+   *   remoteRank:    the rank of the remote process
+   *   tag:           the tag of the connection. tag is copied into the corresponding mscclppDevConn_t, which can be
+   *                  used to identify the connection inside a GPU kernel.
+   *   transportType: the type of transport to be used (mscclppTransportP2P or mscclppTransportIB)
+   *   ibDev:         the name of the IB device to be used. Expects a null for mscclppTransportP2P.
+   */
   std::shared_ptr<HostConnection> connect(int remoteRank, int tag, TransportType transportType, const char* ibDev = 0);
 
   /* Establish all connections created by mscclppConnect(). This function must be called after all mscclppConnect()
-  * calls are made. This function ensures that all remote ranks are ready to communicate when it returns.
-  */
+   * calls are made. This function ensures that all remote ranks are ready to communicate when it returns.
+   */
   void connectionSetup();
-  
+
   /* Return the rank of the calling process.
-  *
-  * Outputs:
-  *   rank: the rank of the calling process
-  */
+   *
+   * Outputs:
+   *   rank: the rank of the calling process
+   */
   int rank();
 
   /* Return the number of ranks of the communicator.
-  *
-  * Outputs:
-  *   size: the number of ranks of the communicator
-  */
+   *
+   * Outputs:
+   *   size: the number of ranks of the communicator
+   */
   int size();
 
 private:

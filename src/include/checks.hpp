@@ -30,21 +30,21 @@
 
 #include <errno.h>
 // Check system calls
-#define SYSCHECKTHROW(call, name)                                                                                           \
+#define SYSCHECKTHROW(call, name)                                                                                      \
   do {                                                                                                                 \
     int retval;                                                                                                        \
     SYSCHECKVAL(call, name, retval);                                                                                   \
   } while (false)
 
-#define SYSCHECKVALTHROW(call, name, retval)                                                                                \
+#define SYSCHECKVALTHROW(call, name, retval)                                                                           \
   do {                                                                                                                 \
     SYSCHECKSYNC(call, name, retval);                                                                                  \
     if (retval == -1) {                                                                                                \
-      std::runtime_error(std::string("Call to " name " failed : ") + strerror(errno));                                                           \
+      std::runtime_error(std::string("Call to " name " failed : ") + strerror(errno));                                 \
     }                                                                                                                  \
   } while (false)
 
-#define SYSCHECKSYNCTHROW(call, name, retval)                                                                               \
+#define SYSCHECKSYNCTHROW(call, name, retval)                                                                          \
   do {                                                                                                                 \
     retval = call;                                                                                                     \
     if (retval == -1 && (errno == EINTR || errno == EWOULDBLOCK || errno == EAGAIN)) {                                 \

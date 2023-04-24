@@ -15,7 +15,7 @@
 
 struct mscclppBufferRegistration
 {
-  void *data;
+  void* data;
   uint64_t size;
 };
 
