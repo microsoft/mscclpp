@@ -152,6 +152,11 @@ void MscclppBootstrap::Impl::initialize(std::string ipPortPair)
 
   uniqueId_.magic = 0xdeadbeef;
   std::memcpy(&uniqueId_.addr, &netIfAddr_, sizeof(union mscclppSocketAddress));
+  ret = mscclppSocketGetAddrFromString(&uniqueId_.addr, ipPortPair.c_str());
+  if (ret != mscclppSuccess) {
+    throw std::runtime_error("Failed to get address from string");
+  }
+
   if (rank_ == 0) {
     rootThread_ = std::thread(&MscclppBootstrap::Impl::bootstrapRoot, this);
   }
