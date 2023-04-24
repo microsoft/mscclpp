@@ -18,7 +18,7 @@ class __attribute__((visibility("default"))) MscclppBootstrap : public Bootstrap
 {
 public:
   MscclppBootstrap(int rank, int nRanks);
-  ~MscclppBootstrap() override = default;
+  ~MscclppBootstrap();
 
   UniqueId GetUniqueId();
 
@@ -28,7 +28,6 @@ public:
   void Recv(void* data, int size, int peer, int tag) override;
   void AllGather(void* allData, int size) override;
   void Barrier() override;
-  void Close();
 
 private:
   class Impl;

@@ -41,11 +41,11 @@ enum bootstrapInterface_t
   dontCareIf = -2
 };
 
-struct unexpectedConn
+struct unexpectedMsg
 {
   int peer;
   int tag;
-  struct mscclppSocket sock;
+  std::shared_ptr<mscclppSocket> sock;
 };
 
 struct extInfo
@@ -81,8 +81,8 @@ private:
   mscclppSocket ringRecvSocket_;
   mscclppSocket ringSendSocket_;
   std::vector<mscclppSocketAddress> peerCommAddresses_;
-  std::vector<mscclppSocketAddress> peerProxyAddresses_;
-  std::queue<unexpectedConn> unexpectedConnections_;
+  std::list<unexpectedMsg> unexpectedMessages_;
+  std::vector<int> barrierArr_;
   volatile uint32_t* abortFlag_;
   std::thread rootThread_;
   char netIfName_[MAX_IF_NAME_SIZE + 1];
@@ -104,7 +104,7 @@ private:
 
 MscclppBootstrap::Impl::Impl(int rank, int nRanks)
   : rank_(rank), nRanks_(nRanks), netInitialized(false), peerCommAddresses_(nRanks, mscclppSocketAddress()),
-    peerProxyAddresses_(nRanks, mscclppSocketAddress()), abortFlag_(nullptr)
+    barrierArr_(nRanks, 0), abortFlag_(nullptr)
 {
 }
 
@@ -347,7 +347,6 @@ mscclppResult_t MscclppBootstrap::Impl::netInit(std::string ipPortPair)
 
 mscclppResult_t MscclppBootstrap::Impl::establishConnections()
 {
-  mscclppSocket* proxySocket;
   mscclppSocketAddress nextAddr;
   mscclppSocket sock, listenSockRoot;
   extInfo info;
@@ -409,15 +408,7 @@ mscclppResult_t MscclppBootstrap::Impl::establishConnections()
   MSCCLPPCHECK(mscclppSocketGetAddr(&this->listenSock_, &this->peerCommAddresses_[rank_]));
   MSCCLPPCHECK(allGather(this->peerCommAddresses_.data(), sizeof(union mscclppSocketAddress)));
 
-  // proxy is aborted through a message; don't set abortFlag
-  MSCCLPPCHECK(mscclppCalloc(&proxySocket, 1));
-  MSCCLPPCHECK(mscclppSocketInit(proxySocket, &netIfAddr_, magic, mscclppSocketTypeProxy, this->abortFlag_));
-  MSCCLPPCHECK(mscclppSocketListen(proxySocket));
-  MSCCLPPCHECK(mscclppSocketGetAddr(proxySocket, &this->peerProxyAddresses_[rank_]));
-  MSCCLPPCHECK(allGather(this->peerProxyAddresses_.data(), sizeof(union mscclppSocketAddress)));
-
   TRACE(MSCCLPP_INIT, "rank %d nranks %d - DONE", rank_, nRanks_);
-
   return mscclppSuccess;
 }
 
@@ -482,16 +473,48 @@ mscclppResult_t MscclppBootstrap::Impl::send(void* data, int size, int peer, int
 
 mscclppResult_t MscclppBootstrap::Impl::recv(void* data, int size, int peer, int tag)
 {
+  // search over all unexpected messages
+  for (auto it = unexpectedMessages_.begin(); it != unexpectedMessages_.end(); ++it){
+    if (it->peer == peer && it->tag == tag){
+      // found a match
+      MSCCLPPCHECK(netRecv(it->sock.get(), data, size));
+      MSCCLPPCHECK(mscclppSocketClose(it->sock.get()));
+      unexpectedMessages_.erase(it);
+      return mscclppSuccess;
+    }
+  }
+  // didn't find one
+  while (true) {
+    auto sock = std::make_shared<mscclppSocket>();
+    int newPeer, newTag;
+    MSCCLPPCHECK(mscclppSocketInit(sock.get()));
+    MSCCLPPCHECK(mscclppSocketAccept(sock.get(), &this->listenSock_));
+    MSCCLPPCHECK(netRecv(sock.get(), &newPeer, sizeof(int)));
+    MSCCLPPCHECK(netRecv(sock.get(), &newTag, sizeof(int)));
+    if (newPeer == peer && newTag == tag) {
+      MSCCLPPCHECK(netRecv(sock.get(), ((char*)data), size));
+      MSCCLPPCHECK(mscclppSocketClose(sock.get()));
+      return mscclppSuccess;
+    }
+    // Unexpected message. Save for later.
+    unexpectedMessages_.push_back({newPeer, newTag, sock});
+  }
+  
   return mscclppSuccess;
 }
 
 mscclppResult_t MscclppBootstrap::Impl::barrier()
 {
+  MSCCLPPCHECK(allGather(barrierArr_.data(), sizeof(int)));
   return mscclppSuccess;
 }
 
 mscclppResult_t MscclppBootstrap::Impl::close()
 {
+  MSCCLPPCHECK(mscclppSocketClose(&this->listenSock_));
+  MSCCLPPCHECK(mscclppSocketClose(&this->ringSendSocket_));
+  MSCCLPPCHECK(mscclppSocketClose(&this->ringRecvSocket_));
+
   return mscclppSuccess;
 }
 
@@ -548,7 +571,7 @@ void MscclppBootstrap::Barrier()
   }
 }
 
-void MscclppBootstrap::Close()
+MscclppBootstrap::~MscclppBootstrap()
 {
   mscclppResult_t res = pimpl_->close();
   if (res != mscclppSuccess) {
