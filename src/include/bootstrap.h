@@ -14,11 +14,11 @@ struct UniqueId
 static_assert(sizeof(UniqueId) <= sizeof(mscclppUniqueId),
               "Bootstrap handle is too large to fit inside MSCCLPP unique ID");
 
-class __attribute__((visibility("default"))) MscclppBootstrap : public Bootstrap
+class __attribute__((visibility("default"))) mscclppBootstrap : public Bootstrap
 {
 public:
-  MscclppBootstrap(int rank, int nRanks);
-  ~MscclppBootstrap();
+  mscclppBootstrap(int rank, int nRanks);
+  ~mscclppBootstrap();
 
   UniqueId GetUniqueId();
 
@@ -33,6 +33,8 @@ private:
   class Impl;
   Impl* pimpl_;
 };
+
+// ------------------- Old bootstrap headers: to be removed -------------------
 
 struct mscclppBootstrapHandle
 {
