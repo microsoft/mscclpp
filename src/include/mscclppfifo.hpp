@@ -1,13 +1,12 @@
 #ifndef MSCCLPPFIFO_HPP_
 #define MSCCLPPFIFO_HPP_
 
-#include <functional>
 #include <stdint.h>
+#include <functional>
 
 namespace mscclpp {
 
-struct alignas(16) ProxyTrigger
-{
+struct alignas(16) ProxyTrigger {
   uint64_t fst, snd;
 };
 
@@ -24,8 +23,7 @@ struct alignas(16) ProxyTrigger
  * Why duplicating the tail is a good idea? The fifo is large engouh and we do not need frequent updates
  * for the tail as there is usually enough space for device threads to push their work into.
  */
-struct ProxyFifo
-{
+struct ProxyFifo {
 #ifdef __CUDACC__
   __forceinline__ __device__ uint64_t push(ProxyTrigger element)
   {
@@ -35,8 +33,8 @@ struct ProxyFifo
     while (*(volatile uint64_t*)&this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0)
       ;
     uint64_t* valptr = (uint64_t*)&(this->triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE].value);
-    asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(valptr), "l"(element.value[0]),
-                 "l"(element.value[1]));
+    asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(valptr),
+                 "l"(element.value[0]), "l"(element.value[1]));
     return curFifoHead;
   }
 #endif // __CUDACC__
@@ -45,9 +43,9 @@ struct ProxyFifo
   void stopProxyThread();
 
   ProxyTrigger* triggerFifo; // Allocate on host via cudaHostAlloc. This space is used for pushing the workelements
-  uint64_t* triggerFifoTail; // Allocated on device. proxyState->fifoTailHost is the true tail on host and pused
-                             // occasionally to device
-  uint64_t* triggerFifoHead; // Allocated on device. Only accessed by device
+  uint64_t* triggerFifoTail;   // Allocated on device. proxyState->fifoTailHost is the true tail on host and pused
+                               // occasionally to device
+  uint64_t* triggerFifoHead;   // Allocated on device. Only accessed by device
 };
 
 } // namespace mscclpp

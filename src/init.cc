@@ -326,8 +326,7 @@ struct mscclppHostP2PConn : mscclppHostConn
   {
     put(1, dstDataOffset, 1, srcDataOffset, dataSize);
   }
-  void put(mscclppBufferHandle_t dst, uint64_t dstDataOffset, mscclppBufferHandle_t src, uint64_t srcDataOffset,
-           uint64_t dataSize)
+  void put(mscclppBufferHandle_t dst, uint64_t dstDataOffset, mscclppBufferHandle_t src, uint64_t srcDataOffset, uint64_t dataSize)
   {
     void* srcBuff = (void*)((char*)conn->bufferRegistrations[src].data + srcDataOffset);
     void* dstBuff = (void*)((char*)conn->remoteBufferRegistrations[dst].data + dstDataOffset);
@@ -365,8 +364,7 @@ struct mscclppHostIBConn : mscclppHostConn
   {
     put(1, dstDataOffset, 1, srcDataOffset, dataSize);
   }
-  void put(mscclppBufferHandle_t dst, uint64_t dstDataOffset, mscclppBufferHandle_t src, uint64_t srcDataOffset,
-           uint64_t dataSize)
+  void put(mscclppBufferHandle_t dst, uint64_t dstDataOffset, mscclppBufferHandle_t src, uint64_t srcDataOffset, uint64_t dataSize)
   {
     this->ibQp->stageSend(this->ibMrs[src], &this->remoteIbMrInfos[dst], (uint32_t)dataSize,
                           /*wrId=*/0, /*srcOffset=*/srcDataOffset, /*dstOffset=*/dstDataOffset, /*signaled=*/false);
@@ -425,8 +423,7 @@ struct mscclppHostIBConn : mscclppHostConn
   std::vector<mscclppIbMrInfo> remoteIbMrInfos;
 };
 
-MSCCLPP_API mscclppResult_t mscclppConnectWithoutBuffer(mscclppComm_t comm, int remoteRank, int tag,
-                                                        mscclppTransport_t transportType, const char* ibDev)
+MSCCLPP_API mscclppResult_t mscclppConnectWithoutBuffer(mscclppComm_t comm, int remoteRank, int tag, mscclppTransport_t transportType, const char* ibDev)
 {
   // save this processes numa binding and set it to the one closest to the device
   // so that all the allocation are close to the device
@@ -566,8 +563,7 @@ MSCCLPP_API mscclppResult_t mscclppConnectWithoutBuffer(mscclppComm_t comm, int 
   MSCCLPPCHECK(setNumaState(curProcessState));
 
   mscclppBufferHandle_t signalHandle = -1;
-  MSCCLPPCHECK(mscclppRegisterBufferForConnection(comm, connId, conn->devConn->localSignalEpochId,
-                                                  sizeof(mscclppDevConnSignalEpochId), &signalHandle));
+  MSCCLPPCHECK(mscclppRegisterBufferForConnection(comm, connId, conn->devConn->localSignalEpochId, sizeof(mscclppDevConnSignalEpochId), &signalHandle));
   if (signalHandle != 0) {
     WARN("signal handle should be 0");
     return mscclppInternalError;
@@ -596,9 +592,7 @@ MSCCLPP_API mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, i
   return mscclppSuccess;
 }
 
-MSCCLPP_API mscclppResult_t mscclppRegisterBufferForConnection(mscclppComm_t comm, int connIdx, void* localBuff,
-                                                               uint64_t buffSize, mscclppBufferHandle_t* handle)
-{
+MSCCLPP_API mscclppResult_t mscclppRegisterBufferForConnection(mscclppComm_t comm, int connIdx, void* localBuff, uint64_t buffSize, mscclppBufferHandle_t *handle) {
   if (connIdx >= comm->nConns) {
     WARN("connIdx out of range");
     return mscclppInvalidArgument;
@@ -624,32 +618,27 @@ struct connInfo
   mscclppIbQpInfo infoQp;
   std::vector<mscclppBufferRegistrationInfo> bufferInfos;
 
-  struct header
-  {
+  struct header {
     mscclppIbQpInfo infoQp;
     int numBufferInfos;
   };
 
-  mscclppResult_t sendOverBootstrap(void* bootstrap, int remoteRank, int tag)
-  {
+  mscclppResult_t sendOverBootstrap(void* bootstrap, int remoteRank, int tag) {
     header h;
     h.infoQp = infoQp;
     h.numBufferInfos = bufferInfos.size();
     MSCCLPPCHECK(bootstrapSend(bootstrap, remoteRank, tag, &h, sizeof(header)));
-    MSCCLPPCHECK(bootstrapSend(bootstrap, remoteRank, tag, bufferInfos.data(),
-                               bufferInfos.size() * sizeof(mscclppBufferRegistrationInfo)));
-    return mscclppSuccess;
+    MSCCLPPCHECK(bootstrapSend(bootstrap, remoteRank, tag, bufferInfos.data(), bufferInfos.size() * sizeof(mscclppBufferRegistrationInfo)));
+  return mscclppSuccess;
   }
 
-  mscclppResult_t recvOverBootstrap(void* bootstrap, int remoteRank, int tag)
-  {
+  mscclppResult_t recvOverBootstrap(void* bootstrap, int remoteRank, int tag) {
     header h;
     MSCCLPPCHECK(bootstrapRecv(bootstrap, remoteRank, tag, &h, sizeof(header)));
     infoQp = h.infoQp;
     bufferInfos.resize(h.numBufferInfos);
-    MSCCLPPCHECK(bootstrapRecv(bootstrap, remoteRank, tag, bufferInfos.data(),
-                               bufferInfos.size() * sizeof(mscclppBufferRegistrationInfo)));
-    return mscclppSuccess;
+    MSCCLPPCHECK(bootstrapRecv(bootstrap, remoteRank, tag, bufferInfos.data(), bufferInfos.size() * sizeof(mscclppBufferRegistrationInfo)));
+  return mscclppSuccess;
   }
 };
 
@@ -661,7 +650,7 @@ mscclppResult_t mscclppP2pConnectionSetupStart(struct connInfo* connInfo /*input
   }
 
   // Add all registered buffers
-  for (const auto& bufReg : conn->bufferRegistrations) {
+  for (const auto &bufReg : conn->bufferRegistrations) {
     connInfo->bufferInfos.emplace_back();
     CUDACHECK(cudaIpcGetMemHandle(&connInfo->bufferInfos.back().cudaHandle, bufReg.data));
     connInfo->bufferInfos.back().size = bufReg.size;
@@ -683,8 +672,7 @@ mscclppResult_t mscclppP2pConnectionSetupEnd(struct connInfo* connInfo /*input*/
   // Open all remote registered buffers
   for (size_t i = 0; i < connInfo->bufferInfos.size(); i++) {
     mscclppBufferRegistration newBufReg;
-    CUDACHECK(
-      cudaIpcOpenMemHandle(&newBufReg.data, connInfo->bufferInfos[i].cudaHandle, cudaIpcMemLazyEnablePeerAccess));
+    CUDACHECK(cudaIpcOpenMemHandle(&newBufReg.data, connInfo->bufferInfos[i].cudaHandle, cudaIpcMemLazyEnablePeerAccess));
     newBufReg.size = connInfo->bufferInfos[i].size;
     conn->remoteBufferRegistrations.push_back(newBufReg);
   }
@@ -695,8 +683,8 @@ mscclppResult_t mscclppP2pConnectionSetupEnd(struct connInfo* connInfo /*input*/
   }
   conn->devConn->remoteSignalEpochId = (mscclppDevConnSignalEpochId*)conn->remoteBufferRegistrations[0].data;
 
-  // For backwards compatibility with the previous API that assumed one data buffer per connection, set the remote
-  // buffer to the first remote data buffer
+  // For backwards compatibility with the previous API that assumed one data buffer per connection, set the remote buffer
+  // to the first remote data buffer
   if (conn->remoteBufferRegistrations.size() > 1) {
     conn->devConn->remoteBuff = conn->remoteBufferRegistrations[1].data;
   }
@@ -720,10 +708,10 @@ mscclppResult_t mscclppIbConnectionSetupStart(struct connInfo* connInfo /*output
   }
 
   // Add all registered buffers
-  for (const auto& bufReg : conn->bufferRegistrations) {
+  for (const auto &bufReg : conn->bufferRegistrations) {
     hostConn->ibMrs.emplace_back();
-    MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, bufReg.data, sizeof(struct mscclppDevConnSignalEpochId),
-                                            &hostConn->ibMrs.back()));
+    MSCCLPPCHECK(mscclppIbContextRegisterMr(ibCtx, bufReg.data,
+                                            sizeof(struct mscclppDevConnSignalEpochId), &hostConn->ibMrs.back()));
     connInfo->bufferInfos.emplace_back();
     connInfo->bufferInfos.back().ibMrInfo = hostConn->ibMrs.back()->info;
     connInfo->bufferInfos.back().size = bufReg.size;
@@ -776,8 +764,7 @@ MSCCLPP_API mscclppResult_t mscclppConnectionSetup(mscclppComm_t comm)
       MSCCLPPCHECK(mscclppIbConnectionSetupStart(&cInfo, conn));
     }
     // TODO: from saemal: do we possibly deadlock if there are too many outstanding sends?
-    // MSCCLPPCHECK(bootstrapSend(comm->bootstrap, conn->devConn->remoteRank, conn->devConn->tag, &cInfo,
-    // sizeof(cInfo)));
+    // MSCCLPPCHECK(bootstrapSend(comm->bootstrap, conn->devConn->remoteRank, conn->devConn->tag, &cInfo, sizeof(cInfo)));
     MSCCLPPCHECK(cInfo.sendOverBootstrap(comm->bootstrap, conn->devConn->remoteRank, conn->devConn->tag));
   }
 
