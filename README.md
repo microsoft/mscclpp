@@ -78,7 +78,7 @@ mpirun -allow-run-as-root -map-by ppr:8:node -hostfile /mnt/hostfile -x LD_LIBRA
 **BusBW (GB/s)**
 | Message Size | NCCL AllGather | NCCL AllReduce | NCCL AllToAll | MSCCL AllToAll LL/LL128/Simple | MSCCL++ AllGather K0/K1/K2   | MSCCL++ AllReduce |
 |:------------:|:--------------:|:--------------:|:-------------:|:------------------------------:|:----------------------------:|:-----------------:|
-| 1G           | 253.59         | **132.31**     | 254.69        | 217.05 / 216.98 / 217.15       | 144.21 / **255.06** / 142.47 | 12.81             |
+| 1G           | 253.59         | **132.31**     | 254.69        | 217.05 / 216.98 / 217.15       | 125.06 / **255.64** / 124.89 | 22.55             |
 
 ### 2 nodes, 1 gpu/node
 **Latency (us)**
@@ -89,7 +89,7 @@ mpirun -allow-run-as-root -map-by ppr:8:node -hostfile /mnt/hostfile -x LD_LIBRA
 **BusBW (GB/s)**
 | Message Size | NCCL AllGather | NCCL AllReduce | NCCL AllToAll | MSCCL AllToAll LL/LL128/Simple | MSCCL++ AllGather K0/K1/K2 | MSCCL++ AllReduce |
 |:------------:|:--------------:|:--------------:|:-------------:|:------------------------------:|:--------------------------:|:-----------------:|
-| 1G           | 31.71          | **18.65**      | 30.93         | 13.94 / 13.83 / 14.10          | 23.26 / 23.29 / **43.20**  | -                 |
+| 1G           | 15.84          | **18.65**      | 15.48         | 13.94 / 13.83 / 14.10          | **23.30** / 23.29 / 21.60  | -                 |
 
 ### 2 nodes, 8 gpus/node
 **Latency (us)**
@@ -100,8 +100,8 @@ mpirun -allow-run-as-root -map-by ppr:8:node -hostfile /mnt/hostfile -x LD_LIBRA
 **BusBW (GB/s)**
 | Message Size | NCCL AllGather | NCCL AllReduce | NCCL AllToAll | MSCCL AllToAll LL/LL128/Simple | MSCCL++ AllGather K0/K1/K2 | MSCCL++ AllReduce |
 |:------------:|:--------------:|:--------------:|:-------------:|:------------------------------:|:--------------------------:|:-----------------:|
-| 1G           | 189.73         | **97.72**      | 40.16         | 40.17 / 40.18 / 40.23          | 44.08 / 9.31 / **225.72**  | -                 |
-| 4G           | 198.87         | **100.36**     | 40.56         | - / - / -                      | 47.54 / - / **249.01**     | -                 |
+| 1G           | 177.05         | **183.82**     | 37.80         | 40.17 / 40.18 / 40.23          | 44.19 / 9.31 / **209.33**  | -                 |
+| 4G           | 186.01         | **188.18**     | 37.81         | - / - / -                      | 44.60 / - / **234.08**     | -                 |
 
 
 
