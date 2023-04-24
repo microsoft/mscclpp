@@ -17,13 +17,13 @@ static_assert(sizeof(UniqueId) <= sizeof(mscclppUniqueId),
 class __attribute__((visibility("default"))) MscclppBootstrap : public Bootstrap
 {
 public:
-  MscclppBootstrap(std::string ipPortPair, int rank, int nRanks);
-  MscclppBootstrap(UniqueId uniqueId, int rank, int nRanks);
+  MscclppBootstrap(int rank, int nRanks);
   ~MscclppBootstrap() override = default;
 
-  static UniqueId GetUniqueId();
+  UniqueId GetUniqueId();
 
-  void Initialize();
+  void Initialize(const UniqueId uniqueId);
+  void Initialize(std::string ipPortPair);
   void Send(void* data, int size, int peer, int tag) override;
   void Recv(void* data, int size, int peer, int tag) override;
   void AllGather(void* allData, int size) override;
