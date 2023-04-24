@@ -3,17 +3,18 @@
 
 #include "mscclpp.hpp"
 #include "mscclpp.h"
+#include "comm.h"
 
 namespace mscclpp {
 
 struct HostConnection::Impl {
+  Communicator* comm;
+  mscclppConn* conn;
   mscclppHostConn_t* hostConn;
 
-  Impl();
+  Impl(Communicator* comm, mscclppConn* conn);
 
   ~Impl();
-
-  void setup(mscclppHostConn_t *hostConn);
 };
 
 } // namespace mscclpp

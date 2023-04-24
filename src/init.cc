@@ -629,7 +629,7 @@ struct connInfo
     h.numBufferInfos = bufferInfos.size();
     MSCCLPPCHECK(bootstrapSend(bootstrap, remoteRank, tag, &h, sizeof(header)));
     MSCCLPPCHECK(bootstrapSend(bootstrap, remoteRank, tag, bufferInfos.data(), bufferInfos.size() * sizeof(mscclppBufferRegistrationInfo)));
-  return mscclppSuccess;
+    return mscclppSuccess;
   }
 
   mscclppResult_t recvOverBootstrap(void* bootstrap, int remoteRank, int tag) {
@@ -638,7 +638,7 @@ struct connInfo
     infoQp = h.infoQp;
     bufferInfos.resize(h.numBufferInfos);
     MSCCLPPCHECK(bootstrapRecv(bootstrap, remoteRank, tag, bufferInfos.data(), bufferInfos.size() * sizeof(mscclppBufferRegistrationInfo)));
-  return mscclppSuccess;
+    return mscclppSuccess;
   }
 };
 

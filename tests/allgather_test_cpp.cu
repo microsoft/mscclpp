@@ -10,6 +10,8 @@
 #include <string>
 #include <unistd.h>
 #include <unordered_map>
+#include <cassert>
+#include <algorithm>
 
 static int nranksPerNode = 8;
 
@@ -46,9 +48,9 @@ static double getTime(void)
   return (tspec.tv_nsec / 1.0e9) + tspec.tv_sec;
 }
 
-__constant__ mscclpp::DeviceConnection constDevConns[16];
+__constant__ mscclpp::SimpleDeviceConnection constDevConns[16];
 
-__device__ void allgather0(mscclppDevConn_t devConn, int rank, int world_size, int remoteRank, size_t nelemsPerGPU)
+__device__ void allgather0(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int remoteRank, size_t nelemsPerGPU)
 {
   // this allgather is really simple and implemented as an alltoall
 
@@ -67,7 +69,7 @@ __device__ void allgather0(mscclppDevConn_t devConn, int rank, int world_size, i
     devConn.wait();
 }
 
-__device__ void localAllGather(mscclppDevConn_t devConn, int rank, int world_size, int nranksPerNode, int remoteRank,
+__device__ void localAllGather(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode, int remoteRank,
                                uint64_t offset, uint64_t size)
 {
   // this allgather algorithm works as follows:
@@ -91,14 +93,14 @@ __device__ void localAllGather(mscclppDevConn_t devConn, int rank, int world_siz
   }
 }
 
-__device__ void allgather1(mscclppDevConn_t devConn, int rank, int world_size, int nranksPerNode, int remoteRank,
+__device__ void allgather1(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode, int remoteRank,
                            size_t nelemsPerGPU)
 {
   localAllGather(devConn, rank, world_size, nranksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
 }
 
-__device__ void allgather2(mscclppDevConn_t devConn, int rank, int world_size, int nranksPerNode, int remoteRank,
+__device__ void allgather2(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode, int remoteRank,
                            size_t nelemsPerGPU)
 {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
@@ -167,7 +169,7 @@ __global__ void kernel(int rank, int world_size, int nranksPerNode, size_t nelem
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   // Each warp is responsible for one of the remote ranks
-  mscclppDevConn_t devConn = constDevConns[warpId];
+  mscclpp::SimpleDeviceConnection devConn = constDevConns[warpId];
 
   if (kernel == 0)
     allgather0(devConn, rank, world_size, remoteRank, nelemsPerGPU);
@@ -219,7 +221,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
   std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
-  std::vector<mscclpp::DeviceConnection> devConns(world_size);
+  std::vector<std::shared_ptr<mscclpp::HostConnection>> hostConns;
 
   for (int r = 0; r < world_size; ++r) {
     if (r == rank)
@@ -235,12 +237,19 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
     // Connect with all other ranks
     auto hostConn = comm.connect(r, 0, transportType, ibDev);
     hostConn->registerBuffer(data_d, dataSize);
-    devConns.push_back(hostConn->toDevice(false));
+    hostConns.push_back(hostConn);
   }
 
   comm.connectionSetup();
-  assert(devConns.size() < sizeof(constDevConns) / sizeof(mscclpp::DeviceConnection));
-  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns.data(), sizeof(mscclpp::DeviceConnection) * devConns.size() ));
+
+  std::vector<mscclpp::SimpleDeviceConnection> devConns;
+  std::transform(hostConns.begin(), hostConns.end(), std::back_inserter(devConns),
+                 [](std::shared_ptr<mscclpp::HostConnection>& hostConn) {
+    return mscclpp::SimpleDeviceConnection(*hostConn);
+  });
+
+  assert(devConns.size() < sizeof(constDevConns) / sizeof(mscclpp::SimpleDeviceConnection));
+  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns.data(), sizeof(mscclpp::SimpleDeviceConnection) * devConns.size() ));
 }
 
 void printUsage(const char* prog, bool isMpi)
@@ -391,12 +400,9 @@ int main(int argc, const char* argv[])
   size_t nelemsPerGPU = dataSize / sizeof(int) / world_size;
 
   try{
-    mscclpp::Communicator comm;
-
     if (rank == 0)
         printf("Initializing MSCCL++\n");
-
-    comm.initRank(world_size, ip_port, rank);
+    mscclpp::Communicator comm(world_size, ip_port, rank);
 
     if (rank == 0)
         printf("Initializing data for allgather test\n");
@@ -406,97 +412,93 @@ int main(int argc, const char* argv[])
         printf("Setting up the connection in MSCCL++\n");
     setupMscclppConnections(rank, world_size, comm, data_d, dataSize);
 
+    if (rank == 0)
+      printf("Launching MSCCL++ proxy threads\n");
+    comm.startProxying();
+
+    if (rank == 0)
+      printf("Testing the correctness of AllGather implementation\n");
+    cudaStream_t stream;
+    CUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    CUDACHECK(cudaDeviceSynchronize());
+    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
+    CUDACHECK(cudaDeviceSynchronize());
+    CUDACHECK(cudaMemcpy(data_h, data_d, dataSize, cudaMemcpyDeviceToHost));
+
+    for (size_t i = 0; i < nelemsPerGPU * world_size; i++) {
+      int val = i + 1;
+      if (data_h[i] != val) {
+        printf("oh uh! data_h[%ld] (%d) != val (%d)\n", i, data_h[i], val);
+        break;
+      }
+    }
+    int tmp[16];
+    // A simple barrier
+    comm.bootstrapAllGather(tmp, sizeof(int));
+    if (rank == 0)
+      printf("Successfully checked the correctness\n");
+
+    // Perf test
+    int iterwithoutcudagraph = 10;
+    if (rank == 0)
+      printf("Running %d iterations of the kernel without CUDA graph\n", iterwithoutcudagraph);
+    CUDACHECK(cudaStreamSynchronize(stream));
+    comm.bootstrapAllGather(tmp, sizeof(int));
+    for (int i = 0; i < iterwithoutcudagraph; ++i) {
+      kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
+    }
+    CUDACHECK(cudaStreamSynchronize(stream));
+    comm.bootstrapAllGather(tmp, sizeof(int));
+
+    // cudaGraph Capture
+    int cudagraphiter = 10;
+    if (rank == 0)
+      printf("Capturing %d iterations of the kernel in a CUDA graph\n", cudagraphiter);
+    cudaGraph_t graph;
+    cudaGraphExec_t instance;
+    cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
+    for (int i = 0; i < cudagraphiter; ++i) {
+      kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
+    }
+    cudaStreamEndCapture(stream, &graph);
+    cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
+
+    int cudagraphwarmup = 10;
+    if (rank == 0)
+      printf("Warming up %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphwarmup,
+            cudagraphiter);
+    for (int i = 0; i < cudagraphwarmup; ++i) {
+      cudaGraphLaunch(instance, stream);
+    }
+    CUDACHECK(cudaStreamSynchronize(stream));
+
+    // measure runtime
+    int cudagraphlaunch = 10;
+    if (rank == 0)
+      printf("Running %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphlaunch,
+            cudagraphiter);
+    comm.bootstrapAllGather(tmp, sizeof(int));
+    double t0, t1, ms, time_in_us;
+    t0 = getTime();
+    for (int i = 0; i < cudagraphlaunch; ++i) {
+      cudaGraphLaunch(instance, stream);
+    }
+    CUDACHECK(cudaStreamSynchronize(stream));
+
+    t1 = getTime();
+    ms = (t1 - t0) * 1000.0;
+    time_in_us = ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter;
+    printf("Rank %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us,
+          (double)(dataSize) / 1e9 / (time_in_us / 1e6));
+    comm.bootstrapAllGather(tmp, sizeof(int));
+
+    if (rank == 0)
+      printf("Stopping MSCCL++ proxy threads\n");
+    comm.stopProxying();
+
   } catch (std::exception& e) {
     // todo: throw exceptions in the implementation and process them here
   }
-
-  if (rank == 0)
-    printf("Launching MSCCL++ proxy threads\n");
-  MSCCLPPCHECK(mscclppProxyLaunch(comm));
-
-  if (rank == 0)
-    printf("Testing the correctness of AllGather implementation\n");
-  cudaStream_t stream;
-  CUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-  CUDACHECK(cudaDeviceSynchronize());
-  kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
-  CUDACHECK(cudaDeviceSynchronize());
-  CUDACHECK(cudaMemcpy(data_h, data_d, dataSize, cudaMemcpyDeviceToHost));
-
-  for (size_t i = 0; i < nelemsPerGPU * world_size; i++) {
-    int val = i + 1;
-    if (data_h[i] != val) {
-      printf("oh uh! data_h[%ld] (%d) != val (%d)\n", i, data_h[i], val);
-      break;
-    }
-  }
-  int tmp[16];
-  // A simple barrier
-  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
-  if (rank == 0)
-    printf("Successfully checked the correctness\n");
-
-  // Perf test
-  int iterwithoutcudagraph = 10;
-  if (rank == 0)
-    printf("Running %d iterations of the kernel without CUDA graph\n", iterwithoutcudagraph);
-  CUDACHECK(cudaStreamSynchronize(stream));
-  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
-  for (int i = 0; i < iterwithoutcudagraph; ++i) {
-    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
-  }
-  CUDACHECK(cudaStreamSynchronize(stream));
-  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
-
-  // cudaGraph Capture
-  int cudagraphiter = 10;
-  if (rank == 0)
-    printf("Capturing %d iterations of the kernel in a CUDA graph\n", cudagraphiter);
-  cudaGraph_t graph;
-  cudaGraphExec_t instance;
-  cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
-  for (int i = 0; i < cudagraphiter; ++i) {
-    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
-  }
-  cudaStreamEndCapture(stream, &graph);
-  cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
-
-  int cudagraphwarmup = 10;
-  if (rank == 0)
-    printf("Warming up %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphwarmup,
-           cudagraphiter);
-  for (int i = 0; i < cudagraphwarmup; ++i) {
-    cudaGraphLaunch(instance, stream);
-  }
-  CUDACHECK(cudaStreamSynchronize(stream));
-
-  // measure runtime
-  int cudagraphlaunch = 10;
-  if (rank == 0)
-    printf("Running %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphlaunch,
-           cudagraphiter);
-  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
-  double t0, t1, ms, time_in_us;
-  t0 = getTime();
-  for (int i = 0; i < cudagraphlaunch; ++i) {
-    cudaGraphLaunch(instance, stream);
-  }
-  CUDACHECK(cudaStreamSynchronize(stream));
-
-  t1 = getTime();
-  ms = (t1 - t0) * 1000.0;
-  time_in_us = ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter;
-  printf("Rank %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us,
-         (double)(dataSize) / 1e9 / (time_in_us / 1e6));
-  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
-
-  if (rank == 0)
-    printf("Stopping MSCCL++ proxy threads\n");
-  MSCCLPPCHECK(mscclppProxyStop(comm));
-
-  if (rank == 0)
-    printf("Destroying MSCCL++ communicator\n");
-  MSCCLPPCHECK(mscclppCommDestroy(comm));
   printf("Rank %d succeeded!\n", rank);
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS

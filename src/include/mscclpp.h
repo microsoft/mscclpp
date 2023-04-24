@@ -29,7 +29,7 @@ struct alignas(16) mscclppDevConnSignalEpochId
   uint64_t proxy;
 };
 
-using mscclppBufferHandle_t = uint8_t;
+using mscclppBufferHandle_t = uint32_t;
 
 /***************************************************************************************************************
  * A mscclppDevConn provides a zero-copy connection between two GPUs connected via P2P NVLink or InfiniBand.
