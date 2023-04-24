@@ -91,7 +91,8 @@ private:
   static mscclppResult_t netSend(mscclppSocket* sock, const void* data, int size);
   static mscclppResult_t netRecv(mscclppSocket* sock, void* data, int size);
 
-  mscclppResult_t bootstrapRoot();
+  void bootstrapCreateRoot();
+  mscclppResult_t bootstrapRoot(mscclppSocket listenSock);
   mscclppResult_t getRemoteAddresses(mscclppSocket* listenSock, std::vector<mscclppSocketAddress>& rankAddresses,
                                      std::vector<mscclppSocketAddress>& rankAddressesRoot, int& rank);
   mscclppResult_t sendHandleToPeer(int peer, const std::vector<mscclppSocketAddress>& rankAddresses,
@@ -109,18 +110,18 @@ MscclppBootstrap::Impl::Impl(int rank, int nRanks)
 
 UniqueId MscclppBootstrap::Impl::getUniqueId()
 {
-  UniqueId uniqueId;
   auto ret = netInit("");
   if (ret != mscclppSuccess) {
     throw std::runtime_error("Failed to initialize network");
   }
-  ret = getRandomData(&uniqueId.magic, sizeof(uniqueId.magic));
+  ret = getRandomData(&uniqueId_.magic, sizeof(uniqueId_.magic));
   if (ret != mscclppSuccess) {
     throw std::runtime_error("getting random data failed");
   }
-  std::memcpy(&uniqueId.addr, &netIfAddr_, sizeof(union mscclppSocketAddress));
+  std::memcpy(&uniqueId_.addr, &netIfAddr_, sizeof(union mscclppSocketAddress));
+  bootstrapCreateRoot();
 
-  return uniqueId;
+  return uniqueId_;
 }
 
 void MscclppBootstrap::Impl::initialize(const UniqueId uniqueId)
@@ -132,10 +133,7 @@ void MscclppBootstrap::Impl::initialize(const UniqueId uniqueId)
 
   uniqueId_.magic = uniqueId.magic;
   uniqueId_.addr = uniqueId.addr;
-
-  if (rank_ == 0) {
-    rootThread_ = std::thread(&MscclppBootstrap::Impl::bootstrapRoot, this);
-  }
+  // printf("addr = %s port = %d\n", inet_ntoa(uniqueId_.addr.sin.sin_addr), (int)ntohs(uniqueId_.addr.sin.sin_port));
 
   ret = establishConnections();
   if (ret != mscclppSuccess) {
@@ -158,7 +156,7 @@ void MscclppBootstrap::Impl::initialize(std::string ipPortPair)
   }
 
   if (rank_ == 0) {
-    rootThread_ = std::thread(&MscclppBootstrap::Impl::bootstrapRoot, this);
+    bootstrapCreateRoot();
   }
 
   ret = establishConnections();
@@ -184,39 +182,33 @@ mscclppResult_t MscclppBootstrap::Impl::getRemoteAddresses(mscclppSocket* listen
   mscclppResult_t res = mscclppSuccess;
 
   mscclppSocketAddress zero;
-  printf("hh 0\n");
   std::memset(&zero, 0, sizeof(mscclppSocketAddress));
   res = mscclppSocketInit(&sock);
   if (res != mscclppSuccess) {
     WARN("Bootstrap Root : mscclppSocketInit failed");
     return res;
   }
-  printf("hh 1\n");
   res = mscclppSocketAccept(&sock, listenSock);
   if (res != mscclppSuccess) {
     WARN("Bootstrap Root : mscclppSocketAccept failed");
     return res;
   }
-  printf("hh 2\n");
   res = netRecv(&sock, &info, sizeof(info));
   if (res != mscclppSuccess) {
     WARN("Bootstrap Root : netRecv failed");
     return res;
   }
-  printf("hh 3\n");
   res = mscclppSocketClose(&sock);
   if (res != mscclppSuccess) {
     WARN("Bootstrap Root : mscclppSocketClose failed");
     return res;
   }
 
-  printf("hh 4\n");
   if (this->nRanks_ != info.nRanks) {
     WARN("Bootstrap Root : mismatch in rank count from procs %d : %d", this->nRanks_, info.nRanks);
     return res;
   }
 
-  printf("hh 5\n");
   if (std::memcmp(&zero, &rankAddressesRoot[info.rank], sizeof(mscclppSocketAddress)) != 0) {
     WARN("Bootstrap Root : rank %d of %d ranks has already checked in", info.rank, this->nRanks_);
     return res;
@@ -259,9 +251,31 @@ mscclppResult_t MscclppBootstrap::Impl::sendHandleToPeer(int peer,
   return mscclppSuccess;
 }
 
-mscclppResult_t MscclppBootstrap::Impl::bootstrapRoot()
+void MscclppBootstrap::Impl::bootstrapCreateRoot()
 {
-  printf("I am here0 magic %x\n", uniqueId_.magic);
+  mscclppSocket listenSock;
+
+  // mscclppSocket* listenSock = new mscclppSocket(); // TODO(saemal) make this a shared ptr
+  auto ret = mscclppSocketInit(&listenSock, &uniqueId_.addr, uniqueId_.magic, mscclppSocketTypeBootstrap, nullptr, 0);
+  if (ret != mscclppSuccess) {
+    throw std::runtime_error("Failed to initialize socket");
+  }
+  ret = mscclppSocketListen(&listenSock);
+  if (ret != mscclppSuccess) {
+    throw std::runtime_error("Failed to listen on socket");
+  }
+  ret = mscclppSocketGetAddr(&listenSock, &uniqueId_.addr);
+  if (ret != mscclppSuccess) {
+    throw std::runtime_error("Failed to get socket address");
+  }
+  auto lambda = [this, listenSock]() {
+    this->bootstrapRoot(listenSock);
+  };
+  rootThread_ = std::thread(lambda);
+}
+
+mscclppResult_t MscclppBootstrap::Impl::bootstrapRoot(mscclppSocket listenSock)
+{
   mscclppResult_t res = mscclppSuccess;
   int numCollected = 0;
   std::vector<mscclppSocketAddress> rankAddresses(this->nRanks_, mscclppSocketAddress());
@@ -272,20 +286,11 @@ mscclppResult_t MscclppBootstrap::Impl::bootstrapRoot()
   std::memset(rankAddressesRoot.data(), 0, sizeof(mscclppSocketAddress) * this->nRanks_);
   setFilesLimit();
 
-  printf("I am here1 %x\n", uniqueId_.magic);
-  mscclppSocket listenSock;
-  MSCCLPPCHECK(
-    mscclppSocketInit(&listenSock, &uniqueId_.addr, uniqueId_.magic, mscclppSocketTypeBootstrap, nullptr, 0));
-  MSCCLPPCHECK(mscclppSocketListen(&listenSock));
-  printf("I am here2\n");
-
   TRACE(MSCCLPP_INIT, "BEGIN");
-  printf("I am here3\n");
   /* Receive addresses from all ranks */
   do {
     int rank;
     res = getRemoteAddresses(&listenSock, rankAddresses, rankAddressesRoot, rank);
-    printf("I am here4\n");
     if (res != mscclppSuccess) {
       WARN("Bootstrap Root : getRemoteAddresses failed");
       break;
@@ -380,16 +385,11 @@ mscclppResult_t MscclppBootstrap::Impl::establishConnections()
   std::sprintf(line, " %s:", netIfName_);
   mscclppSocketToString(&this->uniqueId_.addr, line + strlen(line));
 
-  printf("tt 1  %s\n", line);
   // send info on my listening socket to root
   MSCCLPPCHECK(mscclppSocketInit(&sock, &this->uniqueId_.addr, magic, mscclppSocketTypeBootstrap, this->abortFlag_));
-  printf("tt 2\n");
   MSCCLPPCHECK(mscclppSocketConnect(&sock));
-  printf("tt 3\n");
   MSCCLPPCHECK(netSend(&sock, &info, sizeof(info)));
-  printf("tt 4\n");
   MSCCLPPCHECK(mscclppSocketClose(&sock));
-  printf("tt 5\n");
 
   // get info on my "next" rank in the bootstrap ring from root
   MSCCLPPCHECK(mscclppSocketInit(&sock));
@@ -771,7 +771,7 @@ mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool
     memcpy(&handle->addr, &bootstrapNetIfAddr, sizeof(union mscclppSocketAddress));
     MSCCLPPCHECK(bootstrapCreateRoot(handle));
   }
-  // printf("addr = %s port = %d\n", inet_ntoa(handle->addr.sin.sin_addr), (int)ntohs(handle->addr.sin.sin_port));
+  printf("addr = %s port = %d\n", inet_ntoa(handle->addr.sin.sin_addr), (int)ntohs(handle->addr.sin.sin_port));
   // printf("addr = %s\n", inet_ntoa((*(struct sockaddr_in*)&handle->addr.sa).sin_addr));
 
   return mscclppSuccess;
