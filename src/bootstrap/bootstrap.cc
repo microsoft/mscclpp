@@ -46,14 +46,14 @@ enum bootstrapInterface_t
   dontCareIf = -2
 };
 
-struct unexpectedMsg
+struct UnexpectedMsg
 {
   int peer;
   int tag;
   std::shared_ptr<mscclppSocket> sock;
 };
 
-struct extInfo
+struct ExtInfo
 {
   int rank;
   int nRanks;
@@ -95,7 +95,7 @@ private:
   mscclppSocket ringRecvSocket_;
   mscclppSocket ringSendSocket_;
   std::vector<mscclppSocketAddress> peerCommAddresses_;
-  std::list<unexpectedMsg> unexpectedMessages_;
+  std::list<UnexpectedMsg> unexpectedMessages_;
   std::vector<int> barrierArr_;
   volatile uint32_t* abortFlag_;
   std::thread rootThread_;
@@ -175,7 +175,7 @@ void DefaultBootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock,
                                                            int& rank)
 {
   mscclppSocket sock;
-  extInfo info;
+  ExtInfo info;
 
   mscclppSocketAddress zero;
   std::memset(&zero, 0, sizeof(mscclppSocketAddress));
@@ -292,7 +292,7 @@ void DefaultBootstrap::Impl::establishConnections()
 {
   mscclppSocketAddress nextAddr;
   mscclppSocket sock, listenSockRoot;
-  extInfo info;
+  ExtInfo info;
 
   TRACE(MSCCLPP_INIT, "rank %d nranks %d", rank_, nRanks_);
 
@@ -502,7 +502,7 @@ MSCCLPP_API_CPP DefaultBootstrap::~DefaultBootstrap()
 }
 
 // ------------------- Old bootstrap functions -------------------
-struct bootstrapRootArgs
+struct BootstrapRootArgs
 {
   struct mscclppSocket* listenSock;
   uint64_t magic;
@@ -573,7 +573,7 @@ static mscclppResult_t bootstrapNetRecv(struct mscclppSocket* sock, void* data, 
   return mscclppSuccess;
 }
 
-// struct extInfo
+// struct ExtInfo
 // {
 //   int rank;
 //   int nranks;
@@ -594,12 +594,12 @@ static mscclppResult_t bootstrapNetRecv(struct mscclppSocket* sock, void* data, 
 
 static void* bootstrapRoot(void* rargs)
 {
-  struct bootstrapRootArgs* args = (struct bootstrapRootArgs*)rargs;
+  struct BootstrapRootArgs* args = (struct BootstrapRootArgs*)rargs;
   struct mscclppSocket* listenSock = args->listenSock;
   uint64_t magic = args->magic;
   mscclppResult_t res = mscclppSuccess;
   int nranks = 0, c = 0;
-  struct extInfo info;
+  struct ExtInfo info;
   union mscclppSocketAddress* rankAddresses = NULL;
   union mscclppSocketAddress* rankAddressesRoot = NULL; // for initial rank <-> root information exchange
   union mscclppSocketAddress* zero = NULL;
@@ -671,7 +671,7 @@ out:
 mscclppResult_t bootstrapCreateRoot(struct mscclppBootstrapHandle* handle)
 {
   struct mscclppSocket* listenSock;
-  struct bootstrapRootArgs* args;
+  struct BootstrapRootArgs* args;
   pthread_t thread;
 
   MSCCLPPCHECK(mscclppCalloc(&listenSock, 1));
@@ -722,22 +722,22 @@ mscclppResult_t bootstrapGetUniqueId(struct mscclppBootstrapHandle* handle, bool
   return mscclppSuccess;
 }
 
-struct unexConn
+struct UnexConn
 {
   int peer;
   int tag;
   struct mscclppSocket sock;
-  struct unexConn* next;
+  struct UnexConn* next;
 };
 
-struct bootstrapState
+struct BootstrapState
 {
   struct mscclppSocket listenSock;
   struct mscclppSocket ringRecvSocket;
   struct mscclppSocket ringSendSocket;
   union mscclppSocketAddress* peerCommAddresses;
   union mscclppSocketAddress* peerProxyAddresses;
-  struct unexConn* unexpectedConnections;
+  struct UnexConn* unexpectedConnections;
   int cudaDev;
   int rank;
   int nranks;
@@ -749,11 +749,11 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
 {
   int rank = comm->rank;
   int nranks = comm->nRanks;
-  struct bootstrapState* state;
+  struct BootstrapState* state;
   struct mscclppSocket* proxySocket;
   mscclppSocketAddress nextAddr;
   struct mscclppSocket sock, listenSockRoot;
-  struct extInfo info;
+  struct ExtInfo info;
 
   MSCCLPPCHECK(mscclppCalloc(&state, 1));
   state->rank = rank;
@@ -833,7 +833,7 @@ mscclppResult_t bootstrapInit(struct mscclppBootstrapHandle* handle, struct mscc
 
 mscclppResult_t bootstrapAllGather(void* commState, void* allData, int size)
 {
-  struct bootstrapState* state = (struct bootstrapState*)commState;
+  struct BootstrapState* state = (struct BootstrapState*)commState;
   char* data = (char*)allData;
   int rank = state->rank;
   int nranks = state->nranks;
@@ -861,7 +861,7 @@ mscclppResult_t bootstrapAllGather(void* commState, void* allData, int size)
 mscclppResult_t bootstrapSend(void* commState, int peer, int tag, void* data, int size)
 {
   mscclppResult_t ret = mscclppSuccess;
-  struct bootstrapState* state = (struct bootstrapState*)commState;
+  struct BootstrapState* state = (struct BootstrapState*)commState;
   struct mscclppSocket sock;
 
   MSCCLPPCHECKGOTO(mscclppSocketInit(&sock, state->peerCommAddresses + peer, state->magic, mscclppSocketTypeBootstrap,
@@ -920,17 +920,17 @@ mscclppResult_t bootstrapIntraNodeAllGather(void* commState, int* ranks, int ran
   return mscclppSuccess;
 }
 
-mscclppResult_t unexpectedEnqueue(struct bootstrapState* state, int peer, int tag, struct mscclppSocket* sock)
+mscclppResult_t unexpectedEnqueue(struct BootstrapState* state, int peer, int tag, struct mscclppSocket* sock)
 {
   // New unex
-  struct unexConn* unex;
+  struct UnexConn* unex;
   MSCCLPPCHECK(mscclppCalloc(&unex, 1));
   unex->peer = peer;
   unex->tag = tag;
   memcpy(&unex->sock, sock, sizeof(struct mscclppSocket));
 
   // Enqueue
-  struct unexConn* list = state->unexpectedConnections;
+  struct UnexConn* list = state->unexpectedConnections;
   if (list == NULL) {
     state->unexpectedConnections = unex;
     return mscclppSuccess;
@@ -941,11 +941,11 @@ mscclppResult_t unexpectedEnqueue(struct bootstrapState* state, int peer, int ta
   return mscclppSuccess;
 }
 
-mscclppResult_t unexpectedDequeue(struct bootstrapState* state, int peer, int tag, struct mscclppSocket* sock,
+mscclppResult_t unexpectedDequeue(struct BootstrapState* state, int peer, int tag, struct mscclppSocket* sock,
                                   int* found)
 {
-  struct unexConn* elem = state->unexpectedConnections;
-  struct unexConn* prev = NULL;
+  struct UnexConn* elem = state->unexpectedConnections;
+  struct UnexConn* prev = NULL;
   *found = 0;
   while (elem) {
     if (elem->peer == peer && elem->tag == tag) {
@@ -965,10 +965,10 @@ mscclppResult_t unexpectedDequeue(struct bootstrapState* state, int peer, int ta
   return mscclppSuccess;
 }
 
-static void unexpectedFree(struct bootstrapState* state)
+static void unexpectedFree(struct BootstrapState* state)
 {
-  struct unexConn* elem = state->unexpectedConnections;
-  struct unexConn* prev = NULL;
+  struct UnexConn* elem = state->unexpectedConnections;
+  struct UnexConn* prev = NULL;
 
   while (elem) {
     prev = elem;
@@ -982,7 +982,7 @@ static void unexpectedFree(struct bootstrapState* state)
 mscclppResult_t bootstrapRecv(void* commState, int peer, int tag, void* data, int size)
 {
   mscclppResult_t ret = mscclppSuccess;
-  struct bootstrapState* state = (struct bootstrapState*)commState;
+  struct BootstrapState* state = (struct BootstrapState*)commState;
   struct mscclppSocket sock;
   int newPeer, newTag;
 
@@ -1016,7 +1016,7 @@ fail:
 
 mscclppResult_t bootstrapClose(void* commState)
 {
-  struct bootstrapState* state = (struct bootstrapState*)commState;
+  struct BootstrapState* state = (struct BootstrapState*)commState;
   if (state->unexpectedConnections != NULL) {
     unexpectedFree(state);
     if (*state->abortFlag == 0) {
@@ -1037,7 +1037,7 @@ mscclppResult_t bootstrapClose(void* commState)
 
 mscclppResult_t bootstrapAbort(void* commState)
 {
-  struct bootstrapState* state = (struct bootstrapState*)commState;
+  struct BootstrapState* state = (struct BootstrapState*)commState;
   if (commState == NULL)
     return mscclppSuccess;
   MSCCLPPCHECK(mscclppSocketClose(&state->listenSock));
