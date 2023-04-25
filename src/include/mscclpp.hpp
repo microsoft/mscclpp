@@ -25,22 +25,22 @@ struct UniqueId {
   char internal[MSCCLPP_UNIQUE_ID_BYTES];
 };
 
-class Bootstrap
+class BaseBootstrap
 {
 public:
-  Bootstrap(){};
-  virtual ~Bootstrap() = default;
+  BaseBootstrap(){};
+  virtual ~BaseBootstrap() = default;
   virtual void send(void* data, int size, int peer, int tag) = 0;
   virtual void recv(void* data, int size, int peer, int tag) = 0;
   virtual void allGather(void* allData, int size) = 0;
   virtual void barrier() = 0;
 };
 
-class DefaultBootstrap : public Bootstrap
+class Bootstrap : public BaseBootstrap
 {
 public:
-  DefaultBootstrap(int rank, int nRanks);
-  ~DefaultBootstrap();
+  Bootstrap(int rank, int nRanks);
+  ~Bootstrap();
 
   UniqueId createUniqueId();
   UniqueId getUniqueId() const;

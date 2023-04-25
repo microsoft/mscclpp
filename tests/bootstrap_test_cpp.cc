@@ -11,7 +11,7 @@ int main()
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
 
-  std::shared_ptr<mscclpp::DefaultBootstrap> bootstrap(new mscclpp::DefaultBootstrap(rank, worldSize));
+  std::shared_ptr<mscclpp::Bootstrap> bootstrap(new mscclpp::Bootstrap(rank, worldSize));
   // bootstrap->Initialize("costsim-dev-00000A:50000");
   mscclpp::UniqueId id;
   if (rank == 0)
