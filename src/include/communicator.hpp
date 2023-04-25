@@ -9,15 +9,15 @@
 namespace mscclpp {
 
 struct Communicator::Impl {
-    mscclppComm_t comm;
-    std::vector<std::shared_ptr<HostConnection>> connections;
-    Proxy proxy;
+  mscclppComm_t comm;
+  std::vector<std::shared_ptr<Connection>> connections;
+  Proxy proxy;
 
-    Impl();
+  Impl();
 
-    ~Impl();
+  ~Impl();
 
-    friend class HostConnection;
+  friend class Connection;
 };
 
 } // namespace mscclpp

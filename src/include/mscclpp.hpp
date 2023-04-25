@@ -26,8 +26,9 @@ struct UniqueId {
 std::unique_ptr<UniqueId> getUniqueId();
 
 using TransportFlags = uint32_t;
+const TransportFlags TransportNone = 0b0;
 const TransportFlags TransportCudaIpc = 0b1;
-const TransportFlags TransportIB = 0b10;
+const TransportFlags TransportIB0 = 0b10;
 const TransportFlags TransportIB1 = 0b100;
 const TransportFlags TransportIB2 = 0b1000;
 const TransportFlags TransportIB3 = 0b10000;
@@ -37,7 +38,12 @@ const TransportFlags TransportIB6 = 0b10000000;
 const TransportFlags TransportIB7 = 0b100000000;
 const TransportFlags TransportAll = 0b111111111;
 
+int getIBDeviceCount();
+std::string getIBDeviceName(TransportFlags ibTransport);
+TransportFlags getIBTransportByDeviceName(const std::string& ibDeviceName);
+
 class Communicator;
+class Connection;
 
 class RegisteredMemory {
   struct Impl;
@@ -55,31 +61,20 @@ public:
   static RegisteredMemory deserialize(const std::vector<char>& data);
 
   int rank();
-  bool isLocal();
-  bool isRemote();
+
+  friend class Connection;
 };
 
 class Connection {
-  struct Impl;
-  std::unique_ptr<Impl> pimpl;
-public:
+  virtual ~Connection() = 0;
 
-  /* Connection can not be constructed from user code and must instead be created through Communicator::connect */
-  Connection(std::unique_ptr<Impl>);
-  ~Connection();
+  virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size) = 0;
 
-  void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size);
+  virtual void flush() = 0;
 
-  void flush();
+  virtual TransportFlags transport() = 0;
 
-  TransportFlags transport();
-  TransportFlags remoteTransport(); // Good to have because different IB transports can still connect to each other
-
-  // template<typename T> void write(RegisteredPtr<T> dst, RegisteredPtr<T> src, uint64_t size) {
-  //   write(dst.memory(), dst.offset() * sizeof(T), src.memory(), src.offset() * sizeof(T), size);
-  // }
-
-  friend class Communicator;
+  virtual TransportFlags remoteTransport() = 0;
 };
 
 class Communicator {
@@ -144,6 +139,11 @@ public:
   *   ibDev:         the name of the IB device to be used. Expects a null for mscclppTransportP2P.
   */
   std::shared_ptr<Connection> connect(int remoteRank, int tag, TransportFlags transport);
+
+  /* Establish all connections declared by connect(). This function must be called after all connect()
+  * calls are made. This function ensures that all remote ranks are ready to communicate when it returns.
+  */
+  void connectionSetup();
 
   /* Return the rank of the calling process.
   *

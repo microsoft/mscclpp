@@ -17,9 +17,16 @@ Communicator::Impl::~Impl() {
 
 MSCCLPP_API_CPP Communicator::~Communicator() = default;
 
-static mscclppTransport_t transportFlagsToCStyle(TransportFlags flags) {
+static mscclppTransport_t transportToCStyle(TransportFlags flags) {
   switch (flags) {
-    case TransportIB:
+    case TransportIB0:
+    case TransportIB1:
+    case TransportIB2:
+    case TransportIB3:
+    case TransportIB4:
+    case TransportIB5:
+    case TransportIB6:
+    case TransportIB7:
       return mscclppTransportIB;
     case TransportCudaIpc:
       return mscclppTransportP2P;
@@ -46,24 +53,29 @@ MSCCLPP_API_CPP void Communicator::bootstrapBarrier() {
   mscclppBootstrapBarrier(pimpl->comm);
 }
 
-MSCCLPP_API_CPP std::shared_ptr<HostConnection> Communicator::connect(int remoteRank, int tag, TransportFlags transportFlags, const char* ibDev) {
-  mscclppConnectWithoutBuffer(pimpl->comm, remoteRank, tag, transportFlagsToCStyle(transportFlags), ibDev);
+MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank, int tag, TransportFlags transport) {
+  std::string ibDev;
+  switch (transport) {
+    case TransportIB0:
+    case TransportIB1:
+    case TransportIB2:
+    case TransportIB3:
+    case TransportIB4:
+    case TransportIB5:
+    case TransportIB6:
+    case TransportIB7:
+      ibDev = getIBDeviceName(transport);
+      break;
+  }
+  mscclppConnectWithoutBuffer(pimpl->comm, remoteRank, tag, transportToCStyle(transport), ibDev.c_str());
   auto connIdx = pimpl->connections.size();
-  auto conn = std::make_shared<HostConnection>(std::make_unique<HostConnection::Impl>(this, &pimpl->comm->conns[connIdx]));
+  auto conn = std::make_shared<Connection>(std::make_unique<Connection::Impl>(this, &pimpl->comm->conns[connIdx]));
   pimpl->connections.push_back(conn);
   return conn;
 }
 
 MSCCLPP_API_CPP void Communicator::connectionSetup() {
   mscclppConnectionSetup(pimpl->comm);
-}
-
-MSCCLPP_API_CPP void Communicator::startProxying() {
-  pimpl->proxy.start();
-}
-
-MSCCLPP_API_CPP void Communicator::stopProxying() {
-  pimpl->proxy.stop();
 }
 
 MSCCLPP_API_CPP int Communicator::rank() {
