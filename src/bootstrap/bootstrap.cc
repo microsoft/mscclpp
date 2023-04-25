@@ -79,6 +79,8 @@ public:
   void establishConnections();
   UniqueId createUniqueId();
   UniqueId getUniqueId() const;
+  int getRank();
+  int getNranks();
   void allGather(void* allData, int size);
   void send(void* data, int size, int peer, int tag);
   void recv(void* data, int size, int peer, int tag);
@@ -135,6 +137,16 @@ UniqueId Bootstrap::Impl::createUniqueId()
   std::memcpy(&uniqueId_.addr, &netIfAddr_, sizeof(mscclppSocketAddress));
   bootstrapCreateRoot();
   return getUniqueId();
+}
+
+int Bootstrap::Impl::getRank()
+{
+  return rank_;
+}
+
+int Bootstrap::Impl::getNranks()
+{
+  return nRanks_;
 }
 
 void Bootstrap::Impl::initialize(const UniqueId uniqueId)
@@ -453,6 +465,16 @@ MSCCLPP_API_CPP UniqueId Bootstrap::createUniqueId()
 MSCCLPP_API_CPP UniqueId Bootstrap::getUniqueId() const
 {
   return pimpl_->getUniqueId();
+}
+
+MSCCLPP_API_CPP int Bootstrap::getRank()
+{
+  return pimpl_->getRank();
+}
+
+MSCCLPP_API_CPP int Bootstrap::getNranks()
+{
+  return pimpl_->getNranks();
 }
 
 MSCCLPP_API_CPP void Bootstrap::send(void* data, int size, int peer, int tag)

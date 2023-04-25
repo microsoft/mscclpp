@@ -30,6 +30,8 @@ class BaseBootstrap
 public:
   BaseBootstrap(){};
   virtual ~BaseBootstrap() = default;
+  virtual int getRank() = 0;
+  virtual int getNranks() = 0;
   virtual void send(void* data, int size, int peer, int tag) = 0;
   virtual void recv(void* data, int size, int peer, int tag) = 0;
   virtual void allGather(void* allData, int size) = 0;
@@ -47,6 +49,8 @@ public:
 
   void initialize(UniqueId uniqueId);
   void initialize(std::string ipPortPair);
+  int getRank() override;
+  int getNranks() override;
   void send(void* data, int size, int peer, int tag) override;
   void recv(void* data, int size, int peer, int tag) override;
   void allGather(void* allData, int size) override;
