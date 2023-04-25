@@ -22,7 +22,7 @@ public:
 
   UniqueId GetUniqueId();
 
-  void Initialize(const UniqueId uniqueId);
+  void Initialize(UniqueId uniqueId);
   void Initialize(std::string ipPortPair);
   void Send(void* data, int size, int peer, int tag) override;
   void Recv(void* data, int size, int peer, int tag) override;
