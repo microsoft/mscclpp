@@ -4,6 +4,7 @@
 #include "mscclpp.hpp"
 #include "utils.h"
 
+#include <algorithm>
 #include <cstring>
 #include <mutex>
 #include <queue>
@@ -399,14 +400,14 @@ void Bootstrap::Impl::send(void* data, int size, int peer, int tag)
 void Bootstrap::Impl::recv(void* data, int size, int peer, int tag)
 {
   // search over all unexpected messages
-  for (auto it = unexpectedMessages_.begin(); it != unexpectedMessages_.end(); ++it) {
-    if (it->peer == peer && it->tag == tag) {
-      // found a match
-      netRecv(it->sock.get(), data, size);
-      MSCCLPPTHROW(mscclppSocketClose(it->sock.get()));
-      unexpectedMessages_.erase(it);
-      return;
-    }
+  auto lambda = [peer, tag](const UnexpectedMsg& msg) { return msg.peer == peer && msg.tag == tag; };
+  auto it = std::find_if(unexpectedMessages_.begin(), unexpectedMessages_.end(), lambda);
+  if (it != unexpectedMessages_.end()) {
+    // found a match
+    netRecv(it->sock.get(), data, size);
+    MSCCLPPTHROW(mscclppSocketClose(it->sock.get()));
+    unexpectedMessages_.erase(it);
+    return;
   }
   // didn't find one
   while (true) {
