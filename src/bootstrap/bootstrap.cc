@@ -213,18 +213,9 @@ void Bootstrap::Impl::bootstrapCreateRoot()
   mscclppSocket listenSock;
 
   // mscclppSocket* listenSock = new mscclppSocket(); // TODO(saemal) make this a shared ptr
-  auto ret = mscclppSocketInit(&listenSock, &uniqueId_.addr, uniqueId_.magic, mscclppSocketTypeBootstrap, nullptr, 0);
-  if (ret != mscclppSuccess) {
-    throw std::runtime_error("Failed to initialize socket");
-  }
-  ret = mscclppSocketListen(&listenSock);
-  if (ret != mscclppSuccess) {
-    throw std::runtime_error("Failed to listen on socket");
-  }
-  ret = mscclppSocketGetAddr(&listenSock, &uniqueId_.addr);
-  if (ret != mscclppSuccess) {
-    throw std::runtime_error("Failed to get socket address");
-  }
+  MSCCLPPTHROW(mscclppSocketInit(&listenSock, &uniqueId_.addr, uniqueId_.magic, mscclppSocketTypeBootstrap, nullptr, 0));
+  MSCCLPPTHROW(mscclppSocketListen(&listenSock));
+  MSCCLPPTHROW(mscclppSocketGetAddr(&listenSock, &uniqueId_.addr));
   auto lambda = [this, listenSock]() { this->bootstrapRoot(listenSock); };
   rootThread_ = std::thread(lambda);
 }

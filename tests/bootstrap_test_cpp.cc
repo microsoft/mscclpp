@@ -34,10 +34,12 @@ int main()
   for (int i = 0; i < worldSize; i++) {
     if (i == rank)
       continue;
-    int msg1 = (rank + 1) * 2;
-    int msg2 = (rank + 1) * 2 + 1;
+    int msg1 = (rank + 1) * 3;
+    int msg2 = (rank + 1) * 3 + 1;
+    int msg3 = (rank + 1) * 3 + 2;
     bootstrap->send(&msg1, sizeof(int), i, 0);
     bootstrap->send(&msg2, sizeof(int), i, 1);
+    bootstrap->send(&msg3, sizeof(int), i, 2);
   }
 
   for (int i = 0; i < worldSize; i++) {
@@ -45,10 +47,12 @@ int main()
       continue;
     int msg1 = 0;
     int msg2 = 0;
+    int msg3 = 0;
     // recv them in the opposite order to check correctness
     bootstrap->recv(&msg2, sizeof(int), i, 1);
+    bootstrap->recv(&msg3, sizeof(int), i, 2);
     bootstrap->recv(&msg1, sizeof(int), i, 0);
-    if (msg1 != (i + 1) * 2 || msg2 != (i + 1) * 2 + 1)
+    if (msg1 != (i + 1) * 3 || msg2 != (i + 1) * 3 + 1 || msg3 != (i + 1) * 3 + 2)
       printf("error Send/Recv: rank %d: msg1 = %d, msg2 = %d\n", rank, msg1, msg2);
   }
   printf("rank %d: Send/Recv test passed!\n", rank);
