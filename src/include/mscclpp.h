@@ -248,16 +248,6 @@ typedef enum
 } mscclppResult_t;
 
 
-class Bootstrap {
-public:
-  Bootstrap(){};
-  virtual ~Bootstrap() = default;
-  virtual void Send(void* data, int size, int peer, int tag) = 0;
-  virtual void Recv(void* data, int size, int peer, int tag) = 0;
-  virtual void AllGather(void* allData, int size) = 0;
-  virtual void Barrier() = 0;
-};
-
 /* Create a unique ID for communication. Only needs to be called by one process.
  * Use with mscclppCommInitRankFromId().
  * All processes need to provide the same ID to mscclppCommInitRankFromId().

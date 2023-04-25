@@ -13,11 +13,50 @@
 
 #include <vector>
 #include <memory>
+#include <string>
 #include <functional>
 
 #include <mscclppfifo.hpp>
 
 namespace mscclpp {
+
+#define MSCCLPP_UNIQUE_ID_BYTES 128
+struct UniqueId {
+  char internal[MSCCLPP_UNIQUE_ID_BYTES];
+};
+
+class Bootstrap
+{
+public:
+  Bootstrap(){};
+  virtual ~Bootstrap() = default;
+  virtual void send(void* data, int size, int peer, int tag) = 0;
+  virtual void recv(void* data, int size, int peer, int tag) = 0;
+  virtual void allGather(void* allData, int size) = 0;
+  virtual void barrier() = 0;
+};
+
+class DefaultBootstrap : public Bootstrap
+{
+public:
+  DefaultBootstrap(int rank, int nRanks);
+  ~DefaultBootstrap();
+
+  UniqueId createUniqueId();
+  UniqueId getUniqueId() const;
+
+  void initialize(UniqueId uniqueId);
+  void initialize(std::string ipPortPair);
+  void send(void* data, int size, int peer, int tag) override;
+  void recv(void* data, int size, int peer, int tag) override;
+  void allGather(void* allData, int size) override;
+  void barrier() override;
+
+private:
+  class Impl;
+  std::unique_ptr<Impl> pimpl_;
+};
+
 
 struct alignas(16) SignalEpochId {
   // every signal(), increaments this and either:
@@ -379,11 +418,6 @@ struct SimpleDeviceConnection {
   DeviceConnection devConn;
   BufferHandle dst;
   BufferHandle src;
-};
-
-#define MSCCLPP_UNIQUE_ID_BYTES 128
-struct UniqueId {
-  char internal[MSCCLPP_UNIQUE_ID_BYTES];
 };
 
 /* Create a unique ID for communication. Only needs to be called by one process.

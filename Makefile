@@ -134,7 +134,7 @@ HEADERS := $(wildcard src/include/*.h)
 CPPSOURCES := $(shell find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*" -not -path "./python/*")
 PYTHONCPPSOURCES := $(shell find ./python/src/ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
 
-INCEXPORTS := mscclpp.h mscclppfifo.h
+INCEXPORTS := mscclpp.h mscclppfifo.h mscclpp.hpp mscclppfifo.hpp
 INCTARGETS := $(INCEXPORTS:%=$(BUILDDIR)/$(INCDIR)/%)
 
 LIBNAME   := libmscclpp.so
@@ -198,7 +198,7 @@ $(BUILDDIR)/$(OBJDIR)/$(UTDIR)/%.o: $(UTDIR)/%.cc $(HEADERS)
 	@mkdir -p $(@D)
 	$(CXX) -o $@ $(INCLUDE) $(CXXFLAGS) -c $<
 
-$(BUILDDIR)/$(INCDIR)/%.h: src/$(INCDIR)/%.h
+$(BUILDDIR)/$(INCDIR)/%: src/$(INCDIR)/%
 	@mkdir -p $(@D)
 	cp $< $@
 
@@ -216,7 +216,7 @@ $(BUILDDIR)/$(BINDIR)/$(UTDIR)/%: $(BUILDDIR)/$(OBJDIR)/$(UTDIR)/%.o $(LIBOBJTAR
 # Compile .cc tests
 $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cc $(INCTARGETS)
 	@mkdir -p $(@D)
-	$(CXX) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(CXXFLAGS) -Isrc/include -c $< $(MPI_MACRO)
+	$(CXX) -o $@ -I$(BUILDDIR)/$(INCDIR) $(MPI_INC) $(CXXFLAGS) -c $< $(MPI_MACRO)
 
 # Compile .cu tests
 $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)/%.o: $(TESTSDIR)/%.cu $(INCTARGETS)

@@ -5,35 +5,6 @@
 
 #include "comm.h"
 
-struct UniqueId
-{
-  uint64_t magic;
-  union mscclppSocketAddress addr;
-};
-
-static_assert(sizeof(UniqueId) <= sizeof(mscclppUniqueId),
-              "Bootstrap handle is too large to fit inside MSCCLPP unique ID");
-
-class __attribute__((visibility("default"))) mscclppBootstrap : public Bootstrap
-{
-public:
-  mscclppBootstrap(int rank, int nRanks);
-  ~mscclppBootstrap();
-
-  UniqueId GetUniqueId();
-
-  void Initialize(UniqueId uniqueId);
-  void Initialize(std::string ipPortPair);
-  void Send(void* data, int size, int peer, int tag) override;
-  void Recv(void* data, int size, int peer, int tag) override;
-  void AllGather(void* allData, int size) override;
-  void Barrier() override;
-
-private:
-  class Impl;
-  std::unique_ptr<Impl> pimpl_;
-};
-
 // ------------------- Old bootstrap headers: to be removed -------------------
 
 struct mscclppBootstrapHandle
