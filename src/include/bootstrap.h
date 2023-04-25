@@ -31,7 +31,7 @@ public:
 
 private:
   class Impl;
-  Impl* pimpl_;
+  std::unique_ptr<Impl> pimpl_;
 };
 
 // ------------------- Old bootstrap headers: to be removed -------------------

@@ -436,7 +436,7 @@ void mscclppBootstrap::Impl::close()
 mscclppBootstrap::mscclppBootstrap(int rank, int nRanks)
 {
   // pimpl_ = std::make_unique<Impl>(ipPortPair, rank, nRanks, uniqueId);
-  pimpl_ = new Impl(rank, nRanks);
+  pimpl_ = std::make_unique<Impl>(rank, nRanks);
 }
 
 UniqueId mscclppBootstrap::GetUniqueId()
