@@ -1,8 +1,8 @@
-#include "mscclpp.hpp"
 #include "bootstrap.h"
-#include "utils.h"
-#include "checks.hpp"
 #include "api.h"
+#include "checks.hpp"
+#include "mscclpp.hpp"
+#include "utils.h"
 
 #include <cstring>
 #include <mutex>
@@ -66,8 +66,7 @@ struct UniqueIdInternal
   uint64_t magic;
   union mscclppSocketAddress addr;
 };
-static_assert(sizeof(UniqueIdInternal) <= sizeof(UniqueId),
-              "UniqueIdInternal is too large to fit into UniqueId");
+static_assert(sizeof(UniqueIdInternal) <= sizeof(UniqueId), "UniqueIdInternal is too large to fit into UniqueId");
 
 class DefaultBootstrap::Impl
 {
@@ -84,7 +83,6 @@ public:
   void recv(void* data, int size, int peer, int tag);
   void barrier();
   void close();
-
 
 private:
   UniqueIdInternal uniqueId_;
@@ -108,9 +106,9 @@ private:
   void bootstrapCreateRoot();
   void bootstrapRoot(mscclppSocket listenSock);
   void getRemoteAddresses(mscclppSocket* listenSock, std::vector<mscclppSocketAddress>& rankAddresses,
-                                     std::vector<mscclppSocketAddress>& rankAddressesRoot, int& rank);
+                          std::vector<mscclppSocketAddress>& rankAddressesRoot, int& rank);
   void sendHandleToPeer(int peer, const std::vector<mscclppSocketAddress>& rankAddresses,
-                                   const std::vector<mscclppSocketAddress>& rankAddressesRoot);
+                        const std::vector<mscclppSocketAddress>& rankAddressesRoot);
   void netInit(std::string ipPortPair);
 };
 
@@ -170,9 +168,8 @@ DefaultBootstrap::Impl::~Impl()
 }
 
 void DefaultBootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock,
-                                                           std::vector<mscclppSocketAddress>& rankAddresses,
-                                                           std::vector<mscclppSocketAddress>& rankAddressesRoot,
-                                                           int& rank)
+                                                std::vector<mscclppSocketAddress>& rankAddresses,
+                                                std::vector<mscclppSocketAddress>& rankAddressesRoot, int& rank)
 {
   mscclppSocket sock;
   ExtInfo info;
@@ -185,11 +182,13 @@ void DefaultBootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock,
   MSCCLPPTHROW(mscclppSocketClose(&sock));
 
   if (this->nRanks_ != info.nRanks) {
-    throw std::runtime_error("Bootstrap Root : mismatch in rank count from procs " + std::to_string(this->nRanks_) + " : " + std::to_string(info.nRanks));
+    throw std::runtime_error("Bootstrap Root : mismatch in rank count from procs " + std::to_string(this->nRanks_) +
+                             " : " + std::to_string(info.nRanks));
   }
 
   if (std::memcmp(&zero, &rankAddressesRoot[info.rank], sizeof(mscclppSocketAddress)) != 0) {
-    throw std::runtime_error("Bootstrap Root : rank " + std::to_string(info.rank) + " of " + std::to_string(this->nRanks_) + " has already checked in");
+    throw std::runtime_error("Bootstrap Root : rank " + std::to_string(info.rank) + " of " +
+                             std::to_string(this->nRanks_) + " has already checked in");
   }
 
   // Save the connection handle for that rank
@@ -198,9 +197,8 @@ void DefaultBootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock,
   rank = info.rank;
 }
 
-void DefaultBootstrap::Impl::sendHandleToPeer(int peer,
-                                                         const std::vector<mscclppSocketAddress>& rankAddresses,
-                                                         const std::vector<mscclppSocketAddress>& rankAddressesRoot)
+void DefaultBootstrap::Impl::sendHandleToPeer(int peer, const std::vector<mscclppSocketAddress>& rankAddresses,
+                                              const std::vector<mscclppSocketAddress>& rankAddressesRoot)
 {
   mscclppSocket sock;
   int next = (peer + 1) % this->nRanks_;
@@ -227,9 +225,7 @@ void DefaultBootstrap::Impl::bootstrapCreateRoot()
   if (ret != mscclppSuccess) {
     throw std::runtime_error("Failed to get socket address");
   }
-  auto lambda = [this, listenSock]() {
-    this->bootstrapRoot(listenSock);
-  };
+  auto lambda = [this, listenSock]() { this->bootstrapRoot(listenSock); };
   rootThread_ = std::thread(lambda);
 }
 
@@ -269,7 +265,8 @@ void DefaultBootstrap::Impl::netInit(std::string ipPortPair)
   if (!ipPortPair.empty()) {
     mscclppSocketAddress remoteAddr;
     if (mscclppSocketGetAddrFromString(&remoteAddr, ipPortPair.c_str()) != mscclppSuccess) {
-      throw std::runtime_error("Invalid ipPortPair, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
+      throw std::runtime_error(
+        "Invalid ipPortPair, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
     }
     if (mscclppFindInterfaceMatchSubnet(netIfName_, &netIfAddr_, &remoteAddr, MAX_IF_NAME_SIZE, 1) <= 0) {
       throw std::runtime_error("NET/Socket : No usable listening interface found");
@@ -321,7 +318,6 @@ void DefaultBootstrap::Impl::establishConnections()
   if (this->nRanks_ > 128) {
     randomSleep(this->rank_);
   }
-
 
   char line[SOCKET_NAME_MAXLEN + MAX_IF_NAME_SIZE + 2];
   std::sprintf(line, " %s:", netIfName_);
@@ -390,7 +386,8 @@ void DefaultBootstrap::Impl::netRecv(mscclppSocket* sock, void* data, int size)
   int recvSize;
   MSCCLPPTHROW(mscclppSocketRecv(sock, &recvSize, sizeof(int)));
   if (recvSize > size) {
-    throw std::runtime_error("Message truncated : received " + std::to_string(recvSize) + " bytes instead of " + std::to_string(size));
+    throw std::runtime_error("Message truncated : received " + std::to_string(recvSize) + " bytes instead of " +
+                             std::to_string(size));
   }
   MSCCLPPTHROW(mscclppSocketRecv(sock, data, std::min(recvSize, size)));
 }
@@ -411,8 +408,8 @@ void DefaultBootstrap::Impl::send(void* data, int size, int peer, int tag)
 void DefaultBootstrap::Impl::recv(void* data, int size, int peer, int tag)
 {
   // search over all unexpected messages
-  for (auto it = unexpectedMessages_.begin(); it != unexpectedMessages_.end(); ++it){
-    if (it->peer == peer && it->tag == tag){
+  for (auto it = unexpectedMessages_.begin(); it != unexpectedMessages_.end(); ++it) {
+    if (it->peer == peer && it->tag == tag) {
       // found a match
       netRecv(it->sock.get(), data, size);
       MSCCLPPTHROW(mscclppSocketClose(it->sock.get()));
