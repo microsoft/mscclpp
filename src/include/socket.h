@@ -75,7 +75,7 @@ int mscclppFindInterfaceMatchSubnet(char* ifNames, union mscclppSocketAddress* l
 int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress* ifAddrs, int ifNameMaxSize, int maxIfs);
 
 // Initialize a socket
-mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, union mscclppSocketAddress* addr = NULL,
+mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, const mscclppSocketAddress* addr = NULL,
                                   uint64_t magic = MSCCLPP_SOCKET_MAGIC,
                                   enum mscclppSocketType type = mscclppSocketTypeUnknown,
                                   volatile uint32_t* abortFlag = NULL, int asyncFlag = 0);
