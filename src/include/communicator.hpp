@@ -10,9 +10,11 @@
 
 namespace mscclpp {
 
+class ConnectionBase;
+
 struct Communicator::Impl {
   mscclppComm_t comm;
-  std::vector<std::shared_ptr<Connection>> connections;
+  std::vector<std::shared_ptr<ConnectionBase>> connections;
   std::unordered_map<TransportFlags, mscclppIbContext*> ibContexts;
 
   Impl();

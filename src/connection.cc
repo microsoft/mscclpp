@@ -33,8 +33,8 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
   validateTransport(dst, remoteTransport());
   validateTransport(src, transport());
 
-  auto dstPtr = dst.data();
-  auto srcPtr = src.data();
+  char* dstPtr = (char*)dst.data();
+  char* srcPtr = (char*)src.data();
 
   CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, srcPtr + srcOffset, size, cudaMemcpyDeviceToDevice, stream));
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)size);
@@ -47,7 +47,7 @@ void CudaIpcConnection::flush() {
 
 // IBConnection
 
-IBConnection::IBConnection(TransportFlags transport, Communicator::Impl& commImpl) : transport_(transport), remoteTransport_(TransportNone) {
+IBConnection::IBConnection(int remoteRank, int tag, TransportFlags transport, Communicator::Impl& commImpl) : remoteRank(remoteRank), tag(tag), transport_(transport), remoteTransport_(TransportNone) {
   MSCCLPPTHROW(mscclppIbContextCreateQp(commImpl.getIbContext(transport), &qp));
 }
 
@@ -114,6 +114,14 @@ void IBConnection::flush() {
     }
   }
   // npkitCollectExitEvents(conn, NPKIT_EVENT_IB_SEND_EXIT);
+}
+
+void startSetup(Communicator& comm) {
+  // TODO: use bootstrapper from comm to send over QP info
+}
+
+void endSetup(Communicator& comm) {
+  // TODO: use bootstrapper from comm to receive QP info and do the rtr/rts calls
 }
 
 } // namespace mscclpp

@@ -10,7 +10,13 @@ namespace mscclpp {
 
 // TODO: Add functionality to these classes for Communicator to do connectionSetup
 
-class CudaIpcConnection : public Connection {
+class ConnectionBase : public Connection {
+public:
+  virtual void startSetup(Communicator&) {};
+  virtual void endSetup(Communicator&) {};
+};
+
+class CudaIpcConnection : public ConnectionBase {
   cudaStream_t stream;
 public:
 
@@ -27,13 +33,15 @@ public:
   void flush() override;
 };
 
-class IBConnection : public Connection {
+class IBConnection : public ConnectionBase {
+  int remoteRank;
+  int tag;
   TransportFlags transport_;
   TransportFlags remoteTransport_;
   mscclppIbQp* qp;
 public:
 
-  IBConnection(TransportFlags transport, Communicator::Impl& commImpl);
+  IBConnection(int remoteRank, int tag, TransportFlags transport, Communicator::Impl& commImpl);
 
   ~IBConnection();
 
@@ -44,6 +52,10 @@ public:
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size) override;
 
   void flush() override;
+
+  void startSetup(Communicator& comm) override;
+
+  void endSetup(Communicator& comm) override;
 };
 
 } // namespace mscclpp

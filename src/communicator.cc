@@ -76,20 +76,26 @@ MSCCLPP_API_CPP void Communicator::bootstrapBarrier() {
 }
 
 MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank, int tag, TransportFlags transport) {
-  std::shared_ptr<Connection> conn;
+  std::shared_ptr<ConnectionBase> conn;
   if (transport | TransportCudaIpc) {
     auto cudaIpcConn = std::make_shared<CudaIpcConnection>();
     conn = cudaIpcConn;
   } else if (transport | TransportAllIB) {
-    auto ibConn = std::make_shared<IBConnection>(transport, *pimpl);
+    auto ibConn = std::make_shared<IBConnection>(remoteRank, tag, transport, *pimpl);
     conn = ibConn;
   } else {
     throw std::runtime_error("Unsupported transport");
   }
+  pimpl->connections.push_back(conn);
 }
 
 MSCCLPP_API_CPP void Communicator::connectionSetup() {
-  mscclppConnectionSetup(pimpl->comm);
+  for (auto& conn : pimpl->connections) {
+    conn->startSetup(*this);
+  }
+  for (auto& conn : pimpl->connections) {
+    conn->endSetup(*this);
+  }
 }
 
 MSCCLPP_API_CPP int Communicator::rank() {
