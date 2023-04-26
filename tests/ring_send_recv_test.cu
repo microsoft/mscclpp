@@ -129,6 +129,6 @@ testResult_t RingSendRecvRunTest(struct testArgs* args)
   return testSuccess;
 }
 
-struct testEngine ringSendRecvTestEngine = {RingSendRecvGetBuffSize, RingSendRecvRunTest};
+struct testEngine ringSendRecvTestEngine = {RingSendRecvGetBuffSize, RingSendRecvRunTest, nullptr, nullptr};
 
 #pragma weak mscclppTestEngine = ringSendRecvTestEngine
