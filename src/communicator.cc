@@ -4,14 +4,36 @@
 #include "comm.h"
 #include "basic_proxy_handler.hpp"
 #include "api.h"
+#include "utils.h"
+#include "checks.hpp"
+#include "debug.h"
+#include "connection.hpp"
 
 namespace mscclpp {
 
-Communicator::Impl::Impl() : comm(nullptr), proxy(makeBasicProxyHandler(*this)) {}
+Communicator::Impl::Impl() : comm(nullptr) {}
 
 Communicator::Impl::~Impl() {
+  for (auto& entry : ibContexts) {
+    mscclppIbContextDestroy(entry.second);
+  }
+  ibContexts.clear();
   if (comm) {
     mscclppCommDestroy(comm);
+  }
+}
+
+mscclppIbContext* Communicator::Impl::getIbContext(TransportFlags ibTransport) {
+  // Find IB context or create it
+  auto it = ibContexts.find(ibTransport);
+  if (it == ibContexts.end()) {
+    auto ibDev = getIBDeviceName(ibTransport);
+    mscclppIbContext* ibCtx;
+    MSCCLPPTHROW(mscclppIbContextCreate(&ibCtx, ibDev.c_str()));
+    ibContexts[ibTransport] = ibCtx;
+    return ibCtx;
+  } else {
+    return it->second;
   }
 }
 
@@ -54,24 +76,16 @@ MSCCLPP_API_CPP void Communicator::bootstrapBarrier() {
 }
 
 MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank, int tag, TransportFlags transport) {
-  std::string ibDev;
-  switch (transport) {
-    case TransportIB0:
-    case TransportIB1:
-    case TransportIB2:
-    case TransportIB3:
-    case TransportIB4:
-    case TransportIB5:
-    case TransportIB6:
-    case TransportIB7:
-      ibDev = getIBDeviceName(transport);
-      break;
+  std::shared_ptr<Connection> conn;
+  if (transport | TransportCudaIpc) {
+    auto cudaIpcConn = std::make_shared<CudaIpcConnection>();
+    conn = cudaIpcConn;
+  } else if (transport | TransportAllIB) {
+    auto ibConn = std::make_shared<IBConnection>(transport, *pimpl);
+    conn = ibConn;
+  } else {
+    throw std::runtime_error("Unsupported transport");
   }
-  mscclppConnectWithoutBuffer(pimpl->comm, remoteRank, tag, transportToCStyle(transport), ibDev.c_str());
-  auto connIdx = pimpl->connections.size();
-  auto conn = std::make_shared<Connection>(std::make_unique<Connection::Impl>(this, &pimpl->comm->conns[connIdx]));
-  pimpl->connections.push_back(conn);
-  return conn;
 }
 
 MSCCLPP_API_CPP void Communicator::connectionSetup() {

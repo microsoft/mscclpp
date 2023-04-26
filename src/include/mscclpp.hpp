@@ -67,8 +67,7 @@ public:
 };
 
 class Connection {
-  virtual ~Connection() = 0;
-
+public:
   virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size) = 0;
 
   virtual void flush() = 0;
@@ -76,13 +75,13 @@ class Connection {
   virtual TransportFlags transport() = 0;
 
   virtual TransportFlags remoteTransport() = 0;
+
+protected:
+  static std::shared_ptr<RegisteredMemory::Impl> getRegisteredMemoryImpl(RegisteredMemory&);
 };
 
 class Communicator {
-  struct Impl;
-  std::unique_ptr<Impl> pimpl;
 public:
-
   /* Initialize the communicator. nranks processes with rank 0 to nranks-1 need to call this function.
   *
   * Inputs:
@@ -159,6 +158,10 @@ public:
   *   size: the number of ranks of the communicator
   */
   int size();
+  
+  struct Impl;
+private:
+  std::unique_ptr<Impl> pimpl;
 };
 
 } // namespace mscclpp

@@ -48,8 +48,8 @@ public:
   IbQp* createQp(int port = -1);
 
 private:
-  bool IbCtx::isPortUsable(int port) const;
-  int IbCtx::getAnyActivePort() const;
+  bool isPortUsable(int port) const;
+  int getAnyActivePort() const;
 
   void* ctx;
   void* pd;

@@ -5,19 +5,21 @@
 #include "mscclpp.h"
 #include "channel.hpp"
 #include "proxy.hpp"
+#include "ib.h"
+#include <unordered_map>
 
 namespace mscclpp {
 
 struct Communicator::Impl {
   mscclppComm_t comm;
   std::vector<std::shared_ptr<Connection>> connections;
-  Proxy proxy;
+  std::unordered_map<TransportFlags, mscclppIbContext*> ibContexts;
 
   Impl();
 
   ~Impl();
 
-  friend class Connection;
+  mscclppIbContext* getIbContext(TransportFlags ibTransport);
 };
 
 } // namespace mscclpp

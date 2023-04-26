@@ -4,6 +4,7 @@
 #include "mscclpp.hpp"
 #include <cuda_runtime.h>
 #include "ib.h"
+#include "communicator.hpp"
 
 namespace mscclpp {
 
@@ -15,15 +16,15 @@ public:
 
   CudaIpcConnection();
 
-  virtual ~CudaIpcConnection();
+  ~CudaIpcConnection();
 
-  virtual TransportFlags transport();
+  TransportFlags transport() override;
 
-  virtual TransportFlags remoteTransport();
+  TransportFlags remoteTransport() override;
 
-  virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size);
+  void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size) override;
 
-  virtual void flush();
+  void flush() override;
 };
 
 class IBConnection : public Connection {
@@ -34,15 +35,15 @@ public:
 
   IBConnection(TransportFlags transport, Communicator::Impl& commImpl);
 
-  virtual ~IBConnection();
+  ~IBConnection();
 
-  virtual TransportFlags transport();
+  TransportFlags transport() override;
 
-  virtual TransportFlags remoteTransport();
+  TransportFlags remoteTransport() override;
 
-  virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size);
+  void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size) override;
 
-  virtual void flush();
+  void flush() override;
 };
 
 } // namespace mscclpp

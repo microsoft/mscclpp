@@ -4,14 +4,21 @@
 #include "mscclpp.hpp"
 #include "mscclpp.h"
 #include "ib.h"
-#include <variant>
+#include "communicator.hpp"
 #include <cuda_runtime.h>
 
 namespace mscclpp {
 
 struct TransportInfo {
   TransportFlags transport;
-  std::variant<std::monostate, cudaIpcMemHandle_t, mscclppIbMr*, mscclppIbMrInfo> data;
+
+  // TODO: rewrite this using std::variant or something
+  bool ibLocal;
+  union {
+    cudaIpcMemHandle_t cudaIpcHandle;
+    mscclppIbMr* ibMr;
+    mscclppIbMrInfo ibMrInfo;
+  };
 };
 
 struct RegisteredMemory::Impl {
@@ -21,13 +28,13 @@ struct RegisteredMemory::Impl {
   TransportFlags transports;
   std::vector<TransportInfo> transportInfos;
 
-  Impl(void* data, size_t size, int rank, TransportFlags transports);
+  Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl);
   Impl(const std::vector<char>& data);
 
-  template<class T> T& getTransportInfo(TransportFlags transport) {
+  TransportInfo& getTransportInfo(TransportFlags transport) {
     for (auto& entry : transportInfos) {
       if (entry.transport == transport) {
-        return std::get<T>(entry.data);
+        return entry;
       }
     }
     throw std::runtime_error("Transport data not found");
