@@ -36,7 +36,9 @@ const TransportFlags TransportIB4 = 0b100000;
 const TransportFlags TransportIB5 = 0b1000000;
 const TransportFlags TransportIB6 = 0b10000000;
 const TransportFlags TransportIB7 = 0b100000000;
+
 const TransportFlags TransportAll = 0b111111111;
+const TransportFlags TransportAllIB = 0b111111110;
 
 int getIBDeviceCount();
 std::string getIBDeviceName(TransportFlags ibTransport);
@@ -55,12 +57,11 @@ public:
 
   void* data();
   size_t size();
+  int rank();
   TransportFlags transports();
 
   std::vector<char> serialize();
   static RegisteredMemory deserialize(const std::vector<char>& data);
-
-  int rank();
 
   friend class Connection;
 };

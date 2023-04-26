@@ -2,39 +2,32 @@
 #define MSCCLPP_REGISTERED_MEMORY_HPP_
 
 #include "mscclpp.hpp"
+#include "mscclpp.h"
 #include "ib.h"
 #include <variant>
 #include <cuda_runtime.h>
 
 namespace mscclpp {
 
-struct IBTransportData {
-  mscclppIbMr localIbMr;
-  mscclppIbMrInfo remoteIbMrInfo;
-};
-
-struct TransportData {
+struct TransportInfo {
   TransportFlags transport;
-  union {
-    void* cudaIpcPtr;
-    IBTransportData ibData;
-  }
+  std::variant<std::monostate, cudaIpcMemHandle_t, mscclppIbMr*, mscclppIbMrInfo> data;
 };
 
 struct RegisteredMemory::Impl {
   void* data;
   size_t size;
+  int rank;
   TransportFlags transports;
-  std::vector<TransportData> transportData;
+  std::vector<TransportInfo> transportInfos;
 
-  Impl(void* data, size_t size, TransportFlags transports);
+  Impl(void* data, size_t size, int rank, TransportFlags transports);
+  Impl(const std::vector<char>& data);
 
-  ~Impl();
-
-  template<typename T> T& getTransportData(TransportFlags transport) {
-    for (auto& data : transportData) {
-      if (data.transport == transport) {
-        return data;
+  template<class T> T& getTransportInfo(TransportFlags transport) {
+    for (auto& entry : transportInfos) {
+      if (entry.transport == transport) {
+        return std::get<T>(entry.data);
       }
     }
     throw std::runtime_error("Transport data not found");

@@ -7,6 +7,8 @@
 
 namespace mscclpp {
 
+// TODO: Add functionality to these classes for Communicator to do connectionSetup
+
 class CudaIpcConnection : public Connection {
   cudaStream_t stream;
 public:
@@ -27,10 +29,10 @@ public:
 class IBConnection : public Connection {
   TransportFlags transport_;
   TransportFlags remoteTransport_;
-  mscclppIbQp qp;
+  mscclppIbQp* qp;
 public:
 
-  IBConnection(TransportFlags transport);
+  IBConnection(TransportFlags transport, Communicator::Impl& commImpl);
 
   virtual ~IBConnection();
 
