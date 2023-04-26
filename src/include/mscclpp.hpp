@@ -8,12 +8,50 @@
 
 #include <vector>
 #include <memory>
+#include <string>
+
 
 namespace mscclpp {
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
 struct UniqueId {
   char internal[MSCCLPP_UNIQUE_ID_BYTES];
+};
+
+class BaseBootstrap
+{
+public:
+  BaseBootstrap(){};
+  virtual ~BaseBootstrap() = default;
+  virtual int getRank() = 0;
+  virtual int getNranks() = 0;
+  virtual void send(void* data, int size, int peer, int tag) = 0;
+  virtual void recv(void* data, int size, int peer, int tag) = 0;
+  virtual void allGather(void* allData, int size) = 0;
+  virtual void barrier() = 0;
+};
+
+class Bootstrap : public BaseBootstrap
+{
+public:
+  Bootstrap(int rank, int nRanks);
+  ~Bootstrap();
+
+  UniqueId createUniqueId();
+  UniqueId getUniqueId() const;
+
+  void initialize(UniqueId uniqueId);
+  void initialize(std::string ipPortPair);
+  int getRank() override;
+  int getNranks() override;
+  void send(void* data, int size, int peer, int tag) override;
+  void recv(void* data, int size, int peer, int tag) override;
+  void allGather(void* allData, int size) override;
+  void barrier() override;
+
+private:
+  class Impl;
+  std::unique_ptr<Impl> pimpl_;
 };
 
 /* Create a unique ID for communication. Only needs to be called by one process.

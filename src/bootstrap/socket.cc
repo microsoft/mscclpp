@@ -769,7 +769,7 @@ exit:
   return ret;
 }
 
-mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, union mscclppSocketAddress* addr, uint64_t magic,
+mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, const mscclppSocketAddress* addr, uint64_t magic,
                                   enum mscclppSocketType type, volatile uint32_t* abortFlag, int asyncFlag)
 {
   mscclppResult_t ret = mscclppSuccess;
