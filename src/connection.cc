@@ -116,12 +116,19 @@ void IBConnection::flush() {
   // npkitCollectExitEvents(conn, NPKIT_EVENT_IB_SEND_EXIT);
 }
 
-void startSetup(Communicator& comm) {
-  // TODO: use bootstrapper from comm to send over QP info
+void IBConnection::startSetup(Communicator& comm) {
+  comm.bootstrap().send(&qp->info, sizeof(qp->info), remoteRank, tag);
 }
 
-void endSetup(Communicator& comm) {
-  // TODO: use bootstrapper from comm to receive QP info and do the rtr/rts calls
+void IBConnection::endSetup(Communicator& comm) {
+  mscclppIbQpInfo qpInfo;
+  comm.bootstrap().recv(&qpInfo, sizeof(qpInfo), remoteRank, tag);
+  if (qp->rtr(&qpInfo) != 0) {
+    throw std::runtime_error("Failed to transition QP to RTR");
+  }
+  if (qp->rts() != 0) {
+    throw std::runtime_error("Failed to transition QP to RTS");
+  }
 }
 
 } // namespace mscclpp
