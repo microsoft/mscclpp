@@ -224,6 +224,11 @@ testResult_t CheckData(struct testArgs* args, int in_place, int64_t* wrongElts)
   CUDACHECK(cudaMemcpy(dataHostRecv, args->recvbuff, args->expectedBytes, cudaMemcpyDeviceToHost));
   CUDACHECK(cudaMemcpy(dataHostExpected, args->expected, args->expectedBytes, cudaMemcpyDeviceToHost));
 
+  for (size_t i = 0; i < count; i++) {
+    if (dataHostRecv[i] != dataHostExpected[i]) {
+      *wrongElts += 1;
+    }
+  }
   if (args->reportErrors && *wrongElts) {
     (args->error)++;
   }
