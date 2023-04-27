@@ -15,9 +15,6 @@ namespace mscclpp {
 Communicator::Impl::Impl(std::shared_ptr<BaseBootstrap> bootstrap) : bootstrap_(bootstrap) {}
 
 Communicator::Impl::~Impl() {
-  for (auto& entry : ibContexts) {
-    delete entry.second;
-  }
   ibContexts.clear();
 }
 
@@ -26,11 +23,10 @@ IbCtx* Communicator::Impl::getIbContext(TransportFlags ibTransport) {
   auto it = ibContexts.find(ibTransport);
   if (it == ibContexts.end()) {
     auto ibDev = getIBDeviceName(ibTransport);
-    IbCtx* ibCtx = new IbCtx(ibDev);
-    ibContexts[ibTransport] = ibCtx;
-    return ibCtx;
+    ibContexts[ibTransport] = std::make_unique<IbCtx>(ibDev);
+    return ibContexts[ibTransport].get();
   } else {
-    return it->second;
+    return it->second.get();
   }
 }
 
