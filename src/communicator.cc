@@ -8,6 +8,7 @@
 #include "checks.hpp"
 #include "debug.h"
 #include "connection.hpp"
+#include "registered_memory.hpp"
 
 namespace mscclpp {
 
@@ -75,6 +76,10 @@ MSCCLPP_API_CPP void Communicator::bootstrapBarrier() {
   mscclppBootstrapBarrier(pimpl->comm);
 }
 
+RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports) {
+  return RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(ptr, size, pimpl->comm->rank, transports, *pimpl));
+}
+
 MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank, int tag, TransportFlags transport) {
   std::shared_ptr<ConnectionBase> conn;
   if (transport | TransportCudaIpc) {
@@ -114,7 +119,7 @@ MSCCLPP_API_CPP int Communicator::size() {
 
 int getIBDeviceCount() {
   int num;
-  struct ibv_device** devices = ibv_get_device_list(&num);
+  ibv_get_device_list(&num);
   return num;
 }
 

@@ -102,6 +102,7 @@ public:
   static RegisteredMemory deserialize(const std::vector<char>& data);
 
   friend class Connection;
+  friend class Communicator;
 };
 
 class Connection {
