@@ -24,7 +24,7 @@ void test_barrier(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap){
 
 void test_sendrecv(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap){
   for (int i = 0; i < bootstrap->getNranks(); i++) {
-    if (bootstrap->getRank() == 0)
+    if (bootstrap->getRank() == i)
       continue;
     int msg1 = (bootstrap->getRank() + 1) * 3;
     int msg2 = (bootstrap->getRank() + 1) * 3 + 1;
@@ -35,7 +35,7 @@ void test_sendrecv(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap){
   }
 
   for (int i = 0; i < bootstrap->getNranks(); i++) {
-    if (i == bootstrap->getRank())
+    if (bootstrap->getRank() == i)
       continue;
     int msg1 = 0;
     int msg2 = 0;

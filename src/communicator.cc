@@ -54,15 +54,7 @@ static mscclppTransport_t transportToCStyle(TransportFlags flags) {
   }
 }
 
-MSCCLPP_API_CPP Communicator::Communicator(int nranks, const char* ipPortPair, int rank) : pimpl(std::make_unique<Impl>()) {
-  mscclppCommInitRank(&pimpl->comm, nranks, ipPortPair, rank);
-}
-
-MSCCLPP_API_CPP Communicator::Communicator(int nranks, UniqueId id, int rank) : pimpl(std::make_unique<Impl>()) {
-  static_assert(sizeof(mscclppUniqueId) == sizeof(UniqueId), "UniqueId size mismatch");
-  mscclppUniqueId *cstyle_id = reinterpret_cast<mscclppUniqueId*>(&id);
-  mscclppCommInitRankFromId(&pimpl->comm, nranks, *cstyle_id, rank);
-}
+MSCCLPP_API_CPP Communicator::Communicator(std::shared_ptr<BaseBootstrap> bootstrap) : pimpl(std::make_unique<Impl>(bootstrap)) {}
 
 MSCCLPP_API_CPP void Communicator::bootstrapAllGather(void* data, int size) {
   mscclppBootstrapAllGather(pimpl->comm, data, size);
@@ -98,18 +90,6 @@ MSCCLPP_API_CPP void Communicator::connectionSetup() {
   for (auto& conn : pimpl->connections) {
     conn->endSetup(*this);
   }
-}
-
-MSCCLPP_API_CPP int Communicator::rank() {
-  int result;
-  mscclppCommRank(pimpl->comm, &result);
-  return result;
-}
-
-MSCCLPP_API_CPP int Communicator::size() {
-  int result;
-  mscclppCommSize(pimpl->comm, &result);
-  return result;
 }
 
 } // namespace mscclpp
