@@ -1,9 +1,18 @@
 #include "mscclpp.hpp"
 
 #include <cassert>
+#include <cuda_runtime.h>
 #include <iostream>
 #include <memory>
 #include <mpi.h>
+
+#define CUDATHROW(cmd)                                                                                                 \
+  do {                                                                                                                 \
+    cudaError_t err = cmd;                                                                                             \
+    if (err != cudaSuccess) {                                                                                          \
+      throw std::runtime_error(std::string("Cuda failure '") + cudaGetErrorString(err) + "'");                         \
+    }                                                                                                                  \
+  } while (false)
 
 mscclpp::Transport findIb(int localRank)
 {
@@ -23,16 +32,31 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
   bootstrap->initialize(id);
 
   auto communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
+  if (bootstrap->getRank() == 0)
+    std::cout << "Communicator initialization passed" << std::endl;
+
+  auto myIbDevice = findIb(rank % nranksPerNode);
   for (int i = 0; i < worldSize; i++) {
     if (i != rank) {
       if (i / nranksPerNode == rank / nranksPerNode) {
         auto connect = communicator->connect(i, 0, mscclpp::Transport::CudaIpc);
       } else {
-        auto connect = communicator->connect(i, 0, findIb(rank % nranksPerNode));
+        auto connect = communicator->connect(i, 0, myIbDevice);
       }
     }
   }
   communicator->connectionSetup();
+
+  if (bootstrap->getRank() == 0)
+    std::cout << "Connection setup passed" << std::endl;
+
+  int* devicePtr;
+  int size = 1024;
+  CUDATHROW(cudaMalloc(&devicePtr, size));
+  auto registeredMemory = communicator->registerMemory(devicePtr, size, mscclpp::Transport::CudaIpc | myIbDevice);
+
+  if (bootstrap->getRank() == 0)
+    std::cout << "Memory registeration passed" << std::endl;
 
   if (bootstrap->getRank() == 0)
     std::cout << "--- MSCCLPP::Communicator tests passed! ---" << std::endl;

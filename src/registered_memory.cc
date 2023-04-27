@@ -1,4 +1,5 @@
 #include "registered_memory.hpp"
+#include "api.h"
 #include "checks.hpp"
 #include <algorithm>
 #include <cuda.h>
@@ -45,11 +46,11 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags t
   }
 }
 
-RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) : pimpl(pimpl)
+MSCCLPP_API_CPP RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) : pimpl(pimpl)
 {
 }
 
-RegisteredMemory::~RegisteredMemory() = default;
+MSCCLPP_API_CPP RegisteredMemory::~RegisteredMemory() = default;
 
 void* RegisteredMemory::data()
 {

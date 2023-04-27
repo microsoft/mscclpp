@@ -58,7 +58,7 @@ MSCCLPP_API_CPP void Communicator::bootstrapBarrier()
   mscclppBootstrapBarrier(pimpl->comm);
 }
 
-RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports)
+MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports)
 {
   return RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(ptr, size, pimpl->comm->rank, transports, *pimpl));
 }
