@@ -142,7 +142,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization)
     void* baseDataPtr;
     size_t baseDataSize; // dummy
     CUTHROW(cuMemGetAddressRange((CUdeviceptr*)&baseDataPtr, &baseDataSize, (CUdeviceptr)data));
-    CUDATHROW(cudaIpcOpenMemHandle(&data, entry.cudaIpcHandle, cudaIpcMemLazyEnablePeerAccess));
+    CUDATHROW(cudaIpcOpenMemHandle(&baseDataPtr, entry.cudaIpcHandle, cudaIpcMemLazyEnablePeerAccess));
+    INFO(MSCCLPP_P2P, "Opened CUDA IPC handle for base point of %p", data);
   }
 }
 
