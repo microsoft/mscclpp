@@ -145,7 +145,7 @@ testResult_t startColl(struct testArgs* args, int in_place, int iter)
 
   TESTCHECK(args->collTest->runColl((void*)(in_place ? recvBuff + args->sendInplaceOffset * rank : sendBuff),
                                     (void*)(in_place ? recvBuff + args->recvInplaceOffset * rank : recvBuff),
-                                    args->nranksPerNode, count, args->comm, args->stream, args->kernel_num));
+                                    args->nranksPerNode, count, args->comm, args->stream, args->kernelNum));
   return testSuccess;
 }
 
@@ -384,7 +384,7 @@ testResult_t TimeTest(struct testArgs* args)
   return testSuccess;
 }
 
-testResult_t setupMscclppConnections(int rank, int worldSize, int ranksPerNode, mscclppComm_t comm, void* dataDst,
+testResult_t SetupConnections(int rank, int worldSize, int ranksPerNode, mscclppComm_t comm, void* dataDst,
                                      size_t dataSize)
 {
   int thisNode = rank / ranksPerNode;
@@ -414,10 +414,10 @@ testResult_t setupMscclppConnections(int rank, int worldSize, int ranksPerNode, 
 testResult_t runTests(struct testArgs* args)
 {
   PRINT("# Setting up the connection in MSCCL++\n");
-  if (mscclppTestEngine.setupMscclppConnections != nullptr) {
-    TESTCHECK(mscclppTestEngine.setupMscclppConnections(args));
+  if (mscclppTestEngine.setupConnections != nullptr) {
+    TESTCHECK(mscclppTestEngine.setupConnections(args));
   } else {
-    TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm, args->recvbuff,
+    TESTCHECK(SetupConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm, args->recvbuff,
                                       args->maxbytes));
   }
   PRINT("# Launching MSCCL++ proxy threads\n");
@@ -425,8 +425,8 @@ testResult_t runTests(struct testArgs* args)
   TESTCHECK(mscclppTestEngine.runTest(args));
   PRINT("Stopping MSCCL++ proxy threads\n");
   MSCCLPPCHECK(mscclppProxyStop(args->comm));
-  if (mscclppTestEngine.teardownMscclppConnections != nullptr) {
-    TESTCHECK(mscclppTestEngine.teardownMscclppConnections());
+  if (mscclppTestEngine.teardownConnections != nullptr) {
+    TESTCHECK(mscclppTestEngine.teardownConnections());
   }
   return testSuccess;
 }
@@ -648,7 +648,7 @@ testResult_t run()
   worker.args.totalProcs = totalProcs;
   worker.args.proc = proc;
   worker.args.gpuNum = cudaDev;
-  worker.args.kernel_num = kernel_num;
+  worker.args.kernelNum = kernel_num;
   worker.args.sendbuff = sendbuff;
   worker.args.recvbuff = recvbuff;
   worker.args.expected = expected;

@@ -188,10 +188,10 @@ void AllGatherGetBw(size_t count, int typesize, double sec, double* algBw, doubl
 }
 
 testResult_t AllGatherRunColl(void* sendbuff, void* recvbuff, int nranksPerNode, size_t count, mscclppComm_t comm,
-                              cudaStream_t stream, int kernel_num)
+                              cudaStream_t stream, int kernelNum)
 {
   int worldSize = comm->nRanks;
-  kernel<<<1, 32 * (worldSize - 1), 0, stream>>>(comm->rank, worldSize, nranksPerNode, count / sizeof(int), kernel_num);
+  kernel<<<1, 32 * (worldSize - 1), 0, stream>>>(comm->rank, worldSize, nranksPerNode, count / sizeof(int), kernelNum);
   return testSuccess;
 }
 
@@ -215,6 +215,6 @@ testResult_t AllGatherRunTest(struct testArgs* args)
   return testSuccess;
 }
 
-struct testEngine allGatherEngine = {AllGatherGetBuffSize, AllGatherRunTest, nullptr, nullptr};
+testEngine allGatherEngine = {AllGatherGetBuffSize, AllGatherRunTest, nullptr, nullptr};
 
 #pragma weak mscclppTestEngine = allGatherEngine

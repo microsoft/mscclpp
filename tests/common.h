@@ -14,10 +14,7 @@
 #include <cstdlib>
 
 #include <unistd.h>
-
-#ifdef MSCCLPP_USE_MPI_FOR_TESTS
 #include <mpi.h>
-#endif // MSCCLPP_USE_MPI_FOR_TESTS
 
 #define CUDACHECK(cmd)                                                                                                 \
   do {                                                                                                                 \
@@ -72,16 +69,16 @@ struct testColl
   testResult_t (*initData)(struct testArgs* args, int in_place);
   void (*getBw)(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
   testResult_t (*runColl)(void* sendbuff, void* recvbuff, int nranksPerNode, size_t count, mscclppComm_t comm,
-                          cudaStream_t stream, int kernel_num);
+                          cudaStream_t stream, int kernelNum);
 };
 
 struct testEngine
 {
   void (*getBuffSize)(size_t* sendcount, size_t* recvcount, size_t count, int nranks);
   // We can add more parameters for other communication primitives
-  testResult_t (*runTest)(struct testArgs* args);
-  testResult_t (*setupMscclppConnections)(struct testArgs* args);
-  testResult_t (*teardownMscclppConnections)();
+  testResult_t (*runTest)(testArgs* args);
+  testResult_t (*setupConnections)(testArgs* args);
+  testResult_t (*teardownConnections)();
 };
 
 extern struct testEngine mscclppTestEngine;
@@ -99,7 +96,7 @@ struct testArgs
   int gpuNum;
   int localRank;
   int nranksPerNode;
-  int kernel_num;
+  int kernelNum;
   void* sendbuff;
   size_t sendBytes;
   size_t sendInplaceOffset;
@@ -127,7 +124,7 @@ struct testWorker
 };
 
 // Provided by common.cu
-extern testResult_t TimeTest(struct testArgs* args);
+testResult_t TimeTest(struct testArgs* args);
 
 static void getHostName(char* hostname, int maxlen)
 {
