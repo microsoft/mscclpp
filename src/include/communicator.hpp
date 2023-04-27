@@ -18,6 +18,7 @@ struct Communicator::Impl {
   std::vector<std::shared_ptr<ConnectionBase>> connections;
   std::unordered_map<TransportFlags, std::unique_ptr<IbCtx>> ibContexts;
   std::shared_ptr<BaseBootstrap> bootstrap_;
+  std::vector<uint64_t> rankToHash_;
 
   Impl(std::shared_ptr<BaseBootstrap> bootstrap);
 

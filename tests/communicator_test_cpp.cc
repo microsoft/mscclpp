@@ -30,7 +30,8 @@ void test_communicator(int rank, int worldSize, int nranksPerNode){
   auto communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
   for (int i = 0; i < worldSize; i++){
     if (i != rank){
-      if (i % nranksPerNode == rank % nranksPerNode){
+      if (i / nranksPerNode == rank / nranksPerNode){
+        printf("i %d rank %d nranksPerNode %d\n", i, rank, nranksPerNode);
         auto connect = communicator->connect(i, 0, mscclpp::TransportCudaIpc);
       } else {
         auto connect = communicator->connect(i, 0, findIb(rank % nranksPerNode));
