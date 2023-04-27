@@ -11,16 +11,13 @@
 
 namespace mscclpp {
 
-Communicator::Impl::Impl() : comm(nullptr) {}
+Communicator::Impl::Impl(std::shared_ptr<BaseBootstrap> bootstrap) : bootstrap_(bootstrap) {}
 
 Communicator::Impl::~Impl() {
   for (auto& entry : ibContexts) {
     mscclppIbContextDestroy(entry.second);
   }
   ibContexts.clear();
-  if (comm) {
-    mscclppCommDestroy(comm);
-  }
 }
 
 mscclppIbContext* Communicator::Impl::getIbContext(TransportFlags ibTransport) {

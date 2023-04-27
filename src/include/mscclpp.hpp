@@ -120,24 +120,13 @@ protected:
 
 class Communicator {
 public:
-  /* Initialize the communicator. nranks processes with rank 0 to nranks-1 need to call this function.
+  /* Initialize the communicator.
   *
   * Inputs:
-  *   nranks:     number of ranks in the communicator
-  *   ipPortPair: a string of the form "ip:port" that represents the address of the root process
-  *   rank:       rank of the calling process
+  *   bootstrap: an implementation of the of BaseBootstrap that the communicator will use
   */
-  Communicator(int nranks, const char* ipPortPair, int rank);
+  Communicator(std::shared_ptr<BaseBootstrap> bootstrap);
   
-  /* Initialize the communicator from a given UniqueId. Same as mscclppCommInitRank() except that
-  * id is provided by the user by calling getUniqueId()
-  *
-  * Inputs:
-  *   nranks: number of ranks in the communicator
-  *   id:     the unique ID to be used for communication
-  *   rank:   rank of the calling process
-  */
-  Communicator(int nranks, UniqueId id, int rank);
 
   ~Communicator();
   
@@ -183,20 +172,6 @@ public:
   */
   void connectionSetup();
 
-  /* Return the rank of the calling process.
-  *
-  * Outputs:
-  *   rank: the rank of the calling process
-  */
-  int rank();
-
-  /* Return the number of ranks of the communicator.
-  *
-  * Outputs:
-  *   size: the number of ranks of the communicator
-  */
-  int size();
-  
   struct Impl;
 private:
   std::unique_ptr<Impl> pimpl;

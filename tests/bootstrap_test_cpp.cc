@@ -55,11 +55,11 @@ void test_sendrecv(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap){
 void test_all(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap){
   test_allgather(bootstrap);
   test_barrier(bootstrap);
-  // test_sendrecv(bootstrap);
+  test_sendrecv(bootstrap);
 }
 
 void test_mscclpp_bootstrap_with_id(int rank, int worldSize){
-  std::shared_ptr<mscclpp::Bootstrap> bootstrap(new mscclpp::Bootstrap(rank, worldSize));
+  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(rank, worldSize);
   mscclpp::UniqueId id;
   if (bootstrap->getRank() == 0)
     id = bootstrap->createUniqueId();

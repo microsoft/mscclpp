@@ -16,8 +16,9 @@ struct Communicator::Impl {
   mscclppComm_t comm;
   std::vector<std::shared_ptr<ConnectionBase>> connections;
   std::unordered_map<TransportFlags, mscclppIbContext*> ibContexts;
+  std::shared_ptr<BaseBootstrap> bootstrap_;
 
-  Impl();
+  Impl(std::shared_ptr<BaseBootstrap> bootstrap);
 
   ~Impl();
 
