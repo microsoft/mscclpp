@@ -226,6 +226,8 @@ testResult_t CheckData(struct testArgs* args, int in_place, int64_t* wrongElts)
 
   for (size_t i = 0; i < count; i++) {
     if (dataHostRecv[i] != dataHostExpected[i]) {
+      // PRINT("Error: dataHostRecv[%zu] = %d, dataHostExpected[%zu] = %d\n", i, dataHostRecv[i], i,
+      //        dataHostExpected[i]);
       *wrongElts += 1;
     }
   }
