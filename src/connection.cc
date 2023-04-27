@@ -6,8 +6,8 @@
 
 namespace mscclpp {
 
-void validateTransport(RegisteredMemory mem, TransportFlags transport) {
-  if ((mem.transports() & transport) == TransportNone) {
+void validateTransport(RegisteredMemory mem, Transport transport) {
+  if (!mem.transports().has(transport)) {
     throw std::runtime_error("mem does not support transport");
   }
 }
@@ -28,12 +28,12 @@ CudaIpcConnection::~CudaIpcConnection() {
   cudaStreamDestroy(stream);
 }
 
-TransportFlags CudaIpcConnection::transport() {
-  return TransportCudaIpc;
+Transport CudaIpcConnection::transport() {
+  return Transport::CudaIpc;
 }
 
-TransportFlags CudaIpcConnection::remoteTransport() {
-  return TransportCudaIpc;
+Transport CudaIpcConnection::remoteTransport() {
+  return Transport::CudaIpc;
 }
 
 void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size) {
@@ -54,7 +54,7 @@ void CudaIpcConnection::flush() {
 
 // IBConnection
 
-IBConnection::IBConnection(int remoteRank, int tag, TransportFlags transport, Communicator::Impl& commImpl) : remoteRank_(remoteRank), tag_(tag), transport_(transport), remoteTransport_(TransportNone) {
+IBConnection::IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl) : remoteRank_(remoteRank), tag_(tag), transport_(transport), remoteTransport_(Transport::Unknown) {
   qp = commImpl.getIbContext(transport)->createQp();
 }
 
@@ -62,11 +62,11 @@ IBConnection::~IBConnection() {
   // TODO: Destroy QP?
 }
 
-TransportFlags IBConnection::transport() {
+Transport IBConnection::transport() {
   return transport_;
 }
 
-TransportFlags IBConnection::remoteTransport() {
+Transport IBConnection::remoteTransport() {
   return remoteTransport_;
 }
 
@@ -115,13 +115,11 @@ void IBConnection::flush() {
 }
 
 void IBConnection::startSetup(std::shared_ptr<BaseBootstrap> bootstrap) {
-  // TODO(chhwang): temporarily disabled to compile
   bootstrap->send(&qp->getInfo(), sizeof(qp->getInfo()), remoteRank_, tag_);
 }
 
 void IBConnection::endSetup(std::shared_ptr<BaseBootstrap> bootstrap) {
   IbQpInfo qpInfo;
-  // TODO(chhwang): temporarily disabled to compile
   bootstrap->recv(&qpInfo, sizeof(qpInfo), remoteRank_, tag_);
   qp->rtr(qpInfo);
   qp->rts();

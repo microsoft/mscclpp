@@ -10,7 +10,7 @@
 namespace mscclpp {
 
 struct TransportInfo {
-  TransportFlags transport;
+  Transport transport;
 
   // TODO: rewrite this using std::variant or something
   bool ibLocal;
@@ -31,7 +31,7 @@ struct RegisteredMemory::Impl {
   Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl);
   Impl(const std::vector<char>& data);
 
-  TransportInfo& getTransportInfo(TransportFlags transport) {
+  TransportInfo& getTransportInfo(Transport transport) {
     for (auto& entry : transportInfos) {
       if (entry.transport == transport) {
         return entry;

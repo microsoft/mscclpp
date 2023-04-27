@@ -18,7 +18,7 @@ Communicator::Impl::~Impl() {
   ibContexts.clear();
 }
 
-IbCtx* Communicator::Impl::getIbContext(TransportFlags ibTransport) {
+IbCtx* Communicator::Impl::getIbContext(Transport ibTransport) {
   // Find IB context or create it
   auto it = ibContexts.find(ibTransport);
   if (it == ibContexts.end()) {
@@ -31,24 +31,6 @@ IbCtx* Communicator::Impl::getIbContext(TransportFlags ibTransport) {
 }
 
 MSCCLPP_API_CPP Communicator::~Communicator() = default;
-
-static mscclppTransport_t transportToCStyle(TransportFlags flags) {
-  switch (flags) {
-    case TransportIB0:
-    case TransportIB1:
-    case TransportIB2:
-    case TransportIB3:
-    case TransportIB4:
-    case TransportIB5:
-    case TransportIB6:
-    case TransportIB7:
-      return mscclppTransportIB;
-    case TransportCudaIpc:
-      return mscclppTransportP2P;
-    default:
-      throw std::runtime_error("Unsupported conversion");
-  }
-}
 
 MSCCLPP_API_CPP Communicator::Communicator(std::shared_ptr<BaseBootstrap> bootstrap) : pimpl(std::make_unique<Impl>(bootstrap)) {}
 
@@ -64,12 +46,12 @@ RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportF
   return RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(ptr, size, pimpl->comm->rank, transports, *pimpl));
 }
 
-MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank, int tag, TransportFlags transport) {
+MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank, int tag, Transport transport) {
   std::shared_ptr<ConnectionBase> conn;
-  if (transport | TransportCudaIpc) {
+  if (transport == Transport::CudaIpc) {
     auto cudaIpcConn = std::make_shared<CudaIpcConnection>();
     conn = cudaIpcConn;
-  } else if (transport | TransportAllIB) {
+  } else if (AllIBTransports.has(transport)) {
     auto ibConn = std::make_shared<IBConnection>(remoteRank, tag, transport, *pimpl);
     conn = ibConn;
   } else {

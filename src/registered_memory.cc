@@ -5,17 +5,17 @@
 namespace mscclpp {
 
 RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl) : data(data), size(size), rank(rank), transports(transports) {
-  if (transports & TransportCudaIpc) {
+  if (transports.has(Transport::CudaIpc)) {
     TransportInfo transportInfo;
-    transportInfo.transport = TransportCudaIpc;
+    transportInfo.transport = Transport::CudaIpc;
     cudaIpcMemHandle_t handle;
     // TODO: translate data to a base pointer
     CUDATHROW(cudaIpcGetMemHandle(&handle, data));
     transportInfo.cudaIpcHandle = handle;
     this->transportInfos.push_back(transportInfo);
   }
-  if (transports & TransportAllIB) {
-    auto addIb = [&](TransportFlags ibTransport) {
+  if ((transports & AllIBTransports).any()) {
+    auto addIb = [&](Transport ibTransport) {
       TransportInfo transportInfo;
       transportInfo.transport = ibTransport;
       const IbMr* mr = commImpl.getIbContext(ibTransport)->registerMr(data, size);
@@ -23,14 +23,14 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags t
       transportInfo.ibLocal = true;
       this->transportInfos.push_back(transportInfo);
     };
-    if (transports & TransportIB0) addIb(TransportIB0);
-    if (transports & TransportIB1) addIb(TransportIB1);
-    if (transports & TransportIB2) addIb(TransportIB2);
-    if (transports & TransportIB3) addIb(TransportIB3);
-    if (transports & TransportIB4) addIb(TransportIB4);
-    if (transports & TransportIB5) addIb(TransportIB5);
-    if (transports & TransportIB6) addIb(TransportIB6);
-    if (transports & TransportIB7) addIb(TransportIB7);
+    if (transports.has(Transport::IB0)) addIb(Transport::IB0);
+    if (transports.has(Transport::IB1)) addIb(Transport::IB1);
+    if (transports.has(Transport::IB2)) addIb(Transport::IB2);
+    if (transports.has(Transport::IB3)) addIb(Transport::IB3);
+    if (transports.has(Transport::IB4)) addIb(Transport::IB4);
+    if (transports.has(Transport::IB5)) addIb(Transport::IB5);
+    if (transports.has(Transport::IB6)) addIb(Transport::IB6);
+    if (transports.has(Transport::IB7)) addIb(Transport::IB7);
   }
 }
 
@@ -66,9 +66,9 @@ std::vector<char> RegisteredMemory::serialize() {
   std::copy_n(reinterpret_cast<char*>(&transportCount), sizeof(transportCount), std::back_inserter(result));
   for (auto& entry : pimpl->transportInfos) {
     std::copy_n(reinterpret_cast<char*>(&entry.transport), sizeof(entry.transport), std::back_inserter(result));
-    if (entry.transport == TransportCudaIpc) {
+    if (entry.transport == Transport::CudaIpc) {
       std::copy_n(reinterpret_cast<char*>(&entry.cudaIpcHandle), sizeof(entry.cudaIpcHandle), std::back_inserter(result));
-    } else if (entry.transport & TransportAllIB) {
+    } else if (AllIBTransports.has(entry.transport)) {
       std::copy_n(reinterpret_cast<char*>(&entry.ibMrInfo), sizeof(entry.ibMrInfo), std::back_inserter(result));
     } else {
       throw std::runtime_error("Unknown transport");
@@ -96,12 +96,12 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     TransportInfo transportInfo;
     std::copy_n(it, sizeof(transportInfo.transport), reinterpret_cast<char*>(&transportInfo.transport));
     it += sizeof(transportInfo.transport);
-    if (transportInfo.transport & TransportCudaIpc) {
+    if (transportInfo.transport == Transport::CudaIpc) {
       cudaIpcMemHandle_t handle;
       std::copy_n(it, sizeof(handle), reinterpret_cast<char*>(&handle));
       it += sizeof(handle);
       transportInfo.cudaIpcHandle = handle;
-    } else if (transportInfo.transport & TransportAllIB) {
+    } else if (AllIBTransports.has(transportInfo.transport)) {
       IbMrInfo info;
       std::copy_n(it, sizeof(info), reinterpret_cast<char*>(&info));
       it += sizeof(info);
@@ -116,8 +116,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     throw std::runtime_error("Deserialization failed");
   }
 
-  if (transports & TransportCudaIpc) {
-    auto entry = getTransportInfo(TransportCudaIpc);
+  if (transports.has(Transport::CudaIpc)) {
+    auto entry = getTransportInfo(Transport::CudaIpc);
     CUDATHROW(cudaIpcOpenMemHandle(&data, entry.cudaIpcHandle, cudaIpcMemLazyEnablePeerAccess));
   }
 }

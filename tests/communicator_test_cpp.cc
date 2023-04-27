@@ -5,16 +5,16 @@
 #include <iostream>
 #include <mpi.h>
 
-mscclpp::TransportFlags findIb(int localRank){
-  mscclpp::TransportFlags IBs[] = {
-    mscclpp::TransportIB0,
-    mscclpp::TransportIB1,
-    mscclpp::TransportIB2,
-    mscclpp::TransportIB3,
-    mscclpp::TransportIB4,
-    mscclpp::TransportIB5,
-    mscclpp::TransportIB6,
-    mscclpp::TransportIB7
+mscclpp::Transport findIb(int localRank){
+  mscclpp::Transport IBs[] = {
+    mscclpp::Transport::IB0,
+    mscclpp::Transport::IB1,
+    mscclpp::Transport::IB2,
+    mscclpp::Transport::IB3,
+    mscclpp::Transport::IB4,
+    mscclpp::Transport::IB5,
+    mscclpp::Transport::IB6,
+    mscclpp::Transport::IB7
   };
   return IBs[localRank];
 }
@@ -31,7 +31,7 @@ void test_communicator(int rank, int worldSize, int nranksPerNode){
   for (int i = 0; i < worldSize; i++){
     if (i != rank){
       if (i % nranksPerNode == rank % nranksPerNode){
-        auto connect = communicator->connect(i, 0, mscclpp::TransportCudaIpc);
+        auto connect = communicator->connect(i, 0, mscclpp::Transport::CudaIpc);
       } else {
         auto connect = communicator->connect(i, 0, findIb(rank % nranksPerNode));
       }
