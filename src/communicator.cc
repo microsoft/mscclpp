@@ -110,4 +110,81 @@ MSCCLPP_API_CPP int Communicator::size() {
   return result;
 }
 
+// TODO: move these elsewhere
+
+int getIBDeviceCount() {
+  int num;
+  struct ibv_device** devices = ibv_get_device_list(&num);
+  return num;
+}
+
+std::string getIBDeviceName(TransportFlags ibTransport) {
+  int num;
+  struct ibv_device** devices = ibv_get_device_list(&num);
+  int ibTransportIndex;
+  switch (ibTransport) { // TODO: get rid of this ugly switch
+    case TransportIB0:
+      ibTransportIndex = 0;
+      break;
+    case TransportIB1:
+      ibTransportIndex = 1;
+      break;
+    case TransportIB2:
+      ibTransportIndex = 2;
+      break;
+    case TransportIB3:
+      ibTransportIndex = 3;
+      break;
+    case TransportIB4:
+      ibTransportIndex = 4;
+      break;
+    case TransportIB5:
+      ibTransportIndex = 5;
+      break;
+    case TransportIB6:
+      ibTransportIndex = 6;
+      break;
+    case TransportIB7:
+      ibTransportIndex = 7;
+      break;
+    default:
+      throw std::runtime_error("Not an IB transport");
+  }
+  if (ibTransportIndex >= num) {
+    throw std::runtime_error("IB transport out of range");
+  }
+  return devices[ibTransportIndex]->name;
+}
+
+TransportFlags getIBTransportByDeviceName(const std::string& ibDeviceName) {
+  int num;
+  struct ibv_device** devices = ibv_get_device_list(&num);
+  for (int i = 0; i < num; ++i) {
+    if (ibDeviceName == devices[i]->name) {
+      switch (i) { // TODO: get rid of this ugly switch
+        case 0:
+          return TransportIB0;
+        case 1:
+          return TransportIB1;
+        case 2:
+          return TransportIB2;
+        case 3:
+          return TransportIB3;
+        case 4:
+          return TransportIB4;
+        case 5:
+          return TransportIB5;
+        case 6:
+          return TransportIB6;
+        case 7:
+          return TransportIB7;
+        default:
+          throw std::runtime_error("IB device index out of range");
+      }
+    }
+  }
+  throw std::runtime_error("IB device not found");
+}
+
+
 } // namespace mscclpp

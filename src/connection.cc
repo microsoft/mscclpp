@@ -11,6 +11,12 @@ void validateTransport(RegisteredMemory mem, TransportFlags transport) {
   }
 }
 
+// Connection
+
+std::shared_ptr<RegisteredMemory::Impl> Connection::getRegisteredMemoryImpl(RegisteredMemory& mem) {
+  return mem.pimpl;
+}
+
 // CudaIpcConnection
 
 CudaIpcConnection::CudaIpcConnection() {
