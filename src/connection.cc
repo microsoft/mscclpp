@@ -2,6 +2,7 @@
 #include "checks.hpp"
 #include "registered_memory.hpp"
 #include "npkit/npkit.h"
+#include "infiniband/verbs.h"
 
 namespace mscclpp {
 
@@ -54,7 +55,7 @@ void CudaIpcConnection::flush() {
 // IBConnection
 
 IBConnection::IBConnection(int remoteRank, int tag, TransportFlags transport, Communicator::Impl& commImpl) : remoteRank(remoteRank), tag(tag), transport_(transport), remoteTransport_(TransportNone) {
-  MSCCLPPTHROW(mscclppIbContextCreateQp(commImpl.getIbContext(transport), &qp));
+  qp = commImpl.getIbContext(transport)->createQp();
 }
 
 IBConnection::~IBConnection() {
@@ -85,13 +86,8 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
   auto srcMr = srcTransportInfo.ibMr;
 
-  qp->stageSend(srcMr, &dstMrInfo, (uint32_t)size,
-                        /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset, /*signaled=*/false);
-  int ret = qp->postSend();
-  if (ret != 0) {
-    // Return value is errno.
-    WARN("data postSend failed: errno %d", ret);
-  }
+  qp->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset, /*signaled=*/false);
+  qp->postSend();
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)size);
 }
 
@@ -104,13 +100,9 @@ void IBConnection::flush() {
       continue;
     }
     for (int i = 0; i < wcNum; ++i) {
-      struct ibv_wc* wc = &qp->wcs[i];
+      const struct ibv_wc* wc = reinterpret_cast<const struct ibv_wc*>(qp->getWc(i));
       if (wc->status != IBV_WC_SUCCESS) {
         WARN("wc status %d", wc->status);
-        continue;
-      }
-      if (wc->qp_num != qp->qp->qp_num) {
-        WARN("got wc of unknown qp_num %d", wc->qp_num);
         continue;
       }
       if (wc->opcode == IBV_WC_RDMA_WRITE) {
@@ -123,18 +115,16 @@ void IBConnection::flush() {
 }
 
 void IBConnection::startSetup(Communicator& comm) {
-  comm.bootstrap().send(&qp->info, sizeof(qp->info), remoteRank, tag);
+  // TODO(chhwang): temporarily disabled to compile
+  // comm.bootstrap().send(&qp->getInfo(), sizeof(qp->getInfo()), remoteRank, tag);
 }
 
 void IBConnection::endSetup(Communicator& comm) {
-  mscclppIbQpInfo qpInfo;
-  comm.bootstrap().recv(&qpInfo, sizeof(qpInfo), remoteRank, tag);
-  if (qp->rtr(&qpInfo) != 0) {
-    throw std::runtime_error("Failed to transition QP to RTR");
-  }
-  if (qp->rts() != 0) {
-    throw std::runtime_error("Failed to transition QP to RTS");
-  }
+  IbQpInfo qpInfo;
+  // TODO(chhwang): temporarily disabled to compile
+  // comm.bootstrap().recv(&qpInfo, sizeof(qpInfo), remoteRank, tag);
+  qp->rtr(qpInfo);
+  qp->rts();
 }
 
 } // namespace mscclpp

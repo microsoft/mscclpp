@@ -3,7 +3,7 @@
 
 #include "mscclpp.hpp"
 #include "mscclpp.h"
-#include "ib.h"
+#include "ib.hpp"
 #include "communicator.hpp"
 #include <cuda_runtime.h>
 
@@ -16,8 +16,8 @@ struct TransportInfo {
   bool ibLocal;
   union {
     cudaIpcMemHandle_t cudaIpcHandle;
-    mscclppIbMr* ibMr;
-    mscclppIbMrInfo ibMrInfo;
+    const IbMr* ibMr;
+    IbMrInfo ibMrInfo;
   };
 };
 

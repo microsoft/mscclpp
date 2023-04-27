@@ -3,7 +3,7 @@
 
 #include "mscclpp.hpp"
 #include <cuda_runtime.h>
-#include "ib.h"
+#include "ib.hpp"
 #include "communicator.hpp"
 
 namespace mscclpp {
@@ -38,7 +38,7 @@ class IBConnection : public ConnectionBase {
   int tag;
   TransportFlags transport_;
   TransportFlags remoteTransport_;
-  mscclppIbQp* qp;
+  IbQp* qp;
 public:
 
   IBConnection(int remoteRank, int tag, TransportFlags transport, Communicator::Impl& commImpl);

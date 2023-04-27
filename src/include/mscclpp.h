@@ -207,25 +207,10 @@ typedef struct
   char internal[MSCCLPP_UNIQUE_ID_BYTES];
 } mscclppUniqueId;
 
-// MR info to be shared with the remote peer
-struct mscclppIbMrInfo
-{
-  uint64_t addr;
-  uint32_t rkey;
-};
-
-// IB memory region
-struct mscclppIbMr
-{
-  struct ibv_mr* mr;
-  void* buff;
-  struct mscclppIbMrInfo info;
-};
-
 struct mscclppRegisteredMemoryP2P
 {
   void* remoteBuff;
-  mscclppIbMr* IbMr;
+  const void* IbMr;
 };
 
 struct mscclppRegisteredMemory
