@@ -9,6 +9,7 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include <bitset>
 
 
 namespace mscclpp {
@@ -63,24 +64,129 @@ private:
  */
 std::unique_ptr<UniqueId> getUniqueId();
 
-using TransportFlags = uint32_t;
-const TransportFlags TransportNone = 0b0;
-const TransportFlags TransportCudaIpc = 0b1;
-const TransportFlags TransportIB0 = 0b10;
-const TransportFlags TransportIB1 = 0b100;
-const TransportFlags TransportIB2 = 0b1000;
-const TransportFlags TransportIB3 = 0b10000;
-const TransportFlags TransportIB4 = 0b100000;
-const TransportFlags TransportIB5 = 0b1000000;
-const TransportFlags TransportIB6 = 0b10000000;
-const TransportFlags TransportIB7 = 0b100000000;
+enum class Transport {
+  Unknown,
+  CudaIpc,
+  IB0,
+  IB1,
+  IB2,
+  IB3,
+  IB4,
+  IB5,
+  IB6,
+  IB7,
+  NumTransports
+};
 
-const TransportFlags TransportAll = 0b111111111;
-const TransportFlags TransportAllIB = 0b111111110;
+namespace detail {
+  const size_t TransportFlagsSize = 10;
+  static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports), "TransportFlagsSize must match the number of transports");
+  using TransportFlagsBase = std::bitset<TransportFlagsSize>;
+}
+
+class TransportFlags : private detail::TransportFlagsBase {
+public:
+  TransportFlags() = default;
+  TransportFlags(Transport transport) : detail::TransportFlagsBase(1 << static_cast<size_t>(transport)) {}
+
+  bool has(Transport transport) const {
+    return detail::TransportFlagsBase::test(static_cast<size_t>(transport));
+  }
+
+  bool none() const {
+    return detail::TransportFlagsBase::none();
+  }
+
+  bool any() const {
+    return detail::TransportFlagsBase::any();
+  }
+
+  bool all() const {
+    return detail::TransportFlagsBase::all();
+  }
+
+  size_t count() const {
+    return detail::TransportFlagsBase::count();
+  }
+
+  TransportFlags& operator|=(TransportFlags other) {
+    detail::TransportFlagsBase::operator|=(other);
+    return *this;
+  }
+
+  TransportFlags operator|(TransportFlags other) const {
+    return TransportFlags(*this) |= other;
+  }
+
+  TransportFlags operator|(Transport transport) const {
+    return *this | TransportFlags(transport);
+  }
+
+  TransportFlags& operator&=(TransportFlags other) {
+    detail::TransportFlagsBase::operator&=(other);
+    return *this;
+  }
+
+  TransportFlags operator&(TransportFlags other) const {
+    return TransportFlags(*this) &= other;
+  }
+
+  TransportFlags operator&(Transport transport) const {
+    return *this & TransportFlags(transport);
+  }
+
+  TransportFlags& operator^=(TransportFlags other) {
+    detail::TransportFlagsBase::operator^=(other);
+    return *this;
+  }
+
+  TransportFlags operator^(TransportFlags other) const {
+    return TransportFlags(*this) ^= other;
+  }
+
+  TransportFlags operator^(Transport transport) const {
+    return *this ^ TransportFlags(transport);
+  }
+
+  TransportFlags operator~() const {
+    return TransportFlags(*this).flip();
+  }
+
+  bool operator==(TransportFlags other) const {
+    return detail::TransportFlagsBase::operator==(other);
+  }
+
+  bool operator!=(TransportFlags other) const {
+    return detail::TransportFlagsBase::operator!=(other);
+  }
+
+  detail::TransportFlagsBase toBitset() const {
+    return *this;
+  }
+
+private:
+  TransportFlags(detail::TransportFlagsBase bitset) : detail::TransportFlagsBase(bitset) {}
+};
+
+inline TransportFlags operator|(Transport transport1, Transport transport2) {
+  return TransportFlags(transport1) | transport2;
+}
+
+inline TransportFlags operator&(Transport transport1, Transport transport2) {
+  return TransportFlags(transport1) & transport2;
+}
+
+inline TransportFlags operator^(Transport transport1, Transport transport2) {
+  return TransportFlags(transport1) ^ transport2;
+}
+
+const TransportFlags NoTransports = TransportFlags();
+const TransportFlags AllIBTransports = Transport::IB0 | Transport::IB1 | Transport::IB2 | Transport::IB3 | Transport::IB4 | Transport::IB5 | Transport::IB6 | Transport::IB7;
+const TransportFlags AllTransports = AllIBTransports | Transport::CudaIpc;
 
 int getIBDeviceCount();
-std::string getIBDeviceName(TransportFlags ibTransport);
-TransportFlags getIBTransportByDeviceName(const std::string& ibDeviceName);
+std::string getIBDeviceName(Transport ibTransport);
+Transport getIBTransportByDeviceName(const std::string& ibDeviceName);
 
 class Communicator;
 class Connection;
@@ -111,9 +217,9 @@ public:
 
   virtual void flush() = 0;
 
-  virtual TransportFlags transport() = 0;
+  virtual Transport transport() = 0;
 
-  virtual TransportFlags remoteTransport() = 0;
+  virtual Transport remoteTransport() = 0;
 
 protected:
   static std::shared_ptr<RegisteredMemory::Impl> getRegisteredMemoryImpl(RegisteredMemory&);
@@ -166,7 +272,7 @@ public:
   *   transportType: the type of transport to be used (mscclppTransportP2P or mscclppTransportIB)
   *   ibDev:         the name of the IB device to be used. Expects a null for mscclppTransportP2P.
   */
-  std::shared_ptr<Connection> connect(int remoteRank, int tag, TransportFlags transport);
+  std::shared_ptr<Connection> connect(int remoteRank, int tag, Transport transport);
 
   /* Establish all connections declared by connect(). This function must be called after all connect()
   * calls are made. This function ensures that all remote ranks are ready to communicate when it returns.
@@ -179,5 +285,14 @@ private:
 };
 
 } // namespace mscclpp
+
+namespace std {
+  template <>
+  struct hash<mscclpp::TransportFlags> {
+    size_t operator()(const mscclpp::TransportFlags& flags) const {
+      return hash<mscclpp::detail::TransportFlagsBase>()(flags.toBitset());
+    }
+  };
+}
 
 #endif // MSCCLPP_H_

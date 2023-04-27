@@ -368,33 +368,33 @@ int getIBDeviceCount() {
   return num;
 }
 
-std::string getIBDeviceName(TransportFlags ibTransport) {
+std::string getIBDeviceName(Transport ibTransport) {
   int num;
   struct ibv_device** devices = ibv_get_device_list(&num);
   int ibTransportIndex;
   switch (ibTransport) { // TODO: get rid of this ugly switch
-    case TransportIB0:
+    case Transport::IB0:
       ibTransportIndex = 0;
       break;
-    case TransportIB1:
+    case Transport::IB1:
       ibTransportIndex = 1;
       break;
-    case TransportIB2:
+    case Transport::IB2:
       ibTransportIndex = 2;
       break;
-    case TransportIB3:
+    case Transport::IB3:
       ibTransportIndex = 3;
       break;
-    case TransportIB4:
+    case Transport::IB4:
       ibTransportIndex = 4;
       break;
-    case TransportIB5:
+    case Transport::IB5:
       ibTransportIndex = 5;
       break;
-    case TransportIB6:
+    case Transport::IB6:
       ibTransportIndex = 6;
       break;
-    case TransportIB7:
+    case Transport::IB7:
       ibTransportIndex = 7;
       break;
     default:
@@ -406,28 +406,28 @@ std::string getIBDeviceName(TransportFlags ibTransport) {
   return devices[ibTransportIndex]->name;
 }
 
-TransportFlags getIBTransportByDeviceName(const std::string& ibDeviceName) {
+Transport getIBTransportByDeviceName(const std::string& ibDeviceName) {
   int num;
   struct ibv_device** devices = ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
     if (ibDeviceName == devices[i]->name) {
       switch (i) { // TODO: get rid of this ugly switch
         case 0:
-          return TransportIB0;
+          return Transport::IB0;
         case 1:
-          return TransportIB1;
+          return Transport::IB1;
         case 2:
-          return TransportIB2;
+          return Transport::IB2;
         case 3:
-          return TransportIB3;
+          return Transport::IB3;
         case 4:
-          return TransportIB4;
+          return Transport::IB4;
         case 5:
-          return TransportIB5;
+          return Transport::IB5;
         case 6:
-          return TransportIB6;
+          return Transport::IB6;
         case 7:
-          return TransportIB7;
+          return Transport::IB7;
         default:
           throw std::runtime_error("IB device index out of range");
       }
