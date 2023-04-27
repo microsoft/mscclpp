@@ -8,6 +8,7 @@
 #include "checks.hpp"
 #include "debug.h"
 #include "connection.hpp"
+#include "registered_memory.hpp"
 
 namespace mscclpp {
 
@@ -15,18 +16,17 @@ Communicator::Impl::Impl(std::shared_ptr<BaseBootstrap> bootstrap) : bootstrap_(
 
 Communicator::Impl::~Impl() {
   for (auto& entry : ibContexts) {
-    mscclppIbContextDestroy(entry.second);
+    delete entry.second;
   }
   ibContexts.clear();
 }
 
-mscclppIbContext* Communicator::Impl::getIbContext(TransportFlags ibTransport) {
+IbCtx* Communicator::Impl::getIbContext(TransportFlags ibTransport) {
   // Find IB context or create it
   auto it = ibContexts.find(ibTransport);
   if (it == ibContexts.end()) {
     auto ibDev = getIBDeviceName(ibTransport);
-    mscclppIbContext* ibCtx;
-    MSCCLPPTHROW(mscclppIbContextCreate(&ibCtx, ibDev.c_str()));
+    IbCtx* ibCtx = new IbCtx(ibDev);
     ibContexts[ibTransport] = ibCtx;
     return ibCtx;
   } else {
@@ -72,6 +72,10 @@ MSCCLPP_API_CPP void Communicator::bootstrapBarrier() {
   mscclppBootstrapBarrier(pimpl->comm);
 }
 
+RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports) {
+  return RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(ptr, size, pimpl->comm->rank, transports, *pimpl));
+}
+
 MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank, int tag, TransportFlags transport) {
   std::shared_ptr<ConnectionBase> conn;
   if (transport | TransportCudaIpc) {
@@ -84,6 +88,7 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank
     throw std::runtime_error("Unsupported transport");
   }
   pimpl->connections.push_back(conn);
+  return conn;
 }
 
 MSCCLPP_API_CPP void Communicator::connectionSetup() {
