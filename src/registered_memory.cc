@@ -9,6 +9,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags t
     TransportInfo transportInfo;
     transportInfo.transport = TransportCudaIpc;
     cudaIpcMemHandle_t handle;
+    // TODO: translate data to a base pointer
     CUDATHROW(cudaIpcGetMemHandle(&handle, data));
     transportInfo.cudaIpcHandle = handle;
     this->transportInfos.push_back(transportInfo);

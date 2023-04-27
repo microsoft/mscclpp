@@ -5,3 +5,4 @@
 - Reimplement the "standard" proxy service + DeviceConnection on top of the new Communicator/RegisteredMemory/Connection core API. Remants of the old code is in channel.hpp, basic_proxy_handler.hpp/cc and host_connection.hpp/cc. Probably need a manager class to wrap all of this.
 - Change the new IBConnection and Communicator to use the new C++ IbCtx and IbQp classes.
 - Implement IbQp::~IbQp()
+- Fix RegisteredMemory::Impl::Impl to get the IPC handle from the base pointer, not the derived pointer.
