@@ -676,6 +676,9 @@ testResult_t run()
   CUDACHECK(cudaFreeHost(delta));
 
   int error = worker.args.error;
+#if MSCCLPP_USE_MPI_FOR_TESTS
+  MPI_Allreduce(MPI_IN_PLACE, &error, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+#endif
   PRINT("# Out of bounds values : %d %s\n", error, error ? "FAILED" : "OK");
   PRINT("#\n");
 
