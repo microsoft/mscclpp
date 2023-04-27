@@ -1,8 +1,8 @@
 #ifndef MSCCLPP_CHANNEL_HPP_
 #define MSCCLPP_CHANNEL_HPP_
 
-#include "mscclpp.hpp"
 #include "epoch.hpp"
+#include "mscclpp.hpp"
 #include "proxy.hpp"
 
 namespace mscclpp {
@@ -18,7 +18,7 @@ const ChannelTriggerType channelTriggerFlag = 0x2;
 const ChannelTriggerType channelTriggerSync = 0x4;
 
 // This is just a numeric ID. Each HostConnection will have an internal array indexed by these handles
-// mapping to the actual 
+// mapping to the actual
 using BufferHandle = uint32_t;
 
 #define MSCCLPP_BITS_SIZE 32
@@ -43,20 +43,32 @@ union ChannelTrigger {
     uint64_t dstBufferHandle : MSCCLPP_BITS_BUFFER_HANDLE;
     uint64_t type : MSCCLPP_BITS_TYPE;
     uint64_t connId : MSCCLPP_BITS_CONNID;
-    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_BUFFER_HANDLE - MSCCLPP_BITS_BUFFER_HANDLE - MSCCLPP_BITS_TYPE); // ensure 64-bit alignment
+    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_BUFFER_HANDLE - MSCCLPP_BITS_BUFFER_HANDLE -
+                MSCCLPP_BITS_TYPE); // ensure 64-bit alignment
   } fields;
 
 #ifdef __CUDACC__
-  __device__ ChannelTrigger() {}
-  __device__ ChannelTrigger(ProxyTrigger value) : value(value) {}
-  __device__ ChannelTrigger(ChannelTriggerType type, BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset, uint64_t size, int connectionId) {
+  __device__ ChannelTrigger()
+  {
+  }
+  __device__ ChannelTrigger(ProxyTrigger value) : value(value)
+  {
+  }
+  __device__ ChannelTrigger(ChannelTriggerType type, BufferHandle dst, uint64_t dstOffset, BufferHandle src,
+                            uint64_t srcOffset, uint64_t size, int connectionId)
+  {
     value.fst = ((srcOffset << MSCCLPP_BITS_SIZE) + size);
-    value.snd = ((((((((connectionId << MSCCLPP_BITS_TYPE) + (uint64_t)type) << MSCCLPP_BITS_BUFFER_HANDLE) + dst) << MSCCLPP_BITS_BUFFER_HANDLE) + src) << MSCCLPP_BITS_OFFSET) + dstOffset);
+    value.snd = ((((((((connectionId << MSCCLPP_BITS_TYPE) + (uint64_t)type) << MSCCLPP_BITS_BUFFER_HANDLE) + dst)
+                    << MSCCLPP_BITS_BUFFER_HANDLE) +
+                   src)
+                  << MSCCLPP_BITS_OFFSET) +
+                 dstOffset);
   }
 #endif // __CUDACC__
 };
 
-struct ConnectionEpoch {
+struct ConnectionEpoch
+{
 #ifdef __CUDACC__
   __forceinline__ __device__ void wait()
   {
@@ -81,8 +93,10 @@ struct ConnectionEpoch {
   uint64_t* waitEpochId;
 };
 
-class HostConnection {
+class HostConnection
+{
   struct Impl;
+
 public:
   /* HostConnection can not be constructed from user code and must instead be created through Communicator::connect */
   HostConnection(std::unique_ptr<Impl>);
@@ -103,7 +117,7 @@ public:
    *
    * Inputs:
    *  index: the index of the handle to get
-   * 
+   *
    * Returns: a handle to the buffer
    */
   BufferHandle getLocalBuffer(int index);
@@ -118,7 +132,7 @@ public:
    *
    * Inputs:
    *  index: the index of the handle to get
-   * 
+   *
    * Returns: a handle to the buffer on the remote peer
    */
   BufferHandle getRemoteBuffer(int index);
@@ -140,19 +154,22 @@ private:
   friend class Communicator;
 };
 
-struct DeviceConnection {
+struct DeviceConnection
+{
   DeviceConnection() = default;
 
   DeviceConnection(HostConnection& hostConn)
-    : connectionId(hostConn.getId()), epoch(hostConn.getEpoch()),
-      fifo(hostConn.getDeviceFifo()) {}
+    : connectionId(hostConn.getId()), epoch(hostConn.getEpoch()), fifo(hostConn.getDeviceFifo())
+  {
+  }
 
   DeviceConnection(const DeviceConnection& other) = default;
 
   DeviceConnection& operator=(DeviceConnection& other) = default;
 
 #ifdef __CUDACC__
-  __forceinline__ __device__ void put(BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset, uint64_t size)
+  __forceinline__ __device__ void put(BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset,
+                                      uint64_t size)
   {
     fifo.push(ChannelTrigger(channelTriggerData, dst, dstOffset, src, srcOffset, size, connectionId).value);
   }
@@ -168,10 +185,13 @@ struct DeviceConnection {
     fifo.push(ChannelTrigger(channelTriggerFlag, 0, 0, 0, 0, 1, connectionId).value);
   }
 
-  __forceinline__ __device__ void putWithSignal(BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset, uint64_t size)
+  __forceinline__ __device__ void putWithSignal(BufferHandle dst, uint64_t dstOffset, BufferHandle src,
+                                                uint64_t srcOffset, uint64_t size)
   {
     epochIncrement();
-    fifo.push(ChannelTrigger(channelTriggerData | channelTriggerFlag, dst, dstOffset, src, srcOffset, size, connectionId).value);
+    fifo.push(
+      ChannelTrigger(channelTriggerData | channelTriggerFlag, dst, dstOffset, src, srcOffset, size, connectionId)
+        .value);
   }
 
   __forceinline__ __device__ void putWithSignal(BufferHandle dst, BufferHandle src, uint64_t offset, uint64_t size)
@@ -179,16 +199,20 @@ struct DeviceConnection {
     putWithSignal(dst, offset, src, offset, size);
   }
 
-  __forceinline__ __device__ void putWithSignalAndFlush(BufferHandle dst, uint64_t dstOffset, BufferHandle src, uint64_t srcOffset, uint64_t size)
+  __forceinline__ __device__ void putWithSignalAndFlush(BufferHandle dst, uint64_t dstOffset, BufferHandle src,
+                                                        uint64_t srcOffset, uint64_t size)
   {
     epochIncrement();
-    uint64_t curFifoHead = fifo.push(ChannelTrigger(channelTriggerData | channelTriggerFlag | channelTriggerSync, dst,  dstOffset, src, srcOffset, size, connectionId).value);
+    uint64_t curFifoHead = fifo.push(ChannelTrigger(channelTriggerData | channelTriggerFlag | channelTriggerSync, dst,
+                                                    dstOffset, src, srcOffset, size, connectionId)
+                                       .value);
     while (*(volatile uint64_t*)&fifo.triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
            *(volatile uint64_t*)fifo.tailReplica <= curFifoHead)
       ;
   }
 
-  __forceinline__ __device__ void putWithSignalAndFlush(BufferHandle dst, BufferHandle src, uint64_t offset, uint64_t size)
+  __forceinline__ __device__ void putWithSignalAndFlush(BufferHandle dst, BufferHandle src, uint64_t offset,
+                                                        uint64_t size)
   {
     putWithSignalAndFlush(dst, offset, src, offset, size);
   }
@@ -223,10 +247,12 @@ struct DeviceConnection {
   DeviceProxyFifo fifo;
 };
 
-struct SimpleDeviceConnection {
+struct SimpleDeviceConnection
+{
   SimpleDeviceConnection() = default;
 
-  SimpleDeviceConnection(HostConnection& hostConn) : devConn(hostConn) {
+  SimpleDeviceConnection(HostConnection& hostConn) : devConn(hostConn)
+  {
     dst = hostConn.getRemoteBuffer(0);
     src = hostConn.getLocalBuffer(0);
   }

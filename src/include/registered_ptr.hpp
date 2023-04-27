@@ -3,32 +3,44 @@
 
 namespace mscclpp {
 
-template<typename T>
-class RegisteredPtr {
+template <typename T> class RegisteredPtr
+{
   RegisteredMemory memory;
   size_t offset;
-public:
-  RegisteredPtr(RegisteredMemory memory, size_t offset) : memory(memory), offset(offset) {}
-  RegisteredPtr(RegisteredMemory memory) : RegisteredPtr(memory, 0) {}
-  ~RegisteredPtr() {}
 
-  RegisteredMemory memory() {
+public:
+  RegisteredPtr(RegisteredMemory memory, size_t offset) : memory(memory), offset(offset)
+  {
+  }
+  RegisteredPtr(RegisteredMemory memory) : RegisteredPtr(memory, 0)
+  {
+  }
+  ~RegisteredPtr()
+  {
+  }
+
+  RegisteredMemory memory()
+  {
     return memory;
   }
 
-  T* data() {
+  T* data()
+  {
     return reinterpret_cast<T*>(memory.data());
   }
 
-  size_t size() {
+  size_t size()
+  {
     return memory.size() / sizeof(T);
   }
 
-  size_t offset() {
+  size_t offset()
+  {
     return offset;
   }
 
-  RegisteredPtr<T> operator+(size_t offset) {
+  RegisteredPtr<T> operator+(size_t offset)
+  {
     return RegisteredPtr<T>(memory, this->offset + offset);
   }
 

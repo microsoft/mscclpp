@@ -3,12 +3,13 @@
 
 #include <mscclppfifo.hpp>
 
-#include <memory>
 #include <functional>
+#include <memory>
 
 namespace mscclpp {
 
-enum class ProxyHandlerResult {
+enum class ProxyHandlerResult
+{
   Continue,
   FlushFifoTailAndContinue,
   Stop,
@@ -17,7 +18,8 @@ enum class ProxyHandlerResult {
 class Proxy;
 using ProxyHandler = std::function<ProxyHandlerResult(ProxyTrigger)>;
 
-class Proxy {
+class Proxy
+{
 public:
   Proxy(ProxyHandler handler);
 
@@ -26,7 +28,7 @@ public:
   void start();
 
   void stop();
-  
+
   HostProxyFifo& fifo();
 
 private:

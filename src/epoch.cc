@@ -3,20 +3,25 @@
 
 namespace mscclpp {
 
-struct Epoch::Impl {
+struct Epoch::Impl
+{
   DeviceEpoch deviceEpoch;
 
-  Impl() {
+  Impl()
+  {
     MSCCLPPTHROW(mscclppCudaCalloc(&deviceEpoch.localSignalEpochId, 1));
     MSCCLPPTHROW(mscclppCudaCalloc(&deviceEpoch.waitEpochId, 1));
   }
 
-  ~Impl() {
+  ~Impl()
+  {
     MSCCLPPTHROW(mscclppCudaFree(deviceEpoch.localSignalEpochId));
     MSCCLPPTHROW(mscclppCudaFree(deviceEpoch.waitEpochId));
   }
 };
 
-Epoch::Epoch() : pimpl(std::make_unique<Impl>()) {}
+Epoch::Epoch() : pimpl(std::make_unique<Impl>())
+{
+}
 
 } // namespace mscclpp

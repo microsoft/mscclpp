@@ -2,15 +2,17 @@
 
 namespace mscclpp {
 
-ProxyHandler makeBasicProxyHandler(Communicator::Impl &comm) {
+ProxyHandler makeBasicProxyHandler(Communicator::Impl& comm)
+{
   return [&comm](ProxyTrigger triggerRaw) {
-    ChannelTrigger *trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
+    ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
     HostConnection& conn = *comm.connections.at(trigger->fields.connId);
 
     auto result = ProxyHandlerResult::Continue;
 
     if (trigger->fields.type & mscclppData) {
-      conn.put(trigger->fields.dstBufferHandle, trigger->fields.dstOffset, trigger->fields.srcBufferHandle, trigger->fields.srcOffset, trigger->fields.size);
+      conn.put(trigger->fields.dstBufferHandle, trigger->fields.dstOffset, trigger->fields.srcBufferHandle,
+               trigger->fields.srcOffset, trigger->fields.size);
     }
 
     if (trigger->fields.type & mscclppFlag) {

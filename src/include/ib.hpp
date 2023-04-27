@@ -1,9 +1,9 @@
 #ifndef MSCCLPP_IB_HPP_
 #define MSCCLPP_IB_HPP_
 
+#include <list>
 #include <memory>
 #include <string>
-#include <list>
 
 #define MSCCLPP_IB_CQ_SIZE 1024
 #define MSCCLPP_IB_CQ_POLL_NUM 1
@@ -55,8 +55,10 @@ public:
 
   void rtr(const IbQpInfo& info);
   void rts();
-  int stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled);
-  int stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled, unsigned int immData);
+  int stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+                uint64_t dstOffset, bool signaled);
+  int stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+                       uint64_t dstOffset, bool signaled, unsigned int immData);
   void postSend();
   void postRecv(uint64_t wrId);
   int pollCq();

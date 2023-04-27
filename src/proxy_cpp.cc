@@ -1,8 +1,8 @@
+#include "api.h"
 #include "mscclpp.hpp"
 #include "utils.h"
-#include "api.h"
-#include <thread>
 #include <atomic>
+#include <thread>
 
 namespace mscclpp {
 
@@ -10,26 +10,32 @@ const int ProxyStopCheckPeriod = 1000;
 
 const int ProxyFlushPeriod = 4;
 
-struct Proxy::Impl {
+struct Proxy::Impl
+{
   ProxyHandler handler;
   HostProxyFifo fifo;
   std::thread service;
   std::atomic_bool running;
 
-  Impl(ProxyHandler handler) : handler(handler), running(false) {}
+  Impl(ProxyHandler handler) : handler(handler), running(false)
+  {
+  }
 };
 
-MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler) {
+MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler)
+{
   pimpl = std::make_unique<Impl>(handler);
 }
 
-MSCCLPP_API_CPP Proxy::~Proxy() {
+MSCCLPP_API_CPP Proxy::~Proxy()
+{
   if (pimpl) {
     stop();
   }
 }
 
-MSCCLPP_API_CPP void Proxy::start() {
+MSCCLPP_API_CPP void Proxy::start()
+{
   pimpl->running = true;
   pimpl->service = std::thread([this] {
     // from this point on, proxy thread will stay close to the device
@@ -52,7 +58,7 @@ MSCCLPP_API_CPP void Proxy::start() {
       // Poll to see if we are ready to send anything
       fifo.poll(&trigger);
       if (trigger.fst == 0) { // TODO: this check is a potential pitfall for custom triggers
-        continue; // there is one in progress
+        continue;             // there is one in progress
       }
 
       ProxyHandlerResult result = handler(trigger);
@@ -83,14 +89,16 @@ MSCCLPP_API_CPP void Proxy::start() {
   });
 }
 
-MSCCLPP_API_CPP void Proxy::stop() {
+MSCCLPP_API_CPP void Proxy::stop()
+{
   pimpl->running = false;
   if (pimpl->service.joinable()) {
     pimpl->service.join();
   }
 }
 
-MSCCLPP_API_CPP HostProxyFifo& Proxy::fifo() {
+MSCCLPP_API_CPP HostProxyFifo& Proxy::fifo()
+{
   return pimpl->fifo;
 }
 

@@ -3,8 +3,8 @@
 #include "ib.hpp"
 #include "infiniband/verbs.h"
 #include "mscclpp.hpp"
-#include <string>
 #include <array>
+#include <string>
 
 // Measure current time in second.
 static double getTime(void)

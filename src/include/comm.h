@@ -9,14 +9,14 @@
 
 #include "ib.hpp"
 #include "proxy.h"
-#include <vector>
 #include <memory>
+#include <vector>
 
 #define MAXCONNECTIONS 64
 
 struct mscclppBufferRegistration
 {
-  void *data;
+  void* data;
   uint64_t size;
 };
 

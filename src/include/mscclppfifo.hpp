@@ -1,13 +1,14 @@
 #ifndef MSCCLPPFIFO_HPP_
 #define MSCCLPPFIFO_HPP_
 
-#include <stdint.h>
 #include <functional>
 #include <memory>
+#include <stdint.h>
 
 namespace mscclpp {
 
-struct alignas(16) ProxyTrigger {
+struct alignas(16) ProxyTrigger
+{
   uint64_t fst, snd;
 };
 
@@ -24,7 +25,8 @@ struct alignas(16) ProxyTrigger {
  * Why duplicating the tail is a good idea? The fifo is large engouh and we do not need frequent updates
  * for the tail as there is usually enough space for device threads to push their work into.
  */
-struct DeviceProxyFifo {
+struct DeviceProxyFifo
+{
 #ifdef __CUDACC__
   __forceinline__ __device__ uint64_t push(ProxyTrigger trigger)
   {
@@ -34,29 +36,28 @@ struct DeviceProxyFifo {
     while (*(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0)
       ;
     ProxyTrigger* triggerPtr = (ProxyTrigger*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]);
-    asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr),
-                 "l"(trigger.fst), "l"(trigger.snd));
+    asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
     return curFifoHead;
   }
 #endif // __CUDACC__
 
   ProxyTrigger* triggers; // Allocate on host via cudaHostAlloc. This space is used for pushing the workelements
-  uint64_t* tailReplica;   // Allocated on device. proxyState->fifoTailHost is the true tail on host and pused
-                               // occasionally to device
-  uint64_t* head;   // Allocated on device. Only accessed by device
+  uint64_t* tailReplica;  // Allocated on device. proxyState->fifoTailHost is the true tail on host and pused
+                          // occasionally to device
+  uint64_t* head;         // Allocated on device. Only accessed by device
 };
 
 class HostProxyFifo
 {
 public:
   HostProxyFifo();
-  
+
   ~HostProxyFifo();
 
-  void poll(ProxyTrigger *trigger);
-  
+  void poll(ProxyTrigger* trigger);
+
   void pop();
-  
+
   void flushTail(bool sync = false);
 
   DeviceProxyFifo toDevice();

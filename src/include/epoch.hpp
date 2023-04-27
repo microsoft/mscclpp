@@ -5,7 +5,8 @@
 
 namespace mscclpp {
 
-struct alignas(16) SignalEpochId {
+struct alignas(16) SignalEpochId
+{
   // every signal(), increaments this and either:
   // 1) proxy thread pushes it to the remote peer's localSignalEpochId->proxy
   // 2) gpu thread directly writes it to remoteSignalEpochId->device
@@ -14,7 +15,8 @@ struct alignas(16) SignalEpochId {
   uint64_t proxy;
 };
 
-struct DeviceEpoch {
+struct DeviceEpoch
+{
 #ifdef __CUDACC__
   __forceinline__ __device__ void wait()
   {
@@ -34,10 +36,11 @@ struct DeviceEpoch {
   uint64_t* waitEpochId;
 };
 
-
-class Epoch {
+class Epoch
+{
   struct Impl;
   std::unique_ptr<Impl> pimpl;
+
 public:
   Epoch();
   ~Epoch();

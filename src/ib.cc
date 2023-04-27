@@ -1,16 +1,16 @@
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
-#include <sstream>
 #include <malloc.h>
+#include <sstream>
 #include <unistd.h>
 
-#include "mscclpp.hpp"
 #include "alloc.h"
+#include "checks.hpp"
 #include "comm.h"
 #include "debug.h"
 #include "ib.hpp"
-#include "checks.hpp"
+#include "mscclpp.hpp"
 #include <infiniband/verbs.h>
 #include <string>
 
@@ -28,7 +28,9 @@ IbMr::IbMr(void* pd, void* buff, std::size_t size) : buff(buff)
   uintptr_t addr = reinterpret_cast<uintptr_t>(buff) & -pageSize;
   std::size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;
   struct ibv_pd* _pd = reinterpret_cast<struct ibv_pd*>(pd);
-  struct ibv_mr* _mr = ibv_reg_mr(_pd, reinterpret_cast<void*>(addr), pages * pageSize, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_RELAXED_ORDERING);
+  struct ibv_mr* _mr =
+    ibv_reg_mr(_pd, reinterpret_cast<void*>(addr), pages * pageSize,
+               IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_RELAXED_ORDERING);
   if (_mr == nullptr) {
     std::stringstream err;
     err << "ibv_reg_mr failed (errno " << errno << ")";
@@ -164,7 +166,9 @@ void IbQp::rtr(const IbQpInfo& info)
   qp_attr.ah_attr.sl = 0;
   qp_attr.ah_attr.src_path_bits = 0;
   qp_attr.ah_attr.port_num = info.port;
-  int ret = ibv_modify_qp(reinterpret_cast<struct ibv_qp*>(this->qp), &qp_attr, IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
+  int ret = ibv_modify_qp(reinterpret_cast<struct ibv_qp*>(this->qp), &qp_attr,
+                          IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
+                            IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_modify_qp failed (errno " << errno << ")";
@@ -182,7 +186,9 @@ void IbQp::rts()
   qp_attr.rnr_retry = 7;
   qp_attr.sq_psn = 0;
   qp_attr.max_rd_atomic = 1;
-  int ret = ibv_modify_qp(reinterpret_cast<struct ibv_qp*>(this->qp), &qp_attr, IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC);
+  int ret = ibv_modify_qp(reinterpret_cast<struct ibv_qp*>(this->qp), &qp_attr,
+                          IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN |
+                            IBV_QP_MAX_QP_RD_ATOMIC);
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_modify_qp failed (errno " << errno << ")";
@@ -190,7 +196,8 @@ void IbQp::rts()
   }
 }
 
-int IbQp::stageSend(const IbMr *mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled)
+int IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+                    uint64_t dstOffset, bool signaled)
 {
   if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
     return -1;
@@ -219,7 +226,8 @@ int IbQp::stageSend(const IbMr *mr, const IbMrInfo& info, uint32_t size, uint64_
   return this->wrn;
 }
 
-int IbQp::stageSendWithImm(const IbMr *mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled, unsigned int immData)
+int IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+                           uint64_t dstOffset, bool signaled, unsigned int immData)
 {
   int wrn = this->stageSend(mr, info, size, wrId, srcOffset, dstOffset, signaled);
   struct ibv_send_wr* wrs_ = reinterpret_cast<struct ibv_send_wr*>(this->wrs);
@@ -234,7 +242,8 @@ void IbQp::postSend()
     return;
   }
   struct ibv_send_wr* bad_wr;
-  int ret = ibv_post_send(reinterpret_cast<struct ibv_qp*>(this->qp), reinterpret_cast<struct ibv_send_wr*>(this->wrs), &bad_wr);
+  int ret = ibv_post_send(reinterpret_cast<struct ibv_qp*>(this->qp), reinterpret_cast<struct ibv_send_wr*>(this->wrs),
+                          &bad_wr);
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_post_send failed (errno " << errno << ")";
@@ -260,7 +269,8 @@ void IbQp::postRecv(uint64_t wrId)
 
 int IbQp::pollCq()
 {
-  return ibv_poll_cq(reinterpret_cast<struct ibv_cq*>(this->cq), MSCCLPP_IB_CQ_POLL_NUM, reinterpret_cast<struct ibv_wc*>(this->wcs));
+  return ibv_poll_cq(reinterpret_cast<struct ibv_cq*>(this->cq), MSCCLPP_IB_CQ_POLL_NUM,
+                     reinterpret_cast<struct ibv_wc*>(this->wcs));
 }
 
 IbQpInfo& IbQp::getInfo()
@@ -317,8 +327,8 @@ bool IbCtx::isPortUsable(int port) const
     err << "ibv_query_port failed (errno " << errno << ", port << " << port << ")";
     throw std::runtime_error(err.str());
   }
-  return portAttr.state == IBV_PORT_ACTIVE && (portAttr.link_layer == IBV_LINK_LAYER_ETHERNET ||
-                                               portAttr.link_layer == IBV_LINK_LAYER_INFINIBAND);
+  return portAttr.state == IBV_PORT_ACTIVE &&
+         (portAttr.link_layer == IBV_LINK_LAYER_ETHERNET || portAttr.link_layer == IBV_LINK_LAYER_INFINIBAND);
 }
 
 int IbCtx::getAnyActivePort() const
@@ -362,43 +372,45 @@ const std::string& IbCtx::getDevName() const
   return this->devName;
 }
 
-int getIBDeviceCount() {
+int getIBDeviceCount()
+{
   int num;
   ibv_get_device_list(&num);
   return num;
 }
 
-std::string getIBDeviceName(Transport ibTransport) {
+std::string getIBDeviceName(Transport ibTransport)
+{
   int num;
   struct ibv_device** devices = ibv_get_device_list(&num);
   int ibTransportIndex;
   switch (ibTransport) { // TODO: get rid of this ugly switch
-    case Transport::IB0:
-      ibTransportIndex = 0;
-      break;
-    case Transport::IB1:
-      ibTransportIndex = 1;
-      break;
-    case Transport::IB2:
-      ibTransportIndex = 2;
-      break;
-    case Transport::IB3:
-      ibTransportIndex = 3;
-      break;
-    case Transport::IB4:
-      ibTransportIndex = 4;
-      break;
-    case Transport::IB5:
-      ibTransportIndex = 5;
-      break;
-    case Transport::IB6:
-      ibTransportIndex = 6;
-      break;
-    case Transport::IB7:
-      ibTransportIndex = 7;
-      break;
-    default:
-      throw std::runtime_error("Not an IB transport");
+  case Transport::IB0:
+    ibTransportIndex = 0;
+    break;
+  case Transport::IB1:
+    ibTransportIndex = 1;
+    break;
+  case Transport::IB2:
+    ibTransportIndex = 2;
+    break;
+  case Transport::IB3:
+    ibTransportIndex = 3;
+    break;
+  case Transport::IB4:
+    ibTransportIndex = 4;
+    break;
+  case Transport::IB5:
+    ibTransportIndex = 5;
+    break;
+  case Transport::IB6:
+    ibTransportIndex = 6;
+    break;
+  case Transport::IB7:
+    ibTransportIndex = 7;
+    break;
+  default:
+    throw std::runtime_error("Not an IB transport");
   }
   if (ibTransportIndex >= num) {
     throw std::runtime_error("IB transport out of range");
@@ -406,30 +418,31 @@ std::string getIBDeviceName(Transport ibTransport) {
   return devices[ibTransportIndex]->name;
 }
 
-Transport getIBTransportByDeviceName(const std::string& ibDeviceName) {
+Transport getIBTransportByDeviceName(const std::string& ibDeviceName)
+{
   int num;
   struct ibv_device** devices = ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
     if (ibDeviceName == devices[i]->name) {
       switch (i) { // TODO: get rid of this ugly switch
-        case 0:
-          return Transport::IB0;
-        case 1:
-          return Transport::IB1;
-        case 2:
-          return Transport::IB2;
-        case 3:
-          return Transport::IB3;
-        case 4:
-          return Transport::IB4;
-        case 5:
-          return Transport::IB5;
-        case 6:
-          return Transport::IB6;
-        case 7:
-          return Transport::IB7;
-        default:
-          throw std::runtime_error("IB device index out of range");
+      case 0:
+        return Transport::IB0;
+      case 1:
+        return Transport::IB1;
+      case 2:
+        return Transport::IB2;
+      case 3:
+        return Transport::IB3;
+      case 4:
+        return Transport::IB4;
+      case 5:
+        return Transport::IB5;
+      case 6:
+        return Transport::IB6;
+      case 7:
+        return Transport::IB7;
+      default:
+        throw std::runtime_error("IB device index out of range");
       }
     }
   }

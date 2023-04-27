@@ -1,12 +1,13 @@
 #include "connection.hpp"
 #include "checks.hpp"
-#include "registered_memory.hpp"
-#include "npkit/npkit.h"
 #include "infiniband/verbs.h"
+#include "npkit/npkit.h"
+#include "registered_memory.hpp"
 
 namespace mscclpp {
 
-void validateTransport(RegisteredMemory mem, Transport transport) {
+void validateTransport(RegisteredMemory mem, Transport transport)
+{
   if (!mem.transports().has(transport)) {
     throw std::runtime_error("mem does not support transport");
   }
@@ -14,29 +15,36 @@ void validateTransport(RegisteredMemory mem, Transport transport) {
 
 // Connection
 
-std::shared_ptr<RegisteredMemory::Impl> Connection::getRegisteredMemoryImpl(RegisteredMemory& mem) {
+std::shared_ptr<RegisteredMemory::Impl> Connection::getRegisteredMemoryImpl(RegisteredMemory& mem)
+{
   return mem.pimpl;
 }
 
 // CudaIpcConnection
 
-CudaIpcConnection::CudaIpcConnection() {
+CudaIpcConnection::CudaIpcConnection()
+{
   cudaStreamCreate(&stream);
 }
 
-CudaIpcConnection::~CudaIpcConnection() {
+CudaIpcConnection::~CudaIpcConnection()
+{
   cudaStreamDestroy(stream);
 }
 
-Transport CudaIpcConnection::transport() {
+Transport CudaIpcConnection::transport()
+{
   return Transport::CudaIpc;
 }
 
-Transport CudaIpcConnection::remoteTransport() {
+Transport CudaIpcConnection::remoteTransport()
+{
   return Transport::CudaIpc;
 }
 
-void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size) {
+void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
+                              uint64_t size)
+{
   validateTransport(dst, remoteTransport());
   validateTransport(src, transport());
 
@@ -47,30 +55,38 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)size);
 }
 
-void CudaIpcConnection::flush() {
+void CudaIpcConnection::flush()
+{
   CUDATHROW(cudaStreamSynchronize(stream));
   // npkitCollectExitEvents(conn, NPKIT_EVENT_DMA_SEND_EXIT);
 }
 
 // IBConnection
 
-IBConnection::IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl) : remoteRank_(remoteRank), tag_(tag), transport_(transport), remoteTransport_(Transport::Unknown) {
+IBConnection::IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl)
+  : remoteRank_(remoteRank), tag_(tag), transport_(transport), remoteTransport_(Transport::Unknown)
+{
   qp = commImpl.getIbContext(transport)->createQp();
 }
 
-IBConnection::~IBConnection() {
+IBConnection::~IBConnection()
+{
   // TODO: Destroy QP?
 }
 
-Transport IBConnection::transport() {
+Transport IBConnection::transport()
+{
   return transport_;
 }
 
-Transport IBConnection::remoteTransport() {
+Transport IBConnection::remoteTransport()
+{
   return remoteTransport_;
 }
 
-void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size) {
+void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
+                         uint64_t size)
+{
   validateTransport(dst, remoteTransport());
   validateTransport(src, transport());
 
@@ -82,16 +98,18 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   if (!srcTransportInfo.ibLocal) {
     throw std::runtime_error("src is remote, which is not supported");
   }
-  
+
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
   auto srcMr = srcTransportInfo.ibMr;
 
-  qp->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset, /*signaled=*/false);
+  qp->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset,
+                /*signaled=*/false);
   qp->postSend();
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)size);
 }
 
-void IBConnection::flush() {
+void IBConnection::flush()
+{
   bool isWaiting = true;
   while (isWaiting) {
     int wcNum = qp->pollCq();
@@ -114,11 +132,13 @@ void IBConnection::flush() {
   // npkitCollectExitEvents(conn, NPKIT_EVENT_IB_SEND_EXIT);
 }
 
-void IBConnection::startSetup(std::shared_ptr<BaseBootstrap> bootstrap) {
+void IBConnection::startSetup(std::shared_ptr<BaseBootstrap> bootstrap)
+{
   bootstrap->send(&qp->getInfo(), sizeof(qp->getInfo()), remoteRank_, tag_);
 }
 
-void IBConnection::endSetup(std::shared_ptr<BaseBootstrap> bootstrap) {
+void IBConnection::endSetup(std::shared_ptr<BaseBootstrap> bootstrap)
+{
   IbQpInfo qpInfo;
   bootstrap->recv(&qpInfo, sizeof(qpInfo), remoteRank_, tag_);
   qp->rtr(qpInfo);

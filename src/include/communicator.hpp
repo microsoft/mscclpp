@@ -1,19 +1,20 @@
 #ifndef MSCCL_COMMUNICATOR_HPP_
 #define MSCCL_COMMUNICATOR_HPP_
 
-#include "mscclpp.hpp"
-#include "mscclpp.h"
 #include "channel.hpp"
-#include "proxy.hpp"
 #include "ib.hpp"
-#include <unordered_map>
+#include "mscclpp.h"
+#include "mscclpp.hpp"
+#include "proxy.hpp"
 #include <memory>
+#include <unordered_map>
 
 namespace mscclpp {
 
 class ConnectionBase;
 
-struct Communicator::Impl {
+struct Communicator::Impl
+{
   mscclppComm_t comm;
   std::vector<std::shared_ptr<ConnectionBase>> connections;
   std::unordered_map<Transport, std::unique_ptr<IbCtx>> ibContexts;

@@ -1,10 +1,13 @@
 #include "registered_memory.hpp"
 #include "checks.hpp"
 #include <algorithm>
+#include <cuda.h>
 
 namespace mscclpp {
 
-RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl) : data(data), size(size), rank(rank), transports(transports) {
+RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl)
+  : data(data), size(size), rank(rank), transports(transports)
+{
   if (transports.has(Transport::CudaIpc)) {
     TransportInfo transportInfo;
     transportInfo.transport = Transport::CudaIpc;
@@ -23,38 +26,53 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags t
       transportInfo.ibLocal = true;
       this->transportInfos.push_back(transportInfo);
     };
-    if (transports.has(Transport::IB0)) addIb(Transport::IB0);
-    if (transports.has(Transport::IB1)) addIb(Transport::IB1);
-    if (transports.has(Transport::IB2)) addIb(Transport::IB2);
-    if (transports.has(Transport::IB3)) addIb(Transport::IB3);
-    if (transports.has(Transport::IB4)) addIb(Transport::IB4);
-    if (transports.has(Transport::IB5)) addIb(Transport::IB5);
-    if (transports.has(Transport::IB6)) addIb(Transport::IB6);
-    if (transports.has(Transport::IB7)) addIb(Transport::IB7);
+    if (transports.has(Transport::IB0))
+      addIb(Transport::IB0);
+    if (transports.has(Transport::IB1))
+      addIb(Transport::IB1);
+    if (transports.has(Transport::IB2))
+      addIb(Transport::IB2);
+    if (transports.has(Transport::IB3))
+      addIb(Transport::IB3);
+    if (transports.has(Transport::IB4))
+      addIb(Transport::IB4);
+    if (transports.has(Transport::IB5))
+      addIb(Transport::IB5);
+    if (transports.has(Transport::IB6))
+      addIb(Transport::IB6);
+    if (transports.has(Transport::IB7))
+      addIb(Transport::IB7);
   }
 }
 
-RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) : pimpl(pimpl) {}
+RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) : pimpl(pimpl)
+{
+}
 
 RegisteredMemory::~RegisteredMemory() = default;
 
-void* RegisteredMemory::data() {
+void* RegisteredMemory::data()
+{
   return pimpl->data;
 }
 
-size_t RegisteredMemory::size() {
+size_t RegisteredMemory::size()
+{
   return pimpl->size;
 }
 
-int RegisteredMemory::rank() {
+int RegisteredMemory::rank()
+{
   return pimpl->rank;
 }
 
-TransportFlags RegisteredMemory::transports() {
+TransportFlags RegisteredMemory::transports()
+{
   return pimpl->transports;
 }
 
-std::vector<char> RegisteredMemory::serialize() {
+std::vector<char> RegisteredMemory::serialize()
+{
   std::vector<char> result;
   std::copy_n(reinterpret_cast<char*>(&pimpl->size), sizeof(pimpl->size), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->rank), sizeof(pimpl->rank), std::back_inserter(result));
@@ -67,7 +85,8 @@ std::vector<char> RegisteredMemory::serialize() {
   for (auto& entry : pimpl->transportInfos) {
     std::copy_n(reinterpret_cast<char*>(&entry.transport), sizeof(entry.transport), std::back_inserter(result));
     if (entry.transport == Transport::CudaIpc) {
-      std::copy_n(reinterpret_cast<char*>(&entry.cudaIpcHandle), sizeof(entry.cudaIpcHandle), std::back_inserter(result));
+      std::copy_n(reinterpret_cast<char*>(&entry.cudaIpcHandle), sizeof(entry.cudaIpcHandle),
+                  std::back_inserter(result));
     } else if (AllIBTransports.has(entry.transport)) {
       std::copy_n(reinterpret_cast<char*>(&entry.ibMrInfo), sizeof(entry.ibMrInfo), std::back_inserter(result));
     } else {
@@ -77,11 +96,13 @@ std::vector<char> RegisteredMemory::serialize() {
   return result;
 }
 
-RegisteredMemory RegisteredMemory::deserialize(const std::vector<char>& data) {
+RegisteredMemory RegisteredMemory::deserialize(const std::vector<char>& data)
+{
   return RegisteredMemory(std::make_shared<Impl>(data));
 }
 
-RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
+RegisteredMemory::Impl::Impl(const std::vector<char>& serialization)
+{
   auto it = serialization.begin();
   std::copy_n(it, sizeof(this->size), reinterpret_cast<char*>(&this->size));
   it += sizeof(this->size);
@@ -118,6 +139,9 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
 
   if (transports.has(Transport::CudaIpc)) {
     auto entry = getTransportInfo(Transport::CudaIpc);
+    void* baseDataPtr;
+    size_t baseDataSize; // dummy
+    CUTHROW(cuMemGetAddressRange((CUdeviceptr*)&baseDataPtr, &baseDataSize, (CUdeviceptr)data));
     CUDATHROW(cudaIpcOpenMemHandle(&data, entry.cudaIpcHandle, cudaIpcMemLazyEnablePeerAccess));
   }
 }

@@ -4,14 +4,14 @@
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
 #include "mpi.h"
 #endif // MSCCLPP_USE_MPI_FOR_TESTS
+#include <algorithm>
+#include <cassert>
 #include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
 #include <unistd.h>
 #include <unordered_map>
-#include <cassert>
-#include <algorithm>
 
 static int nranksPerNode = 8;
 
@@ -50,7 +50,8 @@ static double getTime(void)
 
 __constant__ mscclpp::SimpleDeviceConnection constDevConns[16];
 
-__device__ void allgather0(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int remoteRank, size_t nelemsPerGPU)
+__device__ void allgather0(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int remoteRank,
+                           size_t nelemsPerGPU)
 {
   // this allgather is really simple and implemented as an alltoall
 
@@ -69,8 +70,8 @@ __device__ void allgather0(mscclpp::SimpleDeviceConnection devConn, int rank, in
     devConn.wait();
 }
 
-__device__ void localAllGather(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode, int remoteRank,
-                               uint64_t offset, uint64_t size)
+__device__ void localAllGather(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode,
+                               int remoteRank, uint64_t offset, uint64_t size)
 {
   // this allgather algorithm works as follows:
   // Step 1: GPU rank i sends data to GPU rank (i+1) % nranksPerNode
@@ -93,15 +94,15 @@ __device__ void localAllGather(mscclpp::SimpleDeviceConnection devConn, int rank
   }
 }
 
-__device__ void allgather1(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode, int remoteRank,
-                           size_t nelemsPerGPU)
+__device__ void allgather1(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode,
+                           int remoteRank, size_t nelemsPerGPU)
 {
   localAllGather(devConn, rank, world_size, nranksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
 }
 
-__device__ void allgather2(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode, int remoteRank,
-                           size_t nelemsPerGPU)
+__device__ void allgather2(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode,
+                           int remoteRank, size_t nelemsPerGPU)
 {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
@@ -243,13 +244,13 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   comm.connectionSetup();
 
   std::vector<mscclpp::SimpleDeviceConnection> devConns;
-  std::transform(hostConns.begin(), hostConns.end(), std::back_inserter(devConns),
-                 [](std::shared_ptr<mscclpp::HostConnection>& hostConn) {
-    return mscclpp::SimpleDeviceConnection(*hostConn);
-  });
+  std::transform(
+    hostConns.begin(), hostConns.end(), std::back_inserter(devConns),
+    [](std::shared_ptr<mscclpp::HostConnection>& hostConn) { return mscclpp::SimpleDeviceConnection(*hostConn); });
 
   assert(devConns.size() < sizeof(constDevConns) / sizeof(mscclpp::SimpleDeviceConnection));
-  CUDACHECK(cudaMemcpyToSymbol(constDevConns, devConns.data(), sizeof(mscclpp::SimpleDeviceConnection) * devConns.size() ));
+  CUDACHECK(
+    cudaMemcpyToSymbol(constDevConns, devConns.data(), sizeof(mscclpp::SimpleDeviceConnection) * devConns.size()));
 }
 
 void printUsage(const char* prog, bool isMpi)
@@ -399,17 +400,17 @@ int main(int argc, const char* argv[])
   }
   size_t nelemsPerGPU = dataSize / sizeof(int) / world_size;
 
-  try{
+  try {
     if (rank == 0)
-        printf("Initializing MSCCL++\n");
+      printf("Initializing MSCCL++\n");
     mscclpp::Communicator comm(world_size, ip_port, rank);
 
     if (rank == 0)
-        printf("Initializing data for allgather test\n");
+      printf("Initializing data for allgather test\n");
     initializeAndAllocateAllGatherData(rank, world_size, dataSize, nelemsPerGPU, &data_h, &data_d);
 
     if (rank == 0)
-        printf("Setting up the connection in MSCCL++\n");
+      printf("Setting up the connection in MSCCL++\n");
     setupMscclppConnections(rank, world_size, comm, data_d, dataSize);
 
     if (rank == 0)
@@ -466,7 +467,7 @@ int main(int argc, const char* argv[])
     int cudagraphwarmup = 10;
     if (rank == 0)
       printf("Warming up %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphwarmup,
-            cudagraphiter);
+             cudagraphiter);
     for (int i = 0; i < cudagraphwarmup; ++i) {
       cudaGraphLaunch(instance, stream);
     }
@@ -476,7 +477,7 @@ int main(int argc, const char* argv[])
     int cudagraphlaunch = 10;
     if (rank == 0)
       printf("Running %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphlaunch,
-            cudagraphiter);
+             cudagraphiter);
     comm.bootstrapAllGather(tmp, sizeof(int));
     double t0, t1, ms, time_in_us;
     t0 = getTime();
@@ -489,7 +490,7 @@ int main(int argc, const char* argv[])
     ms = (t1 - t0) * 1000.0;
     time_in_us = ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter;
     printf("Rank %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us,
-          (double)(dataSize) / 1e9 / (time_in_us / 1e6));
+           (double)(dataSize) / 1e9 / (time_in_us / 1e6));
     comm.bootstrapAllGather(tmp, sizeof(int));
 
     if (rank == 0)

@@ -1,15 +1,16 @@
 #ifndef MSCCLPP_REGISTERED_MEMORY_HPP_
 #define MSCCLPP_REGISTERED_MEMORY_HPP_
 
-#include "mscclpp.hpp"
-#include "mscclpp.h"
-#include "ib.hpp"
 #include "communicator.hpp"
+#include "ib.hpp"
+#include "mscclpp.h"
+#include "mscclpp.hpp"
 #include <cuda_runtime.h>
 
 namespace mscclpp {
 
-struct TransportInfo {
+struct TransportInfo
+{
   Transport transport;
 
   // TODO: rewrite this using std::variant or something
@@ -21,7 +22,8 @@ struct TransportInfo {
   };
 };
 
-struct RegisteredMemory::Impl {
+struct RegisteredMemory::Impl
+{
   void* data;
   size_t size;
   int rank;
@@ -31,7 +33,8 @@ struct RegisteredMemory::Impl {
   Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl);
   Impl(const std::vector<char>& data);
 
-  TransportInfo& getTransportInfo(Transport transport) {
+  TransportInfo& getTransportInfo(Transport transport)
+  {
     for (auto& entry : transportInfos) {
       if (entry.transport == transport) {
         return entry;

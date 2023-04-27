@@ -8,6 +8,7 @@
 #define MSCCLPP_CHECKS_HPP_
 
 #include "debug.h"
+#include <cuda.h>
 #include <cuda_runtime.h>
 
 #define MSCCLPPTHROW(call)                                                                                             \
@@ -23,6 +24,16 @@
     cudaError_t err = cmd;                                                                                             \
     if (err != cudaSuccess) {                                                                                          \
       throw std::runtime_error(std::string("Cuda failure '") + cudaGetErrorString(err) + "'");                         \
+    }                                                                                                                  \
+  } while (false)
+
+#define CUTHROW(cmd)                                                                                                   \
+  do {                                                                                                                 \
+    CUresult err = cmd;                                                                                                \
+    if (err != CUDA_SUCCESS) {                                                                                         \
+      const char* errStr;                                                                                              \
+      cuGetErrorString(err, &errStr);                                                                                  \
+      throw std::runtime_error(std::string("Cu failure '") + std::string(errStr) + "'");                               \
     }                                                                                                                  \
   } while (false)
 

@@ -1,13 +1,14 @@
-#include "mscclppfifo.hpp"
 #include "alloc.h"
 #include "checks.hpp"
+#include "mscclppfifo.hpp"
 #include <cuda_runtime.h>
-#include <stdexcept>
 #include <emmintrin.h>
+#include <stdexcept>
 
 namespace mscclpp {
 
-struct HostProxyFifo::Impl {
+struct HostProxyFifo::Impl
+{
   DeviceProxyFifo deviceFifo;
 
   // allocated on the host. Only accessed by the host. This is a copy of the
@@ -23,7 +24,8 @@ struct HostProxyFifo::Impl {
   cudaStream_t stream;
 };
 
-HostProxyFifo::HostProxyFifo() {
+HostProxyFifo::HostProxyFifo()
+{
   pimpl = std::make_unique<Impl>();
   MSCCLPPTHROW(mscclppCudaCalloc(&pimpl->deviceFifo.head, 1));
   MSCCLPPTHROW(mscclppCudaHostCalloc(&pimpl->deviceFifo.triggers, MSCCLPP_PROXY_FIFO_SIZE));
@@ -32,35 +34,40 @@ HostProxyFifo::HostProxyFifo() {
   pimpl->hostTail = 0;
 }
 
-HostProxyFifo::~HostProxyFifo() {
+HostProxyFifo::~HostProxyFifo()
+{
   MSCCLPPTHROW(mscclppCudaFree(pimpl->deviceFifo.head));
   MSCCLPPTHROW(mscclppCudaHostFree(pimpl->deviceFifo.triggers));
   MSCCLPPTHROW(mscclppCudaFree(pimpl->deviceFifo.tailReplica));
   CUDATHROW(cudaStreamDestroy(pimpl->stream));
 }
 
-void HostProxyFifo::poll(ProxyTrigger *trigger) {
+void HostProxyFifo::poll(ProxyTrigger* trigger)
+{
   __m128i xmm0 = _mm_load_si128((__m128i*)&pimpl->deviceFifo.triggers[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]);
   _mm_store_si128((__m128i*)trigger, xmm0);
 }
 
-void HostProxyFifo::pop() {
+void HostProxyFifo::pop()
+{
   *(volatile uint64_t*)(&pimpl->deviceFifo.triggers[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
   (pimpl->hostTail)++;
 }
 
-void HostProxyFifo::flushTail(bool sync) {
+void HostProxyFifo::flushTail(bool sync)
+{
   // Flush the tail to device memory. This is either triggered every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER to make sure
   // that the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is for flush
   // request.
-  CUDATHROW(
-    cudaMemcpyAsync(pimpl->deviceFifo.tailReplica, &pimpl->hostTail, sizeof(uint64_t), cudaMemcpyHostToDevice, pimpl->stream));
+  CUDATHROW(cudaMemcpyAsync(pimpl->deviceFifo.tailReplica, &pimpl->hostTail, sizeof(uint64_t), cudaMemcpyHostToDevice,
+                            pimpl->stream));
   if (sync) {
     CUDATHROW(cudaStreamSynchronize(pimpl->stream));
   }
 }
 
-DeviceProxyFifo HostProxyFifo::toDevice() {
+DeviceProxyFifo HostProxyFifo::toDevice()
+{
   return pimpl->deviceFifo;
 }
 

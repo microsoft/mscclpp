@@ -1,25 +1,20 @@
 #include "mscclpp.hpp"
 
-#include <memory>
 #include <cassert>
 #include <iostream>
+#include <memory>
 #include <mpi.h>
 
-mscclpp::Transport findIb(int localRank){
-  mscclpp::Transport IBs[] = {
-    mscclpp::Transport::IB0,
-    mscclpp::Transport::IB1,
-    mscclpp::Transport::IB2,
-    mscclpp::Transport::IB3,
-    mscclpp::Transport::IB4,
-    mscclpp::Transport::IB5,
-    mscclpp::Transport::IB6,
-    mscclpp::Transport::IB7
-  };
+mscclpp::Transport findIb(int localRank)
+{
+  mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
+                              mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
+                              mscclpp::Transport::IB6, mscclpp::Transport::IB7};
   return IBs[localRank];
 }
 
-void test_communicator(int rank, int worldSize, int nranksPerNode){
+void test_communicator(int rank, int worldSize, int nranksPerNode)
+{
   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(rank, worldSize);
   mscclpp::UniqueId id;
   if (bootstrap->getRank() == 0)
@@ -28,9 +23,9 @@ void test_communicator(int rank, int worldSize, int nranksPerNode){
   bootstrap->initialize(id);
 
   auto communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
-  for (int i = 0; i < worldSize; i++){
-    if (i != rank){
-      if (i / nranksPerNode == rank / nranksPerNode){
+  for (int i = 0; i < worldSize; i++) {
+    if (i != rank) {
+      if (i / nranksPerNode == rank / nranksPerNode) {
         auto connect = communicator->connect(i, 0, mscclpp::Transport::CudaIpc);
       } else {
         auto connect = communicator->connect(i, 0, findIb(rank % nranksPerNode));
@@ -43,8 +38,7 @@ void test_communicator(int rank, int worldSize, int nranksPerNode){
     std::cout << "--- MSCCLPP::Communicator tests passed! ---" << std::endl;
 }
 
-
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
   int rank, worldSize;
   MPI_Init(&argc, &argv);
@@ -56,7 +50,7 @@ int main(int argc, char **argv)
   MPI_Comm_size(shmcomm, &shmWorldSize);
   int nranksPerNode = shmWorldSize;
   MPI_Comm_free(&shmcomm);
-  
+
   test_communicator(rank, worldSize, nranksPerNode);
 
   MPI_Finalize();
