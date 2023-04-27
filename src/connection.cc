@@ -54,7 +54,7 @@ void CudaIpcConnection::flush() {
 
 // IBConnection
 
-IBConnection::IBConnection(int remoteRank, int tag, TransportFlags transport, Communicator::Impl& commImpl) : remoteRank(remoteRank), tag(tag), transport_(transport), remoteTransport_(TransportNone) {
+IBConnection::IBConnection(int remoteRank, int tag, TransportFlags transport, Communicator::Impl& commImpl) : remoteRank_(remoteRank), tag_(tag), transport_(transport), remoteTransport_(TransportNone) {
   qp = commImpl.getIbContext(transport)->createQp();
 }
 
@@ -114,15 +114,15 @@ void IBConnection::flush() {
   // npkitCollectExitEvents(conn, NPKIT_EVENT_IB_SEND_EXIT);
 }
 
-void IBConnection::startSetup(Communicator& comm) {
+void IBConnection::startSetup(std::shared_ptr<BaseBootstrap> bootstrap) {
   // TODO(chhwang): temporarily disabled to compile
-  // comm.bootstrap().send(&qp->getInfo(), sizeof(qp->getInfo()), remoteRank, tag);
+  bootstrap->send(&qp->getInfo(), sizeof(qp->getInfo()), remoteRank_, tag_);
 }
 
-void IBConnection::endSetup(Communicator& comm) {
+void IBConnection::endSetup(std::shared_ptr<BaseBootstrap> bootstrap) {
   IbQpInfo qpInfo;
   // TODO(chhwang): temporarily disabled to compile
-  // comm.bootstrap().recv(&qpInfo, sizeof(qpInfo), remoteRank, tag);
+  bootstrap->recv(&qpInfo, sizeof(qpInfo), remoteRank_, tag_);
   qp->rtr(qpInfo);
   qp->rts();
 }

@@ -12,8 +12,8 @@ namespace mscclpp {
 
 class ConnectionBase : public Connection {
 public:
-  virtual void startSetup(Communicator&) {};
-  virtual void endSetup(Communicator&) {};
+  virtual void startSetup(std::shared_ptr<BaseBootstrap> bootstrap) {};
+  virtual void endSetup(std::shared_ptr<BaseBootstrap> bootstrap) {};
 };
 
 class CudaIpcConnection : public ConnectionBase {
@@ -34,8 +34,8 @@ public:
 };
 
 class IBConnection : public ConnectionBase {
-  int remoteRank;
-  int tag;
+  int remoteRank_;
+  int tag_;
   TransportFlags transport_;
   TransportFlags remoteTransport_;
   IbQp* qp;
@@ -53,9 +53,9 @@ public:
 
   void flush() override;
 
-  void startSetup(Communicator& comm) override;
+  void startSetup(std::shared_ptr<BaseBootstrap> bootstrap) override;
 
-  void endSetup(Communicator& comm) override;
+  void endSetup(std::shared_ptr<BaseBootstrap> bootstrap) override;
 };
 
 } // namespace mscclpp

@@ -81,10 +81,10 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank
 
 MSCCLPP_API_CPP void Communicator::connectionSetup() {
   for (auto& conn : pimpl->connections) {
-    conn->startSetup(*this);
+    conn->startSetup(pimpl->bootstrap_);
   }
   for (auto& conn : pimpl->connections) {
-    conn->endSetup(*this);
+    conn->endSetup(pimpl->bootstrap_);
   }
 }
 

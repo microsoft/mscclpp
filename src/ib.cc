@@ -263,7 +263,7 @@ int IbQp::pollCq()
   return ibv_poll_cq(reinterpret_cast<struct ibv_cq*>(this->cq), MSCCLPP_IB_CQ_POLL_NUM, reinterpret_cast<struct ibv_wc*>(this->wcs));
 }
 
-const IbQpInfo& IbQp::getInfo() const
+IbQpInfo& IbQp::getInfo()
 {
   return this->info;
 }

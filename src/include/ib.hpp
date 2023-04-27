@@ -61,7 +61,7 @@ public:
   void postRecv(uint64_t wrId);
   int pollCq();
 
-  const IbQpInfo& getInfo() const;
+  IbQpInfo& getInfo();
   const void* getWc(int idx) const;
 
 private:
