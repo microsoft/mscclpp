@@ -66,10 +66,12 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank
     }    
     auto cudaIpcConn = std::make_shared<CudaIpcConnection>();
     conn = cudaIpcConn;
+    INFO(MSCCLPP_P2P, "Cuda IPC connection between rank %d(%lx) and remoteRank %d(%lx) created", pimpl->bootstrap_->getRank(), pimpl->rankToHash_[pimpl->bootstrap_->getRank()], 
+          remoteRank, pimpl->rankToHash_[remoteRank]);
   } else if (AllIBTransports.has(transport)) {
     auto ibConn = std::make_shared<IBConnection>(remoteRank, tag, transport, *pimpl);
     conn = ibConn;
-    INFO(MSCCLPP_INIT, "IB connection between %d(%lx) via %s and %d(%lx) created", pimpl->bootstrap_->getRank(), pimpl->rankToHash_[pimpl->bootstrap_->getRank()], 
+    INFO(MSCCLPP_NET, "IB connection between rank %d(%lx) via %s and remoteRank %d(%lx) created", pimpl->bootstrap_->getRank(), pimpl->rankToHash_[pimpl->bootstrap_->getRank()], 
           getIBDeviceName(transport).c_str(), remoteRank, pimpl->rankToHash_[remoteRank]);
   } else {
     throw std::runtime_error("Unsupported transport");
