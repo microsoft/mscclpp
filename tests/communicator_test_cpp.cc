@@ -55,6 +55,25 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
   CUDATHROW(cudaMalloc(&devicePtr, size));
   auto registeredMemory = communicator->registerMemory(devicePtr, size, mscclpp::Transport::CudaIpc | myIbDevice);
 
+  for (int i = 0; i < worldSize; i++) {
+    if (i != rank){
+      auto serialized = registeredMemory.serialize();
+      int serializedSize = serialized.size();
+      bootstrap->send(&serializedSize, sizeof(int), i, 0);
+      bootstrap->send(serialized.data(), serializedSize, i, 1);
+    }
+  }
+  for (int i = 0; i < worldSize; i++) {
+    if (i != rank){
+      int deserializedSize;
+      bootstrap->recv(&deserializedSize, sizeof(int), i, 0);
+      std::vector<char> deserialized(deserializedSize);
+      bootstrap->recv(deserialized.data(), deserializedSize, i, 1);
+      // auto deserializedRegisteredMemory = mscclpp::RegisteredMemory::deserialize(deserialized);
+    }
+  }
+
+
   if (bootstrap->getRank() == 0)
     std::cout << "Memory registeration passed" << std::endl;
 

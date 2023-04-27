@@ -13,8 +13,11 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags t
     TransportInfo transportInfo;
     transportInfo.transport = Transport::CudaIpc;
     cudaIpcMemHandle_t handle;
-    // TODO: translate data to a base pointer
-    CUDATHROW(cudaIpcGetMemHandle(&handle, data));
+
+    void* baseDataPtr;
+    size_t baseDataSize; // dummy
+    CUTHROW(cuMemGetAddressRange((CUdeviceptr*)&baseDataPtr, &baseDataSize, (CUdeviceptr)data));
+    CUDATHROW(cudaIpcGetMemHandle(&handle, baseDataPtr));
     transportInfo.cudaIpcHandle = handle;
     this->transportInfos.push_back(transportInfo);
   }
@@ -72,7 +75,7 @@ TransportFlags RegisteredMemory::transports()
   return pimpl->transports;
 }
 
-std::vector<char> RegisteredMemory::serialize()
+MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize()
 {
   std::vector<char> result;
   std::copy_n(reinterpret_cast<char*>(&pimpl->size), sizeof(pimpl->size), std::back_inserter(result));
@@ -97,7 +100,7 @@ std::vector<char> RegisteredMemory::serialize()
   return result;
 }
 
-RegisteredMemory RegisteredMemory::deserialize(const std::vector<char>& data)
+MSCCLPP_API_CPP RegisteredMemory RegisteredMemory::deserialize(const std::vector<char>& data)
 {
   return RegisteredMemory(std::make_shared<Impl>(data));
 }
@@ -140,10 +143,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization)
 
   if (transports.has(Transport::CudaIpc)) {
     auto entry = getTransportInfo(Transport::CudaIpc);
-    void* baseDataPtr;
-    size_t baseDataSize; // dummy
-    CUTHROW(cuMemGetAddressRange((CUdeviceptr*)&baseDataPtr, &baseDataSize, (CUdeviceptr)data));
-    CUDATHROW(cudaIpcOpenMemHandle(&baseDataPtr, entry.cudaIpcHandle, cudaIpcMemLazyEnablePeerAccess));
+    CUDATHROW(cudaIpcOpenMemHandle(&data, entry.cudaIpcHandle, cudaIpcMemLazyEnablePeerAccess));
     INFO(MSCCLPP_P2P, "Opened CUDA IPC handle for base point of %p", data);
   }
 }
