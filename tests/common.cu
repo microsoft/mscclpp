@@ -387,7 +387,7 @@ testResult_t TimeTest(struct testArgs* args)
 }
 
 testResult_t SetupConnections(int rank, int worldSize, int ranksPerNode, mscclppComm_t comm, void* dataDst,
-                                     size_t dataSize)
+                              size_t dataSize)
 {
   int thisNode = rank / ranksPerNode;
   int localRank = rank % ranksPerNode;
@@ -419,8 +419,8 @@ testResult_t runTests(struct testArgs* args)
   if (mscclppTestEngine.setupConnections != nullptr) {
     TESTCHECK(mscclppTestEngine.setupConnections(args));
   } else {
-    TESTCHECK(SetupConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm, args->recvbuff,
-                                      args->maxbytes));
+    TESTCHECK(
+      SetupConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm, args->recvbuff, args->maxbytes));
   }
   PRINT("# Launching MSCCL++ proxy threads\n");
   MSCCLPPCHECK(mscclppProxyLaunch(args->comm));
