@@ -29,16 +29,15 @@ inline int getRecvTag(int rank, int peer)
   return rank < peer ? 1 : 0;
 }
 
-__host__ __device__ Chunk getChunk(size_t dataCount, size_t numChunks, size_t chunkIdx, size_t chunkCount)
+__host__ __device__ Chunk getChunk(size_t dataCount, size_t numChunks, size_t chunkIdx)
 {
   size_t remainder = dataCount % numChunks;
   size_t smallChunkSize = dataCount / numChunks;
   size_t largeChunkSize = smallChunkSize + 1;
-  size_t numLargeChunks = chunkIdx < remainder ? remainder - chunkIdx : 0;
-  size_t numSmallChunks = chunkCount - numLargeChunks;
-  size_t offset =
-    (remainder - numLargeChunks) * largeChunkSize + (chunkIdx > remainder ? chunkIdx - remainder : 0) * smallChunkSize;
-  return Chunk{offset, numLargeChunks * largeChunkSize + numSmallChunks * smallChunkSize};
+  size_t numRemainedLargeChunks = chunkIdx < remainder ? remainder - chunkIdx : 0;
+  size_t offset = (remainder - numRemainedLargeChunks) * largeChunkSize +
+                  (chunkIdx > remainder ? chunkIdx - remainder : 0) * smallChunkSize;
+  return Chunk{offset, chunkIdx < remainder ? largeChunkSize : smallChunkSize};
 }
 
 __host__ __device__ int peerIdx(int peerRank, int rank)
@@ -96,15 +95,15 @@ __global__ void initData(int* data, size_t size, int rank)
   }
 }
 
-__device__ void recvReduceSend(mscclppDevConn_t* sendDevConn, mscclppDevConn_t* recvDevConn, int fromChunkIndex,
-                               int toChunkIndex, size_t dataSize, void* scratch, void* sendRecvData, int rank)
+__device__ void recvReduceSend(mscclppDevConn_t* sendDevConn, mscclppDevConn_t* recvDevConn, int chunkIndex,
+                               size_t dataSize, void* scratch, void* sendRecvData)
 {
   const int tid = threadIdx.x;
   if (tid == 0) {
     recvDevConn->wait();
   }
   __syncthreads();
-  size_t offset = fromChunkIndex * dataSize;
+  size_t offset = chunkIndex * dataSize;
   size_t nElem = dataSize / sizeof(int);
   int* src = (int*)scratch;
   int* dst = (int*)sendRecvData;
@@ -112,7 +111,7 @@ __device__ void recvReduceSend(mscclppDevConn_t* sendDevConn, mscclppDevConn_t* 
   reduceSum(dst + elemOffset, src + elemOffset, nElem);
   __syncthreads();
   if (tid == 0) {
-    sendDevConn->putWithSignalAndFlush(toChunkIndex * dataSize, dataSize);
+    sendDevConn->putWithSignalAndFlush(offset, dataSize);
   }
 }
 
@@ -150,12 +149,12 @@ __global__ void allReduceKernel1(int rank, int nRank, size_t dataSize, mscclppDe
   // k-2 steps: reduce the data and copy to next GPU
   for (int i = 2; i < nRank; ++i) {
     chunkIndex = (rank + nRank - i) % nRank;
-    recvReduceSend(scratchSendDevConn, scratchRecvDevConn, chunkIndex, chunkIndex, chunkSize, scratch, sendRecvData, rank);
+    recvReduceSend(scratchSendDevConn, scratchRecvDevConn, chunkIndex, chunkSize, scratch, sendRecvData);
   }
 
   // step k-1: reduce the data. which will produce the final result then push to next GPU
   chunkIndex = rank;
-  recvReduceSend(sendCopyDevConn, scratchRecvDevConn, chunkIndex, chunkIndex, chunkSize, scratch, sendRecvData, rank);
+  recvReduceSend(sendCopyDevConn, scratchRecvDevConn, chunkIndex, chunkSize, scratch, sendRecvData);
   // sendCopyDevConn->flush();
 
   // k-1 steps: copy to next GPU
@@ -183,7 +182,7 @@ __global__ void allReduceKernel0(int rank, int nRanks, size_t dataCount, size_t 
   mscclppDevConn_t phase2Conn = conns[phase2ConnIdx(peer, rank)];
 
   // 1st communication phase: send data to the scratch buffer of the peer associated with this block
-  Chunk toPeerChunk = getChunk(dataCount, nRanks, peer, 1);
+  Chunk toPeerChunk = getChunk(dataCount, nRanks, peer);
   // Now we need to figure out the offset of this chunk in the scratch buffer of the destination.
   // The destination will have allocated a scratch buffer of size numPeers() * toPeerChunk.size and
   // inside that each of the destination's peers send to the nth chunk, where n is the index of the
@@ -197,16 +196,16 @@ __global__ void allReduceKernel0(int rank, int nRanks, size_t dataCount, size_t 
   __syncthreads();
 
   // Local reduction: every block reduces a slice of each chunk in the scratch buffer into the user buffer
-  Chunk rankChunk = getChunk(dataCount, nRanks, rank, 1);
+  Chunk rankChunk = getChunk(dataCount, nRanks, rank);
   int* chunk = (int*)sendRecvData + rankChunk.offset;
   int numPeers = nRanks - 1, numBlocks = nRanks - 1;
-  Chunk blockUserChunk = getChunk(rankChunk.size, numBlocks, idx, 1);
+  Chunk blockUserChunk = getChunk(rankChunk.size, numBlocks, idx);
   for (int peerIdx = 0; peerIdx < numPeers; ++peerIdx) {
     assert(scratchDataCount % numPeers == 0);
     assert(scratchDataCount / numPeers == rankChunk.size);
     size_t scratchDataCountPerPeer = scratchDataCount / numPeers;
     int* scratchChunk = (int*)scratch + peerIdx * scratchDataCountPerPeer;
-    Chunk blockScratchChunk = getChunk(scratchDataCountPerPeer, numBlocks, idx, 1);
+    Chunk blockScratchChunk = getChunk(scratchDataCountPerPeer, numBlocks, idx);
     assert(blockScratchChunk.size == blockUserChunk.size);
     reduceSum(chunk + blockUserChunk.offset, scratchChunk + blockScratchChunk.offset, blockScratchChunk.size);
   }
@@ -216,7 +215,7 @@ __global__ void allReduceKernel0(int rank, int nRanks, size_t dataCount, size_t 
   __syncthreads();
 
   // 2nd communication phase: send the now reduced data between the user buffers
-  Chunk collectionChunk = getChunk(dataCount, nRanks, rank, 1);
+  Chunk collectionChunk = getChunk(dataCount, nRanks, rank);
   send(phase2Conn, collectionChunk.offset * sizeof(int), collectionChunk.offset * sizeof(int),
        collectionChunk.size * sizeof(int));
   recv(phase2Conn);
@@ -273,7 +272,7 @@ testResult_t AllReduceRunColl(void* sendbuff, void* recvbuff, int nranksPerNode,
   if (kernelNum == 0) {
     int nPeers = worldSize - 1;
     int dataCount = nBytes / sizeof(int);
-    Chunk chunk = getChunk(dataCount, worldSize, comm->rank, 1);
+    Chunk chunk = getChunk(dataCount, worldSize, comm->rank);
     size_t scratchDataCount = chunk.size * nPeers;
     allReduceKernel0<<<worldSize - 1, 256, 0, stream>>>(comm->rank, worldSize, dataCount, scratchDataCount, conns,
                                                         scratch, sendRecvData, barrier);
@@ -290,7 +289,7 @@ testResult_t setupConnectionForKernel0(testArgs* args)
 {
   int rank = args->proc, worldSize = args->totalProcs;
   size_t bufferSize = args->maxbytes;
-  Chunk chunk = getChunk(bufferSize / sizeof(int), args->totalProcs, rank, 1);
+  Chunk chunk = getChunk(bufferSize / sizeof(int), args->totalProcs, rank);
   int nPeers = args->totalProcs - 1;
   size_t scratchBytes = chunk.size * nPeers * sizeof(int);
 
