@@ -13,8 +13,8 @@ namespace mscclpp {
 class ConnectionBase : public Connection
 {
 public:
-  virtual void startSetup(std::shared_ptr<BaseBootstrap> bootstrap){};
-  virtual void endSetup(std::shared_ptr<BaseBootstrap> bootstrap){};
+  virtual void startSetup(std::shared_ptr<BaseBootstrap>){};
+  virtual void endSetup(std::shared_ptr<BaseBootstrap>){};
 };
 
 class CudaIpcConnection : public ConnectionBase

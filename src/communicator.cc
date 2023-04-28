@@ -21,6 +21,7 @@ Communicator::Impl::Impl(std::shared_ptr<BaseBootstrap> bootstrap) : bootstrap_(
   INFO(MSCCLPP_INIT, "Host hash: %lx", hostHash);
   rankToHash_[bootstrap->getRank()] = hostHash;
   bootstrap->allGather(rankToHash_.data(), sizeof(uint64_t));
+  comm->rank = bootstrap->getRank();
 }
 
 Communicator::Impl::~Impl()
