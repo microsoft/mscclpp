@@ -61,7 +61,7 @@ void* RegisteredMemory::data()
     if (pimpl->transports.has(Transport::CudaIpc)) {
       auto entry = pimpl->getTransportInfo(Transport::CudaIpc);
       CUDATHROW(cudaIpcOpenMemHandle(&pimpl->data, entry.cudaIpcHandle, cudaIpcMemLazyEnablePeerAccess));
-      INFO(MSCCLPP_P2P, "Opened CUDA IPC handle for base point of %p", data);
+      INFO(MSCCLPP_P2P, "Opened CUDA IPC handle for base point of %p", pimpl->data);
     }
     else
     {
