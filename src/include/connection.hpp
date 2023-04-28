@@ -12,7 +12,14 @@ namespace mscclpp {
 
 class ConnectionBase : public Connection
 {
+  int remoteRank_;
+  int tag_;
 public:
+  ConnectionBase(int remoteRank, int tag);
+
+  int remoteRank() override;
+  int tag() override;
+
   virtual void startSetup(std::shared_ptr<BaseBootstrap>){};
   virtual void endSetup(std::shared_ptr<BaseBootstrap>){};
 };
@@ -22,7 +29,7 @@ class CudaIpcConnection : public ConnectionBase
   cudaStream_t stream;
 
 public:
-  CudaIpcConnection();
+  CudaIpcConnection(int remoteRank, int tag);
 
   ~CudaIpcConnection();
 
@@ -38,8 +45,6 @@ public:
 
 class IBConnection : public ConnectionBase
 {
-  int remoteRank_;
-  int tag_;
   Transport transport_;
   Transport remoteTransport_;
   IbQp* qp;

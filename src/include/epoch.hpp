@@ -5,14 +5,10 @@
 
 namespace mscclpp {
 
-struct alignas(16) SignalEpochId
+struct alignas(16) EpochIds
 {
-  // every signal(), increaments this and either:
-  // 1) proxy thread pushes it to the remote peer's localSignalEpochId->proxy
-  // 2) gpu thread directly writes it to remoteSignalEpochId->device
-  uint64_t device;
-  // signal() function triggers the cpu proxy thread to write to it
-  uint64_t proxy;
+  uint64_t outbound_;
+  uint64_t inboundReplica_;
 };
 
 struct DeviceEpoch
@@ -20,34 +16,36 @@ struct DeviceEpoch
 #ifdef __CUDACC__
   __forceinline__ __device__ void wait()
   {
-    (*waitEpochId) += 1;
-    while (*(volatile uint64_t*)&(localSignalEpochId->proxy) < (*waitEpochId))
-      ;
+    (*expectedInboundEpochId_) += 1;
+    while (*(volatile uint64_t*)&(epochIds_->inboundReplica_) < (*expectedInboundEpochId_));
   }
 
   __forceinline__ __device__ void epochIncrement()
   {
-    *(volatile uint64_t*)&(localSignalEpochId->device) += 1;
+    *(volatile uint64_t*)&(epochIds_->outbound_) += 1;
   }
 #endif // __CUDACC__
 
-  SignalEpochId* localSignalEpochId;
-  SignalEpochId* remoteSignalEpochId;
-  uint64_t* waitEpochId;
+  EpochIds* epochIds_;
+  uint64_t* expectedInboundEpochId_;
 };
 
 class Epoch
 {
-  struct Impl;
-  std::unique_ptr<Impl> pimpl;
+  std::shared_ptr<Connection> connection_;
+  DeviceEpoch device_;
+  RegisteredMemory localEpochIdsRegMem_;
+  RegisteredMemory remoteEpochIdsRegMem_;
 
 public:
-  Epoch();
+  Epoch(Communicator& communicator, std::shared_ptr<Connection> connection);
   ~Epoch();
 
   void signal();
 
-  DeviceEpoch& getDeviceEpoch();
+  DeviceEpoch deviceEpoch() {
+    return device_;
+  }
 };
 
 } // namespace mscclpp
