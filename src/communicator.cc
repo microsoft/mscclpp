@@ -21,7 +21,6 @@ Communicator::Impl::Impl(std::shared_ptr<BaseBootstrap> bootstrap) : bootstrap_(
   INFO(MSCCLPP_INIT, "Host hash: %lx", hostHash);
   rankToHash_[bootstrap->getRank()] = hostHash;
   bootstrap->allGather(rankToHash_.data(), sizeof(uint64_t));
-  comm->rank = bootstrap->getRank();
 }
 
 Communicator::Impl::~Impl()
@@ -61,7 +60,8 @@ MSCCLPP_API_CPP void Communicator::bootstrapBarrier()
 
 MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports)
 {
-  return RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(ptr, size, pimpl->comm->rank, transports, *pimpl));
+  return RegisteredMemory(
+    std::make_shared<RegisteredMemory::Impl>(ptr, size, pimpl->bootstrap_->getRank(), transports, *pimpl));
 }
 
 MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank, int tag, Transport transport)

@@ -77,7 +77,7 @@ size_t RegisteredMemory::size()
   return pimpl->size;
 }
 
-int RegisteredMemory::rank()
+MSCCLPP_API_CPP int RegisteredMemory::rank()
 {
   return pimpl->rank;
 }

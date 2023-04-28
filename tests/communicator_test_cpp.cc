@@ -5,6 +5,7 @@
 #include <iostream>
 #include <memory>
 #include <mpi.h>
+#include <unordered_map>
 
 #define CUDATHROW(cmd)                                                                                                 \
   do {                                                                                                                 \
@@ -35,7 +36,7 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
   if (bootstrap->getRank() == 0)
     std::cout << "Communicator initialization passed" << std::endl;
 
-  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> connections;
   auto myIbDevice = findIb(rank % nranksPerNode);
   for (int i = 0; i < worldSize; i++) {
     if (i != rank) {
@@ -45,7 +46,7 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
       } else {
         conn = communicator->connect(i, 0, myIbDevice);
       }
-      connections.push_back(conn);
+      connections[i] = conn;
     }
   }
   communicator->connectionSetup();
@@ -66,7 +67,7 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
       bootstrap->send(serialized.data(), serializedSize, i, 1);
     }
   }
-  std::vector<mscclpp::RegisteredMemory> registeredMemories;
+  std::unordered_map<int, mscclpp::RegisteredMemory> registeredMemories;
   for (int i = 0; i < worldSize; i++) {
     if (i != rank){
       int deserializedSize;
@@ -74,14 +75,15 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
       std::vector<char> deserialized(deserializedSize);
       bootstrap->recv(deserialized.data(), deserializedSize, i, 1);
       auto deserializedRegisteredMemory = mscclpp::RegisteredMemory::deserialize(deserialized);
-      registeredMemories.push_back(std::move(deserializedRegisteredMemory));
+      registeredMemories.insert({deserializedRegisteredMemory.rank(), deserializedRegisteredMemory});
     }
   }
 
+  MPI_Barrier(MPI_COMM_WORLD);
   if (bootstrap->getRank() == 0)
     std::cout << "Memory registration passed" << std::endl;
 
-  assert(size % worldSize == 0);
+  assert((size / sizeof(int)) % worldSize == 0);
   size_t writeSize = size / worldSize;
   size_t dataCount = size / sizeof(int);
   // std::vector<int> hostBuffer(dataCount, 0);
@@ -91,11 +93,13 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
   }
   CUDATHROW(cudaMemcpy(devicePtr, hostBuffer.get(), size, cudaMemcpyHostToDevice));
 
+  MPI_Barrier(MPI_COMM_WORLD);
   for (int i = 0; i < worldSize; i++) {
     if (i != rank) {
-      int peerRankIndex = i < rank ? i : i - 1;
-      auto conn = connections[peerRankIndex];
-      conn->write(registeredMemories[peerRankIndex], rank * writeSize, registeredMemory, rank * writeSize, writeSize);
+      auto& conn = connections.at(i);
+      auto& peerMemory = registeredMemories.at(i);
+      // printf("write to rank: %d, rank is %d\n", peerMemory.rank(), rank);
+      conn->write(peerMemory, rank * writeSize, registeredMemory, rank * writeSize, writeSize);
     }
   }
   CUDATHROW(cudaDeviceSynchronize());
