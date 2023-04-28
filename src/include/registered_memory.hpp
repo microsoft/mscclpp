@@ -25,6 +25,7 @@ struct TransportInfo
 struct RegisteredMemory::Impl
 {
   void* data;
+  bool dataInitialized;
   size_t size;
   int rank;
   TransportFlags transports;
