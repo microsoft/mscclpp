@@ -20,9 +20,17 @@ std::shared_ptr<RegisteredMemory::Impl> Connection::getRegisteredMemoryImpl(Regi
   return mem.pimpl;
 }
 
+// ConnectionBase
+
+ConnectionBase::ConnectionBase(int remoteRank, int tag) : remoteRank_(remoteRank), tag_(tag) {}
+
+int ConnectionBase::remoteRank() { return remoteRank_; }
+
+int ConnectionBase::tag() { return tag_; }
+
 // CudaIpcConnection
 
-CudaIpcConnection::CudaIpcConnection()
+CudaIpcConnection::CudaIpcConnection(int remoteRank, int tag) : ConnectionBase(remoteRank, tag)
 {
   cudaStreamCreate(&stream);
 }
@@ -64,7 +72,7 @@ void CudaIpcConnection::flush()
 // IBConnection
 
 IBConnection::IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl)
-  : remoteRank_(remoteRank), tag_(tag), transport_(transport), remoteTransport_(Transport::Unknown)
+  : ConnectionBase(remoteRank, tag), transport_(transport), remoteTransport_(Transport::Unknown)
 {
   qp = commImpl.getIbContext(transport)->createQp();
 }
@@ -134,15 +142,15 @@ void IBConnection::flush()
 
 void IBConnection::startSetup(std::shared_ptr<BaseBootstrap> bootstrap)
 {
-  bootstrap->send(&qp->getInfo(), sizeof(qp->getInfo()), remoteRank_, tag_);
-  bootstrap->send(&transport_, sizeof(transport_), remoteRank_, tag_);
+  bootstrap->send(&qp->getInfo(), sizeof(qp->getInfo()), remoteRank(), tag());
+  bootstrap->send(&transport_, sizeof(transport_), remoteRank(), tag());
 }
 
 void IBConnection::endSetup(std::shared_ptr<BaseBootstrap> bootstrap)
 {
   IbQpInfo qpInfo;
-  bootstrap->recv(&qpInfo, sizeof(qpInfo), remoteRank_, tag_);
-  bootstrap->recv(&remoteTransport_, sizeof(remoteTransport_), remoteRank_, tag_);
+  bootstrap->recv(&qpInfo, sizeof(qpInfo), remoteRank(), tag());
+  bootstrap->recv(&remoteTransport_, sizeof(remoteTransport_), remoteRank(), tag());
   qp->rtr(qpInfo);
   qp->rts();
 }

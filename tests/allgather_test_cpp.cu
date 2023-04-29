@@ -1,5 +1,6 @@
 #include "mscclpp.h"
 #include "mscclpp.hpp"
+#include "channel.hpp"
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
 #include "mpi.h"
@@ -48,9 +49,9 @@ static double getTime(void)
   return (tspec.tv_nsec / 1.0e9) + tspec.tv_sec;
 }
 
-__constant__ mscclpp::SimpleDeviceConnection constDevConns[16];
+__constant__ mscclpp::channel::SimpleDeviceConnection constDevConns[16];
 
-__device__ void allgather0(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int remoteRank,
+__device__ void allgather0(mscclpp::channel::SimpleDeviceConnection devConn, int rank, int world_size, int remoteRank,
                            size_t nelemsPerGPU)
 {
   // this allgather is really simple and implemented as an alltoall
@@ -70,7 +71,7 @@ __device__ void allgather0(mscclpp::SimpleDeviceConnection devConn, int rank, in
     devConn.wait();
 }
 
-__device__ void localAllGather(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode,
+__device__ void localAllGather(mscclpp::channel::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode,
                                int remoteRank, uint64_t offset, uint64_t size)
 {
   // this allgather algorithm works as follows:
@@ -94,14 +95,14 @@ __device__ void localAllGather(mscclpp::SimpleDeviceConnection devConn, int rank
   }
 }
 
-__device__ void allgather1(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode,
+__device__ void allgather1(mscclpp::channel::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode,
                            int remoteRank, size_t nelemsPerGPU)
 {
   localAllGather(devConn, rank, world_size, nranksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
 }
 
-__device__ void allgather2(mscclpp::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode,
+__device__ void allgather2(mscclpp::channel::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode,
                            int remoteRank, size_t nelemsPerGPU)
 {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
@@ -170,7 +171,7 @@ __global__ void kernel(int rank, int world_size, int nranksPerNode, size_t nelem
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   // Each warp is responsible for one of the remote ranks
-  mscclpp::SimpleDeviceConnection devConn = constDevConns[warpId];
+  mscclpp::channel::SimpleDeviceConnection devConn = constDevConns[warpId];
 
   if (kernel == 0)
     allgather0(devConn, rank, world_size, remoteRank, nelemsPerGPU);
@@ -222,21 +223,24 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
   std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
-  std::vector<std::shared_ptr<mscclpp::HostConnection>> hostConns;
+  mscclpp::Transport ibTransport = mscclpp::getIBTransportByDeviceName(ibDevStr);
+  mscclpp::channel::DeviceChannelService channelService;
 
   for (int r = 0; r < world_size; ++r) {
     if (r == rank)
       continue;
-    mscclpp::TransportType transportType;
+    mscclpp::Transport transport;
     const char* ibDev = ibDevStr.c_str();
     if (rankToNode(r) == thisNode) {
       ibDev = NULL;
-      transportType = mscclpp::TransportType::P2P;
+      transportType = mscclpp::Transport::CudaIpc;
     } else {
-      transportType = mscclpp::TransportType::IB;
+      transportType = ibTransport;
     }
     // Connect with all other ranks
-    auto hostConn = comm.connect(r, 0, transportType, ibDev);
+    auto conn = comm.connect(r, 0, transportType);
+    channelService.addChannel(conn);
+    // TODO: WIP
     hostConn->registerBuffer(data_d, dataSize);
     hostConns.push_back(hostConn);
   }

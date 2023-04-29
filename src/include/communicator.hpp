@@ -1,7 +1,6 @@
 #ifndef MSCCL_COMMUNICATOR_HPP_
 #define MSCCL_COMMUNICATOR_HPP_
 
-#include "channel.hpp"
 #include "ib.hpp"
 #include "mscclpp.h"
 #include "mscclpp.hpp"

@@ -30,6 +30,20 @@ public:
   virtual void recv(void* data, int size, int peer, int tag) = 0;
   virtual void allGather(void* allData, int size) = 0;
   virtual void barrier() = 0;
+
+  // TODO: move implementations of these helpers out of this header
+  void send(const std::vector<char>& data, int peer, int tag)
+  {
+    send((void*)data.size(), sizeof(size_t), peer, tag);
+    send((void*)data.data(), data.size(), peer, tag);
+  }
+  void recv(std::vector<char>& data, int peer, int tag)
+  {
+    size_t size;
+    recv((void*)&size, sizeof(size_t), peer, tag);
+    data.resize(size);
+    recv((void*)data.data(), data.size(), peer, tag);
+  }
 };
 
 class Bootstrap : public BaseBootstrap
@@ -223,9 +237,11 @@ class Connection;
 class RegisteredMemory
 {
   struct Impl;
+  // A shared_ptr is used since RegisteredMemory is functionally immutable, although internally some state is populated lazily.
   std::shared_ptr<Impl> pimpl;
 
 public:
+  RegisteredMemory() = default;
   RegisteredMemory(std::shared_ptr<Impl> pimpl);
   ~RegisteredMemory();
 
@@ -249,6 +265,10 @@ public:
 
   virtual void flush() = 0;
 
+  virtual int remoteRank() = 0;
+
+  virtual int tag() = 0;
+
   virtual Transport transport() = 0;
 
   virtual Transport remoteTransport() = 0;
@@ -269,16 +289,8 @@ public:
 
   ~Communicator();
 
-  /* Ring-based AllGather through the bootstrap socket.
-   *
-   * Inputs:
-   *   data: data array to be gathered where `[r*size, (r+1)*size)` is the data for rank `r`
-   *   size: data size per rank
-   */
-  void bootstrapAllGather(void* data, int size);
-
-  /* A no-op function that is used to synchronize all processes via a bootstrap allgather*/
-  void bootstrapBarrier();
+  /* Return the bootstrapper held by this communicator. */
+  std::shared_ptr<BaseBootstrap> bootstrapper();
 
   /* Register a region of GPU memory for use in this communicator.
    *

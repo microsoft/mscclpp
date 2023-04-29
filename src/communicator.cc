@@ -1,13 +1,11 @@
 #include <sstream>
 
 #include "api.h"
-#include "basic_proxy_handler.hpp"
 #include "checks.hpp"
 #include "comm.h"
 #include "communicator.hpp"
 #include "connection.hpp"
 #include "debug.h"
-#include "host_connection.hpp"
 #include "mscclpp.hpp"
 #include "registered_memory.hpp"
 #include "utils.h"
@@ -48,14 +46,9 @@ MSCCLPP_API_CPP Communicator::Communicator(std::shared_ptr<BaseBootstrap> bootst
 {
 }
 
-MSCCLPP_API_CPP void Communicator::bootstrapAllGather(void* data, int size)
+MSCCLPP_API_CPP std::shared_ptr<BaseBootstrap> Communicator::bootstrapper()
 {
-  mscclppBootstrapAllGather(pimpl->comm, data, size);
-}
-
-MSCCLPP_API_CPP void Communicator::bootstrapBarrier()
-{
-  mscclppBootstrapBarrier(pimpl->comm);
+  return pimpl->bootstrap_;
 }
 
 MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports)
@@ -77,7 +70,7 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank
          << pimpl->rankToHash_[pimpl->bootstrap_->getRank()] << ")";
       throw std::runtime_error(ss.str());
     }
-    auto cudaIpcConn = std::make_shared<CudaIpcConnection>();
+    auto cudaIpcConn = std::make_shared<CudaIpcConnection>(remoteRank, tag);
     conn = cudaIpcConn;
     INFO(MSCCLPP_P2P, "Cuda IPC connection between rank %d(%lx) and remoteRank %d(%lx) created",
          pimpl->bootstrap_->getRank(), pimpl->rankToHash_[pimpl->bootstrap_->getRank()], remoteRank,

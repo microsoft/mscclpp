@@ -7,6 +7,11 @@
 
 namespace mscclpp {
 
+// For every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER, a flush of the tail to device memory is triggered.
+// As long as MSCCLPP_PROXY_FIFO_SIZE is large enough, having a stale tail is not a problem.
+#define MSCCLPP_PROXY_FIFO_SIZE 128
+#define MSCCLPP_PROXY_FIFO_FLUSH_COUNTER 4
+
 struct alignas(16) ProxyTrigger
 {
   uint64_t fst, snd;
@@ -60,7 +65,7 @@ public:
 
   void flushTail(bool sync = false);
 
-  DeviceProxyFifo toDevice();
+  DeviceProxyFifo deviceFifo();
 
 private:
   struct Impl;
