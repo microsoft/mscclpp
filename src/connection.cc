@@ -103,7 +103,7 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   auto srcMr = srcTransportInfo.ibMr;
 
   qp->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset,
-                /*signaled=*/false);
+                /*signaled=*/true);
   qp->postSend();
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)size);
 }
@@ -135,12 +135,14 @@ void IBConnection::flush()
 void IBConnection::startSetup(std::shared_ptr<BaseBootstrap> bootstrap)
 {
   bootstrap->send(&qp->getInfo(), sizeof(qp->getInfo()), remoteRank_, tag_);
+  bootstrap->send(&transport_, sizeof(transport_), remoteRank_, tag_);
 }
 
 void IBConnection::endSetup(std::shared_ptr<BaseBootstrap> bootstrap)
 {
   IbQpInfo qpInfo;
   bootstrap->recv(&qpInfo, sizeof(qpInfo), remoteRank_, tag_);
+  bootstrap->recv(&remoteTransport_, sizeof(remoteTransport_), remoteRank_, tag_);
   qp->rtr(qpInfo);
   qp->rts();
 }

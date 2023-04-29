@@ -79,7 +79,7 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
     }
   }
 
-  MPI_Barrier(MPI_COMM_WORLD);
+  bootstrap->barrier();
   if (bootstrap->getRank() == 0)
     std::cout << "Memory registration passed" << std::endl;
 
@@ -93,24 +93,34 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
   }
   CUDATHROW(cudaMemcpy(devicePtr, hostBuffer.get(), size, cudaMemcpyHostToDevice));
 
-  MPI_Barrier(MPI_COMM_WORLD);
+  bootstrap->barrier();
   for (int i = 0; i < worldSize; i++) {
     if (i != rank) {
       auto& conn = connections.at(i);
       auto& peerMemory = registeredMemories.at(i);
       // printf("write to rank: %d, rank is %d\n", peerMemory.rank(), rank);
       conn->write(peerMemory, rank * writeSize, registeredMemory, rank * writeSize, writeSize);
+      conn->flush();
     }
   }
-  CUDATHROW(cudaDeviceSynchronize());
-  MPI_Barrier(MPI_COMM_WORLD);
-  CUDATHROW(cudaMemcpy(hostBuffer.get(), devicePtr, size, cudaMemcpyDeviceToHost));
-  size_t dataPerRank = writeSize / sizeof(int);
-  for (int i = 0; i < dataCount; i++) {
-    if (hostBuffer[i] != i / dataPerRank) {
-      throw std::runtime_error("Data mismatch, connection write failed");
+  bootstrap->barrier();
+  // polling until it becomes ready
+  bool ready = false;
+  int niter = 0;
+  do {
+    ready = true;
+    CUDATHROW(cudaMemcpy(hostBuffer.get(), devicePtr, size, cudaMemcpyDeviceToHost));
+    size_t dataPerRank = writeSize / sizeof(int);
+    for (int i = 0; i < dataCount; i++) {
+      if (hostBuffer[i] != i / dataPerRank) {
+        ready = false;
+      }
     }
-  }
+    if (niter == 10000){
+      throw std::runtime_error("Polling is stuck.");
+    }
+    niter++;
+  } while (!ready);
 
   if (bootstrap->getRank() == 0)
     std::cout << "Connection write passed" << std::endl;
