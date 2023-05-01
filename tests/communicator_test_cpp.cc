@@ -92,6 +92,7 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
     hostBuffer[i] = rank;
   }
   CUDATHROW(cudaMemcpy(devicePtr, hostBuffer.get(), size, cudaMemcpyHostToDevice));
+  CUDATHROW(cudaDeviceSynchronize());
 
   bootstrap->barrier();
   for (int i = 0; i < worldSize; i++) {
@@ -122,6 +123,7 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
     niter++;
   } while (!ready);
 
+  bootstrap->barrier();
   if (bootstrap->getRank() == 0)
     std::cout << "Connection write passed" << std::endl;
 
