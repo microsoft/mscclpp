@@ -30,6 +30,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags t
       transportInfo.ibLocal = true;
       transportInfo.ibMrInfo = mr->getInfo();
       this->transportInfos.push_back(transportInfo);
+      INFO(MSCCLPP_NET, "IB mr for address %p with size %ld is registered", data, size);
     };
     if (transports.has(Transport::IB0))
       addIb(Transport::IB0);

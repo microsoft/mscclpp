@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "connection.hpp"
 #include "checks.hpp"
 #include "infiniband/verbs.h"
@@ -142,15 +143,25 @@ void IBConnection::flush()
 
 void IBConnection::startSetup(std::shared_ptr<BaseBootstrap> bootstrap)
 {
-  bootstrap->send(&qp->getInfo(), sizeof(qp->getInfo()), remoteRank(), tag());
-  bootstrap->send(&transport_, sizeof(transport_), remoteRank(), tag());
+  std::vector<char> ibQpTransport;
+  std::copy_n(reinterpret_cast<char*>(&qp->getInfo()), sizeof(qp->getInfo()), std::back_inserter(ibQpTransport));
+  std::copy_n(reinterpret_cast<char*>(&transport_), sizeof(transport_), std::back_inserter(ibQpTransport));
+
+  bootstrap->send(ibQpTransport.data(), ibQpTransport.size(), remoteRank(), tag());
 }
 
 void IBConnection::endSetup(std::shared_ptr<BaseBootstrap> bootstrap)
 {
+  std::vector<char> ibQpTransport(sizeof(IbQpInfo) + sizeof(Transport));
+  bootstrap->recv(ibQpTransport.data(), ibQpTransport.size(), remoteRank(), tag());
+
   IbQpInfo qpInfo;
-  bootstrap->recv(&qpInfo, sizeof(qpInfo), remoteRank(), tag());
-  bootstrap->recv(&remoteTransport_, sizeof(remoteTransport_), remoteRank(), tag());
+  auto it = ibQpTransport.begin();
+  std::copy_n(it, sizeof(qpInfo), reinterpret_cast<char*>(&qpInfo));
+  it += sizeof(qpInfo);
+  std::copy_n(it, sizeof(remoteTransport_), reinterpret_cast<char*>(&remoteTransport_));
+  it += sizeof(qpInfo);
+
   qp->rtr(qpInfo);
   qp->rts();
 }
