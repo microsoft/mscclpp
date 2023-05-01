@@ -102,7 +102,7 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   if (dstTransportInfo.ibLocal) {
     throw std::runtime_error("dst is local, which is not supported");
   }
-  auto srcTransportInfo = getRegisteredMemoryImpl(src)->getTransportInfo(remoteTransport());
+  auto srcTransportInfo = getRegisteredMemoryImpl(src)->getTransportInfo(transport());
   if (!srcTransportInfo.ibLocal) {
     throw std::runtime_error("src is remote, which is not supported");
   }

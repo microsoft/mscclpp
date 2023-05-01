@@ -17,8 +17,10 @@ struct TransportInfo
   bool ibLocal;
   union {
     cudaIpcMemHandle_t cudaIpcHandle;
-    const IbMr* ibMr;
-    IbMrInfo ibMrInfo;
+    struct {
+      const IbMr* ibMr;
+      IbMrInfo ibMrInfo;
+    };
   };
 };
 

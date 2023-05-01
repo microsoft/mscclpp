@@ -28,6 +28,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags t
       const IbMr* mr = commImpl.getIbContext(ibTransport)->registerMr(data, size);
       transportInfo.ibMr = mr;
       transportInfo.ibLocal = true;
+      transportInfo.ibMrInfo = mr->getInfo();
       this->transportInfos.push_back(transportInfo);
     };
     if (transports.has(Transport::IB0))
