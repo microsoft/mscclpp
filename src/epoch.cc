@@ -21,7 +21,7 @@ Epoch::~Epoch() {
 }
 
 void Epoch::signal() {
-  connection_->write(localEpochIdsRegMem_, offsetof(EpochIds, outbound_), remoteEpochIdsRegMem_, offsetof(EpochIds, inboundReplica_), sizeof(device_.epochIds_));
+  connection_->write(remoteEpochIdsRegMem_, offsetof(EpochIds, inboundReplica_), localEpochIdsRegMem_, offsetof(EpochIds, outbound_), sizeof(device_.epochIds_));
 }
 
 } // namespace mscclpp

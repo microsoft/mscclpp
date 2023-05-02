@@ -126,18 +126,16 @@ void IBConnection::flush()
   while (isWaiting) {
     int wcNum = qp->pollCq();
     if (wcNum < 0) {
-      WARN("pollCq failed: errno %d", errno);
-      continue;
+      throw std::runtime_error("pollCq failed: error no " + std::to_string(errno));
     }
+    isWaiting = false;
     for (int i = 0; i < wcNum; ++i) {
       const struct ibv_wc* wc = reinterpret_cast<const struct ibv_wc*>(qp->getWc(i));
       if (wc->status != IBV_WC_SUCCESS) {
-        WARN("wc status %d", wc->status);
-        continue;
+        throw std::runtime_error("pollCq failed: status " + std::to_string(wc->status));
       }
-      if (wc->opcode == IBV_WC_RDMA_WRITE) {
-        isWaiting = false;
-        break;
+      if (wc->opcode != IBV_WC_RDMA_WRITE) {
+        isWaiting = true;
       }
     }
   }
