@@ -75,7 +75,7 @@ void CudaIpcConnection::flush()
 // IBConnection
 
 IBConnection::IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl)
-  : ConnectionBase(remoteRank, tag), transport_(transport), remoteTransport_(Transport::Unknown)
+  : ConnectionBase(remoteRank, tag), transport_(transport), remoteTransport_(Transport::Unknown), numSignaledSends(0)
 {
   qp = commImpl.getIbContext(transport)->createQp();
 }
@@ -110,6 +110,7 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 
   qp->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset,
                 /*signaled=*/true);
+  numSignaledSends++;
   qp->postSend();
   INFO(MSCCLPP_NET, "IBConnection write: from %p to %p, size %lu", (uint8_t*)srcMr->getBuff() + srcOffset, (uint8_t*)dstMrInfo.addr + dstOffset, size);
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)size);
@@ -117,8 +118,7 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 
 void IBConnection::flush()
 {
-  bool isWaiting = true;
-  while (isWaiting) {
+  while (numSignaledSends) {
     int wcNum = qp->pollCq();
     if (wcNum < 0) {
       throw std::runtime_error("pollCq failed: error no " + std::to_string(errno));
@@ -129,7 +129,7 @@ void IBConnection::flush()
         throw std::runtime_error("pollCq failed: status " + std::to_string(wc->status));
       }
       if (wc->opcode == IBV_WC_RDMA_WRITE) {
-        isWaiting = false;
+        numSignaledSends--;
       }
     }
   }

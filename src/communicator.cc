@@ -72,7 +72,7 @@ struct MemorySender : public Setuppable
   int tag_;
 };
 
-void Communicator::sendMemoryOnSetup(RegisteredMemory memory, int remoteRank, int tag)
+MSCCLPP_API_CPP void Communicator::sendMemoryOnSetup(RegisteredMemory memory, int remoteRank, int tag)
 {
   addSetup(std::make_shared<MemorySender>(memory, remoteRank, tag));
 }
@@ -94,14 +94,14 @@ struct MemoryReceiver : public Setuppable
   int tag_;
 };
 
-NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSetup(int remoteRank, int tag)
+MSCCLPP_API_CPP NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSetup(int remoteRank, int tag)
 {
   auto memoryReceiver = std::make_shared<MemoryReceiver>(remoteRank, tag);
   addSetup(memoryReceiver);
   return NonblockingFuture<RegisteredMemory>(memoryReceiver->memoryPromise_.get_future());
 }
 
-MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank, int tag, Transport transport)
+MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int remoteRank, int tag, Transport transport)
 {
   std::shared_ptr<ConnectionBase> conn;
   if (transport == Transport::CudaIpc) {

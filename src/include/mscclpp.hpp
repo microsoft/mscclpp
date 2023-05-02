@@ -350,7 +350,7 @@ public:
    *   transportType: the type of transport to be used (mscclppTransportP2P or mscclppTransportIB)
    *   ibDev:         the name of the IB device to be used. Expects a null for mscclppTransportP2P.
    */
-  std::shared_ptr<Connection> connect(int remoteRank, int tag, Transport transport);
+  std::shared_ptr<Connection> connectOnSetup(int remoteRank, int tag, Transport transport);
 
   /* Add a custom Setuppable object to a list of objects to be setup later, when setup() is called. */
   void addSetup(std::shared_ptr<Setuppable> setuppable);

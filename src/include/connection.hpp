@@ -45,6 +45,7 @@ class IBConnection : public ConnectionBase
   Transport transport_;
   Transport remoteTransport_;
   IbQp* qp;
+  int numSignaledSends;
 
 public:
   IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl);
