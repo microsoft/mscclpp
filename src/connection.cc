@@ -80,11 +80,6 @@ IBConnection::IBConnection(int remoteRank, int tag, Transport transport, Communi
   qp = commImpl.getIbContext(transport)->createQp();
 }
 
-IBConnection::~IBConnection()
-{
-  // TODO: Destroy QP?
-}
-
 Transport IBConnection::transport()
 {
   return transport_;
@@ -142,7 +137,7 @@ void IBConnection::flush()
   // npkitCollectExitEvents(conn, NPKIT_EVENT_IB_SEND_EXIT);
 }
 
-void IBConnection::startSetup(std::shared_ptr<BaseBootstrap> bootstrap)
+void IBConnection::beginSetup(std::shared_ptr<BaseBootstrap> bootstrap)
 {
   std::vector<char> ibQpTransport;
   std::copy_n(reinterpret_cast<char*>(&qp->getInfo()), sizeof(qp->getInfo()), std::back_inserter(ibQpTransport));

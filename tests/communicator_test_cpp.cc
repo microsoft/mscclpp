@@ -52,7 +52,7 @@ void make_connections(std::unique_ptr<mscclpp::Communicator>& communicator, int 
       }
     }
   }
-  communicator->connectionSetup();
+  communicator->setup();
 }
 
 void write_remote(int rank, int worldSize, std::unordered_map<int, std::shared_ptr<mscclpp::Connection>>& connections, std::unordered_map<int, mscclpp::RegisteredMemory>& remoteRegisteredMemories, mscclpp::RegisteredMemory& registeredMemory, int writeSize){

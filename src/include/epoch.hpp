@@ -35,7 +35,7 @@ class Epoch
   std::shared_ptr<Connection> connection_;
   DeviceEpoch device_;
   RegisteredMemory localEpochIdsRegMem_;
-  RegisteredMemory remoteEpochIdsRegMem_;
+  NonblockingFuture<RegisteredMemory> remoteEpochIdsRegMem_;
 
 public:
   Epoch(Communicator& communicator, std::shared_ptr<Connection> connection);
@@ -43,9 +43,7 @@ public:
 
   void signal();
 
-  DeviceEpoch deviceEpoch() {
-    return device_;
-  }
+  DeviceEpoch deviceEpoch() { return device_; }
 };
 
 } // namespace mscclpp

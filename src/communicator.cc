@@ -23,17 +23,17 @@ Communicator::Impl::Impl(std::shared_ptr<BaseBootstrap> bootstrap) : bootstrap_(
 
 Communicator::Impl::~Impl()
 {
-  ibContexts.clear();
+  ibContexts_.clear();
 }
 
 IbCtx* Communicator::Impl::getIbContext(Transport ibTransport)
 {
   // Find IB context or create it
-  auto it = ibContexts.find(ibTransport);
-  if (it == ibContexts.end()) {
+  auto it = ibContexts_.find(ibTransport);
+  if (it == ibContexts_.end()) {
     auto ibDev = getIBDeviceName(ibTransport);
-    ibContexts[ibTransport] = std::make_unique<IbCtx>(ibDev);
-    return ibContexts[ibTransport].get();
+    ibContexts_[ibTransport] = std::make_unique<IbCtx>(ibDev);
+    return ibContexts_[ibTransport].get();
   } else {
     return it->second.get();
   }
@@ -55,6 +55,50 @@ MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t 
 {
   return RegisteredMemory(
     std::make_shared<RegisteredMemory::Impl>(ptr, size, pimpl->bootstrap_->getRank(), transports, *pimpl));
+}
+
+struct MemorySender : public Setuppable
+{
+  MemorySender(RegisteredMemory memory, int remoteRank, int tag)
+    : memory_(memory), remoteRank_(remoteRank), tag_(tag) {}
+
+  void beginSetup(std::shared_ptr<BaseBootstrap> bootstrap) override
+  {
+    bootstrap->send(memory_.serialize(), remoteRank_, tag_);
+  }
+
+  RegisteredMemory memory_;
+  int remoteRank_;
+  int tag_;
+};
+
+void Communicator::sendMemoryOnSetup(RegisteredMemory memory, int remoteRank, int tag)
+{
+  addSetup(std::make_shared<MemorySender>(memory, remoteRank, tag));
+}
+
+struct MemoryReceiver : public Setuppable
+{
+  MemoryReceiver(int remoteRank, int tag)
+    : remoteRank_(remoteRank), tag_(tag) {}
+
+  void endSetup(std::shared_ptr<BaseBootstrap> bootstrap) override
+  {
+    std::vector<char> data;
+    bootstrap->recv(data, remoteRank_, tag_);
+    memoryPromise_.set_value(RegisteredMemory::deserialize(data));
+  }
+
+  std::promise<RegisteredMemory> memoryPromise_;
+  int remoteRank_;
+  int tag_;
+};
+
+NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSetup(int remoteRank, int tag)
+{
+  auto memoryReceiver = std::make_shared<MemoryReceiver>(remoteRank, tag);
+  addSetup(memoryReceiver);
+  return memoryReceiver->memoryPromise_.get_future();
 }
 
 MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank, int tag, Transport transport)
@@ -84,18 +128,25 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank
   } else {
     throw std::runtime_error("Unsupported transport");
   }
-  pimpl->connections.push_back(conn);
+  pimpl->connections_.push_back(conn);
+  addSetup(conn);
   return conn;
 }
 
-MSCCLPP_API_CPP void Communicator::connectionSetup()
+MSCCLPP_API_CPP void Communicator::addSetup(std::shared_ptr<Setuppable> setuppable)
 {
-  for (auto& conn : pimpl->connections) {
-    conn->startSetup(pimpl->bootstrap_);
+  pimpl->toSetup_.push_back(setuppable);
+}
+
+MSCCLPP_API_CPP void Communicator::setup()
+{
+  for (auto& setuppable : pimpl->toSetup_) {
+    setuppable->beginSetup(pimpl->bootstrap_);
   }
-  for (auto& conn : pimpl->connections) {
-    conn->endSetup(pimpl->bootstrap_);
+  for (auto& setuppable : pimpl->toSetup_) {
+    setuppable->endSetup(pimpl->bootstrap_);
   }
+  pimpl->toSetup_.clear();
 }
 
 } // namespace mscclpp

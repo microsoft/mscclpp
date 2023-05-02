@@ -10,7 +10,7 @@ namespace mscclpp {
 
 // TODO: Add functionality to these classes for Communicator to do connectionSetup
 
-class ConnectionBase : public Connection
+class ConnectionBase : public Connection, public Setuppable
 {
   int remoteRank_;
   int tag_;
@@ -19,9 +19,6 @@ public:
 
   int remoteRank() override;
   int tag() override;
-
-  virtual void startSetup(std::shared_ptr<BaseBootstrap>){};
-  virtual void endSetup(std::shared_ptr<BaseBootstrap>){};
 };
 
 class CudaIpcConnection : public ConnectionBase
@@ -52,8 +49,6 @@ class IBConnection : public ConnectionBase
 public:
   IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl);
 
-  ~IBConnection();
-
   Transport transport() override;
 
   Transport remoteTransport() override;
@@ -63,7 +58,7 @@ public:
 
   void flush() override;
 
-  void startSetup(std::shared_ptr<BaseBootstrap> bootstrap) override;
+  void beginSetup(std::shared_ptr<BaseBootstrap> bootstrap) override;
 
   void endSetup(std::shared_ptr<BaseBootstrap> bootstrap) override;
 };

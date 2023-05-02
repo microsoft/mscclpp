@@ -224,7 +224,6 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   int cudaNum = rankToLocalRank(rank);
   std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
   mscclpp::Transport ibTransport = mscclpp::getIBTransportByDeviceName(ibDevStr);
-  mscclpp::channel::DeviceChannelService channelService;
 
   for (int r = 0; r < world_size; ++r) {
     if (r == rank)
@@ -238,14 +237,13 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
       transportType = ibTransport;
     }
     // Connect with all other ranks
-    auto conn = comm.connect(r, 0, transportType);
-    channelService.addChannel(conn);
-    // TODO: WIP
-    hostConn->registerBuffer(data_d, dataSize);
-    hostConns.push_back(hostConn);
+    auto connId = channelService.addChannel(comm.connect(r, 0, transportType));
+    auto memoryId = channelService.addMemory(comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport));
   }
 
-  comm.connectionSetup();
+  comm.setup();
+
+  mscclpp::channel::DeviceChannelService channelService;
 
   std::vector<mscclpp::SimpleDeviceConnection> devConns;
   std::transform(

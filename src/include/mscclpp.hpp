@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <future>
 
 namespace mscclpp {
 
@@ -277,6 +278,33 @@ protected:
   static std::shared_ptr<RegisteredMemory::Impl> getRegisteredMemoryImpl(RegisteredMemory&);
 };
 
+struct Setuppable
+{
+  virtual void beginSetup(std::shared_ptr<BaseBootstrap>) {}
+  virtual void endSetup(std::shared_ptr<BaseBootstrap>) {}
+};
+
+template<typename T>
+class NonblockingFuture
+{
+  std::future<T> future;
+public:
+  NonblockingFuture() = default;
+  NonblockingFuture(std::future<T>&& future) : future(std::move(future)) {}
+
+  bool ready() const
+  {
+    return future.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+  }
+
+  T get()
+  {
+    if (!ready())
+      throw std::runtime_error("NonblockingFuture::get() called before ready");
+    return future.get();
+  }
+};
+
 class Communicator
 {
 public:
@@ -301,6 +329,10 @@ public:
    * Returns: a handle to the buffer
    */
   RegisteredMemory registerMemory(void* ptr, size_t size, TransportFlags transports);
+  
+  void sendMemoryOnSetup(RegisteredMemory memory, int remoteRank, int tag);
+
+  NonblockingFuture<RegisteredMemory> recvMemoryOnSetup(int remoteRank, int tag);
 
   /* Connect to a remote rank. This function only prepares metadata for connection. The actual connection
    * is made by a following call of mscclppConnectionSetup(). Note that this function is two-way and a connection
@@ -318,10 +350,11 @@ public:
    */
   std::shared_ptr<Connection> connect(int remoteRank, int tag, Transport transport);
 
-  /* Establish all connections declared by connect(). This function must be called after all connect()
-   * calls are made. This function ensures that all remote ranks are ready to communicate when it returns.
-   */
-  void connectionSetup();
+  /* Add a custom Setuppable object to a list of objects to be setup later, when setup() is called. */
+  void addSetup(std::shared_ptr<Setuppable> setuppable);
+
+  /* Setup all objects that have registered for setup. This includes any connections created by connect(). */
+  void setup();
 
   struct Impl;
 

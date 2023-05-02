@@ -9,10 +9,8 @@ Epoch::Epoch(Communicator& communicator, std::shared_ptr<Connection> connection)
   MSCCLPPTHROW(mscclppCudaCalloc(&device_.expectedInboundEpochId_, 1));
 
   localEpochIdsRegMem_ = communicator.registerMemory(device_.epochIds_, sizeof(device_.epochIds_), connection->transport());
-  communicator.bootstrapper()->send(localEpochIdsRegMem_.serialize(), connection->remoteRank(), connection->tag());
-  std::vector<char> serializedRemoteEpochIds;
-  communicator.bootstrapper()->recv(serializedRemoteEpochIds, connection->remoteRank(), connection->tag());
-  remoteEpochIdsRegMem_ = RegisteredMemory::deserialize(serializedRemoteEpochIds);
+  communicator.sendMemoryOnSetup(localEpochIdsRegMem_, connection->remoteRank(), connection->tag());
+  remoteEpochIdsRegMem_ = communicator.recvMemoryOnSetup(connection->remoteRank(), connection->tag());
 }
 
 Epoch::~Epoch() {
@@ -21,7 +19,7 @@ Epoch::~Epoch() {
 }
 
 void Epoch::signal() {
-  connection_->write(remoteEpochIdsRegMem_, offsetof(EpochIds, inboundReplica_), localEpochIdsRegMem_, offsetof(EpochIds, outbound_), sizeof(device_.epochIds_));
+  connection_->write(remoteEpochIdsRegMem_.get(), offsetof(EpochIds, inboundReplica_), localEpochIdsRegMem_, offsetof(EpochIds, outbound_), sizeof(device_.epochIds_));
 }
 
 } // namespace mscclpp

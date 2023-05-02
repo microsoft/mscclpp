@@ -15,8 +15,9 @@ class ConnectionBase;
 struct Communicator::Impl
 {
   mscclppComm_t comm;
-  std::vector<std::shared_ptr<ConnectionBase>> connections;
-  std::unordered_map<Transport, std::unique_ptr<IbCtx>> ibContexts;
+  std::vector<std::shared_ptr<ConnectionBase>> connections_;
+  std::vector<std::shared_ptr<Setuppable>> toSetup_;
+  std::unordered_map<Transport, std::unique_ptr<IbCtx>> ibContexts_;
   std::shared_ptr<BaseBootstrap> bootstrap_;
   std::vector<uint64_t> rankToHash_;
 
