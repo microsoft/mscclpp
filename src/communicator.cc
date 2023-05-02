@@ -72,7 +72,7 @@ struct MemorySender : public Setuppable
   int tag_;
 };
 
-void Communicator::sendMemoryOnSetup(RegisteredMemory memory, int remoteRank, int tag)
+MSCCLPP_API_CPP void Communicator::sendMemoryOnSetup(RegisteredMemory memory, int remoteRank, int tag)
 {
   addSetup(std::make_shared<MemorySender>(memory, remoteRank, tag));
 }
@@ -94,7 +94,7 @@ struct MemoryReceiver : public Setuppable
   int tag_;
 };
 
-NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSetup(int remoteRank, int tag)
+MSCCLPP_API_CPP NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSetup(int remoteRank, int tag)
 {
   auto memoryReceiver = std::make_shared<MemoryReceiver>(remoteRank, tag);
   addSetup(memoryReceiver);
