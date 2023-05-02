@@ -25,16 +25,12 @@ mscclpp::Transport findIb(int localRank)
 
 void register_all_memories(std::unique_ptr<mscclpp::Communicator>& communicator, int rank, int worldSize, void* devicePtr, size_t deviceBufferSize, mscclpp::Transport myIbDevice, mscclpp::RegisteredMemory& localMemory, std::unordered_map<int, mscclpp::RegisteredMemory>& remoteMemory){
   localMemory = communicator->registerMemory(devicePtr, deviceBufferSize, mscclpp::Transport::CudaIpc | myIbDevice);
-  int serializedSize = 0;
+  auto serialized = localMemory.serialize();
+  int serializedSize = serialized.size();
   for (int i = 0; i < worldSize; i++) {
     if (i != rank){
-      auto serialized = localMemory.serialize();
-      serializedSize = serialized.size();
       communicator->bootstrapper()->send(serialized.data(), serializedSize, i, 0);
     }
-  }
-  if (serializedSize == 0) {
-    throw std::runtime_error("Serialized size should have been set to a non-zero value.");
   }
   for (int i = 0; i < worldSize; i++) {
     if (i != rank){
