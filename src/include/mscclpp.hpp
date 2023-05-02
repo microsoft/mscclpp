@@ -287,10 +287,11 @@ struct Setuppable
 template<typename T>
 class NonblockingFuture
 {
-  std::future<T> future;
+  std::shared_future<T> future;
 public:
   NonblockingFuture() = default;
-  NonblockingFuture(std::future<T>&& future) : future(std::move(future)) {}
+  NonblockingFuture(std::shared_future<T>&& future) : future(std::move(future)) {}
+  NonblockingFuture(const NonblockingFuture&) = default;
 
   bool ready() const
   {
