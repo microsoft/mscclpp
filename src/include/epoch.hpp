@@ -39,6 +39,7 @@ class Epoch
 
 public:
   Epoch(Communicator& communicator, std::shared_ptr<Connection> connection);
+  Epoch(const Epoch&) = delete;
   ~Epoch();
 
   void signal();
