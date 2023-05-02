@@ -35,15 +35,16 @@ public:
   // TODO: move implementations of these helpers out of this header
   void send(const std::vector<char>& data, int peer, int tag)
   {
-    send((void*)data.size(), sizeof(size_t), peer, tag);
-    send((void*)data.data(), data.size(), peer, tag);
+    size_t size = data.size();
+    send((void*)&size, sizeof(size_t), peer, tag);
+    send((void*)data.data(), data.size(), peer, tag+1);
   }
   void recv(std::vector<char>& data, int peer, int tag)
   {
     size_t size;
     recv((void*)&size, sizeof(size_t), peer, tag);
     data.resize(size);
-    recv((void*)data.data(), data.size(), peer, tag);
+    recv((void*)data.data(), data.size(), peer, tag+1);
   }
 };
 

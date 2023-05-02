@@ -1,4 +1,5 @@
 #include "mscclpp.hpp"
+#include "epoch.hpp"
 
 #include <cassert>
 #include <cuda_runtime.h>
@@ -88,7 +89,7 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
   if (bootstrap->getRank() == 0)
     std::cout << "Connection setup passed" << std::endl;
 
-  int numBuffers = 1000;
+  int numBuffers = 1;
   std::vector<int*> devicePtr(numBuffers);
   int deviceBufferSize = 1024*1024;
   
@@ -105,6 +106,15 @@ void test_communicator(int rank, int worldSize, int nranksPerNode)
   if (bootstrap->getRank() == 0)
     std::cout << "Memory registration for " << std::to_string(numBuffers) << " buffers passed" << std::endl;
 
+  std::vector<std::unique_ptr<mscclpp::Epoch>> epochs;
+  for (auto entry : connections) {
+    auto& conn = entry.second;
+    epochs.emplace_back(std::make_unique<mscclpp::Epoch>(*communicator, conn));
+  }
+  communicator->setup();
+  bootstrap->barrier();
+  if (bootstrap->getRank() == 0)
+    std::cout << "Epochs are created" << std::endl;
 
   assert((deviceBufferSize / sizeof(int)) % worldSize == 0);
   size_t writeSize = deviceBufferSize / worldSize;

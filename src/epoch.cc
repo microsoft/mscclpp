@@ -1,10 +1,11 @@
 #include "epoch.hpp"
 #include "checks.hpp"
 #include "alloc.h"
+#include "api.h"
 
 namespace mscclpp {
 
-Epoch::Epoch(Communicator& communicator, std::shared_ptr<Connection> connection) : connection_(connection) {
+MSCCLPP_API_CPP Epoch::Epoch(Communicator& communicator, std::shared_ptr<Connection> connection) : connection_(connection) {
   MSCCLPPTHROW(mscclppCudaCalloc(&device_.epochIds_, 1));
   MSCCLPPTHROW(mscclppCudaCalloc(&device_.expectedInboundEpochId_, 1));
 
@@ -13,12 +14,12 @@ Epoch::Epoch(Communicator& communicator, std::shared_ptr<Connection> connection)
   remoteEpochIdsRegMem_ = communicator.recvMemoryOnSetup(connection->remoteRank(), connection->tag());
 }
 
-Epoch::~Epoch() {
-  MSCCLPPTHROW(mscclppCudaFree(&device_.epochIds_));
-  MSCCLPPTHROW(mscclppCudaFree(&device_.expectedInboundEpochId_));
+MSCCLPP_API_CPP Epoch::~Epoch() {
+  mscclppCudaFree(device_.epochIds_);
+  mscclppCudaFree(device_.expectedInboundEpochId_);
 }
 
-void Epoch::signal() {
+MSCCLPP_API_CPP void Epoch::signal() {
   connection_->write(remoteEpochIdsRegMem_.get(), offsetof(EpochIds, inboundReplica_), localEpochIdsRegMem_, offsetof(EpochIds, outbound_), sizeof(device_.epochIds_));
 }
 

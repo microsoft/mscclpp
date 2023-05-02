@@ -17,7 +17,7 @@
     if (res != mscclppSuccess && res != mscclppInProgress) {                                                           \
       throw std::runtime_error(std::string("Call to " #call " failed with error code ") + mscclppGetErrorString(res)); \
     }                                                                                                                  \
-  } while (0);
+  } while (false)
 
 #define CUDATHROW(cmd)                                                                                                 \
   do {                                                                                                                 \

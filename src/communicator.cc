@@ -98,7 +98,7 @@ NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSetup(int remoteRa
 {
   auto memoryReceiver = std::make_shared<MemoryReceiver>(remoteRank, tag);
   addSetup(memoryReceiver);
-  return memoryReceiver->memoryPromise_.get_future();
+  return NonblockingFuture<RegisteredMemory>(memoryReceiver->memoryPromise_.get_future());
 }
 
 MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connect(int remoteRank, int tag, Transport transport)
