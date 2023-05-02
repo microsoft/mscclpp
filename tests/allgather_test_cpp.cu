@@ -49,9 +49,9 @@ static double getTime(void)
   return (tspec.tv_nsec / 1.0e9) + tspec.tv_sec;
 }
 
-__constant__ mscclpp::channel::SimpleDeviceConnection constDevConns[16];
+__constant__ mscclpp::channel::SimpleDeviceChannel constDevChans[16];
 
-__device__ void allgather0(mscclpp::channel::SimpleDeviceConnection devConn, int rank, int world_size, int remoteRank,
+__device__ void allgather0(mscclpp::channel::SimpleDeviceChannel devChan, int rank, int world_size, int remoteRank,
                            size_t nelemsPerGPU)
 {
   // this allgather is really simple and implemented as an alltoall
@@ -59,19 +59,19 @@ __device__ void allgather0(mscclpp::channel::SimpleDeviceConnection devConn, int
   // this thread's role is a sender role
   // put your data asynchronously
   if ((threadIdx.x % 32) == 0)
-    devConn.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+    devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
   // make sure everyone is put their data before some thread randomly blocks everyone else in signal
   __syncthreads();
   // push with flag and sync to make sure the data is received
   if ((threadIdx.x % 32) == 0)
-    devConn.flush();
+    devChan.flush();
 
   // this thread's role is a receiver role. wait on the semaphore to make sure the data is ready
   if ((threadIdx.x % 32) == 0)
-    devConn.wait();
+    devChan.wait();
 }
 
-__device__ void localAllGather(mscclpp::channel::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode,
+__device__ void localAllGather(mscclpp::channel::SimpleDeviceChannel devChan, int rank, int world_size, int nranksPerNode,
                                int remoteRank, uint64_t offset, uint64_t size)
 {
   // this allgather algorithm works as follows:
@@ -84,25 +84,25 @@ __device__ void localAllGather(mscclpp::channel::SimpleDeviceConnection devConn,
     if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)) {
       // put your data to GPU (rank+i) % nranksPerNode and signal in one call
       if ((threadIdx.x % 32) == 0)
-        devConn.putWithSignalAndFlush(offset, size);
+        devChan.putWithSignalAndFlush(offset, size);
     }
     // wait for the data from GPU (rank-i) % nranksPerNode to arrive
     if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode)) {
       if ((threadIdx.x % 32) == 0)
-        devConn.wait();
+        devChan.wait();
     }
     asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nranksPerNode - 1) * 32) : "memory");
   }
 }
 
-__device__ void allgather1(mscclpp::channel::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode,
+__device__ void allgather1(mscclpp::channel::SimpleDeviceChannel devChan, int rank, int world_size, int nranksPerNode,
                            int remoteRank, size_t nelemsPerGPU)
 {
-  localAllGather(devConn, rank, world_size, nranksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
+  localAllGather(devChan, rank, world_size, nranksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
 }
 
-__device__ void allgather2(mscclpp::channel::SimpleDeviceConnection devConn, int rank, int world_size, int nranksPerNode,
+__device__ void allgather2(mscclpp::channel::SimpleDeviceChannel devChan, int rank, int world_size, int nranksPerNode,
                            int remoteRank, size_t nelemsPerGPU)
 {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
@@ -120,17 +120,17 @@ __device__ void allgather2(mscclpp::channel::SimpleDeviceConnection devConn, int
   // Step 1
   // local allgather
   if (remoteRank / nranksPerNode == rank / nranksPerNode) {
-    localAllGather(devConn, rank, world_size, nranksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
+    localAllGather(devChan, rank, world_size, nranksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                    nelemsPerGPU * sizeof(int));
   }
   // cross-node exchange
   if (remoteRank % nranksPerNode == rank % nranksPerNode) {
     // opposite side
     if ((threadIdx.x % 32) == 0)
-      devConn.putWithSignalAndFlush(rank * nelemsPerGPU * sizeof(int),
+      devChan.putWithSignalAndFlush(rank * nelemsPerGPU * sizeof(int),
                                     (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
     if ((threadIdx.x % 32) == 0)
-      devConn.wait();
+      devChan.wait();
   }
 
   __syncthreads();
@@ -139,7 +139,7 @@ __device__ void allgather2(mscclpp::channel::SimpleDeviceConnection devConn, int
   // local allgather
   int otherNghr = (rank + nranksPerNode) % world_size;
   if (remoteRank / nranksPerNode == rank / nranksPerNode) {
-    localAllGather(devConn, rank, world_size, nranksPerNode, remoteRank, otherNghr * nelemsPerGPU * sizeof(int),
+    localAllGather(devChan, rank, world_size, nranksPerNode, remoteRank, otherNghr * nelemsPerGPU * sizeof(int),
                    (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
   }
 
@@ -147,11 +147,11 @@ __device__ void allgather2(mscclpp::channel::SimpleDeviceConnection devConn, int
   if (remoteRank % nranksPerNode == rank % nranksPerNode) {
     // opposite side
     if ((threadIdx.x % 32) == 0)
-      devConn.putWithSignalAndFlush((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) *
+      devChan.putWithSignalAndFlush((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) *
                                       sizeof(int),
                                     nelemsPerGPU / pipelineSize * sizeof(int));
     if ((threadIdx.x % 32) == 0)
-      devConn.wait();
+      devChan.wait();
   }
 
   __syncthreads();
@@ -159,7 +159,7 @@ __device__ void allgather2(mscclpp::channel::SimpleDeviceConnection devConn, int
   // Step 3
   // local allgather
   if (remoteRank / nranksPerNode == rank / nranksPerNode) {
-    localAllGather(devConn, rank, world_size, nranksPerNode, remoteRank,
+    localAllGather(devChan, rank, world_size, nranksPerNode, remoteRank,
                    (otherNghr * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
                    nelemsPerGPU / pipelineSize * sizeof(int));
   }
@@ -167,18 +167,18 @@ __device__ void allgather2(mscclpp::channel::SimpleDeviceConnection devConn, int
 
 __global__ void kernel(int rank, int world_size, int nranksPerNode, size_t nelemsPerGPU, int kernel)
 {
-  // find the mapping between remoteRank and devConns
+  // find the mapping between remoteRank and devChans
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   // Each warp is responsible for one of the remote ranks
-  mscclpp::channel::SimpleDeviceConnection devConn = constDevConns[warpId];
+  mscclpp::channel::SimpleDeviceChannel devChan = constDevChans[warpId];
 
   if (kernel == 0)
-    allgather0(devConn, rank, world_size, remoteRank, nelemsPerGPU);
+    allgather0(devChan, rank, world_size, remoteRank, nelemsPerGPU);
   else if (kernel == 1)
-    allgather1(devConn, rank, world_size, nranksPerNode, remoteRank, nelemsPerGPU);
+    allgather1(devChan, rank, world_size, nranksPerNode, remoteRank, nelemsPerGPU);
   else if (kernel == 2)
-    allgather2(devConn, rank, world_size, nranksPerNode, remoteRank, nelemsPerGPU);
+    allgather2(devChan, rank, world_size, nranksPerNode, remoteRank, nelemsPerGPU);
 }
 
 int rankToLocalRank(int rank)
@@ -218,41 +218,44 @@ void initializeAndAllocateAllGatherData(int rank, int world_size, size_t dataSiz
   CUDACHECK(cudaMemcpy(*data_d, *data_h, dataSize, cudaMemcpyHostToDevice));
 }
 
-void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& comm, int* data_d, size_t dataSize)
+void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& comm, mscclpp::channel::DeviceChannelService& channelService, int* data_d, size_t dataSize)
 {
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
   std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
   mscclpp::Transport ibTransport = mscclpp::getIBTransportByDeviceName(ibDevStr);
+  std::vector<mscclpp::channel::ChannelId> channelIds;
+  std::vector<mscclpp::RegisteredMemory> localMemories;
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemories;
 
   for (int r = 0; r < world_size; ++r) {
     if (r == rank)
       continue;
     mscclpp::Transport transport;
-    const char* ibDev = ibDevStr.c_str();
     if (rankToNode(r) == thisNode) {
-      ibDev = NULL;
-      transportType = mscclpp::Transport::CudaIpc;
+      transport = mscclpp::Transport::CudaIpc;
     } else {
-      transportType = ibTransport;
+      transport = ibTransport;
     }
     // Connect with all other ranks
-    auto connId = channelService.addChannel(comm.connect(r, 0, transportType));
-    auto memoryId = channelService.addMemory(comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport));
+    channelIds.push_back(channelService.addChannel(comm.connectOnSetup(r, 0, transport)));
+    auto memory = comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport);
+    localMemories.push_back(memory);
+    comm.sendMemoryOnSetup(memory, r, 0);
+    remoteMemories.push_back(comm.recvMemoryOnSetup(r, 0));
   }
 
   comm.setup();
 
-  mscclpp::channel::DeviceChannelService channelService;
+  std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
+  for (size_t i = 0; i < channelIds.size(); ++i) {
+    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(channelService.deviceChannel(channelIds[i]),
+      channelService.addMemory(remoteMemories[i].get()), channelService.addMemory(localMemories[i])));
+  }
 
-  std::vector<mscclpp::SimpleDeviceConnection> devConns;
-  std::transform(
-    hostConns.begin(), hostConns.end(), std::back_inserter(devConns),
-    [](std::shared_ptr<mscclpp::HostConnection>& hostConn) { return mscclpp::SimpleDeviceConnection(*hostConn); });
-
-  assert(devConns.size() < sizeof(constDevConns) / sizeof(mscclpp::SimpleDeviceConnection));
+  assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));
   CUDACHECK(
-    cudaMemcpyToSymbol(constDevConns, devConns.data(), sizeof(mscclpp::SimpleDeviceConnection) * devConns.size()));
+    cudaMemcpyToSymbol(constDevChans, devChannels.data(), sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size()));
 }
 
 void printUsage(const char* prog, bool isMpi)
@@ -405,7 +408,10 @@ int main(int argc, const char* argv[])
   try {
     if (rank == 0)
       printf("Initializing MSCCL++\n");
-    mscclpp::Communicator comm(world_size, ip_port, rank);
+    auto bootstrapper = std::make_shared<mscclpp::Bootstrap>(rank, world_size);
+    bootstrapper->initialize(ip_port);
+    mscclpp::Communicator comm(bootstrapper);
+    mscclpp::channel::DeviceChannelService channelService(comm);
 
     if (rank == 0)
       printf("Initializing data for allgather test\n");
@@ -413,11 +419,11 @@ int main(int argc, const char* argv[])
 
     if (rank == 0)
       printf("Setting up the connection in MSCCL++\n");
-    setupMscclppConnections(rank, world_size, comm, data_d, dataSize);
+    setupMscclppConnections(rank, world_size, comm, channelService, data_d, dataSize);
 
     if (rank == 0)
       printf("Launching MSCCL++ proxy threads\n");
-    comm.startProxying();
+    channelService.startProxy();
 
     if (rank == 0)
       printf("Testing the correctness of AllGather implementation\n");
@@ -437,7 +443,7 @@ int main(int argc, const char* argv[])
     }
     int tmp[16];
     // A simple barrier
-    comm.bootstrapAllGather(tmp, sizeof(int));
+    bootstrapper->allGather(tmp, sizeof(int));
     if (rank == 0)
       printf("Successfully checked the correctness\n");
 
@@ -446,12 +452,12 @@ int main(int argc, const char* argv[])
     if (rank == 0)
       printf("Running %d iterations of the kernel without CUDA graph\n", iterwithoutcudagraph);
     CUDACHECK(cudaStreamSynchronize(stream));
-    comm.bootstrapAllGather(tmp, sizeof(int));
+    bootstrapper->allGather(tmp, sizeof(int));
     for (int i = 0; i < iterwithoutcudagraph; ++i) {
       kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
     }
     CUDACHECK(cudaStreamSynchronize(stream));
-    comm.bootstrapAllGather(tmp, sizeof(int));
+    bootstrapper->allGather(tmp, sizeof(int));
 
     // cudaGraph Capture
     int cudagraphiter = 10;
@@ -480,7 +486,7 @@ int main(int argc, const char* argv[])
     if (rank == 0)
       printf("Running %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphlaunch,
              cudagraphiter);
-    comm.bootstrapAllGather(tmp, sizeof(int));
+    bootstrapper->allGather(tmp, sizeof(int));
     double t0, t1, ms, time_in_us;
     t0 = getTime();
     for (int i = 0; i < cudagraphlaunch; ++i) {
@@ -493,11 +499,11 @@ int main(int argc, const char* argv[])
     time_in_us = ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter;
     printf("Rank %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us,
            (double)(dataSize) / 1e9 / (time_in_us / 1e6));
-    comm.bootstrapAllGather(tmp, sizeof(int));
+    bootstrapper->allGather(tmp, sizeof(int));
 
     if (rank == 0)
       printf("Stopping MSCCL++ proxy threads\n");
-    comm.stopProxying();
+    channelService.stopProxy();
 
   } catch (std::exception& e) {
     // todo: throw exceptions in the implementation and process them here

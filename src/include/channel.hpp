@@ -13,7 +13,8 @@ namespace channel {
 class Channel
 {
 public:
-  Channel(std::shared_ptr<Connection> connection) : connection_(connection), epoch_(std::make_shared<Epoch>()) {};
+  Channel(Communicator& communicator, std::shared_ptr<Connection> connection)
+    : connection_(connection), epoch_(std::make_shared<Epoch>(communicator, connection)) {};
 
   Connection& connection() { return *connection_; }
   Epoch& epoch() { return *epoch_; }
@@ -176,10 +177,10 @@ inline ProxyHandler makeChannelProxyHandler(DeviceChannelService& channelService
 
 class DeviceChannelService {
 public:
-  DeviceChannelService() : proxy_([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }) {}
+  DeviceChannelService(Communicator& communicator) : communicator_(communicator), proxy_([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }) {}
 
   ChannelId addChannel(std::shared_ptr<Connection> connection) {
-    channels_.push_back(Channel(connection));
+    channels_.push_back(Channel(communicator_, connection));
     return channels_.size() - 1;
   }
 
@@ -195,6 +196,7 @@ public:
   void stopProxy() { proxy_.stop(); }
 
 private:
+  Communicator& communicator_;
   std::vector<Channel> channels_;
   std::vector<RegisteredMemory> memories_;
   Proxy proxy_;

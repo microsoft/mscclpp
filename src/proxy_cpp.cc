@@ -1,3 +1,4 @@
+#include "proxy.hpp"
 #include "api.h"
 #include "mscclpp.hpp"
 #include "utils.h"

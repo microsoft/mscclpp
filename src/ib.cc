@@ -11,6 +11,7 @@
 #include "debug.h"
 #include "ib.hpp"
 #include "mscclpp.hpp"
+#include "api.h"
 #include <infiniband/verbs.h>
 #include <string>
 
@@ -372,14 +373,14 @@ const std::string& IbCtx::getDevName() const
   return this->devName;
 }
 
-int getIBDeviceCount()
+MSCCLPP_API_CPP int getIBDeviceCount()
 {
   int num;
   ibv_get_device_list(&num);
   return num;
 }
 
-std::string getIBDeviceName(Transport ibTransport)
+MSCCLPP_API_CPP std::string getIBDeviceName(Transport ibTransport)
 {
   int num;
   struct ibv_device** devices = ibv_get_device_list(&num);
@@ -418,7 +419,7 @@ std::string getIBDeviceName(Transport ibTransport)
   return devices[ibTransportIndex]->name;
 }
 
-Transport getIBTransportByDeviceName(const std::string& ibDeviceName)
+MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string& ibDeviceName)
 {
   int num;
   struct ibv_device** devices = ibv_get_device_list(&num);
