@@ -39,23 +39,6 @@ void register_all_memories(mscclpp::Communicator& communicator, int rank, int wo
       remoteMemory[i] = futureRemoteMemory[i].get();
     }
   }
-
-
-  // auto serialized = localMemory.serialize();
-  // int serializedSize = serialized.size();
-  // for (int i = 0; i < worldSize; i++) {
-  //   if (i != rank){
-  //     communicator.bootstrapper()->send(serialized.data(), serializedSize, i, 0);
-  //   }
-  // }
-  // for (int i = 0; i < worldSize; i++) {
-  //   if (i != rank){
-  //     std::vector<char> deserialized(serializedSize);
-  //     communicator.bootstrapper()->recv(deserialized.data(), serializedSize, i, 0);
-  //     auto remote = mscclpp::RegisteredMemory::deserialize(deserialized);
-  //     remoteMemory[i] = remote;
-  //   }
-  // }
 }
 
 void make_connections(mscclpp::Communicator& communicator, int rank, int worldSize, int nRanksPerNode, mscclpp::Transport myIbDevice, std::unordered_map<int, std::shared_ptr<mscclpp::Connection>>& connections){
