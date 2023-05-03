@@ -86,9 +86,7 @@ struct MemoryReceiver : public Setuppable
   {
     std::vector<char> data;
     bootstrap->recv(data, remoteRank_, tag_);
-    auto memory = RegisteredMemory::deserialize(data);
-    memory.data();
-    memoryPromise_.set_value(memory);
+    memoryPromise_.set_value(RegisteredMemory::deserialize(data));
   }
 
   std::promise<RegisteredMemory> memoryPromise_;

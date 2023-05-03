@@ -16,7 +16,10 @@ struct TransportInfo
   // TODO: rewrite this using std::variant or something
   bool ibLocal;
   union {
-    cudaIpcMemHandle_t cudaIpcHandle;
+    struct {
+      cudaIpcMemHandle_t cudaIpcBaseHandle;
+      size_t cudaIpcOffsetFromBase;
+    };
     struct {
       const IbMr* ibMr;
       IbMrInfo ibMrInfo;
@@ -27,9 +30,9 @@ struct TransportInfo
 struct RegisteredMemory::Impl
 {
   void* data;
-  bool dataInitialized;
   size_t size;
   int rank;
+  uint64_t hostHash;
   TransportFlags transports;
   std::vector<TransportInfo> transportInfos;
 
