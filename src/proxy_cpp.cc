@@ -2,6 +2,7 @@
 #include "api.h"
 #include "mscclpp.hpp"
 #include "utils.h"
+#include "utils.hpp"
 #include <atomic>
 #include <thread>
 
@@ -14,18 +15,23 @@ const int ProxyFlushPeriod = 4;
 struct Proxy::Impl
 {
   ProxyHandler handler;
+  std::function<void()> threadInit;
   HostProxyFifo fifo;
   std::thread service;
   std::atomic_bool running;
 
-  Impl(ProxyHandler handler) : handler(handler), running(false)
+  Impl(ProxyHandler handler, std::function<void()> threadInit) : handler(handler), threadInit(threadInit), running(false)
   {
   }
 };
 
-MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler)
+MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, std::function<void()> threadInit)
 {
-  pimpl = std::make_unique<Impl>(handler);
+  pimpl = std::make_unique<Impl>(handler, threadInit);
+}
+
+MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler) : Proxy(handler, [] {})
+{
 }
 
 MSCCLPP_API_CPP Proxy::~Proxy()
@@ -39,8 +45,8 @@ MSCCLPP_API_CPP void Proxy::start()
 {
   pimpl->running = true;
   pimpl->service = std::thread([this] {
-    // from this point on, proxy thread will stay close to the device
-    // PROXYMSCCLPPCHECK(numaBind(pimpl->comm->devNumaNode)); // TODO: reenable this
+
+    pimpl->threadInit();
 
     ProxyHandler handler = this->pimpl->handler;
     HostProxyFifo& fifo = this->pimpl->fifo;

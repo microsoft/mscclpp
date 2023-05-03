@@ -5,6 +5,7 @@
 #include "mscclpp.hpp"
 #include "proxy.hpp"
 #include "mscclppfifo.hpp"
+#include "utils.hpp"
 
 namespace mscclpp {
 namespace channel {
@@ -177,7 +178,7 @@ inline ProxyHandler makeChannelProxyHandler(DeviceChannelService& channelService
 
 class DeviceChannelService {
 public:
-  DeviceChannelService(Communicator& communicator) : communicator_(communicator), proxy_([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }) {}
+  DeviceChannelService(Communicator& communicator);
 
   ChannelId addChannel(std::shared_ptr<Connection> connection) {
     channels_.push_back(Channel(communicator_, connection));
@@ -200,6 +201,9 @@ private:
   std::vector<Channel> channels_;
   std::vector<RegisteredMemory> memories_;
   Proxy proxy_;
+  int deviceNumaNode;
+
+  void bindThread();
 
   ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw) {
     ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
