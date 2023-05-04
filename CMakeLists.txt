@@ -15,6 +15,7 @@ find_package(GDRCopy)
 option(USE_MPI_FOR_TESTS "Use MPI for tests" ON)
 if(USE_MPI_FOR_TESTS)
     find_package(MPI REQUIRED)
+    add_definitions(-DMSCCLPP_USE_MPI_FOR_TESTS)
 endif()
 
 include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
