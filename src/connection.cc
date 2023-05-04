@@ -119,11 +119,16 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 
 void IBConnection::flush()
 {
+  Timer timer;
   while (numSignaledSends) {
     int wcNum = qp->pollCq();
     if (wcNum < 0) {
       throw std::runtime_error("pollCq failed: error no " + std::to_string(errno));
     }
+
+    auto elapsed = timer.elapsed();
+    if (elapsed > MSCCLPP_POLLING_WAIT)
+      throw std::runtime_error("pollCq is stuck: waited for " + std::to_string(elapsed) + " seconds. Expected " + std::to_string(numSignaledSends) + " signals");
     for (int i = 0; i < wcNum; ++i) {
       const struct ibv_wc* wc = reinterpret_cast<const struct ibv_wc*>(qp->getWc(i));
       if (wc->status != IBV_WC_SUCCESS) {

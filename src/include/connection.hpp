@@ -1,6 +1,9 @@
 #ifndef MSCCLPP_CONNECTION_HPP_
 #define MSCCLPP_CONNECTION_HPP_
 
+// TODO(saemal): make this configurable
+#define MSCCLPP_POLLING_WAIT 10000 // in microseconds
+
 #include "communicator.hpp"
 #include "ib.hpp"
 #include "mscclpp.hpp"
