@@ -180,9 +180,8 @@ Bootstrap::Impl::~Impl()
   }
 }
 
-void Bootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock,
-                                                std::vector<mscclppSocketAddress>& rankAddresses,
-                                                std::vector<mscclppSocketAddress>& rankAddressesRoot, int& rank)
+void Bootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock, std::vector<mscclppSocketAddress>& rankAddresses,
+                                         std::vector<mscclppSocketAddress>& rankAddressesRoot, int& rank)
 {
   mscclppSocket sock;
   ExtInfo info;
@@ -211,7 +210,7 @@ void Bootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock,
 }
 
 void Bootstrap::Impl::sendHandleToPeer(int peer, const std::vector<mscclppSocketAddress>& rankAddresses,
-                                              const std::vector<mscclppSocketAddress>& rankAddressesRoot)
+                                       const std::vector<mscclppSocketAddress>& rankAddressesRoot)
 {
   mscclppSocket sock;
   int next = (peer + 1) % this->nRanks_;
@@ -226,7 +225,8 @@ void Bootstrap::Impl::bootstrapCreateRoot()
   mscclppSocket listenSock;
 
   // mscclppSocket* listenSock = new mscclppSocket(); // TODO(saemal) make this a shared ptr
-  MSCCLPPTHROW(mscclppSocketInit(&listenSock, &uniqueId_.addr, uniqueId_.magic, mscclppSocketTypeBootstrap, nullptr, 0));
+  MSCCLPPTHROW(
+    mscclppSocketInit(&listenSock, &uniqueId_.addr, uniqueId_.magic, mscclppSocketTypeBootstrap, nullptr, 0));
   MSCCLPPTHROW(mscclppSocketListen(&listenSock));
   MSCCLPPTHROW(mscclppSocketGetAddr(&listenSock, &uniqueId_.addr));
   auto lambda = [this, listenSock]() { this->bootstrapRoot(listenSock); };

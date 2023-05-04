@@ -61,7 +61,7 @@ endif
 
 NVCUFLAGS  := -ccbin $(CXX) $(NVCC_GENCODE) -std=c++11 --expt-extended-lambda -Xfatbin -compress-all
 # Use addprefix so that we can specify more than one path
-NVLDFLAGS  := -L$(CUDA_LIB) -lcudart -lrt
+NVLDFLAGS  := -L$(CUDA_LIB) -lcudart -lrt -lcuda
 
 ifeq ($(DEBUG), 0)
 NVCUFLAGS += -O3
@@ -120,7 +120,8 @@ LDFLAGS := $(NVLDFLAGS) $(GDRCOPY_LDFLAGS) -libverbs -lnuma
 
 LIBSRCS := $(addprefix src/,debug.cc utils.cc init.cc proxy.cc ib.cc config.cc)
 LIBSRCS += $(addprefix src/bootstrap/,bootstrap.cc socket.cc)
-LIBSRCS += $(addprefix src/,communicator.cc fifo.cc host_connection.cc proxy_cpp.cc basic_proxy_handler.cc)
+LIBSRCS += $(addprefix src/,communicator.cc connection.cc registered_memory.cc)
+LIBSRCS += $(addprefix src/,epoch.cc proxy_cpp.cc fifo.cc channel.cc)
 ifneq ($(NPKIT), 0)
 LIBSRCS += $(addprefix src/misc/,npkit.cc)
 endif
@@ -134,7 +135,7 @@ HEADERS := $(wildcard src/include/*.h)
 CPPSOURCES := $(shell find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*" -not -path "./python/*")
 PYTHONCPPSOURCES := $(shell find ./python/src/ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
 
-INCEXPORTS := mscclpp.h mscclppfifo.h mscclpp.hpp mscclppfifo.hpp
+INCEXPORTS := mscclpp.h mscclppfifo.h mscclpp.hpp mscclppfifo.hpp epoch.hpp
 INCTARGETS := $(INCEXPORTS:%=$(BUILDDIR)/$(INCDIR)/%)
 
 LIBNAME   := libmscclpp.so
@@ -148,7 +149,7 @@ UTOBJTARGETS := $(UTOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 UTBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(UTOBJS))
 
 TESTSDIR  := tests
-TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc allgather_test_standalone.cu allgather_test_cpp.cu bootstrap_test_cpp.cc)
+TESTSSRCS := $(addprefix $(TESTSDIR)/,bootstrap_test.cc allgather_test_standalone.cu  communicator_test_cpp.cu bootstrap_test_cpp.cc allgather_test_cpp.cu)
 TESTSOBJS := $(patsubst %.cc,%.o,$(TESTSSRCS)) $(patsubst %.cu,%.o,$(TESTSSRCS))
 TESTSOBJTARGETS := $(TESTSOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 TESTSBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(TESTSOBJS))

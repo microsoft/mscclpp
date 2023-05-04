@@ -59,8 +59,8 @@ struct mscclppProxyState
   mscclppProxyRunState_t run;
 
   int numaNodeToBind;
-  struct mscclppIbContext* ibContext; // For IB connection only
-  cudaStream_t p2pStream;             // for P2P DMA engine only
+  mscclpp::IbCtx* ibContext; // For IB connection only
+  cudaStream_t p2pStream;    // for P2P DMA engine only
 
   struct mscclppProxyFifo fifo;
 };

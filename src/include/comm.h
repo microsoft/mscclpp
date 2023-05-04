@@ -7,15 +7,16 @@
 #ifndef MSCCLPP_COMM_H_
 #define MSCCLPP_COMM_H_
 
-#include "ib.h"
+#include "ib.hpp"
 #include "proxy.h"
+#include <memory>
 #include <vector>
 
 #define MAXCONNECTIONS 64
 
 struct mscclppBufferRegistration
 {
-  void *data;
+  void* data;
   uint64_t size;
 };
 
@@ -31,7 +32,7 @@ struct mscclppConn
   std::vector<mscclppBufferRegistration> bufferRegistrations;
   std::vector<mscclppBufferRegistration> remoteBufferRegistrations;
 
-  struct mscclppIbContext* ibCtx;
+  mscclpp::IbCtx* ibCtx;
 #if defined(ENABLE_NPKIT)
   std::vector<uint64_t> npkitUsedReqIds;
   std::vector<uint64_t> npkitFreeReqIds;
@@ -57,7 +58,7 @@ struct mscclppComm
   // Flag to ask MSCCLPP kernels to abort
   volatile uint32_t* abortFlag;
 
-  struct mscclppIbContext* ibContext[MSCCLPP_IB_MAX_DEVS];
+  std::unique_ptr<mscclpp::IbCtx> ibContext[MSCCLPP_IB_MAX_DEVS];
   struct mscclppProxyState* proxyState[MSCCLPP_PROXY_MAX_NUM];
 };
 

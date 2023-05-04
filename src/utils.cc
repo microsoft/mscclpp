@@ -9,6 +9,7 @@
 #include <numa.h>
 #include <stdlib.h>
 #include <string>
+#include <memory>
 
 // Get current Compute Capability
 // int mscclppCudaCompCap() {
@@ -112,7 +113,7 @@ uint64_t getHash(const char* string, int n)
  * This string can be overridden by using the MSCCLPP_HOSTID env var.
  */
 #define HOSTID_FILE "/proc/sys/kernel/random/boot_id"
-uint64_t getHostHash(void)
+uint64_t computeHostHash(void)
 {
   char hostHash[1024];
   char* hostId;
@@ -142,6 +143,12 @@ uint64_t getHostHash(void)
   TRACE(MSCCLPP_INIT, "unique hostname '%s'", hostHash);
 
   return getHash(hostHash, strlen(hostHash));
+}
+
+uint64_t getHostHash(void)
+{
+  thread_local std::unique_ptr<uint64_t> hostHash = std::make_unique<uint64_t>(computeHostHash());
+  return *hostHash;
 }
 
 /* Generate a hash of the unique identifying string for this process

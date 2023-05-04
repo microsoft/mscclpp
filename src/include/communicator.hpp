@@ -1,23 +1,32 @@
 #ifndef MSCCL_COMMUNICATOR_HPP_
 #define MSCCL_COMMUNICATOR_HPP_
 
-#include "mscclpp.hpp"
+#include "ib.hpp"
 #include "mscclpp.h"
+#include "mscclpp.hpp"
+#include "proxy.hpp"
+#include <memory>
+#include <unordered_map>
 
 namespace mscclpp {
 
-struct Communicator::Impl {
-    mscclppComm_t comm;
-    std::vector<std::shared_ptr<HostConnection>> connections;
-    Proxy proxy;
+class ConnectionBase;
 
-    Impl();
+struct Communicator::Impl
+{
+  std::vector<std::shared_ptr<ConnectionBase>> connections_;
+  std::vector<std::shared_ptr<Setuppable>> toSetup_;
+  std::unordered_map<Transport, std::unique_ptr<IbCtx>> ibContexts_;
+  std::shared_ptr<BaseBootstrap> bootstrap_;
+  std::vector<uint64_t> rankToHash_;
 
-    ~Impl();
+  Impl(std::shared_ptr<BaseBootstrap> bootstrap);
 
-    friend class HostConnection;
+  ~Impl();
+
+  IbCtx* getIbContext(Transport ibTransport);
 };
 
 } // namespace mscclpp
 
-#endif
+#endif // MSCCL_COMMUNICATOR_HPP_

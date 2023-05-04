@@ -1,7 +1,9 @@
 #include "alloc.h"
 #include "checks.h"
-#include "ib.h"
-#include <set>
+#include "ib.hpp"
+#include "infiniband/verbs.h"
+#include "mscclpp.hpp"
+#include <array>
 #include <string>
 
 // Measure current time in second.
@@ -24,8 +26,8 @@ int main(int argc, const char* argv[])
     printf("Usage: %s <ip:port> <0(recv)/1(send)> <gpu id> <ib id>\n", argv[0]);
     return 1;
   }
-  const char* ip_port = argv[1];
-  int is_send = atoi(argv[2]);
+  const char* ipPortPair = argv[1];
+  int isSend = atoi(argv[2]);
   int cudaDevId = atoi(argv[3]);
   std::string ibDevName = "mlx5_ib" + std::string(argv[4]);
 
@@ -35,51 +37,40 @@ int main(int argc, const char* argv[])
   int nelem = 1;
   MSCCLPPCHECK(mscclppCudaCalloc(&data, nelem));
 
-  mscclppComm_t comm;
-  MSCCLPPCHECK(mscclppCommInitRank(&comm, 2, ip_port, is_send));
+  std::shared_ptr<mscclpp::Bootstrap> bootstrap(new mscclpp::Bootstrap(isSend, 2));
+  bootstrap->initialize(ipPortPair);
 
-  struct mscclppIbContext* ctx;
-  struct mscclppIbQp* qp;
-  struct mscclppIbMr* mr;
-  MSCCLPPCHECK(mscclppIbContextCreate(&ctx, ibDevName.c_str()));
-  MSCCLPPCHECK(mscclppIbContextCreateQp(ctx, &qp));
-  MSCCLPPCHECK(mscclppIbContextRegisterMr(ctx, data, sizeof(int) * nelem, &mr));
+  mscclpp::IbCtx ctx(ibDevName);
+  mscclpp::IbQp* qp = ctx.createQp();
+  const mscclpp::IbMr* mr = ctx.registerMr(data, sizeof(int) * nelem);
 
-  struct mscclppIbQpInfo* qpInfo;
-  MSCCLPPCHECK(mscclppCalloc(&qpInfo, 2));
-  qpInfo[is_send] = qp->info;
+  std::array<mscclpp::IbQpInfo, 2> qpInfo;
+  qpInfo[isSend] = qp->getInfo();
 
-  struct mscclppIbMrInfo* mrInfo;
-  MSCCLPPCHECK(mscclppCalloc(&mrInfo, 2));
-  mrInfo[is_send] = mr->info;
+  std::array<mscclpp::IbMrInfo, 2> mrInfo;
+  mrInfo[isSend] = mr->getInfo();
 
-  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, qpInfo, sizeof(struct mscclppIbQpInfo)));
-  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, mrInfo, sizeof(struct mscclppIbMrInfo)));
+  bootstrap->allGather(qpInfo.data(), sizeof(mscclpp::IbQpInfo));
+  bootstrap->allGather(mrInfo.data(), sizeof(mscclpp::IbMrInfo));
 
-  for (int i = 0; i < 2; ++i) {
-    if (i == is_send)
+  for (int i = 0; i < bootstrap->getNranks(); ++i) {
+    if (i == isSend)
       continue;
-    qp->rtr(&qpInfo[i]);
+    qp->rtr(qpInfo[i]);
     qp->rts();
     break;
   }
 
   printf("connection succeed\n");
 
-  // A simple barrier
-  int* tmp;
-  MSCCLPPCHECK(mscclppCalloc(&tmp, 2));
-  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
+  bootstrap->barrier();
 
-  if (is_send) {
+  if (isSend) {
     int maxIter = 100000;
     double start = getTime();
     for (int iter = 0; iter < maxIter; ++iter) {
-      qp->stageSend(mr, &mrInfo[0], sizeof(int) * nelem, 0, 0, 0, true);
-      if (qp->postSend() != 0) {
-        WARN("postSend failed");
-        return 1;
-      }
+      qp->stageSend(mr, mrInfo[0], sizeof(int) * nelem, 0, 0, 0, true);
+      qp->postSend();
       bool waiting = true;
       while (waiting) {
         int wcNum = qp->pollCq();
@@ -88,7 +79,7 @@ int main(int argc, const char* argv[])
           return 1;
         }
         for (int i = 0; i < wcNum; ++i) {
-          struct ibv_wc* wc = &qp->wcs[i];
+          const struct ibv_wc* wc = reinterpret_cast<const struct ibv_wc*>(qp->getWc(i));
           if (wc->status != IBV_WC_SUCCESS) {
             WARN("wc status %d", wc->status);
             return 1;
@@ -103,10 +94,7 @@ int main(int argc, const char* argv[])
   }
 
   // A simple barrier
-  MSCCLPPCHECK(mscclppBootstrapAllGather(comm, tmp, sizeof(int)));
-
-  MSCCLPPCHECK(mscclppIbContextDestroy(ctx));
-  MSCCLPPCHECK(mscclppCommDestroy(comm));
+  bootstrap->barrier();
 
   return 0;
 }

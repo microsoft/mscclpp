@@ -191,7 +191,8 @@ struct mscclppHostConn
 {
   virtual ~mscclppHostConn() = default;
   virtual void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize) = 0;
-  virtual void put(mscclppBufferHandle_t dst, uint64_t dstDataOffset, mscclppBufferHandle_t src, uint64_t srcDataOffset, uint64_t dataSize) = 0;
+  virtual void put(mscclppBufferHandle_t dst, uint64_t dstDataOffset, mscclppBufferHandle_t src, uint64_t srcDataOffset,
+                   uint64_t dataSize) = 0;
   virtual void signal() = 0;
   virtual void wait() = 0;
   virtual void flush() = 0;
@@ -207,25 +208,10 @@ typedef struct
   char internal[MSCCLPP_UNIQUE_ID_BYTES];
 } mscclppUniqueId;
 
-// MR info to be shared with the remote peer
-struct mscclppIbMrInfo
-{
-  uint64_t addr;
-  uint32_t rkey;
-};
-
-// IB memory region
-struct mscclppIbMr
-{
-  struct ibv_mr* mr;
-  void* buff;
-  struct mscclppIbMrInfo info;
-};
-
 struct mscclppRegisteredMemoryP2P
 {
   void* remoteBuff;
-  mscclppIbMr* IbMr;
+  const void* IbMr;
 };
 
 struct mscclppRegisteredMemory
@@ -246,7 +232,6 @@ typedef enum
   mscclppInProgress = 7,
   mscclppNumResults = 8
 } mscclppResult_t;
-
 
 /* Create a unique ID for communication. Only needs to be called by one process.
  * Use with mscclppCommInitRankFromId().
@@ -358,7 +343,8 @@ mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void
  *   transportType: the type of transport to be used (mscclppTransportP2P or mscclppTransportIB)
  *   ibDev:         the name of the IB device to be used. Expects a null for mscclppTransportP2P.
  */
-mscclppResult_t mscclppConnectWithoutBuffer(mscclppComm_t comm, int remoteRank, int tag, mscclppTransport_t transportType, const char* ibDev = 0);
+mscclppResult_t mscclppConnectWithoutBuffer(mscclppComm_t comm, int remoteRank, int tag,
+                                            mscclppTransport_t transportType, const char* ibDev = 0);
 
 /* Register a buffer for use with a connection.
  *
@@ -371,7 +357,8 @@ mscclppResult_t mscclppConnectWithoutBuffer(mscclppComm_t comm, int remoteRank, 
  * Outputs:
  *   handle:        a handle to the buffer registration
  */
-mscclppResult_t mscclppRegisterBufferForConnection(mscclppComm_t comm, int connIdx, void* localBuff, uint64_t buffSize, mscclppBufferHandle_t *handle);
+mscclppResult_t mscclppRegisterBufferForConnection(mscclppComm_t comm, int connIdx, void* localBuff, uint64_t buffSize,
+                                                   mscclppBufferHandle_t* handle);
 
 /* Establish all connections declared by mscclppConnect(). This function must be called after all mscclppConnect()
  * calls are made. This function ensures that all remote ranks are ready to communicate when it returns.

@@ -2,7 +2,7 @@
 #include "checks.h"
 #include "comm.h"
 #include "debug.h"
-#include "ib.h"
+#include "ib.hpp"
 #include "socket.h"
 
 #include <emmintrin.h>
