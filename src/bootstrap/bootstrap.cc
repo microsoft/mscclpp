@@ -194,13 +194,15 @@ void Bootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock, std::vector<
   MSCCLPPTHROW(mscclppSocketClose(&sock));
 
   if (this->nRanks_ != info.nRanks) {
-    throw std::runtime_error("Bootstrap Root : mismatch in rank count from procs " + std::to_string(this->nRanks_) +
-                             " : " + std::to_string(info.nRanks));
+    throw mscclpp::MscclppError("Bootstrap Root : mismatch in rank count from procs " + std::to_string(this->nRanks_) +
+                                  " : " + std::to_string(info.nRanks),
+                                mscclppInternalError);
   }
 
   if (std::memcmp(&zero, &rankAddressesRoot[info.rank], sizeof(mscclppSocketAddress)) != 0) {
-    throw std::runtime_error("Bootstrap Root : rank " + std::to_string(info.rank) + " of " +
-                             std::to_string(this->nRanks_) + " has already checked in");
+    throw mscclpp::MscclppError("Bootstrap Root : rank " + std::to_string(info.rank) + " of " +
+                                  std::to_string(this->nRanks_) + " has already checked in",
+                                mscclppInternalError);
   }
 
   // Save the connection handle for that rank
@@ -269,16 +271,17 @@ void Bootstrap::Impl::netInit(std::string ipPortPair)
   if (!ipPortPair.empty()) {
     mscclppSocketAddress remoteAddr;
     if (mscclppSocketGetAddrFromString(&remoteAddr, ipPortPair.c_str()) != mscclppSuccess) {
-      throw std::runtime_error(
-        "Invalid ipPortPair, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>");
+      throw mscclpp::MscclppError(
+        "Invalid ipPortPair, please use format: <ipv4>:<port> or [<ipv6>]:<port> or <hostname>:<port>",
+        mscclppInvalidArgument);
     }
     if (mscclppFindInterfaceMatchSubnet(netIfName_, &netIfAddr_, &remoteAddr, MAX_IF_NAME_SIZE, 1) <= 0) {
-      throw std::runtime_error("NET/Socket : No usable listening interface found");
+      throw mscclpp::MscclppError("NET/Socket : No usable listening interface found", mscclppInternalError);
     }
   } else {
     int ret = mscclppFindInterfaces(netIfName_, &netIfAddr_, MAX_IF_NAME_SIZE, 1);
     if (ret <= 0) {
-      throw std::runtime_error("Bootstrap : no socket interface found");
+      throw mscclpp::MscclppError("Bootstrap : no socket interface found", mscclppInternalError);
     }
   }
 
@@ -390,8 +393,9 @@ void Bootstrap::Impl::netRecv(mscclppSocket* sock, void* data, int size)
   int recvSize;
   MSCCLPPTHROW(mscclppSocketRecv(sock, &recvSize, sizeof(int)));
   if (recvSize > size) {
-    throw std::runtime_error("Message truncated : received " + std::to_string(recvSize) + " bytes instead of " +
-                             std::to_string(size));
+    throw mscclpp::MscclppError("Message truncated : received " + std::to_string(recvSize) + " bytes instead of " +
+                                  std::to_string(size),
+                                mscclppInternalError);
   }
   MSCCLPPTHROW(mscclppSocketRecv(sock, data, std::min(recvSize, size)));
 }

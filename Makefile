@@ -121,7 +121,7 @@ LDFLAGS := $(NVLDFLAGS) $(GDRCOPY_LDFLAGS) -libverbs -lnuma
 LIBSRCS := $(addprefix src/,debug.cc utils.cc init.cc proxy.cc ib.cc config.cc)
 LIBSRCS += $(addprefix src/bootstrap/,bootstrap.cc socket.cc)
 LIBSRCS += $(addprefix src/,communicator.cc connection.cc registered_memory.cc)
-LIBSRCS += $(addprefix src/,epoch.cc proxy_cpp.cc fifo.cc channel.cc)
+LIBSRCS += $(addprefix src/,epoch.cc proxy_cpp.cc fifo.cc channel.cc errors.cc)
 ifneq ($(NPKIT), 0)
 LIBSRCS += $(addprefix src/misc/,npkit.cc)
 endif

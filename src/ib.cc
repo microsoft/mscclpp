@@ -6,12 +6,12 @@
 #include <unistd.h>
 
 #include "alloc.h"
+#include "api.h"
 #include "checks.hpp"
 #include "comm.h"
 #include "debug.h"
 #include "ib.hpp"
 #include "mscclpp.hpp"
-#include "api.h"
 #include <infiniband/verbs.h>
 #include <string>
 
@@ -20,7 +20,7 @@ namespace mscclpp {
 IbMr::IbMr(void* pd, void* buff, std::size_t size) : buff(buff)
 {
   if (size == 0) {
-    throw std::runtime_error("invalid size: " + std::to_string(size));
+    throw std::invalid_argument("invalid size: " + std::to_string(size));
   }
   static __thread uintptr_t pageSize = 0;
   if (pageSize == 0) {
@@ -35,7 +35,7 @@ IbMr::IbMr(void* pd, void* buff, std::size_t size) : buff(buff)
   if (_mr == nullptr) {
     std::stringstream err;
     err << "ibv_reg_mr failed (errno " << errno << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
   this->mr = _mr;
   this->size = pages * pageSize;
@@ -73,7 +73,7 @@ IbQp::IbQp(void* ctx, void* pd, int port)
   if (this->cq == nullptr) {
     std::stringstream err;
     err << "ibv_create_cq failed (errno " << errno << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
 
   struct ibv_qp_init_attr qpInitAttr;
@@ -92,14 +92,14 @@ IbQp::IbQp(void* ctx, void* pd, int port)
   if (_qp == nullptr) {
     std::stringstream err;
     err << "ibv_create_qp failed (errno " << errno << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
 
   struct ibv_port_attr portAttr;
   if (ibv_query_port(_ctx, port, &portAttr) != 0) {
     std::stringstream err;
     err << "ibv_query_port failed (errno " << errno << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
   this->info.lid = portAttr.lid;
   this->info.port = port;
@@ -111,7 +111,7 @@ IbQp::IbQp(void* ctx, void* pd, int port)
     if (ibv_query_gid(_ctx, port, 0, &gid) != 0) {
       std::stringstream err;
       err << "ibv_query_gid failed (errno " << errno << ")";
-      throw std::runtime_error(err.str());
+      throw mscclpp::IbError(err.str(), errno);
     }
     this->info.spn = gid.global.subnet_prefix;
   }
@@ -125,7 +125,7 @@ IbQp::IbQp(void* ctx, void* pd, int port)
   if (ibv_modify_qp(_qp, &qpAttr, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS) != 0) {
     std::stringstream err;
     err << "ibv_modify_qp failed (errno " << errno << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
   this->qp = _qp;
   this->wrn = 0;
@@ -174,7 +174,7 @@ void IbQp::rtr(const IbQpInfo& info)
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_modify_qp failed (errno " << errno << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
 }
 
@@ -194,7 +194,7 @@ void IbQp::rts()
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_modify_qp failed (errno " << errno << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
 }
 
@@ -249,7 +249,7 @@ void IbQp::postSend()
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_post_send failed (errno " << errno << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
   this->wrn = 0;
 }
@@ -265,7 +265,7 @@ void IbQp::postRecv(uint64_t wrId)
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_post_recv failed (errno " << errno << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
 }
 
@@ -299,13 +299,13 @@ IbCtx::IbCtx(const std::string& devName) : devName(devName)
   if (this->ctx == nullptr) {
     std::stringstream err;
     err << "ibv_open_device failed (errno " << errno << ", device name << " << devName << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
   this->pd = ibv_alloc_pd(reinterpret_cast<struct ibv_context*>(this->ctx));
   if (this->pd == nullptr) {
     std::stringstream err;
     err << "ibv_alloc_pd failed (errno " << errno << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
 }
 
@@ -327,7 +327,7 @@ bool IbCtx::isPortUsable(int port) const
   if (ibv_query_port(reinterpret_cast<struct ibv_context*>(this->ctx), port, &portAttr) != 0) {
     std::stringstream err;
     err << "ibv_query_port failed (errno " << errno << ", port << " << port << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
   return portAttr.state == IBV_PORT_ACTIVE &&
          (portAttr.link_layer == IBV_LINK_LAYER_ETHERNET || portAttr.link_layer == IBV_LINK_LAYER_INFINIBAND);
@@ -339,7 +339,7 @@ int IbCtx::getAnyActivePort() const
   if (ibv_query_device(reinterpret_cast<struct ibv_context*>(this->ctx), &devAttr) != 0) {
     std::stringstream err;
     err << "ibv_query_device failed (errno " << errno << ")";
-    throw std::runtime_error(err.str());
+    throw mscclpp::IbError(err.str(), errno);
   }
   for (uint8_t port = 1; port <= devAttr.phys_port_cnt; ++port) {
     if (this->isPortUsable(port)) {
@@ -354,10 +354,10 @@ IbQp* IbCtx::createQp(int port /*=-1*/)
   if (port == -1) {
     port = this->getAnyActivePort();
     if (port == -1) {
-      throw std::runtime_error("No active port found");
+      throw mscclpp::MscclppError("No active port found", mscclppInternalError);
     }
   } else if (!this->isPortUsable(port)) {
-    throw std::runtime_error("invalid IB port: " + std::to_string(port));
+    throw mscclpp::MscclppError("invalid IB port: " + std::to_string(port), mscclppInternalError);
   }
   qps.emplace_back(new IbQp(this->ctx, this->pd, port));
   return qps.back().get();
@@ -412,10 +412,10 @@ MSCCLPP_API_CPP std::string getIBDeviceName(Transport ibTransport)
     ibTransportIndex = 7;
     break;
   default:
-    throw std::runtime_error("Not an IB transport");
+    throw std::invalid_argument("Not an IB transport");
   }
   if (ibTransportIndex >= num) {
-    throw std::runtime_error("IB transport out of range");
+    throw std::out_of_range("IB transport out of range");
   }
   return devices[ibTransportIndex]->name;
 }
@@ -444,11 +444,11 @@ MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string& ibDevice
       case 7:
         return Transport::IB7;
       default:
-        throw std::runtime_error("IB device index out of range");
+        throw std::out_of_range("IB device index out of range");
       }
     }
   }
-  throw std::runtime_error("IB device not found");
+  throw std::invalid_argument("IB device not found");
 }
 
 } // namespace mscclpp

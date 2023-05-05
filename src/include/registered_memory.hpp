@@ -46,7 +46,7 @@ struct RegisteredMemory::Impl
         return entry;
       }
     }
-    throw std::runtime_error("Transport data not found");
+    throw MscclppError("Transport data not found", mscclppInternalError);
   }
 };
 
