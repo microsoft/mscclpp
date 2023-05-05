@@ -2,9 +2,11 @@ name: C++ Lint
 
 on:
   push:
-    branches: [ main ]
+    branches:
+    - '**'
   pull_request:
-    branches: [ main ]
+    branches:
+    - '**'
 
 jobs:
   run-linters:
