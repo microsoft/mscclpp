@@ -21,7 +21,6 @@ endif()
 include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 
 add_library(mscclpp SHARED)
-add_subdirectory(src) # This adds the srouces to the mscclpp target
 target_include_directories(mscclpp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/include)
 set_target_properties(mscclpp PROPERTIES LINKER_LANGUAGE CXX)
 target_link_libraries(mscclpp PRIVATE MSCCLPP::ibverbs MSCCLPP::numa CUDA::cudart CUDA::cuda_driver)
@@ -29,4 +28,15 @@ if(GDRCOPY_FOUND)
     target_link_libraries(mscclpp PRIVATE MSCCLPP::gdrcopy)
 endif()
 
+find_program(CLANG_FORMAT clang-format)
+if(CLANG_FORMAT)
+    message(STATUS "Found clang-format: ${CLANG_FORMAT}")
+    file(GLOB_RECURSE ALL_SOURCES include/*.h src/*.cpp src/*.h)
+    add_custom_target(check-format ALL COMMAND ${CLANG_FORMAT} --dry-run ${ALL_SOURCES})
+    add_custom_target(format COMMAND ${CLANG_FORMAT} -i ${ALL_SOURCES})
+else()
+    message(STATUS "clang-format not found.")
+endif()
+
+add_subdirectory(src) # This adds the sources to the mscclpp target
 add_subdirectory(tests)
