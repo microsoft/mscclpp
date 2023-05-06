@@ -100,6 +100,7 @@ struct testArgs
   int localRank;
   int nranksPerNode;
   int kernel_num;
+  int in_place;
   void* sendbuff;
   size_t sendBytes;
   size_t sendInplaceOffset;

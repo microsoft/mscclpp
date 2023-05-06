@@ -3,6 +3,7 @@
  *
  * See LICENSE.txt for license information
  ************************************************************************/
+#define MSCCLPP_USE_MPI_FOR_TESTS 1
 
 #include "common.h"
 #include "cuda.h"
@@ -212,11 +213,8 @@ template <typename T> void Allreduce(struct testArgs* args, T* value, int averag
   *value = accumulator;
 }
 
-testResult_t CheckData(struct testArgs* args, int in_place, int64_t* wrongElts)
+testResult_t CheckData(struct testArgs* args, int64_t* wrongElts)
 {
-  if (in_place == 0) {
-    return testInternalError;
-  }
   size_t count = args->expectedBytes / sizeof(int);
 
   int* dataHostRecv = new int[count];
@@ -226,6 +224,7 @@ testResult_t CheckData(struct testArgs* args, int in_place, int64_t* wrongElts)
 
   for (size_t i = 0; i < count; i++) {
     if (dataHostRecv[i] != dataHostExpected[i]) {
+      PRINT("Error: dataHostRecv[%ld] = %d, dataHostExpected[%ld] = %d\n", i, dataHostRecv[i], i, dataHostExpected[i]);
       *wrongElts += 1;
     }
   }
@@ -299,7 +298,7 @@ testResult_t BenchTime(struct testArgs* args, int in_place)
     CUDACHECK(cudaGraphExecDestroy(graphExec));
     CUDACHECK(cudaGraphDestroy(graph));
 
-    TESTCHECK(CheckData(args, in_place, &wrongElts));
+    TESTCHECK(CheckData(args, &wrongElts));
 
     // aggregate delta from all threads and procs
     long long wrongElts1 = wrongElts;
@@ -376,9 +375,7 @@ testResult_t TimeTest(struct testArgs* args)
        size = ((args->stepfactor > 1) ? size * args->stepfactor : size + args->stepbytes)) {
     setupArgs(size, args);
     PRINT("%12li  %12li", max(args->sendBytes, args->expectedBytes), args->nbytes / sizeof(int));
-    // Don't support out-of-place for now
-    // TESTCHECK(BenchTime(args, 0));
-    TESTCHECK(BenchTime(args, 1));
+    TESTCHECK(BenchTime(args, args->in_place));
     PRINT("\n");
   }
   return testSuccess;
@@ -644,6 +641,7 @@ testResult_t run()
   worker.args.stepfactor = stepFactor;
   worker.args.localRank = localRank;
   worker.args.nranksPerNode = nranksPerNode;
+  worker.args.in_place = 1;
 
   worker.args.totalProcs = totalProcs;
   worker.args.proc = proc;
