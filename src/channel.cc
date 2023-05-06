@@ -1,14 +1,16 @@
 #include "channel.hpp"
-#include "utils.h"
-#include "checks.hpp"
 #include "api.h"
+#include "checks.hpp"
 #include "debug.h"
+#include "utils.h"
 
 namespace mscclpp {
 namespace channel {
 
-MSCCLPP_API_CPP DeviceChannelService::DeviceChannelService(Communicator& communicator) : communicator_(communicator),
-    proxy_([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
+MSCCLPP_API_CPP DeviceChannelService::DeviceChannelService(Communicator& communicator)
+  : communicator_(communicator),
+    proxy_([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); })
+{
   int cudaDevice;
   CUDATHROW(cudaGetDevice(&cudaDevice));
   MSCCLPPTHROW(getDeviceNumaNode(cudaDevice, &deviceNumaNode));

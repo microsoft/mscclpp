@@ -17,7 +17,8 @@ struct DeviceEpoch
   __forceinline__ __device__ void wait()
   {
     (*expectedInboundEpochId_) += 1;
-    while (*(volatile uint64_t*)&(epochIds_->inboundReplica_) < (*expectedInboundEpochId_));
+    while (*(volatile uint64_t*)&(epochIds_->inboundReplica_) < (*expectedInboundEpochId_))
+      ;
   }
 
   __forceinline__ __device__ void epochIncrement()
@@ -44,7 +45,10 @@ public:
 
   void signal();
 
-  DeviceEpoch deviceEpoch() { return device_; }
+  DeviceEpoch deviceEpoch()
+  {
+    return device_;
+  }
 };
 
 } // namespace mscclpp

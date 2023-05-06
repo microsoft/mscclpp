@@ -1,17 +1,17 @@
-#include <algorithm>
 #include "connection.hpp"
 #include "checks.hpp"
 #include "infiniband/verbs.h"
 #include "npkit/npkit.h"
 #include "registered_memory.hpp"
 #include "utils.hpp"
+#include <algorithm>
 
 namespace mscclpp {
 
 void validateTransport(RegisteredMemory mem, Transport transport)
 {
   if (!mem.transports().has(transport)) {
-    throw std::runtime_error("mem does not support transport");
+    throw Error("RegisteredMemory does not support transport", mscclppInvalidArgument);
   }
 }
 
@@ -24,11 +24,19 @@ std::shared_ptr<RegisteredMemory::Impl> Connection::getRegisteredMemoryImpl(Regi
 
 // ConnectionBase
 
-ConnectionBase::ConnectionBase(int remoteRank, int tag) : remoteRank_(remoteRank), tag_(tag) {}
+ConnectionBase::ConnectionBase(int remoteRank, int tag) : remoteRank_(remoteRank), tag_(tag)
+{
+}
 
-int ConnectionBase::remoteRank() { return remoteRank_; }
+int ConnectionBase::remoteRank()
+{
+  return remoteRank_;
+}
 
-int ConnectionBase::tag() { return tag_; }
+int ConnectionBase::tag()
+{
+  return tag_;
+}
 
 // CudaIpcConnection
 
@@ -99,11 +107,11 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 
   auto dstTransportInfo = getRegisteredMemoryImpl(dst)->getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
-    throw std::runtime_error("dst is local, which is not supported");
+    throw Error("dst is local, which is not supported", mscclppInvalidArgument);
   }
   auto srcTransportInfo = getRegisteredMemoryImpl(src)->getTransportInfo(transport());
   if (!srcTransportInfo.ibLocal) {
-    throw std::runtime_error("src is remote, which is not supported");
+    throw Error("src is remote, which is not supported", mscclppInvalidArgument);
   }
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
@@ -113,7 +121,8 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
                 /*signaled=*/true);
   numSignaledSends++;
   qp->postSend();
-  INFO(MSCCLPP_NET, "IBConnection write: from %p to %p, size %lu", (uint8_t*)srcMr->getBuff() + srcOffset, (uint8_t*)dstMrInfo.addr + dstOffset, size);
+  INFO(MSCCLPP_NET, "IBConnection write: from %p to %p, size %lu", (uint8_t*)srcMr->getBuff() + srcOffset,
+       (uint8_t*)dstMrInfo.addr + dstOffset, size);
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)size);
 }
 
@@ -123,16 +132,19 @@ void IBConnection::flush()
   while (numSignaledSends) {
     int wcNum = qp->pollCq();
     if (wcNum < 0) {
-      throw std::runtime_error("pollCq failed: error no " + std::to_string(errno));
+      throw mscclpp::IbError("pollCq failed: error no " + std::to_string(errno), errno);
     }
 
     auto elapsed = timer.elapsed();
-    if (elapsed > MSCCLPP_POLLING_WAIT)
-      throw std::runtime_error("pollCq is stuck: waited for " + std::to_string(elapsed) + " seconds. Expected " + std::to_string(numSignaledSends) + " signals");
+    if (elapsed > MSCCLPP_POLLING_WAIT) {
+      throw Error("pollCq is stuck: waited for " + std::to_string(elapsed) + " seconds. Expected " +
+                    std::to_string(numSignaledSends) + " signals",
+                  mscclppInternalError);
+    }
     for (int i = 0; i < wcNum; ++i) {
       const struct ibv_wc* wc = reinterpret_cast<const struct ibv_wc*>(qp->getWc(i));
       if (wc->status != IBV_WC_SUCCESS) {
-        throw std::runtime_error("pollCq failed: status " + std::to_string(wc->status));
+        throw mscclpp::IbError("pollCq failed: status " + std::to_string(wc->status), wc->status);
       }
       if (wc->opcode == IBV_WC_RDMA_WRITE) {
         numSignaledSends--;

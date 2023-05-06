@@ -8,6 +8,8 @@
 #define MSCCLPP_CHECKS_HPP_
 
 #include "debug.h"
+#include "errors.hpp"
+
 #include <cuda.h>
 #include <cuda_runtime.h>
 
@@ -15,7 +17,8 @@
   do {                                                                                                                 \
     mscclppResult_t res = call;                                                                                        \
     if (res != mscclppSuccess && res != mscclppInProgress) {                                                           \
-      throw std::runtime_error(std::string("Call to " #call " failed with error code ") + mscclppGetErrorString(res)); \
+      throw mscclpp::Error(std::string("Call to " #call " failed with error code ") + mscclppGetErrorString(res),      \
+                           res);                                                                                       \
     }                                                                                                                  \
   } while (false)
 
@@ -23,7 +26,7 @@
   do {                                                                                                                 \
     cudaError_t err = cmd;                                                                                             \
     if (err != cudaSuccess) {                                                                                          \
-      throw std::runtime_error(std::string("Cuda failure '") + cudaGetErrorString(err) + "'");                         \
+      throw mscclpp::CudaError(std::string("Cuda failure '") + cudaGetErrorString(err) + "'", err);                    \
     }                                                                                                                  \
   } while (false)
 
@@ -33,7 +36,7 @@
     if (err != CUDA_SUCCESS) {                                                                                         \
       const char* errStr;                                                                                              \
       cuGetErrorString(err, &errStr);                                                                                  \
-      throw std::runtime_error(std::string("Cu failure '") + std::string(errStr) + "'");                               \
+      throw mscclpp::CuError(std::string("Cu failure '") + std::string(errStr) + "'", err);                            \
     }                                                                                                                  \
   } while (false)
 

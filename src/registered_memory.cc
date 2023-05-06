@@ -88,7 +88,7 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize()
   std::copy_n(reinterpret_cast<char*>(&pimpl->hostHash), sizeof(pimpl->hostHash), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->transports), sizeof(pimpl->transports), std::back_inserter(result));
   if (pimpl->transportInfos.size() > std::numeric_limits<int8_t>::max()) {
-    throw std::runtime_error("Too many transport info entries");
+    throw mscclpp::Error("Too many transport info entries", mscclppInternalError);
   }
   int8_t transportCount = pimpl->transportInfos.size();
   std::copy_n(reinterpret_cast<char*>(&transportCount), sizeof(transportCount), std::back_inserter(result));
@@ -102,7 +102,7 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize()
     } else if (AllIBTransports.has(entry.transport)) {
       std::copy_n(reinterpret_cast<char*>(&entry.ibMrInfo), sizeof(entry.ibMrInfo), std::back_inserter(result));
     } else {
-      throw std::runtime_error("Unknown transport");
+      throw mscclpp::Error("Unknown transport", mscclppInternalError);
     }
   }
   return result;
@@ -132,21 +132,23 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization)
     std::copy_n(it, sizeof(transportInfo.transport), reinterpret_cast<char*>(&transportInfo.transport));
     it += sizeof(transportInfo.transport);
     if (transportInfo.transport == Transport::CudaIpc) {
-      std::copy_n(it, sizeof(transportInfo.cudaIpcBaseHandle), reinterpret_cast<char*>(&transportInfo.cudaIpcBaseHandle));
+      std::copy_n(it, sizeof(transportInfo.cudaIpcBaseHandle),
+                  reinterpret_cast<char*>(&transportInfo.cudaIpcBaseHandle));
       it += sizeof(transportInfo.cudaIpcBaseHandle);
-      std::copy_n(it, sizeof(transportInfo.cudaIpcOffsetFromBase), reinterpret_cast<char*>(&transportInfo.cudaIpcOffsetFromBase));
+      std::copy_n(it, sizeof(transportInfo.cudaIpcOffsetFromBase),
+                  reinterpret_cast<char*>(&transportInfo.cudaIpcOffsetFromBase));
       it += sizeof(transportInfo.cudaIpcOffsetFromBase);
     } else if (AllIBTransports.has(transportInfo.transport)) {
       std::copy_n(it, sizeof(transportInfo.ibMrInfo), reinterpret_cast<char*>(&transportInfo.ibMrInfo));
       it += sizeof(transportInfo.ibMrInfo);
       transportInfo.ibLocal = false;
     } else {
-      throw std::runtime_error("Unknown transport");
+      throw mscclpp::Error("Unknown transport", mscclppInternalError);
     }
     this->transportInfos.push_back(transportInfo);
   }
   if (it != serialization.end()) {
-    throw std::runtime_error("Deserialization failed");
+    throw mscclpp::Error("Serialization failed", mscclppInternalError);
   }
 
   if (transports.has(Transport::CudaIpc)) {

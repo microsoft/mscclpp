@@ -59,8 +59,9 @@ MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t 
 
 struct MemorySender : public Setuppable
 {
-  MemorySender(RegisteredMemory memory, int remoteRank, int tag)
-    : memory_(memory), remoteRank_(remoteRank), tag_(tag) {}
+  MemorySender(RegisteredMemory memory, int remoteRank, int tag) : memory_(memory), remoteRank_(remoteRank), tag_(tag)
+  {
+  }
 
   void beginSetup(std::shared_ptr<BaseBootstrap> bootstrap) override
   {
@@ -79,8 +80,9 @@ MSCCLPP_API_CPP void Communicator::sendMemoryOnSetup(RegisteredMemory memory, in
 
 struct MemoryReceiver : public Setuppable
 {
-  MemoryReceiver(int remoteRank, int tag)
-    : remoteRank_(remoteRank), tag_(tag) {}
+  MemoryReceiver(int remoteRank, int tag) : remoteRank_(remoteRank), tag_(tag)
+  {
+  }
 
   void endSetup(std::shared_ptr<BaseBootstrap> bootstrap) override
   {
@@ -112,7 +114,7 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int rem
          << pimpl->rankToHash_[pimpl->bootstrap_->getRank()] << ")"
          << " != " << pimpl->bootstrap_->getRank() << "(" << std::hex
          << pimpl->rankToHash_[pimpl->bootstrap_->getRank()] << ")";
-      throw std::runtime_error(ss.str());
+      throw mscclpp::Error(ss.str(), mscclppInternalError);
     }
     auto cudaIpcConn = std::make_shared<CudaIpcConnection>(remoteRank, tag);
     conn = cudaIpcConn;
@@ -126,7 +128,7 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int rem
          pimpl->bootstrap_->getRank(), pimpl->rankToHash_[pimpl->bootstrap_->getRank()],
          getIBDeviceName(transport).c_str(), remoteRank, pimpl->rankToHash_[remoteRank]);
   } else {
-    throw std::runtime_error("Unsupported transport");
+    throw mscclpp::Error("Unsupported transport", mscclppInvalidArgument);
   }
   pimpl->connections_.push_back(conn);
   addSetup(conn);
