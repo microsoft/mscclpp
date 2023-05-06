@@ -132,9 +132,11 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization)
     std::copy_n(it, sizeof(transportInfo.transport), reinterpret_cast<char*>(&transportInfo.transport));
     it += sizeof(transportInfo.transport);
     if (transportInfo.transport == Transport::CudaIpc) {
-      std::copy_n(it, sizeof(transportInfo.cudaIpcBaseHandle), reinterpret_cast<char*>(&transportInfo.cudaIpcBaseHandle));
+      std::copy_n(it, sizeof(transportInfo.cudaIpcBaseHandle),
+                  reinterpret_cast<char*>(&transportInfo.cudaIpcBaseHandle));
       it += sizeof(transportInfo.cudaIpcBaseHandle);
-      std::copy_n(it, sizeof(transportInfo.cudaIpcOffsetFromBase), reinterpret_cast<char*>(&transportInfo.cudaIpcOffsetFromBase));
+      std::copy_n(it, sizeof(transportInfo.cudaIpcOffsetFromBase),
+                  reinterpret_cast<char*>(&transportInfo.cudaIpcOffsetFromBase));
       it += sizeof(transportInfo.cudaIpcOffsetFromBase);
     } else if (AllIBTransports.has(transportInfo.transport)) {
       std::copy_n(it, sizeof(transportInfo.ibMrInfo), reinterpret_cast<char*>(&transportInfo.ibMrInfo));

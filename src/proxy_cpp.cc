@@ -1,6 +1,6 @@
-#include "proxy.hpp"
 #include "api.h"
 #include "mscclpp.hpp"
+#include "proxy.hpp"
 #include "utils.h"
 #include "utils.hpp"
 #include <atomic>
@@ -20,7 +20,8 @@ struct Proxy::Impl
   std::thread service;
   std::atomic_bool running;
 
-  Impl(ProxyHandler handler, std::function<void()> threadInit) : handler(handler), threadInit(threadInit), running(false)
+  Impl(ProxyHandler handler, std::function<void()> threadInit)
+    : handler(handler), threadInit(threadInit), running(false)
   {
   }
 };
@@ -45,7 +46,6 @@ MSCCLPP_API_CPP void Proxy::start()
 {
   pimpl->running = true;
   pimpl->service = std::thread([this] {
-
     pimpl->threadInit();
 
     ProxyHandler handler = this->pimpl->handler;

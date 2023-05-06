@@ -1,5 +1,6 @@
 #include "mscclpp.h"
 #include "mscclpp.hpp"
+
 #include "channel.hpp"
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
@@ -71,8 +72,8 @@ __device__ void allgather0(mscclpp::channel::SimpleDeviceChannel devChan, int ra
     devChan.wait();
 }
 
-__device__ void localAllGather(mscclpp::channel::SimpleDeviceChannel devChan, int rank, int world_size, int nranksPerNode,
-                               int remoteRank, uint64_t offset, uint64_t size)
+__device__ void localAllGather(mscclpp::channel::SimpleDeviceChannel devChan, int rank, int world_size,
+                               int nranksPerNode, int remoteRank, uint64_t offset, uint64_t size)
 {
   // this allgather algorithm works as follows:
   // Step 1: GPU rank i sends data to GPU rank (i+1) % nranksPerNode
@@ -131,7 +132,7 @@ __device__ void allgather2(mscclpp::channel::SimpleDeviceChannel devChan, int ra
     // opposite side
     if ((threadIdx.x % 32) == 0)
       devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
-                                    (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
+                            (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
     if ((threadIdx.x % 32) == 0)
       devChan.wait();
   }
@@ -150,9 +151,8 @@ __device__ void allgather2(mscclpp::channel::SimpleDeviceChannel devChan, int ra
   if (remoteRank % nranksPerNode == rank % nranksPerNode) {
     // opposite side
     if ((threadIdx.x % 32) == 0)
-      devChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) *
-                                      sizeof(int),
-                                    nelemsPerGPU / pipelineSize * sizeof(int));
+      devChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
+                            nelemsPerGPU / pipelineSize * sizeof(int));
     if ((threadIdx.x % 32) == 0)
       devChan.wait();
   }
@@ -226,7 +226,8 @@ void initializeAndAllocateAllGatherData(int rank, int world_size, size_t dataSiz
   CUDACHECK(cudaMemcpy(*data_d, *data_h, dataSize, cudaMemcpyHostToDevice));
 }
 
-void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& comm, mscclpp::channel::DeviceChannelService& channelService, int* data_d, size_t dataSize)
+void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& comm,
+                             mscclpp::channel::DeviceChannelService& channelService, int* data_d, size_t dataSize)
 {
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
@@ -258,12 +259,13 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
   for (size_t i = 0; i < channelIds.size(); ++i) {
     devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(channelService.deviceChannel(channelIds[i]),
-      channelService.addMemory(remoteMemories[i].get()), channelService.addMemory(localMemories[i])));
+                                                                channelService.addMemory(remoteMemories[i].get()),
+                                                                channelService.addMemory(localMemories[i])));
   }
 
   assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));
-  CUDACHECK(
-    cudaMemcpyToSymbol(constDevChans, devChannels.data(), sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size()));
+  CUDACHECK(cudaMemcpyToSymbol(constDevChans, devChannels.data(),
+                               sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size()));
 }
 
 void printUsage(const char* prog, bool isMpi)

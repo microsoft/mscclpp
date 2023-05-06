@@ -59,8 +59,9 @@ MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t 
 
 struct MemorySender : public Setuppable
 {
-  MemorySender(RegisteredMemory memory, int remoteRank, int tag)
-    : memory_(memory), remoteRank_(remoteRank), tag_(tag) {}
+  MemorySender(RegisteredMemory memory, int remoteRank, int tag) : memory_(memory), remoteRank_(remoteRank), tag_(tag)
+  {
+  }
 
   void beginSetup(std::shared_ptr<BaseBootstrap> bootstrap) override
   {
@@ -79,8 +80,9 @@ MSCCLPP_API_CPP void Communicator::sendMemoryOnSetup(RegisteredMemory memory, in
 
 struct MemoryReceiver : public Setuppable
 {
-  MemoryReceiver(int remoteRank, int tag)
-    : remoteRank_(remoteRank), tag_(tag) {}
+  MemoryReceiver(int remoteRank, int tag) : remoteRank_(remoteRank), tag_(tag)
+  {
+  }
 
   void endSetup(std::shared_ptr<BaseBootstrap> bootstrap) override
   {

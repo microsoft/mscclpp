@@ -3,8 +3,8 @@
 
 #include "epoch.hpp"
 #include "mscclpp.hpp"
-#include "proxy.hpp"
 #include "mscclppfifo.hpp"
+#include "proxy.hpp"
 #include "utils.hpp"
 
 namespace mscclpp {
@@ -15,10 +15,16 @@ class Channel
 {
 public:
   Channel(Communicator& communicator, std::shared_ptr<Connection> connection)
-    : connection_(connection), epoch_(std::make_shared<Epoch>(communicator, connection)) {};
+    : connection_(connection), epoch_(std::make_shared<Epoch>(communicator, connection)){};
 
-  Connection& connection() { return *connection_; }
-  Epoch& epoch() { return *epoch_; }
+  Connection& connection()
+  {
+    return *connection_;
+  }
+  Epoch& epoch()
+  {
+    return *epoch_;
+  }
 
 private:
   std::shared_ptr<Connection> connection_;
@@ -69,8 +75,8 @@ union ChannelTrigger {
   __device__ ChannelTrigger(ProxyTrigger value) : value(value)
   {
   }
-  __device__ ChannelTrigger(TriggerType type, MemoryId dst, uint64_t dstOffset, MemoryId src,
-                            uint64_t srcOffset, uint64_t size, int connectionId)
+  __device__ ChannelTrigger(TriggerType type, MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
+                            uint64_t size, int connectionId)
   {
     value.fst = ((srcOffset << MSCCLPP_BITS_SIZE) + size);
     value.snd = ((((((((connectionId << MSCCLPP_BITS_TYPE) + (uint64_t)type) << MSCCLPP_BITS_REGMEM_HANDLE) + dst)
@@ -86,15 +92,17 @@ struct DeviceChannel
 {
   DeviceChannel() = default;
 
-  DeviceChannel(ChannelId channelId, DeviceEpoch epoch, DeviceProxyFifo fifo) : channelId_(channelId), epoch_(epoch), fifo_(fifo) {}
+  DeviceChannel(ChannelId channelId, DeviceEpoch epoch, DeviceProxyFifo fifo)
+    : channelId_(channelId), epoch_(epoch), fifo_(fifo)
+  {
+  }
 
   DeviceChannel(const DeviceChannel& other) = default;
 
   DeviceChannel& operator=(DeviceChannel& other) = default;
 
 #ifdef __CUDACC__
-  __forceinline__ __device__ void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
-                                      uint64_t size)
+  __forceinline__ __device__ void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset, uint64_t size)
   {
     fifo_.push(ChannelTrigger(TriggerData, dst, dstOffset, src, srcOffset, size, channelId_).value);
   }
@@ -110,13 +118,11 @@ struct DeviceChannel
     fifo_.push(ChannelTrigger(TriggerFlag, 0, 0, 0, 0, 1, channelId_).value);
   }
 
-  __forceinline__ __device__ void putWithSignal(MemoryId dst, uint64_t dstOffset, MemoryId src,
-                                                uint64_t srcOffset, uint64_t size)
+  __forceinline__ __device__ void putWithSignal(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
+                                                uint64_t size)
   {
     epochIncrement();
-    fifo_.push(
-      ChannelTrigger(TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, size, channelId_)
-        .value);
+    fifo_.push(ChannelTrigger(TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, size, channelId_).value);
   }
 
   __forceinline__ __device__ void putWithSignal(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size)
@@ -128,16 +134,14 @@ struct DeviceChannel
                                                         uint64_t srcOffset, uint64_t size)
   {
     epochIncrement();
-    uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst,
-                                                    dstOffset, src, srcOffset, size, channelId_)
-                                       .value);
+    uint64_t curFifoHead = fifo_.push(
+      ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, channelId_).value);
     while (*(volatile uint64_t*)&fifo_.triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
            *(volatile uint64_t*)fifo_.tailReplica <= curFifoHead)
       ;
   }
 
-  __forceinline__ __device__ void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset,
-                                                        uint64_t size)
+  __forceinline__ __device__ void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size)
   {
     putWithSignalAndFlush(dst, offset, src, offset, size);
   }
@@ -176,25 +180,40 @@ class DeviceChannelService;
 
 inline ProxyHandler makeChannelProxyHandler(DeviceChannelService& channelService);
 
-class DeviceChannelService {
+class DeviceChannelService
+{
 public:
   DeviceChannelService(Communicator& communicator);
 
-  ChannelId addChannel(std::shared_ptr<Connection> connection) {
+  ChannelId addChannel(std::shared_ptr<Connection> connection)
+  {
     channels_.push_back(Channel(communicator_, connection));
     return channels_.size() - 1;
   }
 
-  MemoryId addMemory(RegisteredMemory memory) {
+  MemoryId addMemory(RegisteredMemory memory)
+  {
     memories_.push_back(memory);
     return memories_.size() - 1;
   }
 
-  Channel channel(ChannelId id) { return channels_[id]; }
-  DeviceChannel deviceChannel(ChannelId id) { return DeviceChannel(id, channels_[id].epoch().deviceEpoch(), proxy_.fifo().deviceFifo()); }
+  Channel channel(ChannelId id)
+  {
+    return channels_[id];
+  }
+  DeviceChannel deviceChannel(ChannelId id)
+  {
+    return DeviceChannel(id, channels_[id].epoch().deviceEpoch(), proxy_.fifo().deviceFifo());
+  }
 
-  void startProxy() { proxy_.start(); }
-  void stopProxy() { proxy_.stop(); }
+  void startProxy()
+  {
+    proxy_.start();
+  }
+  void stopProxy()
+  {
+    proxy_.stop();
+  }
 
 private:
   Communicator& communicator_;
@@ -205,7 +224,8 @@ private:
 
   void bindThread();
 
-  ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw) {
+  ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw)
+  {
     ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
     Channel& channel = channels_[trigger->fields.chanId];
 
@@ -234,7 +254,9 @@ struct SimpleDeviceChannel
 {
   SimpleDeviceChannel() = default;
 
-  SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src) : devChan_(devChan), dst_(dst), src_(src) {}
+  SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src) : devChan_(devChan), dst_(dst), src_(src)
+  {
+  }
 
   SimpleDeviceChannel(const SimpleDeviceChannel& other) = default;
 

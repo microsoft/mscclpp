@@ -194,15 +194,15 @@ void Bootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock, std::vector<
   MSCCLPPTHROW(mscclppSocketClose(&sock));
 
   if (this->nRanks_ != info.nRanks) {
-    throw mscclpp::Error("Bootstrap Root : mismatch in rank count from procs " + std::to_string(this->nRanks_) +
-                                  " : " + std::to_string(info.nRanks),
-                                mscclppInternalError);
+    throw mscclpp::Error("Bootstrap Root : mismatch in rank count from procs " + std::to_string(this->nRanks_) + " : " +
+                           std::to_string(info.nRanks),
+                         mscclppInternalError);
   }
 
   if (std::memcmp(&zero, &rankAddressesRoot[info.rank], sizeof(mscclppSocketAddress)) != 0) {
-    throw mscclpp::Error("Bootstrap Root : rank " + std::to_string(info.rank) + " of " +
-                                  std::to_string(this->nRanks_) + " has already checked in",
-                                mscclppInternalError);
+    throw mscclpp::Error("Bootstrap Root : rank " + std::to_string(info.rank) + " of " + std::to_string(this->nRanks_) +
+                           " has already checked in",
+                         mscclppInternalError);
   }
 
   // Save the connection handle for that rank
@@ -394,8 +394,8 @@ void Bootstrap::Impl::netRecv(mscclppSocket* sock, void* data, int size)
   MSCCLPPTHROW(mscclppSocketRecv(sock, &recvSize, sizeof(int)));
   if (recvSize > size) {
     throw mscclpp::Error("Message truncated : received " + std::to_string(recvSize) + " bytes instead of " +
-                                  std::to_string(size),
-                                mscclppInternalError);
+                           std::to_string(size),
+                         mscclppInternalError);
   }
   MSCCLPPTHROW(mscclppSocketRecv(sock, data, std::min(recvSize, size)));
 }
