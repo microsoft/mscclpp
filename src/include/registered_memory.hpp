@@ -2,6 +2,7 @@
 #define MSCCLPP_REGISTERED_MEMORY_HPP_
 
 #include "communicator.hpp"
+#include "errors.hpp"
 #include "ib.hpp"
 #include "mscclpp.h"
 #include "mscclpp.hpp"
@@ -16,11 +17,13 @@ struct TransportInfo
   // TODO: rewrite this using std::variant or something
   bool ibLocal;
   union {
-    struct {
+    struct
+    {
       cudaIpcMemHandle_t cudaIpcBaseHandle;
       size_t cudaIpcOffsetFromBase;
     };
-    struct {
+    struct
+    {
       const IbMr* ibMr;
       IbMrInfo ibMrInfo;
     };
@@ -46,7 +49,7 @@ struct RegisteredMemory::Impl
         return entry;
       }
     }
-    throw MscclppError("Transport data not found", mscclppInternalError);
+    throw Error("Transport data not found", mscclppInternalError);
   }
 };
 

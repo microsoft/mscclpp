@@ -112,7 +112,7 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int rem
          << pimpl->rankToHash_[pimpl->bootstrap_->getRank()] << ")"
          << " != " << pimpl->bootstrap_->getRank() << "(" << std::hex
          << pimpl->rankToHash_[pimpl->bootstrap_->getRank()] << ")";
-      throw mscclpp::MscclppError(ss.str(), mscclppInternalError);
+      throw mscclpp::Error(ss.str(), mscclppInternalError);
     }
     auto cudaIpcConn = std::make_shared<CudaIpcConnection>(remoteRank, tag);
     conn = cudaIpcConn;
@@ -126,7 +126,7 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int rem
          pimpl->bootstrap_->getRank(), pimpl->rankToHash_[pimpl->bootstrap_->getRank()],
          getIBDeviceName(transport).c_str(), remoteRank, pimpl->rankToHash_[remoteRank]);
   } else {
-    throw mscclpp::MscclppError("Unsupported transport", mscclppInvalidArgument);
+    throw mscclpp::Error("Unsupported transport", mscclppInvalidArgument);
   }
   pimpl->connections_.push_back(conn);
   addSetup(conn);

@@ -11,7 +11,7 @@ namespace mscclpp {
 void validateTransport(RegisteredMemory mem, Transport transport)
 {
   if (!mem.transports().has(transport)) {
-    throw MscclppError("RegisteredMemory does not support transport", mscclppInvalidArgument);
+    throw Error("RegisteredMemory does not support transport", mscclppInvalidArgument);
   }
 }
 
@@ -107,11 +107,11 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 
   auto dstTransportInfo = getRegisteredMemoryImpl(dst)->getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
-    throw MscclppError("dst is local, which is not supported", mscclppInvalidArgument);
+    throw Error("dst is local, which is not supported", mscclppInvalidArgument);
   }
   auto srcTransportInfo = getRegisteredMemoryImpl(src)->getTransportInfo(transport());
   if (!srcTransportInfo.ibLocal) {
-    throw MscclppError("src is remote, which is not supported", mscclppInvalidArgument);
+    throw Error("src is remote, which is not supported", mscclppInvalidArgument);
   }
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
@@ -137,9 +137,9 @@ void IBConnection::flush()
 
     auto elapsed = timer.elapsed();
     if (elapsed > MSCCLPP_POLLING_WAIT) {
-      throw MscclppError("pollCq is stuck: waited for " + std::to_string(elapsed) + " seconds. Expected " +
-                           std::to_string(numSignaledSends) + " signals",
-                         mscclppInternalError);
+      throw Error("pollCq is stuck: waited for " + std::to_string(elapsed) + " seconds. Expected " +
+                    std::to_string(numSignaledSends) + " signals",
+                  mscclppInternalError);
     }
     for (int i = 0; i < wcNum; ++i) {
       const struct ibv_wc* wc = reinterpret_cast<const struct ibv_wc*>(qp->getWc(i));

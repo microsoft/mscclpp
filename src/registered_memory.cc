@@ -88,7 +88,7 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize()
   std::copy_n(reinterpret_cast<char*>(&pimpl->hostHash), sizeof(pimpl->hostHash), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->transports), sizeof(pimpl->transports), std::back_inserter(result));
   if (pimpl->transportInfos.size() > std::numeric_limits<int8_t>::max()) {
-    throw mscclpp::MscclppError("Too many transport info entries", mscclppInternalError);
+    throw mscclpp::Error("Too many transport info entries", mscclppInternalError);
   }
   int8_t transportCount = pimpl->transportInfos.size();
   std::copy_n(reinterpret_cast<char*>(&transportCount), sizeof(transportCount), std::back_inserter(result));
@@ -102,7 +102,7 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize()
     } else if (AllIBTransports.has(entry.transport)) {
       std::copy_n(reinterpret_cast<char*>(&entry.ibMrInfo), sizeof(entry.ibMrInfo), std::back_inserter(result));
     } else {
-      throw mscclpp::MscclppError("Unknown transport", mscclppInternalError);
+      throw mscclpp::Error("Unknown transport", mscclppInternalError);
     }
   }
   return result;
@@ -141,12 +141,12 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization)
       it += sizeof(transportInfo.ibMrInfo);
       transportInfo.ibLocal = false;
     } else {
-      throw mscclpp::MscclppError("Unknown transport", mscclppInternalError);
+      throw mscclpp::Error("Unknown transport", mscclppInternalError);
     }
     this->transportInfos.push_back(transportInfo);
   }
   if (it != serialization.end()) {
-    throw mscclpp::MscclppError("Serialization failed", mscclppInternalError);
+    throw mscclpp::Error("Serialization failed", mscclppInternalError);
   }
 
   if (transports.has(Transport::CudaIpc)) {

@@ -8,7 +8,7 @@
 #define MSCCLPP_CHECKS_HPP_
 
 #include "debug.h"
-#include "mscclpp.hpp"
+#include "errors.hpp"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -17,8 +17,8 @@
   do {                                                                                                                 \
     mscclppResult_t res = call;                                                                                        \
     if (res != mscclppSuccess && res != mscclppInProgress) {                                                           \
-      throw mscclpp::MscclppError(                                                                                     \
-        std::string("Call to " #call " failed with error code ") + mscclppGetErrorString(res), res);                   \
+      throw mscclpp::Error(std::string("Call to " #call " failed with error code ") + mscclppGetErrorString(res),      \
+                           res);                                                                                       \
     }                                                                                                                  \
   } while (false)
 

@@ -363,45 +363,6 @@ public:
 private:
   std::unique_ptr<Impl> pimpl;
 };
-
-class BaseError : public std::runtime_error
-{
-public:
-  BaseError(std::string message, int errorCode);
-  virtual ~BaseError() = default;
-  int getErrorCode() const;
-
-private:
-  int errorCode_;
-};
-
-class MscclppError : public BaseError
-{
-public:
-  MscclppError(std::string message, int errorCode);
-  virtual ~MscclppError() = default;
-};
-
-class CudaError : public BaseError
-{
-public:
-  CudaError(std::string message, int errorCode);
-  virtual ~CudaError() = default;
-};
-
-class CuError : public BaseError
-{
-public:
-  CuError(std::string message, int errorCode);
-  virtual ~CuError() = default;
-};
-
-class IbError: public BaseError
-{
-public:
-  IbError(std::string message, int errorCode);
-  virtual ~IbError() = default;
-};
 } // namespace mscclpp
 
 namespace std {

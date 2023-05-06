@@ -1,4 +1,4 @@
-#include "mscclpp.hpp"
+#include "errors.hpp"
 
 namespace mscclpp {
 
@@ -12,7 +12,7 @@ int BaseError::getErrorCode() const
   return errorCode_;
 }
 
-MscclppError::MscclppError(std::string message, int errorCode)
+Error::Error(std::string message, int errorCode)
   : BaseError(message, errorCode)
 {
 }

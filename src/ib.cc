@@ -354,10 +354,10 @@ IbQp* IbCtx::createQp(int port /*=-1*/)
   if (port == -1) {
     port = this->getAnyActivePort();
     if (port == -1) {
-      throw mscclpp::MscclppError("No active port found", mscclppInternalError);
+      throw mscclpp::Error("No active port found", mscclppInternalError);
     }
   } else if (!this->isPortUsable(port)) {
-    throw mscclpp::MscclppError("invalid IB port: " + std::to_string(port), mscclppInternalError);
+    throw mscclpp::Error("invalid IB port: " + std::to_string(port), mscclppInternalError);
   }
   qps.emplace_back(new IbQp(this->ctx, this->pd, port));
   return qps.back().get();
