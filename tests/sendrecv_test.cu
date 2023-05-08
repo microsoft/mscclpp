@@ -10,15 +10,18 @@
 
 #define ALIGN 4
 
-__global__ void initKernel(int* dataDst, int dataCount, int rank)
-{
-  for (size_t i = threadIdx.x; i < dataCount; i += blockDim.x) {
-    dataDst[i] = rank;
-  }
-}
-
 __constant__ mscclppDevConn_t sendConnConst;
 __constant__ mscclppDevConn_t recvConnConst;
+
+inline int getSendTag(int rank, int peer)
+{
+  return rank < peer ? 0 : 1;
+}
+
+inline int getRecvTag(int rank, int peer)
+{
+  return rank < peer ? 1 : 0;
+}
 
 __global__ void kernel(size_t dataSize, int rank)
 {
@@ -26,28 +29,21 @@ __global__ void kernel(size_t dataSize, int rank)
   mscclppDevConn_t recvConn = recvConnConst;
 
   sendConn.putDirect(blockIdx.x *sizeof(int), dataSize, threadIdx.x, blockDim.x);
-  if (sendConn.remoteRank == 0 && threadIdx.x == 0) {
-    printf("rank is %d, send data to rank %d, tag is %d\n", rank, sendConn.remoteRank, sendConn.tag);
-    for (size_t i = 0; i < dataSize/sizeof(int); i++) {
-      printf("%d ", ((int*)sendConn.localBuff)[i]);
-    }
-    printf("\n");
-  }
+  // if (sendConn.remoteRank == 0 && threadIdx.x == 0) {
+  //   printf("\nrank is %d, send data to rank %d, tag is %d, localBuff is %p, size is %ld\n", rank, sendConn.remoteRank,
+  //          sendConn.tag, sendConn.localBuff, dataSize / sizeof(int));
+  //   for (size_t i = 0; i < dataSize / sizeof(int); i++) {
+  //     printf("%d ", ((int*)sendConn.localBuff)[i]);
+  //   }
+  //   printf("\n");
+  //   printf("recv from rank %d, local buff is %p\n", recvConn.remoteRank, recvConn.localBuff);
+  // }
   __syncthreads();
   if (threadIdx.x == 0) {
     sendConn.signalDirect();
     recvConn.waitDirect();
   }
-  __syncthreads();
-  if (recvConn.remoteRank == 1 && threadIdx.x == 0) {
-    printf("rank is %d, recv data from rank %d, tag is %d\n", rank, recvConn.remoteRank, recvConn.tag);
-  }
-}
-
-testResult_t resetData(int* dataDst, size_t dataCount, int rank)
-{
-  initKernel<<<1, BLOCK_THREADS_NUM>>>(dataDst, dataCount, rank);
-  return testSuccess;
+  // __syncthreads();
 }
 
 void SendRecvGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* paramcount, size_t* sendInplaceOffset,
@@ -65,21 +61,20 @@ testResult_t SendRecvInitData(struct testArgs* args, int in_place)
 {
   size_t sendCount = args->sendBytes / sizeof(int);
   size_t recvCount = args->expectedBytes / sizeof(int);
+  size_t maxCount = std::max(sendCount, recvCount);
 
-  CUDACHECK(cudaSetDevice(args->gpuNum));
   int rank = args->proc;
   CUDACHECK(cudaMemset(args->sendbuff, 0, args->sendBytes));
-  resetData((int*)args->sendbuff, sendCount, rank);
+  std::vector<int> dataHost(maxCount, rank);
+  CUDACHECK(cudaMemcpy(args->sendbuff, dataHost.data(), sendCount * sizeof(int), cudaMemcpyHostToDevice));
 
-  int* dataHost = new int[recvCount];
   int recvPeerRank = (rank - 1 + args->totalProcs) % args->totalProcs;
   for (size_t i = 0; i < recvCount; i++) {
     dataHost[i] = recvPeerRank;
   }
-  CUDACHECK(cudaMemcpy(args->expected, dataHost, recvCount * sizeof(int), cudaMemcpyHostToDevice));
-  delete dataHost;
-  CUDACHECK(cudaDeviceSynchronize());
+  CUDACHECK(cudaMemcpy(args->expected, dataHost.data(), recvCount * sizeof(int), cudaMemcpyHostToDevice));
   MSCCLPPCHECK(mscclppBootstrapBarrier(args->comm));
+
   return testSuccess;
 }
 
@@ -120,11 +115,13 @@ testResult_t SendRecvSetupConnections(struct testArgs* args)
   int recvFromRank = (rank - 1 + worldSize) % worldSize;
   std::array<int, 2> ranks = {sendToRank, recvFromRank};
 
-  for (int r : ranks) {
+  for (int i = 0; i < 2; i++) {
+    int r = ranks[i];
     const char* ibDev = r / ranksPerNode == thisNode ? nullptr : ibDevStr.c_str();
     mscclppTransport_t transportType = ibDev == nullptr ? mscclppTransportP2P : mscclppTransportIB;
-    void* buff = r == sendToRank ? args->sendbuff : args->recvbuff;
-    MSCCLPPCHECK(mscclppConnect(args->comm, r, 0, buff, args->maxbytes, transportType, ibDev));
+    void* buff = (i == 0) ? args->sendbuff : args->recvbuff;
+    int tag = (i == 0) ? getSendTag(rank, r) : getRecvTag(rank, r);
+    MSCCLPPCHECK(mscclppConnect(args->comm, r, tag, buff, args->maxbytes, transportType, ibDev));
   }
   MSCCLPPCHECK(mscclppConnectionSetup(args->comm));
 
@@ -141,8 +138,10 @@ testResult_t SendRecvRunTest(struct testArgs* args)
 
   mscclppDevConn_t* sendDevConn;
   mscclppDevConn_t* recvDevConn;
-  MSCCLPPCHECK(mscclppGetDeviceConnection(args->comm, (rank + 1) % worldSize, 0, &sendDevConn));
-  MSCCLPPCHECK(mscclppGetDeviceConnection(args->comm, (rank - 1 + worldSize) % worldSize, 0, &recvDevConn));
+  MSCCLPPCHECK(mscclppGetDeviceConnection(args->comm, (rank + 1) % worldSize, getSendTag(rank, (rank + 1) % worldSize),
+                                          &sendDevConn));
+  MSCCLPPCHECK(mscclppGetDeviceConnection(args->comm, (rank - 1 + worldSize) % worldSize,
+                                          getRecvTag(rank, (rank - 1 + worldSize) % worldSize), &recvDevConn));
   CUDACHECK(cudaMemcpyToSymbol(sendConnConst, sendDevConn, sizeof(mscclppDevConn_t)));
   CUDACHECK(cudaMemcpyToSymbol(recvConnConst, recvDevConn, sizeof(mscclppDevConn_t)));
   TESTCHECK(TimeTest(args));
