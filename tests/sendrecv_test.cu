@@ -1,17 +1,25 @@
 #include "comm.h"
 #include "common.h"
 
+#include <algorithm>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
 #include <unistd.h>
 
-#define BLOCK_THREADS_NUM 128
+#include <cuda/barrier>
+
+constexpr int BLOCK_THREADS_NUM = 128;
+constexpr int MAX_BLOCKS_NUM = 1024;
+constexpr int BYTES_SEND_PER_THREAD = 8;
+constexpr int DEFAULT_BYTES_PER_BLOCK = BLOCK_THREADS_NUM * BYTES_SEND_PER_THREAD * 2; // loop twice
 
 #define ALIGN 4
 
 __constant__ mscclppDevConn_t sendConnConst;
 __constant__ mscclppDevConn_t recvConnConst;
+
+cuda::barrier<cuda::thread_scope_device>* barrier;
 
 inline int getSendTag(int rank, int peer)
 {
@@ -23,27 +31,28 @@ inline int getRecvTag(int rank, int peer)
   return rank < peer ? 1 : 0;
 }
 
-__global__ void kernel(size_t dataSize, int rank)
+inline int getBlockNum(int count)
+{
+  return std::min((count * sizeof(int) + DEFAULT_BYTES_PER_BLOCK - 1) / DEFAULT_BYTES_PER_BLOCK,
+                  static_cast<size_t>(MAX_BLOCKS_NUM));
+}
+
+__global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock, cuda::barrier<cuda::thread_scope_device>* barrier)
 {
   mscclppDevConn_t sendConn = sendConnConst;
   mscclppDevConn_t recvConn = recvConnConst;
+  size_t startIndex = blockIdx.x * dataPerBlock;
+  size_t blockDataSize = min(dataSize - startIndex, dataPerBlock);
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-  sendConn.putDirect(blockIdx.x *sizeof(int), dataSize, threadIdx.x, blockDim.x);
-  // if (sendConn.remoteRank == 0 && threadIdx.x == 0) {
-  //   printf("\nrank is %d, send data to rank %d, tag is %d, localBuff is %p, size is %ld\n", rank, sendConn.remoteRank,
-  //          sendConn.tag, sendConn.localBuff, dataSize / sizeof(int));
-  //   for (size_t i = 0; i < dataSize / sizeof(int); i++) {
-  //     printf("%d ", ((int*)sendConn.localBuff)[i]);
-  //   }
-  //   printf("\n");
-  //   printf("recv from rank %d, local buff is %p\n", recvConn.remoteRank, recvConn.localBuff);
-  // }
+  sendConn.putDirect(startIndex, blockDataSize, threadIdx.x, blockDim.x);
+  if (threadIdx.x == 0)
+    barrier->arrive_and_wait();
   __syncthreads();
-  if (threadIdx.x == 0) {
+  if (tid == 0) {
     sendConn.signalDirect();
     recvConn.waitDirect();
   }
-  // __syncthreads();
 }
 
 void SendRecvGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* paramcount, size_t* sendInplaceOffset,
@@ -55,6 +64,9 @@ void SendRecvGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* para
   *sendInplaceOffset = base;
   *recvInplaceOffset = 0;
   *paramcount = base;
+  int blockNum = getBlockNum(count * sizeof(int));
+  cuda::barrier<cuda::thread_scope_device> initBarrier(blockNum);
+  cudaMemcpy(barrier, &initBarrier, sizeof(cuda::barrier<cuda::thread_scope_device>), cudaMemcpyHostToDevice);
 }
 
 testResult_t SendRecvInitData(struct testArgs* args, int in_place)
@@ -80,17 +92,20 @@ testResult_t SendRecvInitData(struct testArgs* args, int in_place)
 
 void SendRecvGetBw(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks)
 {
-  double baseBw = (double)(count * typesize * nranks) / 1.0E9 / sec;
+  double baseBw = (double)(count * typesize) / 1.0E9 / sec;
 
   *algBw = baseBw;
-  double factor = ((double)(nranks - 1)) / ((double)nranks);
+  double factor = 1;
   *busBw = baseBw * factor;
 }
 
 testResult_t SendRecvRunColl(void* sendbuff, void* recvbuff, int nranksPerNode, size_t count, mscclppComm_t comm,
                              cudaStream_t stream, int kernel_num)
 {
-  kernel<<<1, BLOCK_THREADS_NUM, 0, stream>>>(count, comm->rank);
+  int blockNum =
+    std::min((count + DEFAULT_BYTES_PER_BLOCK - 1) / DEFAULT_BYTES_PER_BLOCK, static_cast<size_t>(MAX_BLOCKS_NUM));
+  size_t bytesPerBlock = (count + blockNum - 1) / blockNum;
+  kernel<<<blockNum, BLOCK_THREADS_NUM, 0, stream>>>(comm->rank, count, bytesPerBlock, barrier);
   return testSuccess;
 }
 
@@ -144,7 +159,9 @@ testResult_t SendRecvRunTest(struct testArgs* args)
                                           getRecvTag(rank, (rank - 1 + worldSize) % worldSize), &recvDevConn));
   CUDACHECK(cudaMemcpyToSymbol(sendConnConst, sendDevConn, sizeof(mscclppDevConn_t)));
   CUDACHECK(cudaMemcpyToSymbol(recvConnConst, recvDevConn, sizeof(mscclppDevConn_t)));
+  CUDACHECK(cudaMalloc(&barrier, sizeof(cuda::barrier<cuda::thread_scope_device>)));
   TESTCHECK(TimeTest(args));
+  CUDACHECK(cudaFree(barrier));
   return testSuccess;
 }
 
