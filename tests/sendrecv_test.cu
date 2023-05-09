@@ -28,7 +28,7 @@ struct SyncGpuState
 // Synchronize multiple thread blocks inside a kernel. Guarantee that all
 // previous work of all threads in cooperating blocks is finished and
 // visible to all threads in the device.
-__forceinline__ __device__ void sync_gpu(SyncGpuState &state, int blockNum)
+__forceinline__ __device__ void sync_gpu(SyncGpuState& state, int blockNum)
 {
   int maxOldCnt = blockNum - 1;
   __syncthreads();
