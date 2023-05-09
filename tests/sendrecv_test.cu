@@ -31,9 +31,9 @@ inline int getRecvTag(int rank, int peer)
   return rank < peer ? 1 : 0;
 }
 
-inline int getBlockNum(int count)
+inline int getBlockNum(size_t count)
 {
-  return std::min((count * sizeof(int) + DEFAULT_BYTES_PER_BLOCK - 1) / DEFAULT_BYTES_PER_BLOCK,
+  return std::min((count + DEFAULT_BYTES_PER_BLOCK - 1) / DEFAULT_BYTES_PER_BLOCK,
                   static_cast<size_t>(MAX_BLOCKS_NUM));
 }
 
