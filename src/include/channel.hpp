@@ -15,14 +15,14 @@ class Channel
 {
 public:
   Channel(Communicator& communicator, std::shared_ptr<Connection> connection)
-    : connection_(connection), epoch_(std::make_shared<Epoch>(communicator, connection)) {};
+    : connection_(connection), epoch_(std::make_shared<DeviceEpoch>(communicator, connection)) {};
 
   Connection& connection() { return *connection_; }
-  Epoch& epoch() { return *epoch_; }
+  DeviceEpoch& epoch() { return *epoch_; }
 
 private:
   std::shared_ptr<Connection> connection_;
-  std::shared_ptr<Epoch> epoch_;
+  std::shared_ptr<DeviceEpoch> epoch_;
 };
 
 using ChannelId = uint32_t;
@@ -86,7 +86,7 @@ struct DeviceChannel
 {
   DeviceChannel() = default;
 
-  DeviceChannel(ChannelId channelId, DeviceEpoch epoch, DeviceProxyFifo fifo) : channelId_(channelId), epoch_(epoch), fifo_(fifo) {}
+  DeviceChannel(ChannelId channelId, DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo) : channelId_(channelId), epoch_(epoch), fifo_(fifo) {}
 
   DeviceChannel(const DeviceChannel& other) = default;
 
@@ -165,7 +165,7 @@ struct DeviceChannel
 
   ChannelId channelId_;
 
-  DeviceEpoch epoch_;
+  DeviceEpoch::DeviceHandle epoch_;
 
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
@@ -191,7 +191,7 @@ public:
   }
 
   Channel channel(ChannelId id) { return channels_[id]; }
-  DeviceChannel deviceChannel(ChannelId id) { return DeviceChannel(id, channels_[id].epoch().deviceEpoch(), proxy_.fifo().deviceFifo()); }
+  DeviceChannel deviceChannel(ChannelId id) { return DeviceChannel(id, channels_[id].epoch().deviceHandle(), proxy_.fifo().deviceFifo()); }
 
   void startProxy() { proxy_.start(); }
   void stopProxy() { proxy_.stop(); }

@@ -7,44 +7,65 @@ namespace mscclpp {
 
 struct alignas(16) EpochIds
 {
-  uint64_t outbound_;
-  uint64_t inboundReplica_;
+  uint64_t outbound;
+  uint64_t inboundReplica;
 };
 
-struct DeviceEpoch
+class BaseEpoch
 {
-#ifdef __CUDACC__
-  __forceinline__ __device__ void wait()
-  {
-    (*expectedInboundEpochId_) += 1;
-    while (*(volatile uint64_t*)&(epochIds_->inboundReplica_) < (*expectedInboundEpochId_));
-  }
-
-  __forceinline__ __device__ void epochIncrement()
-  {
-    *(volatile uint64_t*)&(epochIds_->outbound_) += 1;
-  }
-#endif // __CUDACC__
-
-  EpochIds* epochIds_;
-  uint64_t* expectedInboundEpochId_;
-};
-
-class Epoch
-{
+private:
   std::shared_ptr<Connection> connection_;
-  DeviceEpoch device_;
   RegisteredMemory localEpochIdsRegMem_;
   NonblockingFuture<RegisteredMemory> remoteEpochIdsRegMem_;
-
+protected:
+  EpochIds* epochIds_;
+  uint64_t* expectedInboundEpochId_;
 public:
-  Epoch(Communicator& communicator, std::shared_ptr<Connection> connection);
-  Epoch(const Epoch&) = delete;
-  ~Epoch();
+  BaseEpoch(std::shared_ptr<Connection> connection);
+  void setup(Communicator& communicator);
+  BaseEpoch(const BaseEpoch&) = delete;
+  void signal();
+};
 
+class DeviceEpoch : BaseEpoch
+{
+public:
+  DeviceEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
+  DeviceEpoch(const DeviceEpoch&) = delete;
+  ~DeviceEpoch();
   void signal();
 
-  DeviceEpoch deviceEpoch() { return device_; }
+  struct DeviceHandle
+  {
+  #ifdef __CUDACC__
+    __forceinline__ __device__ void wait()
+    {
+      (*expectedInboundEpochId) += 1;
+      while (*(volatile uint64_t*)&(epochIds->inboundReplica) < (*expectedInboundEpochId));
+    }
+
+    __forceinline__ __device__ void epochIncrement()
+    {
+      *(volatile uint64_t*)&(epochIds->outbound) += 1;
+    }
+  #endif // __CUDACC__
+
+    EpochIds* epochIds;
+    uint64_t* expectedInboundEpochId;
+  };
+
+  DeviceHandle deviceHandle();
+};
+
+class HostEpoch : BaseEpoch
+{
+public:
+  HostEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
+  HostEpoch(const HostEpoch&) = delete;
+  ~HostEpoch();
+
+  void increamentAndSignal();
+  void wait();
 };
 
 } // namespace mscclpp
