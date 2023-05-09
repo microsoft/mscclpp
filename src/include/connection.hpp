@@ -17,6 +17,7 @@ class ConnectionBase : public Connection, public Setuppable
 {
   int remoteRank_;
   int tag_;
+
 public:
   ConnectionBase(int remoteRank, int tag);
 

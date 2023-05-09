@@ -17,9 +17,11 @@ private:
   std::shared_ptr<Connection> connection_;
   RegisteredMemory localEpochIdsRegMem_;
   NonblockingFuture<RegisteredMemory> remoteEpochIdsRegMem_;
+
 protected:
   EpochIds* epochIds_;
   uint64_t* expectedInboundEpochId_;
+
 public:
   BaseEpoch(std::shared_ptr<Connection> connection);
   void setup(Communicator& communicator);
@@ -37,18 +39,19 @@ public:
 
   struct DeviceHandle
   {
-  #ifdef __CUDACC__
+#ifdef __CUDACC__
     __forceinline__ __device__ void wait()
     {
       (*expectedInboundEpochId) += 1;
-      while (*(volatile uint64_t*)&(epochIds->inboundReplica) < (*expectedInboundEpochId));
+      while (*(volatile uint64_t*)&(epochIds->inboundReplica) < (*expectedInboundEpochId))
+        ;
     }
 
     __forceinline__ __device__ void epochIncrement()
     {
       *(volatile uint64_t*)&(epochIds->outbound) += 1;
     }
-  #endif // __CUDACC__
+#endif // __CUDACC__
 
     EpochIds* epochIds;
     uint64_t* expectedInboundEpochId;

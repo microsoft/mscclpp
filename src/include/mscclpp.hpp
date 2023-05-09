@@ -6,11 +6,12 @@
 #define MSCCLPP_PATCH 0
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
+#include "errors.hpp"
 #include <bitset>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
-#include <future>
 
 namespace mscclpp {
 
@@ -37,14 +38,14 @@ public:
   {
     size_t size = data.size();
     send((void*)&size, sizeof(size_t), peer, tag);
-    send((void*)data.data(), data.size(), peer, tag+1);
+    send((void*)data.data(), data.size(), peer, tag + 1);
   }
   void recv(std::vector<char>& data, int peer, int tag)
   {
     size_t size;
     recv((void*)&size, sizeof(size_t), peer, tag);
     data.resize(size);
-    recv((void*)data.data(), data.size(), peer, tag+1);
+    recv((void*)data.data(), data.size(), peer, tag + 1);
   }
 };
 
@@ -239,7 +240,8 @@ class Connection;
 class RegisteredMemory
 {
   struct Impl;
-  // A shared_ptr is used since RegisteredMemory is functionally immutable, although internally some state is populated lazily.
+  // A shared_ptr is used since RegisteredMemory is functionally immutable, although internally some state is populated
+  // lazily.
   std::shared_ptr<Impl> pimpl;
 
 public:
@@ -281,17 +283,23 @@ protected:
 
 struct Setuppable
 {
-  virtual void beginSetup(std::shared_ptr<BaseBootstrap>) {}
-  virtual void endSetup(std::shared_ptr<BaseBootstrap>) {}
+  virtual void beginSetup(std::shared_ptr<BaseBootstrap>)
+  {
+  }
+  virtual void endSetup(std::shared_ptr<BaseBootstrap>)
+  {
+  }
 };
 
-template<typename T>
-class NonblockingFuture
+template <typename T> class NonblockingFuture
 {
   std::shared_future<T> future;
+
 public:
   NonblockingFuture() = default;
-  NonblockingFuture(std::shared_future<T>&& future) : future(std::move(future)) {}
+  NonblockingFuture(std::shared_future<T>&& future) : future(std::move(future))
+  {
+  }
   NonblockingFuture(const NonblockingFuture&) = default;
 
   bool ready() const
@@ -302,7 +310,7 @@ public:
   T get()
   {
     if (!ready())
-      throw std::runtime_error("NonblockingFuture::get() called before ready");
+      throw Error("NonblockingFuture::get() called before ready", ErrorCode::InvalidUsage);
     return future.get();
   }
 };
@@ -331,7 +339,7 @@ public:
    * Returns: a handle to the buffer
    */
   RegisteredMemory registerMemory(void* ptr, size_t size, TransportFlags transports);
-  
+
   void sendMemoryOnSetup(RegisteredMemory memory, int remoteRank, int tag);
 
   NonblockingFuture<RegisteredMemory> recvMemoryOnSetup(int remoteRank, int tag);
@@ -363,7 +371,6 @@ public:
 private:
   std::unique_ptr<Impl> pimpl;
 };
-
 } // namespace mscclpp
 
 namespace std {

@@ -6,10 +6,10 @@
 
 #include "utils.h"
 
+#include <memory>
 #include <numa.h>
 #include <stdlib.h>
 #include <string>
-#include <memory>
 
 // Get current Compute Capability
 // int mscclppCudaCompCap() {
