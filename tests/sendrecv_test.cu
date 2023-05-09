@@ -7,19 +7,52 @@
 #include <string>
 #include <unistd.h>
 
-#include <cuda/barrier>
-
-constexpr int BLOCK_THREADS_NUM = 128;
-constexpr int MAX_BLOCKS_NUM = 512;
-constexpr int BYTES_SEND_PER_THREAD = 8;
-constexpr int DEFAULT_BYTES_PER_BLOCK = BLOCK_THREADS_NUM * BYTES_SEND_PER_THREAD * 2; // loop twice
+constexpr size_t BLOCK_THREADS_NUM = 1024;
+// Try to use more blocks if per-block data size exceeds this threshold
+constexpr size_t THRES_BYTES_PER_BLOCK = 8192;
+// Let it no more than the number of SMs on a GPU
+constexpr size_t MAX_BLOCKS_NUM = 32;
 
 #define ALIGN 4
 
 __constant__ mscclppDevConn_t sendConnConst;
 __constant__ mscclppDevConn_t recvConnConst;
 
-cuda::barrier<cuda::thread_scope_device>* barrier;
+struct SyncGpuState
+{
+  volatile int flag;
+  int cnt;
+  int is_add;
+};
+
+// Synchronize multiple thread blocks inside a kernel. Guarantee that all
+// previous work of all threads in cooperating blocks is finished and
+// visible to all threads in the device.
+__forceinline__ __device__ void sync_gpu(SyncGpuState &state, int blockNum)
+{
+  int maxOldCnt = blockNum - 1;
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    int is_add_ = state.is_add ^ 1;
+    if (is_add_) {
+      if (atomicAdd(&state.cnt, 1) == maxOldCnt) {
+        state.flag = 1;
+      }
+      while (!state.flag) {
+      }
+    } else {
+      if (atomicSub(&state.cnt, 1) == 1) {
+        state.flag = 0;
+      }
+      while (state.flag) {
+      }
+    }
+    state.is_add = is_add_;
+  }
+  // We need sync here because only a single thread is checking whether
+  // the flag is flipped.
+  __syncthreads();
+}
 
 inline int getSendTag(int rank, int peer)
 {
@@ -33,11 +66,12 @@ inline int getRecvTag(int rank, int peer)
 
 inline int getBlockNum(size_t count)
 {
-  return std::min((count + DEFAULT_BYTES_PER_BLOCK - 1) / DEFAULT_BYTES_PER_BLOCK, static_cast<size_t>(MAX_BLOCKS_NUM));
+  return std::min((count + THRES_BYTES_PER_BLOCK - 1) / THRES_BYTES_PER_BLOCK, MAX_BLOCKS_NUM);
 }
 
-__global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock,
-                       cuda::barrier<cuda::thread_scope_device>* barrier)
+__device__ SyncGpuState GLOBAL_SYNC_STATE;
+
+__global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock)
 {
   mscclppDevConn_t sendConn = sendConnConst;
   mscclppDevConn_t recvConn = recvConnConst;
@@ -46,9 +80,7 @@ __global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock,
   int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
   sendConn.putDirect(startIndex, blockDataSize, threadIdx.x, blockDim.x);
-  if (threadIdx.x == 0)
-    barrier->arrive_and_wait();
-  __syncthreads();
+  sync_gpu(GLOBAL_SYNC_STATE, gridDim.x);
   if (tid == 0) {
     sendConn.signalDirect();
     recvConn.waitDirect();
@@ -64,10 +96,6 @@ void SendRecvGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* para
   *sendInplaceOffset = base;
   *recvInplaceOffset = 0;
   *paramcount = base;
-  int blockNum = getBlockNum(count * sizeof(int));
-  // TODO: should move to other function
-  cuda::barrier<cuda::thread_scope_device> initBarrier(blockNum);
-  cudaMemcpy(barrier, &initBarrier, sizeof(cuda::barrier<cuda::thread_scope_device>), cudaMemcpyHostToDevice);
 }
 
 testResult_t SendRecvInitData(struct testArgs* args, int in_place)
@@ -103,10 +131,9 @@ void SendRecvGetBw(size_t count, int typesize, double sec, double* algBw, double
 testResult_t SendRecvRunColl(void* sendbuff, void* recvbuff, int nranksPerNode, size_t count, mscclppComm_t comm,
                              cudaStream_t stream, int kernel_num)
 {
-  int blockNum =
-    std::min((count + DEFAULT_BYTES_PER_BLOCK - 1) / DEFAULT_BYTES_PER_BLOCK, static_cast<size_t>(MAX_BLOCKS_NUM));
+  int blockNum = getBlockNum(count);
   size_t bytesPerBlock = (count + blockNum - 1) / blockNum;
-  kernel<<<blockNum, BLOCK_THREADS_NUM, 0, stream>>>(comm->rank, count, bytesPerBlock, barrier);
+  kernel<<<blockNum, BLOCK_THREADS_NUM, 0, stream>>>(comm->rank, count, bytesPerBlock);
   return testSuccess;
 }
 
@@ -160,9 +187,7 @@ testResult_t SendRecvRunTest(struct testArgs* args)
                                           getRecvTag(rank, (rank - 1 + worldSize) % worldSize), &recvDevConn));
   CUDACHECK(cudaMemcpyToSymbol(sendConnConst, sendDevConn, sizeof(mscclppDevConn_t)));
   CUDACHECK(cudaMemcpyToSymbol(recvConnConst, recvDevConn, sizeof(mscclppDevConn_t)));
-  CUDACHECK(cudaMalloc(&barrier, sizeof(cuda::barrier<cuda::thread_scope_device>)));
   TESTCHECK(TimeTest(args));
-  CUDACHECK(cudaFree(barrier));
   return testSuccess;
 }
 
