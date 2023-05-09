@@ -3,7 +3,6 @@
  *
  * See LICENSE.txt for license information
  ************************************************************************/
-#define MSCCLPP_USE_MPI_FOR_TESTS 1
 
 #include "common.h"
 #include "cuda.h"
@@ -315,6 +314,9 @@ testResult_t BenchTime(struct testArgs* args, int in_place)
     sprintf(timeStr, "%7.1f", timeUsec);
   } else {
     sprintf(timeStr, "%7.2f", timeUsec);
+  }
+  if (!in_place) {
+    PRINT("                                 ");
   }
   if (args->reportErrors) {
     PRINT("  %7s  %6.2f  %6.2f  %5g", timeStr, algBw, busBw, (double)wrongElts);
