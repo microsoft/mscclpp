@@ -10,7 +10,7 @@
 #include <cuda/barrier>
 
 constexpr int BLOCK_THREADS_NUM = 128;
-constexpr int MAX_BLOCKS_NUM = 1024;
+constexpr int MAX_BLOCKS_NUM = 512;
 constexpr int BYTES_SEND_PER_THREAD = 8;
 constexpr int DEFAULT_BYTES_PER_BLOCK = BLOCK_THREADS_NUM * BYTES_SEND_PER_THREAD * 2; // loop twice
 
@@ -33,11 +33,11 @@ inline int getRecvTag(int rank, int peer)
 
 inline int getBlockNum(size_t count)
 {
-  return std::min((count + DEFAULT_BYTES_PER_BLOCK - 1) / DEFAULT_BYTES_PER_BLOCK,
-                  static_cast<size_t>(MAX_BLOCKS_NUM));
+  return std::min((count + DEFAULT_BYTES_PER_BLOCK - 1) / DEFAULT_BYTES_PER_BLOCK, static_cast<size_t>(MAX_BLOCKS_NUM));
 }
 
-__global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock, cuda::barrier<cuda::thread_scope_device>* barrier)
+__global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock,
+                       cuda::barrier<cuda::thread_scope_device>* barrier)
 {
   mscclppDevConn_t sendConn = sendConnConst;
   mscclppDevConn_t recvConn = recvConnConst;
@@ -65,6 +65,7 @@ void SendRecvGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* para
   *recvInplaceOffset = 0;
   *paramcount = base;
   int blockNum = getBlockNum(count * sizeof(int));
+  // TODO: should move to other function
   cuda::barrier<cuda::thread_scope_device> initBarrier(blockNum);
   cudaMemcpy(barrier, &initBarrier, sizeof(cuda::barrier<cuda::thread_scope_device>), cudaMemcpyHostToDevice);
 }
