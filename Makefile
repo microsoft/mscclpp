@@ -155,7 +155,7 @@ TESTSOBJTARGETS := $(TESTSOBJS:%=$(BUILDDIR)/$(OBJDIR)/%)
 TESTSBINS       := $(patsubst %.o,$(BUILDDIR)/$(BINDIR)/%,$(TESTSOBJS))
 
 MSCLLPPTESTSOBJSDIR:= $(BUILDDIR)/$(OBJDIR)/$(TESTSDIR)
-MSCLLPPTESTBINFILESLIST := allgather_test
+MSCLLPPTESTBINFILESLIST := allgather_test allreduce_test ring_send_recv_test
 MSCLLPPTESTBINS         := $(MSCLLPPTESTBINFILESLIST:%=$(BUILDDIR)/$(BINDIR)/$(TESTSDIR)/%_perf)
 
 INCLUDE := -Isrc -Isrc/include
@@ -165,8 +165,8 @@ INCLUDE := -Isrc -Isrc/include
 all: build
 
 build: lib tests
-ifeq ($(USE_MPI_FOR_TESTS), 0)
-build += mscclpp-test
+ifeq ($(USE_MPI_FOR_TESTS), 1)
+build: lib tests mscclpp-test
 endif
 
 lib: $(LIBOBJTARGETS) $(INCTARGETS) $(LIBTARGET)
@@ -179,7 +179,7 @@ mscclpp-test: $(LIBTARGET) $(MSCLLPPTESTBINS)
 
 cpplint:
 	clang-format-12 -style=file --verbose --Werror --dry-run $(CPPSOURCES)
-	clang-format-12 --dry-run $(CPPSOURCES)
+	clang-format-12 --dry-run $(PYTHONCPPSOURCES)
 
 cpplint-autofix:
 	clang-format-12 -style=file --verbose --Werror -i $(CPPSOURCES)

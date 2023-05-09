@@ -229,7 +229,6 @@ testResult_t CheckData(struct testArgs* args, int in_place, int64_t* wrongElts)
       *wrongElts += 1;
     }
   }
-
   if (args->reportErrors && *wrongElts) {
     (args->error)++;
   }
@@ -415,13 +414,20 @@ testResult_t setupMscclppConnections(int rank, int worldSize, int ranksPerNode, 
 testResult_t runTests(struct testArgs* args)
 {
   PRINT("# Setting up the connection in MSCCL++\n");
-  TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm, args->recvbuff,
-                                    args->maxbytes));
+  if (mscclppTestEngine.setupMscclppConnections != nullptr) {
+    TESTCHECK(mscclppTestEngine.setupMscclppConnections(args));
+  } else {
+    TESTCHECK(setupMscclppConnections(args->proc, args->totalProcs, args->nranksPerNode, args->comm, args->recvbuff,
+                                      args->maxbytes));
+  }
   PRINT("# Launching MSCCL++ proxy threads\n");
   MSCCLPPCHECK(mscclppProxyLaunch(args->comm));
   TESTCHECK(mscclppTestEngine.runTest(args));
   PRINT("Stopping MSCCL++ proxy threads\n");
   MSCCLPPCHECK(mscclppProxyStop(args->comm));
+  if (mscclppTestEngine.teardownMscclppConnections != nullptr) {
+    TESTCHECK(mscclppTestEngine.teardownMscclppConnections());
+  }
   return testSuccess;
 }
 
@@ -670,6 +676,9 @@ testResult_t run()
   CUDACHECK(cudaFreeHost(delta));
 
   int error = worker.args.error;
+#if MSCCLPP_USE_MPI_FOR_TESTS
+  MPI_Allreduce(MPI_IN_PLACE, &error, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+#endif
   PRINT("# Out of bounds values : %d %s\n", error, error ? "FAILED" : "OK");
   PRINT("#\n");
 

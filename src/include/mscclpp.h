@@ -148,10 +148,46 @@ struct mscclppDevConn
       ;
   }
 
+  // Version that uses the SM directly to do the copy, instead of using the proxy thread like the functions above.
+  __forceinline__ __device__ void putDirect(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize,
+                                            uint32_t threadId, uint32_t numThreads)
+  {
+    uint64_t* src = (uint64_t*)((char*)localBuff + srcDataOffset);
+    uint64_t* dst = (uint64_t*)((char*)remoteBuff + dstDataOffset);
+    // assume the memory is aligned to 8 bytes
+    size_t nElem =
+      dataSize % sizeof(uint64_t) ? (dataSize + sizeof(uint64_t)) / sizeof(uint64_t) : dataSize / sizeof(uint64_t);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      dst[i] = src[i];
+    }
+  }
+
+  __forceinline__ __device__ void putDirect(uint64_t dataOffset, uint64_t dataSize, uint32_t threadId,
+                                            uint32_t numThreads)
+  {
+    putDirect(dataOffset, dataOffset, dataSize, threadId, numThreads);
+  }
+
+  __forceinline__ __device__ void signalDirect()
+  {
+    // This fence ensures that the writes from a preceding putDirect() are visible on the peer GPU before the
+    // incremented epoch id is visible.
+    __threadfence_system();
+    epochIncrement();
+    *(volatile uint64_t*)&(remoteSignalEpochId->device) = localSignalEpochId->device;
+  }
+
   __forceinline__ __device__ void wait()
   {
     (*waitEpochId) += 1;
     while (*(volatile uint64_t*)&(localSignalEpochId->proxy) < (*waitEpochId))
+      ;
+  }
+
+  __forceinline__ __device__ void waitDirect()
+  {
+    (*waitEpochId) += 1;
+    while (*(volatile uint64_t*)&(localSignalEpochId->device) < (*waitEpochId))
       ;
   }
 
