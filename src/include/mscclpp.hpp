@@ -361,7 +361,7 @@ public:
   std::shared_ptr<Connection> connectOnSetup(int remoteRank, int tag, Transport transport);
 
   /* Add a custom Setuppable object to a list of objects to be setup later, when setup() is called. */
-  void addSetup(std::shared_ptr<Setuppable> setuppable);
+  void onSetup(std::shared_ptr<Setuppable> setuppable);
 
   /* Setup all objects that have registered for setup. This includes any connections created by connect(). */
   void setup();

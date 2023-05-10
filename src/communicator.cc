@@ -75,7 +75,7 @@ struct MemorySender : public Setuppable
 
 MSCCLPP_API_CPP void Communicator::sendMemoryOnSetup(RegisteredMemory memory, int remoteRank, int tag)
 {
-  addSetup(std::make_shared<MemorySender>(memory, remoteRank, tag));
+  onSetup(std::make_shared<MemorySender>(memory, remoteRank, tag));
 }
 
 struct MemoryReceiver : public Setuppable
@@ -99,7 +99,7 @@ struct MemoryReceiver : public Setuppable
 MSCCLPP_API_CPP NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSetup(int remoteRank, int tag)
 {
   auto memoryReceiver = std::make_shared<MemoryReceiver>(remoteRank, tag);
-  addSetup(memoryReceiver);
+  onSetup(memoryReceiver);
   return NonblockingFuture<RegisteredMemory>(memoryReceiver->memoryPromise_.get_future());
 }
 
@@ -131,11 +131,11 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int rem
     throw mscclpp::Error("Unsupported transport", ErrorCode::InternalError);
   }
   pimpl->connections_.push_back(conn);
-  addSetup(conn);
+  onSetup(conn);
   return conn;
 }
 
-MSCCLPP_API_CPP void Communicator::addSetup(std::shared_ptr<Setuppable> setuppable)
+MSCCLPP_API_CPP void Communicator::onSetup(std::shared_ptr<Setuppable> setuppable)
 {
   pimpl->toSetup_.push_back(setuppable);
 }

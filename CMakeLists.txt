@@ -20,6 +20,12 @@ if(ALLOW_GDRCOPY)
     find_package(GDRCopy)
 endif()
 
+include(CTest)
+include(FetchContent)
+FetchContent_Declare(googletest URL https://github.com/google/googletest/archive/b796f7d44681514f58a683a3a71ff17c94edb0c1.zip)
+FetchContent_MakeAvailable(googletest)
+include(GoogleTest)
+
 set(CLANG_FORMAT_SOURCE_DIRS src tests)
 include(${PROJECT_SOURCE_DIR}/cmake/AddClangFormatTargets.cmake)
 
