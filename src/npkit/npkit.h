@@ -3,8 +3,8 @@
 
 #include <string>
 
-#include "npkit/npkit_event.h"
-#include "npkit/npkit_struct.h"
+#include "npkit_event.h"
+#include "npkit_struct.h"
 
 class NpKit
 {

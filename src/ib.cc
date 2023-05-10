@@ -8,12 +8,13 @@
 #include "alloc.h"
 #include "api.h"
 #include "checks.hpp"
-#include "comm.h"
 #include "debug.h"
 #include "ib.hpp"
 #include <mscclpp/core.hpp>
 #include <infiniband/verbs.h>
 #include <string>
+
+#define MAXCONNECTIONS 64
 
 namespace mscclpp {
 

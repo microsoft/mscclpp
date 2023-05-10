@@ -2,7 +2,6 @@
 
 #include "api.h"
 #include "checks.hpp"
-#include "comm.h"
 #include "communicator.hpp"
 #include "connection.hpp"
 #include "debug.h"

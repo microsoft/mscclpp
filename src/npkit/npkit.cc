@@ -3,7 +3,7 @@
 #include <unistd.h>
 
 #include "alloc.h"
-#include "npkit/npkit.h"
+#include "npkit.h"
 #include <cuda_runtime.h>
 
 uint64_t NpKit::rank_ = 0;
