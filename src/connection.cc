@@ -137,7 +137,7 @@ void IBConnection::flush()
 
     auto elapsed = timer.elapsed();
     if (elapsed > MSCCLPP_POLLING_WAIT) {
-      throw Error("pollCq is stuck: waited for " + std::to_string(elapsed) + " seconds. Expected " +
+      throw Error("pollCq is stuck: waited for " + std::to_string(elapsed/1e6) + " seconds. Expected " +
                     std::to_string(numSignaledSends) + " signals",
                   ErrorCode::InternalError);
     }
