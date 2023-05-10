@@ -6,7 +6,7 @@
 #include "communicator.hpp"
 #include "connection.hpp"
 #include "debug.h"
-#include "mscclpp.hpp"
+#include <mscclpp/core.hpp>
 #include "registered_memory.hpp"
 #include "utils.h"
 

@@ -1,7 +1,7 @@
 #ifndef MSCCLPP_EPOCH_HPP_
 #define MSCCLPP_EPOCH_HPP_
 
-#include "mscclpp.hpp"
+#include <mscclpp/core.hpp>
 
 namespace mscclpp {
 

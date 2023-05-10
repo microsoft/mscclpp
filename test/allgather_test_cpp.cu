@@ -1,7 +1,6 @@
-#include "mscclpp.h"
-#include "mscclpp.hpp"
+#include <mscclpp/core.hpp>
 
-#include "channel.hpp"
+#include <mscclpp/channel.hpp>
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
 #include "mpi.h"

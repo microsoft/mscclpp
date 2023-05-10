@@ -11,7 +11,7 @@
 #include "comm.h"
 #include "debug.h"
 #include "ib.hpp"
-#include "mscclpp.hpp"
+#include <mscclpp/core.hpp>
 #include <infiniband/verbs.h>
 #include <string>
 

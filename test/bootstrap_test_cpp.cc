@@ -1,4 +1,4 @@
-#include "mscclpp.hpp"
+#include <mscclpp/core.hpp>
 
 #include <cassert>
 #include <iostream>

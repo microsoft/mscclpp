@@ -1,7 +1,7 @@
 #include "alloc.h"
 #include "api.h"
 #include "checks.hpp"
-#include "mscclppfifo.hpp"
+#include <mscclpp/fifo.hpp>
 #include <cuda_runtime.h>
 #include <emmintrin.h>
 #include <stdexcept>

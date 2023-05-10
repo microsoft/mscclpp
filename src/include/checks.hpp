@@ -8,7 +8,7 @@
 #define MSCCLPP_CHECKS_HPP_
 
 #include "debug.h"
-#include "errors.hpp"
+#include <mscclpp/errors.hpp>
 
 #include <cuda.h>
 #include <cuda_runtime.h>

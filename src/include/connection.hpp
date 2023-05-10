@@ -6,7 +6,7 @@
 
 #include "communicator.hpp"
 #include "ib.hpp"
-#include "mscclpp.hpp"
+#include <mscclpp/core.hpp>
 #include <cuda_runtime.h>
 
 namespace mscclpp {

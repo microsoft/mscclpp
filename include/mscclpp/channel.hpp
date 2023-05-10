@@ -1,11 +1,10 @@
 #ifndef MSCCLPP_CHANNEL_HPP_
 #define MSCCLPP_CHANNEL_HPP_
 
-#include "epoch.hpp"
-#include "mscclpp.hpp"
-#include "mscclppfifo.hpp"
-#include "proxy.hpp"
-#include "utils.hpp"
+#include <mscclpp/epoch.hpp>
+#include <mscclpp/core.hpp>
+#include <mscclpp/fifo.hpp>
+#include <mscclpp/proxy.hpp>
 
 namespace mscclpp {
 namespace channel {
@@ -148,7 +147,7 @@ struct DeviceChannel
 
   __forceinline__ __device__ void flush()
   {
-    uint64_t curFifoHead = fifo_.push(ChannelTrigger(mscclppSync, 0, 0, 0, 0, 1, channelId_).value);
+    uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, channelId_).value);
     // we need to wait for two conditions to be met to ensure the CPU is done flushing. (1) wait for the tail
     // to go pass by curFifoHead (this is safety net) and (2) wait for the work element value to change to 0.
     while (*(volatile uint64_t*)&fifo_.triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&

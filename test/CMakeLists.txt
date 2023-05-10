@@ -1,6 +1,7 @@
 function(add_test_executable name sources)
     add_executable(${name} ${sources})
     target_link_libraries(${name} mscclpp CUDA::cudart CUDA::cuda_driver)
+    target_include_directories(${name} PRIVATE ${PROJECT_SOURCE_DIR}/src/include)
     if(USE_MPI_FOR_TESTS)
         target_link_libraries(${name} MPI::MPI_CXX)
         target_compile_definitions(${name} PRIVATE MSCCLPP_USE_MPI_FOR_TESTS)

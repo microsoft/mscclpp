@@ -1,7 +1,7 @@
 #ifndef MSCCLPP_PROXY_HPP_
 #define MSCCLPP_PROXY_HPP_
 
-#include "mscclppfifo.hpp"
+#include <mscclpp/fifo.hpp>
 
 #include <functional>
 #include <memory>

@@ -2,7 +2,7 @@
 #include "checks.h"
 #include "ib.hpp"
 #include "infiniband/verbs.h"
-#include "mscclpp.hpp"
+#include <mscclpp/core.hpp>
 #include <array>
 #include <string>
 

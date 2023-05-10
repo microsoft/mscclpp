@@ -3,8 +3,8 @@
 
 #include "ib.hpp"
 #include "mscclpp.h"
-#include "mscclpp.hpp"
-#include "proxy.hpp"
+#include <mscclpp/core.hpp>
+#include <mscclpp/proxy.hpp>
 #include <memory>
 #include <unordered_map>
 

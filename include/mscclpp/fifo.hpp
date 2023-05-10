@@ -1,5 +1,5 @@
-#ifndef MSCCLPPFIFO_HPP_
-#define MSCCLPPFIFO_HPP_
+#ifndef MSCCLPP_FIFO_HPP_
+#define MSCCLPP_FIFO_HPP_
 
 #include <functional>
 #include <memory>
@@ -74,4 +74,4 @@ private:
 
 } // namespace mscclpp
 
-#endif // MSCCLPPFIFO_H_
+#endif // MSCCLPP_FIFO_HPP_

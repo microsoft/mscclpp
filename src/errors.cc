@@ -1,4 +1,4 @@
-#include "errors.hpp"
+#include <mscclpp/errors.hpp>
 #include "api.h"
 
 namespace mscclpp {

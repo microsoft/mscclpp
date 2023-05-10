@@ -26,11 +26,11 @@ FetchContent_Declare(googletest URL https://github.com/google/googletest/archive
 FetchContent_MakeAvailable(googletest)
 include(GoogleTest)
 
-set(CLANG_FORMAT_SOURCE_DIRS src tests)
+set(CLANG_FORMAT_SOURCE_DIRS include src tests)
 include(${PROJECT_SOURCE_DIR}/cmake/AddClangFormatTargets.cmake)
 
 add_library(mscclpp SHARED)
-target_include_directories(mscclpp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/include)
+target_include_directories(mscclpp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/include)
 set_target_properties(mscclpp PROPERTIES LINKER_LANGUAGE CXX)
 target_link_libraries(mscclpp PRIVATE MSCCLPP::ibverbs MSCCLPP::numa CUDA::cudart CUDA::cuda_driver)
 if(ENABLE_TRACE)

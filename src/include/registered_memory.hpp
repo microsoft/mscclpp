@@ -2,10 +2,10 @@
 #define MSCCLPP_REGISTERED_MEMORY_HPP_
 
 #include "communicator.hpp"
-#include "errors.hpp"
+#include <mscclpp/errors.hpp>
 #include "ib.hpp"
 #include "mscclpp.h"
-#include "mscclpp.hpp"
+#include <mscclpp/core.hpp>
 #include <cuda_runtime.h>
 
 namespace mscclpp {

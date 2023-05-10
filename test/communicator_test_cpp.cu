@@ -1,5 +1,5 @@
-#include "epoch.hpp"
-#include "mscclpp.hpp"
+#include <mscclpp/epoch.hpp>
+#include <mscclpp/core.hpp>
 
 #include <cassert>
 #include <cuda_runtime.h>

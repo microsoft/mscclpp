@@ -2,7 +2,7 @@
 #define MSCCLPP_BASIC_PROXY_SERVICE_HPP_
 
 #include "communicator.hpp"
-#include "mscclpp.hpp"
+#include <mscclpp/core.hpp>
 
 namespace mscclpp {
 

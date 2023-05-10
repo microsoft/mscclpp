@@ -1,4 +1,4 @@
-#include "channel.hpp"
+#include <mscclpp/channel.hpp>
 #include "api.h"
 #include "checks.hpp"
 #include "debug.h"

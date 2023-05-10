@@ -50,5 +50,7 @@ public:
   IbError(std::string message, int errorCode);
   virtual ~IbError() = default;
 };
+
 };     // namespace mscclpp
-#endif // MSCCLPP_ERRORS_HPP
+
+#endif // MSCCLPP_ERRORS_HPP_

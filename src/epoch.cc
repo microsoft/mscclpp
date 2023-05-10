@@ -1,4 +1,4 @@
-#include "epoch.hpp"
+#include <mscclpp/epoch.hpp>
 #include "alloc.h"
 #include "api.h"
 #include "checks.hpp"

@@ -1,6 +1,6 @@
 #include "api.h"
-#include "mscclpp.hpp"
-#include "proxy.hpp"
+#include <mscclpp/core.hpp>
+#include <mscclpp/proxy.hpp>
 #include "utils.h"
 #include "utils.hpp"
 #include <atomic>

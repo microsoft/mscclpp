@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include "mscclpp.hpp"
+#include <mscclpp/core.hpp>
 
 class LocalCommunicatorTest : public ::testing::Test {
  protected:

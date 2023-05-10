@@ -1,12 +1,12 @@
-#ifndef MSCCLPP_HPP_
-#define MSCCLPP_HPP_
+#ifndef MSCCLPP_CORE_HPP_
+#define MSCCLPP_CORE_HPP_
 
 #define MSCCLPP_MAJOR 0
 #define MSCCLPP_MINOR 1
 #define MSCCLPP_PATCH 0
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
-#include "errors.hpp"
+#include <mscclpp/errors.hpp>
 #include <bitset>
 #include <future>
 #include <memory>
@@ -383,4 +383,4 @@ template <> struct hash<mscclpp::TransportFlags>
 };
 } // namespace std
 
-#endif // MSCCLPP_H_
+#endif // MSCCLPP_CORE_HPP_

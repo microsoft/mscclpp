@@ -1,7 +1,7 @@
 #include "bootstrap.h"
 #include "api.h"
 #include "checks.hpp"
-#include "mscclpp.hpp"
+#include <mscclpp/core.hpp>
 #include "utils.h"
 
 #include <algorithm>
