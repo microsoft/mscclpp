@@ -45,4 +45,4 @@ if(ALLOW_GDRCOPY AND GDRCOPY_FOUND)
 endif()
 
 add_subdirectory(src) # This adds the sources to the mscclpp target
-add_subdirectory(tests)
+add_subdirectory(test)
