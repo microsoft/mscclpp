@@ -64,11 +64,17 @@ typedef enum
   testNumResults = 5
 } testResult_t;
 
+inline testResult_t defaultInitColl()
+{
+  return testSuccess;
+}
+
 struct testColl
 {
   const char name[20];
   void (*getCollByteCount)(size_t* sendcount, size_t* recvcount, size_t* paramcount, size_t* sendInplaceOffset,
                            size_t* recvInplaceOffset, size_t count, int nranks);
+  testResult_t (*initColl)();
   testResult_t (*initData)(struct testArgs* args, int in_place);
   void (*getBw)(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
   testResult_t (*runColl)(void* sendbuff, void* recvbuff, int nranksPerNode, size_t count, mscclppComm_t comm,

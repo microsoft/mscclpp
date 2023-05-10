@@ -98,6 +98,13 @@ void SendRecvGetCollByteCount(size_t* sendcount, size_t* recvcount, size_t* para
   *paramcount = base;
 }
 
+testResult_t SendRecvInitColl()
+{
+  SyncGpuState state = {};
+  CUDACHECK(cudaMemcpyToSymbol(GLOBAL_SYNC_STATE, &state, sizeof(SyncGpuState)));
+  return testSuccess;
+}
+
 testResult_t SendRecvInitData(struct testArgs* args, int in_place)
 {
   size_t sendCount = args->sendBytes / sizeof(int);
@@ -137,8 +144,8 @@ testResult_t SendRecvRunColl(void* sendbuff, void* recvbuff, int nranksPerNode, 
   return testSuccess;
 }
 
-struct testColl sendRecvTest = {"SendRecvTest", SendRecvGetCollByteCount, SendRecvInitData, SendRecvGetBw,
-                                SendRecvRunColl};
+struct testColl sendRecvTest = {"SendRecvTest", SendRecvGetCollByteCount, SendRecvInitColl, SendRecvInitData,
+                                SendRecvGetBw,  SendRecvRunColl};
 
 void SendRecvGetBuffSize(size_t* sendcount, size_t* recvcount, size_t count, int nranks)
 {

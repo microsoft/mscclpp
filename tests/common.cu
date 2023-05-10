@@ -329,7 +329,7 @@ testResult_t BenchTime(struct testArgs* args, int in_place)
   return testSuccess;
 }
 
-void setupArgs(size_t size, struct testArgs* args)
+testResult_t setupArgsAndInit(size_t size, struct testArgs* args)
 {
   int nranks = args->totalProcs;
   size_t count, sendCount, recvCount, paramCount, sendInplaceOffset, recvInplaceOffset;
@@ -345,6 +345,8 @@ void setupArgs(size_t size, struct testArgs* args)
   args->expectedBytes = recvCount * typeSize;
   args->sendInplaceOffset = sendInplaceOffset * typeSize;
   args->recvInplaceOffset = recvInplaceOffset * typeSize;
+
+  return args->collTest->initColl();
 }
 
 testResult_t TimeTest(struct testArgs* args)
@@ -353,7 +355,7 @@ testResult_t TimeTest(struct testArgs* args)
   TESTCHECK(Barrier(args));
 
   // Warm-up for large size
-  setupArgs(args->maxbytes, args);
+  TESTCHECK(setupArgsAndInit(args->maxbytes, args));
   TESTCHECK(args->collTest->initData(args, 1));
   for (int iter = 0; iter < warmup_iters; iter++) {
     TESTCHECK(startColl(args, 1, iter));
@@ -361,7 +363,7 @@ testResult_t TimeTest(struct testArgs* args)
   TESTCHECK(completeColl(args));
 
   // Warm-up for small size
-  setupArgs(args->minbytes, args);
+  TESTCHECK(setupArgsAndInit(args->minbytes, args));
   for (int iter = 0; iter < warmup_iters; iter++) {
     TESTCHECK(startColl(args, 1, iter));
   }
@@ -376,7 +378,7 @@ testResult_t TimeTest(struct testArgs* args)
   // Benchmark
   for (size_t size = args->minbytes; size <= args->maxbytes;
        size = ((args->stepfactor > 1) ? size * args->stepfactor : size + args->stepbytes)) {
-    setupArgs(size, args);
+    TESTCHECK(setupArgsAndInit(size, args));
     PRINT("%12li  %12li", max(args->sendBytes, args->expectedBytes), args->nbytes / sizeof(int));
     TESTCHECK(BenchTime(args, args->in_place));
     PRINT("\n");
