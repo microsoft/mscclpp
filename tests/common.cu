@@ -212,11 +212,8 @@ template <typename T> void Allreduce(struct testArgs* args, T* value, int averag
   *value = accumulator;
 }
 
-testResult_t CheckData(struct testArgs* args, int in_place, int64_t* wrongElts)
+testResult_t CheckData(struct testArgs* args, int64_t* wrongElts)
 {
-  if (in_place == 0) {
-    return testInternalError;
-  }
   size_t count = args->expectedBytes / sizeof(int);
 
   int* dataHostRecv = new int[count];
@@ -226,6 +223,8 @@ testResult_t CheckData(struct testArgs* args, int in_place, int64_t* wrongElts)
 
   for (size_t i = 0; i < count; i++) {
     if (dataHostRecv[i] != dataHostExpected[i]) {
+      // PRINT("Error: dataHostRecv[%ld] = %d, dataHostExpected[%ld] = %d\n", i, dataHostRecv[i], i,
+      // dataHostExpected[i]);
       *wrongElts += 1;
     }
   }
@@ -299,7 +298,7 @@ testResult_t BenchTime(struct testArgs* args, int in_place)
     CUDACHECK(cudaGraphExecDestroy(graphExec));
     CUDACHECK(cudaGraphDestroy(graph));
 
-    TESTCHECK(CheckData(args, in_place, &wrongElts));
+    TESTCHECK(CheckData(args, &wrongElts));
 
     // aggregate delta from all threads and procs
     long long wrongElts1 = wrongElts;
@@ -316,6 +315,9 @@ testResult_t BenchTime(struct testArgs* args, int in_place)
   } else {
     sprintf(timeStr, "%7.2f", timeUsec);
   }
+  if (!in_place) {
+    PRINT("                                 ");
+  }
   if (args->reportErrors) {
     PRINT("  %7s  %6.2f  %6.2f  %5g", timeStr, algBw, busBw, (double)wrongElts);
   } else {
@@ -327,7 +329,7 @@ testResult_t BenchTime(struct testArgs* args, int in_place)
   return testSuccess;
 }
 
-void setupArgs(size_t size, struct testArgs* args)
+testResult_t setupArgsAndInit(size_t size, struct testArgs* args)
 {
   int nranks = args->totalProcs;
   size_t count, sendCount, recvCount, paramCount, sendInplaceOffset, recvInplaceOffset;
@@ -343,6 +345,8 @@ void setupArgs(size_t size, struct testArgs* args)
   args->expectedBytes = recvCount * typeSize;
   args->sendInplaceOffset = sendInplaceOffset * typeSize;
   args->recvInplaceOffset = recvInplaceOffset * typeSize;
+
+  return args->collTest->initColl();
 }
 
 testResult_t TimeTest(struct testArgs* args)
@@ -351,7 +355,7 @@ testResult_t TimeTest(struct testArgs* args)
   TESTCHECK(Barrier(args));
 
   // Warm-up for large size
-  setupArgs(args->maxbytes, args);
+  TESTCHECK(setupArgsAndInit(args->maxbytes, args));
   TESTCHECK(args->collTest->initData(args, 1));
   for (int iter = 0; iter < warmup_iters; iter++) {
     TESTCHECK(startColl(args, 1, iter));
@@ -359,7 +363,7 @@ testResult_t TimeTest(struct testArgs* args)
   TESTCHECK(completeColl(args));
 
   // Warm-up for small size
-  setupArgs(args->minbytes, args);
+  TESTCHECK(setupArgsAndInit(args->minbytes, args));
   for (int iter = 0; iter < warmup_iters; iter++) {
     TESTCHECK(startColl(args, 1, iter));
   }
@@ -374,11 +378,9 @@ testResult_t TimeTest(struct testArgs* args)
   // Benchmark
   for (size_t size = args->minbytes; size <= args->maxbytes;
        size = ((args->stepfactor > 1) ? size * args->stepfactor : size + args->stepbytes)) {
-    setupArgs(size, args);
+    TESTCHECK(setupArgsAndInit(size, args));
     PRINT("%12li  %12li", max(args->sendBytes, args->expectedBytes), args->nbytes / sizeof(int));
-    // Don't support out-of-place for now
-    // TESTCHECK(BenchTime(args, 0));
-    TESTCHECK(BenchTime(args, 1));
+    TESTCHECK(BenchTime(args, args->in_place));
     PRINT("\n");
   }
   return testSuccess;
@@ -644,6 +646,7 @@ testResult_t run()
   worker.args.stepfactor = stepFactor;
   worker.args.localRank = localRank;
   worker.args.nranksPerNode = nranksPerNode;
+  worker.args.in_place = 1;
 
   worker.args.totalProcs = totalProcs;
   worker.args.proc = proc;

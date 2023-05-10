@@ -204,8 +204,8 @@ testResult_t AllReduceRunColl(void* sendbuff, void* recvbuff, int nranksPerNode,
   return testSuccess;
 }
 
-struct testColl allReduceTest = {"AllReduce", AllReduceGetCollByteCount, AllReduceInitData, AllReduceGetBw,
-                                 AllReduceRunColl};
+struct testColl allReduceTest = {"AllReduce",    AllReduceGetCollByteCount, defaultInitColl, AllReduceInitData,
+                                 AllReduceGetBw, AllReduceRunColl};
 
 testResult_t AllReduceSetupMscclppConnections(struct testArgs* args)
 {
