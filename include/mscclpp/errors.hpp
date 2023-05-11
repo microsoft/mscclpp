@@ -1,6 +1,9 @@
 #ifndef MSCCLPP_ERRORS_HPP_
 #define MSCCLPP_ERRORS_HPP_
 
+#include <cuda.h>
+#include <cuda_runtime.h>
+
 #include <stdexcept>
 
 namespace mscclpp {
@@ -11,14 +14,21 @@ enum class ErrorCode {
   InvalidUsage,
 };
 
+std::string errorToString(enum ErrorCode error);
+
 class BaseError : public std::runtime_error {
  public:
   BaseError(std::string message, int errorCode);
+  explicit BaseError(int errorCode);
   virtual ~BaseError() = default;
   int getErrorCode() const;
+  const char* what() const noexcept override;
 
  private:
   int errorCode_;
+
+ protected:
+  std::string message_;
 };
 
 class Error : public BaseError {
@@ -29,13 +39,13 @@ class Error : public BaseError {
 
 class CudaError : public BaseError {
  public:
-  CudaError(std::string message, int errorCode);
+  CudaError(std::string message, cudaError_t errorCode);
   virtual ~CudaError() = default;
 };
 
 class CuError : public BaseError {
  public:
-  CuError(std::string message, int errorCode);
+  CuError(std::string message, CUresult errorCode);
   virtual ~CuError() = default;
 };
 
