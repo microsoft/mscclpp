@@ -26,7 +26,7 @@ jobs:
 
     - name: Run cpplint
       run: |
-        CPPSOURCES=$(find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*" -not -path "./python/*")
+        CPPSOURCES=$(find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*" -not -path "./python/*" -not -path "./test/*")
         PYTHONCPPSOURCES=$(find ./python/src/ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
-        clang-format-12 -style=file --verbose --Werror --dry-run $(CPPSOURCES)
-        clang-format-12 --dry-run $(PYTHONCPPSOURCES)
+        clang-format-12 -style=file --verbose --Werror --dry-run ${CPPSOURCES}
+        clang-format-12 --dry-run ${PYTHONCPPSOURCES}
