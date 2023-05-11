@@ -2,7 +2,8 @@
 
 #include <algorithm>
 
-#include "checks.hpp"
+#include "checks_internal.hpp"
+#include "debug.h"
 #include "infiniband/verbs.h"
 #include "npkit/npkit.h"
 #include "registered_memory.hpp"
@@ -47,14 +48,14 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
   char* dstPtr = (char*)dst.data();
   char* srcPtr = (char*)src.data();
 
-  CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, srcPtr + srcOffset, size, cudaMemcpyDeviceToDevice, stream_));
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, srcPtr + srcOffset, size, cudaMemcpyDeviceToDevice, stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection write: from %p to %p, size %lu", srcPtr + srcOffset, dstPtr + dstOffset, size);
 
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)size);
 }
 
 void CudaIpcConnection::flush() {
-  CUDATHROW(cudaStreamSynchronize(stream_));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream_));
   // npkitCollectExitEvents(conn, NPKIT_EVENT_DMA_SEND_EXIT);
 }
 

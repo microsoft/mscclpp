@@ -1,17 +1,19 @@
 #include <cuda_runtime.h>
 #include <emmintrin.h>
 
+#include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
 #include <stdexcept>
 
-#include "alloc.h"
 #include "api.h"
-#include "checks.hpp"
+#include "checks_internal.hpp"
 
 namespace mscclpp {
 
 struct HostProxyFifo::Impl {
-  DeviceProxyFifo deviceFifo;
+  UniqueCudaHostPtr<ProxyTrigger> triggers;
+  UniqueCudaPtr<uint64_t> head;
+  UniqueCudaPtr<uint64_t> tailReplica;
 
   // allocated on the host. Only accessed by the host. This is a copy of the
   // value pointed to by fifoTailDev and the invariant is that
@@ -23,32 +25,26 @@ struct HostProxyFifo::Impl {
   uint64_t hostTail;
 
   // for transferring fifo tail
-  cudaStream_t stream;
+  CudaStreamWithFlags stream;
+
+  Impl()
+      : triggers(makeUniqueCudaHost<ProxyTrigger>(MSCCLPP_PROXY_FIFO_SIZE)),
+        head(makeUniqueCuda<uint64_t>(1)),
+        tailReplica(makeUniqueCuda<uint64_t>(1)),
+        hostTail(0),
+        stream(cudaStreamNonBlocking) {}
 };
 
-MSCCLPP_API_CPP HostProxyFifo::HostProxyFifo() {
-  pimpl = std::make_unique<Impl>();
-  MSCCLPPTHROW(mscclppCudaCalloc(&pimpl->deviceFifo.head, 1));
-  MSCCLPPTHROW(mscclppCudaHostCalloc(&pimpl->deviceFifo.triggers, MSCCLPP_PROXY_FIFO_SIZE));
-  MSCCLPPTHROW(mscclppCudaCalloc(&pimpl->deviceFifo.tailReplica, 1));
-  CUDATHROW(cudaStreamCreateWithFlags(&pimpl->stream, cudaStreamNonBlocking));
-  pimpl->hostTail = 0;
-}
-
-MSCCLPP_API_CPP HostProxyFifo::~HostProxyFifo() {
-  mscclppCudaFree(pimpl->deviceFifo.head);
-  mscclppCudaHostFree(pimpl->deviceFifo.triggers);
-  mscclppCudaFree(pimpl->deviceFifo.tailReplica);
-  cudaStreamDestroy(pimpl->stream);
-}
+MSCCLPP_API_CPP HostProxyFifo::HostProxyFifo() : pimpl(std::make_unique<Impl>()) {}
+MSCCLPP_API_CPP HostProxyFifo::~HostProxyFifo() = default;
 
 MSCCLPP_API_CPP void HostProxyFifo::poll(ProxyTrigger* trigger) {
-  __m128i xmm0 = _mm_load_si128((__m128i*)&pimpl->deviceFifo.triggers[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]);
+  __m128i xmm0 = _mm_load_si128((__m128i*)&pimpl->triggers.get()[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]);
   _mm_store_si128((__m128i*)trigger, xmm0);
 }
 
 MSCCLPP_API_CPP void HostProxyFifo::pop() {
-  *(volatile uint64_t*)(&pimpl->deviceFifo.triggers[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
+  *(volatile uint64_t*)(&pimpl->triggers.get()[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
   (pimpl->hostTail)++;
 }
 
@@ -56,13 +52,19 @@ MSCCLPP_API_CPP void HostProxyFifo::flushTail(bool sync) {
   // Flush the tail to device memory. This is either triggered every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER to make sure
   // that the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is for flush
   // request.
-  CUDATHROW(cudaMemcpyAsync(pimpl->deviceFifo.tailReplica, &pimpl->hostTail, sizeof(uint64_t), cudaMemcpyHostToDevice,
-                            pimpl->stream));
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(pimpl->tailReplica.get(), &pimpl->hostTail, sizeof(uint64_t),
+                                    cudaMemcpyHostToDevice, pimpl->stream));
   if (sync) {
-    CUDATHROW(cudaStreamSynchronize(pimpl->stream));
+    MSCCLPP_CUDATHROW(cudaStreamSynchronize(pimpl->stream));
   }
 }
 
-MSCCLPP_API_CPP DeviceProxyFifo HostProxyFifo::deviceFifo() { return pimpl->deviceFifo; }
+MSCCLPP_API_CPP DeviceProxyFifo HostProxyFifo::deviceFifo() {
+  DeviceProxyFifo deviceFifo;
+  deviceFifo.triggers = pimpl->triggers.get();
+  deviceFifo.head = pimpl->head.get();
+  deviceFifo.tailReplica = pimpl->tailReplica.get();
+  return deviceFifo;
+}
 
 }  // namespace mscclpp

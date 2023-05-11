@@ -1,7 +1,7 @@
 #include <mscclpp/channel.hpp>
 
 #include "api.h"
-#include "checks.hpp"
+#include "checks_internal.hpp"
 #include "debug.h"
 #include "utils.h"
 
@@ -12,7 +12,7 @@ MSCCLPP_API_CPP DeviceChannelService::DeviceChannelService(Communicator& communi
     : communicator_(communicator),
       proxy_([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
   int cudaDevice;
-  CUDATHROW(cudaGetDevice(&cudaDevice));
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
   MSCCLPPTHROW(getDeviceNumaNode(cudaDevice, &deviceNumaNode));
 }
 
