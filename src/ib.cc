@@ -12,7 +12,7 @@
 #include <string>
 
 #include "api.h"
-#include "checks.hpp"
+#include "checks_internal.hpp"
 #include "debug.h"
 
 #define MAXCONNECTIONS 64
