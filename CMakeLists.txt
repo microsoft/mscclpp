@@ -20,6 +20,7 @@ if(ALLOW_GDRCOPY)
     find_package(GDRCopy)
 endif()
 
+include_directories(${CUDAToolkit_INCLUDE_DIRS})
 include(CTest)
 include(FetchContent)
 FetchContent_Declare(googletest URL https://github.com/google/googletest/archive/b796f7d44681514f58a683a3a71ff17c94edb0c1.zip)
