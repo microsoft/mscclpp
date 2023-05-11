@@ -105,6 +105,10 @@ mpirun -allow-run-as-root -map-by ppr:8:node -hostfile /mnt/hostfile -x LD_LIBRA
 
 
 
+## Document
+
+This project maintains Doxygen-based document. To build it, go to `docs` directory and run `doxygen`.
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
