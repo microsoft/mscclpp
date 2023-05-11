@@ -12,22 +12,20 @@
 
 namespace mscclpp {
 
-struct IbMrInfo
-{
+struct IbMrInfo {
   uint64_t addr;
   uint32_t rkey;
 };
 
-class IbMr
-{
-public:
+class IbMr {
+ public:
   ~IbMr();
 
   IbMrInfo getInfo() const;
   const void* getBuff() const;
   uint32_t getLkey() const;
 
-private:
+ private:
   IbMr(void* pd, void* buff, std::size_t size);
 
   void* mr;
@@ -38,8 +36,7 @@ private:
 };
 
 // QP info to be shared with the remote peer
-struct IbQpInfo
-{
+struct IbQpInfo {
   uint16_t lid;
   uint8_t port;
   uint8_t linkLayer;
@@ -48,9 +45,8 @@ struct IbQpInfo
   int mtu;
 };
 
-class IbQp
-{
-public:
+class IbQp {
+ public:
   ~IbQp();
 
   void rtr(const IbQpInfo& info);
@@ -66,7 +62,7 @@ public:
   IbQpInfo& getInfo();
   const void* getWc(int idx) const;
 
-private:
+ private:
   IbQp(void* ctx, void* pd, int port);
 
   IbQpInfo info;
@@ -81,9 +77,8 @@ private:
   friend class IbCtx;
 };
 
-class IbCtx
-{
-public:
+class IbCtx {
+ public:
   IbCtx(const std::string& devName);
   ~IbCtx();
 
@@ -92,7 +87,7 @@ public:
 
   const std::string& getDevName() const;
 
-private:
+ private:
   bool isPortUsable(int port) const;
   int getAnyActivePort() const;
 
@@ -103,6 +98,6 @@ private:
   std::list<std::unique_ptr<IbMr>> mrs;
 };
 
-} // namespace mscclpp
+}  // namespace mscclpp
 
-#endif // MSCCLPP_IB_HPP_
+#endif  // MSCCLPP_IB_HPP_

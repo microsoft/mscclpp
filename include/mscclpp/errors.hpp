@@ -5,52 +5,46 @@
 
 namespace mscclpp {
 
-enum class ErrorCode
-{
+enum class ErrorCode {
   SystemError,
   InternalError,
   InvalidUsage,
 };
 
-class BaseError : public std::runtime_error
-{
-public:
+class BaseError : public std::runtime_error {
+ public:
   BaseError(std::string message, int errorCode);
   virtual ~BaseError() = default;
   int getErrorCode() const;
 
-private:
+ private:
   int errorCode_;
 };
 
-class Error : public BaseError
-{
-public:
+class Error : public BaseError {
+ public:
   Error(std::string message, ErrorCode errorCode);
   virtual ~Error() = default;
 };
 
-class CudaError : public BaseError
-{
-public:
+class CudaError : public BaseError {
+ public:
   CudaError(std::string message, int errorCode);
   virtual ~CudaError() = default;
 };
 
-class CuError : public BaseError
-{
-public:
+class CuError : public BaseError {
+ public:
   CuError(std::string message, int errorCode);
   virtual ~CuError() = default;
 };
 
-class IbError : public BaseError
-{
-public:
+class IbError : public BaseError {
+ public:
   IbError(std::string message, int errorCode);
   virtual ~IbError() = default;
 };
 
-};     // namespace mscclpp
+};  // namespace mscclpp
 
-#endif // MSCCLPP_ERRORS_HPP_
+#endif  // MSCCLPP_ERRORS_HPP_

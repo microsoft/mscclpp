@@ -6,24 +6,22 @@
 #define MSCCLPP_PATCH 0
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
-#include <mscclpp/errors.hpp>
 #include <bitset>
 #include <future>
 #include <memory>
+#include <mscclpp/errors.hpp>
 #include <string>
 #include <vector>
 
 namespace mscclpp {
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
-struct UniqueId
-{
+struct UniqueId {
   char internal[MSCCLPP_UNIQUE_ID_BYTES];
 };
 
-class BaseBootstrap
-{
-public:
+class BaseBootstrap {
+ public:
   BaseBootstrap(){};
   virtual ~BaseBootstrap() = default;
   virtual int getRank() = 0;
@@ -34,14 +32,12 @@ public:
   virtual void barrier() = 0;
 
   // TODO: move implementations of these helpers out of this header
-  void send(const std::vector<char>& data, int peer, int tag)
-  {
+  void send(const std::vector<char>& data, int peer, int tag) {
     size_t size = data.size();
     send((void*)&size, sizeof(size_t), peer, tag);
     send((void*)data.data(), data.size(), peer, tag + 1);
   }
-  void recv(std::vector<char>& data, int peer, int tag)
-  {
+  void recv(std::vector<char>& data, int peer, int tag) {
     size_t size;
     recv((void*)&size, sizeof(size_t), peer, tag);
     data.resize(size);
@@ -49,9 +45,8 @@ public:
   }
 };
 
-class Bootstrap : public BaseBootstrap
-{
-public:
+class Bootstrap : public BaseBootstrap {
+ public:
   Bootstrap(int rank, int nRanks);
   ~Bootstrap();
 
@@ -67,7 +62,7 @@ public:
   void allGather(void* allData, int size) override;
   void barrier() override;
 
-private:
+ private:
   class Impl;
   std::unique_ptr<Impl> pimpl_;
 };
@@ -81,147 +76,78 @@ private:
  */
 std::unique_ptr<UniqueId> getUniqueId();
 
-enum class Transport
-{
-  Unknown,
-  CudaIpc,
-  IB0,
-  IB1,
-  IB2,
-  IB3,
-  IB4,
-  IB5,
-  IB6,
-  IB7,
-  NumTransports
-};
+enum class Transport { Unknown, CudaIpc, IB0, IB1, IB2, IB3, IB4, IB5, IB6, IB7, NumTransports };
 
 namespace detail {
 const size_t TransportFlagsSize = 10;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
               "TransportFlagsSize must match the number of transports");
 using TransportFlagsBase = std::bitset<TransportFlagsSize>;
-} // namespace detail
+}  // namespace detail
 
-class TransportFlags : private detail::TransportFlagsBase
-{
-public:
+class TransportFlags : private detail::TransportFlagsBase {
+ public:
   TransportFlags() = default;
-  TransportFlags(Transport transport) : detail::TransportFlagsBase(1 << static_cast<size_t>(transport))
-  {
-  }
+  TransportFlags(Transport transport) : detail::TransportFlagsBase(1 << static_cast<size_t>(transport)) {}
 
-  bool has(Transport transport) const
-  {
-    return detail::TransportFlagsBase::test(static_cast<size_t>(transport));
-  }
+  bool has(Transport transport) const { return detail::TransportFlagsBase::test(static_cast<size_t>(transport)); }
 
-  bool none() const
-  {
-    return detail::TransportFlagsBase::none();
-  }
+  bool none() const { return detail::TransportFlagsBase::none(); }
 
-  bool any() const
-  {
-    return detail::TransportFlagsBase::any();
-  }
+  bool any() const { return detail::TransportFlagsBase::any(); }
 
-  bool all() const
-  {
-    return detail::TransportFlagsBase::all();
-  }
+  bool all() const { return detail::TransportFlagsBase::all(); }
 
-  size_t count() const
-  {
-    return detail::TransportFlagsBase::count();
-  }
+  size_t count() const { return detail::TransportFlagsBase::count(); }
 
-  TransportFlags& operator|=(TransportFlags other)
-  {
+  TransportFlags& operator|=(TransportFlags other) {
     detail::TransportFlagsBase::operator|=(other);
     return *this;
   }
 
-  TransportFlags operator|(TransportFlags other) const
-  {
-    return TransportFlags(*this) |= other;
-  }
+  TransportFlags operator|(TransportFlags other) const { return TransportFlags(*this) |= other; }
 
-  TransportFlags operator|(Transport transport) const
-  {
-    return *this | TransportFlags(transport);
-  }
+  TransportFlags operator|(Transport transport) const { return *this | TransportFlags(transport); }
 
-  TransportFlags& operator&=(TransportFlags other)
-  {
+  TransportFlags& operator&=(TransportFlags other) {
     detail::TransportFlagsBase::operator&=(other);
     return *this;
   }
 
-  TransportFlags operator&(TransportFlags other) const
-  {
-    return TransportFlags(*this) &= other;
-  }
+  TransportFlags operator&(TransportFlags other) const { return TransportFlags(*this) &= other; }
 
-  TransportFlags operator&(Transport transport) const
-  {
-    return *this & TransportFlags(transport);
-  }
+  TransportFlags operator&(Transport transport) const { return *this & TransportFlags(transport); }
 
-  TransportFlags& operator^=(TransportFlags other)
-  {
+  TransportFlags& operator^=(TransportFlags other) {
     detail::TransportFlagsBase::operator^=(other);
     return *this;
   }
 
-  TransportFlags operator^(TransportFlags other) const
-  {
-    return TransportFlags(*this) ^= other;
-  }
+  TransportFlags operator^(TransportFlags other) const { return TransportFlags(*this) ^= other; }
 
-  TransportFlags operator^(Transport transport) const
-  {
-    return *this ^ TransportFlags(transport);
-  }
+  TransportFlags operator^(Transport transport) const { return *this ^ TransportFlags(transport); }
 
-  TransportFlags operator~() const
-  {
-    return TransportFlags(*this).flip();
-  }
+  TransportFlags operator~() const { return TransportFlags(*this).flip(); }
 
-  bool operator==(TransportFlags other) const
-  {
-    return detail::TransportFlagsBase::operator==(other);
-  }
+  bool operator==(TransportFlags other) const { return detail::TransportFlagsBase::operator==(other); }
 
-  bool operator!=(TransportFlags other) const
-  {
-    return detail::TransportFlagsBase::operator!=(other);
-  }
+  bool operator!=(TransportFlags other) const { return detail::TransportFlagsBase::operator!=(other); }
 
-  detail::TransportFlagsBase toBitset() const
-  {
-    return *this;
-  }
+  detail::TransportFlagsBase toBitset() const { return *this; }
 
-private:
-  TransportFlags(detail::TransportFlagsBase bitset) : detail::TransportFlagsBase(bitset)
-  {
-  }
+ private:
+  TransportFlags(detail::TransportFlagsBase bitset) : detail::TransportFlagsBase(bitset) {}
 };
 
-inline TransportFlags operator|(Transport transport1, Transport transport2)
-{
+inline TransportFlags operator|(Transport transport1, Transport transport2) {
   return TransportFlags(transport1) | transport2;
 }
 
-inline TransportFlags operator&(Transport transport1, Transport transport2)
-{
+inline TransportFlags operator&(Transport transport1, Transport transport2) {
   return TransportFlags(transport1) & transport2;
 }
 
-inline TransportFlags operator^(Transport transport1, Transport transport2)
-{
+inline TransportFlags operator^(Transport transport1, Transport transport2) {
   return TransportFlags(transport1) ^ transport2;
 }
 
@@ -237,14 +163,13 @@ Transport getIBTransportByDeviceName(const std::string& ibDeviceName);
 class Communicator;
 class Connection;
 
-class RegisteredMemory
-{
+class RegisteredMemory {
   struct Impl;
   // A shared_ptr is used since RegisteredMemory is functionally immutable, although internally some state is populated
   // lazily.
   std::shared_ptr<Impl> pimpl;
 
-public:
+ public:
   RegisteredMemory() = default;
   RegisteredMemory(std::shared_ptr<Impl> pimpl);
   ~RegisteredMemory();
@@ -261,9 +186,8 @@ public:
   friend class Communicator;
 };
 
-class Connection
-{
-public:
+class Connection {
+ public:
   virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                      uint64_t size) = 0;
 
@@ -277,47 +201,34 @@ public:
 
   virtual Transport remoteTransport() = 0;
 
-protected:
+ protected:
   static std::shared_ptr<RegisteredMemory::Impl> getRegisteredMemoryImpl(RegisteredMemory&);
 };
 
-struct Setuppable
-{
-  virtual void beginSetup(std::shared_ptr<BaseBootstrap>)
-  {
-  }
-  virtual void endSetup(std::shared_ptr<BaseBootstrap>)
-  {
-  }
+struct Setuppable {
+  virtual void beginSetup(std::shared_ptr<BaseBootstrap>) {}
+  virtual void endSetup(std::shared_ptr<BaseBootstrap>) {}
 };
 
-template <typename T> class NonblockingFuture
-{
+template <typename T>
+class NonblockingFuture {
   std::shared_future<T> future;
 
-public:
+ public:
   NonblockingFuture() = default;
-  NonblockingFuture(std::shared_future<T>&& future) : future(std::move(future))
-  {
-  }
+  NonblockingFuture(std::shared_future<T>&& future) : future(std::move(future)) {}
   NonblockingFuture(const NonblockingFuture&) = default;
 
-  bool ready() const
-  {
-    return future.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
-  }
+  bool ready() const { return future.wait_for(std::chrono::seconds(0)) == std::future_status::ready; }
 
-  T get()
-  {
-    if (!ready())
-      throw Error("NonblockingFuture::get() called before ready", ErrorCode::InvalidUsage);
+  T get() {
+    if (!ready()) throw Error("NonblockingFuture::get() called before ready", ErrorCode::InvalidUsage);
     return future.get();
   }
 };
 
-class Communicator
-{
-public:
+class Communicator {
+ public:
   /* Initialize the communicator.
    *
    * Inputs:
@@ -368,19 +279,18 @@ public:
 
   struct Impl;
 
-private:
+ private:
   std::unique_ptr<Impl> pimpl;
 };
-} // namespace mscclpp
+}  // namespace mscclpp
 
 namespace std {
-template <> struct hash<mscclpp::TransportFlags>
-{
-  size_t operator()(const mscclpp::TransportFlags& flags) const
-  {
+template <>
+struct hash<mscclpp::TransportFlags> {
+  size_t operator()(const mscclpp::TransportFlags& flags) const {
     return hash<mscclpp::detail::TransportFlagsBase>()(flags.toBitset());
   }
 };
-} // namespace std
+}  // namespace std
 
-#endif // MSCCLPP_CORE_HPP_
+#endif  // MSCCLPP_CORE_HPP_

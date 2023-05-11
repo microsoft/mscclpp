@@ -1,10 +1,11 @@
-#include "api.h"
+#include <atomic>
 #include <mscclpp/core.hpp>
 #include <mscclpp/proxy.hpp>
+#include <thread>
+
+#include "api.h"
 #include "utils.h"
 #include "utils.hpp"
-#include <atomic>
-#include <thread>
 
 namespace mscclpp {
 
@@ -12,8 +13,7 @@ const int ProxyStopCheckPeriod = 1000;
 
 const int ProxyFlushPeriod = 4;
 
-struct Proxy::Impl
-{
+struct Proxy::Impl {
   ProxyHandler handler;
   std::function<void()> threadInit;
   HostProxyFifo fifo;
@@ -21,29 +21,22 @@ struct Proxy::Impl
   std::atomic_bool running;
 
   Impl(ProxyHandler handler, std::function<void()> threadInit)
-    : handler(handler), threadInit(threadInit), running(false)
-  {
-  }
+      : handler(handler), threadInit(threadInit), running(false) {}
 };
 
-MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, std::function<void()> threadInit)
-{
+MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, std::function<void()> threadInit) {
   pimpl = std::make_unique<Impl>(handler, threadInit);
 }
 
-MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler) : Proxy(handler, [] {})
-{
-}
+MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler) : Proxy(handler, [] {}) {}
 
-MSCCLPP_API_CPP Proxy::~Proxy()
-{
+MSCCLPP_API_CPP Proxy::~Proxy() {
   if (pimpl) {
     stop();
   }
 }
 
-MSCCLPP_API_CPP void Proxy::start()
-{
+MSCCLPP_API_CPP void Proxy::start() {
   pimpl->running = true;
   pimpl->service = std::thread([this] {
     pimpl->threadInit();
@@ -64,8 +57,8 @@ MSCCLPP_API_CPP void Proxy::start()
       }
       // Poll to see if we are ready to send anything
       fifo.poll(&trigger);
-      if (trigger.fst == 0) { // TODO: this check is a potential pitfall for custom triggers
-        continue;             // there is one in progress
+      if (trigger.fst == 0) {  // TODO: this check is a potential pitfall for custom triggers
+        continue;              // there is one in progress
       }
 
       ProxyHandlerResult result = handler(trigger);
@@ -96,17 +89,13 @@ MSCCLPP_API_CPP void Proxy::start()
   });
 }
 
-MSCCLPP_API_CPP void Proxy::stop()
-{
+MSCCLPP_API_CPP void Proxy::stop() {
   pimpl->running = false;
   if (pimpl->service.joinable()) {
     pimpl->service.join();
   }
 }
 
-MSCCLPP_API_CPP HostProxyFifo& Proxy::fifo()
-{
-  return pimpl->fifo;
-}
+MSCCLPP_API_CPP HostProxyFifo& Proxy::fifo() { return pimpl->fifo; }
 
-} // namespace mscclpp
+}  // namespace mscclpp

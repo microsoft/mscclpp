@@ -7,7 +7,6 @@
 #ifndef MSCCLPP_SOCKET_H_
 #define MSCCLPP_SOCKET_H_
 
-#include "mscclpp.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -16,9 +15,11 @@
 #include <stddef.h>
 #include <sys/socket.h>
 
+#include "mscclpp.h"
+
 #define MAX_IFS 16
 #define MAX_IF_NAME_SIZE 16
-#define SLEEP_INT 1000 // connection retry sleep interval in usec
+#define SLEEP_INT 1000  // connection retry sleep interval in usec
 #define SOCKET_NAME_MAXLEN (NI_MAXHOST + NI_MAXSERV)
 #define MSCCLPP_SOCKET_MAGIC 0x564ab9f2fc4b9d6cULL
 
@@ -29,8 +30,7 @@ union mscclppSocketAddress {
   struct sockaddr_in6 sin6;
 };
 
-enum mscclppSocketState
-{
+enum mscclppSocketState {
   mscclppSocketStateNone = 0,
   mscclppSocketStateInitialized = 1,
   mscclppSocketStateAccepting = 2,
@@ -44,8 +44,7 @@ enum mscclppSocketState
   mscclppSocketStateNum = 10
 };
 
-enum mscclppSocketType
-{
+enum mscclppSocketType {
   mscclppSocketTypeUnknown = 0,
   mscclppSocketTypeBootstrap = 1,
   mscclppSocketTypeProxy = 2,
@@ -53,8 +52,7 @@ enum mscclppSocketType
   mscclppSocketTypeNetIb = 4
 };
 
-struct mscclppSocket
-{
+struct mscclppSocket {
   int fd;
   int acceptFd;
   int connectRetries;

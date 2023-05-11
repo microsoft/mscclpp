@@ -5,53 +5,45 @@
 
 namespace mscclpp {
 
-struct alignas(16) EpochIds
-{
+struct alignas(16) EpochIds {
   uint64_t outbound;
   uint64_t inboundReplica;
 };
 
-class BaseEpoch
-{
-private:
+class BaseEpoch {
+ private:
   std::shared_ptr<Connection> connection_;
   RegisteredMemory localEpochIdsRegMem_;
   NonblockingFuture<RegisteredMemory> remoteEpochIdsRegMem_;
 
-protected:
+ protected:
   EpochIds* epochIds_;
   uint64_t* expectedInboundEpochId_;
 
-public:
+ public:
   BaseEpoch(std::shared_ptr<Connection> connection);
   void setup(Communicator& communicator);
   BaseEpoch(const BaseEpoch&) = delete;
   void signal();
 };
 
-class DeviceEpoch : BaseEpoch
-{
-public:
+class DeviceEpoch : BaseEpoch {
+ public:
   DeviceEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
   DeviceEpoch(const DeviceEpoch&) = delete;
   ~DeviceEpoch();
   void signal();
 
-  struct DeviceHandle
-  {
+  struct DeviceHandle {
 #ifdef __CUDACC__
-    __forceinline__ __device__ void wait()
-    {
+    __forceinline__ __device__ void wait() {
       (*expectedInboundEpochId) += 1;
       while (*(volatile uint64_t*)&(epochIds->inboundReplica) < (*expectedInboundEpochId))
         ;
     }
 
-    __forceinline__ __device__ void epochIncrement()
-    {
-      *(volatile uint64_t*)&(epochIds->outbound) += 1;
-    }
-#endif // __CUDACC__
+    __forceinline__ __device__ void epochIncrement() { *(volatile uint64_t*)&(epochIds->outbound) += 1; }
+#endif  // __CUDACC__
 
     EpochIds* epochIds;
     uint64_t* expectedInboundEpochId;
@@ -60,9 +52,8 @@ public:
   DeviceHandle deviceHandle();
 };
 
-class HostEpoch : BaseEpoch
-{
-public:
+class HostEpoch : BaseEpoch {
+ public:
   HostEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
   HostEpoch(const HostEpoch&) = delete;
   ~HostEpoch();
@@ -71,6 +62,6 @@ public:
   void wait();
 };
 
-} // namespace mscclpp
+}  // namespace mscclpp
 
-#endif // MSCCLPP_EPOCH_HPP_
+#endif  // MSCCLPP_EPOCH_HPP_
