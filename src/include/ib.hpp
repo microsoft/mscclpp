@@ -43,6 +43,8 @@ struct IbQpInfo {
   uint32_t qpn;
   uint64_t spn;
   int mtu;
+  uint64_t iid;
+  bool is_grh;
 };
 
 class IbQp {

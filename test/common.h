@@ -64,11 +64,17 @@ typedef enum
   testNumResults = 5
 } testResult_t;
 
+inline testResult_t defaultInitColl()
+{
+  return testSuccess;
+}
+
 struct testColl
 {
   const char name[20];
   void (*getCollByteCount)(size_t* sendcount, size_t* recvcount, size_t* paramcount, size_t* sendInplaceOffset,
                            size_t* recvInplaceOffset, size_t count, int nranks);
+  testResult_t (*initColl)();
   testResult_t (*initData)(struct testArgs* args, int in_place);
   void (*getBw)(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
   testResult_t (*runColl)(void* sendbuff, void* recvbuff, int nranksPerNode, size_t count, mscclppComm_t comm,
@@ -80,6 +86,8 @@ struct testEngine
   void (*getBuffSize)(size_t* sendcount, size_t* recvcount, size_t count, int nranks);
   // We can add more parameters for other communication primitives
   testResult_t (*runTest)(struct testArgs* args);
+  testResult_t (*setupMscclppConnections)(struct testArgs* args);
+  testResult_t (*teardownMscclppConnections)();
 };
 
 extern struct testEngine mscclppTestEngine;
@@ -98,6 +106,7 @@ struct testArgs
   int localRank;
   int nranksPerNode;
   int kernel_num;
+  int in_place;
   void* sendbuff;
   size_t sendBytes;
   size_t sendInplaceOffset;

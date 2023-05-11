@@ -195,8 +195,8 @@ testResult_t AllGatherRunColl(void* sendbuff, void* recvbuff, int nranksPerNode,
   return testSuccess;
 }
 
-struct testColl allGatherTest = {"AllGather", AllGatherGetCollByteCount, AllGatherInitData, AllGatherGetBw,
-                                 AllGatherRunColl};
+struct testColl allGatherTest = {"AllGather",    AllGatherGetCollByteCount, defaultInitColl, AllGatherInitData,
+                                 AllGatherGetBw, AllGatherRunColl};
 
 void AllGatherGetBuffSize(size_t* sendcount, size_t* recvcount, size_t count, int nranks)
 {
@@ -215,6 +215,6 @@ testResult_t AllGatherRunTest(struct testArgs* args)
   return testSuccess;
 }
 
-struct testEngine allGatherEngine = {AllGatherGetBuffSize, AllGatherRunTest};
+struct testEngine allGatherEngine = {AllGatherGetBuffSize, AllGatherRunTest, nullptr, nullptr};
 
 #pragma weak mscclppTestEngine = allGatherEngine
