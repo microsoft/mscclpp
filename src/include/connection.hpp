@@ -2,34 +2,34 @@
 #define MSCCLPP_CONNECTION_HPP_
 
 // TODO(saemal): make this configurable
-#define MSCCLPP_POLLING_WAIT 10000 // in microseconds
+#define MSCCLPP_POLLING_WAIT 3e7  // in microseconds
+
+#include <cuda_runtime.h>
+
+#include <mscclpp/core.hpp>
 
 #include "communicator.hpp"
 #include "ib.hpp"
-#include "mscclpp.hpp"
-#include <cuda_runtime.h>
 
 namespace mscclpp {
 
 // TODO: Add functionality to these classes for Communicator to do connectionSetup
 
-class ConnectionBase : public Connection, public Setuppable
-{
+class ConnectionBase : public Connection, public Setuppable {
   int remoteRank_;
   int tag_;
 
-public:
+ public:
   ConnectionBase(int remoteRank, int tag);
 
   int remoteRank() override;
   int tag() override;
 };
 
-class CudaIpcConnection : public ConnectionBase
-{
+class CudaIpcConnection : public ConnectionBase {
   cudaStream_t stream;
 
-public:
+ public:
   CudaIpcConnection(int remoteRank, int tag);
 
   ~CudaIpcConnection();
@@ -44,14 +44,13 @@ public:
   void flush() override;
 };
 
-class IBConnection : public ConnectionBase
-{
+class IBConnection : public ConnectionBase {
   Transport transport_;
   Transport remoteTransport_;
   IbQp* qp;
   int numSignaledSends;
 
-public:
+ public:
   IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl);
 
   Transport transport() override;
@@ -68,6 +67,6 @@ public:
   void endSetup(std::shared_ptr<BaseBootstrap> bootstrap) override;
 };
 
-} // namespace mscclpp
+}  // namespace mscclpp
 
-#endif // MSCCLPP_CONNECTION_HPP_
+#endif  // MSCCLPP_CONNECTION_HPP_

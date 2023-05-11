@@ -1,214 +1,101 @@
-#include "alloc.h"
-#include "checks.h"
-#include "comm.h"
-#include "debug.h"
-#include "ib.hpp"
-#include "socket.h"
-
-#include <emmintrin.h>
-#include <map>
-#include <sys/syscall.h>
+#include <atomic>
+#include <mscclpp/core.hpp>
+#include <mscclpp/proxy.hpp>
 #include <thread>
 
-#define MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD 100
+#include "api.h"
+#include "utils.h"
+#include "utils.hpp"
 
-#define PROXYCUDACHECK(cmd)                                                                                            \
-  do {                                                                                                                 \
-    cudaError_t err = cmd;                                                                                             \
-    if (err != cudaSuccess) {                                                                                          \
-      WARN("CUDA error from proxy: %s", cudaGetErrorString(err));                                                      \
-      return NULL;                                                                                                     \
-    }                                                                                                                  \
-  } while (false)
+namespace mscclpp {
 
-#define PROXYMSCCLPPCHECK(call)                                                                                        \
-  do {                                                                                                                 \
-    mscclppResult_t res = call;                                                                                        \
-    if (res != mscclppSuccess && res != mscclppInProgress) {                                                           \
-      /* Print the back trace*/                                                                                        \
-      if (mscclppDebugNoWarn == 0)                                                                                     \
-        INFO(MSCCLPP_ALL, "%s:%d -> %d", __FILE__, __LINE__, res);                                                     \
-      return NULL;                                                                                                     \
-    }                                                                                                                  \
-  } while (0);
+const int ProxyStopCheckPeriod = 1000;
 
-struct proxyArgs
-{
-  struct mscclppComm* comm;
-  struct mscclppProxyState* proxyState;
+const int ProxyFlushPeriod = 4;
+
+struct Proxy::Impl {
+  ProxyHandler handler;
+  std::function<void()> threadInit;
+  HostProxyFifo fifo;
+  std::thread service;
+  std::atomic_bool running;
+
+  Impl(ProxyHandler handler, std::function<void()> threadInit)
+      : handler(handler), threadInit(threadInit), running(false) {}
 };
 
-mscclppResult_t mscclppProxyFifo::create()
-{
-  MSCCLPPCHECK(mscclppCudaCalloc(&this->fifoHead, 1));
-#if defined(MSCCLPP_USE_GDRCOPY)
-  MSCCLPPCHECK(
-    mscclppGdrCudaCalloc(&this->triggerFifo, &this->triggerFifoDev, MSCCLPP_PROXY_FIFO_SIZE, &this->triggerFifoDesc));
-  MSCCLPPCHECK(mscclppGdrCudaCalloc(&this->fifoTailDevHostPtr, &this->fifoTailDev, 1, &this->fifoTailDesc));
-#else
-  MSCCLPPCHECK(mscclppCudaHostCalloc(&this->triggerFifo, MSCCLPP_PROXY_FIFO_SIZE));
-  MSCCLPPCHECK(mscclppCudaCalloc(&this->fifoTailDev, 1));
-#endif
-  CUDACHECK(cudaStreamCreateWithFlags(&this->stream, cudaStreamNonBlocking));
-  this->fifoTailHost = 0;
-  return mscclppSuccess;
+MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, std::function<void()> threadInit) {
+  pimpl = std::make_unique<Impl>(handler, threadInit);
 }
 
-mscclppResult_t mscclppProxyFifo::destroy()
-{
-  MSCCLPPCHECK(mscclppCudaFree(this->fifoHead));
-#if defined(MSCCLPP_USE_GDRCOPY)
-  MSCCLPPCHECK(mscclppGdrCudaFree(this->triggerFifoDesc));
-  MSCCLPPCHECK(mscclppGdrCudaFree(this->fifoTailDesc));
-#else
-  MSCCLPPCHECK(mscclppCudaHostFree(this->triggerFifo));
-  MSCCLPPCHECK(mscclppCudaFree(this->fifoTailDev));
-#endif
-  CUDACHECK(cudaStreamDestroy(this->stream));
-  return mscclppSuccess;
-}
+MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler) : Proxy(handler, [] {}) {}
 
-// return true if the trigger is valid
-mscclppResult_t mscclppProxyFifo::poll(mscclppTrigger* trigger)
-{
-  __m128i xmm0 = _mm_load_si128((__m128i*)&this->triggerFifo[this->fifoTailHost % MSCCLPP_PROXY_FIFO_SIZE]);
-  _mm_store_si128((__m128i*)trigger, xmm0);
-  return mscclppSuccess;
-}
-
-mscclppResult_t mscclppProxyFifo::pop()
-{
-  *(volatile uint64_t*)(&this->triggerFifo[this->fifoTailHost % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
-  (this->fifoTailHost)++;
-  return mscclppSuccess;
-}
-
-mscclppResult_t mscclppProxyFifo::flushTail(bool sync)
-{
-  // Flush the tail to device memory. This is either triggered every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER to make sure
-  // that the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is for flush
-  // request.
-#if defined(MSCCLPP_USE_GDRCOPY)
-  *(volatile uint64_t*)(this->fifoTailDevHostPtr) = this->fifoTailHost;
-#else
-  CUDACHECK(
-    cudaMemcpyAsync(this->fifoTailDev, &(this->fifoTailHost), sizeof(uint64_t), cudaMemcpyHostToDevice, this->stream));
-  if (sync) {
-    CUDACHECK(cudaStreamSynchronize(this->stream));
-  }
-#endif
-  return mscclppSuccess;
-}
-
-static void processTrigger(const mscclppTrigger trigger, mscclppConn* conn)
-{
-  // Iterate over what send is needed
-  if (trigger.fields.type & mscclppData) {
-    conn->hostConn->put(trigger.fields.dstDataOffset, trigger.fields.srcDataOffset, trigger.fields.dataSize);
-  }
-
-  if (trigger.fields.type & mscclppFlag) {
-    conn->hostConn->signal();
-  }
-
-  // Wait for completion
-  if (trigger.fields.type & mscclppSync) {
-    conn->hostConn->flush();
+MSCCLPP_API_CPP Proxy::~Proxy() {
+  if (pimpl) {
+    stop();
   }
 }
 
-void* mscclppProxyService(void* _args)
-{
-  struct proxyArgs* args = (struct proxyArgs*)_args;
-  struct mscclppComm* comm = args->comm;
-  struct mscclppProxyState* proxyState = args->proxyState;
-  free(_args); // allocated in mscclppProxyCreate
+MSCCLPP_API_CPP void Proxy::start() {
+  pimpl->running = true;
+  pimpl->service = std::thread([this] {
+    pimpl->threadInit();
 
-  // from this point on, proxy thread will stay close to the device
-  PROXYCUDACHECK(cudaSetDevice(comm->cudaDev));
-  PROXYMSCCLPPCHECK(numaBind(comm->devNumaNode));
+    ProxyHandler handler = this->pimpl->handler;
+    HostProxyFifo& fifo = this->pimpl->fifo;
+    std::atomic_bool& running = this->pimpl->running;
+    ProxyTrigger trigger;
 
-  struct mscclppProxyFifo* fifo = &proxyState->fifo;
-  volatile mscclppProxyRunState_t* run = &proxyState->run;
-  mscclppTrigger trigger;
+    int runCnt = ProxyStopCheckPeriod;
+    uint64_t flushCnt = 0;
+    for (;;) {
+      if (runCnt-- == 0) {
+        runCnt = ProxyStopCheckPeriod;
+        if (!running) {
+          break;
+        }
+      }
+      // Poll to see if we are ready to send anything
+      fifo.poll(&trigger);
+      if (trigger.fst == 0) {  // TODO: this check is a potential pitfall for custom triggers
+        continue;              // there is one in progress
+      }
 
-  int runCnt = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
-  uint64_t flushCnt = 0;
-  for (;;) {
-    if (runCnt-- == 0) {
-      runCnt = MSCCLPP_PROXY_RUN_STATE_CHECK_PERIOD;
-      if (*run != MSCCLPP_PROXY_RUN_STATE_RUNNING) {
+      ProxyHandlerResult result = handler(trigger);
+
+      // Send completion: reset only the high 64 bits
+      fifo.pop();
+      // Flush the tail to device memory. This is either triggered every ProxyFlushPeriod to make sure
+      // that the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is for flush
+      // request.
+      if ((++flushCnt % ProxyFlushPeriod) == 0 || result == ProxyHandlerResult::FlushFifoTailAndContinue) {
+        // TODO: relocate this check: || (trigger.fields.type & mscclppSync)
+        fifo.flushTail();
+      }
+
+      if (result == ProxyHandlerResult::Stop) {
         break;
       }
     }
-    // Poll to see if we are ready to send anything
-    PROXYMSCCLPPCHECK(fifo->poll(&trigger));
-    if (trigger.value[0] == 0) {
-      continue; // there is one in progreess
-    }
 
-    mscclppConn* conn = &comm->conns[trigger.fields.connId];
-    processTrigger(trigger, conn);
-
-    // Send completion: reset only the high 64 bits
-    PROXYMSCCLPPCHECK(fifo->pop());
-    // Flush the tail to device memory. This is either triggered every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER to make sure
-    // that the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is for flush
-    // request.
-    if (((++flushCnt % MSCCLPP_PROXY_FIFO_FLUSH_COUNTER) == 0) || (trigger.fields.type & mscclppSync)) {
-      PROXYMSCCLPPCHECK(fifo->flushTail());
-    }
-  }
-
-  // make sure the tail is flushed before we shut the proxy
-  PROXYMSCCLPPCHECK(fifo->flushTail(/*sync=*/true));
-  bool isP2pProxy = (proxyState->ibContext == nullptr);
-  if (isP2pProxy) {
-    cudaStream_t p2pStream = proxyState->p2pStream;
-    PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
-  }
-  *run = MSCCLPP_PROXY_RUN_STATE_IDLE;
-  return NULL;
+    // make sure the tail is flushed before we shut the proxy
+    fifo.flushTail(/*sync=*/true);
+    // TODO: do these need to run?
+    // bool isP2pProxy = (proxyState->ibContext == nullptr);
+    // if (isP2pProxy) {
+    //   cudaStream_t p2pStream = proxyState->p2pStream;
+    //   PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
+    // }
+  });
 }
 
-mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm)
-{
-  for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
-    struct mscclppProxyState* proxyState = comm->proxyState[i];
-    if (proxyState == NULL)
-      break;
-
-    struct proxyArgs* args;
-    MSCCLPPCHECK(mscclppCalloc(&args, 1));
-    args->comm = comm;
-    args->proxyState = proxyState;
-
-    proxyState->run = MSCCLPP_PROXY_RUN_STATE_RUNNING;
-    pthread_create(&proxyState->thread, NULL, mscclppProxyService, args);
-    if (proxyState->transportType == mscclppTransportP2P) {
-      mscclppSetThreadName(proxyState->thread, "MSCCLPP Service P2P - %02d", comm->cudaDev);
-    } else if (proxyState->transportType == mscclppTransportIB) {
-      mscclppSetThreadName(proxyState->thread, "MSCCLPP Service IB - %02d", i);
-    }
+MSCCLPP_API_CPP void Proxy::stop() {
+  pimpl->running = false;
+  if (pimpl->service.joinable()) {
+    pimpl->service.join();
   }
-  return mscclppSuccess;
 }
 
-mscclppResult_t mscclppProxyDestroy(struct mscclppComm* comm)
-{
-  for (int i = 0; i < MSCCLPP_PROXY_MAX_NUM; ++i) {
-    struct mscclppProxyState* proxyState = comm->proxyState[i];
-    if (proxyState == NULL)
-      break;
+MSCCLPP_API_CPP HostProxyFifo& Proxy::fifo() { return pimpl->fifo; }
 
-    volatile int* run = (volatile int*)&proxyState->run;
-    if (*run == MSCCLPP_PROXY_RUN_STATE_IDLE) {
-      continue;
-    }
-    *run = MSCCLPP_PROXY_RUN_STATE_EXITING;
-    while (*run == MSCCLPP_PROXY_RUN_STATE_EXITING && *comm->abortFlag == 0) {
-      usleep(1000);
-    }
-  }
-  return mscclppSuccess;
-}
+}  // namespace mscclpp

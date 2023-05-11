@@ -1,19 +1,18 @@
+#include "communicator.hpp"
+
+#include <mscclpp/core.hpp>
 #include <sstream>
 
 #include "api.h"
 #include "checks.hpp"
-#include "comm.h"
-#include "communicator.hpp"
 #include "connection.hpp"
 #include "debug.h"
-#include "mscclpp.hpp"
 #include "registered_memory.hpp"
 #include "utils.h"
 
 namespace mscclpp {
 
-Communicator::Impl::Impl(std::shared_ptr<BaseBootstrap> bootstrap) : bootstrap_(bootstrap)
-{
+Communicator::Impl::Impl(std::shared_ptr<BaseBootstrap> bootstrap) : bootstrap_(bootstrap) {
   rankToHash_.resize(bootstrap->getNranks());
   auto hostHash = getHostHash();
   INFO(MSCCLPP_INIT, "Host hash: %lx", hostHash);
@@ -21,13 +20,9 @@ Communicator::Impl::Impl(std::shared_ptr<BaseBootstrap> bootstrap) : bootstrap_(
   bootstrap->allGather(rankToHash_.data(), sizeof(uint64_t));
 }
 
-Communicator::Impl::~Impl()
-{
-  ibContexts_.clear();
-}
+Communicator::Impl::~Impl() { ibContexts_.clear(); }
 
-IbCtx* Communicator::Impl::getIbContext(Transport ibTransport)
-{
+IbCtx* Communicator::Impl::getIbContext(Transport ibTransport) {
   // Find IB context or create it
   auto it = ibContexts_.find(ibTransport);
   if (it == ibContexts_.end()) {
@@ -42,29 +37,20 @@ IbCtx* Communicator::Impl::getIbContext(Transport ibTransport)
 MSCCLPP_API_CPP Communicator::~Communicator() = default;
 
 MSCCLPP_API_CPP Communicator::Communicator(std::shared_ptr<BaseBootstrap> bootstrap)
-  : pimpl(std::make_unique<Impl>(bootstrap))
-{
-}
+    : pimpl(std::make_unique<Impl>(bootstrap)) {}
 
-MSCCLPP_API_CPP std::shared_ptr<BaseBootstrap> Communicator::bootstrapper()
-{
-  return pimpl->bootstrap_;
-}
+MSCCLPP_API_CPP std::shared_ptr<BaseBootstrap> Communicator::bootstrapper() { return pimpl->bootstrap_; }
 
-MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports)
-{
+MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports) {
   return RegisteredMemory(
-    std::make_shared<RegisteredMemory::Impl>(ptr, size, pimpl->bootstrap_->getRank(), transports, *pimpl));
+      std::make_shared<RegisteredMemory::Impl>(ptr, size, pimpl->bootstrap_->getRank(), transports, *pimpl));
 }
 
-struct MemorySender : public Setuppable
-{
-  MemorySender(RegisteredMemory memory, int remoteRank, int tag) : memory_(memory), remoteRank_(remoteRank), tag_(tag)
-  {
-  }
+struct MemorySender : public Setuppable {
+  MemorySender(RegisteredMemory memory, int remoteRank, int tag)
+      : memory_(memory), remoteRank_(remoteRank), tag_(tag) {}
 
-  void beginSetup(std::shared_ptr<BaseBootstrap> bootstrap) override
-  {
+  void beginSetup(std::shared_ptr<BaseBootstrap> bootstrap) override {
     bootstrap->send(memory_.serialize(), remoteRank_, tag_);
   }
 
@@ -73,19 +59,14 @@ struct MemorySender : public Setuppable
   int tag_;
 };
 
-MSCCLPP_API_CPP void Communicator::sendMemoryOnSetup(RegisteredMemory memory, int remoteRank, int tag)
-{
-  addSetup(std::make_shared<MemorySender>(memory, remoteRank, tag));
+MSCCLPP_API_CPP void Communicator::sendMemoryOnSetup(RegisteredMemory memory, int remoteRank, int tag) {
+  onSetup(std::make_shared<MemorySender>(memory, remoteRank, tag));
 }
 
-struct MemoryReceiver : public Setuppable
-{
-  MemoryReceiver(int remoteRank, int tag) : remoteRank_(remoteRank), tag_(tag)
-  {
-  }
+struct MemoryReceiver : public Setuppable {
+  MemoryReceiver(int remoteRank, int tag) : remoteRank_(remoteRank), tag_(tag) {}
 
-  void endSetup(std::shared_ptr<BaseBootstrap> bootstrap) override
-  {
+  void endSetup(std::shared_ptr<BaseBootstrap> bootstrap) override {
     std::vector<char> data;
     bootstrap->recv(data, remoteRank_, tag_);
     memoryPromise_.set_value(RegisteredMemory::deserialize(data));
@@ -96,15 +77,13 @@ struct MemoryReceiver : public Setuppable
   int tag_;
 };
 
-MSCCLPP_API_CPP NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSetup(int remoteRank, int tag)
-{
+MSCCLPP_API_CPP NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSetup(int remoteRank, int tag) {
   auto memoryReceiver = std::make_shared<MemoryReceiver>(remoteRank, tag);
-  addSetup(memoryReceiver);
+  onSetup(memoryReceiver);
   return NonblockingFuture<RegisteredMemory>(memoryReceiver->memoryPromise_.get_future());
 }
 
-MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int remoteRank, int tag, Transport transport)
-{
+MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int remoteRank, int tag, Transport transport) {
   std::shared_ptr<ConnectionBase> conn;
   if (transport == Transport::CudaIpc) {
     // sanity check: make sure the IPC connection is being made within a node
@@ -114,7 +93,7 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int rem
          << pimpl->rankToHash_[pimpl->bootstrap_->getRank()] << ")"
          << " != " << pimpl->bootstrap_->getRank() << "(" << std::hex
          << pimpl->rankToHash_[pimpl->bootstrap_->getRank()] << ")";
-      throw mscclpp::Error(ss.str(), mscclppInternalError);
+      throw mscclpp::Error(ss.str(), ErrorCode::InvalidUsage);
     }
     auto cudaIpcConn = std::make_shared<CudaIpcConnection>(remoteRank, tag);
     conn = cudaIpcConn;
@@ -128,20 +107,18 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int rem
          pimpl->bootstrap_->getRank(), pimpl->rankToHash_[pimpl->bootstrap_->getRank()],
          getIBDeviceName(transport).c_str(), remoteRank, pimpl->rankToHash_[remoteRank]);
   } else {
-    throw mscclpp::Error("Unsupported transport", mscclppInvalidArgument);
+    throw mscclpp::Error("Unsupported transport", ErrorCode::InternalError);
   }
   pimpl->connections_.push_back(conn);
-  addSetup(conn);
+  onSetup(conn);
   return conn;
 }
 
-MSCCLPP_API_CPP void Communicator::addSetup(std::shared_ptr<Setuppable> setuppable)
-{
+MSCCLPP_API_CPP void Communicator::onSetup(std::shared_ptr<Setuppable> setuppable) {
   pimpl->toSetup_.push_back(setuppable);
 }
 
-MSCCLPP_API_CPP void Communicator::setup()
-{
+MSCCLPP_API_CPP void Communicator::setup() {
   for (auto& setuppable : pimpl->toSetup_) {
     setuppable->beginSetup(pimpl->bootstrap_);
   }
@@ -151,4 +128,4 @@ MSCCLPP_API_CPP void Communicator::setup()
   pimpl->toSetup_.clear();
 }
 
-} // namespace mscclpp
+}  // namespace mscclpp

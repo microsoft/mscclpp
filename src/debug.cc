@@ -5,6 +5,7 @@
  ************************************************************************/
 
 #include "debug.h"
+
 #include <cuda_runtime.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -15,8 +16,8 @@ int mscclppDebugLevel = -1;
 static int pid = -1;
 static char hostname[1024];
 thread_local int mscclppDebugNoWarn = 0;
-char mscclppLastError[1024] = "";         // Global string for the last error in human readable form
-uint64_t mscclppDebugMask = MSCCLPP_INIT; // Default debug sub-system mask is INIT
+char mscclppLastError[1024] = "";          // Global string for the last error in human readable form
+uint64_t mscclppDebugMask = MSCCLPP_INIT;  // Default debug sub-system mask is INIT
 FILE* mscclppDebugFile = stdout;
 mscclppLogHandler_t mscclppDebugLogHandler = NULL;
 pthread_mutex_t mscclppDebugLock = PTHREAD_MUTEX_INITIALIZER;
@@ -24,13 +25,9 @@ std::chrono::steady_clock::time_point mscclppEpoch;
 
 static __thread int tid = -1;
 
-void mscclppDebugDefaultLogHandler(const char* msg)
-{
-  fwrite(msg, 1, strlen(msg), mscclppDebugFile);
-}
+void mscclppDebugDefaultLogHandler(const char* msg) { fwrite(msg, 1, strlen(msg), mscclppDebugFile); }
 
-void mscclppDebugInit()
-{
+void mscclppDebugInit() {
   pthread_mutex_lock(&mscclppDebugLock);
   if (mscclppDebugLevel != -1) {
     pthread_mutex_unlock(&mscclppDebugLock);
@@ -121,33 +118,32 @@ void mscclppDebugInit()
         continue;
       }
       switch (mscclppDebugFileEnv[c++]) {
-      case '%': // Double %
-        *dfn++ = '%';
-        break;
-      case 'h': // %h = hostname
-        dfn += snprintf(dfn, PATH_MAX, "%s", hostname);
-        break;
-      case 'p': // %p = pid
-        dfn += snprintf(dfn, PATH_MAX, "%d", pid);
-        break;
-      default: // Echo everything we don't understand
-        *dfn++ = '%';
-        *dfn++ = mscclppDebugFileEnv[c - 1];
-        break;
+        case '%':  // Double %
+          *dfn++ = '%';
+          break;
+        case 'h':  // %h = hostname
+          dfn += snprintf(dfn, PATH_MAX, "%s", hostname);
+          break;
+        case 'p':  // %p = pid
+          dfn += snprintf(dfn, PATH_MAX, "%d", pid);
+          break;
+        default:  // Echo everything we don't understand
+          *dfn++ = '%';
+          *dfn++ = mscclppDebugFileEnv[c - 1];
+          break;
       }
     }
     *dfn = '\0';
     if (debugFn[0] != '\0') {
       FILE* file = fopen(debugFn, "w");
       if (file != nullptr) {
-        setbuf(file, nullptr); // disable buffering
+        setbuf(file, nullptr);  // disable buffering
         mscclppDebugFile = file;
       }
     }
   }
 
-  if (mscclppDebugLogHandler == NULL)
-    mscclppDebugLogHandler = mscclppDefaultLogHandler;
+  if (mscclppDebugLogHandler == NULL) mscclppDebugLogHandler = mscclppDefaultLogHandler;
 
   mscclppEpoch = std::chrono::steady_clock::now();
   __atomic_store_n(&mscclppDebugLevel, tempNcclDebugLevel, __ATOMIC_RELEASE);
@@ -159,10 +155,8 @@ void mscclppDebugInit()
  * they can share the debugging mechanisms and output files
  */
 void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char* filefunc, int line, const char* fmt,
-                     ...)
-{
-  if (__atomic_load_n(&mscclppDebugLevel, __ATOMIC_ACQUIRE) == -1)
-    mscclppDebugInit();
+                     ...) {
+  if (__atomic_load_n(&mscclppDebugLevel, __ATOMIC_ACQUIRE) == -1) mscclppDebugInit();
   if (mscclppDebugNoWarn != 0 && level == MSCCLPP_LOG_WARN) {
     level = MSCCLPP_LOG_INFO;
     flags = mscclppDebugNoWarn;
@@ -176,8 +170,7 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
     va_end(vargs);
     pthread_mutex_unlock(&mscclppDebugLock);
   }
-  if (mscclppDebugLevel < level || ((flags & mscclppDebugMask) == 0))
-    return;
+  if (mscclppDebugLevel < level || ((flags & mscclppDebugMask) == 0)) return;
 
   if (tid == -1) {
     tid = syscall(SYS_gettid);
@@ -218,20 +211,16 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
   }
 }
 
-mscclppResult_t mscclppDebugSetLogHandler(mscclppLogHandler_t handler)
-{
-  if (__atomic_load_n(&mscclppDebugLevel, __ATOMIC_ACQUIRE) == -1)
-    mscclppDebugInit();
-  if (handler == NULL)
-    return mscclppInvalidArgument;
+mscclppResult_t mscclppDebugSetLogHandler(mscclppLogHandler_t handler) {
+  if (__atomic_load_n(&mscclppDebugLevel, __ATOMIC_ACQUIRE) == -1) mscclppDebugInit();
+  if (handler == NULL) return mscclppInvalidArgument;
   pthread_mutex_lock(&mscclppDebugLock);
   mscclppDebugLogHandler = handler;
   pthread_mutex_unlock(&mscclppDebugLock);
   return mscclppSuccess;
 }
 
-void mscclppSetThreadName(pthread_t thread, const char* fmt, ...)
-{
+void mscclppSetThreadName(pthread_t thread, const char* fmt, ...) {
   // pthread_setname_np is nonstandard GNU extension
   // needs the following feature test macro
 #ifdef _GNU_SOURCE

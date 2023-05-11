@@ -1,22 +1,24 @@
 #include "registered_memory.hpp"
+
+#include <cuda.h>
+
+#include <algorithm>
+
 #include "api.h"
 #include "checks.hpp"
 #include "utils.h"
-#include <algorithm>
-#include <cuda.h>
 
 namespace mscclpp {
 
 RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl)
-  : data(data), size(size), rank(rank), hostHash(commImpl.rankToHash_.at(rank)), transports(transports)
-{
+    : data(data), size(size), rank(rank), hostHash(commImpl.rankToHash_.at(rank)), transports(transports) {
   if (transports.has(Transport::CudaIpc)) {
     TransportInfo transportInfo;
     transportInfo.transport = Transport::CudaIpc;
     cudaIpcMemHandle_t handle;
 
     void* baseDataPtr;
-    size_t baseDataSize; // dummy
+    size_t baseDataSize;  // dummy
     CUTHROW(cuMemGetAddressRange((CUdeviceptr*)&baseDataPtr, &baseDataSize, (CUdeviceptr)data));
     CUDATHROW(cudaIpcGetMemHandle(&handle, baseDataPtr));
     // TODO: bug with offset of base?
@@ -35,60 +37,37 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags t
       this->transportInfos.push_back(transportInfo);
       INFO(MSCCLPP_NET, "IB mr for address %p with size %ld is registered", data, size);
     };
-    if (transports.has(Transport::IB0))
-      addIb(Transport::IB0);
-    if (transports.has(Transport::IB1))
-      addIb(Transport::IB1);
-    if (transports.has(Transport::IB2))
-      addIb(Transport::IB2);
-    if (transports.has(Transport::IB3))
-      addIb(Transport::IB3);
-    if (transports.has(Transport::IB4))
-      addIb(Transport::IB4);
-    if (transports.has(Transport::IB5))
-      addIb(Transport::IB5);
-    if (transports.has(Transport::IB6))
-      addIb(Transport::IB6);
-    if (transports.has(Transport::IB7))
-      addIb(Transport::IB7);
+    if (transports.has(Transport::IB0)) addIb(Transport::IB0);
+    if (transports.has(Transport::IB1)) addIb(Transport::IB1);
+    if (transports.has(Transport::IB2)) addIb(Transport::IB2);
+    if (transports.has(Transport::IB3)) addIb(Transport::IB3);
+    if (transports.has(Transport::IB4)) addIb(Transport::IB4);
+    if (transports.has(Transport::IB5)) addIb(Transport::IB5);
+    if (transports.has(Transport::IB6)) addIb(Transport::IB6);
+    if (transports.has(Transport::IB7)) addIb(Transport::IB7);
   }
 }
 
-MSCCLPP_API_CPP RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) : pimpl(pimpl)
-{
-}
+MSCCLPP_API_CPP RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) : pimpl(pimpl) {}
 
 MSCCLPP_API_CPP RegisteredMemory::~RegisteredMemory() = default;
 
-MSCCLPP_API_CPP void* RegisteredMemory::data()
-{
-  return pimpl->data;
-}
+MSCCLPP_API_CPP void* RegisteredMemory::data() { return pimpl->data; }
 
-MSCCLPP_API_CPP size_t RegisteredMemory::size()
-{
-  return pimpl->size;
-}
+MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl->size; }
 
-MSCCLPP_API_CPP int RegisteredMemory::rank()
-{
-  return pimpl->rank;
-}
+MSCCLPP_API_CPP int RegisteredMemory::rank() { return pimpl->rank; }
 
-MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports()
-{
-  return pimpl->transports;
-}
+MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl->transports; }
 
-MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize()
-{
+MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
   std::vector<char> result;
   std::copy_n(reinterpret_cast<char*>(&pimpl->size), sizeof(pimpl->size), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->rank), sizeof(pimpl->rank), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->hostHash), sizeof(pimpl->hostHash), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->transports), sizeof(pimpl->transports), std::back_inserter(result));
   if (pimpl->transportInfos.size() > std::numeric_limits<int8_t>::max()) {
-    throw mscclpp::Error("Too many transport info entries", mscclppInternalError);
+    throw mscclpp::Error("Too many transport info entries", ErrorCode::InternalError);
   }
   int8_t transportCount = pimpl->transportInfos.size();
   std::copy_n(reinterpret_cast<char*>(&transportCount), sizeof(transportCount), std::back_inserter(result));
@@ -102,19 +81,17 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize()
     } else if (AllIBTransports.has(entry.transport)) {
       std::copy_n(reinterpret_cast<char*>(&entry.ibMrInfo), sizeof(entry.ibMrInfo), std::back_inserter(result));
     } else {
-      throw mscclpp::Error("Unknown transport", mscclppInternalError);
+      throw mscclpp::Error("Unknown transport", ErrorCode::InternalError);
     }
   }
   return result;
 }
 
-MSCCLPP_API_CPP RegisteredMemory RegisteredMemory::deserialize(const std::vector<char>& data)
-{
+MSCCLPP_API_CPP RegisteredMemory RegisteredMemory::deserialize(const std::vector<char>& data) {
   return RegisteredMemory(std::make_shared<Impl>(data));
 }
 
-RegisteredMemory::Impl::Impl(const std::vector<char>& serialization)
-{
+RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
   auto it = serialization.begin();
   std::copy_n(it, sizeof(this->size), reinterpret_cast<char*>(&this->size));
   it += sizeof(this->size);
@@ -143,12 +120,12 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization)
       it += sizeof(transportInfo.ibMrInfo);
       transportInfo.ibLocal = false;
     } else {
-      throw mscclpp::Error("Unknown transport", mscclppInternalError);
+      throw mscclpp::Error("Unknown transport", ErrorCode::InternalError);
     }
     this->transportInfos.push_back(transportInfo);
   }
   if (it != serialization.end()) {
-    throw mscclpp::Error("Serialization failed", mscclppInternalError);
+    throw mscclpp::Error("Serialization failed", ErrorCode::InternalError);
   }
 
   if (transports.has(Transport::CudaIpc)) {
@@ -163,4 +140,4 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization)
   }
 }
 
-} // namespace mscclpp
+}  // namespace mscclpp

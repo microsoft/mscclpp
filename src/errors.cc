@@ -1,30 +1,19 @@
-#include "errors.hpp"
+#include <mscclpp/errors.hpp>
+
+#include "api.h"
 
 namespace mscclpp {
 
-BaseError::BaseError(std::string message, int errorCode) : std::runtime_error(message), errorCode_(errorCode)
-{
-}
+BaseError::BaseError(std::string message, int errorCode) : std::runtime_error(message), errorCode_(errorCode) {}
 
-int BaseError::getErrorCode() const
-{
-  return errorCode_;
-}
+int BaseError::getErrorCode() const { return errorCode_; }
 
-Error::Error(std::string message, int errorCode) : BaseError(message, errorCode)
-{
-}
+MSCCLPP_API_CPP Error::Error(std::string message, ErrorCode errorCode) : BaseError(message, -1) {}
 
-CudaError::CudaError(std::string message, int errorCode) : BaseError(message, errorCode)
-{
-}
+MSCCLPP_API_CPP CudaError::CudaError(std::string message, int errorCode) : BaseError(message, errorCode) {}
 
-CuError::CuError(std::string message, int errorCode) : BaseError(message, errorCode)
-{
-}
+MSCCLPP_API_CPP CuError::CuError(std::string message, int errorCode) : BaseError(message, errorCode) {}
 
-IbError::IbError(std::string message, int errorCode) : BaseError(message, errorCode)
-{
-}
+MSCCLPP_API_CPP IbError::IbError(std::string message, int errorCode) : BaseError(message, errorCode) {}
 
-}; // namespace mscclpp
+};  // namespace mscclpp

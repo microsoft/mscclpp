@@ -1,15 +1,13 @@
 #ifndef MSCCLPP_PROXY_HPP_
 #define MSCCLPP_PROXY_HPP_
 
-#include "mscclppfifo.hpp"
-
 #include <functional>
 #include <memory>
+#include <mscclpp/fifo.hpp>
 
 namespace mscclpp {
 
-enum class ProxyHandlerResult
-{
+enum class ProxyHandlerResult {
   Continue,
   FlushFifoTailAndContinue,
   Stop,
@@ -18,9 +16,8 @@ enum class ProxyHandlerResult
 class Proxy;
 using ProxyHandler = std::function<ProxyHandlerResult(ProxyTrigger)>;
 
-class Proxy
-{
-public:
+class Proxy {
+ public:
   Proxy(ProxyHandler handler, std::function<void()> threadInit);
   Proxy(ProxyHandler handler);
   ~Proxy();
@@ -30,11 +27,11 @@ public:
 
   HostProxyFifo& fifo();
 
-private:
+ private:
   struct Impl;
   std::unique_ptr<Impl> pimpl;
 };
 
-} // namespace mscclpp
+}  // namespace mscclpp
 
-#endif // MSCCLPP_PROXY_HPP_
+#endif  // MSCCLPP_PROXY_HPP_
