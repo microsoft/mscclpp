@@ -121,7 +121,17 @@ public:
   }
 
   mscclpp::ProxyHandlerResult handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
-    // do something with it.
+    if (triggerRaw.fst == 1) {
+      int dataSizePerRank = dataSize / world_size;
+      for (int r = 0; r < world_size; ++r) {
+        if (r == rank) {
+          continue;
+        }
+        connections[r]->write(remoteMemories[r], rank*dataSizePerRank, localMemory, rank*dataSizePerRank, dataSizePerRank);
+        deviceEpochs[r]->signal();
+        connections[r]->flush();
+      }
+    }
     return mscclpp::ProxyHandlerResult::FlushFifoTailAndContinue;
   }
   mscclpp::Proxy proxy;
@@ -129,11 +139,13 @@ public:
   mscclpp::RegisteredMemory localMemory;
   std::vector<std::shared_ptr<mscclpp::HostEpoch>> hostEpochs;
   std::vector<std::shared_ptr<mscclpp::DeviceEpoch>> deviceEpochs;
-  std::vector<std::shared_ptr<mscclpp::Connection>> connections;  
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  int dataSize; 
 };
 
 void setupProxyService(mscclpp::Communicator& comm, MyProxyService& proxyService, int* data_d, int dataSize)
 {
+  proxyService.dataSize = dataSize;
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
   std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
@@ -150,13 +162,16 @@ void setupProxyService(mscclpp::Communicator& comm, MyProxyService& proxyService
     mscclpp::Transport transport;
     if (rankToNode(r) == thisNode) {
       transport = mscclpp::Transport::CudaIpc;
-      proxyService.hostEpochs.emplace_back(nullptr);
     } else {
       transport = ibTransport;
-      proxyService.hostEpochs.emplace_back(std::make_shared<mscclpp::HostEpoch>(comm, proxyService.connections[r]));
     }
     // Connect with all other ranks
     proxyService.connections[r] = comm.connectOnSetup(r, 0, transport);
+    if (rankToNode(r) == thisNode) {
+      proxyService.hostEpochs.emplace_back(nullptr);
+    } else {
+      proxyService.hostEpochs.emplace_back(std::make_shared<mscclpp::HostEpoch>(comm, proxyService.connections[r]));
+    }
     proxyService.deviceEpochs.emplace_back(std::make_shared<mscclpp::DeviceEpoch>(comm, proxyService.connections[r]));
     comm.sendMemoryOnSetup(proxyService.localMemory, r, 0);
 
@@ -198,7 +213,7 @@ std::unordered_map<std::string, std::string> parseArgs(int argc, char* argv[])
 
 int main(int argc, char* argv[])
 {
-  sleep(10);
+  // sleep(10);
   MPI_Init(&argc, &argv);
   auto parsedArgs = parseArgs(argc, argv);
 
@@ -256,11 +271,13 @@ int main(int argc, char* argv[])
 
   CUDACHECK(cudaMalloc(&deviceHandles, sizeof(mscclpp::DeviceEpoch::DeviceHandle) * world_size));
   for (int i = 0; i < world_size; ++i) {
+    if (i == rank)
+      continue;
     auto handle = proxyService.deviceEpochs[i]->deviceHandle();
     CUDACHECK(cudaMemcpy(&deviceHandles[i], &handle, sizeof(mscclpp::DeviceEpoch::DeviceHandle), cudaMemcpyHostToDevice));
   }
 
-  // kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles);
+  kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles);
   CUDACHECK(cudaStreamSynchronize(stream));
 
   CUDACHECK(cudaMemcpy(data_h, data_d, dataSize, cudaMemcpyDeviceToHost));
@@ -274,8 +291,73 @@ int main(int argc, char* argv[])
   }
 
   bootstrap->barrier();
+  if (rank == 0)
+    printf("Correctness test passed!\n");
 
-  printf("Rank %d succeeded!\n", rank);
+  double t0, t1, ms, time_in_us;
+  int iterwithoutcudagraph = 10;
+  if (rank == 0)
+    printf("Running %d iterations of the kernel without CUDA graph\n", iterwithoutcudagraph);
+  CUDACHECK(cudaStreamSynchronize(stream));
+  bootstrap->barrier();
+  t0 = getTime();
+  for (int i = 0; i < iterwithoutcudagraph; ++i) {
+    kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles);
+  }
+  CUDACHECK(cudaStreamSynchronize(stream));
+  bootstrap->barrier();
+  t1 = getTime();
+  ms = (t1 - t0) * 1000.0;
+  time_in_us = ms * 1000. / (float)iterwithoutcudagraph;
+  printf("No Graph %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us,
+          (double)(dataSize) / 1e9 / (time_in_us / 1e6));
+
+  // cudaGraph Capture
+  int cudagraphiter = 10;
+  if (rank == 0)
+    printf("Capturing %d iterations of the kernel in a CUDA graph\n", cudagraphiter);
+  cudaGraph_t graph;
+  cudaGraphExec_t instance;
+  cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
+  for (int i = 0; i < cudagraphiter; ++i) {
+    kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles);
+  }
+  cudaStreamEndCapture(stream, &graph);
+  cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
+
+  int cudagraphwarmup = 10;
+  if (rank == 0)
+    printf("Warming up %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphwarmup,
+            cudagraphiter);
+  for (int i = 0; i < cudagraphwarmup; ++i) {
+    cudaGraphLaunch(instance, stream);
+  }
+  CUDACHECK(cudaStreamSynchronize(stream));
+
+  // measure runtime
+  int cudagraphlaunch = 10;
+  if (rank == 0)
+    printf("Running %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphlaunch,
+            cudagraphiter);
+  bootstrap->barrier();
+  t0 = getTime();
+  for (int i = 0; i < cudagraphlaunch; ++i) {
+    cudaGraphLaunch(instance, stream);
+  }
+  CUDACHECK(cudaStreamSynchronize(stream));
+
+  t1 = getTime();
+  ms = (t1 - t0) * 1000.0;
+  time_in_us = ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter;
+  printf("Rank %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us,
+          (double)(dataSize) / 1e9 / (time_in_us / 1e6));
+  bootstrap->barrier();
+
+  if (rank == 0)
+    printf("Stopping MSCCL++ proxy threads\n");
+  proxyService.proxy.stop();
+
+
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
   MPI_Finalize();
