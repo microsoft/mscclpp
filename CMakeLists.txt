@@ -8,6 +8,10 @@ option(USE_MPI_FOR_TESTS "Use MPI for tests" ON)
 option(USE_NPKIT "Use NPKIT" ON)
 option(ALLOW_GDRCOPY "Use GDRCopy, if available" OFF)
 
+if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set (CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/installed" CACHE PATH "default install path" FORCE)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
 find_package(CUDAToolkit REQUIRED)
@@ -24,6 +28,7 @@ include_directories(${CUDAToolkit_INCLUDE_DIRS})
 include(CTest)
 include(FetchContent)
 FetchContent_Declare(googletest URL https://github.com/google/googletest/archive/b796f7d44681514f58a683a3a71ff17c94edb0c1.zip)
+option(INSTALL_GTEST OFF)
 FetchContent_MakeAvailable(googletest)
 include(GoogleTest)
 
@@ -45,5 +50,6 @@ if(ALLOW_GDRCOPY AND GDRCOPY_FOUND)
     target_link_libraries(mscclpp PRIVATE MSCCLPP::gdrcopy)
 endif()
 
+add_subdirectory(include) # This adds the public headers to install with mscclpp
 add_subdirectory(src) # This adds the sources to the mscclpp target
 add_subdirectory(test)
