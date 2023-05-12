@@ -51,18 +51,22 @@ static double getTime(void)
 }
 
 
-__global__ void kernel(int r, int nranks, mscclpp::DeviceProxyFifo fifo, mscclpp::DeviceEpoch::DeviceHandle* handles)
+__global__ void kernel(int r, int nranks, mscclpp::DeviceProxyFifo fifo, mscclpp::DeviceEpoch::DeviceHandle* handles, int handleIndex)
 {
   int tid = threadIdx.x;
   if (tid != r)
     handles[tid].epochIncrement();
+  __syncthreads();
+  uint64_t tail;
   if (tid == 0){
     mscclpp::ProxyTrigger trigger;
-    trigger.fst = 1;
-    fifo.push(trigger);
+    trigger.fst = handleIndex;
+    tail = fifo.push(trigger);
   }
   if (tid != r)
     handles[tid].wait();
+  // if (tid == 0)
+  //   while(*(volatile uint64_t*)fifo.tailReplica < tail) {};
 }
 
 int rankToLocalRank(int rank)
@@ -121,15 +125,15 @@ public:
   }
 
   mscclpp::ProxyHandlerResult handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
-    if (triggerRaw.fst == 1) {
+    if (triggerRaw.fst > 0) {
       int dataSizePerRank = dataSize / world_size;
-      for (int r = 0; r < world_size; ++r) {
-        if (r == rank) {
-          continue;
-        }
-        connections[r]->write(remoteMemories[r], rank*dataSizePerRank, localMemory, rank*dataSizePerRank, dataSizePerRank);
-        deviceEpochs[r]->signal();
-        connections[r]->flush();
+      for (int r = 1; r < world_size; ++r) {
+        int nghr = (rank + r) % world_size;
+        connections[nghr]->write(remoteMemories[nghr], rank*dataSizePerRank, localMemory, rank*dataSizePerRank, dataSizePerRank);
+        if (triggerRaw.fst == 1)
+          deviceEpochs1[nghr]->signal();
+        else
+          deviceEpochs2[nghr]->signal();
       }
     }
     return mscclpp::ProxyHandlerResult::FlushFifoTailAndContinue;
@@ -138,7 +142,8 @@ public:
   std::vector<mscclpp::RegisteredMemory> remoteMemories;
   mscclpp::RegisteredMemory localMemory;
   std::vector<std::shared_ptr<mscclpp::HostEpoch>> hostEpochs;
-  std::vector<std::shared_ptr<mscclpp::DeviceEpoch>> deviceEpochs;
+  std::vector<std::shared_ptr<mscclpp::DeviceEpoch>> deviceEpochs1;
+  std::vector<std::shared_ptr<mscclpp::DeviceEpoch>> deviceEpochs2;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
   int dataSize; 
 };
@@ -156,7 +161,8 @@ void setupProxyService(mscclpp::Communicator& comm, MyProxyService& proxyService
   for (int r = 0; r < world_size; ++r) {
     if (r == rank){
       proxyService.hostEpochs.emplace_back(nullptr);
-      proxyService.deviceEpochs.emplace_back(nullptr);
+      proxyService.deviceEpochs1.emplace_back(nullptr);
+      proxyService.deviceEpochs2.emplace_back(nullptr);
       continue;
     }
     mscclpp::Transport transport;
@@ -172,7 +178,8 @@ void setupProxyService(mscclpp::Communicator& comm, MyProxyService& proxyService
     } else {
       proxyService.hostEpochs.emplace_back(std::make_shared<mscclpp::HostEpoch>(comm, proxyService.connections[r]));
     }
-    proxyService.deviceEpochs.emplace_back(std::make_shared<mscclpp::DeviceEpoch>(comm, proxyService.connections[r]));
+    proxyService.deviceEpochs1.emplace_back(std::make_shared<mscclpp::DeviceEpoch>(comm, proxyService.connections[r]));
+    proxyService.deviceEpochs2.emplace_back(std::make_shared<mscclpp::DeviceEpoch>(comm, proxyService.connections[r]));
     comm.sendMemoryOnSetup(proxyService.localMemory, r, 0);
 
     remoteMemories[r] = comm.recvMemoryOnSetup(r, 0);
@@ -267,17 +274,26 @@ int main(int argc, char* argv[])
     printf("Testing the correctness of AllGather implementation\n");
   cudaStream_t stream;
   CUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-  mscclpp::DeviceEpoch::DeviceHandle* deviceHandles;
+  mscclpp::DeviceEpoch::DeviceHandle* deviceHandles1;
+  mscclpp::DeviceEpoch::DeviceHandle* deviceHandles2;
 
-  CUDACHECK(cudaMalloc(&deviceHandles, sizeof(mscclpp::DeviceEpoch::DeviceHandle) * world_size));
+  CUDACHECK(cudaMalloc(&deviceHandles1, sizeof(mscclpp::DeviceEpoch::DeviceHandle) * world_size));
   for (int i = 0; i < world_size; ++i) {
     if (i == rank)
       continue;
-    auto handle = proxyService.deviceEpochs[i]->deviceHandle();
-    CUDACHECK(cudaMemcpy(&deviceHandles[i], &handle, sizeof(mscclpp::DeviceEpoch::DeviceHandle), cudaMemcpyHostToDevice));
+    auto handle = proxyService.deviceEpochs1[i]->deviceHandle();
+    CUDACHECK(cudaMemcpy(&deviceHandles1[i], &handle, sizeof(mscclpp::DeviceEpoch::DeviceHandle), cudaMemcpyHostToDevice));
   }
 
-  kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles);
+  CUDACHECK(cudaMalloc(&deviceHandles2, sizeof(mscclpp::DeviceEpoch::DeviceHandle) * world_size));
+  for (int i = 0; i < world_size; ++i) {
+    if (i == rank)
+      continue;
+    auto handle = proxyService.deviceEpochs2[i]->deviceHandle();
+    CUDACHECK(cudaMemcpy(&deviceHandles2[i], &handle, sizeof(mscclpp::DeviceEpoch::DeviceHandle), cudaMemcpyHostToDevice));
+  }
+
+  kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles1, 1);
   CUDACHECK(cudaStreamSynchronize(stream));
 
   CUDACHECK(cudaMemcpy(data_h, data_d, dataSize, cudaMemcpyDeviceToHost));
@@ -302,13 +318,14 @@ int main(int argc, char* argv[])
   bootstrap->barrier();
   t0 = getTime();
   for (int i = 0; i < iterwithoutcudagraph; ++i) {
-    kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles);
+    kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles1, 1);
+    kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles2, 2);
   }
   CUDACHECK(cudaStreamSynchronize(stream));
   bootstrap->barrier();
   t1 = getTime();
   ms = (t1 - t0) * 1000.0;
-  time_in_us = ms * 1000. / (float)iterwithoutcudagraph;
+  time_in_us = ms * 1000. / (float)iterwithoutcudagraph / 2;
   printf("No Graph %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us,
           (double)(dataSize) / 1e9 / (time_in_us / 1e6));
 
@@ -320,7 +337,8 @@ int main(int argc, char* argv[])
   cudaGraphExec_t instance;
   cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
   for (int i = 0; i < cudagraphiter; ++i) {
-    kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles);
+    kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles1, 1);
+    kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles2, 2);
   }
   cudaStreamEndCapture(stream, &graph);
   cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
@@ -348,9 +366,10 @@ int main(int argc, char* argv[])
 
   t1 = getTime();
   ms = (t1 - t0) * 1000.0;
-  time_in_us = ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter;
-  printf("Rank %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us,
-          (double)(dataSize) / 1e9 / (time_in_us / 1e6));
+  time_in_us = ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter / 2;
+  if (rank == 0)
+    printf("Rank %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us,
+            (double)(dataSize) / 1e9 / (time_in_us / 1e6));
   bootstrap->barrier();
 
   if (rank == 0)

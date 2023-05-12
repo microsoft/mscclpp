@@ -18,9 +18,15 @@ Communicator::Impl::Impl(std::shared_ptr<BaseBootstrap> bootstrap) : bootstrap_(
   INFO(MSCCLPP_INIT, "Host hash: %lx", hostHash);
   rankToHash_[bootstrap->getRank()] = hostHash;
   bootstrap->allGather(rankToHash_.data(), sizeof(uint64_t));
+
+  CUDATHROW(cudaStreamCreateWithFlags(&ipcStream_, cudaStreamNonBlocking));
 }
 
-Communicator::Impl::~Impl() { ibContexts_.clear(); }
+Communicator::Impl::~Impl() {
+  ibContexts_.clear();
+
+  cudaStreamDestroy(ipcStream_);
+}
 
 IbCtx* Communicator::Impl::getIbContext(Transport ibTransport) {
   // Find IB context or create it
@@ -33,6 +39,8 @@ IbCtx* Communicator::Impl::getIbContext(Transport ibTransport) {
     return it->second.get();
   }
 }
+
+cudaStream_t Communicator::Impl::getIpcStream() { return ipcStream_; }
 
 MSCCLPP_API_CPP Communicator::~Communicator() = default;
 
@@ -95,7 +103,7 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int rem
          << pimpl->rankToHash_[pimpl->bootstrap_->getRank()] << ")";
       throw mscclpp::Error(ss.str(), ErrorCode::InvalidUsage);
     }
-    auto cudaIpcConn = std::make_shared<CudaIpcConnection>(remoteRank, tag);
+    auto cudaIpcConn = std::make_shared<CudaIpcConnection>(remoteRank, tag, pimpl->getIpcStream());
     conn = cudaIpcConn;
     INFO(MSCCLPP_P2P, "Cuda IPC connection between rank %d(%lx) and remoteRank %d(%lx) created",
          pimpl->bootstrap_->getRank(), pimpl->rankToHash_[pimpl->bootstrap_->getRank()], remoteRank,
