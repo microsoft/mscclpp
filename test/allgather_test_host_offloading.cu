@@ -150,12 +150,13 @@ void setupProxyService(mscclpp::Communicator& comm, MyProxyService& proxyService
     mscclpp::Transport transport;
     if (rankToNode(r) == thisNode) {
       transport = mscclpp::Transport::CudaIpc;
+      proxyService.hostEpochs.emplace_back(nullptr);
     } else {
       transport = ibTransport;
+      proxyService.hostEpochs.emplace_back(std::make_shared<mscclpp::HostEpoch>(comm, proxyService.connections[r]));
     }
     // Connect with all other ranks
     proxyService.connections[r] = comm.connectOnSetup(r, 0, transport);
-    proxyService.hostEpochs.emplace_back(std::make_shared<mscclpp::HostEpoch>(comm, proxyService.connections[r]));
     proxyService.deviceEpochs.emplace_back(std::make_shared<mscclpp::DeviceEpoch>(comm, proxyService.connections[r]));
     comm.sendMemoryOnSetup(proxyService.localMemory, r, 0);
 
@@ -197,6 +198,7 @@ std::unordered_map<std::string, std::string> parseArgs(int argc, char* argv[])
 
 int main(int argc, char* argv[])
 {
+  sleep(10);
   MPI_Init(&argc, &argv);
   auto parsedArgs = parseArgs(argc, argv);
 
@@ -258,7 +260,7 @@ int main(int argc, char* argv[])
     CUDACHECK(cudaMemcpy(&deviceHandles[i], &handle, sizeof(mscclpp::DeviceEpoch::DeviceHandle), cudaMemcpyHostToDevice));
   }
 
-  kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles);
+  // kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles);
   CUDACHECK(cudaStreamSynchronize(stream));
 
   CUDACHECK(cudaMemcpy(data_h, data_d, dataSize, cudaMemcpyDeviceToHost));
