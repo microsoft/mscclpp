@@ -7,12 +7,7 @@
 extern "C" {
 #endif
 
-typedef enum : uint64_t
-{
-  mscclppData = 0x1,
-  mscclppFlag = 0x2,
-  mscclppSync = 0x4
-} mscclppTriggerType_t;
+typedef enum : uint64_t { mscclppData = 0x1, mscclppFlag = 0x2, mscclppSync = 0x4 } mscclppTriggerType_t;
 
 #define MSCCLPP_BITS_SIZE 32
 #define MSCCLPP_BITS_OFFSET 32
@@ -23,17 +18,16 @@ typedef enum : uint64_t
 // the summation of number of bits must be 128 or less
 union alignas(16) mscclppTrigger {
   uint64_t value[2];
-  struct
-  {
+  struct {
     // first 64 bits: value[0]
     uint64_t dataSize : MSCCLPP_BITS_SIZE;
     uint64_t srcDataOffset : MSCCLPP_BITS_OFFSET;
-    uint64_t : (64 - MSCCLPP_BITS_SIZE - MSCCLPP_BITS_OFFSET); // ensure 64-bit alignment
+    uint64_t : (64 - MSCCLPP_BITS_SIZE - MSCCLPP_BITS_OFFSET);  // ensure 64-bit alignment
     // second 64 bits: value[1]
     uint64_t dstDataOffset : MSCCLPP_BITS_OFFSET;
     uint64_t connId : MSCCLPP_BITS_CONNID;
     uint64_t type : MSCCLPP_BITS_TYPE;
-    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_CONNID - MSCCLPP_BITS_TYPE); // ensure 64-bit alignment
+    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_CONNID - MSCCLPP_BITS_TYPE);  // ensure 64-bit alignment
   } fields;
 };
 
@@ -49,16 +43,14 @@ typedef mscclppTrigger* mscclppTrigger_t;
  * push() function increments triggerFifoHead, proxyState->fifoTailHost is updated in proxy.cc:mscclppProxyService
  * and it occasionally flushes it to triggerFifoTail via a cudaMemcpyAsync.
  *
- * Why douplicating the tail is a good idea? The fifo is large engouh and we do not need frequent updates
+ * Why duplicating the tail is a good idea? The fifo is large engouh and we do not need frequent updates
  * for the tail as there is usually enough space for device threads to push their work into.
  */
-struct mscclppConcurrentFifo
-{
+struct mscclppConcurrentFifo {
 #ifdef __CUDACC__
 
   __forceinline__ __device__ uint64_t push(uint64_t type, uint64_t dstDataOffset, uint64_t srcDataOffset,
-                                           uint64_t dataSize)
-  {
+                                           uint64_t dataSize) {
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->triggerFifoHead, 1);
     while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->triggerFifoTail))
       ;
@@ -71,16 +63,16 @@ struct mscclppConcurrentFifo
     return curFifoHead;
   }
 
-#endif                         // __CUDACC__
-  mscclppTrigger* triggerFifo; // Allocate on host via cudaHostAlloc. This space is used for pushing the workelements
-  uint64_t* triggerFifoTail;   // Allocated on device. proxyState->fifoTailHost is the true tail on host and pused
-                               // occasionally to device
-  uint64_t* triggerFifoHead;   // Allocated on device. Only accessed by device
+#endif                          // __CUDACC__
+  mscclppTrigger* triggerFifo;  // Allocate on host via cudaHostAlloc. This space is used for pushing the workelements
+  uint64_t* triggerFifoTail;    // Allocated on device. proxyState->fifoTailHost is the true tail on host and pused
+                                // occasionally to device
+  uint64_t* triggerFifoHead;    // Allocated on device. Only accessed by device
   int connId;
 };
 
 #ifdef __cplusplus
-} // end extern "C"
+}  // end extern "C"
 #endif
 
-#endif // MSCCLPPFIFO_H_
+#endif  // MSCCLPPFIFO_H_
