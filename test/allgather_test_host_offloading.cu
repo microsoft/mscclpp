@@ -392,7 +392,9 @@ int main(int argc, char* argv[])
     printf("Stopping MSCCL++ proxy threads\n");
   proxyService.stop();
 
-
+  CUDACHECK(cudaFree(data_d));
+  CUDACHECK(cudaFree(deviceHandles1));
+  CUDACHECK(cudaFree(deviceHandles2));
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
   MPI_Finalize();
