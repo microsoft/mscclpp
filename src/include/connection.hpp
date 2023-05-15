@@ -27,10 +27,10 @@ class ConnectionBase : public Connection, public Setuppable {
 };
 
 class CudaIpcConnection : public ConnectionBase {
-  cudaStream_t stream;
+  cudaStream_t stream_;
 
  public:
-  CudaIpcConnection(int remoteRank, int tag);
+  CudaIpcConnection(int remoteRank, int tag, cudaStream_t stream);
 
   ~CudaIpcConnection();
 

@@ -30,11 +30,10 @@ int ConnectionBase::tag() { return tag_; }
 
 // CudaIpcConnection
 
-CudaIpcConnection::CudaIpcConnection(int remoteRank, int tag) : ConnectionBase(remoteRank, tag) {
-  CUDATHROW(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-}
+CudaIpcConnection::CudaIpcConnection(int remoteRank, int tag, cudaStream_t stream)
+    : ConnectionBase(remoteRank, tag), stream_(stream) {}
 
-CudaIpcConnection::~CudaIpcConnection() { cudaStreamDestroy(stream); }
+CudaIpcConnection::~CudaIpcConnection() {}
 
 Transport CudaIpcConnection::transport() { return Transport::CudaIpc; }
 
@@ -48,14 +47,14 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
   char* dstPtr = (char*)dst.data();
   char* srcPtr = (char*)src.data();
 
-  CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, srcPtr + srcOffset, size, cudaMemcpyDeviceToDevice, stream));
+  CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, srcPtr + srcOffset, size, cudaMemcpyDeviceToDevice, stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection write: from %p to %p, size %lu", srcPtr + srcOffset, dstPtr + dstOffset, size);
 
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)size);
 }
 
 void CudaIpcConnection::flush() {
-  CUDATHROW(cudaStreamSynchronize(stream));
+  CUDATHROW(cudaStreamSynchronize(stream_));
   // npkitCollectExitEvents(conn, NPKIT_EVENT_DMA_SEND_EXIT);
 }
 
