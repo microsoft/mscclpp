@@ -1,9 +1,12 @@
-#include <chrono>
-#include <fstream>
+#include "npkit.h"
+
+#include <cuda_runtime.h>
 #include <unistd.h>
 
+#include <chrono>
+#include <fstream>
+
 #include "alloc.h"
-#include "npkit/npkit.h"
 
 uint64_t NpKit::rank_ = 0;
 
@@ -15,8 +18,7 @@ NpKitEventCollectContext* NpKit::cpu_collect_contexts_ = nullptr;
 uint64_t NpKit::cpu_base_system_timestamp_ = 0;
 uint64_t NpKit::cpu_base_steady_timestamp_ = 0;
 
-mscclppResult_t NpKit::Init(int rank)
-{
+mscclppResult_t NpKit::Init(int rank) {
   uint64_t i = 0;
   NpKitEventCollectContext ctx;
   ctx.event_buffer_head = 0;
@@ -46,8 +48,7 @@ mscclppResult_t NpKit::Init(int rank)
   return mscclppSuccess;
 }
 
-mscclppResult_t NpKit::Dump(const std::string& dump_dir)
-{
+mscclppResult_t NpKit::Dump(const std::string& dump_dir) {
   uint64_t i = 0;
   std::string dump_file_path;
 
@@ -112,8 +113,7 @@ mscclppResult_t NpKit::Dump(const std::string& dump_dir)
   return mscclppSuccess;
 }
 
-mscclppResult_t NpKit::Shutdown()
-{
+mscclppResult_t NpKit::Shutdown() {
   uint64_t i = 0;
 
   // Free CPU event data structures
@@ -133,13 +133,9 @@ mscclppResult_t NpKit::Shutdown()
   return mscclppSuccess;
 }
 
-NpKitEventCollectContext* NpKit::GetGpuEventCollectContexts()
-{
-  return gpu_collect_contexts_;
-}
+NpKitEventCollectContext* NpKit::GetGpuEventCollectContexts() { return gpu_collect_contexts_; }
 
-void NpKit::CollectCpuEvent(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp, int channel_id)
-{
+void NpKit::CollectCpuEvent(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp, int channel_id) {
   uint64_t event_buffer_head = cpu_collect_contexts_[channel_id].event_buffer_head;
   if (event_buffer_head < kMaxNumCpuEventsPerBuffer) {
     NpKitEvent& event = cpu_collect_contexts_[channel_id].event_buffer[event_buffer_head];
@@ -151,8 +147,7 @@ void NpKit::CollectCpuEvent(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t
   }
 }
 
-uint64_t NpKit::GetCpuTimestamp()
-{
+uint64_t NpKit::GetCpuTimestamp() {
   uint64_t cpu_curr_steady_timestamp_ = std::chrono::steady_clock::now().time_since_epoch().count();
   return cpu_base_steady_timestamp_ + (cpu_curr_steady_timestamp_ - cpu_base_steady_timestamp_);
 }

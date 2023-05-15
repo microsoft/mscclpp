@@ -7,17 +7,17 @@
 #ifndef MSCCLPP_ALLOC_H_
 #define MSCCLPP_ALLOC_H_
 
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include "align.h"
 #include "checks.h"
 #include "mscclpp.h"
 #include "utils.h"
-#include <stdlib.h>
-#include <string.h>
-#include <sys/mman.h>
-#include <unistd.h>
 
-template <typename T> mscclppResult_t mscclppCudaHostCallocDebug(T** ptr, size_t nelem, const char* filefunc, int line)
-{
+template <typename T>
+mscclppResult_t mscclppCudaHostCallocDebug(T** ptr, size_t nelem, const char* filefunc, int line) {
   mscclppResult_t result = mscclppSuccess;
   cudaStreamCaptureMode mode = cudaStreamCaptureModeRelaxed;
   *ptr = nullptr;
@@ -27,21 +27,19 @@ template <typename T> mscclppResult_t mscclppCudaHostCallocDebug(T** ptr, size_t
   memset(*ptr, 0, nelem * sizeof(T));
 finish:
   CUDACHECK(cudaThreadExchangeStreamCaptureMode(&mode));
-  if (*ptr == nullptr)
-    WARN("Failed to CUDA host alloc %ld bytes", nelem * sizeof(T));
+  if (*ptr == nullptr) WARN("Failed to CUDA host alloc %ld bytes", nelem * sizeof(T));
   INFO(MSCCLPP_ALLOC, "%s:%d Cuda Host Alloc Size %ld pointer %p", filefunc, line, nelem * sizeof(T), *ptr);
   return result;
 }
 #define mscclppCudaHostCalloc(...) mscclppCudaHostCallocDebug(__VA_ARGS__, __FILE__, __LINE__)
 
-inline mscclppResult_t mscclppCudaHostFree(void* ptr)
-{
+inline mscclppResult_t mscclppCudaHostFree(void* ptr) {
   CUDACHECK(cudaFreeHost(ptr));
   return mscclppSuccess;
 }
 
-template <typename T> mscclppResult_t mscclppCallocDebug(T** ptr, size_t nelem, const char* filefunc, int line)
-{
+template <typename T>
+mscclppResult_t mscclppCallocDebug(T** ptr, size_t nelem, const char* filefunc, int line) {
   void* p = malloc(nelem * sizeof(T));
   if (p == NULL) {
     WARN("Failed to malloc %ld bytes", nelem * sizeof(T));
@@ -54,12 +52,10 @@ template <typename T> mscclppResult_t mscclppCallocDebug(T** ptr, size_t nelem, 
 }
 #define mscclppCalloc(...) mscclppCallocDebug(__VA_ARGS__, __FILE__, __LINE__)
 
-template <typename T> mscclppResult_t mscclppRealloc(T** ptr, size_t oldNelem, size_t nelem)
-{
-  if (nelem < oldNelem)
-    return mscclppInternalError;
-  if (nelem == oldNelem)
-    return mscclppSuccess;
+template <typename T>
+mscclppResult_t mscclppRealloc(T** ptr, size_t oldNelem, size_t nelem) {
+  if (nelem < oldNelem) return mscclppInternalError;
+  if (nelem == oldNelem) return mscclppSuccess;
 
   T* oldp = *ptr;
   T* p = (T*)malloc(nelem * sizeof(T));
@@ -76,8 +72,8 @@ template <typename T> mscclppResult_t mscclppRealloc(T** ptr, size_t oldNelem, s
   return mscclppSuccess;
 }
 
-template <typename T> mscclppResult_t mscclppCudaMallocDebug(T** ptr, size_t nelem, const char* filefunc, int line)
-{
+template <typename T>
+mscclppResult_t mscclppCudaMallocDebug(T** ptr, size_t nelem, const char* filefunc, int line) {
   mscclppResult_t result = mscclppSuccess;
   cudaStreamCaptureMode mode = cudaStreamCaptureModeRelaxed;
   *ptr = nullptr;
@@ -85,15 +81,14 @@ template <typename T> mscclppResult_t mscclppCudaMallocDebug(T** ptr, size_t nel
   CUDACHECKGOTO(cudaMalloc(ptr, nelem * sizeof(T)), result, finish);
 finish:
   CUDACHECK(cudaThreadExchangeStreamCaptureMode(&mode));
-  if (*ptr == nullptr)
-    WARN("Failed to CUDA malloc %ld bytes", nelem * sizeof(T));
+  if (*ptr == nullptr) WARN("Failed to CUDA malloc %ld bytes", nelem * sizeof(T));
   INFO(MSCCLPP_ALLOC, "%s:%d Cuda Alloc Size %ld pointer %p", filefunc, line, nelem * sizeof(T), *ptr);
   return result;
 }
 #define mscclppCudaMalloc(...) mscclppCudaMallocDebug(__VA_ARGS__, __FILE__, __LINE__)
 
-template <typename T> mscclppResult_t mscclppCudaCallocDebug(T** ptr, size_t nelem, const char* filefunc, int line)
-{
+template <typename T>
+mscclppResult_t mscclppCudaCallocDebug(T** ptr, size_t nelem, const char* filefunc, int line) {
   mscclppResult_t result = mscclppSuccess;
   cudaStreamCaptureMode mode = cudaStreamCaptureModeRelaxed;
   *ptr = nullptr;
@@ -107,16 +102,15 @@ template <typename T> mscclppResult_t mscclppCudaCallocDebug(T** ptr, size_t nel
   CUDACHECKGOTO(cudaStreamDestroy(stream), result, finish);
 finish:
   CUDACHECK(cudaThreadExchangeStreamCaptureMode(&mode));
-  if (*ptr == nullptr)
-    WARN("Failed to CUDA calloc %ld bytes", nelem * sizeof(T));
+  if (*ptr == nullptr) WARN("Failed to CUDA calloc %ld bytes", nelem * sizeof(T));
   INFO(MSCCLPP_ALLOC, "%s:%d Cuda Alloc Size %ld pointer %p", filefunc, line, nelem * sizeof(T), *ptr);
   return result;
 }
 #define mscclppCudaCalloc(...) mscclppCudaCallocDebug(__VA_ARGS__, __FILE__, __LINE__)
 
 template <typename T>
-mscclppResult_t mscclppCudaCallocAsyncDebug(T** ptr, size_t nelem, cudaStream_t stream, const char* filefunc, int line)
-{
+mscclppResult_t mscclppCudaCallocAsyncDebug(T** ptr, size_t nelem, cudaStream_t stream, const char* filefunc,
+                                            int line) {
   mscclppResult_t result = mscclppSuccess;
   cudaStreamCaptureMode mode = cudaStreamCaptureModeRelaxed;
   *ptr = nullptr;
@@ -125,15 +119,14 @@ mscclppResult_t mscclppCudaCallocAsyncDebug(T** ptr, size_t nelem, cudaStream_t 
   CUDACHECKGOTO(cudaMemsetAsync(*ptr, 0, nelem * sizeof(T), stream), result, finish);
 finish:
   CUDACHECK(cudaThreadExchangeStreamCaptureMode(&mode));
-  if (*ptr == nullptr)
-    WARN("Failed to CUDA calloc async %ld bytes", nelem * sizeof(T));
+  if (*ptr == nullptr) WARN("Failed to CUDA calloc async %ld bytes", nelem * sizeof(T));
   INFO(MSCCLPP_ALLOC, "%s:%d Cuda Alloc Size %ld pointer %p", filefunc, line, nelem * sizeof(T), *ptr);
   return result;
 }
 #define mscclppCudaCallocAsync(...) mscclppCudaCallocAsyncDebug(__VA_ARGS__, __FILE__, __LINE__)
 
-template <typename T> mscclppResult_t mscclppCudaMemcpy(T* dst, T* src, size_t nelem)
-{
+template <typename T>
+mscclppResult_t mscclppCudaMemcpy(T* dst, T* src, size_t nelem) {
   mscclppResult_t result = mscclppSuccess;
   cudaStreamCaptureMode mode = cudaStreamCaptureModeRelaxed;
   CUDACHECK(cudaThreadExchangeStreamCaptureMode(&mode));
@@ -148,8 +141,8 @@ finish:
   return result;
 }
 
-template <typename T> mscclppResult_t mscclppCudaMemcpyAsync(T* dst, T* src, size_t nelem, cudaStream_t stream)
-{
+template <typename T>
+mscclppResult_t mscclppCudaMemcpyAsync(T* dst, T* src, size_t nelem, cudaStream_t stream) {
   mscclppResult_t result = mscclppSuccess;
   cudaStreamCaptureMode mode = cudaStreamCaptureModeRelaxed;
   CUDACHECK(cudaThreadExchangeStreamCaptureMode(&mode));
@@ -159,8 +152,8 @@ finish:
   return result;
 }
 
-template <typename T> mscclppResult_t mscclppCudaFree(T* ptr)
-{
+template <typename T>
+mscclppResult_t mscclppCudaFree(T* ptr) {
   mscclppResult_t result = mscclppSuccess;
   cudaStreamCaptureMode mode = cudaStreamCaptureModeRelaxed;
   CUDACHECK(cudaThreadExchangeStreamCaptureMode(&mode));
@@ -173,14 +166,12 @@ finish:
 // Allocate memory to be potentially ibv_reg_mr'd. This needs to be
 // allocated on separate pages as those pages will be marked DONTFORK
 // and if they are shared, that could cause a crash in a child process
-inline mscclppResult_t mscclppIbMallocDebug(void** ptr, size_t size, const char* filefunc, int line)
-{
+inline mscclppResult_t mscclppIbMallocDebug(void** ptr, size_t size, const char* filefunc, int line) {
   size_t page_size = sysconf(_SC_PAGESIZE);
   void* p;
   int size_aligned = ROUNDUP(size, page_size);
   int ret = posix_memalign(&p, page_size, size_aligned);
-  if (ret != 0)
-    return mscclppSystemError;
+  if (ret != 0) return mscclppSystemError;
   memset(p, 0, size);
   *ptr = p;
   INFO(MSCCLPP_ALLOC, "%s:%d Ib Alloc Size %ld pointer %p", filefunc, line, size, *ptr);

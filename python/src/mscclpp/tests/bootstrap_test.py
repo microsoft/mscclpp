@@ -73,7 +73,7 @@ def _test_bootstrap_allgather_pickle(options: argparse.Namespace, comm: mscclpp.
     comm.connection_setup()
 
 
-def _test_p2p_connect(options: argparse.Namespace, comm: mscclpp.Comm):
+def _test_rm(options: argparse.Namespace, comm: mscclpp.Comm):
     rank = options.rank
 
     buf = torch.zeros([options.world_size], dtype=torch.int64)
@@ -95,13 +95,18 @@ def _test_p2p_connect(options: argparse.Namespace, comm: mscclpp.Comm):
         mscclpp.TransportType.P2P,
     )
 
+    handles = comm.register_buffer(buf.data_ptr(), buf.element_size() * buf.numel())
+    hamcrest.assert_that(
+        handles,
+        hamcrest.has_length(options.world_size - 1),
+    )
+
     torch.cuda.synchronize()
 
     comm.connection_setup()
 
     comm.launch_proxies()
     comm.stop_proxies()
-
 
 
 def main():
@@ -131,7 +136,7 @@ def main():
         _test_bootstrap_allgather_bytes(options, comm)
         _test_bootstrap_allgather_json(options, comm)
         _test_bootstrap_allgather_pickle(options, comm)
-        _test_p2p_connect(options, comm)
+        _test_rm(options, comm)
     finally:
         comm.close()
 

@@ -5,9 +5,11 @@
  ************************************************************************/
 
 #include "utils.h"
-#include "core.h"
 
+#include <numa.h>
 #include <stdlib.h>
+
+#include <memory>
 #include <string>
 
 // Get current Compute Capability
@@ -20,20 +22,17 @@
 //   return ccMajor*10+ccMinor;
 // }
 
-mscclppResult_t int64ToBusId(int64_t id, char* busId)
-{
+mscclppResult_t int64ToBusId(int64_t id, char* busId) {
   sprintf(busId, "%04lx:%02lx:%02lx.%01lx", (id) >> 20, (id & 0xff000) >> 12, (id & 0xff0) >> 4, (id & 0xf));
   return mscclppSuccess;
 }
 
-mscclppResult_t busIdToInt64(const char* busId, int64_t* id)
-{
-  char hexStr[17]; // Longest possible int64 hex string + null terminator.
+mscclppResult_t busIdToInt64(const char* busId, int64_t* id) {
+  char hexStr[17];  // Longest possible int64 hex string + null terminator.
   int hexOffset = 0;
   for (int i = 0; hexOffset < sizeof(hexStr) - 1; i++) {
     char c = busId[i];
-    if (c == '.' || c == ':')
-      continue;
+    if (c == '.' || c == ':') continue;
     if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) {
       hexStr[hexOffset++] = busId[i];
     } else
@@ -45,8 +44,7 @@ mscclppResult_t busIdToInt64(const char* busId, int64_t* id)
 }
 
 // Convert a logical cudaDev index to the NVML device minor number
-mscclppResult_t getBusId(int cudaDev, std::string* busId)
-{
+mscclppResult_t getBusId(int cudaDev, std::string* busId) {
   // On most systems, the PCI bus ID comes back as in the 0000:00:00.0
   // format. Still need to allocate proper space in case PCI domain goes
   // higher.
@@ -60,8 +58,7 @@ mscclppResult_t getBusId(int cudaDev, std::string* busId)
   return mscclppSuccess;
 }
 
-mscclppResult_t getDeviceNumaNode(int cudaDev, int* numaNode)
-{
+mscclppResult_t getDeviceNumaNode(int cudaDev, int* numaNode) {
   std::string busId;
   MSCCLPPCHECK(getBusId(cudaDev, &busId));
 
@@ -80,21 +77,18 @@ mscclppResult_t getDeviceNumaNode(int cudaDev, int* numaNode)
   return mscclppSuccess;
 }
 
-mscclppResult_t getHostName(char* hostname, int maxlen, const char delim)
-{
+mscclppResult_t getHostName(char* hostname, int maxlen, const char delim) {
   if (gethostname(hostname, maxlen) != 0) {
     strncpy(hostname, "unknown", maxlen);
     return mscclppSystemError;
   }
   int i = 0;
-  while ((hostname[i] != delim) && (hostname[i] != '\0') && (i < maxlen - 1))
-    i++;
+  while ((hostname[i] != delim) && (hostname[i] != '\0') && (i < maxlen - 1)) i++;
   hostname[i] = '\0';
   return mscclppSuccess;
 }
 
-uint64_t getHash(const char* string, int n)
-{
+uint64_t getHash(const char* string, int n) {
   // Based on DJB2a, result = result * 33 ^ char
   uint64_t result = 5381;
   for (int c = 0; c < n; c++) {
@@ -112,8 +106,7 @@ uint64_t getHash(const char* string, int n)
  * This string can be overridden by using the MSCCLPP_HOSTID env var.
  */
 #define HOSTID_FILE "/proc/sys/kernel/random/boot_id"
-uint64_t getHostHash(void)
-{
+uint64_t computeHostHash(void) {
   char hostHash[1024];
   char* hostId;
 
@@ -144,21 +137,24 @@ uint64_t getHostHash(void)
   return getHash(hostHash, strlen(hostHash));
 }
 
+uint64_t getHostHash(void) {
+  thread_local std::unique_ptr<uint64_t> hostHash = std::make_unique<uint64_t>(computeHostHash());
+  return *hostHash;
+}
+
 /* Generate a hash of the unique identifying string for this process
  * that will be unique for both bare-metal and container instances
  * Equivalent of a hash of;
  *
  * $$ $(readlink /proc/self/ns/pid)
  */
-uint64_t getPidHash(void)
-{
+uint64_t getPidHash(void) {
   char pname[1024];
   // Start off with our pid ($$)
   sprintf(pname, "%ld", (long)getpid());
   int plen = strlen(pname);
   int len = readlink("/proc/self/ns/pid", pname + plen, sizeof(pname) - 1 - plen);
-  if (len < 0)
-    len = 0;
+  if (len < 0) len = 0;
 
   pname[plen + len] = '\0';
   TRACE(MSCCLPP_INIT, "unique PID '%s'", pname);
@@ -166,10 +162,8 @@ uint64_t getPidHash(void)
   return getHash(pname, strlen(pname));
 }
 
-int parseStringList(const char* string, struct netIf* ifList, int maxList)
-{
-  if (!string)
-    return 0;
+int parseStringList(const char* string, struct netIf* ifList, int maxList) {
+  if (!string) return 0;
 
   const char* ptr = string;
 
@@ -185,8 +179,7 @@ int parseStringList(const char* string, struct netIf* ifList, int maxList)
         ifNum++;
         ifC = 0;
       }
-      while (c != ',' && c != '\0')
-        c = *(++ptr);
+      while (c != ',' && c != '\0') c = *(++ptr);
     } else if (c == ',' || c == '\0') {
       if (ifC > 0) {
         ifList[ifNum].prefix[ifC] = '\0';
@@ -203,29 +196,22 @@ int parseStringList(const char* string, struct netIf* ifList, int maxList)
   return ifNum;
 }
 
-static bool matchIf(const char* string, const char* ref, bool matchExact)
-{
+static bool matchIf(const char* string, const char* ref, bool matchExact) {
   // Make sure to include '\0' in the exact case
   int matchLen = matchExact ? strlen(string) + 1 : strlen(ref);
   return strncmp(string, ref, matchLen) == 0;
 }
 
-static bool matchPort(const int port1, const int port2)
-{
-  if (port1 == -1)
-    return true;
-  if (port2 == -1)
-    return true;
-  if (port1 == port2)
-    return true;
+static bool matchPort(const int port1, const int port2) {
+  if (port1 == -1) return true;
+  if (port2 == -1) return true;
+  if (port1 == port2) return true;
   return false;
 }
 
-bool matchIfList(const char* string, int port, struct netIf* ifList, int listSize, bool matchExact)
-{
+bool matchIfList(const char* string, int port, struct netIf* ifList, int listSize, bool matchExact) {
   // Make an exception for the case where no user list is defined
-  if (listSize == 0)
-    return true;
+  if (listSize == 0) return true;
 
   for (int i = 0; i < listSize; i++) {
     if (matchIf(string, ifList[i].prefix, matchExact) && matchPort(port, ifList[i].port)) {
@@ -235,8 +221,7 @@ bool matchIfList(const char* string, int port, struct netIf* ifList, int listSiz
   return false;
 }
 
-mscclppResult_t numaBind(int node)
-{
+mscclppResult_t numaBind(int node) {
   int totalNumNumaNodes = numa_num_configured_nodes();
   if (node < 0 || node >= totalNumNumaNodes) {
     WARN("Invalid NUMA node %d, must be between 0 and %d", node, totalNumNumaNodes);
@@ -249,9 +234,7 @@ mscclppResult_t numaBind(int node)
   return mscclppSuccess;
 }
 
-mscclppResult_t getNumaState(mscclppNumaState* state)
-{
-
+mscclppResult_t getNumaState(mscclppNumaState* state) {
   mscclppNumaState state_ = numa_get_run_node_mask();
   if (state_ == NULL) {
     WARN("Failed to get NUMA node mask of the running process");
@@ -261,8 +244,7 @@ mscclppResult_t getNumaState(mscclppNumaState* state)
   return mscclppSuccess;
 }
 
-mscclppResult_t setNumaState(mscclppNumaState state)
-{
+mscclppResult_t setNumaState(mscclppNumaState state) {
   if (state == NULL) {
     WARN("Invalid NUMA state");
     return mscclppInvalidUsage;
@@ -271,12 +253,8 @@ mscclppResult_t setNumaState(mscclppNumaState state)
   return mscclppSuccess;
 }
 
-mscclppTime_t getClock()
-{
-  return std::chrono::steady_clock::now();
-}
+mscclppTime_t getClock() { return std::chrono::steady_clock::now(); }
 
-int64_t elapsedClock(mscclppTime_t start, mscclppTime_t end)
-{
+int64_t elapsedClock(mscclppTime_t start, mscclppTime_t end) {
   return std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
 }

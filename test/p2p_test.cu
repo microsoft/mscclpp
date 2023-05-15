@@ -54,7 +54,7 @@ __global__ void kernel(int rank, int world_size)
   volatile int* data = (volatile int*)devConn.localBuff;
   volatile uint64_t* localFlag = devConn.localFlag;
 #if (USE_DMA_FOR_P2P == 0)
-  volatile uint64_t* remoteFlag = devConn.remoteFlag;
+  volatile uint64_t* remoteSignalEpochId = devConn.remoteSignalEpochId;
 #endif
   volatile uint64_t* proxyFlag = devConn.proxyFlag;
 
@@ -106,7 +106,7 @@ __global__ void kernel(int rank, int world_size)
     volatile int* remoteData = (volatile int*)devConn.remoteBuff;
 
     // Wait until the remote data is set
-    while (*remoteFlag == baseFlag) {
+    while (*remoteSignalEpochId == baseFlag) {
     }
 
     // Read remote data

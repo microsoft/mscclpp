@@ -1,25 +1,28 @@
 #ifndef MSCCLPP_PROXY_H_
 #define MSCCLPP_PROXY_H_
 
-#include "comm.h"
-#include "mscclpp.h"
 #include <cuda_runtime.h>
 #include <pthread.h>
 
-#define MSCCLPP_PROXY_MAX_NUM (MSCCLPP_IB_MAX_DEVS + 1) // One is for a P2P proxy.
+#include <atomic>
 
-typedef enum
-{
+#include "comm.h"
+#include "mscclpp.h"
+
+#define MSCCLPP_PROXY_MAX_NUM (MSCCLPP_IB_MAX_DEVS + 1)  // One is for a P2P proxy.
+
+typedef enum {
   MSCCLPP_PROXY_RUN_STATE_IDLE = 0,
   MSCCLPP_PROXY_RUN_STATE_RUNNING,
   MSCCLPP_PROXY_RUN_STATE_EXITING,
 } mscclppProxyRunState_t;
 
-struct mscclppProxyState
-{
-  mscclppTransport_t transportType;
-  pthread_t thread;
-  mscclppProxyRunState_t run;
+struct mscclppProxyFifo {
+  mscclppResult_t create();
+  mscclppResult_t destroy();
+  mscclppResult_t poll(mscclppTrigger* trigger);
+  mscclppResult_t pop();
+  mscclppResult_t flushTail(bool sync = false);
 
   // fifo cudaHostCalloc'ed that is produced by device and consumed by host
   mscclppTrigger* triggerFifo;
@@ -45,10 +48,20 @@ struct mscclppProxyState
   // these updates are pushed to the device.
   uint64_t fifoTailHost;
 
+  // for transferring fifo tail
+  cudaStream_t stream;
+};
+
+struct mscclppProxyState {
+  mscclppTransport_t transportType;
+  pthread_t thread;
+  mscclppProxyRunState_t run;
+
   int numaNodeToBind;
-  struct mscclppIbContext* ibContext; // For IB connection only
-  cudaStream_t p2pStream;             // for P2P DMA engine only
-  cudaStream_t fifoStream;            // for transferring fifo tail
+  mscclpp::IbCtx* ibContext;  // For IB connection only
+  cudaStream_t p2pStream;     // for P2P DMA engine only
+
+  struct mscclppProxyFifo fifo;
 };
 
 mscclppResult_t mscclppProxyCreate(struct mscclppComm* comm);
