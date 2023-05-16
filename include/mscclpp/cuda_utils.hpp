@@ -56,6 +56,7 @@ Memory safeMake(size_t nelem) {
     if (ptr) {
       Deleter()(ptr);
     }
+    throw;
   }
   return Memory(ptr, Deleter());
 }
