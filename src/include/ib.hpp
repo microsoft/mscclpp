@@ -72,7 +72,7 @@ class IbQp {
   int pollCq();
 
   IbQpInfo& getInfo();
-  const void* getWc(int idx) const;
+  const ibv_wc* getWc(int idx) const;
 
  private:
   IbQp(ibv_context* ctx, ibv_pd* pd, int port);

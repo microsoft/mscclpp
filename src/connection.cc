@@ -113,7 +113,7 @@ void IBConnection::flush() {
                   ErrorCode::InternalError);
     }
     for (int i = 0; i < wcNum; ++i) {
-      const struct ibv_wc* wc = reinterpret_cast<const struct ibv_wc*>(qp->getWc(i));
+      const ibv_wc* wc = qp->getWc(i);
       if (wc->status != IBV_WC_SUCCESS) {
         throw mscclpp::IbError("pollCq failed: status " + std::to_string(wc->status), wc->status);
       }

@@ -79,7 +79,7 @@ int main(int argc, const char* argv[])
           return 1;
         }
         for (int i = 0; i < wcNum; ++i) {
-          const struct ibv_wc* wc = reinterpret_cast<const struct ibv_wc*>(qp->getWc(i));
+          const ibv_wc* wc = qp->getWc(i);
           if (wc->status != IBV_WC_SUCCESS) {
             WARN("wc status %d", wc->status);
             return 1;

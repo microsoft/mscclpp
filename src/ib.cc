@@ -247,7 +247,7 @@ int IbQp::pollCq() { return ibv_poll_cq(this->cq, MSCCLPP_IB_CQ_POLL_NUM, this->
 
 IbQpInfo& IbQp::getInfo() { return this->info; }
 
-const void* IbQp::getWc(int idx) const { return &this->wcs[idx]; }
+const ibv_wc* IbQp::getWc(int idx) const { return &this->wcs[idx]; }
 
 IbCtx::IbCtx(const std::string& devName) : devName(devName) {
   int num;
