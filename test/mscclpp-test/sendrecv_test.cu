@@ -67,22 +67,22 @@ inline mscclpp::Transport getTransport(int rank, int peerRank, int nRanksPerNode
 
 __device__ SyncGpuState GLOBAL_SYNC_STATE;
 
-// __global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock)
-// {
-//   size_t startIndex = blockIdx.x * dataPerBlock;
-//   size_t blockDataSize = min(dataSize - startIndex, dataPerBlock);
-//   int tid = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock)
+{
+  size_t startIndex = blockIdx.x * dataPerBlock;
+  size_t blockDataSize = min(dataSize - startIndex, dataPerBlock);
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-//   mscclpp::channel::SimpleDeviceChannel sendConn = constDevChans[0];
-//   mscclpp::channel::SimpleDeviceChannel recvConn = constDevChans[1];
+  mscclpp::channel::SimpleDeviceChannel sendConn = constDevChans[0];
+  mscclpp::channel::SimpleDeviceChannel recvConn = constDevChans[1];
 
-//   sendConn.putDirect(startIndex, blockDataSize, threadIdx.x, blockDim.x);
-//   sync_gpu(GLOBAL_SYNC_STATE, gridDim.x);
-//   if (tid == 0) {
-//     sendConn.signalDirect();
-//     recvConn.waitDirect();
-//   }
-// }
+  sendConn.putDirect(startIndex, blockDataSize, threadIdx.x, blockDim.x);
+  sync_gpu(GLOBAL_SYNC_STATE, gridDim.x);
+  if (tid == 0) {
+    sendConn.signalDirect();
+    recvConn.wait();
+  }
+}
 
 class SendRecvTestColl : public BaseTestColl {
  public:
@@ -96,10 +96,10 @@ class SendRecvTestColl : public BaseTestColl {
 };
 
 void SendRecvTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
-  // size_t sendBytes = sendCount_ * typeSize_;
-  // int blockNum = getBlockNum(sendBytes);
-  // size_t bytesPerBlock = (sendBytes + blockNum - 1) / blockNum;
-  // kernel<<<blockNum, BLOCK_THREADS_NUM, 0, stream>>>(args.rank, sendBytes, bytesPerBlock);
+  size_t sendBytes = sendCount_ * typeSize_;
+  int blockNum = getBlockNum(sendBytes);
+  size_t bytesPerBlock = (sendBytes + blockNum - 1) / blockNum;
+  kernel<<<blockNum, BLOCK_THREADS_NUM, 0, stream>>>(args.rank, sendBytes, bytesPerBlock);
 }
 
 void SendRecvTestColl::getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) {
@@ -197,12 +197,13 @@ void SendRecvTestEngine::setupConnections() {
   }
   comm_->setup();
 
+  std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
   for (int i : {0, 1}) {
-    mscclpp::channel::SimpleDeviceChannel(chanService_->deviceChannel(chanIds[i]),
-                                          chanService_->addMemory(futureRemoteMemory[i].get()),
-                                          chanService_->addMemory(localMemories_[i]));
+    // We assume ranks in the same node
+    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
+        chanService_->deviceChannel(chanIds[i]), futureRemoteMemory[i].get().data(), localMemories_[i].data()));
   }
-  chanService_->startProxy();
+  cudaMemcpyToSymbol(constDevChans, devChannels.data(), sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size());
 }
 
 void SendRecvTestEngine::teardownConnections() {

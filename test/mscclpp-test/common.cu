@@ -211,6 +211,7 @@ void BaseTestEngine::bootstrap(const TestArgs& args) {
 void BaseTestEngine::setupTest() {
   this->coll_ = testColl;
   this->setupConnections();
+  this->chanService_->startProxy();
 }
 
 size_t BaseTestEngine::checkData() {
@@ -373,7 +374,7 @@ void run() {
   // Gather all output in rank order to root (0)
   MPI_Gather(line, MAX_LINE, MPI_BYTE, lines.get(), MAX_LINE, MPI_BYTE, 0, MPI_COMM_WORLD);
   if (rank == 0) {
-    for (int r = 0; r < totalRanks; r++) PRINT("%s", lines[MAX_LINE * r]);
+    for (int r = 0; r < totalRanks; r++) PRINT("%s", &lines[MAX_LINE * r]);
   }
   MPI_Allreduce(MPI_IN_PLACE, &maxMem, 1, MPI_LONG, MPI_MIN, MPI_COMM_WORLD);
 

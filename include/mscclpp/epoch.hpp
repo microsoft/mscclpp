@@ -14,10 +14,10 @@ class BaseEpoch {
  private:
   std::shared_ptr<Connection> connection_;
   RegisteredMemory localEpochIdsRegMem_;
-  NonblockingFuture<RegisteredMemory> remoteEpochIdsRegMem_;
 
  protected:
   EpochIds* epochIds_;
+  NonblockingFuture<RegisteredMemory> remoteEpochIdsRegMem_;
   uint64_t* expectedInboundEpochId_;
 
  public:
@@ -43,9 +43,18 @@ class DeviceEpoch : BaseEpoch {
     }
 
     __forceinline__ __device__ void epochIncrement() { *(volatile uint64_t*)&(epochIds->outbound) += 1; }
+
+    __forceinline__ __device__ void signalDirect() {
+      // This fence ensures that the writes from a preceding putDirect() are visible on the peer GPU before the
+      // incremented epoch id is visible.
+      __threadfence_system();
+      epochIncrement();
+      *(volatile uint64_t*)&(remoteEpochIds->inboundReplica) = epochIds->outbound;
+    }
 #endif  // __CUDACC__
 
     EpochIds* epochIds;
+    EpochIds* remoteEpochIds;
     uint64_t* expectedInboundEpochId;
   };
 

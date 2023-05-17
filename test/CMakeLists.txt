@@ -21,6 +21,4 @@ add_subdirectory(unit) # This adds the sources to the mscclpp target
 gtest_discover_tests(unit_tests DISCOVERY_MODE PRE_TEST)
 
 # Msccclpp_test
-add_executable(mscclpp_tests)
-target_link_libraries(mscclpp_tests mscclpp MPI::MPI_CXX)
-add_subdirectory(mscclpp-test) # This adds the sources to the mscclpp target
+add_subdirectory(mscclpp-test)
