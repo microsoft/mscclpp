@@ -240,7 +240,9 @@ struct SimpleDeviceChannel {
 
   __forceinline__ __device__ void put(uint64_t offset, uint64_t size) { put(offset, offset, size); }
 
-  __forceinline__ __device__ void putDirect(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {}
+  __forceinline__ __device__ void putDirect(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
+    devChan_.putDirect(dstPtr_, srcPtr_, offset, offset, size, threadId, numThreads);
+  }
 
   __forceinline__ __device__ void signal() { devChan_.signal(); }
 

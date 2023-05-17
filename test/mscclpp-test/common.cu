@@ -26,7 +26,7 @@ size_t stepBytes = 1 * 1024 * 1024;
 size_t stepFactor = 1;
 int datacheck = 1;
 int warmup_iters = 10;
-int iters = 100;
+int iters = 20;
 // Report average iteration time: (0=RANK0,1=AVG,2=MIN,3=MAX)
 int average = 1;
 int kernel_num = 0;
@@ -81,6 +81,24 @@ double parseSize(const char* value) {
 
   return size * units;
 }
+
+double allreduceTime(int worldSize, double value, int average)
+{
+  double accumulator = value;
+
+  if (average != 0) {
+    MPI_Op op = average == 1   ? MPI_SUM
+                : average == 2 ? MPI_MIN
+                : average == 3 ? MPI_MAX
+                : average == 4 ? MPI_SUM
+                               : MPI_Op();
+    MPI_Allreduce(MPI_IN_PLACE, (void*)&accumulator, 1, MPI_DOUBLE, op, MPI_COMM_WORLD);
+  }
+
+  if (average == 1)
+    accumulator /= worldSize;
+  return accumulator;
+}
 }  // namespace
 
 timer::timer()
@@ -124,6 +142,7 @@ double BaseTestEngine::benchTime() {
   double deltaSec = tim.elapsed();
   deltaSec = deltaSec / (iters) / (cudaGraphLaunches);
   // all-reduce to get the average time
+  allreduceTime(args_.totalRanks, deltaSec, average);
   CUDATHROW(cudaGraphExecDestroy(graphExec));
   CUDATHROW(cudaGraphDestroy(graph));
   return deltaSec;
@@ -138,13 +157,17 @@ void BaseTestEngine::runTest()
   // warm-up for large size
   this->coll_->setupCollTest(args_.maxBytes, sizeof(int));
   this->barrier();
-  this->coll_->runColl(args_, stream_);
+  for (int iter = 0; iter < warmup_iters; iter++) {
+    this->coll_->runColl(args_, stream_);
+  }
   CUDATHROW(cudaDeviceSynchronize());
 
   // warm-up for small size
   this->coll_->setupCollTest(args_.minBytes, sizeof(int));
   this->barrier();
-  this->coll_->runColl(args_, stream_);
+  for (int iter = 0; iter < warmup_iters; iter++) {
+    this->coll_->runColl(args_, stream_);
+  }
   CUDATHROW(cudaDeviceSynchronize());
 
   PRINT("#\n");
@@ -172,7 +195,7 @@ void BaseTestEngine::runTest()
 
       nErrors = this->checkData();
       if (nErrors > 0) {
-        this->error++;
+        this->error_++;
       }
       MPI_Allreduce(MPI_IN_PLACE, &nErrors, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     }
@@ -188,14 +211,15 @@ void BaseTestEngine::runTest()
     }
     double algBw, busBw;
     this->coll_->getBw(deltaSec, algBw, busBw);
-    // if (!args_.inPlace) {
-    //   PRINT("                                 ");
-    // }
+    if (!this->inPlace_) {
+      PRINT("                                 ");
+    }
     if (args_.reportErrors) {
       PRINT("  %7s  %6.2f  %6.2f  %5g", timeStr, algBw, busBw, (double)nErrors);
     } else {
       PRINT("  %7s  %6.2f  %6.2f  %5s", timeStr, algBw, busBw, "N/A");
     }
+    PRINT("\n");
   }
   PRINT("\n");
 }

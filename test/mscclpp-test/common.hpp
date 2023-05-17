@@ -59,11 +59,11 @@ class BaseTestColl {
 
 class BaseTestEngine {
  public:
-  BaseTestEngine() = default;
+  BaseTestEngine(bool inPlace) : error_(0), inPlace_(inPlace) {};
   virtual ~BaseTestEngine() = default;
   virtual void allocateBuffer() = 0;
 
-  int getTestErrors() {return error;}
+  int getTestErrors() {return error_;}
   void setupTest();
   void teardownTest();
   void bootstrap(const TestArgs& args);
@@ -86,7 +86,8 @@ class BaseTestEngine {
   std::shared_ptr<mscclpp::Communicator> comm_;
   std::shared_ptr<mscclpp::channel::DeviceChannelService> chanService_;
   cudaStream_t stream_;
-  int error;
+  int error_;
+  bool inPlace_;
 };
 
 extern std::shared_ptr<BaseTestEngine> testEngine;

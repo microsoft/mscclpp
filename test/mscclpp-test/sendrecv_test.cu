@@ -134,11 +134,14 @@ void SendRecvTestColl::setupCollTest(size_t size, size_t typeSize) {
   paramCount_ = base;
   expectedCount_ = base;
   typeSize_ = typeSize;
+
+  SyncGpuState state = {};
+  CUDATHROW(cudaMemcpyToSymbol(GLOBAL_SYNC_STATE, &state, sizeof(SyncGpuState)));
 }
 
 class SendRecvTestEngine : public BaseTestEngine {
  public:
-  SendRecvTestEngine() = default;
+  SendRecvTestEngine() : BaseTestEngine(false) {};
   ~SendRecvTestEngine() override = default;
 
   void allocateBuffer() override;
