@@ -246,6 +246,7 @@ void BaseTestEngine::teardownTest() {
   this->teardown();
   // Reset explicitly to avoid crash
   this->chanService_.reset();
+  CUDATHROW(cudaStreamDestroy(stream_));
 }
 
 size_t BaseTestEngine::checkData() {
