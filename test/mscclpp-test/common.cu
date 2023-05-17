@@ -139,11 +139,13 @@ void BaseTestEngine::runTest()
   this->coll_->setupCollTest(args_.maxBytes, sizeof(int));
   this->barrier();
   this->coll_->runColl(args_, stream_);
+  CUDATHROW(cudaDeviceSynchronize());
 
   // warm-up for small size
   this->coll_->setupCollTest(args_.minBytes, sizeof(int));
   this->barrier();
   this->coll_->runColl(args_, stream_);
+  CUDATHROW(cudaDeviceSynchronize());
 
   PRINT("#\n");
   PRINT("# %10s  %12s           in-place                       out-of-place          \n", "", "");
@@ -156,6 +158,7 @@ void BaseTestEngine::runTest()
   for (size_t size = args_.minBytes; size <= args_.maxBytes;
        size = ((args_.stepFactor > 1) ? size * args_.stepFactor : size + args_.stepBytes)) {
     coll_->setupCollTest(size, sizeof(int));
+    this->coll_->initData(this->args_, this->getSendBuff(), this->getExpectedBuff());
     PRINT("%12li  %12li", max(coll_->getSendBytes(), coll_->getExpectedBytes()), coll_->getParamBytes() / sizeof(int));
     double deltaSec = benchTime();
 
@@ -210,8 +213,14 @@ void BaseTestEngine::bootstrap(const TestArgs& args) {
 
 void BaseTestEngine::setupTest() {
   this->coll_ = testColl;
+  CUDATHROW(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
   this->setupConnections();
   this->chanService_->startProxy();
+}
+
+void BaseTestEngine::teardownTest() {
+  this->chanService_->stopProxy();
+  this->teardown();
 }
 
 size_t BaseTestEngine::checkData() {
@@ -230,7 +239,7 @@ size_t BaseTestEngine::checkData() {
   return nErrors;
 }
 
-void run();
+void run(int argc, char* argv[]);
 int main(int argc, char* argv[]) {
   // Make sure everyline is flushed so that we see the progress of the test
   setlinebuf(stdout);
@@ -328,17 +337,17 @@ int main(int argc, char* argv[]) {
     std::cerr << "invalid sizes for 'minbytes' and 'maxbytes': " << minBytes << " > " << maxBytes << std::endl;
     return -1;
   }
-  MPI_Init(&argc, &argv);
-  run();
+  run(argc, argv);
   return 0;
 }
 
-void run() {
+void run(int argc, char* argv[]) {
   int totalRanks = 1, rank = 0;
   int nRanksPerNode = 0, localRank = 0;
   char hostname[1024];
   getHostName(hostname, 1024);
 
+  MPI_Init(&argc, &argv);
   MPI_Comm_size(MPI_COMM_WORLD, &totalRanks);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm shmcomm;
@@ -356,7 +365,7 @@ void run() {
   PRINT("#\n");
   PRINT("# Using devices\n");
 
-#define MAX_LINE 2048
+  constexpr int MAX_LINE = 2048;
   char line[MAX_LINE];
   int len = 0;
   size_t maxMem = ~0;
@@ -370,7 +379,7 @@ void run() {
                   hostname, cudaDev, busIdChar, prop.name);
   maxMem = std::min(maxMem, prop.totalGlobalMem);
 
-  std::shared_ptr<char[]> lines = (rank == 0) ? std::make_shared<char[]>(totalRanks * MAX_LINE) : nullptr;
+  std::shared_ptr<char[]> lines(new char[totalRanks * MAX_LINE]);
   // Gather all output in rank order to root (0)
   MPI_Gather(line, MAX_LINE, MPI_BYTE, lines.get(), MAX_LINE, MPI_BYTE, 0, MPI_COMM_WORLD);
   if (rank == 0) {
@@ -394,7 +403,6 @@ void run() {
   testEngine->allocateBuffer();
   PRINT("# Setting up the connection in MSCCL++\n");
   testEngine->setupTest();
-  // testEngine->setupTest();
   testEngine->barrier();
   testEngine->runTest();
   testEngine->teardownTest();

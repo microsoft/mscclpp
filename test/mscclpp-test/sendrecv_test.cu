@@ -2,10 +2,10 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <iostream>
 #include <mscclpp/channel.hpp>
 #include <mscclpp/epoch.hpp>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "common.hpp"
@@ -133,6 +133,7 @@ void SendRecvTestColl::setupCollTest(size_t size, size_t typeSize) {
   recvCount_ = base;
   paramCount_ = base;
   expectedCount_ = base;
+  typeSize_ = typeSize;
 }
 
 class SendRecvTestEngine : public BaseTestEngine {
@@ -142,15 +143,12 @@ class SendRecvTestEngine : public BaseTestEngine {
 
   void allocateBuffer() override;
   void setupConnections() override;
-  void teardownConnections() override;
-  void teardownTest() override;
+  void teardown() override;
 
  private:
   std::vector<void*> getSendBuff() override;
   void* getExpectedBuff() override;
   void* getRecvBuff() override;
-
-  std::vector<mscclpp::RegisteredMemory> localMemories_;
 
   std::vector<void*> devicePtrs_;
   std::shared_ptr<int[]> expectedBuff_;
@@ -165,7 +163,7 @@ void SendRecvTestEngine::allocateBuffer() {
   devicePtrs_.push_back(sendBuff);
   devicePtrs_.push_back(recvBuff);
 
-  expectedBuff_ = std::make_shared<int[]>(args_.maxBytes / sizeof(int));
+  expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
 }
 
 void SendRecvTestEngine::setupConnections() {
@@ -181,35 +179,36 @@ void SendRecvTestEngine::setupConnections() {
       comm_->connectOnSetup(sendToRank, 0, getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice))));
   if (recvFromRank != sendToRank) {
     chanIds.push_back(chanService_->addChannel(
-        comm_->connectOnSetup(recvFromRank, 1, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice))));
+        comm_->connectOnSetup(recvFromRank, 0, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice))));
   } else {
-    // reuse the send channel if rank is 2
+    // reuse the send channel if worldSize is 2
     chanIds.push_back(chanIds[0]);
   }
   comm_->setup();
 
+  std::vector<mscclpp::RegisteredMemory> localMemories;
   std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> futureRemoteMemory;
+  // auto getDevicePtrIndex = [](int rank, int index) { return rank % 2 == 0 ? index : 1 - index; };
   for (int i : {0, 1}) {
-    localMemories_.push_back(
-        comm_->registerMemory(devicePtrs_[i], args_.maxBytes, mscclpp::Transport::CudaIpc | ibDevice));
-    comm_->sendMemoryOnSetup(localMemories_[i], ranks[i], i);
-    futureRemoteMemory.push_back(comm_->recvMemoryOnSetup(sendToRank, 1 - i));
+    auto regMem = comm_->registerMemory(devicePtrs_[i], args_.maxBytes, mscclpp::Transport::CudaIpc | ibDevice);
+    comm_->sendMemoryOnSetup(regMem, ranks[i], 0);
+    localMemories.push_back(regMem);
+    futureRemoteMemory.push_back(comm_->recvMemoryOnSetup(ranks[1 - i], 0));
+    comm_->setup();
   }
-  comm_->setup();
 
+  // swap to make sure devicePtrs_[0] in local rank write to devicePtrs_[1] in remote rank
+  std::swap(futureRemoteMemory[0], futureRemoteMemory[1]);
   std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
   for (int i : {0, 1}) {
     // We assume ranks in the same node
     devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
-        chanService_->deviceChannel(chanIds[i]), futureRemoteMemory[i].get().data(), localMemories_[i].data()));
+        chanService_->deviceChannel(chanIds[i]), futureRemoteMemory[i].get().data(), localMemories[i].data()));
   }
   cudaMemcpyToSymbol(constDevChans, devChannels.data(), sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size());
 }
 
-void SendRecvTestEngine::teardownConnections() {
-}
-
-void SendRecvTestEngine::teardownTest() {
+void SendRecvTestEngine::teardown() {
   for (auto& ptr : devicePtrs_) {
     CUDATHROW(cudaFree(ptr));
   }

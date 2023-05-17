@@ -62,10 +62,10 @@ class BaseTestEngine {
   BaseTestEngine() = default;
   virtual ~BaseTestEngine() = default;
   virtual void allocateBuffer() = 0;
-  virtual void teardownTest() = 0;
 
   int getTestErrors() {return error;}
   void setupTest();
+  void teardownTest();
   void bootstrap(const TestArgs& args);
   void runTest();
   void barrier();
@@ -73,7 +73,7 @@ class BaseTestEngine {
 
  private:
   virtual void setupConnections() = 0;
-  virtual void teardownConnections() = 0;
+  virtual void teardown() = 0;
   virtual std::vector<void*> getSendBuff() = 0;
   virtual void* getExpectedBuff() = 0;
   virtual void* getRecvBuff() = 0;
