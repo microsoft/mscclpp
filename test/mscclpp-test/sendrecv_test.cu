@@ -155,8 +155,6 @@ class SendRecvTestEngine : public BaseTestEngine {
 
   std::vector<void*> devicePtrs_;
   std::shared_ptr<int[]> expectedBuff_;
-
-  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
 };
 
 void SendRecvTestEngine::allocateBuffer() {
