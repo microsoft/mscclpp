@@ -4,7 +4,7 @@
 #include <sstream>
 
 #include "api.h"
-#include "checks.hpp"
+#include "checks_internal.hpp"
 #include "connection.hpp"
 #include "debug.h"
 #include "registered_memory.hpp"
@@ -19,7 +19,7 @@ Communicator::Impl::Impl(std::shared_ptr<BaseBootstrap> bootstrap) : bootstrap_(
   rankToHash_[bootstrap->getRank()] = hostHash;
   bootstrap->allGather(rankToHash_.data(), sizeof(uint64_t));
 
-  CUDATHROW(cudaStreamCreateWithFlags(&ipcStream_, cudaStreamNonBlocking));
+  MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&ipcStream_, cudaStreamNonBlocking));
 }
 
 Communicator::Impl::~Impl() {

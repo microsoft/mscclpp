@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "api.h"
-#include "checks.hpp"
+#include "checks_internal.hpp"
 #include "socket.h"
 #include "utils.h"
 

@@ -1,7 +1,9 @@
 #ifndef MSCCLPP_EPOCH_HPP_
 #define MSCCLPP_EPOCH_HPP_
 
+#include <memory>
 #include <mscclpp/core.hpp>
+#include <mscclpp/cuda_utils.hpp>
 
 namespace mscclpp {
 
@@ -10,28 +12,39 @@ struct alignas(16) EpochIds {
   uint64_t inboundReplica;
 };
 
+template <template <typename> typename Deleter>
 class BaseEpoch {
  private:
   std::shared_ptr<Connection> connection_;
   RegisteredMemory localEpochIdsRegMem_;
 
  protected:
-  EpochIds* epochIds_;
   NonblockingFuture<RegisteredMemory> remoteEpochIdsRegMem_;
-  uint64_t* expectedInboundEpochId_;
+  std::unique_ptr<EpochIds, Deleter<EpochIds>> epochIds_;
+  std::unique_ptr<uint64_t, Deleter<uint64_t>> expectedInboundEpochId_;
 
  public:
-  BaseEpoch(std::shared_ptr<Connection> connection);
-  void setup(Communicator& communicator);
-  BaseEpoch(const BaseEpoch&) = delete;
-  void signal();
+  BaseEpoch(std::shared_ptr<Connection> connection, std::unique_ptr<EpochIds, Deleter<EpochIds>> epochIds,
+            std::unique_ptr<uint64_t, Deleter<uint64_t>> expectedInboundEpochId)
+      : connection_(connection),
+        epochIds_(std::move(epochIds)),
+        expectedInboundEpochId_(std::move(expectedInboundEpochId)) {}
+
+  void setup(Communicator& communicator) {
+    localEpochIdsRegMem_ = communicator.registerMemory(epochIds_.get(), sizeof(epochIds_), connection_->transport());
+    communicator.sendMemoryOnSetup(localEpochIdsRegMem_, connection_->remoteRank(), connection_->tag());
+    remoteEpochIdsRegMem_ = communicator.recvMemoryOnSetup(connection_->remoteRank(), connection_->tag());
+  }
+
+  void signal() {
+    connection_->write(remoteEpochIdsRegMem_.get(), offsetof(EpochIds, inboundReplica), localEpochIdsRegMem_,
+                       offsetof(EpochIds, outbound), sizeof(epochIds_));
+  }
 };
 
-class DeviceEpoch : BaseEpoch {
+class DeviceEpoch : BaseEpoch<CudaDeleter> {
  public:
   DeviceEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
-  DeviceEpoch(const DeviceEpoch&) = delete;
-  ~DeviceEpoch();
   void signal();
 
   struct DeviceHandle {
@@ -61,13 +74,11 @@ class DeviceEpoch : BaseEpoch {
   DeviceHandle deviceHandle();
 };
 
-class HostEpoch : BaseEpoch {
+class HostEpoch : BaseEpoch<std::default_delete> {
  public:
   HostEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
-  HostEpoch(const HostEpoch&) = delete;
-  ~HostEpoch();
 
-  void increamentAndSignal();
+  void incrementAndSignal();
   void wait();
 };
 
