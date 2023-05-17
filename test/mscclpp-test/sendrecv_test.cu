@@ -171,7 +171,7 @@ void SendRecvTestEngine::allocateBuffer() {
 
 void SendRecvTestEngine::setupConnections() {
   auto ibDevice = IBs[args_.localRank];
-  int worldSize = args_.nRanksPerNode;
+  int worldSize = args_.totalRanks;
   int sendToRank = (args_.rank + 1) % worldSize;
   int recvFromRank = (args_.rank - 1 + worldSize) % worldSize;
   std::array<int, 2> ranks = {sendToRank, recvFromRank};
@@ -191,7 +191,7 @@ void SendRecvTestEngine::setupConnections() {
 
   std::vector<mscclpp::RegisteredMemory> localMemories;
   std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> futureRemoteMemory;
-  // auto getDevicePtrIndex = [](int rank, int index) { return rank % 2 == 0 ? index : 1 - index; };
+
   for (int i : {0, 1}) {
     auto regMem = comm_->registerMemory(devicePtrs_[i], args_.maxBytes, mscclpp::Transport::CudaIpc | ibDevice);
     comm_->sendMemoryOnSetup(regMem, ranks[i], 0);

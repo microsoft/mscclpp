@@ -243,8 +243,9 @@ void BaseTestEngine::setupTest() {
 }
 
 void BaseTestEngine::teardownTest() {
-  this->chanService_->stopProxy();
   this->teardown();
+  // Reset explicitly to avoid crash
+  this->chanService_.reset();
 }
 
 size_t BaseTestEngine::checkData() {
