@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <mscclpp/utils.hpp>
 #include <string>
 #include <type_traits>
 
@@ -32,25 +33,10 @@ int average = 1;
 int kernel_num = 0;
 int cudaGraphLaunches = 15;
 
-class timer {
-  std::uint64_t t0;
-
- public:
-  timer();
-  double elapsed() const;
-  double reset();
-};
-
-std::uint64_t now() {
-  using clock = std::chrono::steady_clock;
-  return std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now().time_since_epoch()).count();
-}
-
 double parseSize(const char* value) {
   long long int units;
   double size;
   char size_lit;
-
   int count = sscanf(value, "%lf %1s", &size, &size_lit);
 
   switch (count) {
@@ -101,32 +87,13 @@ double allreduceTime(int worldSize, double value, int average)
 }
 }  // namespace
 
-timer::timer()
-{
-  t0 = now();
-}
-
-double timer::elapsed() const
-{
-  std::uint64_t t1 = now();
-  return 1.e-9 * (t1 - t0);
-}
-
-double timer::reset()
-{
-  std::uint64_t t1 = now();
-  double ans = 1.e-9 * (t1 - t0);
-  t0 = t1;
-  return ans;
-}
-
 
 double BaseTestEngine::benchTime() {
   // Performance Benchmark
   cudaGraph_t graph;
   cudaGraphExec_t graphExec;
   CUDATHROW(cudaStreamBeginCapture(stream_, cudaStreamCaptureModeGlobal));
-  timer tim;
+  mscclpp::Timer timer;
   for (int iter = 0; iter < iters; iter++) {
     coll_->runColl(args_, stream_);
   }
@@ -134,12 +101,12 @@ double BaseTestEngine::benchTime() {
   CUDATHROW(cudaGraphInstantiate(&graphExec, graph, nullptr, nullptr, 0));
 
   this->barrier();
-  tim.reset();
+  timer.reset();
   for (int l = 0; l < cudaGraphLaunches; ++l) {
     CUDATHROW(cudaGraphLaunch(graphExec, stream_));
   }
   CUDATHROW(cudaStreamSynchronize(stream_));
-  double deltaSec = tim.elapsed();
+  double deltaSec = timer.elapsed() * 1.e-6;
   deltaSec = deltaSec / (iters) / (cudaGraphLaunches);
   // all-reduce to get the average time
   allreduceTime(args_.totalRanks, deltaSec, average);
@@ -370,8 +337,7 @@ int main(int argc, char* argv[]) {
 void run(int argc, char* argv[]) {
   int totalRanks = 1, rank = 0;
   int nRanksPerNode = 0, localRank = 0;
-  char hostname[1024];
-  getHostName(hostname, 1024);
+  std::string hostname = mscclpp::getHostName(1024, '.');
 
   MPI_Init(&argc, &argv);
   MPI_Comm_size(MPI_COMM_WORLD, &totalRanks);
@@ -402,7 +368,7 @@ void run(int argc, char* argv[]) {
   CUDATHROW(cudaGetDeviceProperties(&prop, cudaDev));
   CUDATHROW(cudaDeviceGetPCIBusId(busIdChar, sizeof(busIdChar), cudaDev));
   len += snprintf(line + len, MAX_LINE - len, "#  Rank %2d Pid %6d on %10s device %2d [%s] %s\n", rank, getpid(),
-                  hostname, cudaDev, busIdChar, prop.name);
+                  hostname.c_str(), cudaDev, busIdChar, prop.name);
   maxMem = std::min(maxMem, prop.totalGlobalMem);
 
   std::shared_ptr<char[]> lines(new char[totalRanks * MAX_LINE]);

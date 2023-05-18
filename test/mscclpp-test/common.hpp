@@ -94,16 +94,6 @@ extern std::shared_ptr<BaseTestEngine> testEngine;
 extern std::shared_ptr<BaseTestColl> testColl;
 extern mscclpp::Transport IBs[];
 
-inline void getHostName(char* hostname, int maxlen) {
-  gethostname(hostname, maxlen);
-  for (int i = 0; i < maxlen; i++) {
-    if (hostname[i] == '.') {
-      hostname[i] = '\0';
-      return;
-    }
-  }
-}
-
 #define PRINT \
   if (is_main_proc) printf
 

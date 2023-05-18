@@ -4,6 +4,7 @@
 #include <cstring>
 #include <iostream>
 #include <mscclpp/channel.hpp>
+#include <mscclpp/concurrency.hpp>
 #include <mscclpp/epoch.hpp>
 #include <string>
 #include <vector>
@@ -20,44 +21,7 @@ constexpr size_t MAX_BLOCKS_NUM = 32;
 
 __constant__ mscclpp::channel::SimpleDeviceChannel constDevChans[2];
 
-struct SyncGpuState
-{
-  volatile int flag;
-  int cnt;
-  int is_add;
-};
-
-// Synchronize multiple thread blocks inside a kernel. Guarantee that all
-// previous work of all threads in cooperating blocks is finished and
-// visible to all threads in the device.
-__forceinline__ __device__ void sync_gpu(SyncGpuState& state, int blockNum)
-{
-  int maxOldCnt = blockNum - 1;
-  __syncthreads();
-  if (threadIdx.x == 0) {
-    int is_add_ = state.is_add ^ 1;
-    if (is_add_) {
-      if (atomicAdd(&state.cnt, 1) == maxOldCnt) {
-        state.flag = 1;
-      }
-      while (!state.flag) {
-      }
-    } else {
-      if (atomicSub(&state.cnt, 1) == 1) {
-        state.flag = 0;
-      }
-      while (state.flag) {
-      }
-    }
-    state.is_add = is_add_;
-  }
-  // We need sync here because only a single thread is checking whether
-  // the flag is flipped.
-  __syncthreads();
-}
-
-inline int getBlockNum(size_t count)
-{
+inline int getBlockNum(size_t count) {
   return std::min((count + THRES_BYTES_PER_BLOCK - 1) / THRES_BYTES_PER_BLOCK, MAX_BLOCKS_NUM);
 }
 
@@ -65,20 +29,19 @@ inline mscclpp::Transport getTransport(int rank, int peerRank, int nRanksPerNode
   return rank / nRanksPerNode == peerRank / nRanksPerNode ? mscclpp::Transport::CudaIpc : ibDevice;
 }
 
-__device__ SyncGpuState GLOBAL_SYNC_STATE;
+__device__ mscclpp::GpuSyncer gpuSyncer;
 
-__global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock)
-{
+__global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock) {
   size_t startIndex = blockIdx.x * dataPerBlock;
   size_t blockDataSize = min(dataSize - startIndex, dataPerBlock);
-  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int globalIndex = blockIdx.x * blockDim.x + threadIdx.x;
 
   mscclpp::channel::SimpleDeviceChannel sendConn = constDevChans[0];
   mscclpp::channel::SimpleDeviceChannel recvConn = constDevChans[1];
 
   sendConn.putDirect(startIndex, blockDataSize, threadIdx.x, blockDim.x);
-  sync_gpu(GLOBAL_SYNC_STATE, gridDim.x);
-  if (tid == 0) {
+  gpuSyncer.sync(gridDim.x);
+  if (globalIndex == 0) {
     sendConn.signalDirect();
     recvConn.wait();
   }
@@ -135,13 +98,13 @@ void SendRecvTestColl::setupCollTest(size_t size, size_t typeSize) {
   expectedCount_ = base;
   typeSize_ = typeSize;
 
-  SyncGpuState state = {};
-  CUDATHROW(cudaMemcpyToSymbol(GLOBAL_SYNC_STATE, &state, sizeof(SyncGpuState)));
+  mscclpp::GpuSyncer syncer = {};
+  CUDATHROW(cudaMemcpyToSymbol(gpuSyncer, &syncer, sizeof(mscclpp::GpuSyncer)));
 }
 
 class SendRecvTestEngine : public BaseTestEngine {
  public:
-  SendRecvTestEngine() : BaseTestEngine(false) {};
+  SendRecvTestEngine() : BaseTestEngine(false){};
   ~SendRecvTestEngine() override = default;
 
   void allocateBuffer() override;
@@ -206,7 +169,8 @@ void SendRecvTestEngine::setupConnections() {
     devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
         chanService_->deviceChannel(chanIds[i]), futureRemoteMemory[i].get().data(), localMemories[i].data()));
   }
-  cudaMemcpyToSymbol(constDevChans, devChannels.data(), sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size());
+  cudaMemcpyToSymbol(constDevChans, devChannels.data(),
+                     sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size());
 }
 
 void SendRecvTestEngine::teardown() {
