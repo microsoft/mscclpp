@@ -10,6 +10,16 @@
 #define MSCCLPP_IB_MAX_SENDS 64
 #define MSCCLPP_IB_MAX_DEVS 8
 
+// Forward declarations of IB structures
+struct ibv_context;
+struct ibv_pd;
+struct ibv_mr;
+struct ibv_qp;
+struct ibv_cq;
+struct ibv_wc;
+struct ibv_send_wr;
+struct ibv_sge;
+
 namespace mscclpp {
 
 struct IbMrInfo {
@@ -26,9 +36,9 @@ class IbMr {
   uint32_t getLkey() const;
 
  private:
-  IbMr(void* pd, void* buff, std::size_t size);
+  IbMr(ibv_pd* pd, void* buff, std::size_t size);
 
-  void* mr;
+  ibv_mr* mr;
   void* buff;
   std::size_t size;
 
@@ -62,18 +72,18 @@ class IbQp {
   int pollCq();
 
   IbQpInfo& getInfo();
-  const void* getWc(int idx) const;
+  const ibv_wc* getWc(int idx) const;
 
  private:
-  IbQp(void* ctx, void* pd, int port);
+  IbQp(ibv_context* ctx, ibv_pd* pd, int port);
 
   IbQpInfo info;
 
-  void* qp;
-  void* cq;
-  void* wcs;
-  void* wrs;
-  void* sges;
+  ibv_qp* qp;
+  ibv_cq* cq;
+  std::unique_ptr<ibv_wc[]> wcs;
+  std::unique_ptr<ibv_send_wr[]> wrs;
+  std::unique_ptr<ibv_sge[]> sges;
   int wrn;
 
   friend class IbCtx;
@@ -94,8 +104,8 @@ class IbCtx {
   int getAnyActivePort() const;
 
   const std::string devName;
-  void* ctx;
-  void* pd;
+  ibv_context* ctx;
+  ibv_pd* pd;
   std::list<std::unique_ptr<IbQp>> qps;
   std::list<std::unique_ptr<IbMr>> mrs;
 };

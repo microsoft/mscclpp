@@ -1,9 +1,12 @@
 #ifndef MSCCLPP_UTILS_HPP_
 #define MSCCLPP_UTILS_HPP_
 
-#include <stdio.h>
+#include <unistd.h>
 
 #include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <string>
 
 namespace mscclpp {
 
@@ -34,6 +37,18 @@ struct ScopedTimer {
 
   ~ScopedTimer() { timer.print(name); }
 };
+
+inline std::string getHostName(int maxlen, const char delim) {
+  std::string hostname(maxlen + 1, '\0');
+  if (gethostname(const_cast<char*>(hostname.data()), maxlen) != 0) {
+    std::strncpy(const_cast<char*>(hostname.data()), "unknown", maxlen);
+    throw;
+  }
+  int i = 0;
+  while ((hostname[i] != delim) && (hostname[i] != '\0') && (i < maxlen - 1)) i++;
+  hostname[i] = '\0';
+  return hostname;
+}
 
 }  // namespace mscclpp
 

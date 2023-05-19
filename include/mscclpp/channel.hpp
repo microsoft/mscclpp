@@ -94,6 +94,22 @@ struct DeviceChannel {
     put(dst, offset, src, offset, size);
   }
 
+  __forceinline__ __device__ void putDirect(void* dst, void* src, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
+                                            uint32_t threadId, uint32_t numThreads) {
+    // assume the memory is aligned to 8 bytes
+    uint64_t* srcAddr = (uint64_t*)((char*)src + srcOffset);
+    uint64_t* dstAddr = (uint64_t*)((char*)dst + dstOffset);
+    uint64_t ele;
+    size_t nElem = size % sizeof(uint64_t) ? (size + sizeof(uint64_t)) / sizeof(uint64_t) : size / sizeof(uint64_t);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      // load to register first
+      ele = srcAddr[i];
+      dstAddr[i] = ele;
+    }
+  }
+
+  __forceinline__ __device__ void signalDirect() { epoch_.signalDirect(); }
+
   __forceinline__ __device__ void signal() {
     epochIncrement();
     fifo_.push(ChannelTrigger(TriggerFlag, 0, 0, 0, 0, 1, channelId_).value);
@@ -212,6 +228,9 @@ struct SimpleDeviceChannel {
 
   SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src) : devChan_(devChan), dst_(dst), src_(src) {}
 
+  SimpleDeviceChannel(DeviceChannel devChan, void* dstPtr, void* srcPtr)
+      : devChan_(devChan), srcPtr_(srcPtr), dstPtr_(dstPtr) {}
+
   SimpleDeviceChannel(const SimpleDeviceChannel& other) = default;
 
   SimpleDeviceChannel& operator=(SimpleDeviceChannel& other) = default;
@@ -224,7 +243,13 @@ struct SimpleDeviceChannel {
 
   __forceinline__ __device__ void put(uint64_t offset, uint64_t size) { put(offset, offset, size); }
 
+  __forceinline__ __device__ void putDirect(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
+    devChan_.putDirect(dstPtr_, srcPtr_, offset, offset, size, threadId, numThreads);
+  }
+
   __forceinline__ __device__ void signal() { devChan_.signal(); }
+
+  __forceinline__ __device__ void signalDirect() { devChan_.signalDirect(); }
 
   __forceinline__ __device__ void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
     devChan_.putWithSignal(dst_, dstOffset, src_, srcOffset, size);
@@ -251,6 +276,10 @@ struct SimpleDeviceChannel {
   DeviceChannel devChan_;
   MemoryId dst_;
   MemoryId src_;
+
+  // these are used for direct copy
+  void* srcPtr_;
+  void* dstPtr_;
 };
 
 }  // namespace channel

@@ -271,7 +271,7 @@ void test_write_with_host_epochs(int rank, int worldSize, int nRanksPerNode, int
 
   for (int i = 0; i < worldSize; i++) {
     if (i != rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
-      epochs[i]->increamentAndSignal();
+      epochs[i]->incrementAndSignal();
     }
   }
 
