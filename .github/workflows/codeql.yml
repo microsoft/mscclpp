@@ -1,0 +1,47 @@
+name: "CodeQL"
+
+on:
+  pull_request:
+    branches:
+      - '**'
+  schedule:
+    - cron: "30 1 * * 1"
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
+    container:
+      image: superbench/superbench:v0.8.0-cuda12.1
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'cpp', 'python' ]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+        languages: ${{ matrix.language }}
+
+    - run: |
+        echo "Run, Build Application using script"
+        git config --global --add safe.directory /__w/mscclpp/mscclpp
+        curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
+        tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
+        export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
+        /tmp/cmake-3.26.4-linux-x86_64/bin/cmake .
+        make -j
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+      with:
+        category: "/language:${{matrix.language}}"
