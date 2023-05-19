@@ -87,6 +87,12 @@ double allreduceTime(int worldSize, double value, int average)
 }
 }  // namespace
 
+BaseTestEngine::BaseTestEngine(bool inPlace) : error_(0), inPlace_(inPlace) {
+  this->coll_ = getTestColl();
+  CUDATHROW(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
+}
+
+BaseTestEngine::~BaseTestEngine() { cudaStreamDestroy(stream_); }
 
 void BaseTestColl::setupCollTest(const TestArgs& args, size_t size)
 {
@@ -210,17 +216,8 @@ void BaseTestEngine::bootstrap(const TestArgs& args) {
 }
 
 void BaseTestEngine::setupTest() {
-  CUDATHROW(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
-  this->coll_ = testColl;
   this->setupConnections();
   this->chanService_->startProxy();
-}
-
-void BaseTestEngine::teardownTest() {
-  this->teardown();
-  // Reset explicitly to avoid crash
-  this->chanService_.reset();
-  CUDATHROW(cudaStreamDestroy(stream_));
 }
 
 size_t BaseTestEngine::checkData() {
@@ -398,13 +395,13 @@ void run(int argc, char* argv[]) {
                    cudaDev,  localRank, nRanksPerNode, kernel_num, datacheck};
   PRINT("#\n");
   PRINT("# Initializing MSCCL++\n");
+  auto testEngine = getTestEngine();
   testEngine->bootstrap(args);
   testEngine->allocateBuffer();
   PRINT("# Setting up the connection in MSCCL++\n");
   testEngine->setupTest();
   testEngine->barrier();
   testEngine->runTest();
-  testEngine->teardownTest();
 
   fflush(stdout);
 

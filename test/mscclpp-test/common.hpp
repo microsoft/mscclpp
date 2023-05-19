@@ -63,13 +63,12 @@ class BaseTestColl {
 
 class BaseTestEngine {
  public:
-  BaseTestEngine(bool inPlace = true) : error_(0), inPlace_(inPlace) {};
-  virtual ~BaseTestEngine() = default;
+  BaseTestEngine(bool inPlace = true);
+  virtual ~BaseTestEngine();
   virtual void allocateBuffer() = 0;
 
   int getTestErrors() {return error_;}
   void setupTest();
-  void teardownTest();
   void bootstrap(const TestArgs& args);
   void runTest();
   void barrier();
@@ -77,7 +76,6 @@ class BaseTestEngine {
 
  private:
   virtual void setupConnections() = 0;
-  virtual void teardown() = 0;
   virtual std::vector<void*> getSendBuff() = 0;
   virtual void* getExpectedBuff() = 0;
   virtual void* getRecvBuff() = 0;
@@ -94,8 +92,8 @@ class BaseTestEngine {
   bool inPlace_;
 };
 
-extern std::shared_ptr<BaseTestEngine> testEngine;
-extern std::shared_ptr<BaseTestColl> testColl;
+extern std::shared_ptr<BaseTestEngine> getTestEngine();
+extern std::shared_ptr<BaseTestColl> getTestColl();
 extern mscclpp::Transport IBs[];
 
 #define PRINT \

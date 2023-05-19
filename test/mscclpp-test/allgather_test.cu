@@ -189,7 +189,6 @@ class AllGatherTestEngine : public BaseTestEngine {
 
   void allocateBuffer() override;
   void setupConnections() override;
-  void teardown() override;
 
  private:
   std::vector<void*> getSendBuff() override;
@@ -203,11 +202,6 @@ class AllGatherTestEngine : public BaseTestEngine {
 void AllGatherTestEngine::allocateBuffer() {
   sendBuff_ = mscclpp::makeSharedCuda<int>(args_.maxBytes / sizeof(int));
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
-}
-
-void AllGatherTestEngine::teardown() {
-  // reset explicitly to free the memory and avoid crash
-  sendBuff_.reset();
 }
 
 void AllGatherTestEngine::setupConnections() {
@@ -262,8 +256,5 @@ void* AllGatherTestEngine::getRecvBuff() {
   return sendBuff_.get();
 }
 
-#pragma weak testEngine = allGatherTestEngine
-#pragma weak testColl = allGatherTestColl
-
-std::shared_ptr<BaseTestEngine> allGatherTestEngine = std::make_shared<AllGatherTestEngine>();
-std::shared_ptr<BaseTestColl> allGatherTestColl = std::make_shared<AllGatherTestColl>();
+std::shared_ptr<BaseTestEngine> getTestEngine() { return std::make_shared<AllGatherTestEngine>(); }
+std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<AllGatherTestColl>(); }

@@ -2,10 +2,10 @@
 #define MSCCLPP_CONCURRENCY_HPP_
 
 namespace mscclpp {
-struct GpuSyncer {
+struct DeviceSyncer {
  public:
-  GpuSyncer() = default;
-  ~GpuSyncer() = default;
+  DeviceSyncer() = default;
+  ~DeviceSyncer() = default;
 
 #ifdef __CUDACC__
   // Synchronize multiple thread blocks inside a kernel. Guarantee that all
