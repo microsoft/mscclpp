@@ -1,11 +1,11 @@
 #include <atomic>
 #include <mscclpp/core.hpp>
 #include <mscclpp/proxy.hpp>
+#include <mscclpp/utils.hpp>
 #include <thread>
 
 #include "api.h"
 #include "utils.h"
-#include "utils.hpp"
 
 namespace mscclpp {
 

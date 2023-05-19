@@ -1,8 +1,8 @@
-#include "alloc.h"
 #include "checks.h"
 #include "ib.hpp"
 #include "infiniband/verbs.h"
 #include <mscclpp/core.hpp>
+#include <mscclpp/cuda_utils.hpp>
 #include <array>
 #include <string>
 
@@ -33,16 +33,15 @@ int main(int argc, const char* argv[])
 
   CUDACHECK(cudaSetDevice(cudaDevId));
 
-  int* data;
   int nelem = 1;
-  MSCCLPPCHECK(mscclppCudaCalloc(&data, nelem));
+  auto data = mscclpp::makeUniqueCuda<int>(nelem);
 
   std::shared_ptr<mscclpp::Bootstrap> bootstrap(new mscclpp::Bootstrap(isSend, 2));
   bootstrap->initialize(ipPortPair);
 
   mscclpp::IbCtx ctx(ibDevName);
   mscclpp::IbQp* qp = ctx.createQp();
-  const mscclpp::IbMr* mr = ctx.registerMr(data, sizeof(int) * nelem);
+  const mscclpp::IbMr* mr = ctx.registerMr(data.get(), sizeof(int) * nelem);
 
   std::array<mscclpp::IbQpInfo, 2> qpInfo;
   qpInfo[isSend] = qp->getInfo();
@@ -79,7 +78,7 @@ int main(int argc, const char* argv[])
           return 1;
         }
         for (int i = 0; i < wcNum; ++i) {
-          const struct ibv_wc* wc = reinterpret_cast<const struct ibv_wc*>(qp->getWc(i));
+          const ibv_wc* wc = qp->getWc(i);
           if (wc->status != IBV_WC_SUCCESS) {
             WARN("wc status %d", wc->status);
             return 1;

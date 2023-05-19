@@ -5,7 +5,7 @@
 #include <algorithm>
 
 #include "api.h"
-#include "checks.hpp"
+#include "checks_internal.hpp"
 #include "utils.h"
 
 namespace mscclpp {
@@ -19,8 +19,8 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags t
 
     void* baseDataPtr;
     size_t baseDataSize;  // dummy
-    CUTHROW(cuMemGetAddressRange((CUdeviceptr*)&baseDataPtr, &baseDataSize, (CUdeviceptr)data));
-    CUDATHROW(cudaIpcGetMemHandle(&handle, baseDataPtr));
+    MSCCLPP_CUTHROW(cuMemGetAddressRange((CUdeviceptr*)&baseDataPtr, &baseDataSize, (CUdeviceptr)data));
+    MSCCLPP_CUDATHROW(cudaIpcGetMemHandle(&handle, baseDataPtr));
     // TODO: bug with offset of base?
     transportInfo.cudaIpcBaseHandle = handle;
     transportInfo.cudaIpcOffsetFromBase = (char*)data - (char*)baseDataPtr;
@@ -133,7 +133,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     if (localHostHash == this->hostHash) {
       auto entry = getTransportInfo(Transport::CudaIpc);
       void* base;
-      CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
+      MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
       data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
       INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", data);
     }
