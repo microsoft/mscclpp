@@ -29,7 +29,7 @@ inline mscclpp::Transport getTransport(int rank, int peerRank, int nRanksPerNode
   return rank / nRanksPerNode == peerRank / nRanksPerNode ? mscclpp::Transport::CudaIpc : ibDevice;
 }
 
-__device__ mscclpp::GpuSyncer gpuSyncer;
+__device__ mscclpp::DeviceSyncer deviceSyncer;
 
 __global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock) {
   size_t startIndex = blockIdx.x * dataPerBlock;
@@ -40,7 +40,7 @@ __global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock) {
   mscclpp::channel::SimpleDeviceChannel recvConn = constDevChans[1];
 
   sendConn.putDirect(startIndex, blockDataSize, threadIdx.x, blockDim.x);
-  gpuSyncer.sync(gridDim.x);
+  deviceSyncer.sync(gridDim.x);
   if (globalIndex == 0) {
     sendConn.signalDirect();
     recvConn.wait();
@@ -98,8 +98,8 @@ void SendRecvTestColl::setupCollTest(size_t size, size_t typeSize) {
   expectedCount_ = base;
   typeSize_ = typeSize;
 
-  mscclpp::GpuSyncer syncer = {};
-  CUDATHROW(cudaMemcpyToSymbol(gpuSyncer, &syncer, sizeof(mscclpp::GpuSyncer)));
+  mscclpp::DeviceSyncer syncer = {};
+  CUDATHROW(cudaMemcpyToSymbol(deviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
 }
 
 class SendRecvTestEngine : public BaseTestEngine {
@@ -109,21 +109,19 @@ class SendRecvTestEngine : public BaseTestEngine {
 
   void allocateBuffer() override;
   void setupConnections() override;
-  void teardown() override;
 
  private:
   std::vector<void*> getSendBuff() override;
   void* getExpectedBuff() override;
   void* getRecvBuff() override;
 
-  std::vector<void*> devicePtrs_;
+  std::vector<std::shared_ptr<int>> devicePtrs_;
   std::shared_ptr<int[]> expectedBuff_;
 };
 
 void SendRecvTestEngine::allocateBuffer() {
-  int *sendBuff = nullptr, *recvBuff = nullptr;
-  CUDATHROW(cudaMalloc(&sendBuff, args_.maxBytes));
-  CUDATHROW(cudaMalloc(&recvBuff, args_.maxBytes));
+  std::shared_ptr<int> sendBuff = mscclpp::makeSharedCuda<int>(args_.maxBytes / sizeof(int));
+  std::shared_ptr<int> recvBuff = mscclpp::makeSharedCuda<int>(args_.maxBytes / sizeof(int));
   devicePtrs_.push_back(sendBuff);
   devicePtrs_.push_back(recvBuff);
 
@@ -154,7 +152,7 @@ void SendRecvTestEngine::setupConnections() {
   std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> futureRemoteMemory;
 
   for (int i : {0, 1}) {
-    auto regMem = comm_->registerMemory(devicePtrs_[i], args_.maxBytes, mscclpp::Transport::CudaIpc | ibDevice);
+    auto regMem = comm_->registerMemory(devicePtrs_[i].get(), args_.maxBytes, mscclpp::Transport::CudaIpc | ibDevice);
     comm_->sendMemoryOnSetup(regMem, ranks[i], 0);
     localMemories.push_back(regMem);
     futureRemoteMemory.push_back(comm_->recvMemoryOnSetup(ranks[1 - i], 0));
@@ -173,21 +171,11 @@ void SendRecvTestEngine::setupConnections() {
                      sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size());
 }
 
-void SendRecvTestEngine::teardown() {
-  for (auto& ptr : devicePtrs_) {
-    CUDATHROW(cudaFree(ptr));
-  }
-  devicePtrs_.clear();
-}
-
-std::vector<void*> SendRecvTestEngine::getSendBuff() { return {devicePtrs_[0]}; }
+std::vector<void*> SendRecvTestEngine::getSendBuff() { return {devicePtrs_[0].get()}; }
 
 void* SendRecvTestEngine::getExpectedBuff() { return expectedBuff_.get(); }
 
-void* SendRecvTestEngine::getRecvBuff() { return devicePtrs_[1]; }
+void* SendRecvTestEngine::getRecvBuff() { return devicePtrs_[1].get(); }
 
-#pragma weak testEngine = sendRecvTestEngine
-#pragma weak testColl = sendRecvTestColl
-
-std::shared_ptr<BaseTestEngine> sendRecvTestEngine = std::make_shared<SendRecvTestEngine>();
-std::shared_ptr<BaseTestColl> sendRecvTestColl = std::make_shared<SendRecvTestColl>();
+std::shared_ptr<BaseTestEngine> getTestEngine() { return std::make_shared<SendRecvTestEngine>(); }
+std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<SendRecvTestColl>(); }
