@@ -13,6 +13,7 @@ MSCCLPP_API_CPP void DeviceEpoch::signal() { BaseEpoch::signal(); }
 
 MSCCLPP_API_CPP DeviceEpoch::DeviceHandle DeviceEpoch::deviceHandle() {
   DeviceEpoch::DeviceHandle device;
+  device.remoteEpochIds = reinterpret_cast<EpochIds*>(remoteEpochIdsRegMem_.get().data());
   device.epochIds = epochIds_.get();
   device.expectedInboundEpochId = expectedInboundEpochId_.get();
   return device;

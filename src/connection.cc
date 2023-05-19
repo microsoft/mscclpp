@@ -1,13 +1,13 @@
 #include "connection.hpp"
 
 #include <algorithm>
+#include <mscclpp/utils.hpp>
 
 #include "checks_internal.hpp"
 #include "debug.h"
 #include "infiniband/verbs.h"
 #include "npkit/npkit.h"
 #include "registered_memory.hpp"
-#include "utils.hpp"
 
 namespace mscclpp {
 

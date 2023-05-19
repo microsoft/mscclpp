@@ -17,9 +17,9 @@ class BaseEpoch {
  private:
   std::shared_ptr<Connection> connection_;
   RegisteredMemory localEpochIdsRegMem_;
-  NonblockingFuture<RegisteredMemory> remoteEpochIdsRegMem_;
 
  protected:
+  NonblockingFuture<RegisteredMemory> remoteEpochIdsRegMem_;
   std::unique_ptr<EpochIds, Deleter<EpochIds>> epochIds_;
   std::unique_ptr<uint64_t, Deleter<uint64_t>> expectedInboundEpochId_;
 
@@ -56,9 +56,18 @@ class DeviceEpoch : BaseEpoch<CudaDeleter> {
     }
 
     __forceinline__ __device__ void epochIncrement() { *(volatile uint64_t*)&(epochIds->outbound) += 1; }
+
+    __forceinline__ __device__ void signalDirect() {
+      // This fence ensures that the writes from a preceding putDirect() are visible on the peer GPU before the
+      // incremented epoch id is visible.
+      __threadfence_system();
+      epochIncrement();
+      *(volatile uint64_t*)&(remoteEpochIds->inboundReplica) = epochIds->outbound;
+    }
 #endif  // __CUDACC__
 
     EpochIds* epochIds;
+    EpochIds* remoteEpochIds;
     uint64_t* expectedInboundEpochId;
   };
 

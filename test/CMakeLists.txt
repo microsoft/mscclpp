@@ -22,3 +22,6 @@ add_executable(unit_tests)
 target_link_libraries(unit_tests GTest::gtest_main GTest::gmock_main mscclpp CUDA::cudart CUDA::cuda_driver)
 add_subdirectory(unit) # This adds the sources to the mscclpp target
 gtest_discover_tests(unit_tests DISCOVERY_MODE PRE_TEST)
+
+# Msccclpp_test
+add_subdirectory(mscclpp-test)
