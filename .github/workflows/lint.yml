@@ -1,4 +1,4 @@
-name: C++ Lint
+name: Lint
 
 on:
   pull_request:
@@ -27,3 +27,23 @@ jobs:
         PYTHONCPPSOURCES=$(find ./python/src/ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
         clang-format-12 -style=file --verbose --Werror --dry-run ${CPPSOURCES}
         clang-format-12 --dry-run ${PYTHONCPPSOURCES}
+
+  spelling:
+    runs-on: ubuntu-20.04
+
+    steps:
+    - name: Check git version
+      env:
+        min-ver: "2.18"
+      run: dpkg --compare-versions $(git version | awk '{print $3}') ge ${{ env.min-ver }}
+
+    - name: Check out Git repository
+      uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        curl -L https://git.io/misspell | sudo bash -s -- -b /bin
+
+    - name: Check spelling
+      run: |
+        misspell -error .
