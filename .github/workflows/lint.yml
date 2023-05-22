@@ -40,10 +40,11 @@ jobs:
     - name: Check out Git repository
       uses: actions/checkout@v3
 
-    - name: Install dependencies
+    - name: Download misspell
       run: |
-        curl -L https://git.io/misspell | sudo bash -s -- -b /bin
+        curl -L https://github.com/client9/misspell/releases/download/v0.3.4/misspell_0.3.4_linux_64bit.tar.gz -o /tmp/misspell_0.3.4_linux_64bit.tar.gz
+        tar -xzf /tmp/misspell_0.3.4_linux_64bit.tar.gz -C .
 
     - name: Check spelling
       run: |
-        misspell -error .
+        ./misspell -error .
