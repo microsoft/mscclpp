@@ -6,12 +6,16 @@
 
 #include "socket.h"
 
+#include <errno.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
+#include "checks.h"
 #include "config.h"
+#include "debug.h"
 #include "utils.h"
 
 static mscclppResult_t socketProgressOpt(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset,

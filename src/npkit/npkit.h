@@ -1,9 +1,10 @@
 #ifndef NPKIT_H_
 #define NPKIT_H_
 
+#include <mscclpp/cuda_utils.hpp>
 #include <string>
+#include <vector>
 
-#include "mscclpp.h"
 #include "npkit_event.h"
 #include "npkit_struct.h"
 
@@ -13,11 +14,11 @@ class NpKit {
 
   static const uint64_t kNumCpuEventBuffers = 32;
 
-  static mscclppResult_t Init(int rank);
+  static void Init(int rank);
 
-  static mscclppResult_t Dump(const std::string& dump_dir);
+  static void Dump(const std::string& dump_dir);
 
-  static mscclppResult_t Shutdown();
+  static void Shutdown();
 
   static NpKitEventCollectContext* GetGpuEventCollectContexts();
 
@@ -47,11 +48,11 @@ class NpKit {
   // 64K * 2 (send/recv) * (512/32) = 2M, 2M * 32 * 16B = 1GB per CPU
   static const uint64_t kMaxNumCpuEventsPerBuffer = 1ULL << 21;
 
-  static NpKitEvent** gpu_event_buffers_;
-  static NpKitEvent** cpu_event_buffers_;
+  static std::vector<mscclpp::UniqueCudaPtr<NpKitEvent>> gpu_event_buffers_;
+  static std::vector<std::unique_ptr<NpKitEvent[]>> cpu_event_buffers_;
 
-  static NpKitEventCollectContext* gpu_collect_contexts_;
-  static NpKitEventCollectContext* cpu_collect_contexts_;
+  static mscclpp::UniqueCudaPtr<NpKitEventCollectContext> gpu_collect_contexts_;
+  static std::unique_ptr<NpKitEventCollectContext[]> cpu_collect_contexts_;
 
   static uint64_t cpu_base_system_timestamp_;
   static uint64_t cpu_base_steady_timestamp_;

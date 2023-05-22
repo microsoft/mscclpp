@@ -11,7 +11,7 @@
 namespace mscclpp {
 
 struct HostProxyFifo::Impl {
-  UniqueCudaHostPtr<ProxyTrigger> triggers;
+  UniqueCudaHostPtr<ProxyTrigger[]> triggers;
   UniqueCudaPtr<uint64_t> head;
   UniqueCudaPtr<uint64_t> tailReplica;
 
@@ -28,9 +28,9 @@ struct HostProxyFifo::Impl {
   CudaStreamWithFlags stream;
 
   Impl()
-      : triggers(makeUniqueCudaHost<ProxyTrigger>(MSCCLPP_PROXY_FIFO_SIZE)),
-        head(makeUniqueCuda<uint64_t>(1)),
-        tailReplica(makeUniqueCuda<uint64_t>(1)),
+      : triggers(makeUniqueCudaHost<ProxyTrigger[]>(MSCCLPP_PROXY_FIFO_SIZE)),
+        head(allocUniqueCuda<uint64_t>()),
+        tailReplica(allocUniqueCuda<uint64_t>()),
         hostTail(0),
         stream(cudaStreamNonBlocking) {}
 };
