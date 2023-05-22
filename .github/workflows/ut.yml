@@ -1,0 +1,42 @@
+name: Unit Tests
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  unittests:
+    runs-on: self-hosted
+
+    steps:
+    - name: Check git version
+      env:
+        min-ver: "2.18"
+      run: dpkg --compare-versions $(git version | awk '{print $3}') ge ${{ env.min-ver }}
+
+    - name: Check out Git repository
+      uses: actions/checkout@v3
+
+    - name: Lock GPU clocks
+      run: |
+        nvidia-smi -pm 1
+        for i in $(seq 0 $((nvidia-smi -L | wc -l)-1)); do
+          nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed "s/\ //") -i $i
+        done
+
+    - name: Download CMake
+      run: |
+        curl -L -C- https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
+        tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
+
+    - name: Build MSCCL++
+      run: |
+        git config --global --add safe.directory /__w/mscclpp/mscclpp
+        export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
+        /tmp/cmake-3.26.4-linux-x86_64/bin/cmake .
+        make -j
+
+    - name: Run unit tests
+      run: |
+        export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
+        # make test
