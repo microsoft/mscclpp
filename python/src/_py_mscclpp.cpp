@@ -127,6 +127,21 @@ struct _Comm {
   }
 };
 
+struct _P2PHandle {
+  struct mscclppRegisteredMemoryP2P _rmP2P;
+  struct mscclppIbMr _ibmr;
+
+  _P2PHandle() : _rmP2P({0}), _ibmr({0}) {}
+
+  _P2PHandle(const mscclppRegisteredMemoryP2P& p2p) : _ibmr({0}) {
+    _rmP2P = p2p;
+    if (_rmP2P.IbMr != nullptr) {
+      _ibmr = *_rmP2P.IbMr;
+      _rmP2P.IbMr = &_ibmr;
+    }
+  }
+};
+
 nb::callable _log_callback;
 
 void _LogHandler(const char* msg) {
@@ -140,6 +155,8 @@ static const std::string DOC_MscclppUniqueId =
     "MSCCLPP Unique Id; used by the MPI Interface";
 
 static const std::string DOC__Comm = "MSCCLPP Communications Handle";
+
+static const std::string DOC__P2PHandle = "MSCCLPP P2P MR Handle";
 
 NB_MODULE(_py_mscclpp, m) {
   m.doc() = "Python bindings for MSCCLPP: which is not NCCL";
@@ -191,6 +208,9 @@ NB_MODULE(_py_mscclpp, m) {
         return nb::bytes(id.internal, sizeof(id.internal));
       });
 
+  nb::class_<_P2PHandle>(m, "_P2PHandle")
+      .def_ro_static("__doc__", &DOC__P2PHandle);
+
   nb::class_<_Comm>(m, "_Comm")
       .def_ro_static("__doc__", &DOC__Comm)
       .def_static(
@@ -240,6 +260,31 @@ NB_MODULE(_py_mscclpp, m) {
       .def_ro("rank", &_Comm::_rank)
       .def_ro("world_size", &_Comm::_world_size)
       .def(
+          "register_buffer",
+          [](_Comm& comm,
+             uint64_t local_buff,
+             uint64_t buff_size) -> std::vector<_P2PHandle> {
+            comm.check_open();
+            mscclppRegisteredMemory regMem;
+            checkResult(
+                mscclppRegisterBuffer(
+                    comm._handle,
+                    reinterpret_cast<void*>(local_buff),
+                    buff_size,
+                    &regMem),
+                "Registering buffer failed");
+
+            std::vector<_P2PHandle> handles;
+            for (const auto& p2p : regMem.p2p) {
+              handles.push_back(_P2PHandle(p2p));
+            }
+            return handles;
+          },
+          "local_buf"_a,
+          "buff_size"_a,
+          nb::call_guard<nb::gil_scoped_release>(),
+          "Register a buffer for P2P transfers.")
+      .def(
           "connect",
           [](_Comm& comm,
              int remote_rank,
@@ -247,9 +292,7 @@ NB_MODULE(_py_mscclpp, m) {
              uint64_t local_buff,
              uint64_t buff_size,
              mscclppTransport_t transport_type) -> void {
-            if (comm._proxies_running) {
-              throw std::invalid_argument("Proxy Threads Already Running");
-            }
+            comm.check_open();
             RETRY(
                 mscclppConnect(
                     comm._handle,
@@ -308,15 +351,6 @@ NB_MODULE(_py_mscclpp, m) {
           "Start the MSCCLPP proxy.")
       .def("close", &_Comm::close, nb::call_guard<nb::gil_scoped_release>())
       .def("__del__", &_Comm::close, nb::call_guard<nb::gil_scoped_release>())
-      .def(
-          "connection_setup",
-          [](_Comm& comm) -> void {
-            comm.check_open();
-            checkResult(
-                mscclppConnectionSetup(comm._handle),
-                "Connection Setup Failed");
-          },
-          nb::call_guard<nb::gil_scoped_release>())
       .def(
           "bootstrap_all_gather_int",
           [](_Comm& comm, int val) -> std::vector<int> {

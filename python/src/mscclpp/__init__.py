@@ -18,6 +18,7 @@ __all__ = (
 )
 
 _Comm = _py_mscclpp._Comm
+_P2PHandle = _py_mscclpp._P2PHandle
 TransportType = _py_mscclpp.TransportType
 
 MscclppUniqueId = _py_mscclpp.MscclppUniqueId
@@ -45,6 +46,7 @@ MSCCLPP_LOG_LEVELS: set[str] = {
     "ABORT",
     "TRACE",
 }
+
 
 def _setup_logging(level: str = "INFO"):
     """Setup log hooks for the C library."""
@@ -177,3 +179,25 @@ class Comm:
 
     def stop_proxies(self) -> None:
         self._comm.stop_proxies()
+
+    def register_buffer(
+        self,
+        data_ptr,
+        data_size: int,
+    ) -> list[_P2PHandle]:
+        return [
+            P2PHandle(self, h)
+            for h in self._comm.register_buffer(
+                data_ptr,
+                data_size,
+            )
+        ]
+
+
+class P2PHandle:
+    _comm: Comm
+    _handle: _P2PHandle
+
+    def __init__(self, comm: Comm, handle: _P2PHandle):
+        self._comm = comm
+        self._handle = handle

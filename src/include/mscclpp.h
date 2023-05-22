@@ -12,11 +12,24 @@
 #define MSCCLPP_PROXY_FIFO_FLUSH_COUNTER 4
 
 #include <mscclppfifo.h>
-#include <time.h>
+
+#include <vector>
+// #includa <cuda_runtime.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+struct alignas(16) mscclppDevConnSignalEpochId {
+  // every signal(), increaments this and either:
+  // 1) proxy thread pushes it to the remote peer's localSignalEpochId->proxy
+  // 2) gpu thread directly writes it to remoteSignalEpochId->device
+  uint64_t device;
+  // signal() function triggers the cpu proxy thread to write to it
+  uint64_t proxy;
+};
+
+using mscclppBufferHandle_t = uint32_t;
 
 /***************************************************************************************************************
  * A mscclppDevConn provides a zero-copy connection between two GPUs connected via P2P NVLink or InfiniBand.
@@ -53,7 +66,7 @@ extern "C" {
  *
  * flush(): [blocking] the sender waits for all the data transfers to complete
  *
- * wait(): [blocking] the reciever waits on the signal() to start reading the data.
+ * wait(): [blocking] the receiver waits on the signal() to start reading the data.
  *
  * The sender should not reuse the buffer till the flush() returns.
  * The receiver should only access the data after the wait() returns.
@@ -80,39 +93,30 @@ extern "C" {
  * The two endpoint can concurrently use the same connection provided they are writing (puts) on different
  * indices in the registered buffer.
  **************************************************************************************************************/
-struct mscclppDevConn
-{
+struct mscclppDevConn {
 #ifdef __CUDACC__
-  __forceinline__ __device__ void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
-  {
+  __forceinline__ __device__ void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize) {
     fifo.push(mscclppData, dstDataOffset, srcDataOffset, dataSize);
   }
 
-  __forceinline__ __device__ void put(uint64_t dataOffset, uint64_t dataSize)
-  {
-    put(dataOffset, dataOffset, dataSize);
-  }
+  __forceinline__ __device__ void put(uint64_t dataOffset, uint64_t dataSize) { put(dataOffset, dataOffset, dataSize); }
 
-  __forceinline__ __device__ void signal()
-  {
+  __forceinline__ __device__ void signal() {
     epochIncrement();
     fifo.push(mscclppFlag, 0, 0, 1);
   }
 
-  __forceinline__ __device__ void putWithSignal(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize)
-  {
+  __forceinline__ __device__ void putWithSignal(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize) {
     epochIncrement();
     fifo.push(mscclppData | mscclppFlag, dstDataOffset, srcDataOffset, dataSize);
   }
 
-  __forceinline__ __device__ void putWithSignal(uint64_t dataOffset, uint64_t dataSize)
-  {
+  __forceinline__ __device__ void putWithSignal(uint64_t dataOffset, uint64_t dataSize) {
     putWithSignal(dataOffset, dataOffset, dataSize);
   }
 
   __forceinline__ __device__ void putWithSignalAndFlush(uint64_t dstDataOffset, uint64_t srcDataOffset,
-                                                        uint64_t dataSize)
-  {
+                                                        uint64_t dataSize) {
     epochIncrement();
     uint64_t curFifoHead = fifo.push(mscclppData | mscclppFlag | mscclppSync, dstDataOffset, srcDataOffset, dataSize);
     while (*(volatile uint64_t*)&fifo.triggerFifo[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
@@ -120,13 +124,11 @@ struct mscclppDevConn
       ;
   }
 
-  __forceinline__ __device__ void putWithSignalAndFlush(uint64_t dataOffset, uint64_t dataSize)
-  {
+  __forceinline__ __device__ void putWithSignalAndFlush(uint64_t dataOffset, uint64_t dataSize) {
     putWithSignalAndFlush(dataOffset, dataOffset, dataSize);
   }
 
-  __forceinline__ __device__ void flush()
-  {
+  __forceinline__ __device__ void flush() {
     uint64_t curFifoHead = fifo.push(mscclppSync, 0, 0, 1);
     // we need to wait for two conditions to be met to ensure the CPU is done flushing. (1) wait for the tail
     // to go pass by curFifoHead (this is safety net) and (2) wait for the work element value to change to 0.
@@ -137,84 +139,101 @@ struct mscclppDevConn
 
   // Version that uses the SM directly to do the copy, instead of using the proxy thread like the functions above.
   __forceinline__ __device__ void putDirect(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize,
-                                            uint32_t threadId, uint32_t numThreads)
-  {
+                                            uint32_t threadId, uint32_t numThreads) {
     uint64_t* src = (uint64_t*)((char*)localBuff + srcDataOffset);
     uint64_t* dst = (uint64_t*)((char*)remoteBuff + dstDataOffset);
     // assume the memory is aligned to 8 bytes
     size_t nElem =
-      dataSize % sizeof(uint64_t) ? (dataSize + sizeof(uint64_t)) / sizeof(uint64_t) : dataSize / sizeof(uint64_t);
+        dataSize % sizeof(uint64_t) ? (dataSize + sizeof(uint64_t)) / sizeof(uint64_t) : dataSize / sizeof(uint64_t);
     for (size_t i = threadId; i < nElem; i += numThreads) {
       dst[i] = src[i];
     }
   }
 
   __forceinline__ __device__ void putDirect(uint64_t dataOffset, uint64_t dataSize, uint32_t threadId,
-                                            uint32_t numThreads)
-  {
+                                            uint32_t numThreads) {
     putDirect(dataOffset, dataOffset, dataSize, threadId, numThreads);
   }
 
-  __forceinline__ __device__ void signalDirect()
-  {
+  __forceinline__ __device__ void signalDirect() {
     // This fence ensures that the writes from a preceding putDirect() are visible on the peer GPU before the
     // incremented epoch id is visible.
     __threadfence_system();
     epochIncrement();
-    *(volatile uint64_t*)remoteEpochId = *sendEpochId;
+    *(volatile uint64_t*)&(remoteSignalEpochId->device) = localSignalEpochId->device;
   }
 
-  __forceinline__ __device__ void wait()
-  {
-    (*recvEpochId) += 1;
-    // printf("%llu %llu %llu\n", *(volatile uint64_t*)proxyEpochId, (*recvEpochId), *(volatile uint64_t*)sendEpochId);
-    while (*(volatile uint64_t*)proxyEpochId < (*recvEpochId))
+  __forceinline__ __device__ void wait() {
+    (*waitEpochId) += 1;
+    while (*(volatile uint64_t*)&(localSignalEpochId->proxy) < (*waitEpochId))
       ;
   }
 
-  __forceinline__ __device__ void waitDirect()
-  {
-    (*recvEpochId) += 1;
-    while (*(volatile uint64_t*)directRecvEpochId < (*recvEpochId))
+  __forceinline__ __device__ void waitDirect() {
+    (*waitEpochId) += 1;
+    while (*(volatile uint64_t*)&(localSignalEpochId->device) < (*waitEpochId))
       ;
   }
 
-  __forceinline__ __device__ void epochIncrement()
-  {
-    *(volatile uint64_t*)sendEpochId += 1;
-  }
+  __forceinline__ __device__ void epochIncrement() { *(volatile uint64_t*)&(localSignalEpochId->device) += 1; }
 
-#endif
-  int remoteRank;
-  int tag;
-
-  void* localBuff;
-  uint64_t* sendEpochId;       // this is read and written by the GPU
-  uint64_t* recvEpochId;       // this is the expected recv epoch id.
-  uint64_t* directRecvEpochId; // this is read and written by remote GPU.
-
-  void* remoteBuff;
-  uint64_t* remoteFlag;
-  uint64_t* remoteEpochId;
-  uint64_t* proxyEpochId; // this is only written by the proxy thread
+#endif  // __CUDACC__
 
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
   struct mscclppConcurrentFifo fifo;
+
+  int remoteRank;
+  int tag;
+
+  // my local buffer
+  void* localBuff;
+
+  struct mscclppDevConnSignalEpochId* localSignalEpochId;
+  // used by the signal() function directly from gpu
+  struct mscclppDevConnSignalEpochId* remoteSignalEpochId;
+
+  // every wait(), increaments this and then the gpu waits for either:
+  // 1) localSignalEpochId->proxy to be >= this in case of a proxy thread
+  // 2) remoteSignalEpochId->device to be >= this in case of a gpu thread
+  uint64_t* waitEpochId;
+
+  // my remote peer's buffer. only non-NULL with gpu's direct access
+  // gpu can directly write into it
+  void* remoteBuff;
+};
+
+// Host interface for mscclppDevCon functionality
+struct mscclppHostConn {
+  virtual ~mscclppHostConn() = default;
+  virtual void put(uint64_t dstDataOffset, uint64_t srcDataOffset, uint64_t dataSize) = 0;
+  virtual void put(mscclppBufferHandle_t dst, uint64_t dstDataOffset, mscclppBufferHandle_t src, uint64_t srcDataOffset,
+                   uint64_t dataSize) = 0;
+  virtual void signal() = 0;
+  virtual void wait() = 0;
+  virtual void flush() = 0;
 };
 
 typedef struct mscclppComm* mscclppComm_t;
 typedef struct mscclppDevConn mscclppDevConn_t;
+typedef struct mscclppHostConn mscclppHostConn_t;
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
-typedef struct
-{
+typedef struct {
   char internal[MSCCLPP_UNIQUE_ID_BYTES];
 } mscclppUniqueId;
 
+struct mscclppRegisteredMemoryP2P {
+  void* remoteBuff;
+  const void* IbMr;
+};
+
+struct mscclppRegisteredMemory {
+  std::vector<mscclppRegisteredMemoryP2P> p2p;
+};
+
 /* Error type */
-typedef enum
-{
+typedef enum {
   mscclppSuccess = 0,
   mscclppUnhandledCudaError = 1,
   mscclppSystemError = 2,
@@ -236,10 +255,9 @@ typedef enum
 mscclppResult_t mscclppGetUniqueId(mscclppUniqueId* uniqueId);
 
 /* Transport Types */
-typedef enum
-{
+typedef enum {
   mscclppTransportP2P = 0,
-  mscclppTransportSHM = 1, // TODO(chhwang): not implemented yet
+  mscclppTransportSHM = 1,  // TODO(chhwang): not implemented yet
   mscclppTransportIB = 2,
 } mscclppTransport_t;
 
@@ -291,7 +309,7 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
 /* Return the string for the given error code.
  *
- * Ouput:
+ * Output:
  *   returns the string
  *
  * Inputs:
@@ -318,6 +336,40 @@ const char* mscclppGetErrorString(mscclppResult_t result);
  */
 mscclppResult_t mscclppConnect(mscclppComm_t comm, int remoteRank, int tag, void* localBuff, uint64_t buffSize,
                                mscclppTransport_t transportType, const char* ibDev = 0);
+
+/* Connect to a remote rank. This function only prepares metadata for connection. The actual connection
+ * is made by a following call of mscclppConnectionSetup(). Note that this function is two-way and a connection
+ * from rank i to remote rank j needs to have a counterpart from rank j to rank i.
+ * Note that with IB, buffers are registered at a page level and if a buffer is spread through multiple pages
+ * and do not fully utilize all of them, IB's QP has to register for all involved pages. This potentially has
+ * security risks if the devConn's accesses are given to a malicious process.
+ *
+ * This version does not register a buffer. Buffers should instead be registered with mscclppRegisterBuffer().
+ *
+ * Inputs:
+ *   comm:          the communicator
+ *   remoteRank:    the rank of the remote process
+ *   tag:           the tag of the connection. tag is copied into the corresponding mscclppDevConn_t, which can be
+ *                  used to identify the connection inside a GPU kernel.
+ *   transportType: the type of transport to be used (mscclppTransportP2P or mscclppTransportIB)
+ *   ibDev:         the name of the IB device to be used. Expects a null for mscclppTransportP2P.
+ */
+mscclppResult_t mscclppConnectWithoutBuffer(mscclppComm_t comm, int remoteRank, int tag,
+                                            mscclppTransport_t transportType, const char* ibDev = 0);
+
+/* Register a buffer for use with a connection.
+ *
+ * Inputs:
+ *   comm:          the communicator
+ *   connIdx:       the index of the connection by order of calls to mscclppConnect/mscclppConnectWithoutBuffer
+ *   localBuff:     the local send/receive buffer
+ *   buffSize:      the size of the local buffer
+ *
+ * Outputs:
+ *   handle:        a handle to the buffer registration
+ */
+mscclppResult_t mscclppRegisterBufferForConnection(mscclppComm_t comm, int connIdx, void* localBuff, uint64_t buffSize,
+                                                   mscclppBufferHandle_t* handle);
 
 /* Establish all connections declared by mscclppConnect(). This function must be called after all mscclppConnect()
  * calls are made. This function ensures that all remote ranks are ready to communicate when it returns.
@@ -415,8 +467,35 @@ void mscclppDefaultLogHandler(const char* msg);
  */
 mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler);
 
+/* Register a buffer for RDMA.
+ *
+ * Outputs:
+ *   regMem: the registered memory
+ *
+ * Inputs:
+ *   comm:        the communicator
+ *   local_memory: the local buffer to be registered
+ *   size:        the size of the buffer
+ */
+mscclppResult_t mscclppRegisterBuffer(mscclppComm_t comm, void* local_memory, size_t size,
+                                      mscclppRegisteredMemory* regMem);
+
+/* Write to a registered buffer.
+ *
+ * Inputs:
+ *   comm:        the communicator
+ *   regMem:      the registered memory
+ *   srcBuff:     the source buffer
+ *   size:        the size of the buffer
+ *   srcOffset:   the offset of the source buffer
+ *   dstOffset:   the offset of the destination buffer
+ *   stream:      the CUDA stream
+ */
+mscclppResult_t mscclppRegisteredBufferWrite(mscclppComm_t comm, mscclppRegisteredMemory* regMem, void* srcBuff,
+                                             size_t size, uint32_t srcOffset, uint32_t dstOffset, int64_t stream);
+
 #ifdef __cplusplus
-} // end extern "C"
+}  // end extern "C"
 #endif
 
-#endif // MSCCLPP_H_
+#endif  // MSCCLPP_H_

@@ -7,14 +7,12 @@
 #ifndef MSCCLPP_UTILS_H_
 #define MSCCLPP_UTILS_H_
 
-#include "alloc.h"
-#include "checks.h"
-#include "mscclpp.h"
-#include <new>
-#include <numa.h>
-#include <sched.h>
 #include <stdint.h>
-#include <time.h>
+
+#include <chrono>
+
+#include "alloc.h"
+// #include "mscclpp.h"
 
 // int mscclppCudaCompCap();
 
@@ -31,8 +29,7 @@ uint64_t getHostHash();
 uint64_t getPidHash();
 mscclppResult_t getRandomData(void* buffer, size_t bytes);
 
-struct netIf
-{
+struct netIf {
   char prefix[64];
   int port;
 };
@@ -40,11 +37,9 @@ struct netIf
 int parseStringList(const char* string, struct netIf* ifList, int maxList);
 bool matchIfList(const char* string, int port, struct netIf* ifList, int listSize, bool matchExact);
 
-static long log2i(long n)
-{
+static long log2i(long n) {
   long l = 0;
-  while (n >>= 1)
-    l++;
+  while (n >>= 1) l++;
   return l;
 }
 
@@ -54,16 +49,13 @@ int64_t elapsedClock(mscclppTime_t start, mscclppTime_t end);
 
 /* get any bytes of random data from /dev/urandom, return 0 if it succeeds; else
  * return -1 */
-inline mscclppResult_t getRandomData(void* buffer, size_t bytes)
-{
+inline mscclppResult_t getRandomData(void* buffer, size_t bytes) {
   mscclppResult_t ret = mscclppSuccess;
   if (bytes > 0) {
     const size_t one = 1UL;
     FILE* fp = fopen("/dev/urandom", "r");
-    if (buffer == NULL || fp == NULL || fread(buffer, bytes, one, fp) != one)
-      ret = mscclppSystemError;
-    if (fp)
-      fclose(fp);
+    if (buffer == NULL || fp == NULL || fread(buffer, bytes, one, fp) != one) ret = mscclppSystemError;
+    if (fp) fclose(fp);
   }
   return ret;
 }

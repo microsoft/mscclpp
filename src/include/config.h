@@ -3,16 +3,15 @@
 
 #include <time.h>
 
-class mscclppConfig
-{
-public:
+class mscclppConfig {
+ public:
   time_t bootstrapConnectionTimeout = 30;
 
   static mscclppConfig* getInstance();
   time_t getBootstrapConnectionTimeoutConfig();
   void setBootstrapConnectionTimeoutConfig(time_t timeout);
 
-private:
+ private:
   mscclppConfig() = default;
   mscclppConfig(const mscclppConfig&) = delete;
   mscclppConfig& operator=(const mscclppConfig&) = delete;
@@ -20,4 +19,4 @@ private:
   static mscclppConfig _instance;
 };
 
-#endif // end include guard
+#endif  // end include guard

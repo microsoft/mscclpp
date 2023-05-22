@@ -7,20 +7,20 @@
 #ifndef MSCCLPP_DEBUG_H_
 #define MSCCLPP_DEBUG_H_
 
-#include "mscclpp.h"
-#include <chrono>
-#include <stdio.h>
-#include <type_traits>
-
 #include <limits.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <string.h>
+
+#include <chrono>
+#include <type_traits>
+
+#include "mscclpp.h"
 
 // Conform to pthread and NVTX standard
 #define MSCCLPP_THREAD_NAMELEN 16
 
-typedef enum
-{
+typedef enum {
   MSCCLPP_LOG_NONE = 0,
   MSCCLPP_LOG_VERSION = 1,
   MSCCLPP_LOG_WARN = 2,
@@ -28,8 +28,7 @@ typedef enum
   MSCCLPP_LOG_ABORT = 4,
   MSCCLPP_LOG_TRACE = 5
 } mscclppDebugLogLevel;
-typedef enum
-{
+typedef enum {
   MSCCLPP_INIT = 1,
   MSCCLPP_COLL = 2,
   MSCCLPP_P2P = 4,
