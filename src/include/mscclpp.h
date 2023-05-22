@@ -66,7 +66,7 @@ using mscclppBufferHandle_t = uint32_t;
  *
  * flush(): [blocking] the sender waits for all the data transfers to complete
  *
- * wait(): [blocking] the reciever waits on the signal() to start reading the data.
+ * wait(): [blocking] the receiver waits on the signal() to start reading the data.
  *
  * The sender should not reuse the buffer till the flush() returns.
  * The receiver should only access the data after the wait() returns.
@@ -309,7 +309,7 @@ mscclppResult_t mscclppCommDestroy(mscclppComm_t comm);
 
 /* Return the string for the given error code.
  *
- * Ouput:
+ * Output:
  *   returns the string
  *
  * Inputs:
