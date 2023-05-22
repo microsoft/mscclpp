@@ -12,9 +12,7 @@ on:
 jobs:
   analyze:
     name: Analyze
-    runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
-    container:
-      image: superbench/superbench:v0.8.0-cuda12.1
+    runs-on: self-hosted
     permissions:
       actions: read
       contents: read
