@@ -133,7 +133,7 @@ class AllGatherTestColl : public BaseTestColl {
 
   void runColl(const TestArgs& args, cudaStream_t stream) override;
   void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) override;
-  void getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) override;
+  void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) override;
   void setupCollTest(size_t size) override;
 };
 
@@ -205,42 +205,8 @@ void AllGatherTestEngine::allocateBuffer() {
 }
 
 void AllGatherTestEngine::setupConnections() {
-  const int worldSize = args_.totalRanks;
-  const int rank = args_.rank;
-  const int nRanksPerNode = args_.nRanksPerNode;
-  const int thisNode = rank / nRanksPerNode;
-  const mscclpp::Transport ibTransport = IBs[args_.gpuNum];
-
-  std::vector<mscclpp::channel::ChannelId> channelIds;
-  std::vector<mscclpp::RegisteredMemory> localMemories;
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemories;
-
-  auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
-  for (int r = 0; r < worldSize; r++) {
-    if (r == rank) {
-      continue;
-    }
-    mscclpp::Transport transport;
-    if (rankToNode(r) == thisNode) {
-      transport = mscclpp::Transport::CudaIpc;
-    } else {
-      transport = ibTransport;
-    }
-    // Connect with all other ranks
-    channelIds.push_back(chanService_->addChannel(comm_->connectOnSetup(r, 0, transport)));
-    auto memory = comm_->registerMemory(sendBuff_.get(), args_.maxBytes, mscclpp::Transport::CudaIpc | ibTransport);
-    localMemories.push_back(memory);
-    comm_->sendMemoryOnSetup(memory, r, 0);
-    remoteMemories.push_back(comm_->recvMemoryOnSetup(r, 0));
-  }
-  comm_->setup();
-
   std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
-  for (size_t i = 0; i < channelIds.size(); ++i) {
-    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(chanService_->deviceChannel(channelIds[i]),
-                                                                chanService_->addMemory(remoteMemories[i].get()),
-                                                                chanService_->addMemory(localMemories[i])));
-  }
+  setupMeshConnections(devChannels, sendBuff_.get(), args_.maxBytes);
 
   assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));
   CUDATHROW(cudaMemcpyToSymbol(constDevChans, devChannels.data(),

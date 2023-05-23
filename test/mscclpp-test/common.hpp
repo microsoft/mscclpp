@@ -83,6 +83,8 @@ class BaseTestEngine {
   double benchTime();
 
  protected:
+  void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* buff, size_t bytes);
+
   TestArgs args_;
   std::shared_ptr<BaseTestColl> coll_;
   std::shared_ptr<mscclpp::Communicator> comm_;
