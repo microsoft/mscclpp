@@ -163,11 +163,19 @@ struct DeviceChannel {
   DeviceProxyFifo fifo_;
 };
 
+class BaseChannelService {
+ public:
+  BaseChannelService() = default;
+  virtual ~BaseChannelService() = default;
+  virtual void startProxy() = 0;
+  virtual void stopProxy() = 0;
+};
+
 class DeviceChannelService;
 
 inline ProxyHandler makeChannelProxyHandler(DeviceChannelService& channelService);
 
-class DeviceChannelService {
+class DeviceChannelService : public BaseChannelService {
  public:
   DeviceChannelService(Communicator& communicator);
 
@@ -186,8 +194,8 @@ class DeviceChannelService {
     return DeviceChannel(id, channels_[id].epoch().deviceHandle(), proxy_.fifo().deviceFifo());
   }
 
-  void startProxy() { proxy_.start(); }
-  void stopProxy() { proxy_.stop(); }
+  void startProxy() override { proxy_.start(); }
+  void stopProxy() override { proxy_.stop(); }
 
  private:
   Communicator& communicator_;

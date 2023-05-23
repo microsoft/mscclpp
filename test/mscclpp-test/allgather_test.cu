@@ -6,7 +6,10 @@
 #include "common.hpp"
 
 #define ALIGN 4
+
+constexpr uint64_t MAGIC = 0xdeadbeef;
 __constant__ mscclpp::channel::SimpleDeviceChannel constDevChans[16];
+__constant__ mscclpp::channel::DeviceChannel constRawDevChan[16];
 
 __device__ void allgather0(mscclpp::channel::SimpleDeviceChannel devChan, int rank, int worldSize, int remoteRank,
                            size_t nelemsPerGPU) {
@@ -111,6 +114,29 @@ __device__ void allgather2(mscclpp::channel::SimpleDeviceChannel devChan, int ra
   }
 }
 
+__forceinline__ __device__ void putAndSignalAll(mscclpp::channel::DeviceChannel devChan) {
+  mscclpp::ProxyTrigger trigger;
+  trigger.fst = MAGIC;
+  devChan.fifo_.push(trigger);
+}
+
+__device__ void allgather3(int rank, int woldSize, mscclpp::DeviceProxyFifo fifo) {
+  int tid = threadIdx.x;
+  assert(tid < woldSize);
+  if (tid != rank) {
+    constRawDevChan[tid].epochIncrement();
+  }
+  __syncthreads();
+  if (tid == 0) {
+    mscclpp::ProxyTrigger trigger;
+    trigger.fst = MAGIC;
+    fifo.push(trigger);
+  }
+  if (tid != rank) {
+    constRawDevChan[tid].wait();
+  }
+}
+
 __global__ void kernel(int rank, int worldSize, int nranksPerNode, size_t nelemsPerGPU, int kernel) {
   // find the mapping between remoteRank and devConns
   int warpId = threadIdx.x / 32;
@@ -124,6 +150,66 @@ __global__ void kernel(int rank, int worldSize, int nranksPerNode, size_t nelems
     allgather1(devChan, rank, worldSize, nranksPerNode, remoteRank, nelemsPerGPU);
   else if (kernel == 2)
     allgather2(devChan, rank, worldSize, nranksPerNode, remoteRank, nelemsPerGPU);
+  else if (kernel == 3) {
+    // all channels are connected to the same proxy
+    allgather3(rank, worldSize, constRawDevChan[0].fifo_);
+  }
+}
+
+class AllGatherChannelService : public mscclpp::channel::BaseChannelService {
+ public:
+  AllGatherChannelService(mscclpp::Communicator& communicator, int worldSize, int rank);
+  void startProxy() override { proxy_.start(); }
+  void stopProxy() override { proxy_.stop(); }
+  void setSendBytes(size_t sendBytes) { this->sendBytes_ = sendBytes; }
+  mscclpp::channel::MemoryId addMemory(mscclpp::RegisteredMemory memory) {
+    remoteMemories_.push_back(memory);
+    return remoteMemories_.size() - 1;
+  }
+  mscclpp::channel::ChannelId addChannel(std::shared_ptr<mscclpp::Connection> connection) {
+    channels_.push_back(mscclpp::channel::Channel(communicator_, connection));
+    return channels_.size() - 1;
+  }
+
+ private:
+  mscclpp::Proxy proxy_;
+  mscclpp::Communicator& communicator_;
+  std::vector<mscclpp::channel::Channel> channels_;
+  std::vector<mscclpp::RegisteredMemory> remoteMemories_;
+  mscclpp::RegisteredMemory localMemory_;
+
+  int worldSize_;
+  int rank_;
+  size_t sendBytes_;
+
+  mscclpp::ProxyHandlerResult handleTrigger(mscclpp::ProxyTrigger triggerRaw);
+};
+
+AllGatherChannelService::AllGatherChannelService(mscclpp::Communicator& communicator, int worldSize, int rank)
+    : communicator_(communicator),
+      worldSize_(worldSize),
+      sendBytes_(0),
+      rank_(rank),
+      proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }) {}
+
+mscclpp::ProxyHandlerResult AllGatherChannelService::handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
+  static uint32_t counter = 0;
+  auto* trigger = reinterpret_cast<mscclpp::channel::ChannelTrigger*>(&triggerRaw);
+  size_t bytesPerRank = sendBytes_ / worldSize_;
+  size_t offset = rank_ * bytesPerRank;
+  for (int r = 1; r < worldSize_; r++) {
+    int nextRank = (r + 1) % worldSize_;
+    int index = (r < rank_) ? r : r - 1;
+    auto& conn = channels_[index].connection();
+    conn.write(remoteMemories_[index], offset, localMemory_, offset, bytesPerRank);
+    channels_[index].epoch().signal();
+    if (counter % 64 && mscclpp::AllIBTransports.has(conn.transport())) {
+      // if we use IB, we need to flush in  a while
+      conn.flush();
+    }
+  }
+  counter++;
+  return mscclpp::ProxyHandlerResult::FlushFifoTailAndContinue;
 }
 
 class AllGatherTestColl : public BaseTestColl {
@@ -215,6 +301,7 @@ void AllGatherTestEngine::setupConnections() {
   std::vector<mscclpp::RegisteredMemory> localMemories;
   std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemories;
 
+  auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
   auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
   for (int r = 0; r < worldSize; r++) {
     if (r == rank) {
@@ -227,7 +314,7 @@ void AllGatherTestEngine::setupConnections() {
       transport = ibTransport;
     }
     // Connect with all other ranks
-    channelIds.push_back(chanService_->addChannel(comm_->connectOnSetup(r, 0, transport)));
+    channelIds.push_back(service->addChannel(comm_->connectOnSetup(r, 0, transport)));
     auto memory = comm_->registerMemory(sendBuff_.get(), args_.maxBytes, mscclpp::Transport::CudaIpc | ibTransport);
     localMemories.push_back(memory);
     comm_->sendMemoryOnSetup(memory, r, 0);
@@ -237,9 +324,9 @@ void AllGatherTestEngine::setupConnections() {
 
   std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
   for (size_t i = 0; i < channelIds.size(); ++i) {
-    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(chanService_->deviceChannel(channelIds[i]),
-                                                                chanService_->addMemory(remoteMemories[i].get()),
-                                                                chanService_->addMemory(localMemories[i])));
+    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(service->deviceChannel(channelIds[i]),
+                                                                service->addMemory(remoteMemories[i].get()),
+                                                                service->addMemory(localMemories[i])));
   }
 
   assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));

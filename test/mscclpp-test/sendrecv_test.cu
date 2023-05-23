@@ -133,13 +133,14 @@ void SendRecvTestEngine::setupConnections() {
   int sendToRank = (args_.rank + 1) % worldSize;
   int recvFromRank = (args_.rank - 1 + worldSize) % worldSize;
   std::array<int, 2> ranks = {sendToRank, recvFromRank};
+  auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
 
   std::vector<mscclpp::channel::ChannelId> chanIds;
 
-  chanIds.push_back(chanService_->addChannel(
+  chanIds.push_back(service->addChannel(
       comm_->connectOnSetup(sendToRank, 0, getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice))));
   if (recvFromRank != sendToRank) {
-    chanIds.push_back(chanService_->addChannel(
+    chanIds.push_back(service->addChannel(
         comm_->connectOnSetup(recvFromRank, 0, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice))));
   } else {
     // reuse the send channel if worldSize is 2
@@ -164,7 +165,7 @@ void SendRecvTestEngine::setupConnections() {
   for (int i : {0, 1}) {
     // We assume ranks in the same node
     devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
-        chanService_->deviceChannel(chanIds[i]), futureRemoteMemory[i].get().data(), localMemories[i].data()));
+        service->deviceChannel(chanIds[i]), futureRemoteMemory[i].get().data(), localMemories[i].data()));
   }
   cudaMemcpyToSymbol(constDevChans, devChannels.data(),
                      sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size());

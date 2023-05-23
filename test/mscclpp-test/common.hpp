@@ -86,7 +86,7 @@ class BaseTestEngine {
   TestArgs args_;
   std::shared_ptr<BaseTestColl> coll_;
   std::shared_ptr<mscclpp::Communicator> comm_;
-  std::shared_ptr<mscclpp::channel::DeviceChannelService> chanService_;
+  std::shared_ptr<mscclpp::channel::BaseChannelService> chanService_;
   cudaStream_t stream_;
   int error_;
   bool inPlace_;
