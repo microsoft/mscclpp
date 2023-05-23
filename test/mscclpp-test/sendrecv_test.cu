@@ -55,7 +55,7 @@ class SendRecvTestColl : public BaseTestColl {
   void runColl(const TestArgs& args, cudaStream_t stream) override;
   void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) override;
   void getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) override;
-  void setupCollTest(size_t size, std::shared_ptr<mscclpp::channel::BaseChannelService>) override;
+  void setupCollTest(size_t size) override;
 };
 
 void SendRecvTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
@@ -89,7 +89,7 @@ void SendRecvTestColl::initData(const TestArgs& args, std::vector<void*> sendBuf
   std::memcpy(expectedBuff, dataHost.data(), recvCount_ * typeSize_);
 }
 
-void SendRecvTestColl::setupCollTest(size_t size, std::shared_ptr<mscclpp::channel::BaseChannelService>) {
+void SendRecvTestColl::setupCollTest(size_t size) {
   size_t count = size / typeSize_;
   size_t base = (count / ALIGN) * ALIGN;
   sendCount_ = base;

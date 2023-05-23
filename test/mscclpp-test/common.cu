@@ -94,12 +94,11 @@ BaseTestEngine::BaseTestEngine(bool inPlace) : error_(0), inPlace_(inPlace) {
 
 BaseTestEngine::~BaseTestEngine() { cudaStreamDestroy(stream_); }
 
-void BaseTestColl::setupCollTest(const TestArgs& args, size_t size,
-                                 std::shared_ptr<mscclpp::channel::BaseChannelService> chanService) {
+void BaseTestColl::setupCollTest(const TestArgs& args, size_t size) {
   this->worldSize_ = args.totalRanks;
   this->typeSize_ = sizeof(int);
   this->kernelNum_ = args.kernelNum;
-  this->setupCollTest(size, chanService);
+  this->setupCollTest(size);
 }
 
 double BaseTestEngine::benchTime() {
@@ -136,7 +135,7 @@ void BaseTestEngine::barrier() {
 void BaseTestEngine::runTest()
 {
   // warm-up for large size
-  this->coll_->setupCollTest(args_, args_.maxBytes, chanService_);
+  this->coll_->setupCollTest(args_, args_.maxBytes);
   this->barrier();
   for (int iter = 0; iter < warmup_iters; iter++) {
     this->coll_->runColl(args_, stream_);
@@ -144,7 +143,7 @@ void BaseTestEngine::runTest()
   CUDATHROW(cudaDeviceSynchronize());
 
   // warm-up for small size
-  this->coll_->setupCollTest(args_, args_.minBytes, chanService_);
+  this->coll_->setupCollTest(args_, args_.minBytes);
   this->barrier();
   for (int iter = 0; iter < warmup_iters; iter++) {
     this->coll_->runColl(args_, stream_);
@@ -161,14 +160,14 @@ void BaseTestEngine::runTest()
   // Benchmark
   for (size_t size = args_.minBytes; size <= args_.maxBytes;
        size = ((args_.stepFactor > 1) ? size * args_.stepFactor : size + args_.stepBytes)) {
-    coll_->setupCollTest(args_, size, chanService_);
+    coll_->setupCollTest(args_, size);
     this->coll_->initData(this->args_, this->getSendBuff(), this->getExpectedBuff());
     PRINT("%12li  %12li", max(coll_->getSendBytes(), coll_->getExpectedBytes()), coll_->getParamBytes() / sizeof(int));
     double deltaSec = benchTime();
 
     size_t nErrors = 0;
     if (args_.reportErrors) {
-      this->coll_->setupCollTest(args_, size, chanService_);
+      this->coll_->setupCollTest(args_, size);
       this->coll_->initData(this->args_, this->getSendBuff(), this->getExpectedBuff());
       this->barrier();
       this->coll_->runColl(args_, stream_);
@@ -219,6 +218,7 @@ void BaseTestEngine::setupTest() {
   this->chanService_ = this->createChannelService();
   this->setupConnections();
   this->chanService_->startProxy();
+  this->coll_->setChanService(this->chanService_);
 }
 
 size_t BaseTestEngine::checkData() {

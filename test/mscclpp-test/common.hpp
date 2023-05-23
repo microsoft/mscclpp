@@ -43,8 +43,8 @@ class BaseTestColl {
   virtual void runColl(const TestArgs& args, cudaStream_t stream) = 0;
   virtual void getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) = 0;
 
-  void setupCollTest(const TestArgs& args, size_t size,
-                     std::shared_ptr<mscclpp::channel::BaseChannelService> chanService);
+  void setupCollTest(const TestArgs& args, size_t size);
+  void setChanService(std::shared_ptr<mscclpp::channel::BaseChannelService> chanService) { chanService_ = chanService; }
   size_t getSendBytes() { return sendCount_ * typeSize_; }
   size_t getRecvBytes() { return recvCount_ * typeSize_; }
   size_t getExpectedBytes() { return expectedCount_ * typeSize_; }
@@ -59,8 +59,10 @@ class BaseTestColl {
   int worldSize_;
   int kernelNum_;
 
+  std::shared_ptr<mscclpp::channel::BaseChannelService> chanService_;
+
  private:
-  virtual void setupCollTest(size_t size, std::shared_ptr<mscclpp::channel::BaseChannelService> chanService) = 0;
+  virtual void setupCollTest(size_t size) = 0;
 };
 
 class BaseTestEngine {

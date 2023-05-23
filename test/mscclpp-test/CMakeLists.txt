@@ -1,5 +1,7 @@
 function(add_mscclpp_test_executable name sources)
     add_executable(${name} ${sources} common.cu)
+    # this should be removed after util.cc move to cpp style API
+    target_include_directories(${name} PRIVATE ${PROJECT_SOURCE_DIR}/src/include)
     target_link_libraries(${name} mscclpp MPI::MPI_CXX CUDA::cudart CUDA::cuda_driver)
 endfunction()
 

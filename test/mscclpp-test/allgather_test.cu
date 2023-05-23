@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <string>
+#include "utils.h"
 
 #include "common.hpp"
 
@@ -157,7 +158,7 @@ __global__ void kernel(int rank, int worldSize, int nranksPerNode, size_t nelems
 
 class AllGatherChannelService : public mscclpp::channel::BaseChannelService {
  public:
-  AllGatherChannelService(mscclpp::Communicator& communicator, int worldSize, int rank);
+  AllGatherChannelService(mscclpp::Communicator& communicator, int worldSize, int rank, int cudaDevice);
   void startProxy() override { proxy_.start(); }
   void stopProxy() override { proxy_.stop(); }
   void setSendBytes(size_t sendBytes) { this->sendBytes_ = sendBytes; }
@@ -193,12 +194,18 @@ class AllGatherChannelService : public mscclpp::channel::BaseChannelService {
   mscclpp::ProxyHandlerResult handleTrigger(mscclpp::ProxyTrigger triggerRaw);
 };
 
-AllGatherChannelService::AllGatherChannelService(mscclpp::Communicator& communicator, int worldSize, int rank)
+AllGatherChannelService::AllGatherChannelService(mscclpp::Communicator& communicator, int worldSize, int rank,
+                                                 int cudaDevice)
     : communicator_(communicator),
       worldSize_(worldSize),
       sendBytes_(0),
       rank_(rank),
-      proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }) {}
+      proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); },
+             [&]() {
+               int deviceNumaNode;
+               getDeviceNumaNode(cudaDevice, &deviceNumaNode);
+               numaBind(deviceNumaNode);
+             }) {}
 
 mscclpp::ProxyHandlerResult AllGatherChannelService::handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
   static uint32_t counter = 0;
@@ -232,7 +239,7 @@ class AllGatherTestColl : public BaseTestColl {
   void runColl(const TestArgs& args, cudaStream_t stream) override;
   void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) override;
   void getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) override;
-  void setupCollTest(size_t size, std::shared_ptr<mscclpp::channel::BaseChannelService> chanService) override;
+  void setupCollTest(size_t size) override;
 };
 
 void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
@@ -271,7 +278,7 @@ void AllGatherTestColl::getBw(const double deltaSec, double& algBw, double& busB
   busBw = baseBw * factor;
 }
 
-void AllGatherTestColl::setupCollTest(size_t size, std::shared_ptr<mscclpp::channel::BaseChannelService> chanService) {
+void AllGatherTestColl::setupCollTest(size_t size) {
   size_t count = size / typeSize_;
   size_t base = (count / (ALIGN * worldSize_)) * ALIGN;
   sendCount_ = base;
@@ -279,7 +286,7 @@ void AllGatherTestColl::setupCollTest(size_t size, std::shared_ptr<mscclpp::chan
   paramCount_ = base;
   expectedCount_ = recvCount_;
   if (isUsingHostOffload(kernelNum_)) {
-    auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService);
+    auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
     service->setSendBytes(sendCount_ * typeSize_);
   }
 }
@@ -372,7 +379,7 @@ void AllGatherTestEngine::setupConnections() {
 
 std::shared_ptr<mscclpp::channel::BaseChannelService> AllGatherTestEngine::createChannelService() {
   if (isUsingHostOffload(args_.kernelNum)) {
-    return std::make_shared<AllGatherChannelService>(*comm_, args_.totalRanks, args_.rank);
+    return std::make_shared<AllGatherChannelService>(*comm_, args_.totalRanks, args_.rank, args_.gpuNum);
   } else {
     return std::make_shared<mscclpp::channel::DeviceChannelService>(*comm_);
   }
