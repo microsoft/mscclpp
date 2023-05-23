@@ -68,8 +68,7 @@ double parseSize(const char* value) {
   return size * units;
 }
 
-double allreduceTime(int worldSize, double value, int average)
-{
+double allreduceTime(int worldSize, double value, int average) {
   double accumulator = value;
 
   if (average != 0) {
@@ -81,8 +80,7 @@ double allreduceTime(int worldSize, double value, int average)
     MPI_Allreduce(MPI_IN_PLACE, (void*)&accumulator, 1, MPI_DOUBLE, op, MPI_COMM_WORLD);
   }
 
-  if (average == 1)
-    accumulator /= worldSize;
+  if (average == 1) accumulator /= worldSize;
   return accumulator;
 }
 }  // namespace
@@ -94,8 +92,7 @@ BaseTestEngine::BaseTestEngine(bool inPlace) : error_(0), inPlace_(inPlace) {
 
 BaseTestEngine::~BaseTestEngine() { cudaStreamDestroy(stream_); }
 
-void BaseTestColl::setupCollTest(const TestArgs& args, size_t size)
-{
+void BaseTestColl::setupCollTest(const TestArgs& args, size_t size) {
   this->worldSize_ = args.totalRanks;
   this->typeSize_ = sizeof(int);
   this->setupCollTest(size);
@@ -128,12 +125,9 @@ double BaseTestEngine::benchTime() {
   return deltaSec;
 }
 
-void BaseTestEngine::barrier() {
-  this->comm_->bootstrapper()->barrier();
-}
+void BaseTestEngine::barrier() { this->comm_->bootstrapper()->barrier(); }
 
-void BaseTestEngine::runTest()
-{
+void BaseTestEngine::runTest() {
   // warm-up for large size
   this->coll_->setupCollTest(args_, args_.maxBytes);
   this->barrier();
@@ -236,7 +230,9 @@ size_t BaseTestEngine::checkData() {
   return nErrors;
 }
 
-void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* buff, size_t bytes) {
+// Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
+void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels,
+                                          void* sendBuff, size_t sendBuffBytes, void* recvBuff, size_t recvBuffBytes) {
   const int worldSize = args_.totalRanks;
   const int rank = args_.rank;
   const int nRanksPerNode = args_.nRanksPerNode;
@@ -245,6 +241,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
 
   std::vector<mscclpp::channel::ChannelId> channelIds;
   std::vector<mscclpp::RegisteredMemory> localMemories;
+  std::vector<mscclpp::RegisteredMemory> localTmpMemories;
   std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemories;
 
   auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
@@ -260,17 +257,29 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
     }
     // Connect with all other ranks
     channelIds.push_back(chanService_->addChannel(comm_->connectOnSetup(r, 0, transport)));
-    auto memory = comm_->registerMemory(buff, bytes, mscclpp::Transport::CudaIpc | ibTransport);
-    localMemories.push_back(memory);
-    comm_->sendMemoryOnSetup(memory, r, 0);
+    auto sendMemory = comm_->registerMemory(sendBuff, sendBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
+    localMemories.push_back(sendMemory);
+    if (recvBuff != nullptr) {
+      auto recvMemory = comm_->registerMemory(recvBuff, recvBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
+      comm_->sendMemoryOnSetup(recvMemory, r, 0);
+      localTmpMemories.push_back(recvMemory);
+    } else {
+      comm_->sendMemoryOnSetup(sendMemory, r, 0);
+    }
     remoteMemories.push_back(comm_->recvMemoryOnSetup(r, 0));
   }
   comm_->setup();
 
   for (size_t i = 0; i < channelIds.size(); ++i) {
-    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(chanService_->deviceChannel(channelIds[i]),
-                                                                chanService_->addMemory(remoteMemories[i].get()),
-                                                                chanService_->addMemory(localMemories[i])));
+    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
+        chanService_->deviceChannel(channelIds[i]), chanService_->addMemory(remoteMemories[i].get()),
+        chanService_->addMemory(localMemories[i]), remoteMemories[i].get().data(), localMemories[i].data()));
+    // TODO(chhwang): need an interface for this. see usage in allreduce_test.cu
+    if (recvBuff != nullptr) {
+      devChannels.back().tmpPtr_ = localTmpMemories[i].data();
+    } else {
+      devChannels.back().tmpPtr_ = nullptr;
+    }
   }
 }
 

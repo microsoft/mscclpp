@@ -67,7 +67,7 @@ class BaseTestEngine {
   virtual ~BaseTestEngine();
   virtual void allocateBuffer() = 0;
 
-  int getTestErrors() {return error_;}
+  int getTestErrors() { return error_; }
   void setupTest();
   void bootstrap(const TestArgs& args);
   void runTest();
@@ -83,7 +83,8 @@ class BaseTestEngine {
   double benchTime();
 
  protected:
-  void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* buff, size_t bytes);
+  void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* sendBuff,
+                            size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
 
   TestArgs args_;
   std::shared_ptr<BaseTestColl> coll_;
