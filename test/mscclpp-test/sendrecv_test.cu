@@ -54,7 +54,7 @@ class SendRecvTestColl : public BaseTestColl {
 
   void runColl(const TestArgs& args, cudaStream_t stream) override;
   void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) override;
-  void getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) override;
+  void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) override;
   void setupCollTest(size_t size) override;
 };
 
@@ -65,9 +65,9 @@ void SendRecvTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   kernel<<<blockNum, BLOCK_THREADS_NUM, 0, stream>>>(args.rank, sendBytes, bytesPerBlock);
 }
 
-void SendRecvTestColl::getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) {
+void SendRecvTestColl::getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) {
   double baseBw = (double)(paramCount_ * typeSize_) / 1.0E9 / deltaSec;
-  algBW = baseBw;
+  algBw = baseBw;
   double factor = 1;
   busBw = baseBw * factor;
 }
