@@ -40,10 +40,10 @@ class BaseTestColl {
   BaseTestColl() {}
   virtual ~BaseTestColl() {}
   virtual void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) = 0;
-  virtual void setupCollTest(size_t size, size_t typeSize) = 0;
   virtual void runColl(const TestArgs& args, cudaStream_t stream) = 0;
   virtual void getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) = 0;
 
+  void setupCollTest(const TestArgs& args, size_t size);
   size_t getSendBytes() { return sendCount_ * typeSize_; }
   size_t getRecvBytes() { return recvCount_ * typeSize_; }
   size_t getExpectedBytes() { return expectedCount_ * typeSize_; }
@@ -55,11 +55,15 @@ class BaseTestColl {
   size_t expectedCount_;
   size_t paramCount_;
   int typeSize_;
+  int worldSize_;
+
+ private:
+  virtual void setupCollTest(size_t size) = 0;
 };
 
 class BaseTestEngine {
  public:
-  BaseTestEngine(bool inPlace);
+  BaseTestEngine(bool inPlace = true);
   virtual ~BaseTestEngine();
   virtual void allocateBuffer() = 0;
 
