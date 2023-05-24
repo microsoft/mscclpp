@@ -6,6 +6,7 @@
 
 #include "api.h"
 #include "checks_internal.hpp"
+#include "debug.h"
 #include "utils.h"
 
 namespace mscclpp {

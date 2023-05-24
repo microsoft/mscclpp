@@ -6,11 +6,15 @@
 
 #include "utils.h"
 
+#include <cuda_runtime.h>
 #include <numa.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include <memory>
 #include <string>
+
+#include "checks.h"
 
 // Get current Compute Capability
 // int mscclppCudaCompCap() {

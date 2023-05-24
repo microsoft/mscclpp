@@ -8,11 +8,11 @@
 #define MSCCLPP_UTILS_H_
 
 #include <stdint.h>
+#include <stdio.h>
 
 #include <chrono>
 
-#include "alloc.h"
-// #include "mscclpp.h"
+#include "mscclpp.h"
 
 // int mscclppCudaCompCap();
 
