@@ -13,15 +13,15 @@ struct Chunk {
   size_t size;
 };
 
-__host__ __device__ Chunk getChunk(size_t dataCount, size_t numChunks, size_t chunkIdx, size_t chunkCount) {
+__host__ __device__ Chunk getChunk(size_t dataCount, size_t numChunks, size_t chunkIdx)
+{
   size_t remainder = dataCount % numChunks;
   size_t smallChunkSize = dataCount / numChunks;
   size_t largeChunkSize = smallChunkSize + 1;
-  size_t numLargeChunks = chunkIdx < remainder ? remainder - chunkIdx : 0;
-  size_t numSmallChunks = chunkCount - numLargeChunks;
-  size_t offset = (remainder - numLargeChunks) * largeChunkSize +
+  size_t numRemainedLargeChunks = chunkIdx < remainder ? remainder - chunkIdx : 0;
+  size_t offset = (remainder - numRemainedLargeChunks) * largeChunkSize +
                   (chunkIdx > remainder ? chunkIdx - remainder : 0) * smallChunkSize;
-  return Chunk{offset, numLargeChunks * largeChunkSize + numSmallChunks * smallChunkSize};
+  return Chunk{offset, chunkIdx < remainder ? largeChunkSize : smallChunkSize};
 }
 
 __device__ void send(mscclpp::channel::SimpleDeviceChannel& chan, size_t dstOffset, size_t srcOffset, size_t size) {
@@ -51,35 +51,35 @@ __device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratc
 
   // 1st communication phase: send data to the scratch buffer of the peer associated with this block
   mscclpp::channel::SimpleDeviceChannel devFstRoundChan = constDevFstRoundChans[blockIdx.x];
-  Chunk toPeerChunk = getChunk(nelems, worldSize, remoteRank, 1);
+  Chunk toPeerChunk = getChunk(nelems, worldSize, remoteRank);
   // Now we need to figure out the offset of this chunk in the scratch buffer of the destination.
   // The destination will have allocated a scratch buffer of size numPeers() * toPeerChunk.size and
   // inside that each of the destination's peers send to the nth chunk, where n is the index of the
   // source peer from the destination's perspective.
   size_t dstOffset = (rank < remoteRank ? rank : rank - 1) * toPeerChunk.size;
-  send(devFstRoundChan, toPeerChunk.offset * sizeof(int), dstOffset * sizeof(int), toPeerChunk.size * sizeof(int));
+  send(devFstRoundChan, dstOffset * sizeof(int), toPeerChunk.offset * sizeof(int), toPeerChunk.size * sizeof(int));
   recv(devFstRoundChan);
 
   deviceSyncer.sync(gridDim.x);
 
   // Local reduction: every block reduces a slice of each chunk in the scratch buffer into the user buffer
   mscclpp::channel::SimpleDeviceChannel devSndRoundChan = constDevSndRoundChans[blockIdx.x];
-  Chunk rankChunk = getChunk(nelems, worldSize, rank, 1);
+  Chunk rankChunk = getChunk(nelems, worldSize, rank);
   int* chunk = (int*)devSndRoundChan.srcPtr_ + rankChunk.offset;
   int numPeers = gridDim.x;
   int numBlocks = gridDim.x;
-  Chunk blockUserChunk = getChunk(rankChunk.size, numBlocks, blockIdx.x, 1);
+  Chunk blockUserChunk = getChunk(rankChunk.size, numBlocks, blockIdx.x);
+  size_t scratchDataCountPerPeer = scratchDataCount / numPeers;
+  Chunk blockScratchChunk = getChunk(scratchDataCountPerPeer, numBlocks, blockIdx.x);
   for (int peerIdx = 0; peerIdx < numPeers; ++peerIdx) {
-    size_t scratchDataCountPerPeer = scratchDataCount / numPeers;
     int* scratchChunk = (int*)devFstRoundChan.tmpPtr_ + peerIdx * scratchDataCountPerPeer;
-    Chunk blockScratchChunk = getChunk(scratchDataCountPerPeer, numBlocks, blockIdx.x, 1);
     reduceSum(chunk + blockUserChunk.offset, scratchChunk + blockScratchChunk.offset, blockScratchChunk.size);
   }
 
   deviceSyncer.sync(gridDim.x);
 
   // 2nd communication phase: send the now reduced data between the user buffers
-  Chunk collectionChunk = getChunk(nelems, worldSize, rank, 1);
+  Chunk collectionChunk = getChunk(nelems, worldSize, rank);
   send(devSndRoundChan, collectionChunk.offset * sizeof(int), collectionChunk.offset * sizeof(int),
        collectionChunk.size * sizeof(int));
   recv(devSndRoundChan);
@@ -105,7 +105,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int rank = args.rank;
   const int kernelNum = args.kernelNum;
   const int nPeers = worldSize - 1;
-  const Chunk chunk = getChunk(paramCount_, worldSize, rank, 1);
+  const Chunk chunk = getChunk(paramCount_, worldSize, rank);
   const size_t scratchDataCount = chunk.size * nPeers;
   kernel<<<worldSize - 1, 1024, 0, stream>>>(rank, worldSize, paramCount_, scratchDataCount, kernelNum);
 }
