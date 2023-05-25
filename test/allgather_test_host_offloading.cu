@@ -2,6 +2,7 @@
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/proxy.hpp>
 #include <mscclpp/epoch.hpp>
+#include <mscclpp/checks.hpp>
 #include <utils.h>
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
@@ -392,9 +393,9 @@ int main(int argc, char* argv[])
     printf("Stopping MSCCL++ proxy threads\n");
   proxyService.stop();
 
-  CUDACHECK(cudaFree(data_d));
-  CUDACHECK(cudaFree(deviceHandles1));
-  CUDACHECK(cudaFree(deviceHandles2));
+  MSCCLPP_CUDATHROW(cudaFree(data_d));
+  MSCCLPP_CUDATHROW(cudaFree(deviceHandles1));
+  MSCCLPP_CUDATHROW(cudaFree(deviceHandles2));
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
   MPI_Finalize();
