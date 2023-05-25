@@ -75,8 +75,9 @@ union ChannelTrigger {
 };
 
 union ChannelPacket {
-  // Flags have to be *after* data, because otherwise, an incomplete receive from the network may receive the flag but not the data.
-  // Note this is assuming that either we receive contiguous chunks of data (sockets) or data is written with an atomicity of 8 bytes (IB/RDMA).
+  // Flags have to be *after* data, because otherwise, an incomplete receive from the network may receive the flag but
+  // not the data. Note this is assuming that either we receive contiguous chunks of data (sockets) or data is written
+  // with an atomicity of 8 bytes (IB/RDMA).
   struct {
     uint32_t data1;
     uint32_t flag1;
@@ -100,27 +101,29 @@ union ChannelPacket {
     asm volatile("st.volatile.global.v4.u32 [%0], {%1,1,%2,1};" ::"l"(v), "r"(val1), "r"(val2));
   }
   __forceinline__ __device__ void write(uint64_t val, uint32_t flag) {
-    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"((uint32_t)val), "r"(flag), "r"((uint32_t)(val >> 32)), "r"(flag));
+    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"((uint32_t)val), "r"(flag),
+                 "r"((uint32_t)(val >> 32)), "r"(flag));
   }
   __forceinline__ __device__ void write(uint64_t val) {
-    asm volatile("st.volatile.global.v4.u32 [%0], {%1,1,%2,1};" ::"l"(v), "r"((uint32_t)val), "r"((uint32_t)(val >> 32)));
+    asm volatile("st.volatile.global.v4.u32 [%0], {%1,1,%2,1};" ::"l"(v), "r"((uint32_t)val),
+                 "r"((uint32_t)(val >> 32)));
   }
   __forceinline__ __device__ uint2 read(uint32_t flag) {
     uint2 data;
     uint32_t flag1, flag2;
     do {
-      asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2) : "l"(v));
+      asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
+                   : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2)
+                   : "l"(v));
     } while ((flag1 != flag) || (flag2 != flag));
     return data;
   }
-  __forceinline__ __device__ uint2 read() {
-    return read(1);
-  }
+  __forceinline__ __device__ uint2 read() { return read(1); }
   __forceinline__ __device__ void clear() {
     vec.x = 0;
     vec.y = 0;
   }
-#endif // __CUDACC__
+#endif  // __CUDACC__
 };
 
 struct DeviceChannel {
@@ -203,8 +206,7 @@ struct DeviceChannel {
   __forceinline__ __device__ void wait() { epoch_.wait(); }
 
   __forceinline__ __device__ void putPacket(void* dst, void* src, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
-                                            uint32_t threadId, uint32_t numThreads)
-  {
+                                            uint32_t threadId, uint32_t numThreads) {
     // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
     uint32_t* srcBase = (uint32_t*)((char*)src + srcOffset);
     ChannelPacket* dstBase = (ChannelPacket*)((char*)dst + dstOffset);
@@ -216,8 +218,7 @@ struct DeviceChannel {
   }
 
   __forceinline__ __device__ void getPacket(void* dst, void* src, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
-                                            uint32_t threadId, uint32_t numThreads)
-  {
+                                            uint32_t threadId, uint32_t numThreads) {
     // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
     ChannelPacket* srcBase = (ChannelPacket*)((char*)src + srcOffset);
     uint2* dstBase = (uint2*)((char*)dst + dstOffset);
@@ -353,11 +354,13 @@ struct SimpleDeviceChannel {
 
   __forceinline__ __device__ void wait() { devChan_.wait(); }
 
-  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
+  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                            uint32_t numThreads) {
     devChan_.putPacket(dstPtr_, srcPtr_, dstOffset, srcOffset, size, threadId, numThreads);
   }
 
-  __forceinline__ __device__ void getPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
+  __forceinline__ __device__ void getPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                            uint32_t numThreads) {
     devChan_.getPacket(srcPtr_, tmpPtr_, dstOffset, srcOffset, size, threadId, numThreads);
   }
 

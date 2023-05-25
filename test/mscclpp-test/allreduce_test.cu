@@ -13,8 +13,7 @@ struct Chunk {
   size_t size;
 };
 
-__host__ __device__ Chunk getChunk(size_t dataCount, size_t numChunks, size_t chunkIdx)
-{
+__host__ __device__ Chunk getChunk(size_t dataCount, size_t numChunks, size_t chunkIdx) {
   size_t remainder = dataCount % numChunks;
   size_t smallChunkSize = dataCount / numChunks;
   size_t largeChunkSize = smallChunkSize + 1;
@@ -87,11 +86,11 @@ __device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratc
 
 __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
   mscclpp::channel::SimpleDeviceChannel devFstRoundChan = constDevFstRoundChans[blockIdx.x];
-  size_t dstOffset = (blockIdx.x < rank ? rank - 1 : rank) * nelems * sizeof(int) * 2; // packet needs 2x space
+  size_t dstOffset = (blockIdx.x < rank ? rank - 1 : rank) * nelems * sizeof(int) * 2;  // packet needs 2x space
   devFstRoundChan.putPacket(dstOffset, 0, nelems * sizeof(int), threadIdx.x, blockDim.x);
 
-  size_t nPkts = nelems / 2; // 2 elems per packet, assume nelems is even
-  int2* src = (int2*)devFstRoundChan.srcPtr_; // cummulate into the src buffer
+  size_t nPkts = nelems / 2;                   // 2 elems per packet, assume nelems is even
+  int2* src = (int2*)devFstRoundChan.srcPtr_;  // cummulate into the src buffer
   for (int peerIdx = 0; peerIdx < gridDim.x; ++peerIdx) {
     mscclpp::channel::ChannelPacket* pkt = (mscclpp::channel::ChannelPacket*)devFstRoundChan.tmpPtr_ + peerIdx * nPkts;
     for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPkts; idx += blockDim.x * gridDim.x) {
@@ -187,13 +186,12 @@ class AllReduceTestEngine : public BaseTestEngine {
   std::shared_ptr<int[]> expectedBuff_;
 };
 
-bool AllReduceTestEngine::isUsePacket(const TestArgs& args) {
-  return (args.kernelNum == 1);
-}
+bool AllReduceTestEngine::isUsePacket(const TestArgs& args) { return (args.kernelNum == 1); }
 
 void AllReduceTestEngine::allocateBuffer() {
   sendBuff_ = mscclpp::makeSharedCuda<int>(args_.maxBytes / sizeof(int));
-  scratchBuff_ = mscclpp::makeSharedCuda<int>(args_.maxBytes / sizeof(int) * (isUsePacket(args_) ? (2 * (args_.totalRanks - 1)) : 1));
+  scratchBuff_ = mscclpp::makeSharedCuda<int>(args_.maxBytes / sizeof(int) *
+                                              (isUsePacket(args_) ? (2 * (args_.totalRanks - 1)) : 1));
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
 }
 
