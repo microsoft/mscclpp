@@ -34,7 +34,7 @@ int main(int argc, const char* argv[])
   CUDACHECK(cudaSetDevice(cudaDevId));
 
   int nelem = 1;
-  auto data = mscclpp::makeUniqueCuda<int>(nelem);
+  auto data = mscclpp::allocUniqueCuda<int>(nelem);
 
   std::shared_ptr<mscclpp::Bootstrap> bootstrap(new mscclpp::Bootstrap(isSend, 2));
   bootstrap->initialize(ipPortPair);

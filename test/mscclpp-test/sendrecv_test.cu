@@ -55,7 +55,7 @@ class SendRecvTestColl : public BaseTestColl {
   void runColl(const TestArgs& args, cudaStream_t stream) override;
   void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) override;
   void getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) override;
-  void setupCollTest(size_t size, size_t typeSize) override;
+  void setupCollTest(size_t size) override;
 };
 
 void SendRecvTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
@@ -89,14 +89,13 @@ void SendRecvTestColl::initData(const TestArgs& args, std::vector<void*> sendBuf
   std::memcpy(expectedBuff, dataHost.data(), recvCount_ * typeSize_);
 }
 
-void SendRecvTestColl::setupCollTest(size_t size, size_t typeSize) {
-  size_t count = size / typeSize;
+void SendRecvTestColl::setupCollTest(size_t size) {
+  size_t count = size / typeSize_;
   size_t base = (count / ALIGN) * ALIGN;
   sendCount_ = base;
   recvCount_ = base;
   paramCount_ = base;
   expectedCount_ = base;
-  typeSize_ = typeSize;
 
   mscclpp::DeviceSyncer syncer = {};
   CUDATHROW(cudaMemcpyToSymbol(deviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
@@ -120,8 +119,8 @@ class SendRecvTestEngine : public BaseTestEngine {
 };
 
 void SendRecvTestEngine::allocateBuffer() {
-  std::shared_ptr<int> sendBuff = mscclpp::makeSharedCuda<int>(args_.maxBytes / sizeof(int));
-  std::shared_ptr<int> recvBuff = mscclpp::makeSharedCuda<int>(args_.maxBytes / sizeof(int));
+  std::shared_ptr<int> sendBuff = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
+  std::shared_ptr<int> recvBuff = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
   devicePtrs_.push_back(sendBuff);
   devicePtrs_.push_back(recvBuff);
 
