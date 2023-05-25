@@ -7,7 +7,7 @@
 #include <memory>
 #include <string>
 
-#include "checks.h"
+#include "checks_internal.hpp"
 
 namespace {
 constexpr char HOSTID_FILE[32] = "/proc/sys/kernel/random/boot_id";

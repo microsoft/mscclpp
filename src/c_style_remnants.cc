@@ -1,5 +1,4 @@
 #include "api.h"
-#include "config.h"
 #include "debug.h"
 #include "mscclpp.h"
 
@@ -7,12 +6,6 @@ MSCCLPP_API void mscclppDefaultLogHandler(const char* msg) { mscclppDebugDefault
 
 MSCCLPP_API mscclppResult_t mscclppSetLogHandler(mscclppLogHandler_t handler) {
   return mscclppDebugSetLogHandler(handler);
-}
-
-MSCCLPP_API mscclppResult_t mscclppSetBootstrapConnTimeout(int timeout) {
-  mscclppConfig* config = mscclppConfig::getInstance();
-  config->setBootstrapConnectionTimeoutConfig(timeout);
-  return mscclppSuccess;
 }
 
 MSCCLPP_API const char* mscclppGetErrorString(mscclppResult_t code) {

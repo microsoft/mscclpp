@@ -13,8 +13,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "checks.h"
-#include "config.h"
+#include "checks_internal.hpp"
+#include "config.hpp"
 #include "debug.h"
 #include "utils_internal.hpp"
 
@@ -428,7 +428,7 @@ static mscclppResult_t socketTryAccept(struct mscclppSocket* sock) {
     initTime = mscclpp::getClock();
   }
 
-  mscclppConfig* config = mscclppConfig::getInstance();
+  mscclpp::Config* config = mscclpp::Config::getInstance();
   time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
   socklen_t socklen = sizeof(union mscclppSocketAddress);
   sock->fd = accept(sock->acceptFd, &sock->addr.sa, &socklen);
@@ -489,7 +489,7 @@ static mscclppResult_t socketStartConnect(struct mscclppSocket* sock) {
     initTime = mscclpp::getClock();
   }
 
-  mscclppConfig* config = mscclppConfig::getInstance();
+  mscclpp::Config* config = mscclpp::Config::getInstance();
   time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
 
   /* blocking/non-blocking connect() is determined by asyncFlag. */
@@ -528,7 +528,7 @@ static mscclppResult_t socketPollConnect(struct mscclppSocket* sock) {
     initTime = mscclpp::getClock();
   }
 
-  mscclppConfig* config = mscclppConfig::getInstance();
+  mscclpp::Config* config = mscclpp::Config::getInstance();
   time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
 
   struct pollfd pfd;
