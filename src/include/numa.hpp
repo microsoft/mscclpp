@@ -6,6 +6,6 @@ namespace mscclpp {
 int getDeviceNumaNode(int cudaDev);
 void numaBind(int node);
 
-} // namespace mscclpp
+}  // namespace mscclpp
 
-#endif // MSCCLPP_NUMA_HPP_
+#endif  // MSCCLPP_NUMA_HPP_

@@ -14,7 +14,7 @@
 #include "checks.h"
 #include "checks_internal.hpp"
 #include "socket.h"
-#include "utils.h"
+#include "utils_internal.hpp"
 
 using namespace mscclpp;
 
@@ -115,7 +115,7 @@ UniqueId Bootstrap::Impl::getUniqueId() const {
 
 UniqueId Bootstrap::Impl::createUniqueId() {
   netInit("");
-  MSCCLPPTHROW(getRandomData(&uniqueId_.magic, sizeof(uniqueId_.magic)));
+  getRandomData(&uniqueId_.magic, sizeof(uniqueId_.magic));
   std::memcpy(&uniqueId_.addr, &netIfAddr_, sizeof(mscclppSocketAddress));
   bootstrapCreateRoot();
   return getUniqueId();

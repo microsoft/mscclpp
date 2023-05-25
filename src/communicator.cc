@@ -8,7 +8,7 @@
 #include "connection.hpp"
 #include "debug.h"
 #include "registered_memory.hpp"
-#include "utils.h"
+#include "utils_internal.hpp"
 
 namespace mscclpp {
 
