@@ -64,6 +64,11 @@ class DeviceEpoch : BaseEpoch<CudaDeleter> {
       epochIncrement();
       *(volatile uint64_t*)&(remoteEpochIds->inboundReplica) = epochIds->outbound;
     }
+
+    __forceinline__ __device__ void signalPacket() {
+      epochIncrement();
+      *(volatile uint64_t*)&(remoteEpochIds->inboundReplica) = epochIds->outbound;
+    }
 #endif  // __CUDACC__
 
     EpochIds* epochIds;
