@@ -238,6 +238,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
   const int nRanksPerNode = args_.nRanksPerNode;
   const int thisNode = rank / nRanksPerNode;
   const mscclpp::Transport ibTransport = IBs[args_.gpuNum];
+  const bool isOutPlace = (recvBuff != nullptr);
 
   std::vector<mscclpp::channel::ChannelId> channelIds;
   std::vector<mscclpp::RegisteredMemory> localMemories;
@@ -259,7 +260,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
     channelIds.push_back(chanService_->addChannel(comm_->connectOnSetup(r, 0, transport)));
     auto sendMemory = comm_->registerMemory(sendBuff, sendBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
     localMemories.push_back(sendMemory);
-    if (recvBuff != nullptr) {
+    if (isOutPlace) {
       auto recvMemory = comm_->registerMemory(recvBuff, recvBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
       comm_->sendMemoryOnSetup(recvMemory, r, 0);
       localTmpMemories.push_back(recvMemory);
@@ -273,13 +274,8 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
   for (size_t i = 0; i < channelIds.size(); ++i) {
     devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
         chanService_->deviceChannel(channelIds[i]), chanService_->addMemory(remoteMemories[i].get()),
-        chanService_->addMemory(localMemories[i]), remoteMemories[i].get().data(), localMemories[i].data()));
-    // TODO(chhwang): need an interface for this. see usage in allreduce_test.cu
-    if (recvBuff != nullptr) {
-      devChannels.back().tmpPtr_ = localTmpMemories[i].data();
-    } else {
-      devChannels.back().tmpPtr_ = nullptr;
-    }
+        chanService_->addMemory(localMemories[i]), remoteMemories[i].get().data(), localMemories[i].data(),
+        (isOutPlace ? localTmpMemories[i].data() : nullptr)));
   }
 }
 
