@@ -20,9 +20,6 @@
 mscclppResult_t int64ToBusId(int64_t id, char* busId);
 mscclppResult_t busIdToInt64(const char* busId, int64_t* id);
 
-mscclppResult_t getBusId(int cudaDev, int64_t* busId);
-mscclppResult_t getDeviceNumaNode(int cudaDev, int* numaNode);
-
 mscclppResult_t getHostName(char* hostname, int maxlen, const char delim);
 uint64_t getHash(const char* string, int n);
 uint64_t getHostHash();
@@ -59,13 +56,5 @@ inline mscclppResult_t getRandomData(void* buffer, size_t bytes) {
   }
   return ret;
 }
-
-mscclppResult_t numaBind(int node);
-
-typedef struct bitmask* mscclppNumaState;
-
-mscclppResult_t getNumaState(mscclppNumaState* state);
-
-mscclppResult_t setNumaState(mscclppNumaState state);
 
 #endif

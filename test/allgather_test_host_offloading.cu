@@ -3,7 +3,7 @@
 #include <mscclpp/proxy.hpp>
 #include <mscclpp/epoch.hpp>
 #include <mscclpp/checks.hpp>
-#include <utils.h>
+#include <numa.hpp>
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
 #include "mpi.h"
@@ -115,7 +115,7 @@ public:
   proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
     int cudaDevice;
     CUCHECK(cudaGetDevice(&cudaDevice));
-    getDeviceNumaNode(cudaDevice, &deviceNumaNode_);
+    deviceNumaNode_ = mscclpp::getDeviceNumaNode(cudaDevice);
 
     int thisNode = rankToNode(rank);
     int cudaNum = rankToLocalRank(rank);
@@ -164,7 +164,7 @@ public:
 
   void bindThread() {
     if (deviceNumaNode_ >= 0) {
-      numaBind(deviceNumaNode_);
+      mscclpp::numaBind(deviceNumaNode_);
     }
   }
 

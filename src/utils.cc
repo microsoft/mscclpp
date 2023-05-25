@@ -7,7 +7,6 @@
 #include "utils.h"
 
 #include <cuda_runtime.h>
-#include <numa.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -59,25 +58,6 @@ mscclppResult_t getBusId(int cudaDev, std::string* busId) {
     busIdChar[i] = std::tolower(busIdChar[i]);
   }
   *busId = busIdChar;
-  return mscclppSuccess;
-}
-
-mscclppResult_t getDeviceNumaNode(int cudaDev, int* numaNode) {
-  std::string busId;
-  MSCCLPPCHECK(getBusId(cudaDev, &busId));
-
-  std::string pci_str = "/sys/bus/pci/devices/" + busId + "/numa_node";
-  FILE* file = fopen(pci_str.c_str(), "r");
-  if (file == NULL) {
-    WARN("Could not open %s to detect the NUMA node for device %d", pci_str.c_str(), cudaDev);
-    return mscclppSystemError;
-  }
-  int ret = fscanf(file, "%d", numaNode);
-  if (ret != 1) {
-    WARN("Could not read NUMA node for device %d", cudaDev);
-    return mscclppSystemError;
-  }
-  fclose(file);
   return mscclppSuccess;
 }
 
@@ -223,38 +203,6 @@ bool matchIfList(const char* string, int port, struct netIf* ifList, int listSiz
     }
   }
   return false;
-}
-
-mscclppResult_t numaBind(int node) {
-  int totalNumNumaNodes = numa_num_configured_nodes();
-  if (node < 0 || node >= totalNumNumaNodes) {
-    WARN("Invalid NUMA node %d, must be between 0 and %d", node, totalNumNumaNodes);
-    return mscclppInvalidUsage;
-  }
-  nodemask_t mask;
-  nodemask_zero(&mask);
-  nodemask_set_compat(&mask, node);
-  numa_bind_compat(&mask);
-  return mscclppSuccess;
-}
-
-mscclppResult_t getNumaState(mscclppNumaState* state) {
-  mscclppNumaState state_ = numa_get_run_node_mask();
-  if (state_ == NULL) {
-    WARN("Failed to get NUMA node mask of the running process");
-    return mscclppSystemError;
-  }
-  *state = state_;
-  return mscclppSuccess;
-}
-
-mscclppResult_t setNumaState(mscclppNumaState state) {
-  if (state == NULL) {
-    WARN("Invalid NUMA state");
-    return mscclppInvalidUsage;
-  }
-  numa_bind(state);
-  return mscclppSuccess;
 }
 
 mscclppTime_t getClock() { return std::chrono::steady_clock::now(); }
