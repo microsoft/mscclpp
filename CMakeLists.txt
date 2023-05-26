@@ -32,7 +32,7 @@ option(INSTALL_GTEST OFF)
 FetchContent_MakeAvailable(googletest)
 include(GoogleTest)
 
-set(CLANG_FORMAT_SOURCE_DIRS include src tests)
+set(CLANG_FORMAT_SOURCE_DIRS include src test)
 include(${PROJECT_SOURCE_DIR}/cmake/AddClangFormatTargets.cmake)
 
 add_library(mscclpp SHARED)
