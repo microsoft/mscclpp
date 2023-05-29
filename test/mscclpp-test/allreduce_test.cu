@@ -15,8 +15,7 @@ struct Chunk {
   size_t size;
 };
 
-__host__ __device__ Chunk getChunk(size_t dataCount, size_t numChunks, size_t chunkIdx)
-{
+__host__ __device__ Chunk getChunk(size_t dataCount, size_t numChunks, size_t chunkIdx) {
   size_t remainder = dataCount % numChunks;
   size_t smallChunkSize = dataCount / numChunks;
   size_t largeChunkSize = smallChunkSize + 1;
@@ -24,12 +23,6 @@ __host__ __device__ Chunk getChunk(size_t dataCount, size_t numChunks, size_t ch
   size_t offset = (remainder - numRemainedLargeChunks) * largeChunkSize +
                   (chunkIdx > remainder ? chunkIdx - remainder : 0) * smallChunkSize;
   return Chunk{offset, chunkIdx < remainder ? largeChunkSize : smallChunkSize};
-}
-
-__device__ void send(mscclpp::channel::SimpleDeviceChannel& chan, size_t dstOffset, size_t srcOffset, size_t size) {
-}
-
-__device__ void recv(mscclpp::channel::SimpleDeviceChannel& chan) {
 }
 
 __device__ void reduceSum(int* dst, int* src, size_t size) {
@@ -54,7 +47,10 @@ __device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratc
   // source peer from the destination's perspective.
   size_t dstOffset = (rank < remoteRank ? rank : rank - 1) * toPeerChunk.size;
   if (isComm) {
-    devFstRoundChan.putWithSignalAndFlush(dstOffset * sizeof(int), toPeerChunk.offset * sizeof(int), toPeerChunk.size * sizeof(int));
+    // Write data to the peer
+    devFstRoundChan.putWithSignalAndFlush(dstOffset * sizeof(int), toPeerChunk.offset * sizeof(int),
+                                          toPeerChunk.size * sizeof(int));
+    // Wait for data from the peer
     devFstRoundChan.wait();
   }
 
@@ -79,7 +75,10 @@ __device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratc
   // 2nd communication phase: send the now reduced data between the user buffers
   Chunk collectionChunk = getChunk(nelems, worldSize, rank);
   if (isComm) {
-    devSndRoundChan.putWithSignalAndFlush(collectionChunk.offset * sizeof(int), collectionChunk.offset * sizeof(int), collectionChunk.size * sizeof(int));
+    // Write data to the peer
+    devSndRoundChan.putWithSignalAndFlush(collectionChunk.offset * sizeof(int), collectionChunk.offset * sizeof(int),
+                                          collectionChunk.size * sizeof(int));
+    // Wait for data from the peer
     devSndRoundChan.wait();
   }
 }
