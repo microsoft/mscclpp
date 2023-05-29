@@ -2,112 +2,153 @@
 
 GPU-driven computation & communication stack.
 
-## Quick Start
+See [Quick Start](docs/quickstart.md) to quickly get started.
 
-### Preliminaries
+See [Performance](docs/performance.md) for the latest performance evaluation.
 
-- OS: tested over Ubuntu 18.04 and 20.04
-- Libraries: CUDA >= 11.1.1, [libnuma](https://github.com/numactl/numactl)
-- GPUs: A100 (TBU: H100)
-- Azure SKUs: [ND_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/nda100-v4-series), [NDm_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series) (TBD: [NC_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/nc-a100-v4-series))
+Build our Doxygen document by running `doxygen` in [`docs/`](docs/) directory.
 
+## Overview
 
-### Compile Library
+MSCCL++ is a development kit for implementing highly optimized distributed GPU applications, in terms of both inter-GPU communication and GPU computation. MSCCL++ is specially designed for developers who want to fine-tune inter-GPU communication of their applications at the GPU kernel level, without awareness of detailed communication mechanisms. The key underlying concept of MSCCL++ is GPU-driven execution, where both communication and computation tasks are initiated by GPU not by CPU. That is, the communication and computation interfaces of MSCCL++ are provided as device-side APIs (called inside a GPU kernel), while the host-side APIs of MSCCL++ are for bootstrapping, initial connection setups, or background host threads for inter-GPU DMA and RDMA (called proxies). By using MSCCL++, we expect:
 
-Run `make` in the top directory. To use MPI for test code, pass `MPI_HOME` (`/usr/local/mpi` by default). For example:
+* **Holistic Optimization for High GPU Utilization.** As both communication and computation are scheduled inside a GPU kernel at the same time, we can optimize end-to-end performance of distributed GPU applications from a global view. For example, we can minimize the GPU resource contention between communication and computation, which is known to often substantially degrade throughput of distributed deep learning applications.
 
-```
-$ MPI_HOME=/usr/local/mpi make -j
-```
+* **Fully Pipelined System to Reduce Overhead from the Control Plane.** We can eliminate control overhead from CPU by allowing GPU to autonomously schedule both communication and computation. This significantly reduces GPU scheduling overhead and CPU-GPU synchronization overhead. For example, this allows us to implement a highly fine-grained system pipelining (i.e., hiding communication delays by overlapping with computation), which has been difficult for CPU-controlled applications due to the large control/scheduling overhead.
 
-If you do not want to use MPI, pass `USE_MPI_FOR_TESTS=0`.
+* **Runtime Performance Optimization for Dynamic Workload.** As we can easily implement flexible communication logics, we can optimize communication performance even during runtime. For example, we can implement the system to automatically choose different communication paths or different collective communication algorithms depending on the dynamic workload at runtime.
 
-```
-# Do not use MPI
-$ USE_MPI_FOR_TESTS=0 make -j
-```
+## Key Features (v0.2)
 
-`make` will create a header file `build/include/mscclpp.h` and a shared library `build/lib/libmscclpp.so`.
+MSCCL++ v0.2 supports the following features.
 
-### (Optional) Tests
+### In-Kernel Communication Interfaces
 
-For verification, one can try provided sample code `bootstrap_test` or `p2p_test`. First add the MSCCL++ library path to `LD_LIBRARY_PATH`.
+MSCCL++ provides inter-GPU communication interfaces to be called by a GPU thread. For example, the `put()` method in the following example copies 1KB data from the local GPU to a remote GPU. `devChan` is a peer-to-peer communication channel initialized before the kernel execution from the host side, which consists of information on send/receive buffers.
 
-```
-$ export LD_LIBRARY_PATH=$PWD/build/lib:$LD_LIBRARY_PATH
-```
-
-Run tests using MPI:
-
-```
-$ mpirun -np 8 ./build/bin/tests/bootstrap_test 127.0.0.1:50000
-$ mpirun -np 8 ./build/bin/tests/p2p_test 127.0.0.1:50000
+```cpp
+__device__ mscclpp::channel::SimpleDeviceChannel devChan;
+__global__ void gpuKernel() {
+  ...
+  // Only one thread is needed for this method.
+  devChan.put(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024);
+  ...
+}
 ```
 
-If tests are compiled without MPI, pass a rank and the number of ranks as the following example. Usage of `p2p_test` is also the same as `bootstrap_test`.
+MSCCL++ also provides efficient synchronization methods, `signal()`, `flush()`, and `wait()`. For example, we can implement a simple barrier between two ranks (peer-to-peer connected through `devChan`) as follows. Explanation of each method is inlined.
 
-```
-# Terminal 1: Rank 0, #Ranks 2
-$ ./build/bin/tests/bootstrap_test 127.0.0.1:50000 0 2
-# Terminal 2: Rank 1, #Ranks 2
-$ ./build/bin/tests/bootstrap_test 127.0.0.1:50000 1 2
-```
-
-## Performance
-
-All results from NDv4. NCCL version 2.17.1+cuda11.8, reported in-place numbers.
-
-nccl-tests command example:
-```bash
-mpirun --bind-to numa -hostfile /mnt/hostfile --tag-output --allow-run-as-root -map-by ppr:8:node --bind-to numa -mca pml ob1 -mca btl ^openib -mca btl_tcp_if_include eth0 -x PATH -x LD_PRELOAD=/mnt/nccl/build/lib/libnccl.so -x NCCL_IB_PCI_RELAXED_ORDERING=1 -x NCCL_SOCKET_IFNAME=eth0 -x CUDA_DEVICE_ORDER=PCI_BUS_ID -x NCCL_NET_GDR_LEVEL=5 -x NCCL_TOPO_FILE=/mnt/ndv4-topo.xml -x NCCL_DEBUG=WARN ./build/all_gather_perf -b 1K -e 1K -g 1 -c 1 -w 10 -n 10 -G 1
-```
-
-mscclpp-tests command example:
-```bash
-mpirun -allow-run-as-root -map-by ppr:8:node -hostfile /mnt/hostfile -x LD_LIBRARY_PATH=/mnt/mscclpp/build/lib:$LD_LIBRARY_PATH ./build/bin/tests/allgather_test_perf -b 1K -e 1K -w 10 -n 10 -G 1 -k 0
+```cpp
+// Only one thread is needed for this function.
+__device__ void barrier() {
+  // Inform the peer GPU that I have arrived at this point.
+  devChan.signal();
+  // Immediately flush all previous requests sent via this channel.
+  devChan.flush();
+  // Wait for the peer GPU to call signal().
+  devChan.wait();
+  // Now this thread is synchronized with the remote GPU’s thread.
+  // Users may call a local synchronize functions (e.g., __syncthreads())
+  // to synchronize other local threads as well with the remote side.
+}
 ```
 
-**NOTE:** NCCL AllGather leverages Ring algorithm instead of all-pairs alike algorithm, which greatly reduces inter-node transmission, causing significant higher performance. MSCCL++ should do something similar in the future
+MSCCL++ provides consistent in-kernel interfaces, i.e., the above interfaces are used regardless of the location of the remote GPU (either on the local node or on a remote node) or the underlying link (either NVLink or InfiniBand).
 
-### 1 node, 8 gpus/node
-**Latency (us)**
-| Message Size | NCCL AllGather | NCCL AllReduce | NCCL AllToAll | MSCCL AllToAll LL/LL128/Simple | MSCCL++ AllGather K0/K1/K2 | MSCCL++ AllReduce |
-|:------------:|:--------------:|:--------------:|:-------------:|:------------------------------:|:--------------------------:|:-----------------:|
-| 1K           | 12.53          | **16.96**      | 9.34          | **7.76** / 21.06 / 28.50       | 157.91 / 143.21 / 447.0    | 326.4             |
+### Host-Side Communication Proxy
 
-**BusBW (GB/s)**
-| Message Size | NCCL AllGather | NCCL AllReduce | NCCL AllToAll | MSCCL AllToAll LL/LL128/Simple | MSCCL++ AllGather K0/K1/K2   | MSCCL++ AllReduce |
-|:------------:|:--------------:|:--------------:|:-------------:|:------------------------------:|:----------------------------:|:-----------------:|
-| 1G           | 253.59         | **132.31**     | 254.69        | 217.05 / 216.98 / 217.15       | 125.06 / **255.64** / 124.89 | 22.55             |
+Some in-kernel communication interfaces of MSCCL++ send requests (called triggers) to a GPU-external helper that conducts key functionalities such as DMA or RDMA. This helper is called a channel service or a proxy. MSCCL++ provides a default implementation of a proxy, which is a background host thread that busy polls triggers from GPUs and conducts functionalities accordingly. For example, the following is a typical host-side code for MSCCL++.
 
-### 2 nodes, 1 gpu/node
-**Latency (us)**
-| Message Size | NCCL AllGather | NCCL AllReduce |  NCCL AllToAll | MSCCL AllToAll LL/LL128/Simple | MSCCL++ AllGather K0/K1/K2 | MSCCL++ AllReduce |
-|:------------:|:--------------:|:--------------:|:--------------:|:------------------------------:|:--------------------------:|:-----------------:|
-| 1K           | 16.08          | **21.27**      | 29.84          | 14.67 / 29.12 / 35.43          | 15.32 / **13.84** / 26.08  | -                 |
+```cpp
+// Bootstrap: initialize control-plane connections between all ranks
+auto bootstrap = std::make_shared<mscclpp::Bootstrap>(rank, world_size);
+// Create a communicator for connection setup
+mscclpp::Communicator comm(bootstrap);
+// Setup connections here using `comm`
+...
+// Construct the default channel service
+mscclpp::channel::DeviceChannelService channelService(comm);
+// Start the proxy
+channelService.startProxy();
+// Run the user application, i.e., launch GPU kernels here
+...
+// Stop the proxy after the application is finished
+channelService.stopProxy();
+```
 
-**BusBW (GB/s)**
-| Message Size | NCCL AllGather | NCCL AllReduce | NCCL AllToAll | MSCCL AllToAll LL/LL128/Simple | MSCCL++ AllGather K0/K1/K2 | MSCCL++ AllReduce |
-|:------------:|:--------------:|:--------------:|:-------------:|:------------------------------:|:--------------------------:|:-----------------:|
-| 1G           | 15.84          | **18.65**      | 15.48         | 13.94 / 13.83 / 14.10          | **23.30** / 23.29 / 21.60  | -                 |
+While the default implementation already enables any kinds of communication, MSCCL++ also supports users to easily implement their own customized proxies for further optimization. For example, the following example re-defines how to interpret triggers from GPUs.
 
-### 2 nodes, 8 gpus/node
-**Latency (us)**
-| Message Size | NCCL AllGather | NCCL AllReduce | NCCL AllToAll | MSCCL AllToAll LL/LL128/Simple | MSCCL++ AllGather K0/K1/K2 | MSCCL++ AllReduce |
-|:------------:|:--------------:|:--------------:|:-------------:|:------------------------------:|:--------------------------:|:-----------------:|
-| 1K           | 33.74          | **35.85**      | 49.75         | **22.55** / 39.33 / 56.93      | 159.14 / 230.52 / 462.7    | -                 |
+```cpp
+// Proxy FIFO is obtained from mscclpp::Proxy on the host and copied to the device.
+__device__ mscclpp::DeviceProxyFifo fifo;
+__global__ void gpuKernel() {
+  ...
+  // Only one thread is needed for the followings
+  mscclpp::ProxyTrigger trigger;
+  // Send a custom request: "1"
+  trigger.fst = 1;
+  fifo.push(trigger);
+  // Send a custom request: "2"
+  trigger.fst = 2;
+  fifo.push(trigger);
+  // Send a custom request: "0xdeadbeef"
+  trigger.fst = 0xdeadbeef;
+  fifo.push(trigger);
+  ...
+}
 
-**BusBW (GB/s)**
-| Message Size | NCCL AllGather | NCCL AllReduce | NCCL AllToAll | MSCCL AllToAll LL/LL128/Simple | MSCCL++ AllGather K0/K1/K2 | MSCCL++ AllReduce |
-|:------------:|:--------------:|:--------------:|:-------------:|:------------------------------:|:--------------------------:|:-----------------:|
-| 1G           | 177.05         | **183.82**     | 37.80         | 40.17 / 40.18 / 40.23          | 44.19 / 9.31 / **209.33**  | -                 |
-| 4G           | 186.01         | **188.18**     | 37.81         | - / - / -                      | 44.60 / - / **234.08**     | -                 |
+// Host-side custom channel service
+class CustomChannelService {
+private:
+  mscclpp::Proxy proxy_;
+public:
+  CustomChannelService() : proxy_([&](mscclpp::ProxyTrigger trigger) {
+                                    // Custom trigger handler
+                                    if (trigger.fst == 1) {
+                                      // Handle request "1"
+                                    } else if (trigger.fst == 2) {
+                                      // Handle request "2"
+                                    } else if (trigger.fst == 0xdeadbeef) {
+                                      // Handle request "0xdeadbeef"
+                                    }
+                                  },
+                                  [&]() { /* Empty proxy initializer */ }) {}
+  void startProxy() { proxy_.start(); }
+  void stopProxy()  { proxy_.stop(); }
+};
+```
 
+Customized proxies can be used for conducting a series of pre-defined data transfers within only a single trigger from GPU at runtime. This would be more efficient than sending a trigger for each data transfer one by one.
 
+### Flexible Customization
 
-## Document
+Most of key components of MSCCL++ are designed to be easily customized. This enables MSCCL++ to easily adopt a new software / hardware technology and lets users implement algorithms optimized for their own use cases.
 
-This project maintains Doxygen-based document. To build it, go to `docs` directory and run `doxygen`.
+## Status & Roadmap
+
+MSCCL++ is under active development and a part of its features will be added in a future release. The following describes key features of each version.
+
+### MSCCL++ v0.4 (TBU)
+* Automatic task scheduler
+* Dynamic performance tuning
+
+### MSCCL++ v0.3 (TBU)
+* Tile-based communication: efficient transport of 2D data patches (tiles)
+* GPU computation interfaces
+
+### MSCCL++ v0.2 (Latest Release)
+* Basic communication functionalities and new interfaces
+    - GPU-side communication interfaces
+    - Host-side helpers: bootstrap, communicator, and channel service (proxy)
+    - Supports both NVLink and InfiniBand
+    - Supports both in-SM copy and DMA/RDMA
+* Communication performance optimization
+    - Example code outperforms NCCL/MSCCL AllGather/AllReduce/AllToAll
+* Development pipeline
+* Documentation
+
+### MSCCL++ v0.1
+* Proof-of-concept, preliminary interfaces
 
 ## Contributing
 
