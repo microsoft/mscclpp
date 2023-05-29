@@ -5,6 +5,8 @@
 #include "common.hpp"
 
 #define ALIGN 4
+#define BLOCKS_PER_PEER 15
+
 __constant__ mscclpp::channel::SimpleDeviceChannel constDevFstRoundChans[16];
 __constant__ mscclpp::channel::SimpleDeviceChannel constDevSndRoundChans[16];
 
@@ -25,17 +27,9 @@ __host__ __device__ Chunk getChunk(size_t dataCount, size_t numChunks, size_t ch
 }
 
 __device__ void send(mscclpp::channel::SimpleDeviceChannel& chan, size_t dstOffset, size_t srcOffset, size_t size) {
-  if (threadIdx.x == 0) {
-    chan.putWithSignalAndFlush(dstOffset, srcOffset, size);
-  }
-  __syncthreads();
 }
 
 __device__ void recv(mscclpp::channel::SimpleDeviceChannel& chan) {
-  if (threadIdx.x == 0) {
-    chan.wait();
-  }
-  __syncthreads();
 }
 
 __device__ void reduceSum(int* dst, int* src, size_t size) {
@@ -47,26 +41,30 @@ __device__ void reduceSum(int* dst, int* src, size_t size) {
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
 __device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
-  int remoteRank = (blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
+  int peerId = blockIdx.x / BLOCKS_PER_PEER;
+  int isComm = (threadIdx.x == 0) && (blockIdx.x % BLOCKS_PER_PEER == 0);
+  int remoteRank = (peerId < rank) ? peerId : peerId + 1;
 
   // 1st communication phase: send data to the scratch buffer of the peer associated with this block
-  mscclpp::channel::SimpleDeviceChannel devFstRoundChan = constDevFstRoundChans[blockIdx.x];
+  mscclpp::channel::SimpleDeviceChannel& devFstRoundChan = constDevFstRoundChans[peerId];
   Chunk toPeerChunk = getChunk(nelems, worldSize, remoteRank);
   // Now we need to figure out the offset of this chunk in the scratch buffer of the destination.
   // The destination will have allocated a scratch buffer of size numPeers() * toPeerChunk.size and
   // inside that each of the destination's peers send to the nth chunk, where n is the index of the
   // source peer from the destination's perspective.
   size_t dstOffset = (rank < remoteRank ? rank : rank - 1) * toPeerChunk.size;
-  send(devFstRoundChan, dstOffset * sizeof(int), toPeerChunk.offset * sizeof(int), toPeerChunk.size * sizeof(int));
-  recv(devFstRoundChan);
+  if (isComm) {
+    devFstRoundChan.putWithSignalAndFlush(dstOffset * sizeof(int), toPeerChunk.offset * sizeof(int), toPeerChunk.size * sizeof(int));
+    devFstRoundChan.wait();
+  }
 
   deviceSyncer.sync(gridDim.x);
 
   // Local reduction: every block reduces a slice of each chunk in the scratch buffer into the user buffer
-  mscclpp::channel::SimpleDeviceChannel devSndRoundChan = constDevSndRoundChans[blockIdx.x];
+  mscclpp::channel::SimpleDeviceChannel& devSndRoundChan = constDevSndRoundChans[peerId];
   Chunk rankChunk = getChunk(nelems, worldSize, rank);
   int* chunk = (int*)devSndRoundChan.srcPtr_ + rankChunk.offset;
-  int numPeers = gridDim.x;
+  int numPeers = gridDim.x / BLOCKS_PER_PEER;
   int numBlocks = gridDim.x;
   Chunk blockUserChunk = getChunk(rankChunk.size, numBlocks, blockIdx.x);
   size_t scratchDataCountPerPeer = scratchDataCount / numPeers;
@@ -80,9 +78,10 @@ __device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratc
 
   // 2nd communication phase: send the now reduced data between the user buffers
   Chunk collectionChunk = getChunk(nelems, worldSize, rank);
-  send(devSndRoundChan, collectionChunk.offset * sizeof(int), collectionChunk.offset * sizeof(int),
-       collectionChunk.size * sizeof(int));
-  recv(devSndRoundChan);
+  if (isComm) {
+    devSndRoundChan.putWithSignalAndFlush(collectionChunk.offset * sizeof(int), collectionChunk.offset * sizeof(int), collectionChunk.size * sizeof(int));
+    devSndRoundChan.wait();
+  }
 }
 
 __global__ void kernel(int rank, int worldSize, size_t nelems, size_t scratchDataCount, int kernel) {
@@ -107,7 +106,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int nPeers = worldSize - 1;
   const Chunk chunk = getChunk(paramCount_, worldSize, rank);
   const size_t scratchDataCount = chunk.size * nPeers;
-  kernel<<<worldSize - 1, 1024, 0, stream>>>(rank, worldSize, paramCount_, scratchDataCount, kernelNum);
+  kernel<<<nPeers * BLOCKS_PER_PEER, 1024, 0, stream>>>(rank, worldSize, paramCount_, scratchDataCount, kernelNum);
 }
 
 void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
