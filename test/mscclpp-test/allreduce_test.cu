@@ -83,8 +83,96 @@ __device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratc
   }
 }
 
+__device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
+  int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
+  int remoteSendRank = (rank + 1) % worldSize;
+  int remoteRecvRank = (rank + worldSize - 1) % worldSize;
+  int peerSendId = (remoteSendRank < rank) ? remoteSendRank : remoteSendRank - 1;
+  int peerRecvId = (remoteRecvRank < rank) ? remoteRecvRank : remoteRecvRank - 1;
+
+  mscclpp::channel::SimpleDeviceChannel& devFstSendChan = constDevFstRoundChans[peerSendId];
+  mscclpp::channel::SimpleDeviceChannel& devFstRecvChan = constDevFstRoundChans[peerRecvId];
+  mscclpp::channel::SimpleDeviceChannel& devSndSendChan = constDevSndRoundChans[peerSendId];
+  mscclpp::channel::SimpleDeviceChannel& devSndRecvChan = constDevSndRoundChans[peerRecvId];
+
+  // Step 1
+  size_t chunkIndex = (rank + worldSize - 1) % worldSize;
+  size_t chunkSize = nelems / worldSize * sizeof(int);
+  size_t offset = chunkIndex * chunkSize;
+  if (isComm) {
+    //printf("[rank %d] send offset %lu, size %lu\n", rank, offset, chunkSize);
+    devFstSendChan.putWithSignalAndFlush(offset, chunkSize);
+  }
+
+  // Step 2 ~ Step n-1
+  for (int i = 2; i < worldSize; ++i) {
+    if (isComm) {
+      devFstRecvChan.wait();
+    }
+    deviceSyncer.sync(gridDim.x);
+
+    // Reduce
+    chunkIndex = (rank + worldSize - i) % worldSize;
+    offset = chunkIndex * chunkSize;
+    if (isComm) {
+      int* data = (int*)((char*)devFstRecvChan.tmpPtr_ + offset);
+      int* cum = (int*)((char*)devFstSendChan.srcPtr_);
+      //printf("[rank %d] sum offset %lu, size %lu, data %d, cum [%d, %d, %d, %d]\n", rank, offset, chunkSize, data[0], cum[0], cum[1], cum[2], cum[3]);
+    }
+    __syncthreads();
+    reduceSum((int*)((char*)devFstSendChan.srcPtr_ + offset), (int*)((char*)devFstRecvChan.tmpPtr_ + offset), chunkSize);
+    deviceSyncer.sync(gridDim.x);
+
+    if (isComm) {
+      //printf("[rank %d] send offset %lu, size %lu\n", rank, offset, chunkSize);
+      devFstSendChan.putWithSignalAndFlush(offset, chunkSize);
+    }
+  }
+
+  // Step n
+  if (isComm) {
+    devFstRecvChan.wait();
+  }
+  deviceSyncer.sync(gridDim.x);
+  offset = rank * chunkSize;
+  if (isComm) {
+    int* data = (int*)((char*)devFstRecvChan.tmpPtr_ + offset);
+    int* cum = (int*)((char*)devSndSendChan.srcPtr_);
+    //printf("[rank %d] sum offset %lu, size %lu, data %d, cum [%d, %d, %d, %d]\n", rank, offset, chunkSize, data[0], cum[0], cum[1], cum[2], cum[3]);
+  }
+  __syncthreads();
+  reduceSum((int*)((char*)devSndSendChan.srcPtr_ + offset), (int*)((char*)devFstRecvChan.tmpPtr_ + offset), chunkSize);
+  deviceSyncer.sync(gridDim.x);
+  if (isComm) {
+    //printf("[rank %d] send offset %lu, size %lu\n", rank, offset, chunkSize);
+    devSndSendChan.putWithSignalAndFlush(offset, chunkSize);
+  }
+
+  // Step n+1 ~ Step 2n-2
+  for (int i = 2; i < worldSize; ++i) {
+    if (isComm) {
+      devSndRecvChan.wait();
+    }
+    deviceSyncer.sync(gridDim.x);
+
+    // Copy
+    chunkIndex = (rank + worldSize - i) % worldSize;
+    if (isComm) {
+      int* data = (int*)((char*)devSndSendChan.srcPtr_);
+      //printf("[rank %d] send offset %lu, size %lu, data [%d, %d, %d, %d]\n", rank, chunkIndex * chunkSize, chunkSize, data[0], data[1], data[2], data[3]);
+      devSndSendChan.putWithSignalAndFlush(chunkIndex * chunkSize, chunkSize);
+    }
+  }
+
+  // Final receive
+  if (isComm) {
+    devSndRecvChan.wait();
+  }
+}
+
 __global__ void kernel(int rank, int worldSize, size_t nelems, size_t scratchDataCount, int kernel) {
   if (kernel == 0) allreduce0(rank, worldSize, nelems, scratchDataCount);
+  else if (kernel == 1) allreduce1(rank, worldSize, nelems, scratchDataCount);
 }
 
 class AllReduceTestColl : public BaseTestColl {
@@ -105,7 +193,8 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int nPeers = worldSize - 1;
   const Chunk chunk = getChunk(paramCount_, worldSize, rank);
   const size_t scratchDataCount = chunk.size * nPeers;
-  kernel<<<nPeers * BLOCKS_PER_PEER, 1024, 0, stream>>>(rank, worldSize, paramCount_, scratchDataCount, kernelNum);
+  const int nBlocks = (kernelNum == 0) ? nPeers * BLOCKS_PER_PEER : 1;
+  kernel<<<nBlocks, 1024, 0, stream>>>(rank, worldSize, paramCount_, scratchDataCount, kernelNum);
 }
 
 void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
