@@ -6,13 +6,14 @@
 #define ALIGN 4
 __constant__ mscclpp::channel::SimpleDeviceChannel constDevChans[16];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
+void* localRecvBuff;
+void* localSendBuff;
 
 __device__ void alltoall0(int rank, int worldSize, size_t nElements) {
   int remoteRank = (blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
-  int dstOffset = remoteRank < rank ? rank - 1 : rank;
   mscclpp::channel::SimpleDeviceChannel devChan = constDevChans[blockIdx.x];
   if (threadIdx.x == 0) {
-    devChan.putWithSignal(dstOffset * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
+    devChan.putWithSignal(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
                           nElements * sizeof(int));
   }
 
@@ -20,10 +21,6 @@ __device__ void alltoall0(int rank, int worldSize, size_t nElements) {
   if (threadIdx.x == 0) {
     devChan.flush();
     devChan.wait();
-  }
-  __syncthreads();
-  for (size_t i = threadIdx.x; i < nElements; i += blockDim.x) {
-    ((int*)devChan.srcPtr_)[remoteRank * nElements + i] = ((int*)devChan.tmpPtr_)[blockIdx.x * nElements + i];
   }
 }
 
@@ -48,6 +45,8 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int worldSize = args.totalRanks;
   const int rank = args.rank;
   const int kernelNum = args.kernelNum;
+  CUDATHROW(cudaMemcpyAsync((int*)localRecvBuff + paramCount_ * rank, (int*)localSendBuff + paramCount_ * rank,
+                  paramCount_ * sizeof(int), cudaMemcpyDeviceToDevice, stream));
   kernel<<<worldSize - 1, 1024, 0, stream>>>(rank, worldSize, paramCount_, kernelNum);
 }
 
@@ -89,7 +88,7 @@ void AllToAllTestColl::setupCollTest(size_t size) {
 
 class AllToAllTestEngine : public BaseTestEngine {
  public:
-  AllToAllTestEngine() = default;
+  AllToAllTestEngine() : BaseTestEngine(false){};
   ~AllToAllTestEngine() override = default;
 
   void allocateBuffer() override;
@@ -101,19 +100,22 @@ class AllToAllTestEngine : public BaseTestEngine {
   void* getRecvBuff() override;
 
   std::shared_ptr<int> sendBuff_;
-  std::shared_ptr<int> scratchBuff_;
+  std::shared_ptr<int> recvBuff_;
   std::shared_ptr<int[]> expectedBuff_;
 };
 
 void AllToAllTestEngine::allocateBuffer() {
   sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
-  scratchBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
+  recvBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
+
+  localSendBuff = sendBuff_.get();
+  localRecvBuff = recvBuff_.get();
 }
 
 void AllToAllTestEngine::setupConnections() {
   std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
-  setupMeshConnections(devChannels, sendBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
+  setupMeshConnections(devChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
 
   assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));
   CUDATHROW(cudaMemcpyToSymbol(constDevChans, devChannels.data(),
@@ -122,7 +124,7 @@ void AllToAllTestEngine::setupConnections() {
 
 std::vector<void*> AllToAllTestEngine::getSendBuff() { return {sendBuff_.get()}; }
 void* AllToAllTestEngine::getExpectedBuff() { return expectedBuff_.get(); }
-void* AllToAllTestEngine::getRecvBuff() { return sendBuff_.get(); }
+void* AllToAllTestEngine::getRecvBuff() { return recvBuff_.get(); }
 
 std::shared_ptr<BaseTestEngine> getTestEngine() { return std::make_shared<AllToAllTestEngine>(); }
 std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<AllToAllTestColl>(); }
