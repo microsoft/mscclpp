@@ -100,7 +100,6 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
   size_t chunkSize = nelems / worldSize * sizeof(int);
   size_t offset = chunkIndex * chunkSize;
   if (isComm) {
-    //printf("[rank %d] send offset %lu, size %lu\n", rank, offset, chunkSize);
     devFstSendChan.putWithSignalAndFlush(offset, chunkSize);
   }
 
@@ -114,17 +113,14 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
     // Reduce
     chunkIndex = (rank + worldSize - i) % worldSize;
     offset = chunkIndex * chunkSize;
-    if (isComm) {
-      int* data = (int*)((char*)devFstRecvChan.tmpPtr_ + offset);
-      int* cum = (int*)((char*)devFstSendChan.srcPtr_);
-      //printf("[rank %d] sum offset %lu, size %lu, data %d, cum [%d, %d, %d, %d]\n", rank, offset, chunkSize, data[0], cum[0], cum[1], cum[2], cum[3]);
+    int* dst = (int*)((char*)devFstSendChan.srcPtr_ + offset);
+    int* src = (int*)((char*)devFstRecvChan.tmpPtr_ + offset);
+    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < chunkSize / sizeof(int); i += blockDim.x * gridDim.x) {
+      dst[i] += src[i];
     }
-    __syncthreads();
-    reduceSum((int*)((char*)devFstSendChan.srcPtr_ + offset), (int*)((char*)devFstRecvChan.tmpPtr_ + offset), chunkSize);
     deviceSyncer.sync(gridDim.x);
 
     if (isComm) {
-      //printf("[rank %d] send offset %lu, size %lu\n", rank, offset, chunkSize);
       devFstSendChan.putWithSignalAndFlush(offset, chunkSize);
     }
   }
@@ -135,21 +131,18 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
   }
   deviceSyncer.sync(gridDim.x);
   offset = rank * chunkSize;
-  if (isComm) {
-    int* data = (int*)((char*)devFstRecvChan.tmpPtr_ + offset);
-    int* cum = (int*)((char*)devSndSendChan.srcPtr_);
-    //printf("[rank %d] sum offset %lu, size %lu, data %d, cum [%d, %d, %d, %d]\n", rank, offset, chunkSize, data[0], cum[0], cum[1], cum[2], cum[3]);
+  int* dst = (int*)((char*)devFstSendChan.srcPtr_ + offset);
+  int* src = (int*)((char*)devFstRecvChan.tmpPtr_ + offset);
+  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < chunkSize / sizeof(int); i += blockDim.x * gridDim.x) {
+    dst[i] += src[i];
   }
-  __syncthreads();
-  reduceSum((int*)((char*)devSndSendChan.srcPtr_ + offset), (int*)((char*)devFstRecvChan.tmpPtr_ + offset), chunkSize);
   deviceSyncer.sync(gridDim.x);
   if (isComm) {
-    //printf("[rank %d] send offset %lu, size %lu\n", rank, offset, chunkSize);
     devSndSendChan.putWithSignalAndFlush(offset, chunkSize);
   }
 
   // Step n+1 ~ Step 2n-2
-  for (int i = 2; i < worldSize; ++i) {
+  for (int i = 1; i < worldSize - 1; ++i) {
     if (isComm) {
       devSndRecvChan.wait();
     }
@@ -158,8 +151,6 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
     // Copy
     chunkIndex = (rank + worldSize - i) % worldSize;
     if (isComm) {
-      int* data = (int*)((char*)devSndSendChan.srcPtr_);
-      //printf("[rank %d] send offset %lu, size %lu, data [%d, %d, %d, %d]\n", rank, chunkIndex * chunkSize, chunkSize, data[0], data[1], data[2], data[3]);
       devSndSendChan.putWithSignalAndFlush(chunkIndex * chunkSize, chunkSize);
     }
   }
@@ -193,7 +184,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int nPeers = worldSize - 1;
   const Chunk chunk = getChunk(paramCount_, worldSize, rank);
   const size_t scratchDataCount = chunk.size * nPeers;
-  const int nBlocks = (kernelNum == 0) ? nPeers * BLOCKS_PER_PEER : 1;
+  const int nBlocks = (kernelNum == 0) ? nPeers * BLOCKS_PER_PEER : 32;
   kernel<<<nBlocks, 1024, 0, stream>>>(rank, worldSize, paramCount_, scratchDataCount, kernelNum);
 }
 
