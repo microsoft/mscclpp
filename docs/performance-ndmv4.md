@@ -1,6 +1,6 @@
-# Performance
+# NDmv4 Performance
 
-All results from NDv4. NCCL version 2.17.1+cuda11.8, reported in-place numbers.
+All results from NDmv4. NCCL version 2.17.1+cuda11.8, reported in-place numbers.
 
 nccl-tests command example:
 ```bash
