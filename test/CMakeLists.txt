@@ -9,11 +9,14 @@ function(add_test_executable name sources)
     endif()
 endfunction()
 
-add_test_executable(bootstrap_test_cpp bootstrap_test_cpp.cc)
 add_test_executable(communicator_test_cpp communicator_test_cpp.cu)
 add_test_executable(allgather_test_cpp allgather_test_cpp.cu)
 add_test_executable(allgather_test_host_offloading allgather_test_host_offloading.cu)
 add_test_executable(ib_test ib_test.cc)
+
+add_executable(mp_unit_tests mp_unit_tests.cu)
+target_link_libraries(mp_unit_tests mscclpp CUDA::cudart CUDA::cuda_driver MPI::MPI_CXX GTest::gtest_main GTest::gmock_main)
+target_include_directories(mp_unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/include)
 
 configure_file(run_mpi_test.sh.in run_mpi_test.sh)
 
