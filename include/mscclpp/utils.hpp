@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <mscclpp/errors.hpp>
 #include <string>
 
 namespace mscclpp {
@@ -42,7 +43,7 @@ inline std::string getHostName(int maxlen, const char delim) {
   std::string hostname(maxlen + 1, '\0');
   if (gethostname(const_cast<char*>(hostname.data()), maxlen) != 0) {
     std::strncpy(const_cast<char*>(hostname.data()), "unknown", maxlen);
-    throw;
+    throw Error("gethostname failed", ErrorCode::SystemError);
   }
   int i = 0;
   while ((hostname[i] != delim) && (hostname[i] != '\0') && (i < maxlen - 1)) i++;
