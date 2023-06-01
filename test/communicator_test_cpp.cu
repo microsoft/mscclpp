@@ -1,23 +1,22 @@
-#include <mscclpp/epoch.hpp>
-#include <mscclpp/core.hpp>
+#include <cuda_runtime.h>
+#include <mpi.h>
 
 #include <cassert>
-#include <cuda_runtime.h>
 #include <iostream>
 #include <memory>
-#include <mpi.h>
+#include <mscclpp/core.hpp>
+#include <mscclpp/epoch.hpp>
 #include <unordered_map>
 
-#define CUDATHROW(cmd)                                                                                                 \
-  do {                                                                                                                 \
-    cudaError_t err = cmd;                                                                                             \
-    if (err != cudaSuccess) {                                                                                          \
-      throw std::runtime_error(std::string("Cuda failure '") + cudaGetErrorString(err) + "'");                         \
-    }                                                                                                                  \
+#define CUDATHROW(cmd)                                                                         \
+  do {                                                                                         \
+    cudaError_t err = cmd;                                                                     \
+    if (err != cudaSuccess) {                                                                  \
+      throw std::runtime_error(std::string("Cuda failure '") + cudaGetErrorString(err) + "'"); \
+    }                                                                                          \
   } while (false)
 
-mscclpp::Transport findIb(int localRank)
-{
+mscclpp::Transport findIb(int localRank) {
   mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
                               mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
                               mscclpp::Transport::IB6, mscclpp::Transport::IB7};
@@ -27,8 +26,7 @@ mscclpp::Transport findIb(int localRank)
 void register_all_memories(mscclpp::Communicator& communicator, int rank, int worldSize, void* devicePtr,
                            size_t deviceBufferSize, mscclpp::Transport myIbDevice,
                            mscclpp::RegisteredMemory& localMemory,
-                           std::unordered_map<int, mscclpp::RegisteredMemory>& remoteMemory)
-{
+                           std::unordered_map<int, mscclpp::RegisteredMemory>& remoteMemory) {
   localMemory = communicator.registerMemory(devicePtr, deviceBufferSize, mscclpp::Transport::CudaIpc | myIbDevice);
   std::unordered_map<int, mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> futureRemoteMemory;
   for (int i = 0; i < worldSize; i++) {
@@ -47,8 +45,7 @@ void register_all_memories(mscclpp::Communicator& communicator, int rank, int wo
 
 void make_connections(mscclpp::Communicator& communicator, int rank, int worldSize, int nRanksPerNode,
                       mscclpp::Transport myIbDevice,
-                      std::unordered_map<int, std::shared_ptr<mscclpp::Connection>>& connections)
-{
+                      std::unordered_map<int, std::shared_ptr<mscclpp::Connection>>& connections) {
   for (int i = 0; i < worldSize; i++) {
     if (i != rank) {
       if (i / nRanksPerNode == rank / nRanksPerNode) {
@@ -63,8 +60,7 @@ void make_connections(mscclpp::Communicator& communicator, int rank, int worldSi
 
 void write_remote(int rank, int worldSize, std::unordered_map<int, std::shared_ptr<mscclpp::Connection>>& connections,
                   std::unordered_map<int, mscclpp::RegisteredMemory>& remoteRegisteredMemories,
-                  mscclpp::RegisteredMemory& registeredMemory, int dataCountPerRank)
-{
+                  mscclpp::RegisteredMemory& registeredMemory, int dataCountPerRank) {
   for (int i = 0; i < worldSize; i++) {
     if (i != rank) {
       auto& conn = connections.at(i);
@@ -76,8 +72,7 @@ void write_remote(int rank, int worldSize, std::unordered_map<int, std::shared_p
   }
 }
 
-void device_buffer_init(int rank, int worldSize, int dataCount, std::vector<int*>& devicePtr)
-{
+void device_buffer_init(int rank, int worldSize, int dataCount, std::vector<int*>& devicePtr) {
   for (int n = 0; n < (int)devicePtr.size(); n++) {
     std::vector<int> hostBuffer(dataCount, 0);
     for (int i = 0; i < dataCount; i++) {
@@ -89,8 +84,7 @@ void device_buffer_init(int rank, int worldSize, int dataCount, std::vector<int*
 }
 
 bool test_device_buffer_write_correctness(int rank, int worldSize, int nRanksPerNode, int dataCount,
-                                          std::vector<int*>& devicePtr, bool skipLocal = false)
-{
+                                          std::vector<int*>& devicePtr, bool skipLocal = false) {
   for (int n = 0; n < (int)devicePtr.size(); n++) {
     std::vector<int> hostBuffer(dataCount, 0);
     CUDATHROW(cudaMemcpy(hostBuffer.data(), devicePtr[n], dataCount * sizeof(int), cudaMemcpyDeviceToHost));
@@ -112,16 +106,13 @@ void test_write(int rank, int worldSize, int nRanksPerNode, int deviceBufferSize
                 std::shared_ptr<mscclpp::BaseBootstrap> bootstrap,
                 std::unordered_map<int, std::shared_ptr<mscclpp::Connection>>& connections,
                 std::vector<std::unordered_map<int, mscclpp::RegisteredMemory>>& remoteMemory,
-                std::vector<mscclpp::RegisteredMemory>& localMemory, std::vector<int*>& devicePtr, int numBuffers)
-{
-
+                std::vector<mscclpp::RegisteredMemory>& localMemory, std::vector<int*>& devicePtr, int numBuffers) {
   assert((deviceBufferSize / sizeof(int)) % worldSize == 0);
   size_t dataCount = deviceBufferSize / sizeof(int);
 
   device_buffer_init(rank, worldSize, dataCount, devicePtr);
   bootstrap->barrier();
-  if (bootstrap->getRank() == 0)
-    std::cout << "CUDA memory initialization passed" << std::endl;
+  if (bootstrap->getRank() == 0) std::cout << "CUDA memory initialization passed" << std::endl;
 
   for (int n = 0; n < numBuffers; n++) {
     write_remote(rank, worldSize, connections, remoteMemory[n], localMemory[n], dataCount / worldSize);
@@ -145,20 +136,17 @@ void test_write(int rank, int worldSize, int nRanksPerNode, int deviceBufferSize
   if (bootstrap->getRank() == 0)
     std::cout << "Polling for " << std::to_string(numBuffers) << " buffers passed" << std::endl;
 
-  if (bootstrap->getRank() == 0)
-    std::cout << "--- Testing vanialla writes passed ---" << std::endl;
+  if (bootstrap->getRank() == 0) std::cout << "--- Testing vanialla writes passed ---" << std::endl;
 }
 
-__global__ void increament_epochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize)
-{
+__global__ void increament_epochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize) {
   int tid = threadIdx.x;
   if (tid != rank && tid < worldSize) {
     deviceEpochs[tid].epochIncrement();
   }
 }
 
-__global__ void wait_epochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize)
-{
+__global__ void wait_epochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize) {
   int tid = threadIdx.x;
   if (tid != rank && tid < worldSize) {
     deviceEpochs[tid].wait();
@@ -171,9 +159,7 @@ void test_write_with_device_epochs(int rank, int worldSize, int nRanksPerNode, i
                                    std::unordered_map<int, std::shared_ptr<mscclpp::Connection>>& connections,
                                    std::vector<std::unordered_map<int, mscclpp::RegisteredMemory>>& remoteMemory,
                                    std::vector<mscclpp::RegisteredMemory>& localMemory, std::vector<int*>& devicePtr,
-                                   int numBuffers)
-{
-
+                                   int numBuffers) {
   std::unordered_map<int, std::shared_ptr<mscclpp::DeviceEpoch>> epochs;
   for (auto entry : connections) {
     auto& conn = entry.second;
@@ -181,16 +167,14 @@ void test_write_with_device_epochs(int rank, int worldSize, int nRanksPerNode, i
   }
   communicator.setup();
   bootstrap->barrier();
-  if (bootstrap->getRank() == 0)
-    std::cout << "Epochs are created" << std::endl;
+  if (bootstrap->getRank() == 0) std::cout << "Epochs are created" << std::endl;
 
   assert((deviceBufferSize / sizeof(int)) % worldSize == 0);
   size_t dataCount = deviceBufferSize / sizeof(int);
 
   device_buffer_init(rank, worldSize, dataCount, devicePtr);
   bootstrap->barrier();
-  if (bootstrap->getRank() == 0)
-    std::cout << "CUDA memory initialization passed" << std::endl;
+  if (bootstrap->getRank() == 0) std::cout << "CUDA memory initialization passed" << std::endl;
 
   mscclpp::DeviceEpoch::DeviceHandle* deviceEpochHandles;
   CUDATHROW(cudaMalloc(&deviceEpochHandles, sizeof(mscclpp::DeviceEpoch::DeviceHandle) * worldSize));
@@ -204,8 +188,7 @@ void test_write_with_device_epochs(int rank, int worldSize, int nRanksPerNode, i
   CUDATHROW(cudaDeviceSynchronize());
 
   bootstrap->barrier();
-  if (bootstrap->getRank() == 0)
-    std::cout << "CUDA device epochs are created" << std::endl;
+  if (bootstrap->getRank() == 0) std::cout << "CUDA device epochs are created" << std::endl;
 
   for (int n = 0; n < numBuffers; n++) {
     write_remote(rank, worldSize, connections, remoteMemory[n], localMemory[n], dataCount / worldSize);
@@ -238,32 +221,26 @@ void test_write_with_host_epochs(int rank, int worldSize, int nRanksPerNode, int
                                  std::unordered_map<int, std::shared_ptr<mscclpp::Connection>>& connections,
                                  std::vector<std::unordered_map<int, mscclpp::RegisteredMemory>>& remoteMemory,
                                  std::vector<mscclpp::RegisteredMemory>& localMemory, std::vector<int*>& devicePtr,
-                                 int numBuffers)
-{
-
+                                 int numBuffers) {
   std::unordered_map<int, std::shared_ptr<mscclpp::HostEpoch>> epochs;
   for (auto entry : connections) {
     auto& conn = entry.second;
-    if (conn->transport() == mscclpp::Transport::CudaIpc)
-      continue;
+    if (conn->transport() == mscclpp::Transport::CudaIpc) continue;
     epochs.insert({entry.first, std::make_shared<mscclpp::HostEpoch>(communicator, conn)});
   }
   communicator.setup();
   bootstrap->barrier();
-  if (bootstrap->getRank() == 0)
-    std::cout << "Epochs are created" << std::endl;
+  if (bootstrap->getRank() == 0) std::cout << "Epochs are created" << std::endl;
 
   assert((deviceBufferSize / sizeof(int)) % worldSize == 0);
   size_t dataCount = deviceBufferSize / sizeof(int);
 
   device_buffer_init(rank, worldSize, dataCount, devicePtr);
   bootstrap->barrier();
-  if (bootstrap->getRank() == 0)
-    std::cout << "CUDA memory initialization passed" << std::endl;
+  if (bootstrap->getRank() == 0) std::cout << "CUDA memory initialization passed" << std::endl;
 
   bootstrap->barrier();
-  if (bootstrap->getRank() == 0)
-    std::cout << "Host epochs are created" << std::endl;
+  if (bootstrap->getRank() == 0) std::cout << "Host epochs are created" << std::endl;
 
   for (int n = 0; n < numBuffers; n++) {
     write_remote(rank, worldSize, connections, remoteMemory[n], localMemory[n], dataCount / worldSize);
@@ -291,25 +268,21 @@ void test_write_with_host_epochs(int rank, int worldSize, int nRanksPerNode, int
               << std::endl;
 }
 
-void test_communicator(int rank, int worldSize, int nRanksPerNode)
-{
+void test_communicator(int rank, int worldSize, int nRanksPerNode) {
   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(rank, worldSize);
   mscclpp::UniqueId id;
-  if (bootstrap->getRank() == 0)
-    id = bootstrap->createUniqueId();
+  if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
   bootstrap->initialize(id);
 
   mscclpp::Communicator communicator(bootstrap);
-  if (bootstrap->getRank() == 0)
-    std::cout << "Communicator initialization passed" << std::endl;
+  if (bootstrap->getRank() == 0) std::cout << "Communicator initialization passed" << std::endl;
 
   std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> connections;
   auto myIbDevice = findIb(rank % nRanksPerNode);
 
   make_connections(communicator, rank, worldSize, nRanksPerNode, myIbDevice, connections);
-  if (bootstrap->getRank() == 0)
-    std::cout << "Connection setup passed" << std::endl;
+  if (bootstrap->getRank() == 0) std::cout << "Connection setup passed" << std::endl;
 
   int numBuffers = 10;
   std::vector<int*> devicePtr(numBuffers);
@@ -319,8 +292,7 @@ void test_communicator(int rank, int worldSize, int nRanksPerNode)
   std::vector<std::unordered_map<int, mscclpp::RegisteredMemory>> remoteMemory(numBuffers);
 
   for (int n = 0; n < numBuffers; n++) {
-    if (n % 100 == 0)
-      std::cout << "Registering memory for " << std::to_string(n) << " buffers" << std::endl;
+    if (n % 100 == 0) std::cout << "Registering memory for " << std::to_string(n) << " buffers" << std::endl;
     CUDATHROW(cudaMalloc(&devicePtr[n], deviceBufferSize));
     register_all_memories(communicator, rank, worldSize, devicePtr[n], deviceBufferSize, myIbDevice, localMemory[n],
                           remoteMemory[n]);
@@ -338,16 +310,14 @@ void test_communicator(int rank, int worldSize, int nRanksPerNode)
   test_write_with_host_epochs(rank, worldSize, nRanksPerNode, deviceBufferSize, communicator, bootstrap, connections,
                               remoteMemory, localMemory, devicePtr, numBuffers);
 
-  if (bootstrap->getRank() == 0)
-    std::cout << "--- MSCCLPP::Communicator tests passed! ---" << std::endl;
+  if (bootstrap->getRank() == 0) std::cout << "--- MSCCLPP::Communicator tests passed! ---" << std::endl;
 
   for (int n = 0; n < numBuffers; n++) {
     CUDATHROW(cudaFree(devicePtr[n]));
   }
 }
 
-int main(int argc, char** argv)
-{
+int main(int argc, char** argv) {
   int rank, worldSize;
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
