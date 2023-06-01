@@ -28,20 +28,20 @@ extends:
       # suppression:
       #   suppressionFile: $(Build.SourcesDirectory)\.gdn\global.gdnsuppress
 
-  stages:
-  - stage: build
-    jobs:
-    - job: build
-      pool:
-        type: linux
-      variables: # More settings at https://aka.ms/obpipelines/yaml/jobs
-        ob_outputDirectory: '$(REPOROOT)\out' # this directory is uploaded to pipeline artifacts, reddog and cloudvault. More info at https://aka.ms/obpipelines/artifacts
-        ob_sdl_binskim_break: true # https://aka.ms/obpipelines/sdl
+    stages:
+    - stage: build
+      jobs:
+      - job: build
+        pool:
+          type: linux
+        variables: # More settings at https://aka.ms/obpipelines/yaml/jobs
+          ob_outputDirectory: '$(REPOROOT)\out' # this directory is uploaded to pipeline artifacts, reddog and cloudvault. More info at https://aka.ms/obpipelines/artifacts
+          ob_sdl_binskim_break: true # https://aka.ms/obpipelines/sdl
 
-        # ob_sdl_suppression_suppressionFile: $(Build.SourcesDirectory)\.gdn\build.nonofficial.gdnsuppress
+          # ob_sdl_suppression_suppressionFile: $(Build.SourcesDirectory)\.gdn\build.nonofficial.gdnsuppress
 
 
-      steps:
-      - script: |
-          make
-        displayName: 'make'
+        steps:
+        - script: |
+            make
+          displayName: 'make'
