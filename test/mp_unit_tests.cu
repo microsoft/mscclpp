@@ -2,6 +2,7 @@
 #include <mpi.h>
 
 #include <iostream>
+#include <mscclpp/channel.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/epoch.hpp>
@@ -96,8 +97,7 @@ TEST_F(MultiProcessTest, Prelim) {
 // Bootstrap tests
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-class BootstrapTest : public MultiProcessTest {
-};
+class BootstrapTest : public MultiProcessTest {};
 
 void bootstrapTestAllGather(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap) {
   std::vector<int> tmp(bootstrap->getNranks(), 0);
@@ -199,7 +199,7 @@ static mscclpp::Transport ibIdToTransport(int id) {
 }
 
 class IbTest : public MultiProcessTest {
-protected:
+ protected:
   void SetUp() override {
     MSCCLPP_CUDATHROW(cudaGetDeviceCount(&cudaDevNum));
     cudaDevId = (gEnv->rank % gEnv->nRanksPerNode) % cudaDevNum;
@@ -249,8 +249,7 @@ TEST_F(IbTest, SimpleSendRecv) {
   bootstrap->allGather(mrInfo.data(), sizeof(mscclpp::IbMrInfo));
 
   for (int i = 0; i < bootstrap->getNranks(); ++i) {
-    if (i == gEnv->rank)
-      continue;
+    if (i == gEnv->rank) continue;
     qp->rtr(qpInfo[i]);
     qp->rts();
     break;
@@ -288,25 +287,116 @@ TEST_F(IbTest, SimpleSendRecv) {
 // Communicator tests
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-class CommunicatorTest : public MultiProcessTest {
-protected:
+class CommunicatorTestBase : public MultiProcessTest {
+ protected:
   void SetUp() override {
     MultiProcessTest::SetUp();
 
+    if (numRanksToUse == -1) {
+      numRanksToUse = gEnv->worldSize;
+    }
+    ASSERT_LE(numRanksToUse, gEnv->worldSize);
+
+    std::shared_ptr<mscclpp::Bootstrap> bootstrap;
+    mscclpp::UniqueId id;
+    if (gEnv->rank < numRanksToUse) {
+      bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, numRanksToUse);
+      if (gEnv->rank == 0) id = bootstrap->createUniqueId();
+    }
+    MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+    if (gEnv->rank >= numRanksToUse) {
+      return;
+    }
+    bootstrap->initialize(id);
+    communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
+    ibTransport = ibIdToTransport(rankToLocalRank(gEnv->rank));
+  }
+
+  void TearDown() override {
+    connections.clear();
+    communicator.reset();
+    MultiProcessTest::TearDown();
+  }
+
+  void setNumRanksToUse(int num) { numRanksToUse = num; }
+
+  int rankToLocalRank(int rank) const { return rank % gEnv->nRanksPerNode; }
+
+  int rankToNode(int rank) const { return rank / gEnv->nRanksPerNode; }
+
+  void connectMesh(bool useIbOnly = false) {
+    for (int i = 0; i < numRanksToUse; i++) {
+      if (i != gEnv->rank) {
+        if ((rankToNode(i) == rankToNode(gEnv->rank)) && !useIbOnly) {
+          connections[i] = communicator->connectOnSetup(i, 0, mscclpp::Transport::CudaIpc);
+        } else {
+          connections[i] = communicator->connectOnSetup(i, 0, ibTransport);
+        }
+      }
+    }
+    communicator->setup();
+  }
+
+  // Register a local memory and receive corresponding remote memories
+  void registerMemoryPairs(void* buff, size_t buffSize, mscclpp::TransportFlags transport, int tag,
+                           const std::vector<int>& remoteRanks, mscclpp::RegisteredMemory& localMemory,
+                           std::unordered_map<int, mscclpp::RegisteredMemory>& remoteMemories) {
+    localMemory = communicator->registerMemory(buff, buffSize, transport);
+    std::unordered_map<int, mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> futureRemoteMemories;
+    for (int remoteRank : remoteRanks) {
+      if (remoteRank != communicator->bootstrapper()->getRank()) {
+        communicator->sendMemoryOnSetup(localMemory, remoteRank, tag);
+        futureRemoteMemories[remoteRank] = communicator->recvMemoryOnSetup(remoteRank, tag);
+      }
+    }
+    communicator->setup();
+    for (int remoteRank : remoteRanks) {
+      if (remoteRank != communicator->bootstrapper()->getRank()) {
+        remoteMemories[remoteRank] = futureRemoteMemories[remoteRank].get();
+      }
+    }
+  }
+
+  // Register a local memory an receive one corresponding remote memory
+  void registerMemoryPair(void* buff, size_t buffSize, mscclpp::TransportFlags transport, int tag, int remoteRank,
+                          mscclpp::RegisteredMemory& localMemory, mscclpp::RegisteredMemory& remoteMemory) {
+    std::vector<int> remoteRanks = {remoteRank};
+    std::unordered_map<int, mscclpp::RegisteredMemory> remoteMemories;
+    registerMemoryPairs(buff, buffSize, transport, tag, remoteRanks, localMemory, remoteMemories);
+    remoteMemory = remoteMemories[remoteRank];
+  }
+
+  int numRanksToUse = -1;
+  std::shared_ptr<mscclpp::Communicator> communicator;
+  mscclpp::Transport ibTransport;
+  std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> connections;
+};
+
+class CommunicatorTest : public CommunicatorTestBase {
+ protected:
+  void SetUp() override {
+    CommunicatorTestBase::SetUp();
+
     ASSERT_EQ((deviceBufferSize / sizeof(int)) % gEnv->worldSize, 0);
 
-    communicator = std::make_shared<mscclpp::Communicator>(createBootstrap());
-    myIbDevice = ibIdToTransport(gEnv->rank % gEnv->nRanksPerNode);
-
-    makeConnections();
+    connectMesh();
 
     devicePtr.resize(numBuffers);
     localMemory.resize(numBuffers);
     remoteMemory.resize(numBuffers);
 
+    std::vector<int> remoteRanks;
+    for (int i = 0; i < gEnv->worldSize; i++) {
+      if (i != gEnv->rank) {
+        remoteRanks.push_back(i);
+      }
+    }
+
     for (int n = 0; n < numBuffers; n++) {
       devicePtr[n] = mscclpp::allocSharedCuda<int>(deviceBufferSize / sizeof(int));
-      registerAllMemories(devicePtr[n], localMemory[n], remoteMemory[n]);
+      registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, mscclpp::Transport::CudaIpc | ibTransport, 0,
+                          remoteRanks, localMemory[n], remoteMemory[n]);
     }
   }
 
@@ -314,49 +404,7 @@ protected:
     remoteMemory.clear();
     localMemory.clear();
     devicePtr.clear();
-    connections.clear();
-    communicator.reset();
-    MultiProcessTest::TearDown();
-  }
-
-  std::shared_ptr<mscclpp::Bootstrap> createBootstrap() const {
-    auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
-    mscclpp::UniqueId id;
-    if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
-    MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
-    bootstrap->initialize(id);
-    return bootstrap;
-  }
-
-  void makeConnections() {
-    for (int i = 0; i < gEnv->worldSize; i++) {
-      if (i != gEnv->rank) {
-        if (i / gEnv->nRanksPerNode == gEnv->rank / gEnv->nRanksPerNode) {
-          connections[i] = communicator->connectOnSetup(i, 0, mscclpp::Transport::CudaIpc);
-        } else {
-          connections[i] = communicator->connectOnSetup(i, 0, myIbDevice);
-        }
-      }
-    }
-    communicator->setup();
-  }
-
-  void registerAllMemories(std::shared_ptr<int> devicePtr, mscclpp::RegisteredMemory& localMem,
-                           std::unordered_map<int, mscclpp::RegisteredMemory>& remoteMem) {
-    localMem = communicator->registerMemory(devicePtr.get(), deviceBufferSize, mscclpp::Transport::CudaIpc | myIbDevice);
-    std::unordered_map<int, mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> futureRemoteMemory;
-    for (int i = 0; i < gEnv->worldSize; i++) {
-      if (i != gEnv->rank) {
-        communicator->sendMemoryOnSetup(localMem, i, 0);
-        futureRemoteMemory[i] = communicator->recvMemoryOnSetup(i, 0);
-      }
-    }
-    communicator->setup();
-    for (int i = 0; i < gEnv->worldSize; i++) {
-      if (i != gEnv->rank) {
-        remoteMem[i] = futureRemoteMemory[i].get();
-      }
-    }
+    CommunicatorTestBase::TearDown();
   }
 
   void deviceBufferInit() {
@@ -370,8 +418,7 @@ protected:
     }
   }
 
-  void writeToRemote(int dataCountPerRank)
-  {
+  void writeToRemote(int dataCountPerRank) {
     for (int n = 0; n < numBuffers; n++) {
       for (int i = 0; i < gEnv->worldSize; i++) {
         if (i != gEnv->rank) {
@@ -385,8 +432,7 @@ protected:
     }
   }
 
-  bool testWriteCorrectness(bool skipLocal = false)
-  {
+  bool testWriteCorrectness(bool skipLocal = false) {
     size_t dataCount = deviceBufferSize / sizeof(int);
     for (int n = 0; n < (int)devicePtr.size(); n++) {
       std::vector<int> hostBuffer(dataCount, 0);
@@ -405,10 +451,6 @@ protected:
     return true;
   }
 
-  std::shared_ptr<mscclpp::Communicator> communicator;
-  std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> connections;
-  mscclpp::Transport myIbDevice;
-
   const size_t numBuffers = 10;
   const int deviceBufferSize = 1024 * 1024;
   std::vector<std::shared_ptr<int>> devicePtr;
@@ -417,6 +459,8 @@ protected:
 };
 
 TEST_F(CommunicatorTest, BasicWrite) {
+  if (gEnv->rank >= numRanksToUse) return;
+
   deviceBufferInit();
   communicator->bootstrapper()->barrier();
 
@@ -436,16 +480,14 @@ TEST_F(CommunicatorTest, BasicWrite) {
   communicator->bootstrapper()->barrier();
 }
 
-__global__ void kernelIncEpochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize)
-{
+__global__ void kernelIncEpochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize) {
   int tid = threadIdx.x;
   if (tid != rank && tid < worldSize) {
     deviceEpochs[tid].epochIncrement();
   }
 }
 
-__global__ void kernelWaitEpochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize)
-{
+__global__ void kernelWaitEpochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize) {
   int tid = threadIdx.x;
   if (tid != rank && tid < worldSize) {
     deviceEpochs[tid].wait();
@@ -453,6 +495,8 @@ __global__ void kernelWaitEpochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpoch
 }
 
 TEST_F(CommunicatorTest, WriteWithDeviceEpochs) {
+  if (gEnv->rank >= numRanksToUse) return;
+
   std::unordered_map<int, std::shared_ptr<mscclpp::DeviceEpoch>> epochs;
   for (auto entry : connections) {
     auto& conn = entry.second;
@@ -468,7 +512,8 @@ TEST_F(CommunicatorTest, WriteWithDeviceEpochs) {
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank) {
       mscclpp::DeviceEpoch::DeviceHandle deviceHandle = epochs[i]->deviceHandle();
-      mscclpp::memcpyCuda<mscclpp::DeviceEpoch::DeviceHandle>(deviceEpochHandles.get() + i, &deviceHandle, 1, cudaMemcpyHostToDevice);
+      mscclpp::memcpyCuda<mscclpp::DeviceEpoch::DeviceHandle>(deviceEpochHandles.get() + i, &deviceHandle, 1,
+                                                              cudaMemcpyHostToDevice);
     }
   }
   communicator->bootstrapper()->barrier();
@@ -492,12 +537,13 @@ TEST_F(CommunicatorTest, WriteWithDeviceEpochs) {
 }
 
 TEST_F(CommunicatorTest, WriteWithHostEpochs) {
+  if (gEnv->rank >= numRanksToUse) return;
+
   std::unordered_map<int, std::shared_ptr<mscclpp::HostEpoch>> epochs;
   for (auto entry : connections) {
     auto& conn = entry.second;
     // HostEpoch cannot be used with CudaIpc transport
-    if (conn->transport() == mscclpp::Transport::CudaIpc)
-      continue;
+    if (conn->transport() == mscclpp::Transport::CudaIpc) continue;
     epochs.insert({entry.first, std::make_shared<mscclpp::HostEpoch>(*communicator.get(), conn)});
   }
   communicator->setup();
@@ -522,4 +568,129 @@ TEST_F(CommunicatorTest, WriteWithHostEpochs) {
 
   ASSERT_TRUE(testWriteCorrectness());
   communicator->bootstrapper()->barrier();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Channel tests
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class ChannelOneToOneTest : public CommunicatorTestBase {
+ protected:
+  void SetUp() override {
+    // Use only two ranks
+    setNumRanksToUse(2);
+    CommunicatorTestBase::SetUp();
+    channelService = std::make_shared<mscclpp::channel::DeviceChannelService>(*communicator.get());
+  }
+
+  void TearDown() override { CommunicatorTestBase::TearDown(); }
+
+  void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, bool useIbOnly,
+                            void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0) {
+    const int rank = communicator->bootstrapper()->getRank();
+    const int worldSize = communicator->bootstrapper()->getNranks();
+    const bool isInPlace = (recvBuff == nullptr);
+    mscclpp::TransportFlags transport = mscclpp::Transport::CudaIpc | ibTransport;
+
+    connectMesh(useIbOnly);
+
+    for (int r = 0; r < worldSize; r++) {
+      if (r == rank) {
+        continue;
+      }
+      mscclpp::RegisteredMemory sendMemory;
+      mscclpp::RegisteredMemory remoteMemory;
+      void* tmpBuff = nullptr;
+
+      if (isInPlace) {
+        registerMemoryPair(sendBuff, sendBuffBytes, transport, 0, r, sendMemory, remoteMemory);
+      } else {
+        sendMemory = communicator->registerMemory(recvBuff, recvBuffBytes, transport);
+        mscclpp::RegisteredMemory recvMemory;
+        registerMemoryPair(recvBuff, recvBuffBytes, transport, 0, r, recvMemory, remoteMemory);
+        tmpBuff = recvMemory.data();
+      }
+      // TODO: enable this when we support out-of-place
+      // devChannels.emplace_back(channelService->deviceChannel(channelService->addChannel(connections[r])),
+      //                          channelService->addMemory(remoteMemory), channelService->addMemory(sendMemory),
+      //                          remoteMemory.data(), sendMemory.data(), tmpBuff);
+      devChannels.emplace_back(channelService->deviceChannel(channelService->addChannel(connections[r])),
+                               channelService->addMemory(remoteMemory), channelService->addMemory(sendMemory),
+                               remoteMemory.data(), sendMemory.data());
+    }
+  }
+
+  std::shared_ptr<mscclpp::channel::DeviceChannelService> channelService;
+};
+
+__constant__ mscclpp::channel::SimpleDeviceChannel gChannelOneToOneTestConstDevChans;
+
+__global__ void kernelPingPong(int rank, int nElem) {
+  mscclpp::channel::SimpleDeviceChannel& devChan = gChannelOneToOneTestConstDevChans;
+  volatile int* sendBuff = (volatile int*)devChan.srcPtr_;
+  int nTries = 1000;
+  int flusher = 0;
+  int rank1Offset = 10000000;
+  for (int i = 0; i < nTries; i++) {
+    if (rank == 0) {
+      if (i > 0) {
+        if (threadIdx.x == 0) devChan.wait();
+        __syncthreads();
+        for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+          if (sendBuff[j] != rank1Offset + i - 1 + j) {
+            printf("rank 0 ERROR: sendBuff[%d] = %d, expected %d\n", j, sendBuff[j], 100000 + i - 1 + j);
+          }
+        }
+      }
+      for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+        sendBuff[j] = i + j;
+      }
+      __syncthreads();
+      // __threadfence_system(); // not necessary if we make sendBuff volatile
+      if (threadIdx.x == 0) devChan.putWithSignal(0, nElem * sizeof(int));
+    }
+    if (rank == 1) {
+      if (threadIdx.x == 0) devChan.wait();
+      __syncthreads();
+      for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+        if (sendBuff[j] != i + j) {
+          printf("rank 1 ERROR: sendBuff[%d] = %d, expected %d\n", j, sendBuff[j], i + j);
+        }
+      }
+      if (i < nTries - 1) {
+        for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+          sendBuff[j] = rank1Offset + i + j;
+        }
+        __syncthreads();
+        // __threadfence_system(); // not necessary if we make sendBuff volatile
+        if (threadIdx.x == 0) devChan.putWithSignal(0, nElem * sizeof(int));
+      }
+    }
+    flusher++;
+    if (flusher == 100) {
+      devChan.flush();
+      flusher = 0;
+    }
+  }
+}
+
+TEST_F(ChannelOneToOneTest, PingPongIb) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int nElem = 64 * 1024 * 1024;
+
+  std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
+  std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
+  setupMeshConnections(devChannels, true, buff.get(), nElem * sizeof(int));
+
+  ASSERT_EQ(devChannels.size(), 1);
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(&gChannelOneToOneTestConstDevChans, devChannels.data(),
+                                       sizeof(mscclpp::channel::SimpleDeviceChannel)));
+
+  channelService->startProxy();
+
+  kernelPingPong<<<24, 1024>>>(gEnv->rank, nElem);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  channelService->stopProxy();
 }

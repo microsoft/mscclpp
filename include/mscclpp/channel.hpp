@@ -228,6 +228,9 @@ struct SimpleDeviceChannel {
 
   SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src) : devChan_(devChan), dst_(dst), src_(src) {}
 
+  SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src, void* dstPtr, void* srcPtr)
+      : devChan_(devChan), dst_(dst), src_(src), dstPtr_(dstPtr), srcPtr_(srcPtr) {}
+
   SimpleDeviceChannel(DeviceChannel devChan, void* dstPtr, void* srcPtr)
       : devChan_(devChan), srcPtr_(srcPtr), dstPtr_(dstPtr) {}
 
