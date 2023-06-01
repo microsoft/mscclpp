@@ -1,5 +1,6 @@
-#include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <mscclpp/core.hpp>
 
 class LocalCommunicatorTest : public ::testing::Test {

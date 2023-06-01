@@ -9,7 +9,6 @@
 #include <unordered_map>
 
 #include "ib.hpp"
-#include "mscclpp.h"
 
 namespace mscclpp {
 
