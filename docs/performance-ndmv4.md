@@ -23,7 +23,7 @@ mpirun -allow-run-as-root -map-by ppr:8:node -hostfile /mnt/hostfile ./build/tes
 **BusBW (GB/s)**
 | Message Size | NCCL AllGather | NCCL AllReduce | NCCL AllToAll | MSCCL AllToAll LL/LL128/Simple | MSCCL++ AllGather K0/K1/K2   | MSCCL++ AllReduce |
 |:------------:|:--------------:|:--------------:|:-------------:|:------------------------------:|:----------------------------:|:-----------------:|
-| 1G           | 253.59         | **132.31**     | 254.69        | 217.05 / 216.98 / 217.15       | 125.06 / **255.64** / 124.89 | 22.55             |
+| 1G           | 253.59         | **231.45**     | 254.69        | 217.05 / 216.98 / 217.15       | 125.06 / **255.64** / 124.89 | 22.55             |
 
 ### 2 nodes, 1 gpu/node
 **Latency (us)**

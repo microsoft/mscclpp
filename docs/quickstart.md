@@ -1,6 +1,6 @@
 # Quick Start
 
-## Preliminaries
+## Prerequisites
 
 * Azure SKUs
     * [ND_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/nda100-v4-series)
