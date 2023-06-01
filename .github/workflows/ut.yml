@@ -33,10 +33,24 @@ jobs:
       run: |
         git config --global --add safe.directory /__w/mscclpp/mscclpp
         export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
-        /tmp/cmake-3.26.4-linux-x86_64/bin/cmake .
-        make -j
+        mkdir build && cd build && /tmp/cmake-3.26.4-linux-x86_64/bin/cmake .. && make -j && cd ..
 
     - name: Run unit tests
       run: |
         export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
-        # make test
+        ./build/test/unit_tests
+
+    - name: Run 2-process unit tests
+      run: |
+        export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
+        mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests
+  
+    - name: Run 4-process unit tests
+      run: |
+        export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
+        mpirun --allow-run-as-root -tag-output -np 4 ./build/test/mp_unit_tests
+  
+    - name: Run 8-process unit tests
+      run: |
+        export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
+        mpirun --allow-run-as-root -tag-output -np 8 ./build/test/mp_unit_tests

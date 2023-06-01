@@ -5,7 +5,11 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/epoch.hpp>
+#include <mscclpp/utils.hpp>
 #include <sstream>
+
+#include "ib.hpp"
+#include "infiniband/verbs.h"
 
 static const char gDefaultIpPort[] = "127.0.0.1:50053";
 
@@ -184,6 +188,103 @@ TEST_F(BootstrapTest, MPIBootstrap) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// InfiniBand tests
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static mscclpp::Transport ibIdToTransport(int id) {
+  mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
+                              mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
+                              mscclpp::Transport::IB6, mscclpp::Transport::IB7};
+  return IBs[id];
+}
+
+class IbTest : public MultiProcessTest {
+protected:
+  void SetUp() override {
+    MSCCLPP_CUDATHROW(cudaGetDeviceCount(&cudaDevNum));
+    cudaDevId = (gEnv->rank % gEnv->nRanksPerNode) % cudaDevNum;
+    MSCCLPP_CUDATHROW(cudaSetDevice(cudaDevId));
+
+    int ibDevId = (gEnv->rank % gEnv->nRanksPerNode) / mscclpp::getIBDeviceCount();
+    ibDevName = mscclpp::getIBDeviceName(ibIdToTransport(ibDevId));
+  }
+
+  int cudaDevNum;
+  int cudaDevId;
+  std::string ibDevName;
+};
+
+TEST_F(IbTest, SimpleSendRecv) {
+  if (gEnv->rank >= 2) {
+    // This test needs only two ranks
+    return;
+  }
+
+  const int maxIter = 100000;
+  const int nelem = 1;
+  auto data = mscclpp::allocUniqueCuda<int>(nelem);
+
+  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, 2);
+
+  mscclpp::UniqueId id;
+  if (gEnv->rank == 0) {
+    id = bootstrap->createUniqueId();
+    MPI_Send(&id, sizeof(id), MPI_BYTE, 1, 0, MPI_COMM_WORLD);
+  } else {
+    MPI_Recv(&id, sizeof(id), MPI_BYTE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+  }
+  bootstrap->initialize(id);
+
+  mscclpp::IbCtx ctx(ibDevName);
+  mscclpp::IbQp* qp = ctx.createQp();
+  const mscclpp::IbMr* mr = ctx.registerMr(data.get(), sizeof(int) * nelem);
+
+  std::array<mscclpp::IbQpInfo, 2> qpInfo;
+  qpInfo[gEnv->rank] = qp->getInfo();
+
+  std::array<mscclpp::IbMrInfo, 2> mrInfo;
+  mrInfo[gEnv->rank] = mr->getInfo();
+
+  bootstrap->allGather(qpInfo.data(), sizeof(mscclpp::IbQpInfo));
+  bootstrap->allGather(mrInfo.data(), sizeof(mscclpp::IbMrInfo));
+
+  for (int i = 0; i < bootstrap->getNranks(); ++i) {
+    if (i == gEnv->rank)
+      continue;
+    qp->rtr(qpInfo[i]);
+    qp->rts();
+    break;
+  }
+  bootstrap->barrier();
+
+  if (gEnv->rank == 1) {
+    mscclpp::Timer timer;
+    for (int iter = 0; iter < maxIter; ++iter) {
+      qp->stageSend(mr, mrInfo[0], sizeof(int) * nelem, 0, 0, 0, true);
+      qp->postSend();
+      bool waiting = true;
+      int spin = 0;
+      while (waiting) {
+        int wcNum = qp->pollCq();
+        ASSERT_GE(wcNum, 0);
+        for (int i = 0; i < wcNum; ++i) {
+          const ibv_wc* wc = qp->getWc(i);
+          EXPECT_EQ(wc->status, IBV_WC_SUCCESS);
+          waiting = false;
+          break;
+        }
+        if (spin++ > 1000000) {
+          FAIL() << "Polling is stuck.";
+        }
+      }
+    }
+    float us = (float)timer.elapsed();
+    std::cout << "IbTest.SimpleSendRecv: " << us / maxIter << " us/iter" << std::endl;
+  }
+  bootstrap->barrier();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Communicator tests
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -195,7 +296,7 @@ protected:
     ASSERT_EQ((deviceBufferSize / sizeof(int)) % gEnv->worldSize, 0);
 
     communicator = std::make_shared<mscclpp::Communicator>(createBootstrap());
-    myIbDevice = findIb(gEnv->rank % gEnv->nRanksPerNode);
+    myIbDevice = ibIdToTransport(gEnv->rank % gEnv->nRanksPerNode);
 
     makeConnections();
 
@@ -225,13 +326,6 @@ protected:
     MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
     bootstrap->initialize(id);
     return bootstrap;
-  }
-
-  mscclpp::Transport findIb(int localRank) const {
-    mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
-                                mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
-                                mscclpp::Transport::IB6, mscclpp::Transport::IB7};
-    return IBs[localRank];
   }
 
   void makeConnections() {
