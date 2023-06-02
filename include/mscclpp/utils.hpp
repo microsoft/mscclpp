@@ -4,10 +4,11 @@
 #include <unistd.h>
 
 #include <chrono>
-#include <cstdio>
 #include <cstring>
 #include <mscclpp/errors.hpp>
 #include <string>
+#include <sstream>
+#include <iostream>
 
 namespace mscclpp {
 
@@ -23,18 +24,20 @@ struct Timer {
 
   void reset() { start = std::chrono::steady_clock::now(); }
 
-  void print(const char* name) {
+  void print(const std::string& name) {
     auto end = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-    printf("%s: %ld us\n", name, elapsed);
+    std::stringstream ss;
+    ss << name << ": " << elapsed << " us\n";
+    std::cout << ss.str();
   }
 };
 
 struct ScopedTimer {
   Timer timer;
-  const char* name;
+  const std::string name;
 
-  ScopedTimer(const char* name) : name(name) {}
+  ScopedTimer(const std::string& name) : name(name) {}
 
   ~ScopedTimer() { timer.print(name); }
 };
