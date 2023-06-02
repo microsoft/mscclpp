@@ -225,15 +225,7 @@ TEST_F(IbTest, SimpleSendRecv) {
   auto data = mscclpp::allocUniqueCuda<int>(nelem);
 
   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, 2);
-
-  mscclpp::UniqueId id;
-  if (gEnv->rank == 0) {
-    id = bootstrap->createUniqueId();
-    MPI_Send(&id, sizeof(id), MPI_BYTE, 1, 0, MPI_COMM_WORLD);
-  } else {
-    MPI_Recv(&id, sizeof(id), MPI_BYTE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-  }
-  bootstrap->initialize(id);
+  bootstrap->initialize(gEnv->args["ip_port"]);
 
   mscclpp::IbCtx ctx(ibDevName);
   mscclpp::IbQp* qp = ctx.createQp();
@@ -610,11 +602,15 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
         registerMemoryPair(recvBuff, recvBuffBytes, transport, 0, r, recvMemory, remoteMemory);
         tmpBuff = recvMemory.data();
       }
+
+      mscclpp::channel::ChannelId cid = channelService->addChannel(connections[r]);
+      communicator->setup();
+
       // TODO: enable this when we support out-of-place
-      // devChannels.emplace_back(channelService->deviceChannel(channelService->addChannel(connections[r])),
+      // devChannels.emplace_back(channelService->deviceChannel(cid),
       //                          channelService->addMemory(remoteMemory), channelService->addMemory(sendMemory),
       //                          remoteMemory.data(), sendMemory.data(), tmpBuff);
-      devChannels.emplace_back(channelService->deviceChannel(channelService->addChannel(connections[r])),
+      devChannels.emplace_back(channelService->deviceChannel(cid),
                                channelService->addMemory(remoteMemory), channelService->addMemory(sendMemory),
                                remoteMemory.data(), sendMemory.data());
     }
@@ -677,19 +673,28 @@ __global__ void kernelPingPong(int rank, int nElem) {
 TEST_F(ChannelOneToOneTest, PingPongIb) {
   if (gEnv->rank >= numRanksToUse) return;
 
-  const int nElem = 64 * 1024 * 1024;
+  const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
   setupMeshConnections(devChannels, true, buff.get(), nElem * sizeof(int));
 
   ASSERT_EQ(devChannels.size(), 1);
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(&gChannelOneToOneTestConstDevChans, devChannels.data(),
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstDevChans, devChannels.data(),
                                        sizeof(mscclpp::channel::SimpleDeviceChannel)));
 
   channelService->startProxy();
 
-  kernelPingPong<<<24, 1024>>>(gEnv->rank, nElem);
+  kernelPingPong<<<1, 1024>>>(gEnv->rank, 1);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  kernelPingPong<<<1, 1024>>>(gEnv->rank, 1024);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  kernelPingPong<<<1, 1024>>>(gEnv->rank, 1024 * 1024);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  kernelPingPong<<<1, 1024>>>(gEnv->rank, 4 * 1024 * 1024);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   channelService->stopProxy();
