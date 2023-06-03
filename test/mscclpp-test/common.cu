@@ -229,6 +229,72 @@ size_t BaseTestEngine::checkData() {
   return nErrors;
 }
 
+std::shared_ptr<mscclpp::channel::BaseChannelService> BaseTestEngine::createChannelService() {
+  return std::make_shared<mscclpp::channel::DeviceChannelService>(*comm_);
+}
+
+// Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
+void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels,
+                                          void* sendBuff, size_t sendBuffBytes, void* recvBuff, size_t recvBuffBytes,
+                                          SetupChannelFunc setupChannel) {
+  const int worldSize = args_.totalRanks;
+  const int rank = args_.rank;
+  const int nRanksPerNode = args_.nRanksPerNode;
+  const int thisNode = rank / nRanksPerNode;
+  const mscclpp::Transport ibTransport = IBs[args_.gpuNum];
+  const bool isOutPlace = (recvBuff != nullptr);
+
+  std::vector<mscclpp::RegisteredMemory> localMemories;
+  std::vector<mscclpp::RegisteredMemory> localTmpMemories;
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemories;
+  std::vector<std::shared_ptr<mscclpp::Connection>> conns;
+
+  auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
+  for (int r = 0; r < worldSize; r++) {
+    if (r == rank) {
+      continue;
+    }
+    mscclpp::Transport transport;
+    if (rankToNode(r) == thisNode) {
+      transport = mscclpp::Transport::CudaIpc;
+    } else {
+      transport = ibTransport;
+    }
+    // Connect with all other ranks
+    conns.push_back(comm_->connectOnSetup(r, 0, transport));
+    // channelIds.push_back(chanService_->addChannel(comm_->connectOnSetup(r, 0, transport)));
+    auto sendMemory = comm_->registerMemory(sendBuff, sendBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
+    localMemories.push_back(sendMemory);
+    if (isOutPlace) {
+      auto recvMemory = comm_->registerMemory(recvBuff, recvBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
+      comm_->sendMemoryOnSetup(recvMemory, r, 0);
+      localTmpMemories.push_back(recvMemory);
+    } else {
+      comm_->sendMemoryOnSetup(sendMemory, r, 0);
+    }
+    remoteMemories.push_back(comm_->recvMemoryOnSetup(r, 0));
+  }
+  comm_->setup();
+
+  // setup channels
+  if (setupChannel != nullptr) {
+    setupChannel(conns, remoteMemories, localMemories);
+  } else {
+    auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
+    std::vector<mscclpp::channel::ChannelId> channelIds;
+    for (auto& conn : conns) {
+      channelIds.push_back(service->addChannel(conn));
+    }
+    comm_->setup();
+    for (size_t i = 0; i < channelIds.size(); ++i) {
+      devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
+          service->deviceChannel(channelIds[i]), service->addMemory(remoteMemories[i].get()),
+          service->addMemory(localMemories[i]), remoteMemories[i].get().data(), localMemories[i].data(),
+          (isOutPlace ? localTmpMemories[i].data() : nullptr)));
+    }
+  }
+}
+
 void run(int argc, char* argv[]);
 int main(int argc, char* argv[]) {
   // Make sure everyline is flushed so that we see the progress of the test

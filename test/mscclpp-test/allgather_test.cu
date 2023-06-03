@@ -1,6 +1,7 @@
 #include <cuda_runtime.h>
 
 #include <cassert>
+#include <iostream>
 #include <string>
 
 #include "common.hpp"
@@ -176,15 +177,16 @@ class AllGatherChannelService : public mscclpp::channel::BaseChannelService {
   }
 
  private:
+  int worldSize_;
+  int rank_;
+  int cudaDevice_;
+  size_t sendBytes_;
+
   mscclpp::Proxy proxy_;
   mscclpp::Communicator& communicator_;
   std::vector<mscclpp::channel::Channel> channels_;
   std::vector<mscclpp::RegisteredMemory> remoteMemories_;
   mscclpp::RegisteredMemory localMemory_;
-
-  int worldSize_;
-  int rank_;
-  size_t sendBytes_;
 
   mscclpp::ProxyHandlerResult handleTrigger(mscclpp::ProxyTrigger triggerRaw);
 };
@@ -195,9 +197,10 @@ AllGatherChannelService::AllGatherChannelService(mscclpp::Communicator& communic
       worldSize_(worldSize),
       sendBytes_(0),
       rank_(rank),
+      cudaDevice_(cudaDevice),
       proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); },
              [&]() {
-               int deviceNumaNode = mscclpp::getDeviceNumaNode(cudaDevice);
+               int deviceNumaNode = mscclpp::getDeviceNumaNode(cudaDevice_);
                mscclpp::numaBind(deviceNumaNode);
              }) {}
 
@@ -232,7 +235,7 @@ class AllGatherTestColl : public BaseTestColl {
 
   void runColl(const TestArgs& args, cudaStream_t stream) override;
   void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) override;
-  void getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) override;
+  void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) override;
   void setupCollTest(size_t size) override;
 };
 
@@ -309,64 +312,32 @@ void AllGatherTestEngine::allocateBuffer() {
 }
 
 void AllGatherTestEngine::setupConnections() {
-  const int worldSize = args_.totalRanks;
-  const int rank = args_.rank;
-  const int nRanksPerNode = args_.nRanksPerNode;
-  const int thisNode = rank / nRanksPerNode;
-  const mscclpp::Transport ibTransport = IBs[args_.gpuNum];
-
-  std::vector<mscclpp::channel::ChannelId> channelIds;
-  std::vector<mscclpp::RegisteredMemory> localMemories;
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemories;
-
-  auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
-  for (int r = 0; r < worldSize; r++) {
-    if (r == rank) {
-      continue;
-    }
-    mscclpp::Transport transport;
-    if (rankToNode(r) == thisNode) {
-      transport = mscclpp::Transport::CudaIpc;
-    } else {
-      transport = ibTransport;
-    }
-    // Connect with all other ranks
-    if (isUsingHostOffload(args_.kernelNum)) {
-      auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
-      channelIds.push_back(service->addChannel(comm_->connectOnSetup(r, 0, transport)));
-    } else {
-      auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
-      channelIds.push_back(service->addChannel(comm_->connectOnSetup(r, 0, transport)));
-    }
-    auto memory = comm_->registerMemory(sendBuff_.get(), args_.maxBytes, mscclpp::Transport::CudaIpc | ibTransport);
-    localMemories.push_back(memory);
-    comm_->sendMemoryOnSetup(memory, r, 0);
-    remoteMemories.push_back(comm_->recvMemoryOnSetup(r, 0));
-  }
-  comm_->setup();
-
-  if (isUsingHostOffload(args_.kernelNum)) {
-    auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
-    for (size_t i = 0; i < channelIds.size(); ++i) {
-      service->addRemoteMemory(remoteMemories[i].get());
-    }
-    service->setLocalMemory(localMemories[0]);
-    auto devChannels = service->deviceChannels();
-    assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));
-    CUDATHROW(cudaMemcpyToSymbol(constRawDevChan, devChannels.data(),
-                                 sizeof(mscclpp::channel::DeviceChannel) * devChannels.size()));
-  } else {
-    auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
-    std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
-    for (size_t i = 0; i < channelIds.size(); ++i) {
-      devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(service->deviceChannel(channelIds[i]),
-                                                                  service->addMemory(remoteMemories[i].get()),
-                                                                  service->addMemory(localMemories[i])));
-    }
-
+  std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
+  if (!isUsingHostOffload(args_.kernelNum)) {
+    setupMeshConnections(devChannels, sendBuff_.get(), args_.maxBytes);
     assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));
     CUDATHROW(cudaMemcpyToSymbol(constDevChans, devChannels.data(),
                                  sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size()));
+  } else {
+    auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
+    setupMeshConnections(devChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,
+                         [&](std::vector<std::shared_ptr<mscclpp::Connection>> conns,
+                             std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteMemories,
+                             std::vector<mscclpp::RegisteredMemory>& localMemories) {
+                           std::vector<mscclpp::channel::ChannelId> channelIds;
+                           for (auto& conn : conns) {
+                             channelIds.push_back(service->addChannel(conn));
+                           }
+                           comm_->setup();
+                           for (size_t i = 0; i < channelIds.size(); ++i) {
+                             service->addRemoteMemory(remoteMemories[i].get());
+                           }
+                           service->setLocalMemory(localMemories[0]);
+                         });
+    auto devChannels = service->deviceChannels();
+    assert(devChannels.size() < sizeof(constRawDevChan) / sizeof(mscclpp::channel::DeviceChannel));
+    CUDATHROW(cudaMemcpyToSymbol(constRawDevChan, devChannels.data(),
+                                 sizeof(mscclpp::channel::DeviceChannel) * devChannels.size()));
   }
 }
 

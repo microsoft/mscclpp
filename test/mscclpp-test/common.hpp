@@ -41,7 +41,7 @@ class BaseTestColl {
   virtual ~BaseTestColl() {}
   virtual void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) = 0;
   virtual void runColl(const TestArgs& args, cudaStream_t stream) = 0;
-  virtual void getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) = 0;
+  virtual void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) = 0;
 
   void setupCollTest(const TestArgs& args, size_t size);
   void setChanService(std::shared_ptr<mscclpp::channel::BaseChannelService> chanService) { chanService_ = chanService; }
@@ -80,7 +80,7 @@ class BaseTestEngine {
 
  private:
   virtual void setupConnections() = 0;
-  virtual std::shared_ptr<mscclpp::channel::BaseChannelService> createChannelService() = 0;
+  virtual std::shared_ptr<mscclpp::channel::BaseChannelService> createChannelService();
   virtual std::vector<void*> getSendBuff() = 0;
   virtual void* getExpectedBuff() = 0;
   virtual void* getRecvBuff() = 0;
@@ -88,6 +88,13 @@ class BaseTestEngine {
   double benchTime();
 
  protected:
+  using SetupChannelFunc = std::function<void(std::vector<std::shared_ptr<mscclpp::Connection>>,
+                                              std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>&,
+                                              std::vector<mscclpp::RegisteredMemory>&)>;
+  void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* sendBuff,
+                            size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0,
+                            SetupChannelFunc setupChannel = nullptr);
+
   TestArgs args_;
   std::shared_ptr<BaseTestColl> coll_;
   std::shared_ptr<mscclpp::Communicator> comm_;
