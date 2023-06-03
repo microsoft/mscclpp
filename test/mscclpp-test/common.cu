@@ -68,21 +68,16 @@ double parseSize(const char* value) {
   return size * units;
 }
 
-double allreduceTime(int worldSize, double value, int average)
-{
+double allreduceTime(int worldSize, double value, int average) {
   double accumulator = value;
 
   if (average != 0) {
-    MPI_Op op = average == 1   ? MPI_SUM
-                : average == 2 ? MPI_MIN
-                : average == 3 ? MPI_MAX
-                : average == 4 ? MPI_SUM
-                               : MPI_Op();
+    MPI_Op op =
+        average == 1 ? MPI_SUM : average == 2 ? MPI_MIN : average == 3 ? MPI_MAX : average == 4 ? MPI_SUM : MPI_Op();
     MPI_Allreduce(MPI_IN_PLACE, (void*)&accumulator, 1, MPI_DOUBLE, op, MPI_COMM_WORLD);
   }
 
-  if (average == 1)
-    accumulator /= worldSize;
+  if (average == 1) accumulator /= worldSize;
   return accumulator;
 }
 }  // namespace
@@ -128,12 +123,9 @@ double BaseTestEngine::benchTime() {
   return deltaSec;
 }
 
-void BaseTestEngine::barrier() {
-  this->comm_->bootstrapper()->barrier();
-}
+void BaseTestEngine::barrier() { this->comm_->bootstrapper()->barrier(); }
 
-void BaseTestEngine::runTest()
-{
+void BaseTestEngine::runTest() {
   // warm-up for large size
   this->coll_->setupCollTest(args_, args_.maxBytes);
   this->barrier();

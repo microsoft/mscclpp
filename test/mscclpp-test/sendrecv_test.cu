@@ -122,8 +122,8 @@ class SendRecvTestEngine : public BaseTestEngine {
 };
 
 void SendRecvTestEngine::allocateBuffer() {
-  std::shared_ptr<int> sendBuff = mscclpp::makeSharedCuda<int>(args_.maxBytes / sizeof(int));
-  std::shared_ptr<int> recvBuff = mscclpp::makeSharedCuda<int>(args_.maxBytes / sizeof(int));
+  std::shared_ptr<int> sendBuff = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
+  std::shared_ptr<int> recvBuff = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
   devicePtrs_.push_back(sendBuff);
   devicePtrs_.push_back(recvBuff);
 

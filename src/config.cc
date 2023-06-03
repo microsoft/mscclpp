@@ -1,9 +1,11 @@
-#include "config.h"
+#include "config.hpp"
 
-mscclppConfig mscclppConfig::_instance;
+namespace mscclpp {
+Config Config::instance_;
 
-mscclppConfig* mscclppConfig::getInstance() { return &_instance; }
+Config* Config::getInstance() { return &instance_; }
 
-time_t mscclppConfig::getBootstrapConnectionTimeoutConfig() { return bootstrapConnectionTimeout; }
+time_t Config::getBootstrapConnectionTimeoutConfig() { return bootstrapConnectionTimeout; }
 
-void mscclppConfig::setBootstrapConnectionTimeoutConfig(time_t timeout) { bootstrapConnectionTimeout = timeout; }
+void Config::setBootstrapConnectionTimeoutConfig(time_t timeout) { bootstrapConnectionTimeout = timeout; }
+}  // namespace mscclpp

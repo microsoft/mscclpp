@@ -2,17 +2,16 @@
 
 #include <cassert>
 #include <string>
-#include "utils.h"
 
 #include "common.hpp"
+#include "numa.hpp"
 
 #define ALIGN 4
 
 namespace {
-  auto isUsingHostOffload = [](int kernelNum) { return kernelNum == 3; };
-  constexpr uint64_t MAGIC = 0xdeadbeef;
-}
-
+auto isUsingHostOffload = [](int kernelNum) { return kernelNum == 3; };
+constexpr uint64_t MAGIC = 0xdeadbeef;
+}  // namespace
 
 __constant__ mscclpp::channel::SimpleDeviceChannel constDevChans[16];
 __constant__ mscclpp::channel::DeviceChannel constRawDevChan[16];
@@ -132,7 +131,7 @@ __device__ void allgather3(mscclpp::channel::DeviceChannel devChan, int rank, in
     // offload all the work to the proxy
     devChan.fifo_.push(trigger);
   }
- if (tid % 32 == 0) {
+  if (tid % 32 == 0) {
     devChan.wait();
   }
 }
@@ -162,12 +161,8 @@ class AllGatherChannelService : public mscclpp::channel::BaseChannelService {
   void startProxy() override { proxy_.start(); }
   void stopProxy() override { proxy_.stop(); }
   void setSendBytes(size_t sendBytes) { this->sendBytes_ = sendBytes; }
-  void addRemoteMemory(mscclpp::RegisteredMemory memory) {
-    remoteMemories_.push_back(memory);
-  }
-  void setLocalMemory(mscclpp::RegisteredMemory memory) {
-    localMemory_ = memory;
-  }
+  void addRemoteMemory(mscclpp::RegisteredMemory memory) { remoteMemories_.push_back(memory); }
+  void setLocalMemory(mscclpp::RegisteredMemory memory) { localMemory_ = memory; }
   mscclpp::channel::ChannelId addChannel(std::shared_ptr<mscclpp::Connection> connection) {
     channels_.push_back(mscclpp::channel::Channel(communicator_, connection));
     return channels_.size() - 1;
@@ -202,9 +197,8 @@ AllGatherChannelService::AllGatherChannelService(mscclpp::Communicator& communic
       rank_(rank),
       proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); },
              [&]() {
-               int deviceNumaNode;
-               getDeviceNumaNode(cudaDevice, &deviceNumaNode);
-               numaBind(deviceNumaNode);
+               int deviceNumaNode = mscclpp::getDeviceNumaNode(cudaDevice);
+               mscclpp::numaBind(deviceNumaNode);
              }) {}
 
 mscclpp::ProxyHandlerResult AllGatherChannelService::handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
@@ -310,7 +304,7 @@ class AllGatherTestEngine : public BaseTestEngine {
 };
 
 void AllGatherTestEngine::allocateBuffer() {
-  sendBuff_ = mscclpp::makeSharedCuda<int>(args_.maxBytes / sizeof(int));
+  sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
 }
 
@@ -340,8 +334,7 @@ void AllGatherTestEngine::setupConnections() {
     if (isUsingHostOffload(args_.kernelNum)) {
       auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
       channelIds.push_back(service->addChannel(comm_->connectOnSetup(r, 0, transport)));
-    }
-    else {
+    } else {
       auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
       channelIds.push_back(service->addChannel(comm_->connectOnSetup(r, 0, transport)));
     }
