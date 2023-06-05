@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+
 #include <mscclpp/cuda_utils.hpp>
 
 #include "numa.hpp"
