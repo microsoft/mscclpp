@@ -9,6 +9,7 @@
 #include <mscclpp/utils.hpp>
 #include <sstream>
 
+#include "config.hpp"
 #include "ib.hpp"
 #include "infiniband/verbs.h"
 
@@ -170,14 +171,52 @@ TEST_F(BootstrapTest, ResumeWithId) {
 
 TEST_F(BootstrapTest, ResumeWithIpPortPair) {
   mscclpp::Timer timer(3);
-  // TODO: uncomment when the bug is fixed. bootstrap hangs and even timer doesn't work
-  // for (int i = 0; i < 5; ++i) {
-  //   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
-  //   bootstrap->initialize(gEnv->args["ip_port"]);
-  // }
-
+  // TODO: enable when the bug is fixed. bootstrap hangs and even timer doesn't work
+#if 0
+  for (int i = 0; i < 5; ++i) {
+    auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
+    bootstrap->initialize(gEnv->args["ip_port"]);
+  }
+#else
   // TODO: remove when the bug is fixed.
   FAIL();
+#endif
+}
+
+TEST_F(BootstrapTest, ExitBeforeConnect) {
+  mscclpp::Timer timer(3);
+
+  // TODO: enable when the bug is fixed. bootstrap rootThread_ does not exit gracefully
+#if 0
+  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
+  mscclpp::UniqueId id = bootstrap->createUniqueId();
+#else
+  // TODO: remove when the bug is fixed.
+  FAIL();
+#endif
+}
+
+TEST_F(BootstrapTest, TimeoutWithId) {
+  // TODO: enable when BootstrapTest.ExitBeforeConnect passes.
+#if 0
+  mscclpp::Timer timer(3);
+
+  // Set bootstrap timeout to 1 second
+  mscclpp::Config* cfg = mscclpp::Config::getInstance();
+  cfg->setBootstrapConnectionTimeoutConfig(1);
+
+  // All ranks initialize a bootstrap with their own id (will hang)
+  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
+  mscclpp::UniqueId id = bootstrap->createUniqueId();
+
+  ASSERT_THROW(bootstrap->initialize(id), mscclpp::Error);
+
+  // Timeout should be less than 3 seconds
+  ASSERT_LT(timer.elapsed(), 3000000);
+#else
+  // TODO: remove when BootstrapTest.ExitBeforeConnect passes.
+  FAIL();
+#endif
 }
 
 class MPIBootstrap : public mscclpp::BaseBootstrap {
