@@ -57,7 +57,7 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             TAGS=$(sed "s/main:/dev:/g" <<< ${TAGS})
           fi
-          DOCKERFILE=dockerfile/${{ matrix.dockerfile }}.dockerfile
+          DOCKERFILE=docker/${{ matrix.dockerfile }}.dockerfile
 
           BUILD_ARGS="NUM_MAKE_JOBS=8"
           if [[ "${{ matrix.extra_args }}" ]]; then
