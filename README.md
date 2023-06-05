@@ -4,7 +4,7 @@ GPU-driven computation & communication stack.
 
 See [Quick Start](docs/quickstart.md) to quickly get started.
 
-See [Performance](docs/performance.md) for the latest performance evaluation.
+See the latest performance evaluation on Azure [NDmv4](docs/performance-ndmv4.md).
 
 Build our Doxygen document by running `doxygen` in [`docs/`](docs/) directory.
 
