@@ -100,45 +100,72 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
   size_t chunkSize = nelems / worldSize * sizeof(int);
   size_t offset = chunkIndex * chunkSize;
   if (isComm) {
-    devFstSendChan.putWithSignalAndFlush(offset, chunkSize);
+    devFstSendChan.putWithSignal(offset, chunkSize / 2);
   }
 
   // Step 2 ~ Step n-1
-  for (int i = 2; i < worldSize; ++i) {
+  for (int step = 2; step < worldSize; ++step) {
     if (isComm) {
       devFstRecvChan.wait();
+      devFstSendChan.flush();
+      devFstSendChan.putWithSignal(offset + chunkSize / 2, chunkSize - chunkSize / 2);
     }
     deviceSyncer.sync(gridDim.x);
 
     // Reduce
-    chunkIndex = (rank + worldSize - i) % worldSize;
+    chunkIndex = (rank + worldSize - step) % worldSize;
     offset = chunkIndex * chunkSize;
     int* dst = (int*)((char*)devFstSendChan.srcPtr_ + offset);
     int* src = (int*)((char*)devFstRecvChan.tmpPtr_ + offset);
-    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < chunkSize / sizeof(int); i += blockDim.x * gridDim.x) {
+    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < chunkSize / sizeof(int) / 2; i += blockDim.x * gridDim.x) {
       dst[i] += src[i];
+    }
+
+    if (isComm) {
+      devFstRecvChan.wait();
+      devFstSendChan.flush();
+      devFstSendChan.putWithSignal(offset, chunkSize / 2);
     }
     deviceSyncer.sync(gridDim.x);
 
-    if (isComm) {
-      devFstSendChan.putWithSignalAndFlush(offset, chunkSize);
+    dst += chunkSize / sizeof(int) / 2;
+    src += chunkSize / sizeof(int) / 2;
+    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < (chunkSize - chunkSize / 2) / sizeof(int); i += blockDim.x * gridDim.x) {
+      dst[i] += src[i];
     }
   }
 
   // Step n
   if (isComm) {
     devFstRecvChan.wait();
+    devFstSendChan.flush();
+    devFstSendChan.putWithSignalAndFlush(offset + chunkSize / 2, chunkSize - chunkSize / 2);
   }
   deviceSyncer.sync(gridDim.x);
+
   offset = rank * chunkSize;
   int* dst = (int*)((char*)devFstSendChan.srcPtr_ + offset);
   int* src = (int*)((char*)devFstRecvChan.tmpPtr_ + offset);
-  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < chunkSize / sizeof(int); i += blockDim.x * gridDim.x) {
+  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < chunkSize / sizeof(int) / 2; i += blockDim.x * gridDim.x) {
     dst[i] += src[i];
   }
-  deviceSyncer.sync(gridDim.x);
+
   if (isComm) {
-    devSndSendChan.putWithSignalAndFlush(offset, chunkSize);
+    devFstRecvChan.wait();
+    devFstSendChan.flush();
+    devSndSendChan.putWithSignal(offset, chunkSize / 2);
+  }
+  deviceSyncer.sync(gridDim.x);
+
+  dst += chunkSize / sizeof(int) / 2;
+  src += chunkSize / sizeof(int) / 2;
+  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < (chunkSize - chunkSize / 2) / sizeof(int); i += blockDim.x * gridDim.x) {
+    dst[i] += src[i];
+  }
+
+  if (isComm) {
+    devSndSendChan.flush();
+    devSndSendChan.putWithSignalAndFlush(offset + chunkSize / 2, chunkSize - chunkSize / 2);
   }
 
   // Step n+1 ~ Step 2n-2
@@ -184,7 +211,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int nPeers = worldSize - 1;
   const Chunk chunk = getChunk(paramCount_, worldSize, rank);
   const size_t scratchDataCount = chunk.size * nPeers;
-  const int nBlocks = (kernelNum == 0) ? nPeers * BLOCKS_PER_PEER : 32;
+  const int nBlocks = (kernelNum == 0) ? nPeers * BLOCKS_PER_PEER : 24;
   kernel<<<nBlocks, 1024, 0, stream>>>(rank, worldSize, paramCount_, scratchDataCount, kernelNum);
 }
 
