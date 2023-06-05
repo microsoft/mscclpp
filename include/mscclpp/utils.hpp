@@ -2,6 +2,7 @@
 #define MSCCLPP_UTILS_HPP_
 
 #include <unistd.h>
+#include <signal.h>
 
 #include <chrono>
 #include <cstring>
@@ -10,19 +11,48 @@
 #include <sstream>
 #include <string>
 
+// Throw upon SIGALRM.
+static void sigalrmTimeoutHandler(int)
+{
+  signal(SIGALRM, SIG_IGN);
+  throw mscclpp::Error("Timer timed out", mscclpp::ErrorCode::Timeout);
+}
+
 namespace mscclpp {
 
 struct Timer {
   std::chrono::steady_clock::time_point start;
+  const int timeout;
 
-  Timer() { start = std::chrono::steady_clock::now(); }
+  Timer(int timeout = -1) : timeout(timeout) {
+    if (timeout > 0) {
+      std::cout << "Alarm Set: timeout = " << timeout << "\n";
+      signal(SIGALRM, sigalrmTimeoutHandler);
+      alarm(timeout);
+    }
+    start = std::chrono::steady_clock::now();
+  }
+
+  ~Timer() {
+    if (timeout > 0) {
+      std::cout << "Alarm reset\n";
+      alarm(0);
+      signal(SIGALRM, SIG_DFL);
+    }
+  }
 
   int64_t elapsed() {
     auto end = std::chrono::steady_clock::now();
     return std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
   }
 
-  void reset() { start = std::chrono::steady_clock::now(); }
+  void reset() {
+    if (timeout > 0) {
+      signal(SIGALRM, sigalrmTimeoutHandler);
+      alarm(timeout);
+    }
+    start = std::chrono::steady_clock::now();
+  }
 
   void print(const std::string& name) {
     auto end = std::chrono::steady_clock::now();

@@ -157,6 +157,29 @@ TEST_F(BootstrapTest, WithIpPortPair) {
   bootstrapTestAll(bootstrap);
 }
 
+TEST_F(BootstrapTest, ResumeWithId) {
+  mscclpp::Timer timer(3);
+  for (int i = 0; i < 5; ++i) {
+    auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
+    mscclpp::UniqueId id;
+    if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
+    MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
+    bootstrap->initialize(id);
+  }
+}
+
+TEST_F(BootstrapTest, ResumeWithIpPortPair) {
+  mscclpp::Timer timer(3);
+  // TODO: uncomment when the bug is fixed. bootstrap hangs and even timer doesn't work
+  // for (int i = 0; i < 5; ++i) {
+  //   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
+  //   bootstrap->initialize(gEnv->args["ip_port"]);
+  // }
+
+  // TODO: remove when the bug is fixed.
+  FAIL();
+}
+
 class MPIBootstrap : public mscclpp::BaseBootstrap {
  public:
   MPIBootstrap() : BaseBootstrap() {}
@@ -220,12 +243,17 @@ TEST_F(IbTest, SimpleSendRecv) {
     return;
   }
 
+  mscclpp::Timer timer(3);
+
   const int maxIter = 100000;
   const int nelem = 1;
   auto data = mscclpp::allocUniqueCuda<int>(nelem);
 
   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, 2);
-  bootstrap->initialize(gEnv->args["ip_port"]);
+  mscclpp::UniqueId id;
+  if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
+  MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
+  bootstrap->initialize(id);
 
   mscclpp::IbCtx ctx(ibDevName);
   mscclpp::IbQp* qp = ctx.createQp();
