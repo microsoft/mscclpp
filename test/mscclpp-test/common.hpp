@@ -67,7 +67,7 @@ class BaseTestEngine {
   virtual ~BaseTestEngine();
   virtual void allocateBuffer() = 0;
 
-  int getTestErrors() {return error_;}
+  int getTestErrors() { return error_; }
   void setupTest();
   void bootstrap(const TestArgs& args);
   void runTest();

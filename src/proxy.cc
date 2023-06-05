@@ -5,7 +5,6 @@
 #include <thread>
 
 #include "api.h"
-#include "utils.h"
 
 namespace mscclpp {
 
