@@ -6,6 +6,11 @@
 #include <functional>
 #include <memory>
 
+#ifndef NDEBUG
+#include <stdio.h>
+#define MSCCLPP_DEBUG_MAX_PUSH_LOOPS 1000000
+#endif  // NDEBUG
+
 namespace mscclpp {
 
 // For every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER, a flush of the tail to device memory is triggered.
@@ -34,13 +39,36 @@ struct DeviceProxyFifo {
 #ifdef __CUDACC__
   __forceinline__ __device__ uint64_t push(ProxyTrigger trigger) {
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->head, 1);
-    while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->tailReplica))
-      ;
-    while (*(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0)
-      ;
+#ifndef NDEBUG
+    uint64_t pushLoops = 0;
+#endif  // NDEBUG
+    while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->tailReplica)) {
+#ifndef NDEBUG
+      if (++pushLoops == MSCCLPP_DEBUG_MAX_PUSH_LOOPS) {
+        printf("push() is stuck. curFifoHead: %lu, tailReplica: %lu\n", curFifoHead,
+               *((volatile uint64_t*)this->tailReplica));
+      }
+#endif  // NDEBUG
+    }
+    while (*(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0) {
+#ifndef NDEBUG
+      if (++pushLoops == MSCCLPP_DEBUG_MAX_PUSH_LOOPS) {
+        printf("push() is stuck. trigger.fst: %lu, curFifoHead: %lu\n",
+               *(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE], curFifoHead);
+      }
+#endif  // NDEBUG
+    }
     ProxyTrigger* triggerPtr = (ProxyTrigger*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]);
     asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
     return curFifoHead;
+  }
+
+  __forceinline__ __device__ void sync(uint64_t curFifoHead) {
+    // We need to wait for two conditions to be met to ensure the CPU is done flushing. (1) wait for the tail
+    // to go pass by curFifoHead (this is safety net) and (2) wait for the work element value to change to 0.
+    while (*(volatile uint64_t*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]) != 0 &&
+           *(volatile uint64_t*)(this->tailReplica) <= curFifoHead)
+      ;
   }
 #endif  // __CUDACC__
 

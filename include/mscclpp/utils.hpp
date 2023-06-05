@@ -1,8 +1,8 @@
 #ifndef MSCCLPP_UTILS_HPP_
 #define MSCCLPP_UTILS_HPP_
 
-#include <unistd.h>
 #include <signal.h>
+#include <unistd.h>
 
 #include <chrono>
 #include <cstring>
@@ -12,8 +12,7 @@
 #include <string>
 
 // Throw upon SIGALRM.
-static void sigalrmTimeoutHandler(int)
-{
+static void sigalrmTimeoutHandler(int) {
   signal(SIGALRM, SIG_IGN);
   throw mscclpp::Error("Timer timed out", mscclpp::ErrorCode::Timeout);
 }
@@ -26,7 +25,6 @@ struct Timer {
 
   Timer(int timeout = -1) : timeout(timeout) {
     if (timeout > 0) {
-      std::cout << "Alarm Set: timeout = " << timeout << "\n";
       signal(SIGALRM, sigalrmTimeoutHandler);
       alarm(timeout);
     }
@@ -35,7 +33,6 @@ struct Timer {
 
   ~Timer() {
     if (timeout > 0) {
-      std::cout << "Alarm reset\n";
       alarm(0);
       signal(SIGALRM, SIG_DFL);
     }
