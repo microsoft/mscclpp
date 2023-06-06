@@ -32,10 +32,8 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: Free disk space
+    - name: Check disk space
       run: |
-        apt-get clean
-        docker rmi $(docker images --format "{{.Repository}}:{{.Tag}}" --filter=reference="node" --filter=reference="buildpack-deps")
         df -h
 
     - name: Initialize CodeQL
