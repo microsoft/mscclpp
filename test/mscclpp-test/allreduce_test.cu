@@ -83,6 +83,12 @@ __device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratc
   }
 }
 
+__forceinline__ __device__ void vectorSum(int* dst, int* src, size_t nElem) {
+  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nElem; i += blockDim.x * gridDim.x) {
+    dst[i] += src[i];
+  }
+}
+
 __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int remoteSendRank = (rank + 1) % worldSize;
@@ -97,75 +103,80 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
 
   // Step 1
   size_t chunkIndex = (rank + worldSize - 1) % worldSize;
-  size_t chunkSize = nelems / worldSize * sizeof(int);
-  size_t offset = chunkIndex * chunkSize;
+  size_t chunkNelem = nelems / worldSize;
+  size_t offset = chunkIndex * chunkNelem * sizeof(int);
   if (isComm) {
-    devFstSendChan.putWithSignal(offset, chunkSize / 2);
+    if (chunkNelem > 1) {
+      devFstSendChan.putWithSignal(offset, chunkNelem / 2 * sizeof(int));
+    }
   }
 
   // Step 2 ~ Step n-1
   for (int step = 2; step < worldSize; ++step) {
     if (isComm) {
-      devFstRecvChan.wait();
-      devFstSendChan.flush();
-      devFstSendChan.putWithSignal(offset + chunkSize / 2, chunkSize - chunkSize / 2);
+      if (chunkNelem > 1) {
+        devFstRecvChan.wait();
+        devFstSendChan.flush();
+      }
+      devFstSendChan.putWithSignal(offset + chunkNelem / 2 * sizeof(int), (chunkNelem - chunkNelem / 2) * sizeof(int));
     }
     deviceSyncer.sync(gridDim.x);
 
     // Reduce
     chunkIndex = (rank + worldSize - step) % worldSize;
-    offset = chunkIndex * chunkSize;
+    offset = chunkIndex * chunkNelem * sizeof(int);
     int* dst = (int*)((char*)devFstSendChan.srcPtr_ + offset);
     int* src = (int*)((char*)devFstRecvChan.tmpPtr_ + offset);
-    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < chunkSize / sizeof(int) / 2; i += blockDim.x * gridDim.x) {
-      dst[i] += src[i];
-    }
+    vectorSum(dst, src, chunkNelem / 2);
 
     if (isComm) {
       devFstRecvChan.wait();
       devFstSendChan.flush();
-      devFstSendChan.putWithSignal(offset, chunkSize / 2);
+      if (chunkNelem > 1) {
+        devFstSendChan.putWithSignal(offset, chunkNelem / 2 * sizeof(int));
+      }
     }
     deviceSyncer.sync(gridDim.x);
 
-    dst += chunkSize / sizeof(int) / 2;
-    src += chunkSize / sizeof(int) / 2;
-    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < (chunkSize - chunkSize / 2) / sizeof(int); i += blockDim.x * gridDim.x) {
-      dst[i] += src[i];
-    }
+    dst += chunkNelem / 2;
+    src += chunkNelem / 2;
+    vectorSum(dst, src, chunkNelem - chunkNelem / 2);
   }
 
   // Step n
   if (isComm) {
-    devFstRecvChan.wait();
-    devFstSendChan.flush();
-    devFstSendChan.putWithSignalAndFlush(offset + chunkSize / 2, chunkSize - chunkSize / 2);
+    if (chunkNelem > 1) {
+      devFstRecvChan.wait();
+      devFstSendChan.flush();
+    }
+    devFstSendChan.putWithSignal(offset + chunkNelem / 2 * sizeof(int), (chunkNelem - chunkNelem / 2) * sizeof(int));
   }
   deviceSyncer.sync(gridDim.x);
 
-  offset = rank * chunkSize;
+  offset = rank * chunkNelem * sizeof(int);
   int* dst = (int*)((char*)devFstSendChan.srcPtr_ + offset);
   int* src = (int*)((char*)devFstRecvChan.tmpPtr_ + offset);
-  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < chunkSize / sizeof(int) / 2; i += blockDim.x * gridDim.x) {
-    dst[i] += src[i];
-  }
+  vectorSum(dst, src, chunkNelem / 2);
 
   if (isComm) {
     devFstRecvChan.wait();
     devFstSendChan.flush();
-    devSndSendChan.putWithSignal(offset, chunkSize / 2);
+    if (chunkNelem > 1) {
+      devSndSendChan.putWithSignal(offset, chunkNelem / 2 * sizeof(int));
+    }
   }
   deviceSyncer.sync(gridDim.x);
 
-  dst += chunkSize / sizeof(int) / 2;
-  src += chunkSize / sizeof(int) / 2;
-  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < (chunkSize - chunkSize / 2) / sizeof(int); i += blockDim.x * gridDim.x) {
-    dst[i] += src[i];
-  }
+  dst += chunkNelem / 2;
+  src += chunkNelem / 2;
+  vectorSum(dst, src, chunkNelem - chunkNelem / 2);
 
   if (isComm) {
-    devSndSendChan.flush();
-    devSndSendChan.putWithSignalAndFlush(offset + chunkSize / 2, chunkSize - chunkSize / 2);
+    if (chunkNelem > 1) {
+      devSndSendChan.flush();
+    }
+    devSndSendChan.putWithSignalAndFlush(offset + chunkNelem / 2 * sizeof(int),
+                                         (chunkNelem - chunkNelem / 2) * sizeof(int));
   }
 
   // Step n+1 ~ Step 2n-2
@@ -178,7 +189,7 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
     // Copy
     chunkIndex = (rank + worldSize - i) % worldSize;
     if (isComm) {
-      devSndSendChan.putWithSignalAndFlush(chunkIndex * chunkSize, chunkSize);
+      devSndSendChan.putWithSignalAndFlush(chunkIndex * chunkNelem * sizeof(int), chunkNelem * sizeof(int));
     }
   }
 
@@ -189,8 +200,10 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
 }
 
 __global__ void kernel(int rank, int worldSize, size_t nelems, size_t scratchDataCount, int kernel) {
-  if (kernel == 0) allreduce0(rank, worldSize, nelems, scratchDataCount);
-  else if (kernel == 1) allreduce1(rank, worldSize, nelems, scratchDataCount);
+  if (kernel == 0)
+    allreduce0(rank, worldSize, nelems, scratchDataCount);
+  else if (kernel == 1)
+    allreduce1(rank, worldSize, nelems, scratchDataCount);
 }
 
 class AllReduceTestColl : public BaseTestColl {
