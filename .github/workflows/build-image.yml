@@ -22,9 +22,9 @@ jobs:
     strategy:
       matrix:
         include:
-        - name: cuda12.1-base
-          dockerfile: cuda12.1-base
-          tags: mscclpp/main:cuda12.1-base
+        - name: base-cuda12.1
+          dockerfile: base-cuda12.1
+          tags: mscclpp/main:base-cuda12.1
     steps:
       - name: Checkout
         uses: actions/checkout@v2

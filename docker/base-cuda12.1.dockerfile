@@ -1,6 +1,7 @@
 FROM nvidia/cuda:12.1.1-devel-ubuntu20.04
 
 LABEL maintainer="MSCCL++"
+LABEL org.opencontainers.image.source https://github.com/microsoft/mscclpp
 
 ENV DEBIAN_FRONTEND=noninteractive
 
