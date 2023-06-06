@@ -13,6 +13,10 @@ jobs:
     runs-on: 'ubuntu-latest'
     container:
       image: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+      credentials:
+         username: ${{ github.actor }}
+         password: ${{ secrets.github_token }}
+
     permissions:
       actions: read
       contents: read
