@@ -84,8 +84,22 @@ __device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratc
 }
 
 __forceinline__ __device__ void vectorSum(int* dst, int* src, size_t nElem) {
-  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nElem; i += blockDim.x * gridDim.x) {
-    dst[i] += src[i];
+  size_t nInt4 = nElem / 4;
+  size_t nLastInts = nElem % 4;
+  int4* dst4 = (int4*)dst;
+  int4* src4 = (int4*)src;
+  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nInt4; i += blockDim.x * gridDim.x) {
+    dst4[i].w += src4[i].w;
+    dst4[i].x += src4[i].x;
+    dst4[i].y += src4[i].y;
+    dst4[i].z += src4[i].z;
+  }
+  if (nLastInts > 0) {
+    int* dstLast = dst + nInt4 * 4;
+    int* srcLast = src + nInt4 * 4;
+    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nLastInts; i += blockDim.x * gridDim.x) {
+      dstLast[i] += srcLast[i];
+    }
   }
 }
 
