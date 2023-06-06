@@ -6,13 +6,17 @@
 
 #include "socket.h"
 
+#include <errno.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
-#include "config.h"
-#include "utils.h"
+#include "checks_internal.hpp"
+#include "config.hpp"
+#include "debug.h"
+#include "utils_internal.hpp"
 
 static mscclppResult_t socketProgressOpt(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset,
                                          int block, int* closed) {
@@ -108,12 +112,12 @@ static int findInterfaces(const char* prefixList, char* names, union mscclppSock
 #ifdef ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
 #endif
-  struct netIf userIfs[MAX_IFS];
+  struct mscclpp::netIf userIfs[MAX_IFS];
   bool searchNot = prefixList && prefixList[0] == '^';
   if (searchNot) prefixList++;
   bool searchExact = prefixList && prefixList[0] == '=';
   if (searchExact) prefixList++;
-  int nUserIfs = parseStringList(prefixList, userIfs, MAX_IFS);
+  int nUserIfs = mscclpp::parseStringList(prefixList, userIfs, MAX_IFS);
 
   int found = 0;
   struct ifaddrs *interfaces, *interface;
@@ -138,7 +142,7 @@ static int findInterfaces(const char* prefixList, char* names, union mscclppSock
     }
 
     // check against user specified interfaces
-    if (!(matchIfList(interface->ifa_name, -1, userIfs, nUserIfs, searchExact) ^ searchNot)) {
+    if (!(mscclpp::matchIfList(interface->ifa_name, -1, userIfs, nUserIfs, searchExact) ^ searchNot)) {
       continue;
     }
 
@@ -260,9 +264,9 @@ mscclppResult_t mscclppSocketGetAddrFromString(union mscclppSocketAddress* ua, c
   bool ipv6 = ip_port_pair[0] == '[';
   /* Construct the sockaddress structure */
   if (!ipv6) {
-    struct netIf ni;
+    struct mscclpp::netIf ni;
     // parse <ip_or_hostname>:<port> string, expect one pair
-    if (parseStringList(ip_port_pair, &ni, 1) != 1) {
+    if (mscclpp::parseStringList(ip_port_pair, &ni, 1) != 1) {
       WARN("Net : No valid <IPv4_or_hostname>:<port> pair found");
       return mscclppInvalidArgument;
     }
@@ -418,13 +422,13 @@ mscclppResult_t mscclppSocketGetAddr(struct mscclppSocket* sock, union mscclppSo
 
 static mscclppResult_t socketTryAccept(struct mscclppSocket* sock) {
   static bool timeInitialized = false;
-  static mscclppTime_t initTime;
+  static mscclpp::TimePoint initTime;
   if (!timeInitialized) {
     timeInitialized = true;
-    initTime = getClock();
+    initTime = mscclpp::getClock();
   }
 
-  mscclppConfig* config = mscclppConfig::getInstance();
+  mscclpp::Config* config = mscclpp::Config::getInstance();
   time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
   socklen_t socklen = sizeof(union mscclppSocketAddress);
   sock->fd = accept(sock->acceptFd, &sock->addr.sa, &socklen);
@@ -435,7 +439,7 @@ static mscclppResult_t socketTryAccept(struct mscclppSocket* sock) {
     WARN("socketTryAccept: get errno %d that is not EAGAIN or EWOULDBLOCK", errno);
     timeInitialized = false;
     return mscclppSystemError;
-  } else if (elapsedClock(getClock(), initTime) > acceptTimeout) {
+  } else if (mscclpp::elapsedClock(mscclpp::getClock(), initTime) > acceptTimeout) {
     WARN("socketTryAccept: exceeded timeout (%ld) sec", acceptTimeout);
     timeInitialized = false;
     return mscclppRemoteError;
@@ -479,13 +483,13 @@ static mscclppResult_t socketFinalizeAccept(struct mscclppSocket* sock) {
 
 static mscclppResult_t socketStartConnect(struct mscclppSocket* sock) {
   static bool timeInitialized = false;
-  static mscclppTime_t initTime;
+  static mscclpp::TimePoint initTime;
   if (!timeInitialized) {
     timeInitialized = true;
-    initTime = getClock();
+    initTime = mscclpp::getClock();
   }
 
-  mscclppConfig* config = mscclppConfig::getInstance();
+  mscclpp::Config* config = mscclpp::Config::getInstance();
   time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
 
   /* blocking/non-blocking connect() is determined by asyncFlag. */
@@ -498,7 +502,7 @@ static mscclppResult_t socketStartConnect(struct mscclppSocket* sock) {
     sock->state = mscclppSocketStateConnectPolling;
     return mscclppSuccess;
   } else if (errno == ECONNREFUSED || errno == ETIMEDOUT) {
-    if (elapsedClock(getClock(), initTime) > acceptTimeout) {
+    if (mscclpp::elapsedClock(mscclpp::getClock(), initTime) > acceptTimeout) {
       WARN("socketStartConnect: exceeded timeout (%ld) sec", acceptTimeout);
       sock->state = mscclppSocketStateError;
       timeInitialized = false;
@@ -518,13 +522,13 @@ static mscclppResult_t socketStartConnect(struct mscclppSocket* sock) {
 
 static mscclppResult_t socketPollConnect(struct mscclppSocket* sock) {
   static bool timeInitialized = false;
-  static mscclppTime_t initTime;
+  static mscclpp::TimePoint initTime;
   if (!timeInitialized) {
     timeInitialized = true;
-    initTime = getClock();
+    initTime = mscclpp::getClock();
   }
 
-  mscclppConfig* config = mscclppConfig::getInstance();
+  mscclpp::Config* config = mscclpp::Config::getInstance();
   time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
 
   struct pollfd pfd;
@@ -548,7 +552,7 @@ static mscclppResult_t socketPollConnect(struct mscclppSocket* sock) {
     timeInitialized = false;
     sock->state = mscclppSocketStateConnected;
   } else if (ret == ECONNREFUSED || ret == ETIMEDOUT) {
-    if (elapsedClock(getClock(), initTime) > acceptTimeout) {
+    if (mscclpp::elapsedClock(mscclpp::getClock(), initTime) > acceptTimeout) {
       WARN("socketPollConnect: exceeded timeout (%ld) sec", acceptTimeout);
       sock->state = mscclppSocketStateError;
       return mscclppRemoteError;

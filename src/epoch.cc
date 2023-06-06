@@ -5,7 +5,7 @@
 namespace mscclpp {
 
 MSCCLPP_API_CPP DeviceEpoch::DeviceEpoch(Communicator& communicator, std::shared_ptr<Connection> connection)
-    : BaseEpoch(connection, makeUniqueCuda<EpochIds>(), makeUniqueCuda<uint64_t>()) {
+    : BaseEpoch(connection, allocUniqueCuda<EpochIds>(), allocUniqueCuda<uint64_t>()) {
   setup(communicator);
 }
 

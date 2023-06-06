@@ -308,11 +308,12 @@ struct SimpleDeviceChannel {
 
   SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src) : devChan_(devChan), dst_(dst), src_(src) {}
 
-  SimpleDeviceChannel(DeviceChannel devChan, void* dstPtr, void* srcPtr)
-      : devChan_(devChan), dstPtr_(dstPtr), srcPtr_(srcPtr) {}
+  SimpleDeviceChannel(DeviceChannel devChan, void* dstPtr, void* srcPtr, void* tmpPtr = nullptr)
+      : devChan_(devChan), dstPtr_(dstPtr), srcPtr_(srcPtr), tmpPtr_(tmpPtr) {}
 
-  SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src, void* dstPtr, void* srcPtr)
-      : devChan_(devChan), dst_(dst), src_(src), dstPtr_(dstPtr), srcPtr_(srcPtr) {}
+  SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src, void* dstPtr, void* srcPtr,
+                      void* tmpPtr = nullptr)
+      : devChan_(devChan), dst_(dst), src_(src), dstPtr_(dstPtr), srcPtr_(srcPtr), tmpPtr_(tmpPtr) {}
 
   SimpleDeviceChannel(const SimpleDeviceChannel& other) = default;
 
@@ -377,7 +378,6 @@ struct SimpleDeviceChannel {
   void* srcPtr_;
 
   // extra local buffer for out-of-place copy
-  // TODO(chhwang): need an interface to set this
   void* tmpPtr_;
 };
 

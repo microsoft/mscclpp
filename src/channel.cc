@@ -3,7 +3,7 @@
 #include "api.h"
 #include "checks_internal.hpp"
 #include "debug.h"
-#include "utils.h"
+#include "numa.hpp"
 
 namespace mscclpp {
 namespace channel {
@@ -13,12 +13,12 @@ MSCCLPP_API_CPP DeviceChannelService::DeviceChannelService(Communicator& communi
       proxy_([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
   int cudaDevice;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
-  MSCCLPPTHROW(getDeviceNumaNode(cudaDevice, &deviceNumaNode));
+  deviceNumaNode = getDeviceNumaNode(cudaDevice);
 }
 
 MSCCLPP_API_CPP void DeviceChannelService::bindThread() {
   if (deviceNumaNode >= 0) {
-    MSCCLPPTHROW(numaBind(deviceNumaNode));
+    numaBind(deviceNumaNode);
     INFO(MSCCLPP_INIT, "NUMA node of DeviceChannelService proxy thread is set to %d", deviceNumaNode);
   }
 }

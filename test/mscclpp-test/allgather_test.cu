@@ -200,7 +200,7 @@ class AllGatherTestEngine : public BaseTestEngine {
 };
 
 void AllGatherTestEngine::allocateBuffer() {
-  sendBuff_ = mscclpp::makeSharedCuda<int>(args_.maxBytes / sizeof(int));
+  sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
 }
 
