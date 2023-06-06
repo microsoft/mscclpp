@@ -12,6 +12,8 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <mscclpp/utils.hpp>
+
 int mscclppDebugLevel = -1;
 static int pid = -1;
 static char hostname[1024];
@@ -100,7 +102,7 @@ void mscclppDebugInit() {
   }
 
   // Cache pid and hostname
-  getHostName(hostname, 1024, '.');
+  strncpy(hostname, mscclpp::getHostName(1024, '.').c_str(), 1024);
   pid = getpid();
 
   /* Parse and expand the MSCCLPP_DEBUG_FILE path and

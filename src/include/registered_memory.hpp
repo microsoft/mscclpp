@@ -8,7 +8,6 @@
 
 #include "communicator.hpp"
 #include "ib.hpp"
-#include "mscclpp.h"
 
 namespace mscclpp {
 

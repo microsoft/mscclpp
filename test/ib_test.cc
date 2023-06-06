@@ -1,14 +1,15 @@
-#include "checks.h"
 #include "ib.hpp"
-#include "infiniband/verbs.h"
+
+#include <array>
 #include <mscclpp/core.hpp>
 #include <mscclpp/cuda_utils.hpp>
-#include <array>
 #include <string>
 
+#include "checks_internal.hpp"
+#include "infiniband/verbs.h"
+
 // Measure current time in second.
-static double getTime(void)
-{
+static double getTime(void) {
   struct timespec tspec;
   if (clock_gettime(CLOCK_MONOTONIC, &tspec) == -1) {
     printf("clock_gettime failed\n");
@@ -20,8 +21,7 @@ static double getTime(void)
 // Example usage:
 //   Receiver: ./build/bin/tests/unittests/ib_test 127.0.0.1:50000 0 0 0
 //   Sender:   ./build/bin/tests/unittests/ib_test 127.0.0.1:50000 1 0 0
-int main(int argc, const char* argv[])
-{
+int main(int argc, const char* argv[]) {
   if (argc != 5) {
     printf("Usage: %s <ip:port> <0(recv)/1(send)> <gpu id> <ib id>\n", argv[0]);
     return 1;
@@ -31,7 +31,7 @@ int main(int argc, const char* argv[])
   int cudaDevId = atoi(argv[3]);
   std::string ibDevName = "mlx5_ib" + std::string(argv[4]);
 
-  CUDACHECK(cudaSetDevice(cudaDevId));
+  MSCCLPP_CUDATHROW(cudaSetDevice(cudaDevId));
 
   int nelem = 1;
   auto data = mscclpp::allocUniqueCuda<int>(nelem);
@@ -53,8 +53,7 @@ int main(int argc, const char* argv[])
   bootstrap->allGather(mrInfo.data(), sizeof(mscclpp::IbMrInfo));
 
   for (int i = 0; i < bootstrap->getNranks(); ++i) {
-    if (i == isSend)
-      continue;
+    if (i == isSend) continue;
     qp->rtr(qpInfo[i]);
     qp->rts();
     break;

@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mscclpp/core.hpp>
+#include <mscclpp/fifo.hpp>
 #include <sstream>
 #include <string>
 
