@@ -14,8 +14,8 @@ jobs:
     container:
       image: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
       credentials:
-         username: ${{ github.actor }}
-         password: ${{ secrets.github_token }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     permissions:
       actions: read
