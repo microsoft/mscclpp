@@ -46,8 +46,7 @@ jobs:
         git config --global --add safe.directory /__w/mscclpp/mscclpp
         curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
         tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
-        export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
-        /tmp/cmake-3.26.4-linux-x86_64/bin/cmake .
+        MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake .
         make -j
 
     - name: Perform CodeQL Analysis
