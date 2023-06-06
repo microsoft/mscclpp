@@ -32,7 +32,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   std::size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;
   this->mr = ibv_reg_mr(
       pd, reinterpret_cast<void*>(addr), pages * pageSize,
-      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_RELAXED_ORDERING);
+      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
   if (this->mr == nullptr) {
     std::stringstream err;
     err << "ibv_reg_mr failed (errno " << errno << ")";
@@ -110,7 +110,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port) {
   qpAttr.qp_state = IBV_QPS_INIT;
   qpAttr.pkey_index = 0;
   qpAttr.port_num = port;
-  qpAttr.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
+  qpAttr.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC;
   if (ibv_modify_qp(_qp, &qpAttr, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS) != 0) {
     std::stringstream err;
     err << "ibv_modify_qp failed (errno " << errno << ")";
@@ -201,6 +201,36 @@ int IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_
   sge_->addr = (uint64_t)(mr->getBuff()) + srcOffset;
   sge_->length = size;
   sge_->lkey = mr->getLkey();
+  if (wrn > 0) {
+    this->wrs[wrn - 1].next = wr_;
+  }
+  this->wrn++;
+  return this->wrn;
+}
+
+int IbQp::stageSendAtomic(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+                    uint64_t dstOffset, bool signaled) {
+  if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
+    return -1;
+  }
+  int wrn = this->wrn;
+  static int cnt = 1;
+
+  struct ibv_send_wr* wr_ = &this->wrs[wrn];
+  struct ibv_sge* sge_ = &this->sges[wrn];
+  wr_->wr_id = wrId;
+  wr_->sg_list = sge_;
+  wr_->num_sge = 1;
+  wr_->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
+  wr_->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
+  wr_->wr.atomic.remote_addr = (uint64_t)(info.addr) + dstOffset;
+  wr_->wr.atomic.rkey = info.rkey;
+  wr_->wr.atomic.compare_add = cnt;
+  cnt++;
+  wr_->next = nullptr;
+  sge_->addr = 0;//(uint64_t)(mr->getBuff()) + srcOffset;
+  sge_->length = 8;
+  sge_->lkey = 0;//mr->getLkey();
   if (wrn > 0) {
     this->wrs[wrn - 1].next = wr_;
   }

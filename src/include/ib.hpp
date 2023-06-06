@@ -65,6 +65,8 @@ class IbQp {
   void rts();
   int stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                 uint64_t dstOffset, bool signaled);
+  int stageSendAtomic(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+                uint64_t dstOffset, bool signaled);
   int stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                        uint64_t dstOffset, bool signaled, unsigned int immData);
   void postSend();
