@@ -181,69 +181,66 @@ void IbQp::rts() {
   }
 }
 
-int IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                    uint64_t dstOffset, bool signaled) {
+IbQpWrInfo IbQp::getNewWR(){
   if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
-    return -1;
+    std::stringstream err;
+    err << "too many outstanding work requests. limit is " << MSCCLPP_IB_MAX_SENDS;
+    throw mscclpp::Error(err.str(), ErrorCode::InvalidUsage);
   }
   int wrn = this->wrn;
 
   struct ibv_send_wr* wr_ = &this->wrs[wrn];
   struct ibv_sge* sge_ = &this->sges[wrn];
-  wr_->wr_id = wrId;
   wr_->sg_list = sge_;
   wr_->num_sge = 1;
-  wr_->opcode = IBV_WR_RDMA_WRITE;
-  wr_->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
-  wr_->wr.rdma.remote_addr = (uint64_t)(info.addr) + dstOffset;
-  wr_->wr.rdma.rkey = info.rkey;
-  wr_->next = nullptr;
-  sge_->addr = (uint64_t)(mr->getBuff()) + srcOffset;
-  sge_->length = size;
-  sge_->lkey = mr->getLkey();
   if (wrn > 0) {
     this->wrs[wrn - 1].next = wr_;
-  }
+  }  
   this->wrn++;
-  return this->wrn;
+  return IbQpWrInfo{wr_, sge_};
 }
 
-int IbQp::stageSendAtomic(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                     uint64_t dstOffset, bool signaled) {
-  if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
-    return -1;
-  }
-  int wrn = this->wrn;
-  static int cnt = 1;
-
-  struct ibv_send_wr* wr_ = &this->wrs[wrn];
-  struct ibv_sge* sge_ = &this->sges[wrn];
-  wr_->wr_id = wrId;
-  wr_->sg_list = sge_;
-  wr_->num_sge = 1;
-  wr_->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
-  wr_->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
-  wr_->wr.atomic.remote_addr = (uint64_t)(info.addr) + dstOffset;
-  wr_->wr.atomic.rkey = info.rkey;
-  wr_->wr.atomic.compare_add = 1;
-  cnt++;
-  wr_->next = nullptr;
-  sge_->addr = (uint64_t)(mr->getBuff()) + srcOffset;
-  sge_->length = 8;
-  sge_->lkey = mr->getLkey();
-  if (wrn > 0) {
-    this->wrs[wrn - 1].next = wr_;
-  }
-  this->wrn++;
-  return this->wrn;
+  auto wrInfo = this->getNewWR();
+  wrInfo.wr->wr_id = wrId;
+  wrInfo.wr->opcode = IBV_WR_RDMA_WRITE;
+  wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
+  wrInfo.wr->wr.rdma.remote_addr = (uint64_t)(info.addr) + dstOffset;
+  wrInfo.wr->wr.rdma.rkey = info.rkey;
+  wrInfo.wr->next = nullptr;
+  wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
+  wrInfo.sge->length = size;
+  wrInfo.sge->lkey = mr->getLkey();
 }
 
-int IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+void IbQp::stageSendAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t srcOffset,
+                    uint64_t dstOffset, uint64_t addVal) {
+  auto wrInfo = this->getNewWR();
+  wrInfo.wr->wr_id = wrId;
+  wrInfo.wr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
+  wrInfo.wr->send_flags = 0; // atomic op cannot be signaled
+  wrInfo.wr->wr.atomic.remote_addr = (uint64_t)(info.addr) + dstOffset;
+  wrInfo.wr->wr.atomic.rkey = info.rkey;
+  wrInfo.wr->wr.atomic.compare_add = addVal;
+  wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
+  wrInfo.sge->length = 8; // atomic op is always 8 bytes
+  wrInfo.sge->lkey = mr->getLkey();
+}
+
+void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                            uint64_t dstOffset, bool signaled, unsigned int immData) {
-  int wrn = this->stageSend(mr, info, size, wrId, srcOffset, dstOffset, signaled);
-  this->wrs[wrn - 1].opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
-  this->wrs[wrn - 1].imm_data = immData;
-  return wrn;
+  auto wrInfo = this->getNewWR();
+  wrInfo.wr->wr_id = wrId;
+  wrInfo.wr->opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
+  wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
+  wrInfo.wr->wr.rdma.remote_addr = (uint64_t)(info.addr) + dstOffset;
+  wrInfo.wr->wr.rdma.rkey = info.rkey;
+  wrInfo.wr->next = nullptr;
+  wrInfo.wr->imm_data = immData;
+  wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
+  wrInfo.sge->length = size;
+  wrInfo.sge->lkey = mr->getLkey();
 }
 
 void IbQp::postSend() {

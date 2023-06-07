@@ -90,14 +90,8 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
   auto srcMr = srcTransportInfo.ibMr;
 
-  if (size == 8){
-    qp->stageSendAtomic(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset,
-                  /*signaled=*/false);
-  } else {
-    qp->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset,
-                  /*signaled=*/true);
-    numSignaledSends++;
-  }
+  qp->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset,
+                /*signaled=*/true);
 
   qp->postSend();
   INFO(MSCCLPP_NET, "IBConnection write: from %p to %p, size %lu", (uint8_t*)srcMr->getBuff() + srcOffset,

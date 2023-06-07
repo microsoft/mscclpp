@@ -57,17 +57,22 @@ struct IbQpInfo {
   bool is_grh;
 };
 
+struct IbQpWrInfo {
+  struct ibv_send_wr* wr;
+  struct ibv_sge* sge;
+};
+
 class IbQp {
  public:
   ~IbQp();
 
   void rtr(const IbQpInfo& info);
   void rts();
-  int stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+  void stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                 uint64_t dstOffset, bool signaled);
-  int stageSendAtomic(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                uint64_t dstOffset, bool signaled);
-  int stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+  void stageSendAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t srcOffset,
+                    uint64_t dstOffset, uint64_t addVal);
+  void stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                        uint64_t dstOffset, bool signaled, unsigned int immData);
   void postSend();
   void postRecv(uint64_t wrId);
@@ -78,6 +83,7 @@ class IbQp {
 
  private:
   IbQp(ibv_context* ctx, ibv_pd* pd, int port);
+  IbQpWrInfo getNewWR();
 
   IbQpInfo info;
 

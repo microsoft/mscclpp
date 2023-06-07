@@ -28,7 +28,7 @@ MSCCLPP_API_CPP HostEpoch::HostEpoch(Communicator& communicator, std::shared_ptr
 }
 
 MSCCLPP_API_CPP void HostEpoch::incrementAndSignal() {
-  // *(volatile uint64_t*)&(epochIds_->outbound) += 1;
+  *(volatile uint64_t*)&(epochIds_->outbound) += 1;
   signal();
 }
 
