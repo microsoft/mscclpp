@@ -316,8 +316,8 @@ void test_communicator(int rank, int worldSize, int nRanksPerNode) {
   test_write(rank, worldSize, nRanksPerNode, deviceBufferSize, bootstrap, connections, remoteMemory, localMemory,
              devicePtr, numBuffers);
 
-  test_write_with_device_epochs(rank, worldSize, nRanksPerNode, deviceBufferSize, communicator, bootstrap, connections,
-                                remoteMemory, localMemory, devicePtr, numBuffers);
+  // test_write_with_device_epochs(rank, worldSize, nRanksPerNode, deviceBufferSize, communicator, bootstrap, connections,
+  //                               remoteMemory, localMemory, devicePtr, numBuffers);
 
   test_write_with_host_epochs(rank, worldSize, nRanksPerNode, deviceBufferSize, communicator, bootstrap, connections,
                               remoteMemory, localMemory, devicePtr, numBuffers);

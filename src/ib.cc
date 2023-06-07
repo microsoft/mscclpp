@@ -225,12 +225,12 @@ int IbQp::stageSendAtomic(const IbMr* mr, const IbMrInfo& info, uint32_t size, u
   wr_->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
   wr_->wr.atomic.remote_addr = (uint64_t)(info.addr) + dstOffset;
   wr_->wr.atomic.rkey = info.rkey;
-  wr_->wr.atomic.compare_add = cnt;
+  wr_->wr.atomic.compare_add = 1;
   cnt++;
   wr_->next = nullptr;
-  sge_->addr = 0;//(uint64_t)(mr->getBuff()) + srcOffset;
+  sge_->addr = (uint64_t)(mr->getBuff()) + srcOffset;
   sge_->length = 8;
-  sge_->lkey = 0;//mr->getLkey();
+  sge_->lkey = mr->getLkey();
   if (wrn > 0) {
     this->wrs[wrn - 1].next = wr_;
   }
