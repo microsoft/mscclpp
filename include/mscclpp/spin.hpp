@@ -8,7 +8,7 @@
 #define MSCCLPP_SAFE_SPIN_PRINT(__cond)                         \
   do {                                                          \
     printf("mscclpp: spin is stuck. condition: " #__cond "\n"); \
-  } while (0);                                                  \
+  } while (0);
 #else  // NDEBUG
 #define MSCCLPP_SAFE_SPIN_PRINT(__cond)
 #endif  // NDEBUG
@@ -16,7 +16,7 @@
 #define MSCCLPP_SAFE_SPIN_MAX_LOOPS 1000000000
 
 // If a spin is stuck, escape from it and set status to 1.
-#define MSCCLPP_SAFE_SPIN(__cond, __status)              \
+#define MSCCLPP_SAFE_SPIN_BREAK(__cond, __status)        \
   do {                                                   \
     uint64_t __spin_cnt = 0;                             \
     __status = 0;                                        \
