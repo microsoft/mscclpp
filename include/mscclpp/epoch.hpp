@@ -4,6 +4,7 @@
 #include <memory>
 #include <mscclpp/core.hpp>
 #include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/spin.hpp>
 
 namespace mscclpp {
 
@@ -51,8 +52,7 @@ class DeviceEpoch : BaseEpoch<CudaDeleter> {
 #ifdef __CUDACC__
     __forceinline__ __device__ void wait() {
       (*expectedInboundEpochId) += 1;
-      while (*(volatile uint64_t*)&(epochIds->inboundReplica) < (*expectedInboundEpochId))
-        ;
+      MSCCLPP_SAFE_SPIN(*(volatile uint64_t*)&(epochIds->inboundReplica) < (*expectedInboundEpochId));
     }
 
     __forceinline__ __device__ void epochIncrement() { *(volatile uint64_t*)&(epochIds->outbound) += 1; }
