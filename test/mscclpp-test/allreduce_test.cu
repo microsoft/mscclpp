@@ -230,6 +230,8 @@ __device__ void allreduce2(int rank, int worldSize, size_t nelems) {
 
   devFstRoundChan.putPacket(dstOffset, srcOffset, nelems / BLOCKS_PER_PEER * sizeof(int), threadIdx.x, blockDim.x,
                             flag);
+  // This fixes occasional correctness bugs
+  __threadfence();
 
   int2* src = (int2*)devFstRoundChan.srcPtr_;  // cummulate into the src buffer
   mscclpp::channel::ChannelPacket* tmpPtr = (mscclpp::channel::ChannelPacket*)devFstRoundChan.tmpPtr_ +
