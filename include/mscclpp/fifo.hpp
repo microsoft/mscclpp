@@ -1,17 +1,14 @@
 #ifndef MSCCLPP_FIFO_HPP_
 #define MSCCLPP_FIFO_HPP_
 
-#include <stdint.h>
-
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <mscclpp/poll.hpp>
+
+#define MSCCLPP_PROXY_FIFO_SIZE 128
 
 namespace mscclpp {
-
-// For every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER, a flush of the tail to device memory is triggered.
-// As long as MSCCLPP_PROXY_FIFO_SIZE is large enough, having a stale tail is not a problem.
-#define MSCCLPP_PROXY_FIFO_SIZE 128
-#define MSCCLPP_PROXY_FIFO_FLUSH_COUNTER 4
 
 struct alignas(16) ProxyTrigger {
   uint64_t fst, snd;
@@ -34,13 +31,22 @@ struct DeviceProxyFifo {
 #ifdef __CUDACC__
   __forceinline__ __device__ uint64_t push(ProxyTrigger trigger) {
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->head, 1);
-    while (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->tailReplica))
-      ;
-    while (*(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0)
-      ;
+
+    POLL_MAYBE_JAILBREAK(curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->tailReplica), 1000000000);
+
+    POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0, 1000000000);
+
     ProxyTrigger* triggerPtr = (ProxyTrigger*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]);
     asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
     return curFifoHead;
+  }
+
+  __forceinline__ __device__ void sync(uint64_t curFifoHead) {
+    // We need to wait for two conditions to be met to ensure the CPU is done flushing. (1) wait for the tail
+    // to go pass by curFifoHead (this is safety net) and (2) wait for the work element value to change to 0.
+    POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]) != 0 &&
+                             *(volatile uint64_t*)(this->tailReplica) <= curFifoHead,
+                         1000000000);
   }
 #endif  // __CUDACC__
 

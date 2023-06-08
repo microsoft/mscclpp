@@ -171,4 +171,17 @@ TimePoint getClock() { return std::chrono::steady_clock::now(); }
 int64_t elapsedClock(TimePoint start, TimePoint end) {
   return std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
 }
+
+/* get any bytes of random data from /dev/urandom */
+void getRandomData(void* buffer, size_t bytes) {
+  if (bytes > 0) {
+    const size_t one = 1UL;
+    FILE* fp = fopen("/dev/urandom", "r");
+    if (buffer == NULL || fp == NULL || fread(buffer, bytes, one, fp) != one) {
+      throw Error("Failed to read random data", ErrorCode::SystemError);
+    }
+    if (fp) fclose(fp);
+  }
+}
+
 }  // namespace mscclpp

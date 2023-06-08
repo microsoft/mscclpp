@@ -131,9 +131,7 @@ struct DeviceChannel {
     uint64_t curFifoHead = fifo_.push(
         ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, channelId_)
             .value);
-    while (*(volatile uint64_t*)&fifo_.triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
-           *(volatile uint64_t*)fifo_.tailReplica <= curFifoHead)
-      ;
+    fifo_.sync(curFifoHead);
   }
 
   __forceinline__ __device__ void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
@@ -142,11 +140,7 @@ struct DeviceChannel {
 
   __forceinline__ __device__ void flush() {
     uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, channelId_).value);
-    // we need to wait for two conditions to be met to ensure the CPU is done flushing. (1) wait for the tail
-    // to go pass by curFifoHead (this is safety net) and (2) wait for the work element value to change to 0.
-    while (*(volatile uint64_t*)&fifo_.triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
-           *(volatile uint64_t*)fifo_.tailReplica <= curFifoHead)
-      ;
+    fifo_.sync(curFifoHead);
   }
 
   __forceinline__ __device__ void wait() { epoch_.wait(); }

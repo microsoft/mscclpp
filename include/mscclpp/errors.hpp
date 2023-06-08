@@ -12,6 +12,7 @@ enum class ErrorCode {
   SystemError,
   InternalError,
   InvalidUsage,
+  Timeout,
 };
 
 std::string errorToString(enum ErrorCode error);
