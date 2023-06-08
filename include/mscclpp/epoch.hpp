@@ -57,6 +57,8 @@ class DeviceEpoch : BaseEpoch<CudaDeleter> {
 
     __forceinline__ __device__ void epochIncrement() { *(volatile uint64_t*)&(epochIds->outbound) += 1; }
 
+    __forceinline__ __device__ uint64_t epochGetLocal() const { return epochIds->outbound; }
+
     __forceinline__ __device__ void signalDirect() {
       // This fence ensures that the writes from a preceding putDirect() are visible on the peer GPU before the
       // incremented epoch id is visible.

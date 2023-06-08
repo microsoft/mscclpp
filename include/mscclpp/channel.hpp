@@ -206,6 +206,18 @@ struct DeviceChannel {
   __forceinline__ __device__ void wait() { epoch_.wait(); }
 
   __forceinline__ __device__ void putPacket(void* dst, void* src, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
+                                            uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+    uint32_t* srcBase = (uint32_t*)((char*)src + srcOffset);
+    ChannelPacket* dstBase = (ChannelPacket*)((char*)dst + dstOffset);
+    size_t nElem = size / sizeof(uint64_t);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      ChannelPacket* pkt = &dstBase[i];
+      pkt->write(srcBase[2 * i], srcBase[2 * i + 1], flag);
+    }
+  }
+
+  __forceinline__ __device__ void putPacket(void* dst, void* src, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                             uint32_t threadId, uint32_t numThreads) {
     // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
     uint32_t* srcBase = (uint32_t*)((char*)src + srcOffset);
@@ -218,20 +230,22 @@ struct DeviceChannel {
   }
 
   __forceinline__ __device__ void getPacket(void* dst, void* src, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
-                                            uint32_t threadId, uint32_t numThreads) {
+                                            uint32_t threadId, uint32_t numThreads, uint32_t flag) {
     // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
     ChannelPacket* srcBase = (ChannelPacket*)((char*)src + srcOffset);
     uint2* dstBase = (uint2*)((char*)dst + dstOffset);
     size_t nElem = size / sizeof(uint2);
     for (size_t i = threadId; i < nElem; i += numThreads) {
       ChannelPacket* pkt = &srcBase[i];
-      dstBase[i] = pkt->read();
+      dstBase[i] = pkt->read(flag);
       // for future reuse
       pkt->clear();
     }
   }
 
   __forceinline__ __device__ void epochIncrement() { epoch_.epochIncrement(); }
+
+  __forceinline__ __device__ uint64_t epochGetLocal() const { return epoch_.epochGetLocal(); }
 #endif  // __CUDACC__
 
   ChannelId channelId_;
@@ -356,16 +370,23 @@ struct SimpleDeviceChannel {
   __forceinline__ __device__ void wait() { devChan_.wait(); }
 
   __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                            uint32_t numThreads, uint32_t flag) {
+    devChan_.putPacket(dstPtr_, srcPtr_, dstOffset, srcOffset, size, threadId, numThreads, flag);
+  }
+
+  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
                                             uint32_t numThreads) {
     devChan_.putPacket(dstPtr_, srcPtr_, dstOffset, srcOffset, size, threadId, numThreads);
   }
 
   __forceinline__ __device__ void getPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
-                                            uint32_t numThreads) {
-    devChan_.getPacket(srcPtr_, tmpPtr_, dstOffset, srcOffset, size, threadId, numThreads);
+                                            uint32_t numThreads, uint32_t flag) {
+    devChan_.getPacket(srcPtr_, tmpPtr_, dstOffset, srcOffset, size, threadId, numThreads, flag);
   }
 
   __forceinline__ __device__ void epochIncrement() { devChan_.epochIncrement(); }
+
+  __forceinline__ __device__ uint64_t epochGetLocal() const { return devChan_.epochGetLocal(); }
 
 #endif  // __CUDACC__
 

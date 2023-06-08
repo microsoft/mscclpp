@@ -5,7 +5,7 @@
 #include "common.hpp"
 
 #define ALIGN 4
-#define BLOCKS_PER_PEER 15
+#define BLOCKS_PER_PEER 1
 
 __constant__ mscclpp::channel::SimpleDeviceChannel constDevFstRoundChans[16];
 __constant__ mscclpp::channel::SimpleDeviceChannel constDevSndRoundChans[16];
@@ -25,8 +25,28 @@ __host__ __device__ Chunk getChunk(size_t dataCount, size_t numChunks, size_t ch
   return Chunk{offset, chunkIdx < remainder ? largeChunkSize : smallChunkSize};
 }
 
-__device__ void reduceSum(int* dst, int* src, size_t size) {
-  for (int i = threadIdx.x; i < size; i += blockDim.x) {
+__forceinline__ __device__ void vectorSum(int* dst, int* src, size_t nElem) {
+  size_t nInt4 = nElem / 4;
+  size_t nLastInts = nElem % 4;
+  int4* dst4 = (int4*)dst;
+  int4* src4 = (int4*)src;
+  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nInt4; i += blockDim.x * gridDim.x) {
+    dst4[i].w += src4[i].w;
+    dst4[i].x += src4[i].x;
+    dst4[i].y += src4[i].y;
+    dst4[i].z += src4[i].z;
+  }
+  if (nLastInts > 0) {
+    int* dstLast = dst + nInt4 * 4;
+    int* srcLast = src + nInt4 * 4;
+    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nLastInts; i += blockDim.x * gridDim.x) {
+      dstLast[i] += srcLast[i];
+    }
+  }
+}
+
+__device__ void vectorSumSingleBlock(int* dst, int* src, size_t nElem) {
+  for (int i = threadIdx.x; i < nElem; i += blockDim.x) {
     dst[i] += src[i];
   }
 }
@@ -67,7 +87,8 @@ __device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratc
   Chunk blockScratchChunk = getChunk(scratchDataCountPerPeer, numBlocks, blockIdx.x);
   for (int peerIdx = 0; peerIdx < numPeers; ++peerIdx) {
     int* scratchChunk = (int*)devFstRoundChan.tmpPtr_ + peerIdx * scratchDataCountPerPeer;
-    reduceSum(chunk + blockUserChunk.offset, scratchChunk + blockScratchChunk.offset, blockScratchChunk.size);
+    vectorSumSingleBlock(chunk + blockUserChunk.offset, scratchChunk + blockScratchChunk.offset,
+                         blockScratchChunk.size);
   }
 
   deviceSyncer.sync(gridDim.x);
@@ -80,26 +101,6 @@ __device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratc
                                           collectionChunk.size * sizeof(int));
     // Wait for data from the peer
     devSndRoundChan.wait();
-  }
-}
-
-__forceinline__ __device__ void vectorSum(int* dst, int* src, size_t nElem) {
-  size_t nInt4 = nElem / 4;
-  size_t nLastInts = nElem % 4;
-  int4* dst4 = (int4*)dst;
-  int4* src4 = (int4*)src;
-  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nInt4; i += blockDim.x * gridDim.x) {
-    dst4[i].w += src4[i].w;
-    dst4[i].x += src4[i].x;
-    dst4[i].y += src4[i].y;
-    dst4[i].z += src4[i].z;
-  }
-  if (nLastInts > 0) {
-    int* dstLast = dst + nInt4 * 4;
-    int* srcLast = src + nInt4 * 4;
-    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nLastInts; i += blockDim.x * gridDim.x) {
-      dstLast[i] += srcLast[i];
-    }
   }
 }
 
@@ -213,26 +214,46 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
   }
 }
 
-__device__ void allreduce2(int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
-  mscclpp::channel::SimpleDeviceChannel devFstRoundChan = constDevFstRoundChans[blockIdx.x];
-  size_t dstOffset = (blockIdx.x < rank ? rank - 1 : rank) * nelems * sizeof(int) * 2;  // packet needs 2x space
-  devFstRoundChan.putPacket(dstOffset, 0, nelems * sizeof(int), threadIdx.x, blockDim.x);
+__device__ void allreduce2(int rank, int worldSize, size_t nelems) {
+  mscclpp::channel::SimpleDeviceChannel devFstRoundChan = constDevFstRoundChans[blockIdx.x / BLOCKS_PER_PEER];
+  uint32_t flag = (uint32_t)devFstRoundChan.epochGetLocal();
+  size_t dstOffset = ((flag & 1) ? nelems * sizeof(int) * 2 * (worldSize - 1) : 0) +
+                     (blockIdx.x / BLOCKS_PER_PEER < rank ? rank - 1 : rank) * nelems * sizeof(int) * 2 +
+                     (blockIdx.x % BLOCKS_PER_PEER) * nelems / blockIdx.x / BLOCKS_PER_PEER * sizeof(int) *
+                         2;  // packet needs 2x space
+  devFstRoundChan.putPacket(dstOffset, 0, nelems / BLOCKS_PER_PEER * sizeof(int),
+                            threadIdx.x + (blockIdx.x % BLOCKS_PER_PEER) * blockDim.x, blockDim.x * BLOCKS_PER_PEER,
+                            flag);
 
   size_t nPkts = nelems / 2;                   // 2 elems per packet, assume nelems is even
   int2* src = (int2*)devFstRoundChan.srcPtr_;  // cummulate into the src buffer
-  for (int peerIdx = 0; peerIdx < gridDim.x; ++peerIdx) {
-    mscclpp::channel::ChannelPacket* pkt = (mscclpp::channel::ChannelPacket*)devFstRoundChan.tmpPtr_ + peerIdx * nPkts;
-    for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPkts; idx += blockDim.x * gridDim.x) {
-      uint2 data = pkt[idx].read();
-      src[idx].x += (int)data.x;
-      src[idx].y += (int)data.y;
-      pkt[idx].clear();
+  int numPeers = gridDim.x / BLOCKS_PER_PEER;
+  mscclpp::channel::ChannelPacket* tmpPtr =
+      (mscclpp::channel::ChannelPacket*)devFstRoundChan.tmpPtr_ + ((flag & 1) ? nPkts * (worldSize - 1) : 0);
+  for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPkts; idx += blockDim.x * gridDim.x) {
+    int x = 0;
+    int y = 0;
+    for (int peerIdx = 0; peerIdx < numPeers / 2; ++peerIdx) {
+      mscclpp::channel::ChannelPacket* pkt0 = tmpPtr + 2 * peerIdx * nPkts;
+      mscclpp::channel::ChannelPacket* pkt1 = tmpPtr + (2 * peerIdx + 1) * nPkts;
+      uint2 data0 = pkt0[idx].read(flag);
+      uint2 data1 = pkt1[idx].read(flag);
+      x += (int)data0.x;
+      y += (int)data0.y;
+      x += (int)data1.x;
+      y += (int)data1.y;
     }
+    if (numPeers & 1) {
+      mscclpp::channel::ChannelPacket* pkt = tmpPtr + (numPeers - 1) * nPkts;
+      uint2 data = pkt[idx].read(flag);
+      x += (int)data.x;
+      y += (int)data.y;
+    }
+    src[idx].x += x;
+    src[idx].y += y;
   }
-  deviceSyncer.sync(gridDim.x);
-  if (threadIdx.x == 0) {
-    devFstRoundChan.signalPacket();
-    devFstRoundChan.wait();
+  if (threadIdx.x == 0 && (blockIdx.x % BLOCKS_PER_PEER) == 0) {
+    devFstRoundChan.epochIncrement();
   }
 }
 
@@ -242,7 +263,7 @@ __global__ void kernel(int rank, int worldSize, size_t nelems, size_t scratchDat
   else if (kernel == 1)
     allreduce1(rank, worldSize, nelems, scratchDataCount);
   else if (kernel == 2)
-    allreduce2(rank, worldSize, nelems, scratchDataCount);
+    allreduce2(rank, worldSize, nelems);
 }
 
 class AllReduceTestColl : public BaseTestColl {
@@ -263,7 +284,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int nPeers = worldSize - 1;
   const Chunk chunk = getChunk(paramCount_, worldSize, rank);
   const size_t scratchDataCount = chunk.size * nPeers;
-  const int nBlocks = (kernelNum == 0) ? nPeers * BLOCKS_PER_PEER : 24;
+  const int nBlocks = (kernelNum == 1) ? 24 : nPeers * BLOCKS_PER_PEER;
   kernel<<<nBlocks, 1024, 0, stream>>>(rank, worldSize, paramCount_, scratchDataCount, kernelNum);
 }
 
@@ -322,8 +343,9 @@ bool AllReduceTestEngine::isUsePacket(const TestArgs& args) { return (args.kerne
 
 void AllReduceTestEngine::allocateBuffer() {
   sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
-  scratchBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int) *
-                                               (isUsePacket(args_) ? (2 * (args_.totalRanks - 1)) : 1));
+  // Use 4x buffer size for packet-based allreduce: 2x as packets need twice the data size, and 2x for double-buffering
+  size_t scale = (isUsePacket(args_) ? (4 * (args_.totalRanks - 1)) : 1);
+  scratchBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int) * scale);
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
 }
 
