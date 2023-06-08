@@ -1,14 +1,14 @@
 #include <gtest/gtest.h>
+
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/utils.hpp>
 
-#define FLUSH_PERIOD (MSCCLPP_PROXY_FIFO_SIZE) // should not exceed MSCCLPP_PROXY_FIFO_SIZE
-#define ITER 10000 // should be larger than MSCCLPP_PROXY_FIFO_SIZE for proper testing
+#define FLUSH_PERIOD (MSCCLPP_PROXY_FIFO_SIZE)  // should not exceed MSCCLPP_PROXY_FIFO_SIZE
+#define ITER 10000                              // should be larger than MSCCLPP_PROXY_FIFO_SIZE for proper testing
 
 __constant__ mscclpp::DeviceProxyFifo gFifoTestDeviceProxyFifo;
-__global__ void kernelFifoTest()
-{
+__global__ void kernelFifoTest() {
   if (threadIdx.x + blockIdx.x * blockDim.x != 0) return;
 
   mscclpp::DeviceProxyFifo& fifo = gFifoTestDeviceProxyFifo;

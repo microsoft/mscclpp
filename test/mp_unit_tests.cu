@@ -677,9 +677,8 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
       // devChannels.emplace_back(channelService->deviceChannel(cid),
       //                          channelService->addMemory(remoteMemory), channelService->addMemory(sendMemory),
       //                          remoteMemory.data(), sendMemory.data(), tmpBuff);
-      devChannels.emplace_back(channelService->deviceChannel(cid),
-                               channelService->addMemory(remoteMemory), channelService->addMemory(sendMemory),
-                               remoteMemory.data(), sendMemory.data());
+      devChannels.emplace_back(channelService->deviceChannel(cid), channelService->addMemory(remoteMemory),
+                               channelService->addMemory(sendMemory), remoteMemory.data(), sendMemory.data());
     }
   }
 

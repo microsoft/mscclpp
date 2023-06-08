@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+
 #include <mscclpp/errors.hpp>
 
 TEST(ErrorsTest, SystemError) {
