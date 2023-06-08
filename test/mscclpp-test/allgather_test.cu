@@ -1,7 +1,6 @@
 #include <cuda_runtime.h>
 
 #include <cassert>
-#include <iostream>
 #include <string>
 
 #include "common.hpp"

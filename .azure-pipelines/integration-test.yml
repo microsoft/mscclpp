@@ -34,6 +34,7 @@ steps:
       mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2
       mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1
       mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
@@ -43,4 +44,24 @@ steps:
     targetType: 'inline'
     script: |
       mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: AllReduceTest
+  displayName: Run mscclpp AllReduce test
+  inputs:
+    targetType: 'inline'
+    script: |
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: AllToAll
+  displayName: Run mscclpp AllToAll test
+  inputs:
+    targetType: 'inline'
+    script: |
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1
     workingDirectory: '$(System.DefaultWorkingDirectory)'
