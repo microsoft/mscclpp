@@ -2,6 +2,7 @@
 #include <getopt.h>
 #include <libgen.h>
 
+#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -469,6 +470,7 @@ void run(int argc, char* argv[]) {
 
   PRINT("# Out of bounds values : %d %s\n", error, error ? "FAILED" : "OK");
   PRINT("#\n");
+  assert(error == 0);
 
   MPI_Finalize();
 }
