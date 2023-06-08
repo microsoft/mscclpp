@@ -151,7 +151,7 @@ __global__ void kernel(int rank, int worldSize, int nranksPerNode, size_t nelems
   else if (kernel == 2)
     allgather2(devChan, rank, worldSize, nranksPerNode, remoteRank, nelemsPerGPU);
   else if (kernel == 3) {
-    auto devChan = constRawDevChan[warpId];
+    mscclpp::channel::DeviceChannel devChan = constRawDevChan[warpId];
     allgather3(devChan, rank, worldSize);
   }
 }
