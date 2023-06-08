@@ -35,18 +35,6 @@ using TimePoint = std::chrono::steady_clock::time_point;
 TimePoint getClock();
 int64_t elapsedClock(TimePoint start, TimePoint end);
 
-/* get any bytes of random data from /dev/urandom */
-inline void getRandomData(void* buffer, size_t bytes) {
-  if (bytes > 0) {
-    const size_t one = 1UL;
-    FILE* fp = fopen("/dev/urandom", "r");
-    if (buffer == NULL || fp == NULL || fread(buffer, bytes, one, fp) != one) {
-      throw Error("Failed to read random data", ErrorCode::SystemError);
-    }
-    if (fp) fclose(fp);
-  }
-}
-
 }  // namespace mscclpp
 
 #endif

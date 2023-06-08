@@ -98,7 +98,11 @@ TEST_F(MultiProcessTest, Prelim) {
 // Bootstrap tests
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-class BootstrapTest : public MultiProcessTest {};
+class BootstrapTest : public MultiProcessTest {
+ protected:
+  // Each test case should finish within 3 seconds.
+  mscclpp::Timer bootstrapTestTimer{3};
+};
 
 void bootstrapTestAllGather(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap) {
   std::vector<int> tmp(bootstrap->getNranks(), 0);
@@ -159,7 +163,6 @@ TEST_F(BootstrapTest, WithIpPortPair) {
 }
 
 TEST_F(BootstrapTest, ResumeWithId) {
-  mscclpp::Timer timer(3);
   for (int i = 0; i < 5; ++i) {
     auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
     mscclpp::UniqueId id;
@@ -170,7 +173,6 @@ TEST_F(BootstrapTest, ResumeWithId) {
 }
 
 TEST_F(BootstrapTest, ResumeWithIpPortPair) {
-  mscclpp::Timer timer(3);
   // TODO: enable when the bug is fixed. bootstrap hangs and even timer doesn't work
 #if 0
   for (int i = 0; i < 5; ++i) {
@@ -184,8 +186,6 @@ TEST_F(BootstrapTest, ResumeWithIpPortPair) {
 }
 
 TEST_F(BootstrapTest, ExitBeforeConnect) {
-  mscclpp::Timer timer(3);
-
   // TODO: enable when the bug is fixed. bootstrap rootThread_ does not exit gracefully
 #if 0
   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
@@ -199,8 +199,6 @@ TEST_F(BootstrapTest, ExitBeforeConnect) {
 TEST_F(BootstrapTest, TimeoutWithId) {
   // TODO: enable when BootstrapTest.ExitBeforeConnect passes.
 #if 0
-  mscclpp::Timer timer(3);
-
   // Set bootstrap timeout to 1 second
   mscclpp::Config* cfg = mscclpp::Config::getInstance();
   cfg->setBootstrapConnectionTimeoutConfig(1);
