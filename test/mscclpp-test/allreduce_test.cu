@@ -215,21 +215,24 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
 }
 
 __device__ void allreduce2(int rank, int worldSize, size_t nelems) {
-  mscclpp::channel::SimpleDeviceChannel devFstRoundChan = constDevFstRoundChans[blockIdx.x / BLOCKS_PER_PEER];
-  uint32_t flag = (uint32_t)devFstRoundChan.epochGetLocal();
-  size_t dstOffset = ((flag & 1) ? nelems * sizeof(int) * 2 * (worldSize - 1) : 0) +
-                     (blockIdx.x / BLOCKS_PER_PEER < rank ? rank - 1 : rank) * nelems * sizeof(int) * 2 +
-                     (blockIdx.x % BLOCKS_PER_PEER) * nelems / blockIdx.x / BLOCKS_PER_PEER * sizeof(int) *
-                         2;  // packet needs 2x space
-  devFstRoundChan.putPacket(dstOffset, 0, nelems / BLOCKS_PER_PEER * sizeof(int),
-                            threadIdx.x + (blockIdx.x % BLOCKS_PER_PEER) * blockDim.x, blockDim.x * BLOCKS_PER_PEER,
+  int chanIdx = blockIdx.x / BLOCKS_PER_PEER;
+  int numPeers = worldSize - 1;
+  size_t nPkts = nelems / 2;  // 2 elems per packet, assume nelems is even
+  size_t pktBytes = nPkts * sizeof(mscclpp::channel::ChannelPacket);
+  mscclpp::channel::SimpleDeviceChannel devFstRoundChan = constDevFstRoundChans[chanIdx];
+  uint32_t flag = (uint32_t)devFstRoundChan.epochGetLocal() + 1;  // +1 as flag should be non-zero
+  size_t srcOffset =
+      ((blockIdx.x % BLOCKS_PER_PEER) * nelems * sizeof(int) / BLOCKS_PER_PEER);  // offset for this block
+  size_t dstOffset = ((flag & 1) ? 0 : pktBytes * numPeers) +                     // double buffering
+                     ((chanIdx < rank ? rank - 1 : rank) * pktBytes) +            // offset for this rank
+                     (srcOffset * 2);  // offset for this block: twice of srcOffset because 2 elems per packet
+
+  devFstRoundChan.putPacket(dstOffset, srcOffset, nelems / BLOCKS_PER_PEER * sizeof(int), threadIdx.x, blockDim.x,
                             flag);
 
-  size_t nPkts = nelems / 2;                   // 2 elems per packet, assume nelems is even
   int2* src = (int2*)devFstRoundChan.srcPtr_;  // cummulate into the src buffer
-  int numPeers = gridDim.x / BLOCKS_PER_PEER;
-  mscclpp::channel::ChannelPacket* tmpPtr =
-      (mscclpp::channel::ChannelPacket*)devFstRoundChan.tmpPtr_ + ((flag & 1) ? nPkts * (worldSize - 1) : 0);
+  mscclpp::channel::ChannelPacket* tmpPtr = (mscclpp::channel::ChannelPacket*)devFstRoundChan.tmpPtr_ +
+                                            ((flag & 1) ? 0 : nPkts * numPeers);  // double buffering
   for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPkts; idx += blockDim.x * gridDim.x) {
     int x = 0;
     int y = 0;
@@ -252,6 +255,10 @@ __device__ void allreduce2(int rank, int worldSize, size_t nelems) {
     src[idx].x += x;
     src[idx].y += y;
   }
+
+  // TODO(chhwang): do we need to sync here? (to prevent incrementing epoch before co-working blocks call
+  // epochGetLocal())
+  // deviceSyncer.sync(gridDim.x);
   if (threadIdx.x == 0 && (blockIdx.x % BLOCKS_PER_PEER) == 0) {
     devFstRoundChan.epochIncrement();
   }
