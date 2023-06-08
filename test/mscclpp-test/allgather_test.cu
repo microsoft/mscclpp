@@ -219,7 +219,7 @@ mscclpp::ProxyHandlerResult AllGatherChannelService::handleTrigger(mscclpp::Prox
     conn.write(remoteMemories_[index], offset, localMemory_, offset, sendBytes_);
     channels_[index].epoch().signal();
     if (counter % 64 && mscclpp::AllIBTransports.has(conn.transport())) {
-      // if we use IB, we need to flush in  a while
+      // if we are using IB transport, we need a flush every once in a while to avoid CQ overflow
       conn.flush();
     }
   }
