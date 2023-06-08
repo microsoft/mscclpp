@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <mscclpp/spin.hpp>
+#include <mscclpp/poll.hpp>
 
 #define MSCCLPP_PROXY_FIFO_SIZE 128
 
@@ -32,9 +32,9 @@ struct DeviceProxyFifo {
   __forceinline__ __device__ uint64_t push(ProxyTrigger trigger) {
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->head, 1);
 
-    MSCCLPP_SAFE_SPIN(curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->tailReplica));
+    POLL_MAYBE_JAILBREAK(curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->tailReplica), 1000000000);
 
-    MSCCLPP_SAFE_SPIN(*(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0);
+    POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0, 1000000000);
 
     ProxyTrigger* triggerPtr = (ProxyTrigger*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]);
     asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
@@ -44,8 +44,9 @@ struct DeviceProxyFifo {
   __forceinline__ __device__ void sync(uint64_t curFifoHead) {
     // We need to wait for two conditions to be met to ensure the CPU is done flushing. (1) wait for the tail
     // to go pass by curFifoHead (this is safety net) and (2) wait for the work element value to change to 0.
-    MSCCLPP_SAFE_SPIN(*(volatile uint64_t*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]) != 0 &&
-                      *(volatile uint64_t*)(this->tailReplica) <= curFifoHead);
+    POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]) != 0 &&
+                             *(volatile uint64_t*)(this->tailReplica) <= curFifoHead,
+                         1000000000);
   }
 #endif  // __CUDACC__
 
