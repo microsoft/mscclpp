@@ -231,7 +231,12 @@ __device__ void allreduce2(int rank, int worldSize, size_t nelems) {
   devFstRoundChan.putPacket(dstOffset, srcOffset, nelems / BLOCKS_PER_PEER * sizeof(int), threadIdx.x, blockDim.x,
                             flag);
   // This fixes occasional correctness bugs
-  __threadfence();
+  if (BLOCKS_PER_PEER > 1) {
+    // We only need to sync in between co-working BLOCKS_PER_PEER blocks, but we sync all blocks for simplicity
+    deviceSyncer.sync(gridDim.x);
+  } else {
+    __threadfence();
+  }
 
   int2* src = (int2*)devFstRoundChan.srcPtr_;  // cummulate into the src buffer
   mscclpp::channel::ChannelPacket* tmpPtr = (mscclpp::channel::ChannelPacket*)devFstRoundChan.tmpPtr_ +
@@ -259,9 +264,6 @@ __device__ void allreduce2(int rank, int worldSize, size_t nelems) {
     src[idx].y += y;
   }
 
-  // TODO(chhwang): do we need to sync here? (to prevent incrementing epoch before co-working blocks call
-  // epochGetLocal())
-  // deviceSyncer.sync(gridDim.x);
   if (threadIdx.x == 0 && (blockIdx.x % BLOCKS_PER_PEER) == 0) {
     devFstRoundChan.epochIncrement();
   }
