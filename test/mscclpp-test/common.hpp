@@ -41,7 +41,7 @@ class BaseTestColl {
   virtual ~BaseTestColl() {}
   virtual void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) = 0;
   virtual void runColl(const TestArgs& args, cudaStream_t stream) = 0;
-  virtual void getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) = 0;
+  virtual void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) = 0;
 
   void setupCollTest(const TestArgs& args, size_t size);
   size_t getSendBytes() { return sendCount_ * typeSize_; }
@@ -83,6 +83,9 @@ class BaseTestEngine {
   double benchTime();
 
  protected:
+  void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* sendBuff,
+                            size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
+
   TestArgs args_;
   std::shared_ptr<BaseTestColl> coll_;
   std::shared_ptr<mscclpp::Communicator> comm_;
