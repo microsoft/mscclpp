@@ -188,6 +188,7 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
 
   if (isComm) {
     if (chunkNelem > 1) {
+      devSndRecvChan.wait();
       devSndSendChan.flush();
     }
     devSndSendChan.putWithSignalAndFlush(offset + chunkNelem / 2 * sizeof(int),
