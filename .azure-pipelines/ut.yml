@@ -24,7 +24,7 @@ jobs:
         tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
         export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
         mkdir build && cd build
-        /tmp/cmake-3.26.4-linux-x86_64/bin/cmake ..
+        /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
         make -j
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
