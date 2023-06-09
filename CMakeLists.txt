@@ -29,10 +29,6 @@ if(CUDAToolkit_FOUND)
     if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12)
         set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_90,code=sm_90")
     endif()
-
-    message("Detected CUDA version: ${CUDAToolkit_VERSION}")
-else()
-    message(FATAL_ERROR "CUDA not found")
 endif()
 
 find_package(IBVerbs REQUIRED)
