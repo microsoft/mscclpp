@@ -393,10 +393,10 @@ __global__ void kernelMemoryConsistency(uint64_t* data, volatile uint64_t* curIt
     if (threadIdx.x == 0) {
       *curIter = iter;
 
-      // Wait for the last element arrival (expect equal to iter). Expect that the last element is delivered in
-      // a special way that guarantees all previous elements are completely delivered.
+      // Wait for the first element arrival (expect equal to iter). Expect that the first element is delivered in
+      // a special way that guarantees all other elements are completely delivered.
       uint64_t spin = 0;
-      while (ptr[nelem - 1] != iter) {
+      while (ptr[0] != iter) {
         if (spin++ == 1000000) {
           // Assume the program is stuck. Set the abort flag and escape the loop.
           *result |= FlagAbort;
@@ -512,22 +512,17 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
       // Need to signal from time to time to empty the IB send queue
       bool signaled = (iter % signalPeriod == 0);
 
+      // Send from the second element to the last
+      stageSend(sizeof(uint64_t) * (nelem - 1), 0, sizeof(uint64_t), sizeof(uint64_t), signaled);
+      qp->postSend();
+
 #if 1
-      // Send everything at once. This should see the wrong result.
-      // TODO(chhwang): need to make this version return error.
-      stageSend(sizeof(uint64_t) * nelem, 0, 0, 0, signaled);
+      // Send the first element using a normal send. This should occasionally see the wrong result.
+      stageSend(sizeof(uint64_t), 0, 0, 0, false);
       qp->postSend();
 #else
       // For reference: send the last element using AtomicAdd. This should see the correct result.
-
-      // Send the first (nelem - 1) elements
-      stageSend(sizeof(uint64_t) * (nelem - 1), 0, 0, 0, signaled);
-      qp->postSend();
-
-      // Send the last element
-      size_t offset = sizeof(uint64_t) * (nelem - 1);
-      stageAtomicAdd(0, offset, offset, 1);
-      // stageSend(sizeof(uint64_t), 0, offset, offset, false);
+      stageAtomicAdd(0, 0, 0, 1);
       qp->postSend();
 #endif
 
@@ -544,7 +539,7 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
       // Get the result from the receiver
       uint64_t tmp[2];
       bootstrap->allGather(tmp, sizeof(uint64_t));
-      uint64_t res = tmp[0];
+      res = tmp[0];
 
       if (res != 0) break;
     }
