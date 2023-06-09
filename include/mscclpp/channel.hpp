@@ -131,9 +131,7 @@ struct DeviceChannel {
     uint64_t curFifoHead = fifo_.push(
         ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, channelId_)
             .value);
-    while (*(volatile uint64_t*)&fifo_.triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
-           *(volatile uint64_t*)fifo_.tailReplica <= curFifoHead)
-      ;
+    fifo_.sync(curFifoHead);
   }
 
   __forceinline__ __device__ void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
@@ -142,11 +140,7 @@ struct DeviceChannel {
 
   __forceinline__ __device__ void flush() {
     uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, channelId_).value);
-    // we need to wait for two conditions to be met to ensure the CPU is done flushing. (1) wait for the tail
-    // to go pass by curFifoHead (this is safety net) and (2) wait for the work element value to change to 0.
-    while (*(volatile uint64_t*)&fifo_.triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
-           *(volatile uint64_t*)fifo_.tailReplica <= curFifoHead)
-      ;
+    fifo_.sync(curFifoHead);
   }
 
   __forceinline__ __device__ void wait() { epoch_.wait(); }
@@ -228,8 +222,12 @@ struct SimpleDeviceChannel {
 
   SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src) : devChan_(devChan), dst_(dst), src_(src) {}
 
-  SimpleDeviceChannel(DeviceChannel devChan, void* dstPtr, void* srcPtr)
-      : devChan_(devChan), srcPtr_(srcPtr), dstPtr_(dstPtr) {}
+  SimpleDeviceChannel(DeviceChannel devChan, void* dstPtr, void* srcPtr, void* tmpPtr = nullptr)
+      : devChan_(devChan), dstPtr_(dstPtr), srcPtr_(srcPtr), tmpPtr_(tmpPtr) {}
+
+  SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src, void* dstPtr, void* srcPtr,
+                      void* tmpPtr = nullptr)
+      : devChan_(devChan), dst_(dst), src_(src), dstPtr_(dstPtr), srcPtr_(srcPtr), tmpPtr_(tmpPtr) {}
 
   SimpleDeviceChannel(const SimpleDeviceChannel& other) = default;
 
@@ -278,8 +276,11 @@ struct SimpleDeviceChannel {
   MemoryId src_;
 
   // these are used for direct copy
-  void* srcPtr_;
   void* dstPtr_;
+  void* srcPtr_;
+
+  // extra local buffer for out-of-place copy
+  void* tmpPtr_;
 };
 
 }  // namespace channel

@@ -13,6 +13,8 @@ std::string errorToString(enum ErrorCode error) {
       return "InternalError";
     case ErrorCode::InvalidUsage:
       return "InvalidUsage";
+    case ErrorCode::Timeout:
+      return "Timeout";
     default:
       return "UnknownError";
   }

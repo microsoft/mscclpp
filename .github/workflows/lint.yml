@@ -23,7 +23,7 @@ jobs:
 
     - name: Run cpplint
       run: |
-        CPPSOURCES=$(find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*" -not -path "./python/*" -not -path "./test/*")
+        CPPSOURCES=$(find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*" -not -path "./python/*")
         PYTHONCPPSOURCES=$(find ./python/src/ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
         clang-format-12 -style=file --verbose --Werror --dry-run ${CPPSOURCES}
         clang-format-12 --dry-run ${PYTHONCPPSOURCES}
@@ -40,10 +40,11 @@ jobs:
     - name: Check out Git repository
       uses: actions/checkout@v3
 
-    - name: Install dependencies
+    - name: Download misspell
       run: |
-        curl -L https://git.io/misspell | sudo bash -s -- -b /bin
+        curl -L https://github.com/client9/misspell/releases/download/v0.3.4/misspell_0.3.4_linux_64bit.tar.gz -o /tmp/misspell_0.3.4_linux_64bit.tar.gz
+        tar -xzf /tmp/misspell_0.3.4_linux_64bit.tar.gz -C .
 
     - name: Check spelling
       run: |
-        misspell -error .
+        ./misspell -error .
