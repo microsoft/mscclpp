@@ -266,7 +266,6 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
     }
     // Connect with all other ranks
     conns.push_back(comm_->connectOnSetup(r, 0, transport));
-    // channelIds.push_back(chanService_->addChannel(comm_->connectOnSetup(r, 0, transport)));
     auto sendMemory = comm_->registerMemory(sendBuff, sendBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
     localMemories.push_back(sendMemory);
     if (isOutPlace) {
@@ -473,7 +472,9 @@ void run(int argc, char* argv[]) {
 
   PRINT("# Out of bounds values : %d %s\n", error, error ? "FAILED" : "OK");
   PRINT("#\n");
-  assert(error == 0);
 
   MPI_Finalize();
+  if (error != 0) {
+    exit(1);
+  }
 }

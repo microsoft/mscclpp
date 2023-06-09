@@ -122,6 +122,7 @@ __device__ void allgather2(mscclpp::channel::SimpleDeviceChannel devChan, int ra
 __device__ void allgather3(mscclpp::channel::DeviceChannel devChan, int rank, int worldSize) {
   int tid = threadIdx.x;
   if (tid % 32 == 0) {
+    // TODO(binyli): move this to handleTrigger after hostEpoch is implemented
     devChan.epochIncrement();
   }
   __syncthreads();
@@ -208,7 +209,7 @@ mscclpp::ProxyHandlerResult AllGatherChannelService::handleTrigger(mscclpp::Prox
   size_t offset = rank_ * sendBytes_;
   if (triggerRaw.fst != MAGIC) {
     // this is not a valid trigger
-    return mscclpp::ProxyHandlerResult::FlushFifoTailAndContinue;
+    throw std::runtime_error("Invalid trigger");
   }
   for (int r = 0; r < worldSize_; r++) {
     if (r == rank_) {
