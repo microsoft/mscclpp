@@ -4,7 +4,6 @@
 #include <string>
 
 #include "common.hpp"
-#include "numa.hpp"
 
 #define ALIGN 4
 
@@ -200,8 +199,8 @@ AllGatherChannelService::AllGatherChannelService(mscclpp::Communicator& communic
       cudaDevice_(cudaDevice),
       proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); },
              [&]() {
-               int deviceNumaNode = mscclpp::getDeviceNumaNode(cudaDevice_);
-               mscclpp::numaBind(deviceNumaNode);
+               int deviceNumaNode = getDeviceNumaNode(cudaDevice_);
+               numaBind(deviceNumaNode);
              }) {}
 
 mscclpp::ProxyHandlerResult AllGatherChannelService::handleTrigger(mscclpp::ProxyTrigger triggerRaw) {

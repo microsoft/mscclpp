@@ -20,6 +20,9 @@
     }                                                                                                                 \
   } while (0)
 
+int getDeviceNumaNode(int cudaDev);
+void numaBind(int node);
+
 struct TestArgs {
   size_t minBytes;
   size_t maxBytes;

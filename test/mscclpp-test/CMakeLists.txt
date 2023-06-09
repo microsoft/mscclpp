@@ -1,8 +1,6 @@
 function(add_mscclpp_test_executable name sources)
     add_executable(${name} ${sources} common.cu)
-    # workaround, we should just use public headers in mscclpp-test
-    target_include_directories(${name} PRIVATE ${PROJECT_SOURCE_DIR}/src/include)
-    target_link_libraries(${name} mscclpp MPI::MPI_CXX CUDA::cudart CUDA::cuda_driver)
+    target_link_libraries(${name} mscclpp MPI::MPI_CXX CUDA::cudart CUDA::cuda_driver MSCCLPP::numa)
 endfunction()
 
 add_mscclpp_test_executable(sendrecv_test_perf sendrecv_test.cu)
