@@ -1,0 +1,46 @@
+trigger:
+- main
+
+pr:
+- main
+
+pool:
+  name: mscclpp
+container:
+  image: superbench/superbench:v0.8.0-cuda12.1
+  options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
+
+steps:
+- task: Bash@3
+  name: Build
+  displayName: Build
+  inputs:
+    targetType: 'inline'
+    script: |
+      curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
+      tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
+      export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
+      mkdir build && cd build
+      /tmp/cmake-3.26.4-linux-x86_64/bin/cmake ..
+      make -j
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: AllGatherTest
+  displayName: Run mscclpp AllGather test
+  inputs:
+    targetType: 'inline'
+    script: |
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: SendRecvTest
+  displayName: Run mscclpp SendRecv test
+  inputs:
+    targetType: 'inline'
+    script: |
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2
+    workingDirectory: '$(System.DefaultWorkingDirectory)'

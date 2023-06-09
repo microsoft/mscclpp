@@ -96,7 +96,7 @@ TransportInfo IBConnection::validateAndGetTransportInfo(RegisteredMemory mem, Tr
 
 void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                          uint64_t size) {
-  auto dstTransportInfo = validateAndGetTransportInfo(dst, remoteTransport());                          
+  auto dstTransportInfo = validateAndGetTransportInfo(dst, remoteTransport());
   auto srcTransportInfo = validateAndGetTransportInfo(src, transport());
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
@@ -127,7 +127,6 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   INFO(MSCCLPP_NET, "IBConnection atomic Write: from %p to %p, %lu -> %lu", src,
        (uint8_t*)dstMrInfo.addr + dstOffset, oldValue, newValue);
 }
-
 
 void IBConnection::flush() {
   Timer timer;

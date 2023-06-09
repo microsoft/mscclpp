@@ -10,6 +10,7 @@
 
 #include "communicator.hpp"
 #include "ib.hpp"
+#include "registered_memory.hpp"
 
 namespace mscclpp {
 

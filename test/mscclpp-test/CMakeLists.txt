@@ -5,3 +5,5 @@ endfunction()
 
 add_mscclpp_test_executable(sendrecv_test_perf sendrecv_test.cu)
 add_mscclpp_test_executable(allgather_test_perf allgather_test.cu)
+add_mscclpp_test_executable(allreduce_test_perf allreduce_test.cu)
+add_mscclpp_test_executable(alltoall_test_perf alltoall_test.cu)

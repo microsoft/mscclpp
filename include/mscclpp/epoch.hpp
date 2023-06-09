@@ -4,6 +4,7 @@
 #include <memory>
 #include <mscclpp/core.hpp>
 #include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/poll.hpp>
 
 namespace mscclpp {
 
