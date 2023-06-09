@@ -37,7 +37,7 @@ class BaseEpoch {
   }
 
   void signal() {
-    connection_->write(remoteEpochIdsRegMem_.get(), offsetof(EpochIds, inboundReplica), localEpochIdsRegMem_,
+    connection_->atomicWrite(remoteEpochIdsRegMem_.get(), offsetof(EpochIds, inboundReplica), localEpochIdsRegMem_,
                        offsetof(EpochIds, outbound), sizeof(epochIds_));
   }
 };

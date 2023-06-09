@@ -214,8 +214,8 @@ void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64
   wrInfo.sge->lkey = mr->getLkey();
 }
 
-void IbQp::stageSendAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t srcOffset,
-                    uint64_t dstOffset, uint64_t addVal) {
+void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t srcOffset,
+                uint64_t dstOffset, uint64_t addVal) {
   auto wrInfo = this->getNewWR();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;

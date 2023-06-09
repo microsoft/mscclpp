@@ -40,6 +40,7 @@ class CudaIpcConnection : public ConnectionBase {
 
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
+  void atomicWrite(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t oldValue, uint64_t newValue) override;
 
   void flush() override;
 };
@@ -49,6 +50,7 @@ class IBConnection : public ConnectionBase {
   Transport remoteTransport_;
   IbQp* qp;
   int numSignaledSends;
+  TransportInfo validateAndGetTransportInfo(RegisteredMemory mem, Transport transport);
 
  public:
   IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl);
@@ -59,6 +61,7 @@ class IBConnection : public ConnectionBase {
 
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
+  void atomicWrite(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t oldValue, uint64_t newValue) override;
 
   void flush() override;
 
