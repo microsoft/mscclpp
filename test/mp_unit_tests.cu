@@ -379,7 +379,8 @@ TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
   bootstrap->barrier();
 }
 
-__global__ void kernelMemoryConsistency(uint64_t* data, volatile int* result, uint64_t nelem, uint64_t maxIter) {
+__global__ void kernelMemoryConsistency(uint64_t* data, volatile uint64_t* curIter, volatile int* result,
+                                        uint64_t nelem, uint64_t maxIter) {
   if (blockIdx.x != 0) return;
 
   constexpr int FlagWrong = 1;
@@ -390,6 +391,8 @@ __global__ void kernelMemoryConsistency(uint64_t* data, volatile int* result, ui
     int err = 0;
 
     if (threadIdx.x == 0) {
+      *curIter = iter;
+
       // Wait for the last element arrival (expect equal to iter). Expect that the last element is delivered in
       // a special way that guarantees all previous elements are completely delivered.
       uint64_t spin = 0;
@@ -440,6 +443,9 @@ __global__ void kernelMemoryConsistency(uint64_t* data, volatile int* result, ui
       return;
     }
   }
+  if (threadIdx.x == 0) {
+    *curIter = maxIter + 1;
+  }
 }
 
 TEST_F(IbPeerToPeerTest, MemoryConsistency) {
@@ -448,8 +454,9 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
     return;
   }
 
-  const uint64_t maxIter = 1;
-  const uint64_t nelem = 2134353 + 1;
+  const uint64_t signalPeriod = 1024;
+  const uint64_t maxIter = 10000;
+  const uint64_t nelem = 65536 + 1;
   auto data = mscclpp::allocUniqueCuda<uint64_t>(nelem);
 
   registerBufferAndConnect(data.get(), sizeof(uint64_t) * nelem);
@@ -459,17 +466,28 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
 
   if (gEnv->rank == 0) {
     // Receiver
-    auto result = mscclpp::makeUniqueCudaHost<int>(1);
-    *result = 0;
+    auto curIter = mscclpp::makeUniqueCudaHost<uint64_t>(0);
+    auto result = mscclpp::makeUniqueCudaHost<int>(0);
 
-    kernelMemoryConsistency<<<1, 1024>>>(data.get(), (volatile int*)result.get(), nelem, maxIter);
+    volatile uint64_t* ptrCurIter = (volatile uint64_t*)curIter.get();
+    volatile int* ptrResult = (volatile int*)result.get();
+
+    ASSERT_EQ(*ptrCurIter, 0);
+    ASSERT_EQ(*ptrResult, 0);
+
+    kernelMemoryConsistency<<<1, 1024>>>(data.get(), ptrCurIter, ptrResult, nelem, maxIter);
     MSCCLPP_CUDATHROW(cudaGetLastError());
 
     for (iter = 1; iter < maxIter + 1; ++iter) {
       mscclpp::Timer timeout(5);
 
+      while (*ptrCurIter != iter + 1) {
+        res = *ptrResult;
+        if (res != 0) break;
+      }
+
       // Send the result to the sender
-      res = *(volatile int*)result.get();
+      res = *ptrResult;
       uint64_t tmp[2];
       tmp[0] = res;
       bootstrap->allGather(tmp, sizeof(uint64_t));
@@ -491,16 +509,19 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
       }
       mscclpp::memcpyCuda<uint64_t>(data.get(), hostBuffer.data(), nelem, cudaMemcpyHostToDevice);
 
+      // Need to signal from time to time to empty the IB send queue
+      bool signaled = (iter % signalPeriod == 0);
+
 #if 1
       // Send everything at once. This should see the wrong result.
       // TODO(chhwang): need to make this version return error.
-      stageSend(sizeof(uint64_t) * nelem, 0, 0, 0, false);
+      stageSend(sizeof(uint64_t) * nelem, 0, 0, 0, signaled);
       qp->postSend();
 #else
       // For reference: send the last element using AtomicAdd. This should see the correct result.
 
       // Send the first (nelem - 1) elements
-      stageSend(sizeof(uint64_t) * (nelem - 1), 0, 0, 0, false);
+      stageSend(sizeof(uint64_t) * (nelem - 1), 0, 0, 0, signaled);
       qp->postSend();
 
       // Send the last element
@@ -509,6 +530,16 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
       // stageSend(sizeof(uint64_t), 0, offset, offset, false);
       qp->postSend();
 #endif
+
+      if (signaled) {
+        int wcNum = qp->pollCq();
+        while (wcNum == 0) {
+          wcNum = qp->pollCq();
+        }
+        ASSERT_EQ(wcNum, 1);
+        const ibv_wc* wc = qp->getWc(0);
+        ASSERT_EQ(wc->status, IBV_WC_SUCCESS);
+      }
 
       // Get the result from the receiver
       uint64_t tmp[2];
