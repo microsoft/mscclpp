@@ -30,9 +30,9 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   }
   uintptr_t addr = reinterpret_cast<uintptr_t>(buff) & -pageSize;
   std::size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;
-  this->mr = ibv_reg_mr(
-      pd, reinterpret_cast<void*>(addr), pages * pageSize,
-      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
+  this->mr = ibv_reg_mr(pd, reinterpret_cast<void*>(addr), pages * pageSize,
+                        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
+                            IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
   if (this->mr == nullptr) {
     std::stringstream err;
     err << "ibv_reg_mr failed (errno " << errno << ")";
@@ -181,7 +181,7 @@ void IbQp::rts() {
   }
 }
 
-IbQpWrInfo IbQp::getNewWR(){
+IbQpWrInfo IbQp::getNewWR() {
   if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
     std::stringstream err;
     err << "too many outstanding work requests. limit is " << MSCCLPP_IB_MAX_SENDS;
@@ -195,13 +195,13 @@ IbQpWrInfo IbQp::getNewWR(){
   wr_->num_sge = 1;
   if (wrn > 0) {
     this->wrs[wrn - 1].next = wr_;
-  }  
+  }
   this->wrn++;
   return IbQpWrInfo{wr_, sge_};
 }
 
 void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                    uint64_t dstOffset, bool signaled) {
+                     uint64_t dstOffset, bool signaled) {
   auto wrInfo = this->getNewWR();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_RDMA_WRITE;
@@ -214,22 +214,22 @@ void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64
   wrInfo.sge->lkey = mr->getLkey();
 }
 
-void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t srcOffset,
-                uint64_t dstOffset, uint64_t addVal) {
+void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset,
+                          uint64_t addVal) {
   auto wrInfo = this->getNewWR();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
-  wrInfo.wr->send_flags = 0; // atomic op cannot be signaled
+  wrInfo.wr->send_flags = 0;  // atomic op cannot be signaled
   wrInfo.wr->wr.atomic.remote_addr = (uint64_t)(info.addr) + dstOffset;
   wrInfo.wr->wr.atomic.rkey = info.rkey;
   wrInfo.wr->wr.atomic.compare_add = addVal;
   wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
-  wrInfo.sge->length = 8; // atomic op is always 8 bytes
+  wrInfo.sge->length = 8;  // atomic op is always 8 bytes
   wrInfo.sge->lkey = mr->getLkey();
 }
 
 void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                           uint64_t dstOffset, bool signaled, unsigned int immData) {
+                            uint64_t dstOffset, bool signaled, unsigned int immData) {
   auto wrInfo = this->getNewWR();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_RDMA_WRITE_WITH_IMM;

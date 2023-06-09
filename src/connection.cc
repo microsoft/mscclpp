@@ -54,14 +54,17 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)size);
 }
 
-void CudaIpcConnection::atomicWrite(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, /*ignored*/uint64_t oldValue, uint64_t newValue) {
+void CudaIpcConnection::atomicWrite(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
+                                    /*ignored*/ uint64_t oldValue, uint64_t newValue) {
   validateTransport(dst, remoteTransport());
   uint64_t* srcPtr = (uint64_t*)src.data();
-  *(srcPtr+srcOffset) = newValue;
+  *(srcPtr + srcOffset) = newValue;
   uint64_t* dstPtr = (uint64_t*)dst.data();
-  
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, srcPtr + srcOffset, sizeof(uint64_t), cudaMemcpyHostToDevice, stream_));
-  INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", srcPtr + srcOffset, dstPtr + dstOffset, oldValue, newValue);
+
+  MSCCLPP_CUDATHROW(
+      cudaMemcpyAsync(dstPtr + dstOffset, srcPtr + srcOffset, sizeof(uint64_t), cudaMemcpyHostToDevice, stream_));
+  INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", srcPtr + srcOffset, dstPtr + dstOffset,
+       oldValue, newValue);
 
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)size);
 }
@@ -96,7 +99,7 @@ TransportInfo IBConnection::validateAndGetTransportInfo(RegisteredMemory mem, Tr
 
 void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                          uint64_t size) {
-  auto dstTransportInfo = validateAndGetTransportInfo(dst, remoteTransport());                          
+  auto dstTransportInfo = validateAndGetTransportInfo(dst, remoteTransport());
   auto srcTransportInfo = validateAndGetTransportInfo(src, transport());
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
@@ -112,19 +115,19 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)size);
 }
 
-void IBConnection::atomicWrite(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t oldValue, uint64_t newValue){
-  auto dstTransportInfo = validateAndGetTransportInfo(dst, remoteTransport());                          
+void IBConnection::atomicWrite(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
+                               uint64_t oldValue, uint64_t newValue) {
+  auto dstTransportInfo = validateAndGetTransportInfo(dst, remoteTransport());
   auto srcTransportInfo = validateAndGetTransportInfo(src, transport());
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
   auto srcMr = srcTransportInfo.ibMr;
 
-  qp->stageAtomicAdd(srcMr, dstMrInfo, /*wrId=*/0, srcOffset, dstOffset, newValue-oldValue);
+  qp->stageAtomicAdd(srcMr, dstMrInfo, /*wrId=*/0, srcOffset, dstOffset, newValue - oldValue);
   qp->postSend();
   INFO(MSCCLPP_NET, "IBConnection atomic Write: from %p to %p, %lu -> %lu", (uint8_t*)srcMr->getBuff() + srcOffset,
        (uint8_t*)dstMrInfo.addr + dstOffset, oldValue, newValue);
 }
-
 
 void IBConnection::flush() {
   Timer timer;

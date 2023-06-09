@@ -34,8 +34,9 @@ MSCCLPP_API_CPP void HostEpoch::incrementAndSignal() {
 
 MSCCLPP_API_CPP void HostEpoch::wait() {
   (*expectedInboundEpochId_) += 1;
-  while (*(volatile uint64_t*)&(epochIds_->inboundReplica) < (*expectedInboundEpochId_)){
-    printf("waiting for epoch %lu vs %lu\n", *expectedInboundEpochId_, *(volatile uint64_t*)&(epochIds_->inboundReplica));
+  while (*(volatile uint64_t*)&(epochIds_->inboundReplica) < (*expectedInboundEpochId_)) {
+    printf("waiting for epoch %lu vs %lu\n", *expectedInboundEpochId_,
+           *(volatile uint64_t*)&(epochIds_->inboundReplica));
   }
 }
 
