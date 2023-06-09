@@ -57,11 +57,6 @@ struct IbQpInfo {
   bool is_grh;
 };
 
-struct IbQpWrInfo {
-  struct ibv_send_wr* wr;
-  struct ibv_sge* sge;
-};
-
 class IbQp {
  public:
   ~IbQp();
@@ -82,8 +77,13 @@ class IbQp {
   const ibv_wc* getWc(int idx) const;
 
  private:
+  struct WrInfo {
+    ibv_send_wr* wr;
+    ibv_sge* sge;
+  };
+
   IbQp(ibv_context* ctx, ibv_pd* pd, int port);
-  IbQpWrInfo getNewWR();
+  WrInfo getNewWrInfo();
 
   IbQpInfo info;
 

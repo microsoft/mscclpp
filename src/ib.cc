@@ -181,7 +181,7 @@ void IbQp::rts() {
   }
 }
 
-IbQpWrInfo IbQp::getNewWR() {
+IbQp::WrInfo IbQp::getNewWrInfo() {
   if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
     std::stringstream err;
     err << "too many outstanding work requests. limit is " << MSCCLPP_IB_MAX_SENDS;
@@ -189,20 +189,20 @@ IbQpWrInfo IbQp::getNewWR() {
   }
   int wrn = this->wrn;
 
-  struct ibv_send_wr* wr_ = &this->wrs[wrn];
-  struct ibv_sge* sge_ = &this->sges[wrn];
+  ibv_send_wr* wr_ = &this->wrs[wrn];
+  ibv_sge* sge_ = &this->sges[wrn];
   wr_->sg_list = sge_;
   wr_->num_sge = 1;
   if (wrn > 0) {
     this->wrs[wrn - 1].next = wr_;
   }
   this->wrn++;
-  return IbQpWrInfo{wr_, sge_};
+  return IbQp::WrInfo{wr_, sge_};
 }
 
 void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                      uint64_t dstOffset, bool signaled) {
-  auto wrInfo = this->getNewWR();
+  auto wrInfo = this->getNewWrInfo();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_RDMA_WRITE;
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
@@ -216,7 +216,7 @@ void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64
 
 void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset,
                           uint64_t addVal) {
-  auto wrInfo = this->getNewWR();
+  auto wrInfo = this->getNewWrInfo();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
   wrInfo.wr->send_flags = 0;  // atomic op cannot be signaled
@@ -230,7 +230,7 @@ void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, u
 
 void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                             uint64_t dstOffset, bool signaled, unsigned int immData) {
-  auto wrInfo = this->getNewWR();
+  auto wrInfo = this->getNewWrInfo();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
