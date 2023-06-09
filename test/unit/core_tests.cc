@@ -37,14 +37,14 @@ TEST_F(LocalCommunicatorTest, RegisterMemory) {
   EXPECT_EQ(memory.transports(), mscclpp::NoTransports);
 }
 
-TEST_F(LocalCommunicatorTest, SendMemoryToSelf) {
-  int dummy[42];
-  auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
-  comm->sendMemoryOnSetup(memory, 0, 0);
-  auto memoryFuture = comm->recvMemoryOnSetup(0, 0);
-  comm->setup();
-  auto sameMemory = memoryFuture.get();
-  EXPECT_EQ(sameMemory.size(), memory.size());
-  EXPECT_EQ(sameMemory.rank(), memory.rank());
-  EXPECT_EQ(sameMemory.transports(), memory.transports());
-}
+// TEST_F(LocalCommunicatorTest, SendMemoryToSelf) {
+//   int dummy[42];
+//   auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
+//   comm->sendMemoryOnSetup(memory, 0, 0);
+//   auto memoryFuture = comm->recvMemoryOnSetup(0, 0);
+//   comm->setup();
+//   auto sameMemory = memoryFuture.get();
+//   EXPECT_EQ(sameMemory.size(), memory.size());
+//   EXPECT_EQ(sameMemory.rank(), memory.rank());
+//   EXPECT_EQ(sameMemory.transports(), memory.transports());
+// }

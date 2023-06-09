@@ -1,12 +1,14 @@
 trigger:
 - main
 
+# Do not run multi-nodes-test for PR, we can trigger it manually
+pr: none
+
 pool:
   name: mscclpp-it
 container:
-  # image: superbench/superbench:v0.8.0-cuda12.1
   image: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
-  endpoint: mscclpp-pacakge
+  endpoint: mscclpp-package
 
 steps:
 - task: Bash@3

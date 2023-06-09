@@ -47,7 +47,8 @@ __device__ void alltoall1(int rank, int nRanksPerNode, size_t nElements) {
 __global__ void kernel(int rank, int worldSize, size_t nElements, int nRanksPerNode, int kernelNum) {
   if (kernelNum == 0) {
     alltoall0(rank, worldSize, nElements);
-  } if (kernelNum == 1) {
+  }
+  if (kernelNum == 1) {
     alltoall1(rank, nRanksPerNode, nElements);
   }
 }
@@ -69,7 +70,7 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int kernelNum = args.kernelNum;
   const int nRanksPerNode = args.nRanksPerNode;
   CUDATHROW(cudaMemcpyAsync((int*)localRecvBuff + paramCount_ * rank, (int*)localSendBuff + paramCount_ * rank,
-                  paramCount_ * sizeof(int), cudaMemcpyDeviceToDevice, stream));
+                            paramCount_ * sizeof(int), cudaMemcpyDeviceToDevice, stream));
   kernel<<<worldSize - 1, 32, 0, stream>>>(rank, worldSize, paramCount_, nRanksPerNode, kernelNum);
 }
 
