@@ -34,15 +34,21 @@ MSCCLPP_API_CPP HostEpoch::HostEpoch(Communicator& communicator, std::shared_ptr
 
 MSCCLPP_API_CPP void HostEpoch::wait() {
   (*expectedInboundEpochId_) += 1;
-  while (*(volatile uint64_t*)&(inboundEpochId_) < (*expectedInboundEpochId_)){
-    // printf("waiting for epoch %lu vs %lu\n", *expectedInboundEpochId_, *(volatile uint64_t*)&(epochIds_->inboundReplica));
+  while (*(volatile uint64_t*)&(inboundEpochId_) < (*expectedInboundEpochId_)) {
+    // printf("waiting for epoch %lu vs %lu\n", *expectedInboundEpochId_, *(volatile
+    // uint64_t*)&(epochIds_->inboundReplica));
   }
 }
 
 MSCCLPP_API_CPP DirectEpoch::DirectEpoch(Communicator& communicator, std::shared_ptr<Connection> connection)
-    : expectedInboundEpochId_(allocUniqueCuda<uint64_t>()), outboundEpochId_(allocUniqueCuda<uint64_t>()),
-     localInboundEpochId_(allocUniqueCuda<uint64_t>()) {
-  auto localInboundEpochIdsRegMem = communicator.registerMemory(localInboundEpochId_.get(), sizeof(uint64_t), connection->transport());
+    : expectedInboundEpochId_(allocUniqueCuda<uint64_t>()),
+      outboundEpochId_(allocUniqueCuda<uint64_t>()),
+      localInboundEpochId_(allocUniqueCuda<uint64_t>()) {
+  if (connection->transport() != Transport::CudaIpc) {
+    throw Error("DirectEpoch can only be used with CudaIpc transport", ErrorCode::InvalidUsage);
+  }
+  auto localInboundEpochIdsRegMem =
+      communicator.registerMemory(localInboundEpochId_.get(), sizeof(uint64_t), connection->transport());
 
   communicator.sendMemoryOnSetup(localInboundEpochIdsRegMem, connection->remoteRank(), connection->tag());
   remoteInboundEpochIdsRegMem_ = communicator.recvMemoryOnSetup(connection->remoteRank(), connection->tag());

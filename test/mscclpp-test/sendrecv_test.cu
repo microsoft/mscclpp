@@ -43,7 +43,7 @@ __global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock) {
   deviceSyncer.sync(gridDim.x);
   if (globalIndex == 0) {
     sendConn.signalDirect();
-    recvConn.wait();
+    recvConn.waitDirect();
   }
 }
 

@@ -59,9 +59,10 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
   uint64_t oldValue = *src;
   *src = newValue;
   uint64_t* dstPtr = (uint64_t*)dst.data();
-  
+
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, src, sizeof(uint64_t), cudaMemcpyHostToDevice, stream_));
-  INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue, newValue);
+  INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
+       newValue);
 
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)size);
 }
@@ -112,8 +113,8 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)size);
 }
 
-void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue){
-  auto dstTransportInfo = validateAndGetTransportInfo(dst, remoteTransport());                          
+void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
+  auto dstTransportInfo = validateAndGetTransportInfo(dst, remoteTransport());
   // auto srcTransportInfo = validateAndGetTransportInfo(src, transport());
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
@@ -122,10 +123,10 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   uint64_t oldValue = *src;
   *src = newValue;
 
-  qp->stageAtomicAdd(dstMrInfo, /*wrId=*/0, dstOffset, newValue-oldValue);
+  qp->stageAtomicAdd(dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue);
   qp->postSend();
-  INFO(MSCCLPP_NET, "IBConnection atomic Write: from %p to %p, %lu -> %lu", src,
-       (uint8_t*)dstMrInfo.addr + dstOffset, oldValue, newValue);
+  INFO(MSCCLPP_NET, "IBConnection atomic Write: from %p to %p, %lu -> %lu", src, (uint8_t*)dstMrInfo.addr + dstOffset,
+       oldValue, newValue);
 }
 
 void IBConnection::flush() {

@@ -214,8 +214,7 @@ void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64
   wrInfo.sge->lkey = mr->getLkey();
 }
 
-void IbQp::stageAtomicAdd(const IbMrInfo& info, uint64_t wrId,
-                uint64_t dstOffset, uint64_t addVal) {
+void IbQp::stageAtomicAdd(const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal) {
   auto wrInfo = this->getNewWrInfo();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
@@ -226,13 +225,13 @@ void IbQp::stageAtomicAdd(const IbMrInfo& info, uint64_t wrId,
   // receiver's NIC adds it with addVal
   // receiver's NIC writes the new value atomically back to the remote_address
 
-  wrInfo.wr->send_flags = 0; // atomic op cannot be signaled
+  wrInfo.wr->send_flags = 0;  // atomic op cannot be signaled
   wrInfo.wr->wr.atomic.remote_addr = (uint64_t)(info.addr) + dstOffset;
   wrInfo.wr->wr.atomic.rkey = info.rkey;
   wrInfo.wr->wr.atomic.compare_add = addVal;
-  wrInfo.sge->addr = 0;//(uint64_t)(mr->getBuff()) + srcOffset;
-  wrInfo.sge->length = 0; // atomic op is always 8 bytes
-  wrInfo.sge->lkey = 0;//mr->getLkey();
+  wrInfo.sge->addr = 0;    //(uint64_t)(mr->getBuff()) + srcOffset;
+  wrInfo.sge->length = 0;  // atomic op is always 8 bytes
+  wrInfo.sge->lkey = 0;    // mr->getLkey();
 }
 
 void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,

@@ -21,9 +21,9 @@ class BaseEpoch {
 
  protected:
   NonblockingFuture<RegisteredMemory> remoteInboundEpochIdsRegMem_;
-  uint64_t outBoundEpochId_; // always on the host
-  std::unique_ptr<uint64_t, Deleter<uint64_t>> inboundEpochId_; // could be device or host
-  std::unique_ptr<uint64_t, Deleter<uint64_t>> expectedInboundEpochId_; // could be device or host
+  uint64_t outBoundEpochId_;                                             // always on the host
+  std::unique_ptr<uint64_t, Deleter<uint64_t>> inboundEpochId_;          // could be device or host
+  std::unique_ptr<uint64_t, Deleter<uint64_t>> expectedInboundEpochId_;  // could be device or host
 
  public:
   BaseEpoch(std::shared_ptr<Connection> connection, std::unique_ptr<uint64_t, Deleter<uint64_t>> inboundEpochId,
@@ -34,26 +34,26 @@ class BaseEpoch {
         expectedInboundEpochId_(std::move(expectedInboundEpochId)) {}
 
   void setup(Communicator& communicator) {
-    auto localInboundEpochIdsRegMem = communicator.registerMemory(inboundEpochId_.get(), sizeof(uint64_t), connection_->transport());
+    auto localInboundEpochIdsRegMem =
+        communicator.registerMemory(inboundEpochId_.get(), sizeof(uint64_t), connection_->transport());
     communicator.sendMemoryOnSetup(localInboundEpochIdsRegMem, connection_->remoteRank(), connection_->tag());
     remoteInboundEpochIdsRegMem_ = communicator.recvMemoryOnSetup(connection_->remoteRank(), connection_->tag());
   }
 
   void signal() {
-    connection_->updateAndSync(remoteEpochIdsRegMem_.get(), 0, &outBoundEpochId_, outBoundEpochId_ + 1);
+    connection_->updateAndSync(remoteInboundEpochIdsRegMem_.get(), 0, &outBoundEpochId_, outBoundEpochId_ + 1);
   }
 };
 
-class DeviceEpoch : BaseEpoch<CudaDeleter> {
+class DeviceEpoch : public BaseEpoch<CudaDeleter> {
  public:
   DeviceEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
-  // void signal();
 
   struct DeviceHandle {
 #ifdef __CUDACC__
     __forceinline__ __device__ void wait() {
       (*expectedInboundEpochId) += 1;
-      while (*(volatile uint64_t*)&(inboundEpochId) < (*expectedInboundEpochId)){
+      while (*(volatile uint64_t*)&(inboundEpochId) < (*expectedInboundEpochId)) {
       }
     }
 #endif  // __CUDACC__
@@ -80,17 +80,17 @@ class DirectEpoch {
   std::unique_ptr<uint64_t, CudaDeleter<uint64_t>> expectedInboundEpochId_;
   std::unique_ptr<uint64_t, CudaDeleter<uint64_t>> outboundEpochId_;
 
-public:
+ public:
   DirectEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
   struct DeviceHandle {
 #ifdef __CUDACC__
     __forceinline__ __device__ void wait() {
       (*expectedInboundEpochId) += 1;
-      while (*inboundEpochId < (*expectedInboundEpochId)){
+      while (*inboundEpochId < (*expectedInboundEpochId)) {
       }
     }
 
-    __forceinline__ __device__ void signalDirect() {
+    __forceinline__ __device__ void signal() {
       // This fence ensures that the writes from a preceding putDirect() are visible on the peer GPU before the
       // incremented epoch id is visible.
       __threadfence_system();
