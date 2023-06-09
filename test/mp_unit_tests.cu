@@ -258,7 +258,7 @@ static mscclpp::Transport ibIdToTransport(int id) {
   return IBs[id];
 }
 
-class IbTest : public MultiProcessTest {
+class IbTestBase : public MultiProcessTest {
  protected:
   void SetUp() override {
     MSCCLPP_CUDATHROW(cudaGetDeviceCount(&cudaDevNum));
@@ -274,49 +274,88 @@ class IbTest : public MultiProcessTest {
   std::string ibDevName;
 };
 
-TEST_F(IbTest, SimpleSendRecv) {
+class IbPeerToPeerTest : public IbTestBase {
+ protected:
+  void SetUp() override {
+    if (gEnv->rank >= 2) {
+      // This test needs only two ranks
+      return;
+    }
+
+    IbTestBase::SetUp();
+
+    bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, 2);
+    mscclpp::UniqueId id;
+    if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
+    MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
+    bootstrap->initialize(id);
+
+    ibCtx = std::make_shared<mscclpp::IbCtx>(ibDevName);
+    qp = ibCtx->createQp();
+
+    qpInfo[gEnv->rank] = qp->getInfo();
+    bootstrap->allGather(qpInfo.data(), sizeof(mscclpp::IbQpInfo));
+  }
+
+  void registerBufferAndConnect(void* buf, size_t size) {
+    bufSize = size;
+    mr = ibCtx->registerMr(buf, size);
+    mrInfo[gEnv->rank] = mr->getInfo();
+    bootstrap->allGather(mrInfo.data(), sizeof(mscclpp::IbMrInfo));
+
+    for (int i = 0; i < bootstrap->getNranks(); ++i) {
+      if (i == gEnv->rank) continue;
+      qp->rtr(qpInfo[i]);
+      qp->rts();
+      break;
+    }
+    bootstrap->barrier();
+  }
+
+  void stageSend(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled) {
+    const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
+    qp->stageSend(mr, remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled);
+  }
+
+  void stageAtomicAdd(uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, uint64_t addVal) {
+    const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
+    qp->stageAtomicAdd(mr, remoteMrInfo, wrId, srcOffset, dstOffset, addVal);
+  }
+
+  void stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
+                        unsigned int immData) {
+    const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
+    qp->stageSendWithImm(mr, remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled, immData);
+  }
+
+  std::shared_ptr<mscclpp::Bootstrap> bootstrap;
+  std::shared_ptr<mscclpp::IbCtx> ibCtx;
+  mscclpp::IbQp* qp;
+  const mscclpp::IbMr* mr;
+  size_t bufSize;
+
+  std::array<mscclpp::IbQpInfo, 2> qpInfo;
+  std::array<mscclpp::IbMrInfo, 2> mrInfo;
+};
+
+TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
   if (gEnv->rank >= 2) {
     // This test needs only two ranks
     return;
   }
 
-  mscclpp::Timer timer(3);
+  mscclpp::Timer timeout(3);
 
   const int maxIter = 100000;
   const int nelem = 1;
   auto data = mscclpp::allocUniqueCuda<int>(nelem);
 
-  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, 2);
-  mscclpp::UniqueId id;
-  if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
-  MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
-  bootstrap->initialize(id);
-
-  mscclpp::IbCtx ctx(ibDevName);
-  mscclpp::IbQp* qp = ctx.createQp();
-  const mscclpp::IbMr* mr = ctx.registerMr(data.get(), sizeof(int) * nelem);
-
-  std::array<mscclpp::IbQpInfo, 2> qpInfo;
-  qpInfo[gEnv->rank] = qp->getInfo();
-
-  std::array<mscclpp::IbMrInfo, 2> mrInfo;
-  mrInfo[gEnv->rank] = mr->getInfo();
-
-  bootstrap->allGather(qpInfo.data(), sizeof(mscclpp::IbQpInfo));
-  bootstrap->allGather(mrInfo.data(), sizeof(mscclpp::IbMrInfo));
-
-  for (int i = 0; i < bootstrap->getNranks(); ++i) {
-    if (i == gEnv->rank) continue;
-    qp->rtr(qpInfo[i]);
-    qp->rts();
-    break;
-  }
-  bootstrap->barrier();
+  registerBufferAndConnect(data.get(), sizeof(int) * nelem);
 
   if (gEnv->rank == 1) {
     mscclpp::Timer timer;
     for (int iter = 0; iter < maxIter; ++iter) {
-      qp->stageSend(mr, mrInfo[0], sizeof(int) * nelem, 0, 0, 0, true);
+      stageSend(sizeof(int) * nelem, 0, 0, 0, true);
       qp->postSend();
       bool waiting = true;
       int spin = 0;
@@ -335,9 +374,159 @@ TEST_F(IbTest, SimpleSendRecv) {
       }
     }
     float us = (float)timer.elapsed();
-    std::cout << "IbTest.SimpleSendRecv: " << us / maxIter << " us/iter" << std::endl;
+    std::cout << "IbPeerToPeerTest.SimpleSendRecv: " << us / maxIter << " us/iter" << std::endl;
   }
   bootstrap->barrier();
+}
+
+__global__ void kernelMemoryConsistency(uint64_t* data, volatile int* result, uint64_t nelem, uint64_t maxIter) {
+  if (blockIdx.x != 0) return;
+
+  constexpr int FlagWrong = 1;
+  constexpr int FlagAbort = 2;
+
+  volatile uint64_t* ptr = data;
+  for (uint64_t iter = 1; iter < maxIter + 1; ++iter) {
+    int err = 0;
+
+    if (threadIdx.x == 0) {
+      // Wait for the last element arrival (expect equal to iter). Expect that the last element is delivered in
+      // a special way that guarantees all previous elements are completely delivered.
+      uint64_t spin = 0;
+      while (ptr[nelem - 1] != iter) {
+        if (spin++ == 1000000) {
+          // Assume the program is stuck. Set the abort flag and escape the loop.
+          *result |= FlagAbort;
+          err = 1;
+          break;
+        }
+      }
+    }
+    __syncthreads();
+
+    // Check results (expect equal to iter) in backward that is more likely to see the wrong result.
+    for (size_t i = nelem - 1 + threadIdx.x; i >= blockDim.x; i -= blockDim.x) {
+      if (data[i - blockDim.x] != iter) {
+#if 1
+        *result |= FlagWrong;
+        err = 1;
+        break;
+#else
+        // For debugging purposes: try waiting for the correct result.
+        uint64_t spin = 0;
+        while (ptr[i - blockDim.x] != iter) {
+          if (spin++ == 1000000) {
+            *result |= FlagAbort;
+            err = 1;
+            break;
+          }
+        }
+        if (spin >= 1000000) {
+          break;
+        }
+#endif
+      }
+    }
+    __threadfence();
+    __syncthreads();
+
+    // Shuffle err
+    for (int i = 16; i > 0; i /= 2) {
+      err += __shfl_xor_sync(0xffffffff, err, i);
+    }
+
+    if (err > 0) {
+      // Exit if any error is detected.
+      return;
+    }
+  }
+}
+
+TEST_F(IbPeerToPeerTest, MemoryConsistency) {
+  if (gEnv->rank >= 2) {
+    // This test needs only two ranks
+    return;
+  }
+
+  const uint64_t maxIter = 1;
+  const uint64_t nelem = 2134353 + 1;
+  auto data = mscclpp::allocUniqueCuda<uint64_t>(nelem);
+
+  registerBufferAndConnect(data.get(), sizeof(uint64_t) * nelem);
+
+  uint64_t res = 0;
+  uint64_t iter = 0;
+
+  if (gEnv->rank == 0) {
+    // Receiver
+    auto result = mscclpp::makeUniqueCudaHost<int>(1);
+    *result = 0;
+
+    kernelMemoryConsistency<<<1, 1024>>>(data.get(), (volatile int*)result.get(), nelem, maxIter);
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+
+    for (iter = 1; iter < maxIter + 1; ++iter) {
+      mscclpp::Timer timeout(5);
+
+      // Send the result to the sender
+      res = *(volatile int*)result.get();
+      uint64_t tmp[2];
+      tmp[0] = res;
+      bootstrap->allGather(tmp, sizeof(uint64_t));
+
+      if (res != 0) break;
+    }
+
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  } else if (gEnv->rank == 1) {
+    // Sender
+    std::vector<uint64_t> hostBuffer(nelem, 0);
+
+    for (iter = 1; iter < maxIter + 1; ++iter) {
+      mscclpp::Timer timeout(5);
+
+      // Set data
+      for (uint64_t i = 0; i < nelem; i++) {
+        hostBuffer[i] = iter;
+      }
+      mscclpp::memcpyCuda<uint64_t>(data.get(), hostBuffer.data(), nelem, cudaMemcpyHostToDevice);
+
+#if 1
+      // Send everything at once. This should see the wrong result.
+      // TODO(chhwang): need to make this version return error.
+      stageSend(sizeof(uint64_t) * nelem, 0, 0, 0, false);
+      qp->postSend();
+#else
+      // For reference: send the last element using AtomicAdd. This should see the correct result.
+
+      // Send the first (nelem - 1) elements
+      stageSend(sizeof(uint64_t) * (nelem - 1), 0, 0, 0, false);
+      qp->postSend();
+
+      // Send the last element
+      size_t offset = sizeof(uint64_t) * (nelem - 1);
+      stageAtomicAdd(0, offset, offset, 1);
+      // stageSend(sizeof(uint64_t), 0, offset, offset, false);
+      qp->postSend();
+#endif
+
+      // Get the result from the receiver
+      uint64_t tmp[2];
+      bootstrap->allGather(tmp, sizeof(uint64_t));
+      uint64_t res = tmp[0];
+
+      if (res != 0) break;
+    }
+  }
+
+  if (res & 2) {
+    FAIL() << "The receiver is stuck at iteration " << iter << ".";
+  } else if (res != 0 && res != 1) {
+    FAIL() << "Unknown error is detected at iteration " << iter << ". res =" << res;
+  }
+
+  // Expect only FlagWrong set.
+  EXPECT_EQ(res, 1);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
