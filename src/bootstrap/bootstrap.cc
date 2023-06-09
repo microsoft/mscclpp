@@ -8,6 +8,7 @@
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "api.h"
@@ -77,15 +78,19 @@ class Bootstrap::Impl {
   mscclppSocket ringRecvSocket_;
   mscclppSocket ringSendSocket_;
   std::vector<mscclppSocketAddress> peerCommAddresses_;
-  std::list<UnexpectedMsg> unexpectedMessages_;
   std::vector<int> barrierArr_;
   volatile uint32_t* abortFlag_;
   std::thread rootThread_;
   char netIfName_[MAX_IF_NAME_SIZE + 1];
   mscclppSocketAddress netIfAddr_;
+  std::unordered_map<std::pair<int, int>, std::shared_ptr<mscclppSocket>, PairHash> peerSendSockets_;
+  std::unordered_map<std::pair<int, int>, std::shared_ptr<mscclppSocket>, PairHash> peerRecvSockets_;
 
   void netSend(mscclppSocket* sock, const void* data, int size);
   void netRecv(mscclppSocket* sock, void* data, int size);
+
+  std::shared_ptr<mscclppSocket> getPeerSendSocket(int peer, int tag);
+  std::shared_ptr<mscclppSocket> getPeerRecvSocket(int peer, int tag);
 
   void bootstrapCreateRoot();
   void bootstrapRoot(mscclppSocket listenSock);
@@ -346,6 +351,40 @@ void Bootstrap::Impl::allGather(void* allData, int size) {
   TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d - DONE", rank, nRanks, size);
 }
 
+std::shared_ptr<mscclppSocket> Bootstrap::Impl::getPeerSendSocket(int peer, int tag) {
+  auto it = this->peerSendSockets_.find(std::make_pair(peer, tag));
+  if (it != this->peerSendSockets_.end()) {
+    return it->second;
+  }
+  auto sock = std::make_shared<mscclppSocket>();
+  MSCCLPPTHROW(mscclppSocketInit(sock.get(), &this->peerCommAddresses_[peer], this->uniqueId_.magic,
+                                 mscclppSocketTypeBootstrap, this->abortFlag_));
+  MSCCLPPTHROW(mscclppSocketConnect(sock.get()));
+  netSend(sock.get(), &this->rank_, sizeof(int));
+  netSend(sock.get(), &tag, sizeof(int));
+  this->peerSendSockets_[std::make_pair(peer, tag)] = sock;
+  return sock;
+}
+
+std::shared_ptr<mscclppSocket> Bootstrap::Impl::getPeerRecvSocket(int peer, int tag) {
+  auto it = this->peerRecvSockets_.find(std::make_pair(peer, tag));
+  if (it != this->peerRecvSockets_.end()) {
+    return it->second;
+  }
+  for (;;) {
+    auto sock = std::make_shared<mscclppSocket>();
+    MSCCLPPTHROW(mscclppSocketInit(sock.get()));
+    MSCCLPPTHROW(mscclppSocketAccept(sock.get(), &this->listenSock_));
+    int recvPeer, recvTag;
+    netRecv(sock.get(), &recvPeer, sizeof(int));
+    netRecv(sock.get(), &recvTag, sizeof(int));
+    this->peerRecvSockets_[std::make_pair(recvPeer, recvTag)] = sock;
+    if (recvPeer == peer && recvTag == tag) {
+      return sock;
+    }
+  }
+}
+
 void Bootstrap::Impl::netSend(mscclppSocket* sock, const void* data, int size) {
   MSCCLPPTHROW(mscclppSocketSend(sock, &size, sizeof(int)));
   MSCCLPPTHROW(mscclppSocketSend(sock, const_cast<void*>(data), size));
@@ -363,44 +402,13 @@ void Bootstrap::Impl::netRecv(mscclppSocket* sock, void* data, int size) {
 }
 
 void Bootstrap::Impl::send(void* data, int size, int peer, int tag) {
-  mscclppSocket sock;
-  MSCCLPPTHROW(mscclppSocketInit(&sock, &this->peerCommAddresses_[peer], this->uniqueId_.magic,
-                                 mscclppSocketTypeBootstrap, this->abortFlag_));
-  MSCCLPPTHROW(mscclppSocketConnect(&sock));
-  netSend(&sock, &this->rank_, sizeof(int));
-  netSend(&sock, &tag, sizeof(int));
-  netSend(&sock, data, size);
-
-  MSCCLPPTHROW(mscclppSocketClose(&sock));
+  auto sock = getPeerSendSocket(peer, tag);
+  netSend(sock.get(), data, size);
 }
 
 void Bootstrap::Impl::recv(void* data, int size, int peer, int tag) {
-  // search over all unexpected messages
-  auto lambda = [peer, tag](const UnexpectedMsg& msg) { return msg.peer == peer && msg.tag == tag; };
-  auto it = std::find_if(unexpectedMessages_.begin(), unexpectedMessages_.end(), lambda);
-  if (it != unexpectedMessages_.end()) {
-    // found a match
-    netRecv(it->sock.get(), data, size);
-    MSCCLPPTHROW(mscclppSocketClose(it->sock.get()));
-    unexpectedMessages_.erase(it);
-    return;
-  }
-  // didn't find one
-  while (true) {
-    auto sock = std::make_shared<mscclppSocket>();
-    int newPeer, newTag;
-    MSCCLPPTHROW(mscclppSocketInit(sock.get()));
-    MSCCLPPTHROW(mscclppSocketAccept(sock.get(), &this->listenSock_));
-    netRecv(sock.get(), &newPeer, sizeof(int));
-    netRecv(sock.get(), &newTag, sizeof(int));
-    if (newPeer == peer && newTag == tag) {
-      netRecv(sock.get(), ((char*)data), size);
-      MSCCLPPTHROW(mscclppSocketClose(sock.get()));
-      return;
-    }
-    // Unexpected message. Save for later.
-    unexpectedMessages_.push_back({newPeer, newTag, sock});
-  }
+  auto sock = getPeerRecvSocket(peer, tag);
+  netRecv(sock.get(), data, size);
 }
 
 void Bootstrap::Impl::barrier() { allGather(barrierArr_.data(), sizeof(int)); }
@@ -409,6 +417,14 @@ void Bootstrap::Impl::close() {
   MSCCLPPTHROW(mscclppSocketClose(&this->listenSock_));
   MSCCLPPTHROW(mscclppSocketClose(&this->ringSendSocket_));
   MSCCLPPTHROW(mscclppSocketClose(&this->ringRecvSocket_));
+  for (auto& it : this->peerSendSockets_) {
+    MSCCLPPTHROW(mscclppSocketClose(it.second.get()));
+  }
+  this->peerSendSockets_.clear();
+  for (auto& it : this->peerRecvSockets_) {
+    MSCCLPPTHROW(mscclppSocketClose(it.second.get()));
+  }
+  this->peerRecvSockets_.clear();
 }
 
 MSCCLPP_API_CPP Bootstrap::Bootstrap(int rank, int nRanks) {
