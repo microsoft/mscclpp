@@ -521,7 +521,7 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
       stageSend(sizeof(uint64_t), 0, 0, 0, false);
       qp->postSend();
 #else
-      // For reference: send the last element using AtomicAdd. This should see the correct result.
+      // For reference: send the first element using AtomicAdd. This should see the correct result.
       stageAtomicAdd(0, 0, 0, 1);
       qp->postSend();
 #endif
