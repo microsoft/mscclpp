@@ -228,19 +228,28 @@ size_t BaseTestEngine::checkData() {
 }
 
 // Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
+// TODO(saemal): retrun the actual vector instead of void
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels,
-                                          void* sendBuff, size_t sendBuffBytes, void* recvBuff, size_t recvBuffBytes) {
+                                          std::vector<mscclpp::channel::DirectChannel>& directChannels, void* inputBuff,
+                                          size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes) {
   const int worldSize = args_.totalRanks;
   const int rank = args_.rank;
   const int nRanksPerNode = args_.nRanksPerNode;
   const int thisNode = rank / nRanksPerNode;
   const mscclpp::Transport ibTransport = IBs[args_.gpuNum];
-  const bool isOutPlace = (recvBuff != nullptr);
+  const bool isOutPlace = (outputBuff != nullptr);
 
   std::vector<mscclpp::channel::ChannelId> channelIds;
-  std::vector<mscclpp::RegisteredMemory> localMemories;
-  std::vector<mscclpp::RegisteredMemory> localTmpMemories;
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemories;
+  mscclpp::RegisteredMemory inputBufRegMem =
+      comm_->registerMemory(inputBuff, inputBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
+  mscclpp::RegisteredMemory outputBufRegMem;
+  if (isOutPlace) {
+    outputBufRegMem = comm_->registerMemory(outputBuff, outputBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
+  }
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
+
+  std::vector<mscclpp::DirectEpoch> directEpochs;
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> directRegMemories;
 
   auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
   for (int r = 0; r < worldSize; r++) {
@@ -254,25 +263,32 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
       transport = ibTransport;
     }
     // Connect with all other ranks
-    channelIds.push_back(chanService_->addChannel(comm_->connectOnSetup(r, 0, transport)));
-    auto sendMemory = comm_->registerMemory(sendBuff, sendBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
-    localMemories.push_back(sendMemory);
+    auto connection = comm_->connectOnSetup(r, 0, transport);
+    channelIds.push_back(chanService_->addChannel(connection));
+
     if (isOutPlace) {
-      auto recvMemory = comm_->registerMemory(recvBuff, recvBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
-      comm_->sendMemoryOnSetup(recvMemory, r, 0);
-      localTmpMemories.push_back(recvMemory);
+      comm_->sendMemoryOnSetup(outputBufRegMem, r, 0);
     } else {
-      comm_->sendMemoryOnSetup(sendMemory, r, 0);
+      comm_->sendMemoryOnSetup(inputBufRegMem, r, 0);
     }
-    remoteMemories.push_back(comm_->recvMemoryOnSetup(r, 0));
+    auto remoteMemory = comm_->recvMemoryOnSetup(r, 0);
+    remoteRegMemories.push_back(remoteMemory);
+
+    if (rankToNode(r) == thisNode) {
+      directEpochs.emplace_back(*comm_, connection);
+      directRegMemories.push_back(remoteMemory);
+    }
   }
   comm_->setup();
 
   for (size_t i = 0; i < channelIds.size(); ++i) {
-    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
-        chanService_->deviceChannel(channelIds[i]), chanService_->addMemory(remoteMemories[i].get()),
-        chanService_->addMemory(localMemories[i]), remoteMemories[i].get().data(), localMemories[i].data(),
-        (isOutPlace ? localTmpMemories[i].data() : nullptr)));
+    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(chanService_->deviceChannel(channelIds[i]),
+                                                                chanService_->addMemory(remoteRegMemories[i].get()),
+                                                                chanService_->addMemory(inputBufRegMem)));
+  }
+
+  for (size_t i = 0; i < directEpochs.size(); ++i) {
+    directChannels.push_back(mscclpp::channel::DirectChannel(directEpochs[i].deviceHandle(), directRegMemories[i].get(), inputBufRegMem.data()));
   }
 }
 
