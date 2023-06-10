@@ -300,19 +300,31 @@ void AllReduceTestEngine::allocateBuffer() {
 
 void AllReduceTestEngine::setupConnections() {
   std::vector<mscclpp::channel::SimpleDeviceChannel> fstRoundChannels;
+  std::vector<mscclpp::channel::DirectChannel> fstDirectChannels;
   std::vector<mscclpp::channel::SimpleDeviceChannel> sndRoundChannels;
+  std::vector<mscclpp::channel::DirectChannel> sndDirectChannels;
 
   // Send data from local sendBuff to remote scratchBuff (out-of-place)
-  setupMeshConnections(fstRoundChannels, sendBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
+  setupMeshConnections(fstRoundChannels, fstDirectChannels, sendBuff_.get(), args_.maxBytes, scratchBuff_.get(),
+                       args_.maxBytes);
   assert(fstRoundChannels.size() < sizeof(constDevFstRoundChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));
   CUDATHROW(cudaMemcpyToSymbol(constDevFstRoundChans, fstRoundChannels.data(),
                                sizeof(mscclpp::channel::SimpleDeviceChannel) * fstRoundChannels.size()));
 
   // Send data from local sendBuff to remote sendBuff (in-place)
-  setupMeshConnections(sndRoundChannels, sendBuff_.get(), args_.maxBytes);
+  setupMeshConnections(sndRoundChannels, sndDirectChannels, sendBuff_.get(), args_.maxBytes);
   assert(sndRoundChannels.size() < sizeof(constDevSndRoundChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));
   CUDATHROW(cudaMemcpyToSymbol(constDevSndRoundChans, sndRoundChannels.data(),
                                sizeof(mscclpp::channel::SimpleDeviceChannel) * sndRoundChannels.size()));
+
+  // Now do the same but for direct channels
+  assert(fstDirectChannels.size() < sizeof(constFstDirChans) / sizeof(mscclpp::channel::DirectChannel));
+  CUDATHROW(cudaMemcpyToSymbol(constFstDirChans, fstDirectChannels.data(),
+                               sizeof(mscclpp::channel::DirectChannel) * fstDirectChannels.size()));
+
+  assert(sndDirectChannels.size() < sizeof(constSndDirChans) / sizeof(mscclpp::channel::DirectChannel));
+  CUDATHROW(cudaMemcpyToSymbol(constSndDirChans, sndDirectChannels.data(),
+                               sizeof(mscclpp::channel::DirectChannel) * sndDirectChannels.size()));
 }
 
 std::vector<void*> AllReduceTestEngine::getSendBuff() { return {sendBuff_.get()}; }

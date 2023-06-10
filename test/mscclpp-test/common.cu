@@ -288,7 +288,8 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
   }
 
   for (size_t i = 0; i < directEpochs.size(); ++i) {
-    directChannels.push_back(mscclpp::channel::DirectChannel(directEpochs[i].deviceHandle(), directRegMemories[i].get(), inputBufRegMem.data()));
+    directChannels.push_back(mscclpp::channel::DirectChannel(directEpochs[i].deviceHandle(), directRegMemories[i].get(),
+                                                             inputBufRegMem.data()));
   }
 }
 

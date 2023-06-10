@@ -243,6 +243,7 @@ struct SimpleDeviceChannel {
 // A direct version of DeviceChannel only for CudaIpc
 struct DirectChannel {
  public:
+  DirectChannel() = default;
   DirectChannel(DirectEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src) : epoch_(epoch), src_(src) {
     if (!dst.transports().has(Transport::CudaIpc)) {
       throw Error("DirectChannel: dst must be registered with CudaIpc", ErrorCode::InvalidUsage);
