@@ -319,7 +319,7 @@ class IbPeerToPeerTest : public IbTestBase {
 
   void stageAtomicAdd(uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, uint64_t addVal) {
     const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
-    qp->stageAtomicAdd(remoteMrInfo, wrId, dstOffset, addVal);
+    qp->stageAtomicAdd(mr, remoteMrInfo, wrId, dstOffset, addVal);
   }
 
   void stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
@@ -516,7 +516,7 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
       stageSend(sizeof(uint64_t) * (nelem - 1), 0, sizeof(uint64_t), sizeof(uint64_t), signaled);
       qp->postSend();
 
-#if 1
+#if 0
       // Send the first element using a normal send. This should occasionally see the wrong result.
       stageSend(sizeof(uint64_t), 0, 0, 0, false);
       qp->postSend();
@@ -551,8 +551,7 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
     FAIL() << "Unknown error is detected at iteration " << iter << ". res =" << res;
   }
 
-  // Expect only FlagWrong set.
-  EXPECT_EQ(res, 1);
+  EXPECT_EQ(res, 0);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

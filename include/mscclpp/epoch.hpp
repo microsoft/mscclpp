@@ -53,7 +53,7 @@ class DeviceEpoch : public BaseEpoch<CudaDeleter> {
 #ifdef __CUDACC__
     __forceinline__ __device__ void wait() {
       (*expectedInboundEpochId) += 1;
-      printf("Waiting for %lu -- %lu\n", *expectedInboundEpochId, *(volatile uint64_t*)&(inboundEpochId));
+      printf("Waiting for %d -- %d\n", (int)*expectedInboundEpochId, (int)*(volatile uint64_t*)inboundEpochId);
       while (*(volatile uint64_t*)&(inboundEpochId) < (*expectedInboundEpochId)) {
       }
     }

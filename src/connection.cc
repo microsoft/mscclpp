@@ -78,8 +78,17 @@ IBConnection::IBConnection(int remoteRank, int tag, Transport transport, Communi
     : ConnectionBase(remoteRank, tag),
       transport_(transport),
       remoteTransport_(Transport::Unknown),
-      numSignaledSends(0) {
+      numSignaledSends(0),
+      dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
   qp = commImpl.getIbContext(transport)->createQp();
+  dummyAtomicSourceMem_ = RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(
+      dummyAtomicSource_.get(), sizeof(uint64_t), commImpl.bootstrap_->getRank(), transport, commImpl));
+  validateTransport(dummyAtomicSourceMem_, transport);
+  dstTransportInfo_ = getRegisteredMemoryImpl(dummyAtomicSourceMem_)->getTransportInfo(transport);
+
+  if (!dstTransportInfo_.ibLocal) {
+    throw Error("dummyAtomicSource_ is remote, which is not supported", ErrorCode::InternalError);
+  }
 }
 
 Transport IBConnection::transport() { return transport_; }
@@ -121,12 +130,11 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   }
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
-  // auto srcMr = srcTransportInfo.ibMr;
   // assert that src is on host
   uint64_t oldValue = *src;
   *src = newValue;
 
-  qp->stageAtomicAdd(dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue);
+  qp->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue);
   qp->postSend();
   INFO(MSCCLPP_NET, "IBConnection atomic Write: from %p to %p, %lu -> %lu", src, (uint8_t*)dstMrInfo.addr + dstOffset,
        oldValue, newValue);
