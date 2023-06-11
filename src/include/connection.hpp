@@ -51,7 +51,6 @@ class IBConnection : public ConnectionBase {
   Transport remoteTransport_;
   IbQp* qp;
   int numSignaledSends;
-  TransportInfo validateAndGetTransportInfo(RegisteredMemory mem, Transport transport);
 
  public:
   IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl);

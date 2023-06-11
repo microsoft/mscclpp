@@ -86,19 +86,19 @@ Transport IBConnection::transport() { return transport_; }
 
 Transport IBConnection::remoteTransport() { return remoteTransport_; }
 
-TransportInfo IBConnection::validateAndGetTransportInfo(RegisteredMemory mem, Transport transport) {
-  validateTransport(mem, transport);
-  auto transportInfo = getRegisteredMemoryImpl(mem)->getTransportInfo(transport);
-  if (transportInfo.ibLocal) {
-    throw Error("mem is local, which is not supported", ErrorCode::InvalidUsage);
-  }
-  return transportInfo;
-}
-
 void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                          uint64_t size) {
-  auto dstTransportInfo = validateAndGetTransportInfo(dst, remoteTransport());
-  auto srcTransportInfo = validateAndGetTransportInfo(src, transport());
+  validateTransport(dst, remoteTransport());
+  validateTransport(src, transport());
+
+  auto dstTransportInfo = getRegisteredMemoryImpl(dst)->getTransportInfo(remoteTransport());
+  if (dstTransportInfo.ibLocal) {
+    throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
+  }
+  auto srcTransportInfo = getRegisteredMemoryImpl(src)->getTransportInfo(transport());
+  if (!srcTransportInfo.ibLocal) {
+    throw Error("src is remote, which is not supported", ErrorCode::InvalidUsage);
+  }
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
   auto srcMr = srcTransportInfo.ibMr;
@@ -114,8 +114,11 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 }
 
 void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
-  auto dstTransportInfo = validateAndGetTransportInfo(dst, remoteTransport());
-  // auto srcTransportInfo = validateAndGetTransportInfo(src, transport());
+  validateTransport(dst, remoteTransport());
+  auto dstTransportInfo = getRegisteredMemoryImpl(dst)->getTransportInfo(remoteTransport());
+  if (dstTransportInfo.ibLocal) {
+    throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
+  }
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
   // auto srcMr = srcTransportInfo.ibMr;
