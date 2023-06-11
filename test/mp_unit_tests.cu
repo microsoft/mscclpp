@@ -319,7 +319,7 @@ class IbPeerToPeerTest : public IbTestBase {
 
   void stageAtomicAdd(uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, uint64_t addVal) {
     const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
-    qp->stageAtomicAdd(mr, remoteMrInfo, wrId, srcOffset, dstOffset, addVal);
+    qp->stageAtomicAdd(remoteMrInfo, wrId, dstOffset, addVal);
   }
 
   void stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
@@ -752,13 +752,6 @@ TEST_F(CommunicatorTest, BasicWrite) {
   communicator->bootstrapper()->barrier();
 }
 
-__global__ void kernelIncEpochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize) {
-  int tid = threadIdx.x;
-  if (tid != rank && tid < worldSize) {
-    deviceEpochs[tid].epochIncrement();
-  }
-}
-
 __global__ void kernelWaitEpochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize) {
   int tid = threadIdx.x;
   if (tid != rank && tid < worldSize) {
@@ -791,9 +784,6 @@ TEST_F(CommunicatorTest, WriteWithDeviceEpochs) {
   communicator->bootstrapper()->barrier();
 
   writeToRemote(deviceBufferSize / sizeof(int) / gEnv->worldSize);
-
-  kernelIncEpochs<<<1, gEnv->worldSize>>>(deviceEpochHandles.get(), gEnv->rank, gEnv->worldSize);
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank) {
@@ -828,7 +818,7 @@ TEST_F(CommunicatorTest, WriteWithHostEpochs) {
 
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
-      epochs[i]->incrementAndSignal();
+      epochs[i]->signal();
     }
   }
 
@@ -840,7 +830,7 @@ TEST_F(CommunicatorTest, WriteWithHostEpochs) {
 
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
-      epochs[i]->incrementAndSignal();
+      epochs[i]->signal();
     }
   }
 
@@ -884,7 +874,7 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
       }
       mscclpp::RegisteredMemory sendMemory;
       mscclpp::RegisteredMemory remoteMemory;
-      void* tmpBuff = nullptr;
+      // void* tmpBuff = nullptr;
 
       if (isInPlace) {
         registerMemoryPair(sendBuff, sendBuffBytes, transport, 0, r, sendMemory, remoteMemory);
@@ -892,7 +882,7 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
         sendMemory = communicator->registerMemory(recvBuff, recvBuffBytes, transport);
         mscclpp::RegisteredMemory recvMemory;
         registerMemoryPair(recvBuff, recvBuffBytes, transport, 0, r, recvMemory, remoteMemory);
-        tmpBuff = recvMemory.data();
+        // tmpBuff = recvMemory.data();
       }
 
       mscclpp::channel::ChannelId cid = channelService->addChannel(connections[r]);
@@ -903,7 +893,7 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
       //                          channelService->addMemory(remoteMemory), channelService->addMemory(sendMemory),
       //                          remoteMemory.data(), sendMemory.data(), tmpBuff);
       devChannels.emplace_back(channelService->deviceChannel(cid), channelService->addMemory(remoteMemory),
-                               channelService->addMemory(sendMemory), remoteMemory.data(), sendMemory.data());
+                               channelService->addMemory(sendMemory));
     }
   }
 
@@ -912,9 +902,9 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
 
 __constant__ mscclpp::channel::SimpleDeviceChannel gChannelOneToOneTestConstDevChans;
 
-__global__ void kernelPingPong(int rank, int nElem) {
+__global__ void kernelPingPong(int* buff, int rank, int nElem) {
   mscclpp::channel::SimpleDeviceChannel& devChan = gChannelOneToOneTestConstDevChans;
-  volatile int* sendBuff = (volatile int*)devChan.srcPtr_;
+  volatile int* sendBuff = (volatile int*)buff;
   int nTries = 1000;
   int flusher = 0;
   int rank1Offset = 10000000;
@@ -976,16 +966,16 @@ TEST_F(ChannelOneToOneTest, PingPongIb) {
 
   channelService->startProxy();
 
-  kernelPingPong<<<1, 1024>>>(gEnv->rank, 1);
+  kernelPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  kernelPingPong<<<1, 1024>>>(gEnv->rank, 1024);
+  kernelPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  kernelPingPong<<<1, 1024>>>(gEnv->rank, 1024 * 1024);
+  kernelPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  kernelPingPong<<<1, 1024>>>(gEnv->rank, 4 * 1024 * 1024);
+  kernelPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   channelService->stopProxy();

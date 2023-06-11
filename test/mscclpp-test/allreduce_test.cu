@@ -33,7 +33,7 @@ __device__ void reduceSum(int* dst, int* src, size_t size) {
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
-__device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
+__device__ void allreduce0(int* buff, int* scratch, int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
   int peerId = blockIdx.x / BLOCKS_PER_PEER;
   int isComm = (threadIdx.x == 0) && (blockIdx.x % BLOCKS_PER_PEER == 0);
   int remoteRank = (peerId < rank) ? peerId : peerId + 1;
@@ -59,14 +59,14 @@ __device__ void allreduce0(int rank, int worldSize, size_t nelems, size_t scratc
   // Local reduction: every block reduces a slice of each chunk in the scratch buffer into the user buffer
   mscclpp::channel::SimpleDeviceChannel& devSndRoundChan = constDevSndRoundChans[peerId];
   Chunk rankChunk = getChunk(nelems, worldSize, rank);
-  int* chunk = (int*)devSndRoundChan.srcPtr_ + rankChunk.offset;
+  int* chunk = buff + rankChunk.offset;
   int numPeers = gridDim.x / BLOCKS_PER_PEER;
   int numBlocks = gridDim.x;
   Chunk blockUserChunk = getChunk(rankChunk.size, numBlocks, blockIdx.x);
   size_t scratchDataCountPerPeer = scratchDataCount / numPeers;
   Chunk blockScratchChunk = getChunk(scratchDataCountPerPeer, numBlocks, blockIdx.x);
   for (int peerIdx = 0; peerIdx < numPeers; ++peerIdx) {
-    int* scratchChunk = (int*)devFstRoundChan.tmpPtr_ + peerIdx * scratchDataCountPerPeer;
+    int* scratchChunk = scratch + peerIdx * scratchDataCountPerPeer;
     reduceSum(chunk + blockUserChunk.offset, scratchChunk + blockScratchChunk.offset, blockScratchChunk.size);
   }
 
@@ -103,7 +103,7 @@ __forceinline__ __device__ void vectorSum(int* dst, int* src, size_t nElem) {
   }
 }
 
-__device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
+__device__ void allreduce1(int* buff, int* scratch, int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int remoteSendRank = (rank + 1) % worldSize;
   int remoteRecvRank = (rank + worldSize - 1) % worldSize;
@@ -139,8 +139,8 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
     // Reduce
     chunkIndex = (rank + worldSize - step) % worldSize;
     offset = chunkIndex * chunkNelem * sizeof(int);
-    int* dst = (int*)((char*)devFstSendChan.srcPtr_ + offset);
-    int* src = (int*)((char*)devFstRecvChan.tmpPtr_ + offset);
+    int* dst = (int*)((char*)buff + offset);
+    int* src = (int*)((char*)scratch + offset);
     vectorSum(dst, src, chunkNelem / 2);
 
     if (isComm) {
@@ -168,8 +168,8 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
   deviceSyncer.sync(gridDim.x);
 
   offset = rank * chunkNelem * sizeof(int);
-  int* dst = (int*)((char*)devFstSendChan.srcPtr_ + offset);
-  int* src = (int*)((char*)devFstRecvChan.tmpPtr_ + offset);
+  int* dst = (int*)((char*)buff + offset);
+  int* src = (int*)((char*)scratch + offset);
   vectorSum(dst, src, chunkNelem / 2);
 
   if (isComm) {
@@ -213,11 +213,12 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
   }
 }
 
-__global__ void kernel(int rank, int worldSize, size_t nelems, size_t scratchDataCount, int kernel) {
+__global__ void kernel(int* buff, int* scratch, int rank, int worldSize, size_t nelems, size_t scratchDataCount,
+                       int kernel) {
   if (kernel == 0)
-    allreduce0(rank, worldSize, nelems, scratchDataCount);
+    allreduce0(buff, scratch, rank, worldSize, nelems, scratchDataCount);
   else if (kernel == 1)
-    allreduce1(rank, worldSize, nelems, scratchDataCount);
+    allreduce1(buff, scratch, rank, worldSize, nelems, scratchDataCount);
 }
 
 class AllReduceTestColl : public BaseTestColl {
@@ -239,7 +240,10 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const Chunk chunk = getChunk(paramCount_, worldSize, rank);
   const size_t scratchDataCount = chunk.size * nPeers;
   const int nBlocks = (kernelNum == 0) ? nPeers * BLOCKS_PER_PEER : 24;
-  kernel<<<nBlocks, 1024, 0, stream>>>(rank, worldSize, paramCount_, scratchDataCount, kernelNum);
+  int* inputBuff = args.inputBuff;
+  int* scratchBuff = args.scratchBuff;
+  kernel<<<nBlocks, 1024, 0, stream>>>(inputBuff, scratchBuff, rank, worldSize, paramCount_, scratchDataCount,
+                                       kernelNum);
 }
 
 void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
@@ -282,10 +286,12 @@ class AllReduceTestEngine : public BaseTestEngine {
   void allocateBuffer() override;
   void setupConnections() override;
 
- private:
   std::vector<void*> getSendBuff() override;
-  void* getExpectedBuff() override;
   void* getRecvBuff() override;
+  void* getScratchBuff() override;
+
+ private:
+  void* getExpectedBuff() override;
 
   std::shared_ptr<int> sendBuff_;
   std::shared_ptr<int> scratchBuff_;
@@ -300,31 +306,19 @@ void AllReduceTestEngine::allocateBuffer() {
 
 void AllReduceTestEngine::setupConnections() {
   std::vector<mscclpp::channel::SimpleDeviceChannel> fstRoundChannels;
-  std::vector<mscclpp::channel::DirectChannel> fstDirectChannels;
   std::vector<mscclpp::channel::SimpleDeviceChannel> sndRoundChannels;
-  std::vector<mscclpp::channel::DirectChannel> sndDirectChannels;
 
   // Send data from local sendBuff to remote scratchBuff (out-of-place)
-  setupMeshConnections(fstRoundChannels, fstDirectChannels, sendBuff_.get(), args_.maxBytes, scratchBuff_.get(),
-                       args_.maxBytes);
+  setupMeshConnections(fstRoundChannels, sendBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
   assert(fstRoundChannels.size() < sizeof(constDevFstRoundChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));
   CUDATHROW(cudaMemcpyToSymbol(constDevFstRoundChans, fstRoundChannels.data(),
                                sizeof(mscclpp::channel::SimpleDeviceChannel) * fstRoundChannels.size()));
 
   // Send data from local sendBuff to remote sendBuff (in-place)
-  setupMeshConnections(sndRoundChannels, sndDirectChannels, sendBuff_.get(), args_.maxBytes);
+  setupMeshConnections(sndRoundChannels, sendBuff_.get(), args_.maxBytes);
   assert(sndRoundChannels.size() < sizeof(constDevSndRoundChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));
   CUDATHROW(cudaMemcpyToSymbol(constDevSndRoundChans, sndRoundChannels.data(),
                                sizeof(mscclpp::channel::SimpleDeviceChannel) * sndRoundChannels.size()));
-
-  // Now do the same but for direct channels
-  assert(fstDirectChannels.size() < sizeof(constFstDirChans) / sizeof(mscclpp::channel::DirectChannel));
-  CUDATHROW(cudaMemcpyToSymbol(constFstDirChans, fstDirectChannels.data(),
-                               sizeof(mscclpp::channel::DirectChannel) * fstDirectChannels.size()));
-
-  assert(sndDirectChannels.size() < sizeof(constSndDirChans) / sizeof(mscclpp::channel::DirectChannel));
-  CUDATHROW(cudaMemcpyToSymbol(constSndDirChans, sndDirectChannels.data(),
-                               sizeof(mscclpp::channel::DirectChannel) * sndDirectChannels.size()));
 }
 
 std::vector<void*> AllReduceTestEngine::getSendBuff() { return {sendBuff_.get()}; }
@@ -335,6 +329,8 @@ void* AllReduceTestEngine::getRecvBuff() {
   // in-place operation reuse the send buffer
   return sendBuff_.get();
 }
+
+void* AllReduceTestEngine::getScratchBuff() { return scratchBuff_.get(); }
 
 std::shared_ptr<BaseTestEngine> getTestEngine() { return std::make_shared<AllReduceTestEngine>(); }
 std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<AllReduceTestColl>(); }

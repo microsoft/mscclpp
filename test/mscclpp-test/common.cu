@@ -230,8 +230,8 @@ size_t BaseTestEngine::checkData() {
 // Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
 // TODO(saemal): retrun the actual vector instead of void
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels,
-                                          std::vector<mscclpp::channel::DirectChannel>& directChannels, void* inputBuff,
-                                          size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes) {
+                                          void* inputBuff, size_t inputBuffBytes, void* outputBuff,
+                                          size_t outputBuffBytes) {
   const int worldSize = args_.totalRanks;
   const int rank = args_.rank;
   const int nRanksPerNode = args_.nRanksPerNode;
@@ -247,9 +247,6 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
     outputBufRegMem = comm_->registerMemory(outputBuff, outputBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
   }
   std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
-
-  std::vector<mscclpp::DirectEpoch> directEpochs;
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> directRegMemories;
 
   auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
   for (int r = 0; r < worldSize; r++) {
@@ -273,11 +270,6 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
     }
     auto remoteMemory = comm_->recvMemoryOnSetup(r, 0);
     remoteRegMemories.push_back(remoteMemory);
-
-    if (rankToNode(r) == thisNode) {
-      directEpochs.emplace_back(*comm_, connection);
-      directRegMemories.push_back(remoteMemory);
-    }
   }
   comm_->setup();
 
@@ -285,11 +277,6 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
     devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(chanService_->deviceChannel(channelIds[i]),
                                                                 chanService_->addMemory(remoteRegMemories[i].get()),
                                                                 chanService_->addMemory(inputBufRegMem)));
-  }
-
-  for (size_t i = 0; i < directEpochs.size(); ++i) {
-    directChannels.push_back(mscclpp::channel::DirectChannel(directEpochs[i].deviceHandle(), directRegMemories[i].get(),
-                                                             inputBufRegMem.data()));
   }
 }
 
@@ -448,13 +435,15 @@ void run(int argc, char* argv[]) {
   }
 
   CUDATHROW(cudaSetDevice(cudaDev));
-  TestArgs args = {minBytes, maxBytes,  stepBytes,     stepFactor, totalRanks, rank,
-                   cudaDev,  localRank, nRanksPerNode, kernel_num, datacheck};
+  auto testEngine = getTestEngine();
+  testEngine->allocateBuffer();
+  int* inputBuff = (int*)testEngine->getSendBuff()[0];
+  int* scratchBuff = (int*)testEngine->getScratchBuff();
+  TestArgs args = {minBytes,  maxBytes,      stepBytes,  stepFactor, totalRanks, rank,       cudaDev,
+                   localRank, nRanksPerNode, kernel_num, datacheck,  inputBuff,  scratchBuff};
   PRINT("#\n");
   PRINT("# Initializing MSCCL++\n");
-  auto testEngine = getTestEngine();
   testEngine->bootstrap(args);
-  testEngine->allocateBuffer();
   PRINT("# Setting up the connection in MSCCL++\n");
   testEngine->setupTest();
   testEngine->barrier();

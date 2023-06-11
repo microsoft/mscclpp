@@ -118,10 +118,12 @@ class AllToAllTestEngine : public BaseTestEngine {
   void allocateBuffer() override;
   void setupConnections() override;
 
- private:
   std::vector<void*> getSendBuff() override;
-  void* getExpectedBuff() override;
   void* getRecvBuff() override;
+  void* getScratchBuff() override;
+
+ private:
+  void* getExpectedBuff() override;
 
   std::shared_ptr<int> sendBuff_;
   std::shared_ptr<int> recvBuff_;
@@ -149,6 +151,7 @@ void AllToAllTestEngine::setupConnections() {
 std::vector<void*> AllToAllTestEngine::getSendBuff() { return {sendBuff_.get()}; }
 void* AllToAllTestEngine::getExpectedBuff() { return expectedBuff_.get(); }
 void* AllToAllTestEngine::getRecvBuff() { return recvBuff_.get(); }
+void* AllToAllTestEngine::getScratchBuff() { return nullptr; }
 
 std::shared_ptr<BaseTestEngine> getTestEngine() { return std::make_shared<AllToAllTestEngine>(); }
 std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<AllToAllTestColl>(); }

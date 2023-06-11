@@ -33,6 +33,9 @@ struct TestArgs {
   int nRanksPerNode;
   int kernelNum;
   int reportErrors;
+
+  int* inputBuff;
+  int* scratchBuff;
 };
 
 class BaseTestColl {
@@ -74,17 +77,18 @@ class BaseTestEngine {
   void barrier();
   size_t checkData();
 
+  virtual std::vector<void*> getSendBuff() = 0;
+  virtual void* getRecvBuff() = 0;
+  virtual void* getScratchBuff() = 0;
+
  private:
   virtual void setupConnections() = 0;
-  virtual std::vector<void*> getSendBuff() = 0;
   virtual void* getExpectedBuff() = 0;
-  virtual void* getRecvBuff() = 0;
 
   double benchTime();
 
  protected:
-  void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels,
-                            std::vector<mscclpp::channel::DirectChannel>& directChannels, void* inputBuff,
+  void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* inputBuff,
                             size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0);
 
   TestArgs args_;

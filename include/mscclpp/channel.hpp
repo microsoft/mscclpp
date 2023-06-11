@@ -252,11 +252,11 @@ struct DirectChannel {
   };
 
 #ifdef __CUDACC__
-  __forceinline__ __device__ void put(void* dst, void* src, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
-                                      uint32_t threadId, uint32_t numThreads) {
+  __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                      uint32_t numThreads) {
     // assume the memory is aligned to 8 bytes
-    uint64_t* srcAddr = (uint64_t*)((char*)src + srcOffset);
-    uint64_t* dstAddr = (uint64_t*)((char*)dst + dstOffset);
+    uint64_t* srcAddr = (uint64_t*)((char*)src_ + srcOffset);
+    uint64_t* dstAddr = (uint64_t*)((char*)dst_ + dstOffset);
     uint64_t ele;
     size_t nElem = size % sizeof(uint64_t) ? (size + sizeof(uint64_t)) / sizeof(uint64_t) : size / sizeof(uint64_t);
     for (size_t i = threadId; i < nElem; i += numThreads) {

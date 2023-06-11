@@ -82,6 +82,7 @@ class DirectEpoch {
 
  public:
   DirectEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
+  DirectEpoch() = default;
   struct DeviceHandle {
 #ifdef __CUDACC__
     __forceinline__ __device__ void wait() {
