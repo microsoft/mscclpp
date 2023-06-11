@@ -9,11 +9,8 @@ MSCCLPP_API_CPP DeviceEpoch::DeviceEpoch(Communicator& communicator, std::shared
   setup(communicator);
 }
 
-// MSCCLPP_API_CPP void DeviceEpoch::signal() { BaseEpoch::signal(); }
-
 MSCCLPP_API_CPP DeviceEpoch::DeviceHandle DeviceEpoch::deviceHandle() {
   DeviceEpoch::DeviceHandle device;
-  // device.remoteEpochIds = reinterpret_cast<EpochIds*>(remoteEpochIdsRegMem_.get().data());
   device.inboundEpochId = inboundEpochId_.get();
   device.expectedInboundEpochId = expectedInboundEpochId_.get();
   return device;
@@ -27,16 +24,9 @@ MSCCLPP_API_CPP HostEpoch::HostEpoch(Communicator& communicator, std::shared_ptr
   setup(communicator);
 }
 
-// MSCCLPP_API_CPP void HostEpoch::incrementAndSignal() {
-//   *(volatile uint64_t*)&(epochIds_->outbound) += 1;
-//   signal();
-// }
-
 MSCCLPP_API_CPP void HostEpoch::wait() {
   (*expectedInboundEpochId_) += 1;
   while (*(volatile uint64_t*)&(inboundEpochId_) < (*expectedInboundEpochId_)) {
-    // printf("waiting for epoch %lu vs %lu\n", *expectedInboundEpochId_, *(volatile
-    // uint64_t*)&(epochIds_->inboundReplica));
   }
 }
 

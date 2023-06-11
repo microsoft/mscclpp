@@ -8,16 +8,10 @@
 
 namespace mscclpp {
 
-// struct alignas(16) EpochIds {
-//   uint64_t outbound;
-//   uint64_t inboundReplica;
-// };
-
 template <template <typename> typename Deleter>
 class BaseEpoch {
  private:
   std::shared_ptr<Connection> connection_;
-  // RegisteredMemory localInboundEpochIdsRegMem_;
 
  protected:
   NonblockingFuture<RegisteredMemory> remoteInboundEpochIdsRegMem_;
@@ -53,14 +47,12 @@ class DeviceEpoch : public BaseEpoch<CudaDeleter> {
 #ifdef __CUDACC__
     __forceinline__ __device__ void wait() {
       (*expectedInboundEpochId) += 1;
-      printf("Waiting for %d -- %d\n", (int)*expectedInboundEpochId, (int)*(volatile uint64_t*)inboundEpochId);
-      while (*(volatile uint64_t*)&(inboundEpochId) < (*expectedInboundEpochId)) {
+      while (*(volatile uint64_t*)(inboundEpochId) < (*expectedInboundEpochId)) {
       }
     }
 #endif  // __CUDACC__
 
     uint64_t* inboundEpochId;
-    // EpochIds* remoteEpochIds;
     uint64_t* expectedInboundEpochId;
   };
 
