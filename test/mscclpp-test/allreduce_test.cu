@@ -10,6 +10,8 @@
 __constant__ mscclpp::channel::SimpleDeviceChannel constDevFstRoundChans[16];
 __constant__ mscclpp::channel::SimpleDeviceChannel constDevSndRoundChans[16];
 
+static void* resultBuffer = nullptr;
+
 struct Chunk {
   size_t offset;
   size_t size;
@@ -215,7 +217,7 @@ __device__ void allreduce1(int rank, int worldSize, size_t nelems, size_t scratc
   }
 }
 
-__device__ void allreduce2(int rank, int worldSize, size_t nelems) {
+__device__ void allreduce2(int rank, int worldSize, size_t nelems, void* resultBuff) {
   int chanIdx = blockIdx.x / BLOCKS_PER_PEER;
   int numPeers = worldSize - 1;
   size_t nPkts = nelems / 2;  // 2 elems per packet, assume nelems is even
@@ -230,15 +232,9 @@ __device__ void allreduce2(int rank, int worldSize, size_t nelems) {
 
   devFstRoundChan.putPacket(dstOffset, srcOffset, nelems / BLOCKS_PER_PEER * sizeof(int), threadIdx.x, blockDim.x,
                             flag);
-  // This fixes occasional correctness bugs
-  if (BLOCKS_PER_PEER > 1) {
-    // We only need to sync in between co-working BLOCKS_PER_PEER blocks, but we sync all blocks for simplicity
-    deviceSyncer.sync(gridDim.x);
-  } else {
-    __threadfence();
-  }
 
-  int2* src = (int2*)devFstRoundChan.srcPtr_;  // cummulate into the src buffer
+  int2* src = (int2*)devFstRoundChan.srcPtr_;
+  int2* res = (int2*)resultBuff;  // cummulate into here
   mscclpp::channel::ChannelPacket* tmpPtr = (mscclpp::channel::ChannelPacket*)devFstRoundChan.tmpPtr_ +
                                             ((flag & 1) ? 0 : nPkts * numPeers);  // double buffering
   for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPkts; idx += blockDim.x * gridDim.x) {
@@ -260,8 +256,8 @@ __device__ void allreduce2(int rank, int worldSize, size_t nelems) {
       x += (int)data.x;
       y += (int)data.y;
     }
-    src[idx].x += x;
-    src[idx].y += y;
+    res[idx].x = src[idx].x + x;
+    res[idx].y = src[idx].y + y;
   }
 
   if (threadIdx.x == 0 && (blockIdx.x % BLOCKS_PER_PEER) == 0) {
@@ -269,13 +265,13 @@ __device__ void allreduce2(int rank, int worldSize, size_t nelems) {
   }
 }
 
-__global__ void kernel(int rank, int worldSize, size_t nelems, size_t scratchDataCount, int kernel) {
+__global__ void kernel(int rank, int worldSize, size_t nelems, size_t scratchDataCount, void* resultBuff, int kernel) {
   if (kernel == 0)
     allreduce0(rank, worldSize, nelems, scratchDataCount);
   else if (kernel == 1)
     allreduce1(rank, worldSize, nelems, scratchDataCount);
   else if (kernel == 2)
-    allreduce2(rank, worldSize, nelems);
+    allreduce2(rank, worldSize, nelems, resultBuff);
 }
 
 class AllReduceTestColl : public BaseTestColl {
@@ -297,7 +293,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const Chunk chunk = getChunk(paramCount_, worldSize, rank);
   const size_t scratchDataCount = chunk.size * nPeers;
   const int nBlocks = (kernelNum == 1) ? 24 : nPeers * BLOCKS_PER_PEER;
-  kernel<<<nBlocks, 1024, 0, stream>>>(rank, worldSize, paramCount_, scratchDataCount, kernelNum);
+  kernel<<<nBlocks, 1024, 0, stream>>>(rank, worldSize, paramCount_, scratchDataCount, resultBuffer, kernelNum);
 }
 
 void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
@@ -334,31 +330,39 @@ void AllReduceTestColl::setupCollTest(size_t size) {
 
 class AllReduceTestEngine : public BaseTestEngine {
  public:
-  AllReduceTestEngine() = default;
+  AllReduceTestEngine() : BaseTestEngine(isInPlace()){};
   ~AllReduceTestEngine() = default;
 
   void allocateBuffer() override;
   void setupConnections() override;
 
  private:
-  bool isUsePacket(const TestArgs& args);
+  bool isUsePacket();
+  bool isInPlace();
   std::vector<void*> getSendBuff() override;
   void* getExpectedBuff() override;
   void* getRecvBuff() override;
 
   std::shared_ptr<int> sendBuff_;
   std::shared_ptr<int> scratchBuff_;
+  std::shared_ptr<int> resultBuff_;
   std::shared_ptr<int[]> expectedBuff_;
 };
 
-bool AllReduceTestEngine::isUsePacket(const TestArgs& args) { return (args.kernelNum == 2); }
+bool AllReduceTestEngine::isUsePacket() { return (args_.kernelNum == 2); }
+
+bool AllReduceTestEngine::isInPlace() { return (args_.kernelNum != 2); }
 
 void AllReduceTestEngine::allocateBuffer() {
   sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
   // Use 4x buffer size for packet-based allreduce: 2x as packets need twice the data size, and 2x for double-buffering
-  size_t scale = (isUsePacket(args_) ? (4 * (args_.totalRanks - 1)) : 1);
+  size_t scale = (isUsePacket() ? (4 * (args_.totalRanks - 1)) : 1);
   scratchBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int) * scale);
+  resultBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
+
+  // TODO(chhwang): need a new interface for this.
+  resultBuffer = resultBuff_.get();
 }
 
 void AllReduceTestEngine::setupConnections() {
@@ -371,7 +375,7 @@ void AllReduceTestEngine::setupConnections() {
   CUDATHROW(cudaMemcpyToSymbol(constDevFstRoundChans, fstRoundChannels.data(),
                                sizeof(mscclpp::channel::SimpleDeviceChannel) * fstRoundChannels.size()));
 
-  if (isUsePacket(args_)) {
+  if (isUsePacket()) {
     // Send data from local sendBuff to remote scratchBuff (out-of-place)
     setupMeshConnections(sndRoundChannels, sendBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
   } else {
@@ -387,10 +391,7 @@ std::vector<void*> AllReduceTestEngine::getSendBuff() { return {sendBuff_.get()}
 
 void* AllReduceTestEngine::getExpectedBuff() { return expectedBuff_.get(); }
 
-void* AllReduceTestEngine::getRecvBuff() {
-  // in-place operation reuse the send buffer
-  return sendBuff_.get();
-}
+void* AllReduceTestEngine::getRecvBuff() { return isInPlace() ? sendBuff_.get() : resultBuff_.get(); }
 
 std::shared_ptr<BaseTestEngine> getTestEngine() { return std::make_shared<AllReduceTestEngine>(); }
 std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<AllReduceTestColl>(); }
