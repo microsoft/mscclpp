@@ -141,4 +141,13 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
   }
 }
 
+const TransportInfo& RegisteredMemory::Impl::getTransportInfo(Transport transport) const {
+  for (auto& entry : transportInfos) {
+    if (entry.transport == transport) {
+      return entry;
+    }
+  }
+  throw Error("Transport data not found", ErrorCode::InternalError);
+}
+
 }  // namespace mscclpp

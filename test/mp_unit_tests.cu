@@ -897,10 +897,6 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
       mscclpp::channel::ChannelId cid = channelService->addChannel(connections[r]);
       communicator->setup();
 
-      // TODO: enable this when we support out-of-place
-      // devChannels.emplace_back(channelService->deviceChannel(cid),
-      //                          channelService->addMemory(remoteMemory), channelService->addMemory(sendMemory),
-      //                          remoteMemory.data(), sendMemory.data(), tmpBuff);
       devChannels.emplace_back(channelService->deviceChannel(cid), channelService->addMemory(remoteMemory),
                                channelService->addMemory(sendMemory));
     }
