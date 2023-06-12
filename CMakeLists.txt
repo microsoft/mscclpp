@@ -15,6 +15,22 @@ endif()
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
 find_package(CUDAToolkit REQUIRED)
+
+# Set CUDA flags based on the detected CUDA version
+if(CUDAToolkit_FOUND)
+    if(CUDAToolkit_VERSION_MAJOR LESS 11)
+        message(FATAL_ERROR "CUDA 11 or higher is required but detected ${CUDAToolkit_VERSION}")
+    endif()
+
+    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 11)
+        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_80,code=sm_80")
+    endif()
+
+    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12)
+        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_90,code=sm_90")
+    endif()
+endif()
+
 find_package(IBVerbs REQUIRED)
 find_package(NUMA REQUIRED)
 if(USE_MPI_FOR_TESTS)
