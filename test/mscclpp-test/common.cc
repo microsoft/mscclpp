@@ -2,21 +2,29 @@
 
 #include <cuda.h>
 #include <getopt.h>
-#include <libgen.h>
+#include <mpi.h>
+#include <unistd.h>
 
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <iomanip>
 #include <iostream>
 #include <mscclpp/utils.hpp>
+#include <sstream>
 #include <string>
 #include <type_traits>
 
-int is_main_proc = 0;
+int isMainProc = 0;
 
 mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
                             mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
                             mscclpp::Transport::IB6, mscclpp::Transport::IB7};
+
+#define PRINT(__message)                    \
+  do {                                      \
+    if (isMainProc) std::cout << __message; \
+  } while (0);
 
 namespace {
 
@@ -144,20 +152,24 @@ void BaseTestEngine::runTest() {
   }
   CUDATHROW(cudaDeviceSynchronize());
 
-  PRINT("#\n");
-  PRINT("# %10s  %12s           in-place                       out-of-place          \n", "", "");
-  PRINT("# %10s  %12s  %7s  %6s  %6s  %6s  %7s  %6s  %6s  %6s\n", "size", "count", "time", "algbw", "busbw", "#wrong",
-        "time", "algbw", "busbw", "#wrong");
-  PRINT("# %10s  %12s  %7s  %6s  %6s  %5s  %7s  %6s  %6s  %5s\n", "(B)", "(elements)", "(us)", "(GB/s)", "(GB/s)", "",
-        "(us)", "(GB/s)", "(GB/s)", "");
+  std::stringstream ss;
+  ss << "#\n";
+  ss << "#                                        in-place                       out-of-place\n";
+  ss << "#       size         count     time   algbw   busbw  #wrong     time   algbw   busbw  #wrong\n";
+  ss << "#        (B)    (elements)     (us)  (GB/s)  (GB/s)             (us)  (GB/s)  (GB/s)\n";
+  PRINT(ss.str());
+
+  ss.clear();
 
   // Benchmark
   for (size_t size = args_.minBytes; size <= args_.maxBytes;
        size = ((args_.stepFactor > 1) ? size * args_.stepFactor : size + args_.stepBytes)) {
     coll_->setupCollTest(args_, size);
     this->coll_->initData(this->args_, this->getSendBuff(), this->getExpectedBuff());
-    PRINT("%12li  %12li", std::max(coll_->getSendBytes(), coll_->getExpectedBytes()),
-          coll_->getParamBytes() / sizeof(int));
+
+    ss << std::setw(12) << std::max(coll_->getSendBytes(), coll_->getExpectedBytes()) << "  " << std::setw(12)
+       << coll_->getParamBytes() / sizeof(int);
+
     double deltaSec = benchTime();
 
     size_t nErrors = 0;
@@ -187,14 +199,17 @@ void BaseTestEngine::runTest() {
     double algBw, busBw;
     this->coll_->getBw(deltaSec, algBw, busBw);
     if (!this->inPlace_) {
-      PRINT("                                 ");
+      ss << "                                 ";
     }
     if (args_.reportErrors) {
-      PRINT("  %7s  %6.2f  %6.2f  %5g", timeStr, algBw, busBw, (double)nErrors);
+      ss << "  " << std::setw(7) << timeStr << "  " << std::setw(6) << algBw << "  " << std::setw(6) << busBw << "  "
+         << std::setw(5) << nErrors;
     } else {
-      PRINT("  %7s  %6.2f  %6.2f  %5s", timeStr, algBw, busBw, "N/A");
+      ss << "  " << std::setw(7) << timeStr << "  " << std::setw(6) << algBw << "  " << std::setw(6) << busBw;
     }
-    PRINT("\n");
+    ss << "\n";
+    PRINT(ss.str());
+    ss.clear();
   }
   PRINT("\n");
 }
@@ -399,15 +414,16 @@ void run(int argc, char* argv[]) {
   MPI_Comm_size(shmcomm, &nRanksPerNode);
   MPI_Comm_free(&shmcomm);
   localRank = rank % nRanksPerNode;
-  is_main_proc = (rank == 0) ? 1 : 0;
+  isMainProc = (rank == 0) ? 1 : 0;
 
-  PRINT(
-      "# minBytes %ld maxBytes %ld step: %ld(%s) warmup iters: %d iters: %d validation: %d graph: %d, "
-      "kernel num: %d\n",
-      minBytes, maxBytes, (stepFactor > 1) ? stepFactor : stepBytes, (stepFactor > 1) ? "factor" : "bytes",
-      warmup_iters, iters, datacheck, cudaGraphLaunches, kernel_num);
-  PRINT("#\n");
-  PRINT("# Using devices\n");
+  std::stringstream ss;
+  ss << "# minBytes " << minBytes << " maxBytes " << maxBytes
+     << " step: " << ((stepFactor > 1) ? stepFactor : stepBytes) << "(" << ((stepFactor > 1) ? "factor" : "bytes")
+     << ") warmup iters: " << warmup_iters << " iters: " << iters << " validation: " << datacheck
+     << " graph: " << cudaGraphLaunches << " kernel num: " << kernel_num << "\n";
+  ss << "#\n# Using devices\n";
+  PRINT(ss.str());
+  ss.clear();
 
   constexpr int MAX_LINE = 2048;
   char line[MAX_LINE];
@@ -427,7 +443,11 @@ void run(int argc, char* argv[]) {
   // Gather all output in rank order to root (0)
   MPI_Gather(line, MAX_LINE, MPI_BYTE, lines.get(), MAX_LINE, MPI_BYTE, 0, MPI_COMM_WORLD);
   if (rank == 0) {
-    for (int r = 0; r < totalRanks; r++) PRINT("%s", &lines[MAX_LINE * r]);
+    for (int r = 0; r < totalRanks; r++) {
+      ss << &lines[MAX_LINE * r];
+    }
+    PRINT(ss.str());
+    ss.clear();
   }
   MPI_Allreduce(MPI_IN_PLACE, &maxMem, 1, MPI_LONG, MPI_MIN, MPI_COMM_WORLD);
 
@@ -435,14 +455,17 @@ void run(int argc, char* argv[]) {
   size_t memMaxBytes = (maxMem - (1 << 30)) / (datacheck ? 3 : 2);
   if (maxBytes > memMaxBytes) {
     maxBytes = memMaxBytes;
-    PRINT("#\n# Reducing maxBytes to %ld due to memory limitation\n", maxBytes);
+    ss << "#\n# Reducing maxBytes to " << maxBytes << " due to memory limitation\n";
+    PRINT(ss.str());
+    ss.clear();
   }
 
   CUDATHROW(cudaSetDevice(cudaDev));
   TestArgs args = {minBytes, maxBytes,  stepBytes,     stepFactor, totalRanks, rank,
                    cudaDev,  localRank, nRanksPerNode, kernel_num, datacheck};
-  PRINT("#\n");
-  PRINT("# Initializing MSCCL++\n");
+
+  PRINT("#\n# Initializing MSCCL++\n");
+
   auto testEngine = getTestEngine();
   testEngine->bootstrap(args);
   testEngine->allocateBuffer();
@@ -460,8 +483,8 @@ void run(int argc, char* argv[]) {
   int error = testEngine->getTestErrors();
   MPI_Allreduce(MPI_IN_PLACE, &error, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-  PRINT("# Out of bounds values : %d %s\n", error, error ? "FAILED" : "OK");
-  PRINT("#\n");
+  ss << "# Out of bounds values : " << error << " " << (error ? "FAILED" : "OK") << "\n#\n";
+  PRINT(ss.str());
 
   MPI_Finalize();
 }

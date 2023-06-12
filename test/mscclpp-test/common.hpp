@@ -1,12 +1,6 @@
 #ifndef MSCCLPP_TESTS_COMMON_H_
 #define MSCCLPP_TESTS_COMMON_H_
 
-#include <mpi.h>
-#include <unistd.h>
-
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <mscclpp/channel.hpp>
 #include <mscclpp/core.hpp>
 
@@ -103,8 +97,5 @@ class BaseTestEngine {
 extern std::shared_ptr<BaseTestEngine> getTestEngine();
 extern std::shared_ptr<BaseTestColl> getTestColl();
 extern mscclpp::Transport IBs[];
-
-#define PRINT \
-  if (is_main_proc) printf
 
 #endif  // MSCCLPP_TESTS_COMMON_H_
