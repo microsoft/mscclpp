@@ -438,15 +438,17 @@ void run(int argc, char* argv[]) {
   }
 
   CUDATHROW(cudaSetDevice(cudaDev));
+  TestArgs args = {minBytes, maxBytes,  stepBytes,     stepFactor, totalRanks, rank,
+                   cudaDev,  localRank, nRanksPerNode, kernel_num, datacheck};
+  PRINT("#\n");
+  PRINT("# Initializing MSCCL++\n");
   auto testEngine = getTestEngine();
+  testEngine->bootstrap(args);
   testEngine->allocateBuffer();
   int* inputBuff = (int*)testEngine->getSendBuff()[0];
   int* scratchBuff = (int*)testEngine->getScratchBuff();
-  TestArgs args = {minBytes,  maxBytes,      stepBytes,  stepFactor, totalRanks, rank,       cudaDev,
-                   localRank, nRanksPerNode, kernel_num, datacheck,  inputBuff,  scratchBuff};
-  PRINT("#\n");
-  PRINT("# Initializing MSCCL++\n");
-  testEngine->bootstrap(args);
+  args.inputBuff = inputBuff;
+  args.scratchBuff = scratchBuff;
   PRINT("# Setting up the connection in MSCCL++\n");
   testEngine->setupTest();
   testEngine->barrier();
