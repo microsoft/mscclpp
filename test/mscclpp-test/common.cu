@@ -75,8 +75,16 @@ double allreduceTime(int worldSize, double value, int average) {
   double accumulator = value;
 
   if (average != 0) {
-    MPI_Op op =
-        average == 1 ? MPI_SUM : average == 2 ? MPI_MIN : average == 3 ? MPI_MAX : average == 4 ? MPI_SUM : MPI_Op();
+    MPI_Op op;
+    if (average == 1) {
+      op = MPI_SUM;
+    } else if (average == 2) {
+      op = MPI_MIN;
+    } else if (average == 3) {
+      op = MPI_MAX;
+    } else if (average == 4) {
+      op = MPI_SUM;
+    }
     MPI_Allreduce(MPI_IN_PLACE, (void*)&accumulator, 1, MPI_DOUBLE, op, MPI_COMM_WORLD);
   }
 
@@ -125,7 +133,8 @@ void numaBind(int node) {
   numa_bind_compat(&mask);
 }
 
-BaseTestEngine::BaseTestEngine(bool inPlace) : error_(0), inPlace_(inPlace) {
+BaseTestEngine::BaseTestEngine(const TestArgs& args) : args_(args), inPlace_(true), error_(0) {
+
   this->coll_ = getTestColl();
   CUDATHROW(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
 }
@@ -239,8 +248,7 @@ void BaseTestEngine::runTest() {
   PRINT("\n");
 }
 
-void BaseTestEngine::bootstrap(const TestArgs& args) {
-  this->args_ = args;
+void BaseTestEngine::bootstrap() {
   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(args_.rank, args_.totalRanks);
   mscclpp::UniqueId id;
   if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
@@ -496,8 +504,8 @@ void run(int argc, char* argv[]) {
                    cudaDev,  localRank, nRanksPerNode, kernel_num, datacheck};
   PRINT("#\n");
   PRINT("# Initializing MSCCL++\n");
-  auto testEngine = getTestEngine();
-  testEngine->bootstrap(args);
+  auto testEngine = getTestEngine(args);
+  testEngine->bootstrap();
   testEngine->allocateBuffer();
   PRINT("# Setting up the connection in MSCCL++\n");
   testEngine->setupTest();

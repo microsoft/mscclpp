@@ -70,13 +70,13 @@ class BaseTestColl {
 
 class BaseTestEngine {
  public:
-  BaseTestEngine(bool inPlace = true);
+  BaseTestEngine(const TestArgs& args);
   virtual ~BaseTestEngine();
   virtual void allocateBuffer() = 0;
 
   int getTestErrors() { return error_; }
   void setupTest();
-  void bootstrap(const TestArgs& args);
+  void bootstrap();
   void runTest();
   void barrier();
   size_t checkData();
@@ -98,16 +98,16 @@ class BaseTestEngine {
                             size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0,
                             SetupChannelFunc setupChannel = nullptr);
 
-  TestArgs args_;
+  const TestArgs args_;
+  bool inPlace_;
   std::shared_ptr<BaseTestColl> coll_;
   std::shared_ptr<mscclpp::Communicator> comm_;
   std::shared_ptr<mscclpp::channel::BaseChannelService> chanService_;
   cudaStream_t stream_;
   int error_;
-  bool inPlace_;
 };
 
-extern std::shared_ptr<BaseTestEngine> getTestEngine();
+extern std::shared_ptr<BaseTestEngine> getTestEngine(const TestArgs& args);
 extern std::shared_ptr<BaseTestColl> getTestColl();
 extern mscclpp::Transport IBs[];
 

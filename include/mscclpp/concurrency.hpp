@@ -12,11 +12,10 @@ struct DeviceSyncer {
   // previous work of all threads in cooperating blocks is finished.
   __forceinline__ __device__ void sync(int blockNum) {
     int maxOldCnt = blockNum - 1;
-    __threadfence();
-    // Make sure that all threads in this block have done `__threadfence()`
-    // before to flip `flag`.
     __syncthreads();
     if (threadIdx.x == 0) {
+      // Need a `__threadfence()` before to flip `flag`.
+      __threadfence();
       int tmpIsAdd = isAdd_ ^ 1;
       if (tmpIsAdd) {
         if (atomicAdd(&count_, 1) == maxOldCnt) {

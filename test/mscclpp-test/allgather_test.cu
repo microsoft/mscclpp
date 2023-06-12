@@ -297,7 +297,7 @@ void AllGatherTestColl::setupCollTest(size_t size) {
 
 class AllGatherTestEngine : public BaseTestEngine {
  public:
-  AllGatherTestEngine() = default;
+  AllGatherTestEngine(const TestArgs& args);
   ~AllGatherTestEngine() override = default;
 
   void allocateBuffer() override;
@@ -312,6 +312,8 @@ class AllGatherTestEngine : public BaseTestEngine {
   std::shared_ptr<int> sendBuff_;
   std::shared_ptr<int[]> expectedBuff_;
 };
+
+AllGatherTestEngine::AllGatherTestEngine(const TestArgs& args) : BaseTestEngine(args) {}
 
 void AllGatherTestEngine::allocateBuffer() {
   sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
@@ -365,5 +367,7 @@ void* AllGatherTestEngine::getRecvBuff() {
   return sendBuff_.get();
 }
 
-std::shared_ptr<BaseTestEngine> getTestEngine() { return std::make_shared<AllGatherTestEngine>(); }
+std::shared_ptr<BaseTestEngine> getTestEngine(const TestArgs& args) {
+  return std::make_shared<AllGatherTestEngine>(args);
+}
 std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<AllGatherTestColl>(); }
