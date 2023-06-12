@@ -134,7 +134,6 @@ void numaBind(int node) {
 }
 
 BaseTestEngine::BaseTestEngine(const TestArgs& args) : args_(args), inPlace_(true), error_(0) {
-
   this->coll_ = getTestColl();
   CUDATHROW(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
 }
