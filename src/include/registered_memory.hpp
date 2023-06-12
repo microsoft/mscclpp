@@ -39,14 +39,7 @@ struct RegisteredMemory::Impl {
   Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl);
   Impl(const std::vector<char>& data);
 
-  TransportInfo& getTransportInfo(Transport transport) {
-    for (auto& entry : transportInfos) {
-      if (entry.transport == transport) {
-        return entry;
-      }
-    }
-    throw Error("Transport data not found", ErrorCode::InternalError);
-  }
+  const TransportInfo& getTransportInfo(Transport transport) const;
 };
 
 }  // namespace mscclpp
