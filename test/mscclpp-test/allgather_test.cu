@@ -1,5 +1,6 @@
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cassert>
 #include <string>
 
@@ -129,7 +130,9 @@ __device__ void allgather3(mscclpp::channel::DeviceChannel devChan, int rank, in
     mscclpp::ProxyTrigger trigger;
     trigger.fst = MAGIC;
     // offload all the work to the proxy
-    devChan.fifo_.push(trigger);
+    uint64_t currentFifoHead = devChan.fifo_.push(trigger);
+    // wait for the work to be done in cpu side
+    devChan.fifo_.sync(currentFifoHead);
   }
   if (tid % 32 == 0) {
     devChan.wait();
@@ -204,7 +207,6 @@ AllGatherChannelService::AllGatherChannelService(mscclpp::Communicator& communic
              }) {}
 
 mscclpp::ProxyHandlerResult AllGatherChannelService::handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
-  static uint32_t counter = 0;
   size_t offset = rank_ * sendBytes_;
   if (triggerRaw.fst != MAGIC) {
     // this is not a valid trigger
@@ -218,12 +220,19 @@ mscclpp::ProxyHandlerResult AllGatherChannelService::handleTrigger(mscclpp::Prox
     auto& conn = channels_[index].connection();
     conn.write(remoteMemories_[index], offset, localMemory_, offset, sendBytes_);
     channels_[index].epoch().signal();
-    if (counter % 64 && mscclpp::AllIBTransports.has(conn.transport())) {
-      // if we are using IB transport, we need a flush every once in a while to avoid CQ overflow
+  }
+  bool flushIpc = false;
+  for (auto& chan : channels_) {
+    auto& conn = chan.connection();
+    if (conn.transport() == mscclpp::Transport::CudaIpc && !flushIpc) {
+      // since all the cudaIpc channels are using the same cuda stream, we only need to flush one of them
+      conn.flush();
+      flushIpc = true;
+    }
+    if (mscclpp::AllIBTransports.has(conn.transport())) {
       conn.flush();
     }
   }
-  counter++;
   return mscclpp::ProxyHandlerResult::FlushFifoTailAndContinue;
 }
 

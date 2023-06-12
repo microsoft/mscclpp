@@ -55,6 +55,7 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
 }
 
 void CudaIpcConnection::flush() {
+  AvoidCudaGraphCaptureGuard guard;
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream_));
   // npkitCollectExitEvents(conn, NPKIT_EVENT_DMA_SEND_EXIT);
 }
