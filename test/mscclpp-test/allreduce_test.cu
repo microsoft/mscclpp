@@ -234,7 +234,7 @@ __device__ void allreduce2(int rank, int worldSize, size_t nelems, void* resultB
                             flag);
 
   int2* src = (int2*)devFstRoundChan.srcPtr_;
-  int2* res = (int2*)resultBuff;  // cummulate into here
+  int2* res = (int2*)resultBuff;  // cumulate into here
   mscclpp::channel::ChannelPacket* tmpPtr = (mscclpp::channel::ChannelPacket*)devFstRoundChan.tmpPtr_ +
                                             ((flag & 1) ? 0 : nPkts * numPeers);  // double buffering
   for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPkts; idx += blockDim.x * gridDim.x) {
@@ -330,15 +330,15 @@ void AllReduceTestColl::setupCollTest(size_t size) {
 
 class AllReduceTestEngine : public BaseTestEngine {
  public:
-  AllReduceTestEngine() : BaseTestEngine(isInPlace()){};
+  AllReduceTestEngine(const TestArgs& args);
   ~AllReduceTestEngine() = default;
 
   void allocateBuffer() override;
   void setupConnections() override;
 
  private:
-  bool isUsePacket();
-  bool isInPlace();
+  bool isUsePacket() const;
+  bool isInPlace() const;
   std::vector<void*> getSendBuff() override;
   void* getExpectedBuff() override;
   void* getRecvBuff() override;
@@ -349,9 +349,11 @@ class AllReduceTestEngine : public BaseTestEngine {
   std::shared_ptr<int[]> expectedBuff_;
 };
 
-bool AllReduceTestEngine::isUsePacket() { return (args_.kernelNum == 2); }
+AllReduceTestEngine::AllReduceTestEngine(const TestArgs& args) : BaseTestEngine(args) { inPlace_ = isInPlace(); }
 
-bool AllReduceTestEngine::isInPlace() { return (args_.kernelNum != 2); }
+bool AllReduceTestEngine::isUsePacket() const { return (args_.kernelNum == 2); }
+
+bool AllReduceTestEngine::isInPlace() const { return (args_.kernelNum != 2); }
 
 void AllReduceTestEngine::allocateBuffer() {
   sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
@@ -393,5 +395,7 @@ void* AllReduceTestEngine::getExpectedBuff() { return expectedBuff_.get(); }
 
 void* AllReduceTestEngine::getRecvBuff() { return isInPlace() ? sendBuff_.get() : resultBuff_.get(); }
 
-std::shared_ptr<BaseTestEngine> getTestEngine() { return std::make_shared<AllReduceTestEngine>(); }
+std::shared_ptr<BaseTestEngine> getTestEngine(const TestArgs& args) {
+  return std::make_shared<AllReduceTestEngine>(args);
+}
 std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<AllReduceTestColl>(); }
