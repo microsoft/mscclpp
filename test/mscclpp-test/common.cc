@@ -310,6 +310,8 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
         chanService_->deviceChannel(chanService_->addChannel(connections[i])),
         chanService_->addMemory(remoteRegMemories[i].get()), chanService_->addMemory(inputBufRegMem)));
   }
+
+  comm_->setup();
 }
 
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::DirectChannel>& dirChannels, void* inputBuff,
@@ -507,8 +509,6 @@ void run(int argc, char* argv[]) {
   testEngine->allocateBuffer();
   int* inputBuff = (int*)testEngine->getSendBuff()[0];
   int* scratchBuff = (int*)testEngine->getScratchBuff();
-  args.inputBuff = inputBuff;
-  args.scratchBuff = scratchBuff;
   PRINT("# Setting up the connection in MSCCL++\n");
   testEngine->setupTest();
   testEngine->barrier();

@@ -14,6 +14,8 @@ __constant__ mscclpp::channel::DirectChannel constDirChans[16];
 
 // TODO(chhwang): need an interface for this.
 static void* resultBuff = nullptr;
+int* inputBuff;
+int* scratchBuff;
 
 struct Chunk {
   size_t offset;
@@ -296,8 +298,6 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const Chunk chunk = getChunk(paramCount_, worldSize, rank);
   const size_t scratchDataCount = chunk.size * nPeers;
   const int nBlocks = (kernelNum == 1) ? 24 : nPeers * BLOCKS_PER_PEER;
-  int* inputBuff = args.inputBuff;
-  int* scratchBuff = args.scratchBuff;
   kernel<<<nBlocks, 1024, 0, stream>>>(inputBuff, scratchBuff, resultBuff, rank, worldSize, paramCount_,
                                        scratchDataCount, kernelNum);
 }
@@ -372,6 +372,8 @@ void AllReduceTestEngine::allocateBuffer() {
   resultBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
 
+  inputBuff = sendBuff_.get();
+  scratchBuff = scratchBuff_.get();
   // TODO(chhwang): need a new interface for this.
   resultBuff = resultBuff_.get();
 }

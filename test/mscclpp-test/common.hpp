@@ -27,9 +27,6 @@ struct TestArgs {
   int nRanksPerNode;
   int kernelNum;
   int reportErrors;
-
-  int* inputBuff;
-  int* scratchBuff;
 };
 
 class BaseTestColl {
