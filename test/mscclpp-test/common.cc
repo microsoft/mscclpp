@@ -1,3 +1,5 @@
+#include "common.hpp"
+
 #include <cuda.h>
 #include <getopt.h>
 #include <libgen.h>
@@ -9,8 +11,6 @@
 #include <mscclpp/utils.hpp>
 #include <string>
 #include <type_traits>
-
-#include "common.hpp"
 
 int is_main_proc = 0;
 
@@ -72,8 +72,11 @@ double allreduceTime(int worldSize, double value, int average) {
   double accumulator = value;
 
   if (average != 0) {
-    MPI_Op op =
-        average == 1 ? MPI_SUM : average == 2 ? MPI_MIN : average == 3 ? MPI_MAX : average == 4 ? MPI_SUM : MPI_Op();
+    MPI_Op op = average == 1   ? MPI_SUM
+                : average == 2 ? MPI_MIN
+                : average == 3 ? MPI_MAX
+                : average == 4 ? MPI_SUM
+                               : MPI_Op();
     MPI_Allreduce(MPI_IN_PLACE, (void*)&accumulator, 1, MPI_DOUBLE, op, MPI_COMM_WORLD);
   }
 
@@ -153,7 +156,8 @@ void BaseTestEngine::runTest() {
        size = ((args_.stepFactor > 1) ? size * args_.stepFactor : size + args_.stepBytes)) {
     coll_->setupCollTest(args_, size);
     this->coll_->initData(this->args_, this->getSendBuff(), this->getExpectedBuff());
-    PRINT("%12li  %12li", max(coll_->getSendBytes(), coll_->getExpectedBytes()), coll_->getParamBytes() / sizeof(int));
+    PRINT("%12li  %12li", std::max(coll_->getSendBytes(), coll_->getExpectedBytes()),
+          coll_->getParamBytes() / sizeof(int));
     double deltaSec = benchTime();
 
     size_t nErrors = 0;
