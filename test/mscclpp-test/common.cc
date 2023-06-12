@@ -80,11 +80,16 @@ double allreduceTime(int worldSize, double value, int average) {
   double accumulator = value;
 
   if (average != 0) {
-    MPI_Op op = average == 1   ? MPI_SUM
-                : average == 2 ? MPI_MIN
-                : average == 3 ? MPI_MAX
-                : average == 4 ? MPI_SUM
-                               : MPI_Op();
+    MPI_Op op;
+    if (average == 1) {
+      op = MPI_SUM;
+    } else if (average == 2) {
+      op = MPI_MIN;
+    } else if (average == 3) {
+      op = MPI_MAX;
+    } else if (average == 4) {
+      op = MPI_SUM;
+    }
     MPI_Allreduce(MPI_IN_PLACE, (void*)&accumulator, 1, MPI_DOUBLE, op, MPI_COMM_WORLD);
   }
 
