@@ -47,8 +47,7 @@ class DeviceEpoch : public BaseEpoch<CudaDeleter> {
 #ifdef __CUDACC__
     __forceinline__ __device__ void wait() {
       (*expectedInboundEpochId) += 1;
-      while (*(volatile uint64_t*)(inboundEpochId) < (*expectedInboundEpochId)) {
-      }
+      POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)(inboundEpochId) < (*expectedInboundEpochId), 1000000);
     }
 #endif  // __CUDACC__
 
@@ -80,8 +79,7 @@ class DirectEpoch {
 #ifdef __CUDACC__
     __forceinline__ __device__ void wait() {
       (*expectedInboundEpochId) += 1;
-      while (*inboundEpochId < (*expectedInboundEpochId)) {
-      }
+      POLL_MAYBE_JAILBREAK(*inboundEpochId < (*expectedInboundEpochId), 1000000);
     }
 
     __forceinline__ __device__ void signal() {
