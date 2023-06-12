@@ -19,14 +19,14 @@ jobs:
       uses: actions/checkout@v3
 
     - name: Install ClangFormat
-      run: sudo apt-get install -y clang-format-12
+      run: sudo apt-get install -y clang-format
 
     - name: Run cpplint
       run: |
         CPPSOURCES=$(find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*" -not -path "./python/*")
         PYTHONCPPSOURCES=$(find ./python/src/ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
-        clang-format-12 -style=file --verbose --Werror --dry-run ${CPPSOURCES}
-        clang-format-12 --dry-run ${PYTHONCPPSOURCES}
+        clang-format -style=file --verbose --Werror --dry-run ${CPPSOURCES}
+        clang-format --dry-run ${PYTHONCPPSOURCES}
 
   spelling:
     runs-on: ubuntu-20.04
