@@ -32,7 +32,7 @@ parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${DEPLOY_
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker run --rm -itd --privileged --net=host --ipc=host --gpus=all \
   -w /root -v ${DST_DIR}:/root/mscclpp --name=mscclpp-test \
-  --entrypoint /bin/bash superbench/superbench:v0.8.0-cuda12.1"
+  --entrypoint /bin/bash ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1"
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker exec -t --user root mscclpp-test bash '/root/mscclpp/setup.sh'"
 
