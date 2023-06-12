@@ -80,7 +80,13 @@ class MultiProcessTestEnv : public ::testing::Environment {
 
 MultiProcessTestEnv* gEnv = nullptr;
 
-class MultiProcessTest : public ::testing::Test {};
+class MultiProcessTest : public ::testing::Test {
+ protected:
+  void TearDown() override {
+    // Wait for all ranks to finish the previous test
+    MPI_Barrier(MPI_COMM_WORLD);
+  }
+};
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
@@ -277,17 +283,21 @@ class IbTestBase : public MultiProcessTest {
 class IbPeerToPeerTest : public IbTestBase {
  protected:
   void SetUp() override {
+    IbTestBase::SetUp();
+
+    mscclpp::UniqueId id;
+
+    if (gEnv->rank < 2) {
+      // This test needs only two ranks
+      bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, 2);
+      if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
+    }
+    MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
     if (gEnv->rank >= 2) {
       // This test needs only two ranks
       return;
     }
 
-    IbTestBase::SetUp();
-
-    bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, 2);
-    mscclpp::UniqueId id;
-    if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
-    MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
     bootstrap->initialize(id);
 
     ibCtx = std::make_shared<mscclpp::IbCtx>(ibDevName);
