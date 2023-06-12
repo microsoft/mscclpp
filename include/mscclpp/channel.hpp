@@ -165,31 +165,19 @@ class BaseChannelService {
   virtual void stopProxy() = 0;
 };
 
-class DeviceChannelService;
-
-inline ProxyHandler makeChannelProxyHandler(DeviceChannelService& channelService);
-
 class DeviceChannelService : public BaseChannelService {
  public:
   DeviceChannelService(Communicator& communicator);
 
-  ChannelId addChannel(std::shared_ptr<Connection> connection) {
-    channels_.push_back(Channel(communicator_, connection));
-    return channels_.size() - 1;
-  }
+  ChannelId addChannel(std::shared_ptr<Connection> connection);
 
-  MemoryId addMemory(RegisteredMemory memory) {
-    memories_.push_back(memory);
-    return memories_.size() - 1;
-  }
+  MemoryId addMemory(RegisteredMemory memory);
 
-  Channel channel(ChannelId id) { return channels_[id]; }
-  DeviceChannel deviceChannel(ChannelId id) {
-    return DeviceChannel(id, channels_[id].epoch().deviceHandle(), proxy_.fifo().deviceFifo());
-  }
+  Channel channel(ChannelId id) const;
+  DeviceChannel deviceChannel(ChannelId id);
 
-  void startProxy() override { proxy_.start(); }
-  void stopProxy() override { proxy_.stop(); }
+  void startProxy();
+  void stopProxy();
 
  private:
   Communicator& communicator_;
@@ -200,29 +188,7 @@ class DeviceChannelService : public BaseChannelService {
 
   void bindThread();
 
-  ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw) {
-    ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
-    Channel& channel = channels_[trigger->fields.chanId];
-
-    auto result = ProxyHandlerResult::Continue;
-
-    if (trigger->fields.type & TriggerData) {
-      RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
-      RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
-      channel.connection().write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset, trigger->fields.size);
-    }
-
-    if (trigger->fields.type & TriggerFlag) {
-      channel.epoch().signal();
-    }
-
-    if (trigger->fields.type & TriggerSync) {
-      channel.connection().flush();
-      result = ProxyHandlerResult::FlushFifoTailAndContinue;
-    }
-
-    return result;
-  }
+  ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
 };
 
 struct SimpleDeviceChannel {

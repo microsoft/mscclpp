@@ -35,6 +35,23 @@ using TimePoint = std::chrono::steady_clock::time_point;
 TimePoint getClock();
 int64_t elapsedClock(TimePoint start, TimePoint end);
 
+template <class T>
+inline void hashCombine(std::size_t& hash, const T& v) {
+  std::hash<T> hasher;
+  hash ^= hasher(v) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+}
+
+struct PairHash {
+ public:
+  template <typename T, typename U>
+  std::size_t operator()(const std::pair<T, U>& x) const {
+    std::size_t hash = 0;
+    hashCombine(hash, x.first);
+    hashCombine(hash, x.second);
+    return hash;
+  }
+};
+
 }  // namespace mscclpp
 
 #endif
