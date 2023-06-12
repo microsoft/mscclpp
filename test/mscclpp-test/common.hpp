@@ -60,13 +60,13 @@ class BaseTestColl {
 
 class BaseTestEngine {
  public:
-  BaseTestEngine(bool inPlace = true);
+  BaseTestEngine(const TestArgs& args);
   virtual ~BaseTestEngine();
   virtual void allocateBuffer() = 0;
 
   int getTestErrors() { return error_; }
   void setupTest();
-  void bootstrap(const TestArgs& args);
+  void bootstrap();
   void runTest();
   void barrier();
   size_t checkData();
@@ -81,20 +81,28 @@ class BaseTestEngine {
 
   double benchTime();
 
+  void setupMeshConnectionsInternal(
+      std::vector<std::shared_ptr<mscclpp::Connection>>& connections, mscclpp::RegisteredMemory& inputBufRegMem,
+      mscclpp::RegisteredMemory& outputBufRegMem,
+      std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories, void* inputBuff,
+      size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes);
+
  protected:
   void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* inputBuff,
                             size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0);
+  void setupMeshConnections(std::vector<mscclpp::channel::DirectChannel>& dirChannels, void* inputBuff,
+                            size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes = 0);
 
-  TestArgs args_;
+  const TestArgs args_;
+  bool inPlace_;
   std::shared_ptr<BaseTestColl> coll_;
   std::shared_ptr<mscclpp::Communicator> comm_;
   std::shared_ptr<mscclpp::channel::DeviceChannelService> chanService_;
   cudaStream_t stream_;
   int error_;
-  bool inPlace_;
 };
 
-extern std::shared_ptr<BaseTestEngine> getTestEngine();
+extern std::shared_ptr<BaseTestEngine> getTestEngine(const TestArgs& args);
 extern std::shared_ptr<BaseTestColl> getTestColl();
 extern mscclpp::Transport IBs[];
 

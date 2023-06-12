@@ -112,7 +112,7 @@ void AllToAllTestColl::setupCollTest(size_t size) {
 
 class AllToAllTestEngine : public BaseTestEngine {
  public:
-  AllToAllTestEngine() : BaseTestEngine(false){};
+  AllToAllTestEngine(const TestArgs& args);
   ~AllToAllTestEngine() override = default;
 
   void allocateBuffer() override;
@@ -129,6 +129,8 @@ class AllToAllTestEngine : public BaseTestEngine {
   std::shared_ptr<int> recvBuff_;
   std::shared_ptr<int[]> expectedBuff_;
 };
+
+AllToAllTestEngine::AllToAllTestEngine(const TestArgs& args) : BaseTestEngine(args) { inPlace_ = false; }
 
 void AllToAllTestEngine::allocateBuffer() {
   sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
@@ -153,5 +155,7 @@ void* AllToAllTestEngine::getExpectedBuff() { return expectedBuff_.get(); }
 void* AllToAllTestEngine::getRecvBuff() { return recvBuff_.get(); }
 void* AllToAllTestEngine::getScratchBuff() { return nullptr; }
 
-std::shared_ptr<BaseTestEngine> getTestEngine() { return std::make_shared<AllToAllTestEngine>(); }
+std::shared_ptr<BaseTestEngine> getTestEngine(const TestArgs& args) {
+  return std::make_shared<AllToAllTestEngine>(args);
+}
 std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<AllToAllTestColl>(); }

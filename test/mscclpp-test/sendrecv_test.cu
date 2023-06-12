@@ -103,7 +103,7 @@ void SendRecvTestColl::setupCollTest(size_t size) {
 
 class SendRecvTestEngine : public BaseTestEngine {
  public:
-  SendRecvTestEngine() : BaseTestEngine(false){};
+  SendRecvTestEngine(const TestArgs& args);
   ~SendRecvTestEngine() override = default;
 
   void allocateBuffer() override;
@@ -119,6 +119,8 @@ class SendRecvTestEngine : public BaseTestEngine {
   std::vector<std::shared_ptr<int>> devicePtrs_;
   std::shared_ptr<int[]> expectedBuff_;
 };
+
+SendRecvTestEngine::SendRecvTestEngine(const TestArgs& args) : BaseTestEngine(args) { inPlace_ = false; }
 
 void SendRecvTestEngine::allocateBuffer() {
   std::shared_ptr<int> sendBuff = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
@@ -181,5 +183,8 @@ void* SendRecvTestEngine::getRecvBuff() { return devicePtrs_[1].get(); }
 
 void* SendRecvTestEngine::getScratchBuff() { return nullptr; }
 
-std::shared_ptr<BaseTestEngine> getTestEngine() { return std::make_shared<SendRecvTestEngine>(); }
+std::shared_ptr<BaseTestEngine> getTestEngine(const TestArgs& args) {
+  return std::make_shared<SendRecvTestEngine>(args);
+}
+
 std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<SendRecvTestColl>(); }

@@ -86,10 +86,20 @@ class DirectEpoch {
       // This fence ensures that the writes from a preceding putDirect() are visible on the peer GPU before the
       // incremented epoch id is visible.
       __threadfence_system();
-      *outboundEpochId += 1;
+      epochIncrement();
       *remoteInboundEpochId = *outboundEpochId;
     }
+
+    __forceinline__ __device__ void signalPacket() {
+      epochIncrement();
+      *remoteInboundEpochId = *outboundEpochId;
+    }
+
+    __forceinline__ __device__ void epochIncrement() { *outboundEpochId += 1; }
+
+    __forceinline__ __device__ uint64_t epochGetLocal() const { return *outboundEpochId; }
 #endif  // __CUDACC__
+
     volatile uint64_t* inboundEpochId;
     uint64_t* outboundEpochId;
     volatile uint64_t* remoteInboundEpochId;

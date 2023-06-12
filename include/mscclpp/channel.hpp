@@ -74,6 +74,58 @@ union ChannelTrigger {
 #endif  // __CUDACC__
 };
 
+union ChannelPacket {
+  // Flags have to be *after* data, because otherwise, an incomplete receive from the network may receive the flag but
+  // not the data. Note this is assuming that either we receive contiguous chunks of data (sockets) or data is written
+  // with an atomicity of 8 bytes (IB/RDMA).
+  struct {
+    uint32_t data1;
+    uint32_t flag1;
+    uint32_t data2;
+    uint32_t flag2;
+  };
+
+  struct {
+    uint64_t x;
+    uint64_t y;
+  } vec;
+
+  uint64_t v[2];
+
+#ifdef __CUDACC__
+  __forceinline__ __device__ ChannelPacket() {}
+  __forceinline__ __device__ void write(uint32_t val1, uint32_t val2, uint32_t flag) {
+    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"(val1), "r"(flag), "r"(val2), "r"(flag));
+  }
+  __forceinline__ __device__ void write(uint32_t val1, uint32_t val2) {
+    asm volatile("st.volatile.global.v4.u32 [%0], {%1,1,%2,1};" ::"l"(v), "r"(val1), "r"(val2));
+  }
+  __forceinline__ __device__ void write(uint64_t val, uint32_t flag) {
+    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"((uint32_t)val), "r"(flag),
+                 "r"((uint32_t)(val >> 32)), "r"(flag));
+  }
+  __forceinline__ __device__ void write(uint64_t val) {
+    asm volatile("st.volatile.global.v4.u32 [%0], {%1,1,%2,1};" ::"l"(v), "r"((uint32_t)val),
+                 "r"((uint32_t)(val >> 32)));
+  }
+  __forceinline__ __device__ uint2 read(uint32_t flag) {
+    uint2 data;
+    uint32_t flag1, flag2;
+    do {
+      asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
+                   : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2)
+                   : "l"(v));
+    } while ((flag1 != flag) || (flag2 != flag));
+    return data;
+  }
+  __forceinline__ __device__ uint2 read() { return read(1); }
+  __forceinline__ __device__ void clear() {
+    vec.x = 0;
+    vec.y = 0;
+  }
+#endif  // __CUDACC__
+};
+
 struct DeviceChannel {
   DeviceChannel() = default;
 
@@ -210,7 +262,8 @@ struct SimpleDeviceChannel {
 struct DirectChannel {
  public:
   DirectChannel() = default;
-  DirectChannel(DirectEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src) : epoch_(epoch), src_(src) {
+  DirectChannel(DirectEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src, void* tmp = nullptr)
+      : epoch_(epoch), src_(src), tmp_(tmp) {
     if (!dst.transports().has(Transport::CudaIpc)) {
       throw Error("DirectChannel: dst must be registered with CudaIpc", ErrorCode::InvalidUsage);
     }
@@ -232,7 +285,51 @@ struct DirectChannel {
     }
   }
 
+  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                            uint32_t numThreads, uint32_t flag) {
+    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+    uint32_t* srcBase = (uint32_t*)((char*)src_ + srcOffset);
+    ChannelPacket* dstBase = (ChannelPacket*)((char*)dst_ + dstOffset);
+    size_t nElem = size / sizeof(uint64_t);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      ChannelPacket* pkt = &dstBase[i];
+      pkt->write(srcBase[2 * i], srcBase[2 * i + 1], flag);
+    }
+  }
+
+  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                            uint32_t numThreads) {
+    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+    uint32_t* srcBase = (uint32_t*)((char*)src_ + srcOffset);
+    ChannelPacket* dstBase = (ChannelPacket*)((char*)dst_ + dstOffset);
+    size_t nElem = size / sizeof(uint64_t);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      ChannelPacket* pkt = &dstBase[i];
+      pkt->write(srcBase[2 * i], srcBase[2 * i + 1]);
+    }
+  }
+
+  __forceinline__ __device__ void getPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                            uint32_t numThreads, uint32_t flag) {
+    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+    ChannelPacket* tmpBase = (ChannelPacket*)((char*)tmp_ + srcOffset);
+    uint2* srcBase = (uint2*)((char*)src_ + dstOffset);
+    size_t nElem = size / sizeof(uint2);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      ChannelPacket* pkt = &tmpBase[i];
+      srcBase[i] = pkt->read(flag);
+      // for future reuse
+      pkt->clear();
+    }
+  }
+
   __forceinline__ __device__ void signal() { epoch_.signal(); }
+
+  __forceinline__ __device__ void signalPacket() { epoch_.signalPacket(); }
+
+  __forceinline__ __device__ void epochIncrement() { epoch_.epochIncrement(); }
+
+  __forceinline__ __device__ uint64_t epochGetLocal() const { return epoch_.epochGetLocal(); }
 
   __forceinline__ __device__ void wait() { epoch_.wait(); }
 #endif  // __CUDACC__
@@ -240,6 +337,7 @@ struct DirectChannel {
   DirectEpoch::DeviceHandle epoch_;
   void* src_;
   void* dst_;
+  void* tmp_;
 };
 
 }  // namespace channel

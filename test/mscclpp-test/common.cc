@@ -98,7 +98,7 @@ double allreduceTime(int worldSize, double value, int average) {
 }
 }  // namespace
 
-BaseTestEngine::BaseTestEngine(bool inPlace) : error_(0), inPlace_(inPlace) {
+BaseTestEngine::BaseTestEngine(const TestArgs& args) : args_(args), inPlace_(true), error_(0) {
   this->coll_ = getTestColl();
   CUDATHROW(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
 }
@@ -219,8 +219,7 @@ void BaseTestEngine::runTest() {
   PRINT("\n");
 }
 
-void BaseTestEngine::bootstrap(const TestArgs& args) {
-  this->args_ = args;
+void BaseTestEngine::bootstrap() {
   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(args_.rank, args_.totalRanks);
   mscclpp::UniqueId id;
   if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
@@ -251,11 +250,11 @@ size_t BaseTestEngine::checkData() {
   return nErrors;
 }
 
-// Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
-// TODO(saemal): retrun the actual vector instead of void
-void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels,
-                                          void* inputBuff, size_t inputBuffBytes, void* outputBuff,
-                                          size_t outputBuffBytes) {
+void BaseTestEngine::setupMeshConnectionsInternal(
+    std::vector<std::shared_ptr<mscclpp::Connection>>& connections, mscclpp::RegisteredMemory& inputBufRegMem,
+    mscclpp::RegisteredMemory& outputBufRegMem,
+    std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories, void* inputBuff,
+    size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes) {
   const int worldSize = args_.totalRanks;
   const int rank = args_.rank;
   const int nRanksPerNode = args_.nRanksPerNode;
@@ -263,14 +262,10 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
   const mscclpp::Transport ibTransport = IBs[args_.gpuNum];
   const bool isOutPlace = (outputBuff != nullptr);
 
-  std::vector<mscclpp::channel::ChannelId> channelIds;
-  mscclpp::RegisteredMemory inputBufRegMem =
-      comm_->registerMemory(inputBuff, inputBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
-  mscclpp::RegisteredMemory outputBufRegMem;
+  inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
   if (isOutPlace) {
     outputBufRegMem = comm_->registerMemory(outputBuff, outputBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
   }
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
 
   auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
   for (int r = 0; r < worldSize; r++) {
@@ -284,8 +279,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
       transport = ibTransport;
     }
     // Connect with all other ranks
-    auto connection = comm_->connectOnSetup(r, 0, transport);
-    channelIds.push_back(chanService_->addChannel(connection));
+    connections.push_back(comm_->connectOnSetup(r, 0, transport));
 
     if (isOutPlace) {
       comm_->sendMemoryOnSetup(outputBufRegMem, r, 0);
@@ -296,11 +290,48 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
     remoteRegMemories.push_back(remoteMemory);
   }
   comm_->setup();
+}
 
-  for (size_t i = 0; i < channelIds.size(); ++i) {
-    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(chanService_->deviceChannel(channelIds[i]),
-                                                                chanService_->addMemory(remoteRegMemories[i].get()),
-                                                                chanService_->addMemory(inputBufRegMem)));
+// Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
+// TODO(saemal): retrun the actual vector instead of void
+void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels,
+                                          void* inputBuff, size_t inputBuffBytes, void* outputBuff,
+                                          size_t outputBuffBytes) {
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  mscclpp::RegisteredMemory inputBufRegMem;
+  mscclpp::RegisteredMemory outputBufRegMem;
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
+
+  setupMeshConnectionsInternal(connections, inputBufRegMem, outputBufRegMem, remoteRegMemories, inputBuff,
+                               inputBuffBytes, outputBuff, outputBuffBytes);
+
+  for (size_t i = 0; i < connections.size(); ++i) {
+    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
+        chanService_->deviceChannel(chanService_->addChannel(connections[i])),
+        chanService_->addMemory(remoteRegMemories[i].get()), chanService_->addMemory(inputBufRegMem)));
+  }
+}
+
+void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::DirectChannel>& dirChannels, void* inputBuff,
+                                          size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes) {
+  const bool isOutPlace = (outputBuff != nullptr);
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  mscclpp::RegisteredMemory inputBufRegMem;
+  mscclpp::RegisteredMemory outputBufRegMem;
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
+
+  setupMeshConnectionsInternal(connections, inputBufRegMem, outputBufRegMem, remoteRegMemories, inputBuff,
+                               inputBuffBytes, outputBuff, outputBuffBytes);
+
+  std::vector<std::shared_ptr<mscclpp::DirectEpoch>> dirEpochs;
+  for (auto& conn : connections) {
+    dirEpochs.emplace_back(std::make_shared<mscclpp::DirectEpoch>(*comm_, conn));
+  }
+  comm_->setup();
+
+  for (size_t i = 0; i < dirEpochs.size(); ++i) {
+    dirChannels.emplace_back(dirEpochs[i]->deviceHandle(), remoteRegMemories[i].get(), inputBufRegMem.data(),
+                             (isOutPlace ? outputBufRegMem.data() : nullptr));
   }
 }
 
@@ -471,8 +502,8 @@ void run(int argc, char* argv[]) {
 
   PRINT("#\n# Initializing MSCCL++\n");
 
-  auto testEngine = getTestEngine();
-  testEngine->bootstrap(args);
+  auto testEngine = getTestEngine(args);
+  testEngine->bootstrap();
   testEngine->allocateBuffer();
   int* inputBuff = (int*)testEngine->getSendBuff()[0];
   int* scratchBuff = (int*)testEngine->getScratchBuff();
