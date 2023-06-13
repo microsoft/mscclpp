@@ -14,6 +14,9 @@
     }                                                                                                                 \
   } while (0)
 
+int getDeviceNumaNode(int cudaDev);
+void numaBind(int node);
+
 struct TestArgs {
   size_t minBytes;
   size_t maxBytes;
@@ -38,6 +41,7 @@ class BaseTestColl {
   virtual void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) = 0;
 
   void setupCollTest(const TestArgs& args, size_t size);
+  void setChanService(std::shared_ptr<mscclpp::channel::BaseChannelService> chanService) { chanService_ = chanService; }
   size_t getSendBytes() { return sendCount_ * typeSize_; }
   size_t getRecvBytes() { return recvCount_ * typeSize_; }
   size_t getExpectedBytes() { return expectedCount_ * typeSize_; }
@@ -50,6 +54,9 @@ class BaseTestColl {
   size_t paramCount_;
   int typeSize_;
   int worldSize_;
+  int kernelNum_;
+
+  std::shared_ptr<mscclpp::channel::BaseChannelService> chanService_;
 
  private:
   virtual void setupCollTest(size_t size) = 0;
@@ -74,6 +81,7 @@ class BaseTestEngine {
 
  private:
   virtual void setupConnections() = 0;
+  virtual std::shared_ptr<mscclpp::channel::BaseChannelService> createChannelService();
   virtual void* getExpectedBuff() = 0;
 
   double benchTime();
@@ -85,8 +93,12 @@ class BaseTestEngine {
       size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes);
 
  protected:
+  using SetupChannelFunc = std::function<void(std::vector<std::shared_ptr<mscclpp::Connection>>,
+                                              std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>&,
+                                              const mscclpp::RegisteredMemory&)>;
   void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* inputBuff,
-                            size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0);
+                            size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0,
+                            SetupChannelFunc setupChannel = nullptr);
   void setupMeshConnections(std::vector<mscclpp::channel::DirectChannel>& dirChannels, void* inputBuff,
                             size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes = 0);
 
@@ -94,7 +106,7 @@ class BaseTestEngine {
   bool inPlace_;
   std::shared_ptr<BaseTestColl> coll_;
   std::shared_ptr<mscclpp::Communicator> comm_;
-  std::shared_ptr<mscclpp::channel::DeviceChannelService> chanService_;
+  std::shared_ptr<mscclpp::channel::BaseChannelService> chanService_;
   cudaStream_t stream_;
   int error_;
 };
