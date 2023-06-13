@@ -92,6 +92,7 @@ class Bootstrap::Impl {
   mscclppSocket ringSendSocket_;
   std::vector<mscclppSocketAddress> peerCommAddresses_;
   std::vector<int> barrierArr_;
+  std::unique_ptr<uint32_t> abortFlagStorage_;
   volatile uint32_t* abortFlag_;
   std::thread rootThread_;
   char netIfName_[MAX_IF_NAME_SIZE + 1];
@@ -107,14 +108,12 @@ class Bootstrap::Impl {
 
   void bootstrapCreateRoot();
   void bootstrapRoot(mscclppSocket listenSock);
-  void getRemoteAddresses(mscclppSocket* listenSock, std::vector<mscclppSocketAddress>& rankAddresses,
-                          std::vector<mscclppSocketAddress>& rankAddressesRoot, int& rank);
+  int getRemoteAddresses(mscclppSocket* listenSock, std::vector<mscclppSocketAddress>& rankAddresses,
+                         std::vector<mscclppSocketAddress>& rankAddressesRoot, int& rank);
   void sendHandleToPeer(int peer, const std::vector<mscclppSocketAddress>& rankAddresses,
                         const std::vector<mscclppSocketAddress>& rankAddressesRoot);
   void netInit(std::string ipPortPair);
 };
-
-// UniqueId MscclppBootstrap::Impl::uniqueId_;
 
 Bootstrap::Impl::Impl(int rank, int nRanks)
     : rank_(rank),
@@ -122,7 +121,8 @@ Bootstrap::Impl::Impl(int rank, int nRanks)
       netInitialized(false),
       peerCommAddresses_(nRanks, mscclppSocketAddress()),
       barrierArr_(nRanks, 0),
-      abortFlag_(nullptr) {}
+      abortFlagStorage_(new uint32_t(0)),
+      abortFlag_(abortFlagStorage_.get()) {}
 
 UniqueId Bootstrap::Impl::getUniqueId() const {
   UniqueId ret;
@@ -165,22 +165,28 @@ void Bootstrap::Impl::initialize(std::string ipPortPair) {
 }
 
 Bootstrap::Impl::~Impl() {
+  if (abortFlag_ != nullptr) {
+    *abortFlag_ = 1;
+  }
   if (rootThread_.joinable()) {
     rootThread_.join();
   }
 }
 
-void Bootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock, std::vector<mscclppSocketAddress>& rankAddresses,
-                                         std::vector<mscclppSocketAddress>& rankAddressesRoot, int& rank) {
+int Bootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock, std::vector<mscclppSocketAddress>& rankAddresses,
+                                        std::vector<mscclppSocketAddress>& rankAddressesRoot, int& rank) {
   mscclppSocket sock;
   ExtInfo info;
 
   mscclppSocketAddress zero;
   std::memset(&zero, 0, sizeof(mscclppSocketAddress));
-  MSCCLPPTHROW(mscclppSocketInit(&sock));
-  MSCCLPPTHROW(mscclppSocketAccept(&sock, listenSock));
-  netRecv(&sock, &info, sizeof(info));
+  MSCCLPPTHROW(mscclppSocketInit(&sock, nullptr, MSCCLPP_SOCKET_MAGIC, mscclppSocketTypeUnknown, this->abortFlag_));
+  if (mscclppSocketAccept(&sock, listenSock) == mscclppSuccess) {
+    netRecv(&sock, &info, sizeof(info));
+  }
   MSCCLPPTHROW(mscclppSocketClose(&sock));
+
+  if (abortFlag_ && *abortFlag_) return 1;
 
   if (this->nRanks_ != info.nRanks) {
     throw mscclpp::Error("Bootstrap Root : mismatch in rank count from procs " + std::to_string(this->nRanks_) + " : " +
@@ -198,13 +204,15 @@ void Bootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock, std::vector<
   rankAddressesRoot[info.rank] = info.extAddressListenRoot;
   rankAddresses[info.rank] = info.extAddressListen;
   rank = info.rank;
+  return 0;
 }
 
 void Bootstrap::Impl::sendHandleToPeer(int peer, const std::vector<mscclppSocketAddress>& rankAddresses,
                                        const std::vector<mscclppSocketAddress>& rankAddressesRoot) {
   mscclppSocket sock;
   int next = (peer + 1) % this->nRanks_;
-  MSCCLPPTHROW(mscclppSocketInit(&sock, &rankAddressesRoot[peer], this->uniqueId_.magic, mscclppSocketTypeBootstrap));
+  MSCCLPPTHROW(mscclppSocketInit(&sock, &rankAddressesRoot[peer], this->uniqueId_.magic, mscclppSocketTypeBootstrap,
+                                 this->abortFlag_));
   MSCCLPPTHROW(mscclppSocketConnect(&sock));
   netSend(&sock, &rankAddresses[next], sizeof(mscclppSocketAddress));
   MSCCLPPTHROW(mscclppSocketClose(&sock));
@@ -213,9 +221,8 @@ void Bootstrap::Impl::sendHandleToPeer(int peer, const std::vector<mscclppSocket
 void Bootstrap::Impl::bootstrapCreateRoot() {
   mscclppSocket listenSock;
 
-  // mscclppSocket* listenSock = new mscclppSocket(); // TODO(saemal) make this a shared ptr
-  MSCCLPPTHROW(
-      mscclppSocketInit(&listenSock, &uniqueId_.addr, uniqueId_.magic, mscclppSocketTypeBootstrap, nullptr, 0));
+  MSCCLPPTHROW(mscclppSocketInit(&listenSock, &uniqueId_.addr, uniqueId_.magic, mscclppSocketTypeBootstrap,
+                                 this->abortFlag_, 0));
   MSCCLPPTHROW(mscclppSocketListen(&listenSock));
   MSCCLPPTHROW(mscclppSocketGetAddr(&listenSock, &uniqueId_.addr));
   auto lambda = [this, listenSock]() { this->bootstrapRoot(listenSock); };
@@ -236,10 +243,18 @@ void Bootstrap::Impl::bootstrapRoot(mscclppSocket listenSock) {
   /* Receive addresses from all ranks */
   do {
     int rank;
-    getRemoteAddresses(&listenSock, rankAddresses, rankAddressesRoot, rank);
-    ++numCollected;
-    TRACE(MSCCLPP_INIT, "Received connect from rank %d total %d/%d", rank, numCollected, this->nRanks_);
-  } while (numCollected < this->nRanks_);
+    if (getRemoteAddresses(&listenSock, rankAddresses, rankAddressesRoot, rank) == 0) {
+      ++numCollected;
+      TRACE(MSCCLPP_INIT, "Received connect from rank %d total %d/%d", rank, numCollected, this->nRanks_);
+    }
+  } while (numCollected < this->nRanks_ && (!abortFlag_ || *abortFlag_ == 0));
+
+  if (abortFlag_ && *abortFlag_) {
+    MSCCLPPTHROW(mscclppSocketClose(&listenSock));
+    TRACE(MSCCLPP_INIT, "ABORTED");
+    return;
+  }
+
   TRACE(MSCCLPP_INIT, "COLLECTED ALL %d HANDLES", this->nRanks_);
 
   // Send the connect handle for the next rank in the AllGather ring
@@ -247,6 +262,7 @@ void Bootstrap::Impl::bootstrapRoot(mscclppSocket listenSock) {
     sendHandleToPeer(peer, rankAddresses, rankAddressesRoot);
   }
 
+  MSCCLPPTHROW(mscclppSocketClose(&listenSock));
   TRACE(MSCCLPP_INIT, "DONE");
 }
 
@@ -320,7 +336,7 @@ void Bootstrap::Impl::establishConnections() {
   MSCCLPPTHROW(mscclppSocketClose(&sock));
 
   // get info on my "next" rank in the bootstrap ring from root
-  MSCCLPPTHROW(mscclppSocketInit(&sock));
+  MSCCLPPTHROW(mscclppSocketInit(&sock, nullptr, MSCCLPP_SOCKET_MAGIC, mscclppSocketTypeUnknown, this->abortFlag_));
   MSCCLPPTHROW(mscclppSocketAccept(&sock, &listenSockRoot));
   netRecv(&sock, &nextAddr, sizeof(mscclppSocketAddress));
   MSCCLPPTHROW(mscclppSocketClose(&sock));
@@ -330,7 +346,8 @@ void Bootstrap::Impl::establishConnections() {
       mscclppSocketInit(&this->ringSendSocket_, &nextAddr, magic, mscclppSocketTypeBootstrap, this->abortFlag_));
   MSCCLPPTHROW(mscclppSocketConnect(&this->ringSendSocket_));
   // Accept the connect request from the previous rank in the AllGather ring
-  MSCCLPPTHROW(mscclppSocketInit(&this->ringRecvSocket_));
+  MSCCLPPTHROW(mscclppSocketInit(&this->ringRecvSocket_, nullptr, MSCCLPP_SOCKET_MAGIC, mscclppSocketTypeUnknown,
+                                 this->abortFlag_));
   MSCCLPPTHROW(mscclppSocketAccept(&this->ringRecvSocket_, &this->listenSock_));
 
   // AllGather all listen handlers
@@ -386,7 +403,8 @@ std::shared_ptr<mscclppSocket> Bootstrap::Impl::getPeerRecvSocket(int peer, int 
   }
   for (;;) {
     auto sock = std::make_shared<mscclppSocket>();
-    MSCCLPPTHROW(mscclppSocketInit(sock.get()));
+    MSCCLPPTHROW(
+        mscclppSocketInit(sock.get(), nullptr, MSCCLPP_SOCKET_MAGIC, mscclppSocketTypeUnknown, this->abortFlag_));
     MSCCLPPTHROW(mscclppSocketAccept(sock.get(), &this->listenSock_));
     int recvPeer, recvTag;
     netRecv(sock.get(), &recvPeer, sizeof(int));
@@ -440,10 +458,7 @@ void Bootstrap::Impl::close() {
   this->peerRecvSockets_.clear();
 }
 
-MSCCLPP_API_CPP Bootstrap::Bootstrap(int rank, int nRanks) {
-  // pimpl_ = std::make_unique<Impl>(ipPortPair, rank, nRanks, uniqueId);
-  pimpl_ = std::make_unique<Impl>(rank, nRanks);
-}
+MSCCLPP_API_CPP Bootstrap::Bootstrap(int rank, int nRanks) { pimpl_ = std::make_unique<Impl>(rank, nRanks); }
 
 MSCCLPP_API_CPP UniqueId Bootstrap::createUniqueId() { return pimpl_->createUniqueId(); }
 

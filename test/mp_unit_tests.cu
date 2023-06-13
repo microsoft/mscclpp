@@ -179,35 +179,23 @@ TEST_F(BootstrapTest, ResumeWithId) {
 }
 
 TEST_F(BootstrapTest, ResumeWithIpPortPair) {
-  // TODO: enable when the bug is fixed. bootstrap hangs and even timer doesn't work
-#if 0
   for (int i = 0; i < 5; ++i) {
     auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
     bootstrap->initialize(gEnv->args["ip_port"]);
   }
-#else
-  // TODO: remove when the bug is fixed.
-  FAIL();
-#endif
 }
 
 TEST_F(BootstrapTest, ExitBeforeConnect) {
-  // TODO: enable when the bug is fixed. bootstrap rootThread_ does not exit gracefully
-#if 0
   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
   mscclpp::UniqueId id = bootstrap->createUniqueId();
-#else
-  // TODO: remove when the bug is fixed.
-  FAIL();
-#endif
 }
 
 TEST_F(BootstrapTest, TimeoutWithId) {
-  // TODO: enable when BootstrapTest.ExitBeforeConnect passes.
-#if 0
   // Set bootstrap timeout to 1 second
   mscclpp::Config* cfg = mscclpp::Config::getInstance();
   cfg->setBootstrapConnectionTimeoutConfig(1);
+
+  mscclpp::Timer timer;
 
   // All ranks initialize a bootstrap with their own id (will hang)
   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
@@ -217,10 +205,6 @@ TEST_F(BootstrapTest, TimeoutWithId) {
 
   // Timeout should be less than 3 seconds
   ASSERT_LT(timer.elapsed(), 3000000);
-#else
-  // TODO: remove when BootstrapTest.ExitBeforeConnect passes.
-  FAIL();
-#endif
 }
 
 class MPIBootstrap : public mscclpp::BaseBootstrap {
