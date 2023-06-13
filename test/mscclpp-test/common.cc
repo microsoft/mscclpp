@@ -26,6 +26,8 @@ mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, ms
     if (isMainProc) std::cout << __message; \
   } while (0);
 
+#define PRECISION(__val) std::fixed << std::setprecision(2) << __val
+
 namespace {
 
 // Command line parameter defaults
@@ -164,7 +166,7 @@ void BaseTestEngine::runTest() {
   ss << "#        (B)    (elements)     (us)  (GB/s)  (GB/s)             (us)  (GB/s)  (GB/s)\n";
   PRINT(ss.str());
 
-  ss.clear();
+  ss.str(std::string());
 
   // Benchmark
   for (size_t size = args_.minBytes; size <= args_.maxBytes;
@@ -207,14 +209,15 @@ void BaseTestEngine::runTest() {
       ss << "                                 ";
     }
     if (args_.reportErrors) {
-      ss << "  " << std::setw(7) << timeStr << "  " << std::setw(6) << algBw << "  " << std::setw(6) << busBw << "  "
-         << std::setw(5) << nErrors;
+      ss << "  " << std::setw(7) << timeStr << "  " << std::setw(6) << PRECISION(algBw) << "  " << std::setw(6)
+         << PRECISION(busBw) << "  " << std::setw(5) << nErrors;
     } else {
-      ss << "  " << std::setw(7) << timeStr << "  " << std::setw(6) << algBw << "  " << std::setw(6) << busBw;
+      ss << "  " << std::setw(7) << timeStr << "  " << std::setw(6) << PRECISION(algBw) << "  " << std::setw(6)
+         << PRECISION(busBw);
     }
     ss << "\n";
     PRINT(ss.str());
-    ss.clear();
+    ss.str(std::string());
   }
   PRINT("\n");
 }
@@ -461,7 +464,7 @@ void run(int argc, char* argv[]) {
      << " graph: " << cudaGraphLaunches << " kernel num: " << kernel_num << "\n";
   ss << "#\n# Using devices\n";
   PRINT(ss.str());
-  ss.clear();
+  ss.str(std::string());
 
   constexpr int MAX_LINE = 2048;
   char line[MAX_LINE];
@@ -485,7 +488,7 @@ void run(int argc, char* argv[]) {
       ss << &lines[MAX_LINE * r];
     }
     PRINT(ss.str());
-    ss.clear();
+    ss.str(std::string());
   }
   MPI_Allreduce(MPI_IN_PLACE, &maxMem, 1, MPI_LONG, MPI_MIN, MPI_COMM_WORLD);
 
@@ -495,7 +498,7 @@ void run(int argc, char* argv[]) {
     maxBytes = memMaxBytes;
     ss << "#\n# Reducing maxBytes to " << maxBytes << " due to memory limitation\n";
     PRINT(ss.str());
-    ss.clear();
+    ss.str(std::string());
   }
 
   CUDATHROW(cudaSetDevice(cudaDev));
