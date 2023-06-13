@@ -69,8 +69,10 @@ steps:
       mkdir -p output
       touch output/mscclpp-it-000000
       tail -f output/mscclpp-it-000000 &
-      parallel-ssh -i -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
+      CHILD_PID=$!
+      parallel-ssh -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
       -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh'
+      kill $CHILD_PID
 
 - task: AzureCLI@2
   name: StopVMSS
