@@ -137,6 +137,7 @@ void SendRecvTestEngine::setupConnections() {
   int sendToRank = (args_.rank + 1) % worldSize;
   int recvFromRank = (args_.rank - 1 + worldSize) % worldSize;
   std::array<int, 2> ranks = {sendToRank, recvFromRank};
+  auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
 
   std::vector<std::shared_ptr<mscclpp::DirectEpoch>> directEpochs;
 
