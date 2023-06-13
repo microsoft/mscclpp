@@ -1,5 +1,5 @@
 function(add_mscclpp_test_executable name sources)
-    add_executable(${name} ${sources} common.cu)
+    add_executable(${name} ${sources} common.cc)
     target_link_libraries(${name} mscclpp MPI::MPI_CXX CUDA::cudart CUDA::cuda_driver)
 endfunction()
 

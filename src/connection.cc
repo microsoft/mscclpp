@@ -54,6 +54,19 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)size);
 }
 
+void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
+  validateTransport(dst, remoteTransport());
+  uint64_t oldValue = *src;
+  *src = newValue;
+  uint64_t* dstPtr = (uint64_t*)dst.data();
+
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, src, sizeof(uint64_t), cudaMemcpyHostToDevice, stream_));
+  INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
+       newValue);
+
+  // npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)size);
+}
+
 void CudaIpcConnection::flush() {
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream_));
   // npkitCollectExitEvents(conn, NPKIT_EVENT_DMA_SEND_EXIT);
@@ -65,8 +78,17 @@ IBConnection::IBConnection(int remoteRank, int tag, Transport transport, Communi
     : ConnectionBase(remoteRank, tag),
       transport_(transport),
       remoteTransport_(Transport::Unknown),
-      numSignaledSends(0) {
+      numSignaledSends(0),
+      dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
   qp = commImpl.getIbContext(transport)->createQp();
+  dummyAtomicSourceMem_ = RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(
+      dummyAtomicSource_.get(), sizeof(uint64_t), commImpl.bootstrap_->getRank(), transport, commImpl));
+  validateTransport(dummyAtomicSourceMem_, transport);
+  dstTransportInfo_ = getRegisteredMemoryImpl(dummyAtomicSourceMem_)->getTransportInfo(transport);
+
+  if (!dstTransportInfo_.ibLocal) {
+    throw Error("dummyAtomicSource_ is remote, which is not supported", ErrorCode::InternalError);
+  }
 }
 
 Transport IBConnection::transport() { return transport_; }
@@ -93,10 +115,29 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   qp->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset,
                 /*signaled=*/true);
   numSignaledSends++;
+
   qp->postSend();
   INFO(MSCCLPP_NET, "IBConnection write: from %p to %p, size %lu", (uint8_t*)srcMr->getBuff() + srcOffset,
        (uint8_t*)dstMrInfo.addr + dstOffset, size);
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)size);
+}
+
+void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
+  validateTransport(dst, remoteTransport());
+  auto dstTransportInfo = getRegisteredMemoryImpl(dst)->getTransportInfo(remoteTransport());
+  if (dstTransportInfo.ibLocal) {
+    throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
+  }
+
+  auto dstMrInfo = dstTransportInfo.ibMrInfo;
+  // assert that src is on host
+  uint64_t oldValue = *src;
+  *src = newValue;
+
+  qp->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue);
+  qp->postSend();
+  INFO(MSCCLPP_NET, "IBConnection atomic Write: from %p to %p, %lu -> %lu", src, (uint8_t*)dstMrInfo.addr + dstOffset,
+       oldValue, newValue);
 }
 
 void IBConnection::flush() {
