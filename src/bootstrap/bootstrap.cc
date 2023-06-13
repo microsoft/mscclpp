@@ -183,6 +183,8 @@ int Bootstrap::Impl::getRemoteAddresses(mscclppSocket* listenSock, std::vector<m
   MSCCLPPTHROW(mscclppSocketInit(&sock, nullptr, MSCCLPP_SOCKET_MAGIC, mscclppSocketTypeUnknown, this->abortFlag_));
   if (mscclppSocketAccept(&sock, listenSock) == mscclppSuccess) {
     netRecv(&sock, &info, sizeof(info));
+  } else {
+    *abortFlag_ = 1;
   }
   MSCCLPPTHROW(mscclppSocketClose(&sock));
 
