@@ -565,8 +565,6 @@ void run(int argc, char* argv[]) {
   auto testEngine = getTestEngine(args);
   testEngine->bootstrap();
   testEngine->allocateBuffer();
-  int* inputBuff = (int*)testEngine->getSendBuff()[0];
-  int* scratchBuff = (int*)testEngine->getScratchBuff();
   PRINT("# Setting up the connection in MSCCL++\n");
   testEngine->setupTest();
   testEngine->barrier();

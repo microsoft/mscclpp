@@ -66,6 +66,7 @@ steps:
       HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      rm -rf output
       mkdir -p output
       touch output/mscclpp-it-000000
       tail -f output/mscclpp-it-000000 &
