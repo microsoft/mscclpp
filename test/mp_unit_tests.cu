@@ -854,10 +854,10 @@ TEST_F(CommunicatorTest, WriteWithHostEpochs) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Channel tests
+// DeviceChannel tests
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-class ChannelOneToOneTest : public CommunicatorTestBase {
+class DeviceChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   void SetUp() override {
     // Use only two ranks
@@ -883,7 +883,6 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
       }
       mscclpp::RegisteredMemory sendMemory;
       mscclpp::RegisteredMemory remoteMemory;
-      // void* tmpBuff = nullptr;
 
       if (isInPlace) {
         registerMemoryPair(sendBuff, sendBuffBytes, transport, 0, r, sendMemory, remoteMemory);
@@ -891,7 +890,6 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
         sendMemory = communicator->registerMemory(recvBuff, recvBuffBytes, transport);
         mscclpp::RegisteredMemory recvMemory;
         registerMemoryPair(recvBuff, recvBuffBytes, transport, 0, r, recvMemory, remoteMemory);
-        // tmpBuff = recvMemory.data();
       }
 
       mscclpp::channel::ChannelId cid = channelService->addChannel(connections[r]);
@@ -907,7 +905,7 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
 
 __constant__ mscclpp::channel::SimpleDeviceChannel gChannelOneToOneTestConstDevChans;
 
-__global__ void kernelPingPong(int* buff, int rank, int nElem) {
+__global__ void kernelDevicePingPong(int* buff, int rank, int nElem, int* ret) {
   mscclpp::channel::SimpleDeviceChannel& devChan = gChannelOneToOneTestConstDevChans;
   volatile int* sendBuff = (volatile int*)buff;
   int nTries = 1000;
@@ -920,7 +918,9 @@ __global__ void kernelPingPong(int* buff, int rank, int nElem) {
         __syncthreads();
         for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
           if (sendBuff[j] != rank1Offset + i - 1 + j) {
-            printf("rank 0 ERROR: sendBuff[%d] = %d, expected %d\n", j, sendBuff[j], 100000 + i - 1 + j);
+            // printf("rank 0 ERROR: sendBuff[%d] = %d, expected %d\n", j, sendBuff[j], rank1Offset + i - 1 + j);
+            *ret = 1;
+            break;
           }
         }
       }
@@ -936,7 +936,9 @@ __global__ void kernelPingPong(int* buff, int rank, int nElem) {
       __syncthreads();
       for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
         if (sendBuff[j] != i + j) {
-          printf("rank 1 ERROR: sendBuff[%d] = %d, expected %d\n", j, sendBuff[j], i + j);
+          // printf("rank 1 ERROR: sendBuff[%d] = %d, expected %d\n", j, sendBuff[j], i + j);
+          *ret = 1;
+          break;
         }
       }
       if (i < nTries - 1) {
@@ -956,7 +958,7 @@ __global__ void kernelPingPong(int* buff, int rank, int nElem) {
   }
 }
 
-TEST_F(ChannelOneToOneTest, PingPongIb) {
+TEST_F(DeviceChannelOneToOneTest, PingPongIb) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
@@ -971,17 +973,278 @@ TEST_F(ChannelOneToOneTest, PingPongIb) {
 
   channelService->startProxy();
 
-  kernelPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1);
+  std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
+
+  kernelDevicePingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  kernelPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024);
+  EXPECT_EQ(*ret, 0);
+
+  kernelDevicePingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  kernelPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024);
+  EXPECT_EQ(*ret, 0);
+
+  kernelDevicePingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  kernelPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024);
+  EXPECT_EQ(*ret, 0);
+
+  kernelDevicePingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
 
   channelService->stopProxy();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// DirectChannel tests
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class DirectChannelOneToOneTest : public CommunicatorTestBase {
+ protected:
+  void SetUp() override {
+    // Use only two ranks
+    setNumRanksToUse(2);
+    CommunicatorTestBase::SetUp();
+  }
+
+  void TearDown() override { CommunicatorTestBase::TearDown(); }
+
+  void setupMeshConnections(std::vector<mscclpp::channel::DirectChannel>& dirChannels, void* inputBuff,
+                            size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0) {
+    const int rank = communicator->bootstrapper()->getRank();
+    const int worldSize = communicator->bootstrapper()->getNranks();
+    const bool isInPlace = (outputBuff == nullptr);
+    mscclpp::TransportFlags transport = mscclpp::Transport::CudaIpc | ibTransport;
+
+    mscclpp::RegisteredMemory inputBufRegMem = communicator->registerMemory(inputBuff, inputBuffBytes, transport);
+    mscclpp::RegisteredMemory outputBufRegMem;
+    if (!isInPlace) {
+      outputBufRegMem = communicator->registerMemory(outputBuff, outputBuffBytes, transport);
+    }
+
+    for (int r = 0; r < worldSize; r++) {
+      if (r == rank) {
+        continue;
+      }
+      std::shared_ptr<mscclpp::Connection> conn;
+      if (rankToNode(r) == rankToNode(gEnv->rank)) {
+        conn = communicator->connectOnSetup(r, 0, mscclpp::Transport::CudaIpc);
+      } else {
+        conn = communicator->connectOnSetup(r, 0, ibTransport);
+      }
+      connections[r] = conn;
+
+      if (isInPlace) {
+        communicator->sendMemoryOnSetup(inputBufRegMem, r, 0);
+      } else {
+        communicator->sendMemoryOnSetup(outputBufRegMem, r, 0);
+      }
+      auto remoteMemory = communicator->recvMemoryOnSetup(r, 0);
+
+      communicator->setup();
+
+      directEpochs[r] = std::make_shared<mscclpp::DirectEpoch>(*communicator, conn);
+
+      communicator->setup();
+
+      dirChannels.emplace_back(directEpochs[r]->deviceHandle(), remoteMemory.get(), inputBufRegMem.data(),
+                               (isInPlace ? nullptr : outputBufRegMem.data()));
+    }
+  }
+
+  std::unordered_map<int, std::shared_ptr<mscclpp::DirectEpoch>> directEpochs;
+};
+
+__constant__ mscclpp::channel::DirectChannel gChannelOneToOneTestConstDirChans;
+
+__global__ void kernelDirectPingPong(int* buff, int rank, int nElem, int* ret) {
+  mscclpp::channel::DirectChannel& dirChan = gChannelOneToOneTestConstDirChans;
+  volatile int* sendBuff = (volatile int*)buff;
+  int nTries = 1000;
+  int rank1Offset = 10000000;
+  for (int i = 0; i < nTries; i++) {
+    if (rank == 0) {
+      if (i > 0) {
+        if (threadIdx.x == 0) dirChan.wait();
+        __syncthreads();
+        for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+          if (sendBuff[j] != rank1Offset + i - 1 + j) {
+            // printf("rank 0 ERROR: sendBuff[%d] = %d, expected %d\n", j, sendBuff[j], rank1Offset + i - 1 + j);
+            *ret = 1;
+            break;
+          }
+        }
+      }
+      for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+        sendBuff[j] = i + j;
+      }
+      __syncthreads();
+      dirChan.put(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x);
+      if (threadIdx.x == 0) dirChan.signal();
+    }
+    if (rank == 1) {
+      if (threadIdx.x == 0) dirChan.wait();
+      __syncthreads();
+      for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+        if (sendBuff[j] != i + j) {
+          // printf("rank 1 ERROR: sendBuff[%d] = %d, expected %d\n", j, sendBuff[j], i + j);
+          *ret = 1;
+          break;
+        }
+      }
+      if (i < nTries - 1) {
+        for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+          sendBuff[j] = rank1Offset + i + j;
+        }
+        __syncthreads();
+        dirChan.put(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x);
+        if (threadIdx.x == 0) dirChan.signal();
+      }
+    }
+  }
+}
+
+TEST_F(DirectChannelOneToOneTest, PingPong) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int nElem = 4 * 1024 * 1024;
+
+  std::vector<mscclpp::channel::DirectChannel> dirChannels;
+  std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
+  setupMeshConnections(dirChannels, buff.get(), nElem * sizeof(int));
+
+  ASSERT_EQ(dirChannels.size(), 1);
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstDirChans, dirChannels.data(),
+                                       sizeof(mscclpp::channel::DirectChannel)));
+
+  std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
+
+  kernelDirectPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
+  *ret = 0;
+
+  kernelDirectPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
+  *ret = 0;
+
+  kernelDirectPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
+  *ret = 0;
+
+  kernelDirectPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
+}
+
+__global__ void kernelDirectPacketPingPong(int* buff, int rank, int nElem, int* ret) {
+  mscclpp::channel::DirectChannel& dirChan = gChannelOneToOneTestConstDirChans;
+  volatile int* sendBuff = (volatile int*)buff;
+  int nTries = 1000;
+  int rank1Offset = 10000000;
+  for (int i = 0; i < nTries; i++) {
+    uint64_t flag = (uint64_t)i + 1;
+    if (rank == 0) {
+      if (i > 0) {
+        dirChan.getPacket(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+        // If each thread reads 8 bytes at once, we don't need a barrier after getPacket().
+        for (int j = threadIdx.x; j < nElem / 2; j += blockDim.x) {
+          if (sendBuff[2 * j] != rank1Offset + i - 1 + 2 * j) {
+            // printf("rank 0 ERROR: sendBuff[%d] = %d, expected %d. Skipping following errors\n",
+            //        2 * j, sendBuff[2 * j], rank1Offset + i - 1 + 2 * j);
+            *ret = 1;
+            break;
+          }
+          if (sendBuff[2 * j + 1] != rank1Offset + i - 1 + 2 * j + 1) {
+            // printf("rank 0 ERROR: sendBuff[%d] = %d, expected %d. Skipping following errors\n",
+            //        2 * j + 1, sendBuff[2 * j + 1], rank1Offset + i - 1 + 2 * j + 1);
+            *ret = 1;
+            break;
+          }
+        }
+      }
+      // If each thread writes 8 bytes at once, we don't need a barrier before putPacket().
+      for (int j = threadIdx.x; j < nElem / 2; j += blockDim.x) {
+        sendBuff[2 * j] = i + 2 * j;
+        sendBuff[2 * j + 1] = i + 2 * j + 1;
+      }
+      dirChan.putPacket(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+    }
+    if (rank == 1) {
+      dirChan.getPacket(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      // If each thread reads 8 bytes at once, we don't need a barrier after getPacket().
+      for (int j = threadIdx.x; j < nElem / 2; j += blockDim.x) {
+        if (sendBuff[2 * j] != i + 2 * j) {
+          // printf("rank 1 ERROR: sendBuff[%d] = %d, expected %d. Skipping following errors\n",
+          //        2 * j, sendBuff[2 * j], i + 2 * j);
+          *ret = 1;
+          break;
+        }
+        if (sendBuff[2 * j + 1] != i + 2 * j + 1) {
+          // printf("rank 1 ERROR: sendBuff[%d] = %d, expected %d. Skipping following errors\n",
+          //        2 * j + 1, sendBuff[2 * j + 1], i + 2 * j + 1);
+          *ret = 1;
+          break;
+        }
+      }
+      if (i < nTries - 1) {
+        // If each thread writes 8 bytes at once, we don't need a barrier before putPacket().
+        for (int j = threadIdx.x; j < nElem / 2; j += blockDim.x) {
+          sendBuff[2 * j] = rank1Offset + i + 2 * j;
+          sendBuff[2 * j + 1] = rank1Offset + i + 2 * j + 1;
+        }
+        dirChan.putPacket(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      }
+    }
+  }
+}
+
+TEST_F(DirectChannelOneToOneTest, PacketPingPong) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int nElem = 4 * 1024 * 1024;
+
+  std::vector<mscclpp::channel::DirectChannel> dirChannels;
+  std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
+  std::shared_ptr<int> intermBuff = mscclpp::allocSharedCuda<int>(nElem * 2);
+  setupMeshConnections(dirChannels, buff.get(), nElem * sizeof(int), intermBuff.get(), nElem * 2 * sizeof(int));
+
+  ASSERT_EQ(dirChannels.size(), 1);
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstDirChans, dirChannels.data(),
+                                       sizeof(mscclpp::channel::DirectChannel)));
+
+  std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
+
+  // The least nelem is 2 for packet ping pong
+  // kernelDirectPacketPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 2, ret.get());
+  // MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  // EXPECT_EQ(*ret, 0);
+  // *ret = 0;
+
+  // kernelDirectPacketPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, ret.get());
+  // MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  // EXPECT_EQ(*ret, 0);
+  // *ret = 0;
+
+  // kernelDirectPacketPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, ret.get());
+  // MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  // EXPECT_EQ(*ret, 0);
+  // *ret = 0;
+
+  // kernelDirectPacketPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, ret.get());
+  // MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  // EXPECT_EQ(*ret, 0);
 }

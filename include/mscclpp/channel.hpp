@@ -318,8 +318,6 @@ struct DirectChannel {
     for (size_t i = threadId; i < nElem; i += numThreads) {
       ChannelPacket* pkt = &tmpBase[i];
       srcBase[i] = pkt->read(flag);
-      // for future reuse
-      pkt->clear();
     }
   }
 
