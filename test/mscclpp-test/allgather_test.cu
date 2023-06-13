@@ -120,10 +120,6 @@ __device__ void allgather2(mscclpp::channel::SimpleDeviceChannel devChan, int ra
 
 __device__ void allgather3(mscclpp::channel::DeviceChannel devChan, int rank, int worldSize) {
   int tid = threadIdx.x;
-  if (tid % 32 == 0) {
-    // TODO(binyli): move this to handleTrigger after hostEpoch is implemented
-    devChan.epochIncrement();
-  }
   __syncthreads();
   if (tid == 0) {
     mscclpp::ProxyTrigger trigger;
@@ -303,11 +299,13 @@ class AllGatherTestEngine : public BaseTestEngine {
   void allocateBuffer() override;
   void setupConnections() override;
 
- private:
   std::vector<void*> getSendBuff() override;
-  void* getExpectedBuff() override;
   void* getRecvBuff() override;
+  void* getScratchBuff() override;
   std::shared_ptr<mscclpp::channel::BaseChannelService> createChannelService() override;
+
+ private:
+  void* getExpectedBuff() override;
 
   std::shared_ptr<int> sendBuff_;
   std::shared_ptr<int[]> expectedBuff_;
@@ -332,16 +330,14 @@ void AllGatherTestEngine::setupConnections() {
     setupMeshConnections(devChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,
                          [&](std::vector<std::shared_ptr<mscclpp::Connection>> conns,
                              std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteMemories,
-                             std::vector<mscclpp::RegisteredMemory>& localMemories) {
+                             const mscclpp::RegisteredMemory& localMemory) {
                            std::vector<mscclpp::channel::ChannelId> channelIds;
-                           for (auto& conn : conns) {
-                             channelIds.push_back(service->addChannel(conn));
-                           }
-                           comm_->setup();
-                           for (size_t i = 0; i < channelIds.size(); ++i) {
+                           for (int i = 0; i < conns.size(); ++i) {
+                             service->addChannel(conns[i]);
                              service->addRemoteMemory(remoteMemories[i].get());
                            }
-                           service->setLocalMemory(localMemories[0]);
+                           service->setLocalMemory(localMemory);
+                           comm_->setup();
                          });
     auto devChannels = service->deviceChannels();
     assert(devChannels.size() < sizeof(constRawDevChan) / sizeof(mscclpp::channel::DeviceChannel));
@@ -367,7 +363,10 @@ void* AllGatherTestEngine::getRecvBuff() {
   return sendBuff_.get();
 }
 
+void* AllGatherTestEngine::getScratchBuff() { return nullptr; }
+
 std::shared_ptr<BaseTestEngine> getTestEngine(const TestArgs& args) {
   return std::make_shared<AllGatherTestEngine>(args);
 }
+
 std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<AllGatherTestColl>(); }

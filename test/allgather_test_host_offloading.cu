@@ -45,7 +45,6 @@ static double getTime(void) {
 __global__ void kernel(int r, int nranks, mscclpp::DeviceProxyFifo fifo, mscclpp::DeviceEpoch::DeviceHandle* handles,
                        int handleIndex) {
   int tid = threadIdx.x;
-  if (tid != r) handles[tid].epochIncrement();
   __syncthreads();
   // uint64_t tail;
   if (tid == 0) {

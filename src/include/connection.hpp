@@ -10,6 +10,7 @@
 
 #include "communicator.hpp"
 #include "ib.hpp"
+#include "registered_memory.hpp"
 
 namespace mscclpp {
 
@@ -40,6 +41,7 @@ class CudaIpcConnection : public ConnectionBase {
 
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
+  void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
 
   void flush() override;
 };
@@ -49,6 +51,9 @@ class IBConnection : public ConnectionBase {
   Transport remoteTransport_;
   IbQp* qp;
   int numSignaledSends;
+  std::unique_ptr<uint64_t> dummyAtomicSource_;  // not used anywhere but IB needs a source
+  RegisteredMemory dummyAtomicSourceMem_;
+  mscclpp::TransportInfo dstTransportInfo_;
 
  public:
   IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl);
@@ -59,6 +64,7 @@ class IBConnection : public ConnectionBase {
 
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
+  void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
 
   void flush() override;
 

@@ -154,10 +154,8 @@ class Communicator;
 class Connection;
 
 class RegisteredMemory {
+ protected:
   struct Impl;
-  // A shared_ptr is used since RegisteredMemory is functionally immutable, although internally some state is populated
-  // lazily.
-  std::shared_ptr<Impl> pimpl;
 
  public:
   RegisteredMemory() = default;
@@ -173,13 +171,22 @@ class RegisteredMemory {
   static RegisteredMemory deserialize(const std::vector<char>& data);
 
   friend class Connection;
+  friend class IBConnection;
   friend class Communicator;
+
+ private:
+  // A shared_ptr is used since RegisteredMemory is functionally immutable, although internally some state is populated
+  // lazily.
+  std::shared_ptr<Impl> pimpl;
 };
 
 class Connection {
  public:
   virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                      uint64_t size) = 0;
+
+  // src must be a CPU memory
+  virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
 
   virtual void flush() = 0;
 
