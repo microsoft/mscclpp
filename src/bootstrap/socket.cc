@@ -13,6 +13,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <mscclpp/utils.hpp>
+
 #include "checks_internal.hpp"
 #include "config.hpp"
 #include "debug.h"
@@ -422,10 +424,10 @@ mscclppResult_t mscclppSocketGetAddr(struct mscclppSocket* sock, union mscclppSo
 
 static mscclppResult_t socketTryAccept(struct mscclppSocket* sock) {
   static bool timeInitialized = false;
-  static mscclpp::TimePoint initTime;
+  static mscclpp::Timer timer;
   if (!timeInitialized) {
     timeInitialized = true;
-    initTime = mscclpp::getClock();
+    timer.reset();
   }
 
   mscclpp::Config* config = mscclpp::Config::getInstance();
@@ -439,7 +441,7 @@ static mscclppResult_t socketTryAccept(struct mscclppSocket* sock) {
     WARN("socketTryAccept: get errno %d that is not EAGAIN or EWOULDBLOCK", errno);
     timeInitialized = false;
     return mscclppSystemError;
-  } else if (mscclpp::elapsedClock(mscclpp::getClock(), initTime) > acceptTimeout) {
+  } else if (timer.elapsed() > acceptTimeout * 1000000) {
     WARN("socketTryAccept: exceeded timeout (%ld) sec", acceptTimeout);
     timeInitialized = false;
     return mscclppRemoteError;
@@ -483,10 +485,10 @@ static mscclppResult_t socketFinalizeAccept(struct mscclppSocket* sock) {
 
 static mscclppResult_t socketStartConnect(struct mscclppSocket* sock) {
   static bool timeInitialized = false;
-  static mscclpp::TimePoint initTime;
+  static mscclpp::Timer timer;
   if (!timeInitialized) {
     timeInitialized = true;
-    initTime = mscclpp::getClock();
+    timer.reset();
   }
 
   mscclpp::Config* config = mscclpp::Config::getInstance();
@@ -502,7 +504,7 @@ static mscclppResult_t socketStartConnect(struct mscclppSocket* sock) {
     sock->state = mscclppSocketStateConnectPolling;
     return mscclppSuccess;
   } else if (errno == ECONNREFUSED || errno == ETIMEDOUT) {
-    if (mscclpp::elapsedClock(mscclpp::getClock(), initTime) > acceptTimeout) {
+    if (timer.elapsed() > acceptTimeout * 1000000) {
       WARN("socketStartConnect: exceeded timeout (%ld) sec", acceptTimeout);
       sock->state = mscclppSocketStateError;
       timeInitialized = false;
@@ -522,10 +524,10 @@ static mscclppResult_t socketStartConnect(struct mscclppSocket* sock) {
 
 static mscclppResult_t socketPollConnect(struct mscclppSocket* sock) {
   static bool timeInitialized = false;
-  static mscclpp::TimePoint initTime;
+  static mscclpp::Timer timer;
   if (!timeInitialized) {
     timeInitialized = true;
-    initTime = mscclpp::getClock();
+    timer.reset();
   }
 
   mscclpp::Config* config = mscclpp::Config::getInstance();
@@ -552,7 +554,7 @@ static mscclppResult_t socketPollConnect(struct mscclppSocket* sock) {
     timeInitialized = false;
     sock->state = mscclppSocketStateConnected;
   } else if (ret == ECONNREFUSED || ret == ETIMEDOUT) {
-    if (mscclpp::elapsedClock(mscclpp::getClock(), initTime) > acceptTimeout) {
+    if (timer.elapsed() > acceptTimeout * 1000000) {
       WARN("socketPollConnect: exceeded timeout (%ld) sec", acceptTimeout);
       sock->state = mscclppSocketStateError;
       return mscclppRemoteError;
@@ -572,14 +574,14 @@ static mscclppResult_t socketPollConnect(struct mscclppSocket* sock) {
   return mscclppSuccess;
 }
 
-mscclppResult_t mscclppSocketPollConnect(struct mscclppSocket* sock) {
-  if (sock == NULL) {
-    WARN("mscclppSocketPollConnect: pass NULL socket");
-    return mscclppInvalidArgument;
-  }
-  MSCCLPPCHECK(socketPollConnect(sock));
-  return mscclppSuccess;
-}
+// mscclppResult_t mscclppSocketPollConnect(struct mscclppSocket* sock) {
+//   if (sock == NULL) {
+//     WARN("mscclppSocketPollConnect: pass NULL socket");
+//     return mscclppInvalidArgument;
+//   }
+//   MSCCLPPCHECK(socketPollConnect(sock));
+//   return mscclppSuccess;
+// }
 
 static mscclppResult_t socketFinalizeConnect(struct mscclppSocket* sock) {
   int sent = 0;

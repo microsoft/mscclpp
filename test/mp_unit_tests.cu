@@ -203,8 +203,9 @@ TEST_F(BootstrapTest, TimeoutWithId) {
 
   ASSERT_THROW(bootstrap->initialize(id), mscclpp::Error);
 
-  // Timeout should be less than 3 seconds
-  ASSERT_LT(timer.elapsed(), 3000000);
+  // Timeout should be sligtly greater than 1 second
+  ASSERT_GT(timer.elapsed(), 1000000);
+  ASSERT_LT(timer.elapsed(), 1100000);
 }
 
 class MPIBootstrap : public mscclpp::BaseBootstrap {
