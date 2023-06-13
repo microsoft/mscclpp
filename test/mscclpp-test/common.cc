@@ -44,37 +44,39 @@ int kernel_num = 0;
 int cudaGraphLaunches = 15;
 
 double parseSize(const char* value) {
+  std::string valueStr(value);
+  std::istringstream iss(valueStr);
   long long int units;
   double size;
   char size_lit;
-  int count = sscanf(value, "%lf %1s", &size, &size_lit);
 
-  switch (count) {
-    case 2:
-      switch (size_lit) {
-        case 'G':
-        case 'g':
-          units = 1024 * 1024 * 1024;
-          break;
-        case 'M':
-        case 'm':
-          units = 1024 * 1024;
-          break;
-        case 'K':
-        case 'k':
-          units = 1024;
-          break;
-        default:
-          return -1.0;
-      };
-      break;
-    case 1:
-      units = 1;
-      break;
-    default:
-      return -1.0;
+  if (iss >> size) {
+    iss >> std::ws;  // eat whitespace
+    iss >> size_lit;
+  } else {
+    return -1.0;
   }
 
+  if (!std::isspace(size_lit)) {
+    switch (size_lit) {
+      case 'G':
+      case 'g':
+        units = 1024 * 1024 * 1024;
+        break;
+      case 'M':
+      case 'm':
+        units = 1024 * 1024;
+        break;
+      case 'K':
+      case 'k':
+        units = 1024;
+        break;
+      default:
+        return -1.0;
+    };
+  } else {
+    units = 1;
+  }
   return size * units;
 }
 
