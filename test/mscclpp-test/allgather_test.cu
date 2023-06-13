@@ -190,10 +190,12 @@ class AllGatherTestEngine : public BaseTestEngine {
   void allocateBuffer() override;
   void setupConnections() override;
 
- private:
   std::vector<void*> getSendBuff() override;
-  void* getExpectedBuff() override;
   void* getRecvBuff() override;
+  void* getScratchBuff() override;
+
+ private:
+  void* getExpectedBuff() override;
 
   std::shared_ptr<int> sendBuff_;
   std::shared_ptr<int[]> expectedBuff_;
@@ -224,7 +226,10 @@ void* AllGatherTestEngine::getRecvBuff() {
   return sendBuff_.get();
 }
 
+void* AllGatherTestEngine::getScratchBuff() { return nullptr; }
+
 std::shared_ptr<BaseTestEngine> getTestEngine(const TestArgs& args) {
   return std::make_shared<AllGatherTestEngine>(args);
 }
+
 std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<AllGatherTestColl>(); }

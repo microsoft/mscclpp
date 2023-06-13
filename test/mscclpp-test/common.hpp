@@ -1,12 +1,6 @@
 #ifndef MSCCLPP_TESTS_COMMON_H_
 #define MSCCLPP_TESTS_COMMON_H_
 
-#include <mpi.h>
-#include <unistd.h>
-
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <mscclpp/channel.hpp>
 #include <mscclpp/core.hpp>
 
@@ -74,17 +68,27 @@ class BaseTestEngine {
   void barrier();
   size_t checkData();
 
+  virtual std::vector<void*> getSendBuff() = 0;
+  virtual void* getRecvBuff() = 0;
+  virtual void* getScratchBuff() = 0;
+
  private:
   virtual void setupConnections() = 0;
-  virtual std::vector<void*> getSendBuff() = 0;
   virtual void* getExpectedBuff() = 0;
-  virtual void* getRecvBuff() = 0;
 
   double benchTime();
 
+  void setupMeshConnectionsInternal(
+      std::vector<std::shared_ptr<mscclpp::Connection>>& connections, mscclpp::RegisteredMemory& inputBufRegMem,
+      mscclpp::RegisteredMemory& outputBufRegMem,
+      std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories, void* inputBuff,
+      size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes);
+
  protected:
-  void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* sendBuff,
-                            size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
+  void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* inputBuff,
+                            size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0);
+  void setupMeshConnections(std::vector<mscclpp::channel::DirectChannel>& dirChannels, void* inputBuff,
+                            size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes = 0);
 
   const TestArgs args_;
   bool inPlace_;
@@ -98,8 +102,5 @@ class BaseTestEngine {
 extern std::shared_ptr<BaseTestEngine> getTestEngine(const TestArgs& args);
 extern std::shared_ptr<BaseTestColl> getTestColl();
 extern mscclpp::Transport IBs[];
-
-#define PRINT \
-  if (is_main_proc) printf
 
 #endif  // MSCCLPP_TESTS_COMMON_H_

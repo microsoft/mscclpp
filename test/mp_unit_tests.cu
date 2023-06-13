@@ -80,7 +80,13 @@ class MultiProcessTestEnv : public ::testing::Environment {
 
 MultiProcessTestEnv* gEnv = nullptr;
 
-class MultiProcessTest : public ::testing::Test {};
+class MultiProcessTest : public ::testing::Test {
+ protected:
+  void TearDown() override {
+    // Wait for all ranks to finish the previous test
+    MPI_Barrier(MPI_COMM_WORLD);
+  }
+};
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
@@ -258,7 +264,7 @@ static mscclpp::Transport ibIdToTransport(int id) {
   return IBs[id];
 }
 
-class IbTest : public MultiProcessTest {
+class IbTestBase : public MultiProcessTest {
  protected:
   void SetUp() override {
     MSCCLPP_CUDATHROW(cudaGetDeviceCount(&cudaDevNum));
@@ -274,49 +280,92 @@ class IbTest : public MultiProcessTest {
   std::string ibDevName;
 };
 
-TEST_F(IbTest, SimpleSendRecv) {
+class IbPeerToPeerTest : public IbTestBase {
+ protected:
+  void SetUp() override {
+    IbTestBase::SetUp();
+
+    mscclpp::UniqueId id;
+
+    if (gEnv->rank < 2) {
+      // This test needs only two ranks
+      bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, 2);
+      if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
+    }
+    MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
+    if (gEnv->rank >= 2) {
+      // This test needs only two ranks
+      return;
+    }
+
+    bootstrap->initialize(id);
+
+    ibCtx = std::make_shared<mscclpp::IbCtx>(ibDevName);
+    qp = ibCtx->createQp();
+
+    qpInfo[gEnv->rank] = qp->getInfo();
+    bootstrap->allGather(qpInfo.data(), sizeof(mscclpp::IbQpInfo));
+  }
+
+  void registerBufferAndConnect(void* buf, size_t size) {
+    bufSize = size;
+    mr = ibCtx->registerMr(buf, size);
+    mrInfo[gEnv->rank] = mr->getInfo();
+    bootstrap->allGather(mrInfo.data(), sizeof(mscclpp::IbMrInfo));
+
+    for (int i = 0; i < bootstrap->getNranks(); ++i) {
+      if (i == gEnv->rank) continue;
+      qp->rtr(qpInfo[i]);
+      qp->rts();
+      break;
+    }
+    bootstrap->barrier();
+  }
+
+  void stageSend(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled) {
+    const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
+    qp->stageSend(mr, remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled);
+  }
+
+  void stageAtomicAdd(uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, uint64_t addVal) {
+    const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
+    qp->stageAtomicAdd(mr, remoteMrInfo, wrId, dstOffset, addVal);
+  }
+
+  void stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
+                        unsigned int immData) {
+    const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
+    qp->stageSendWithImm(mr, remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled, immData);
+  }
+
+  std::shared_ptr<mscclpp::Bootstrap> bootstrap;
+  std::shared_ptr<mscclpp::IbCtx> ibCtx;
+  mscclpp::IbQp* qp;
+  const mscclpp::IbMr* mr;
+  size_t bufSize;
+
+  std::array<mscclpp::IbQpInfo, 2> qpInfo;
+  std::array<mscclpp::IbMrInfo, 2> mrInfo;
+};
+
+TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
   if (gEnv->rank >= 2) {
     // This test needs only two ranks
     return;
   }
 
-  mscclpp::Timer timer(3);
+  mscclpp::Timer timeout(3);
 
   const int maxIter = 100000;
   const int nelem = 1;
   auto data = mscclpp::allocUniqueCuda<int>(nelem);
 
-  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, 2);
-  mscclpp::UniqueId id;
-  if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
-  MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
-  bootstrap->initialize(id);
-
-  mscclpp::IbCtx ctx(ibDevName);
-  mscclpp::IbQp* qp = ctx.createQp();
-  const mscclpp::IbMr* mr = ctx.registerMr(data.get(), sizeof(int) * nelem);
-
-  std::array<mscclpp::IbQpInfo, 2> qpInfo;
-  qpInfo[gEnv->rank] = qp->getInfo();
-
-  std::array<mscclpp::IbMrInfo, 2> mrInfo;
-  mrInfo[gEnv->rank] = mr->getInfo();
-
-  bootstrap->allGather(qpInfo.data(), sizeof(mscclpp::IbQpInfo));
-  bootstrap->allGather(mrInfo.data(), sizeof(mscclpp::IbMrInfo));
-
-  for (int i = 0; i < bootstrap->getNranks(); ++i) {
-    if (i == gEnv->rank) continue;
-    qp->rtr(qpInfo[i]);
-    qp->rts();
-    break;
-  }
-  bootstrap->barrier();
+  registerBufferAndConnect(data.get(), sizeof(int) * nelem);
 
   if (gEnv->rank == 1) {
     mscclpp::Timer timer;
     for (int iter = 0; iter < maxIter; ++iter) {
-      qp->stageSend(mr, mrInfo[0], sizeof(int) * nelem, 0, 0, 0, true);
+      stageSend(sizeof(int) * nelem, 0, 0, 0, true);
       qp->postSend();
       bool waiting = true;
       int spin = 0;
@@ -335,9 +384,184 @@ TEST_F(IbTest, SimpleSendRecv) {
       }
     }
     float us = (float)timer.elapsed();
-    std::cout << "IbTest.SimpleSendRecv: " << us / maxIter << " us/iter" << std::endl;
+    std::cout << "IbPeerToPeerTest.SimpleSendRecv: " << us / maxIter << " us/iter" << std::endl;
   }
   bootstrap->barrier();
+}
+
+__global__ void kernelMemoryConsistency(uint64_t* data, volatile uint64_t* curIter, volatile int* result,
+                                        uint64_t nelem, uint64_t maxIter) {
+  if (blockIdx.x != 0) return;
+
+  constexpr int FlagWrong = 1;
+  constexpr int FlagAbort = 2;
+
+  volatile uint64_t* ptr = data;
+  for (uint64_t iter = 1; iter < maxIter + 1; ++iter) {
+    int err = 0;
+
+    if (threadIdx.x == 0) {
+      *curIter = iter;
+
+      // Wait for the first element arrival (expect equal to iter). Expect that the first element is delivered in
+      // a special way that guarantees all other elements are completely delivered.
+      uint64_t spin = 0;
+      while (ptr[0] != iter) {
+        if (spin++ == 1000000) {
+          // Assume the program is stuck. Set the abort flag and escape the loop.
+          *result |= FlagAbort;
+          err = 1;
+          break;
+        }
+      }
+    }
+    __syncthreads();
+
+    // Check results (expect equal to iter) in backward that is more likely to see the wrong result.
+    for (size_t i = nelem - 1 + threadIdx.x; i >= blockDim.x; i -= blockDim.x) {
+      if (data[i - blockDim.x] != iter) {
+#if 1
+        *result |= FlagWrong;
+        err = 1;
+        break;
+#else
+        // For debugging purposes: try waiting for the correct result.
+        uint64_t spin = 0;
+        while (ptr[i - blockDim.x] != iter) {
+          if (spin++ == 1000000) {
+            *result |= FlagAbort;
+            err = 1;
+            break;
+          }
+        }
+        if (spin >= 1000000) {
+          break;
+        }
+#endif
+      }
+    }
+    __threadfence();
+    __syncthreads();
+
+    // Shuffle err
+    for (int i = 16; i > 0; i /= 2) {
+      err += __shfl_xor_sync(0xffffffff, err, i);
+    }
+
+    if (err > 0) {
+      // Exit if any error is detected.
+      return;
+    }
+  }
+  if (threadIdx.x == 0) {
+    *curIter = maxIter + 1;
+  }
+}
+
+TEST_F(IbPeerToPeerTest, MemoryConsistency) {
+  if (gEnv->rank >= 2) {
+    // This test needs only two ranks
+    return;
+  }
+
+  const uint64_t signalPeriod = 1024;
+  const uint64_t maxIter = 10000;
+  const uint64_t nelem = 65536 + 1;
+  auto data = mscclpp::allocUniqueCuda<uint64_t>(nelem);
+
+  registerBufferAndConnect(data.get(), sizeof(uint64_t) * nelem);
+
+  uint64_t res = 0;
+  uint64_t iter = 0;
+
+  if (gEnv->rank == 0) {
+    // Receiver
+    auto curIter = mscclpp::makeUniqueCudaHost<uint64_t>(0);
+    auto result = mscclpp::makeUniqueCudaHost<int>(0);
+
+    volatile uint64_t* ptrCurIter = (volatile uint64_t*)curIter.get();
+    volatile int* ptrResult = (volatile int*)result.get();
+
+    ASSERT_EQ(*ptrCurIter, 0);
+    ASSERT_EQ(*ptrResult, 0);
+
+    kernelMemoryConsistency<<<1, 1024>>>(data.get(), ptrCurIter, ptrResult, nelem, maxIter);
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+
+    for (iter = 1; iter < maxIter + 1; ++iter) {
+      mscclpp::Timer timeout(5);
+
+      while (*ptrCurIter != iter + 1) {
+        res = *ptrResult;
+        if (res != 0) break;
+      }
+
+      // Send the result to the sender
+      res = *ptrResult;
+      uint64_t tmp[2];
+      tmp[0] = res;
+      bootstrap->allGather(tmp, sizeof(uint64_t));
+
+      if (res != 0) break;
+    }
+
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  } else if (gEnv->rank == 1) {
+    // Sender
+    std::vector<uint64_t> hostBuffer(nelem, 0);
+
+    for (iter = 1; iter < maxIter + 1; ++iter) {
+      mscclpp::Timer timeout(5);
+
+      // Set data
+      for (uint64_t i = 0; i < nelem; i++) {
+        hostBuffer[i] = iter;
+      }
+      mscclpp::memcpyCuda<uint64_t>(data.get(), hostBuffer.data(), nelem, cudaMemcpyHostToDevice);
+
+      // Need to signal from time to time to empty the IB send queue
+      bool signaled = (iter % signalPeriod == 0);
+
+      // Send from the second element to the last
+      stageSend(sizeof(uint64_t) * (nelem - 1), 0, sizeof(uint64_t), sizeof(uint64_t), signaled);
+      qp->postSend();
+
+#if 0
+      // Send the first element using a normal send. This should occasionally see the wrong result.
+      stageSend(sizeof(uint64_t), 0, 0, 0, false);
+      qp->postSend();
+#else
+      // For reference: send the first element using AtomicAdd. This should see the correct result.
+      stageAtomicAdd(0, 0, 0, 1);
+      qp->postSend();
+#endif
+
+      if (signaled) {
+        int wcNum = qp->pollCq();
+        while (wcNum == 0) {
+          wcNum = qp->pollCq();
+        }
+        ASSERT_EQ(wcNum, 1);
+        const ibv_wc* wc = qp->getWc(0);
+        ASSERT_EQ(wc->status, IBV_WC_SUCCESS);
+      }
+
+      // Get the result from the receiver
+      uint64_t tmp[2];
+      bootstrap->allGather(tmp, sizeof(uint64_t));
+      res = tmp[0];
+
+      if (res != 0) break;
+    }
+  }
+
+  if (res & 2) {
+    FAIL() << "The receiver is stuck at iteration " << iter << ".";
+  } else if (res != 0 && res != 1) {
+    FAIL() << "Unknown error is detected at iteration " << iter << ". res =" << res;
+  }
+
+  EXPECT_EQ(res, 0);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -537,13 +761,6 @@ TEST_F(CommunicatorTest, BasicWrite) {
   communicator->bootstrapper()->barrier();
 }
 
-__global__ void kernelIncEpochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize) {
-  int tid = threadIdx.x;
-  if (tid != rank && tid < worldSize) {
-    deviceEpochs[tid].epochIncrement();
-  }
-}
-
 __global__ void kernelWaitEpochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize) {
   int tid = threadIdx.x;
   if (tid != rank && tid < worldSize) {
@@ -576,9 +793,6 @@ TEST_F(CommunicatorTest, WriteWithDeviceEpochs) {
   communicator->bootstrapper()->barrier();
 
   writeToRemote(deviceBufferSize / sizeof(int) / gEnv->worldSize);
-
-  kernelIncEpochs<<<1, gEnv->worldSize>>>(deviceEpochHandles.get(), gEnv->rank, gEnv->worldSize);
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank) {
@@ -613,7 +827,19 @@ TEST_F(CommunicatorTest, WriteWithHostEpochs) {
 
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
-      epochs[i]->incrementAndSignal();
+      epochs[i]->signal();
+    }
+  }
+
+  for (int i = 0; i < gEnv->worldSize; i++) {
+    if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
+      epochs[i]->wait();
+    }
+  }
+
+  for (int i = 0; i < gEnv->worldSize; i++) {
+    if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
+      epochs[i]->signal();
     }
   }
 
@@ -657,7 +883,7 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
       }
       mscclpp::RegisteredMemory sendMemory;
       mscclpp::RegisteredMemory remoteMemory;
-      void* tmpBuff = nullptr;
+      // void* tmpBuff = nullptr;
 
       if (isInPlace) {
         registerMemoryPair(sendBuff, sendBuffBytes, transport, 0, r, sendMemory, remoteMemory);
@@ -665,14 +891,14 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
         sendMemory = communicator->registerMemory(recvBuff, recvBuffBytes, transport);
         mscclpp::RegisteredMemory recvMemory;
         registerMemoryPair(recvBuff, recvBuffBytes, transport, 0, r, recvMemory, remoteMemory);
-        tmpBuff = recvMemory.data();
+        // tmpBuff = recvMemory.data();
       }
 
       mscclpp::channel::ChannelId cid = channelService->addChannel(connections[r]);
       communicator->setup();
 
       devChannels.emplace_back(channelService->deviceChannel(cid), channelService->addMemory(remoteMemory),
-                               channelService->addMemory(sendMemory), remoteMemory.data(), sendMemory.data(), tmpBuff);
+                               channelService->addMemory(sendMemory));
     }
   }
 
@@ -681,9 +907,9 @@ class ChannelOneToOneTest : public CommunicatorTestBase {
 
 __constant__ mscclpp::channel::SimpleDeviceChannel gChannelOneToOneTestConstDevChans;
 
-__global__ void kernelPingPong(int rank, int nElem) {
+__global__ void kernelPingPong(int* buff, int rank, int nElem) {
   mscclpp::channel::SimpleDeviceChannel& devChan = gChannelOneToOneTestConstDevChans;
-  volatile int* sendBuff = (volatile int*)devChan.srcPtr_;
+  volatile int* sendBuff = (volatile int*)buff;
   int nTries = 1000;
   int flusher = 0;
   int rank1Offset = 10000000;
@@ -745,16 +971,16 @@ TEST_F(ChannelOneToOneTest, PingPongIb) {
 
   channelService->startProxy();
 
-  kernelPingPong<<<1, 1024>>>(gEnv->rank, 1);
+  kernelPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  kernelPingPong<<<1, 1024>>>(gEnv->rank, 1024);
+  kernelPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  kernelPingPong<<<1, 1024>>>(gEnv->rank, 1024 * 1024);
+  kernelPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  kernelPingPong<<<1, 1024>>>(gEnv->rank, 4 * 1024 * 1024);
+  kernelPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   channelService->stopProxy();
