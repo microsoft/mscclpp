@@ -66,10 +66,11 @@ steps:
       HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      mkdir -p output
+      touch output/mscclpp-it-000000
+      tail -f output/mscclpp-it-000000 &
       parallel-ssh -i -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
-      -O $SSH_OPTION 'hostname'
-      parallel-ssh -i -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
-      -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh'
+      -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh'
 
 - task: AzureCLI@2
   name: StopVMSS
