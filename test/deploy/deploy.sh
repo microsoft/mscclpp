@@ -3,8 +3,8 @@ set -e
 KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
 SRC_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/build"
 DST_DIR="/tmp/mscclpp"
-HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/mscclpp-test/deploy/hostfile"
-DEPLOY_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/mscclpp-test/deploy"
+HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile"
+DEPLOY_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy"
 SSH_OPTION="StrictHostKeyChecking=no"
 
 chmod 400 ${KeyFilePath}
@@ -29,6 +29,9 @@ parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION sshkey ${
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION sshkey.pub ${DST_DIR}
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${DEPLOY_DIR}/* ${DST_DIR}
 
+# force to pull the latest image
+parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
+  "sudo docker pull ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1"
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker run --rm -itd --privileged --net=host --ipc=host --gpus=all \
   -w /root -v ${DST_DIR}:/root/mscclpp --name=mscclpp-test \

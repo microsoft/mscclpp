@@ -2,7 +2,10 @@ trigger:
 - main
 
 pr:
-- main
+  branches:
+    include:
+    - main
+  drafts: false
 
 jobs:
 - job: UnitTest
@@ -10,7 +13,7 @@ jobs:
   pool:
     name: mscclpp
   container:
-    image: superbench/superbench:v0.8.0-cuda12.1
+    image: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
     options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
 
   steps:
@@ -22,9 +25,8 @@ jobs:
       script: |
         curl -L -C- https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
         tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
-        export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
         mkdir build && cd build
-        /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
+        MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
         make -j
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -44,6 +46,8 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
+        set -e
+        export PATH=/usr/local/mpi/bin:$PATH
         mpirun -tag-output -np 2 ./build/test/mp_unit_tests
         mpirun -tag-output -np 4 ./build/test/mp_unit_tests
         mpirun -tag-output -np 8 ./build/test/mp_unit_tests
