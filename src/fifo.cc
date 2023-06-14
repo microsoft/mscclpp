@@ -49,9 +49,8 @@ MSCCLPP_API_CPP void HostProxyFifo::pop() {
 }
 
 MSCCLPP_API_CPP void HostProxyFifo::flushTail(bool sync) {
-  // Flush the tail to device memory. This is either triggered every MSCCLPP_PROXY_FIFO_FLUSH_COUNTER to make sure
-  // that the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is for flush
-  // request.
+  // Flush the tail to device memory. This is either triggered every ProxyFlushPeriod to make sure that the fifo can
+  // make progress even if there is no request mscclppSync. However, mscclppSync type is for flush request.
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(pimpl->tailReplica.get(), &pimpl->hostTail, sizeof(uint64_t),
                                     cudaMemcpyHostToDevice, pimpl->stream));
   if (sync) {

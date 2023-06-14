@@ -74,6 +74,58 @@ union ChannelTrigger {
 #endif  // __CUDACC__
 };
 
+union ChannelPacket {
+  // Flags have to be *after* data, because otherwise, an incomplete receive from the network may receive the flag but
+  // not the data. Note this is assuming that either we receive contiguous chunks of data (sockets) or data is written
+  // with an atomicity of 8 bytes (IB/RDMA).
+  struct {
+    uint32_t data1;
+    uint32_t flag1;
+    uint32_t data2;
+    uint32_t flag2;
+  };
+
+  struct {
+    uint64_t x;
+    uint64_t y;
+  } vec;
+
+  uint64_t v[2];
+
+#ifdef __CUDACC__
+  __forceinline__ __device__ ChannelPacket() {}
+  __forceinline__ __device__ void write(uint32_t val1, uint32_t val2, uint32_t flag) {
+    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"(val1), "r"(flag), "r"(val2), "r"(flag));
+  }
+  __forceinline__ __device__ void write(uint32_t val1, uint32_t val2) {
+    asm volatile("st.volatile.global.v4.u32 [%0], {%1,1,%2,1};" ::"l"(v), "r"(val1), "r"(val2));
+  }
+  __forceinline__ __device__ void write(uint64_t val, uint32_t flag) {
+    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"((uint32_t)val), "r"(flag),
+                 "r"((uint32_t)(val >> 32)), "r"(flag));
+  }
+  __forceinline__ __device__ void write(uint64_t val) {
+    asm volatile("st.volatile.global.v4.u32 [%0], {%1,1,%2,1};" ::"l"(v), "r"((uint32_t)val),
+                 "r"((uint32_t)(val >> 32)));
+  }
+  __forceinline__ __device__ uint2 read(uint32_t flag) {
+    uint2 data;
+    uint32_t flag1, flag2;
+    do {
+      asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
+                   : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2)
+                   : "l"(v));
+    } while ((flag1 != flag) || (flag2 != flag));
+    return data;
+  }
+  __forceinline__ __device__ uint2 read() { return read(1); }
+  __forceinline__ __device__ void clear() {
+    vec.x = 0;
+    vec.y = 0;
+  }
+#endif  // __CUDACC__
+};
+
 struct DeviceChannel {
   DeviceChannel() = default;
 
@@ -94,30 +146,10 @@ struct DeviceChannel {
     put(dst, offset, src, offset, size);
   }
 
-  __forceinline__ __device__ void putDirect(void* dst, void* src, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
-                                            uint32_t threadId, uint32_t numThreads) {
-    // assume the memory is aligned to 8 bytes
-    uint64_t* srcAddr = (uint64_t*)((char*)src + srcOffset);
-    uint64_t* dstAddr = (uint64_t*)((char*)dst + dstOffset);
-    uint64_t ele;
-    size_t nElem = size % sizeof(uint64_t) ? (size + sizeof(uint64_t)) / sizeof(uint64_t) : size / sizeof(uint64_t);
-    for (size_t i = threadId; i < nElem; i += numThreads) {
-      // load to register first
-      ele = srcAddr[i];
-      dstAddr[i] = ele;
-    }
-  }
-
-  __forceinline__ __device__ void signalDirect() { epoch_.signalDirect(); }
-
-  __forceinline__ __device__ void signal() {
-    epochIncrement();
-    fifo_.push(ChannelTrigger(TriggerFlag, 0, 0, 0, 0, 1, channelId_).value);
-  }
+  __forceinline__ __device__ void signal() { fifo_.push(ChannelTrigger(TriggerFlag, 0, 0, 0, 0, 1, channelId_).value); }
 
   __forceinline__ __device__ void putWithSignal(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
                                                 uint64_t size) {
-    epochIncrement();
     fifo_.push(ChannelTrigger(TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, size, channelId_).value);
   }
 
@@ -127,13 +159,10 @@ struct DeviceChannel {
 
   __forceinline__ __device__ void putWithSignalAndFlush(MemoryId dst, uint64_t dstOffset, MemoryId src,
                                                         uint64_t srcOffset, uint64_t size) {
-    epochIncrement();
     uint64_t curFifoHead = fifo_.push(
         ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, channelId_)
             .value);
-    while (*(volatile uint64_t*)&fifo_.triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
-           *(volatile uint64_t*)fifo_.tailReplica <= curFifoHead)
-      ;
+    fifo_.sync(curFifoHead);
   }
 
   __forceinline__ __device__ void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
@@ -142,16 +171,11 @@ struct DeviceChannel {
 
   __forceinline__ __device__ void flush() {
     uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, channelId_).value);
-    // we need to wait for two conditions to be met to ensure the CPU is done flushing. (1) wait for the tail
-    // to go pass by curFifoHead (this is safety net) and (2) wait for the work element value to change to 0.
-    while (*(volatile uint64_t*)&fifo_.triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0 &&
-           *(volatile uint64_t*)fifo_.tailReplica <= curFifoHead)
-      ;
+    fifo_.sync(curFifoHead);
   }
 
   __forceinline__ __device__ void wait() { epoch_.wait(); }
 
-  __forceinline__ __device__ void epochIncrement() { epoch_.epochIncrement(); }
 #endif  // __CUDACC__
 
   ChannelId channelId_;
@@ -163,31 +187,27 @@ struct DeviceChannel {
   DeviceProxyFifo fifo_;
 };
 
-class DeviceChannelService;
+class BaseChannelService {
+ public:
+  BaseChannelService() = default;
+  virtual ~BaseChannelService() = default;
+  virtual void startProxy() = 0;
+  virtual void stopProxy() = 0;
+};
 
-inline ProxyHandler makeChannelProxyHandler(DeviceChannelService& channelService);
-
-class DeviceChannelService {
+class DeviceChannelService : public BaseChannelService {
  public:
   DeviceChannelService(Communicator& communicator);
 
-  ChannelId addChannel(std::shared_ptr<Connection> connection) {
-    channels_.push_back(Channel(communicator_, connection));
-    return channels_.size() - 1;
-  }
+  ChannelId addChannel(std::shared_ptr<Connection> connection);
 
-  MemoryId addMemory(RegisteredMemory memory) {
-    memories_.push_back(memory);
-    return memories_.size() - 1;
-  }
+  MemoryId addMemory(RegisteredMemory memory);
 
-  Channel channel(ChannelId id) { return channels_[id]; }
-  DeviceChannel deviceChannel(ChannelId id) {
-    return DeviceChannel(id, channels_[id].epoch().deviceHandle(), proxy_.fifo().deviceFifo());
-  }
+  Channel channel(ChannelId id) const;
+  DeviceChannel deviceChannel(ChannelId id);
 
-  void startProxy() { proxy_.start(); }
-  void stopProxy() { proxy_.stop(); }
+  void startProxy();
+  void stopProxy();
 
  private:
   Communicator& communicator_;
@@ -198,29 +218,7 @@ class DeviceChannelService {
 
   void bindThread();
 
-  ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw) {
-    ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
-    Channel& channel = channels_[trigger->fields.chanId];
-
-    auto result = ProxyHandlerResult::Continue;
-
-    if (trigger->fields.type & TriggerData) {
-      RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
-      RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
-      channel.connection().write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset, trigger->fields.size);
-    }
-
-    if (trigger->fields.type & TriggerFlag) {
-      channel.epoch().signal();
-    }
-
-    if (trigger->fields.type & TriggerSync) {
-      channel.connection().flush();
-      result = ProxyHandlerResult::FlushFifoTailAndContinue;
-    }
-
-    return result;
-  }
+  ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
 };
 
 struct SimpleDeviceChannel {
@@ -228,28 +226,20 @@ struct SimpleDeviceChannel {
 
   SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src) : devChan_(devChan), dst_(dst), src_(src) {}
 
-  SimpleDeviceChannel(DeviceChannel devChan, void* dstPtr, void* srcPtr)
-      : devChan_(devChan), srcPtr_(srcPtr), dstPtr_(dstPtr) {}
+  SimpleDeviceChannel(DeviceChannel devChan) : devChan_(devChan) {}
 
   SimpleDeviceChannel(const SimpleDeviceChannel& other) = default;
 
   SimpleDeviceChannel& operator=(SimpleDeviceChannel& other) = default;
 
 #ifdef __CUDACC__
-
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
     devChan_.put(dst_, dstOffset, src_, srcOffset, size);
   }
 
   __forceinline__ __device__ void put(uint64_t offset, uint64_t size) { put(offset, offset, size); }
 
-  __forceinline__ __device__ void putDirect(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
-    devChan_.putDirect(dstPtr_, srcPtr_, offset, offset, size, threadId, numThreads);
-  }
-
   __forceinline__ __device__ void signal() { devChan_.signal(); }
-
-  __forceinline__ __device__ void signalDirect() { devChan_.signalDirect(); }
 
   __forceinline__ __device__ void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
     devChan_.putWithSignal(dst_, dstOffset, src_, srcOffset, size);
@@ -269,17 +259,93 @@ struct SimpleDeviceChannel {
 
   __forceinline__ __device__ void wait() { devChan_.wait(); }
 
-  __forceinline__ __device__ void epochIncrement() { devChan_.epochIncrement(); }
-
 #endif  // __CUDACC__
 
   DeviceChannel devChan_;
   MemoryId dst_;
   MemoryId src_;
+};
 
-  // these are used for direct copy
-  void* srcPtr_;
-  void* dstPtr_;
+// A direct version of DeviceChannel only for CudaIpc
+struct DirectChannel {
+ public:
+  DirectChannel() = default;
+  DirectChannel(DirectEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src, void* tmp = nullptr)
+      : epoch_(epoch), src_(src), tmp_(tmp) {
+    if (!dst.transports().has(Transport::CudaIpc)) {
+      throw Error("DirectChannel: dst must be registered with CudaIpc", ErrorCode::InvalidUsage);
+    }
+    dst_ = dst.data();
+  };
+
+#ifdef __CUDACC__
+  __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                      uint32_t numThreads) {
+    // assume the memory is aligned to 8 bytes
+    uint64_t* srcAddr = (uint64_t*)((char*)src_ + srcOffset);
+    uint64_t* dstAddr = (uint64_t*)((char*)dst_ + dstOffset);
+    uint64_t ele;
+    size_t nElem = size % sizeof(uint64_t) ? (size + sizeof(uint64_t)) / sizeof(uint64_t) : size / sizeof(uint64_t);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      // load to register first
+      ele = srcAddr[i];
+      dstAddr[i] = ele;
+    }
+  }
+
+  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                            uint32_t numThreads, uint32_t flag) {
+    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+    uint32_t* srcBase = (uint32_t*)((char*)src_ + srcOffset);
+    ChannelPacket* dstBase = (ChannelPacket*)((char*)dst_ + dstOffset);
+    size_t nElem = size / sizeof(uint64_t);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      ChannelPacket* pkt = &dstBase[i];
+      pkt->write(srcBase[2 * i], srcBase[2 * i + 1], flag);
+    }
+  }
+
+  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                            uint32_t numThreads) {
+    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+    uint32_t* srcBase = (uint32_t*)((char*)src_ + srcOffset);
+    ChannelPacket* dstBase = (ChannelPacket*)((char*)dst_ + dstOffset);
+    size_t nElem = size / sizeof(uint64_t);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      ChannelPacket* pkt = &dstBase[i];
+      pkt->write(srcBase[2 * i], srcBase[2 * i + 1]);
+    }
+  }
+
+  __forceinline__ __device__ void getPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                            uint32_t numThreads, uint32_t flag) {
+    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+    ChannelPacket* tmpBase = (ChannelPacket*)((char*)tmp_ + srcOffset);
+    uint2* srcBase = (uint2*)((char*)src_ + dstOffset);
+    size_t nElem = size / sizeof(uint2);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      ChannelPacket* pkt = &tmpBase[i];
+      srcBase[i] = pkt->read(flag);
+      // for future reuse
+      pkt->clear();
+    }
+  }
+
+  __forceinline__ __device__ void signal() { epoch_.signal(); }
+
+  __forceinline__ __device__ void signalPacket() { epoch_.signalPacket(); }
+
+  __forceinline__ __device__ void epochIncrement() { epoch_.epochIncrement(); }
+
+  __forceinline__ __device__ uint64_t epochGetLocal() const { return epoch_.epochGetLocal(); }
+
+  __forceinline__ __device__ void wait() { epoch_.wait(); }
+#endif  // __CUDACC__
+ private:
+  DirectEpoch::DeviceHandle epoch_;
+  void* src_;
+  void* dst_;
+  void* tmp_;
 };
 
 }  // namespace channel

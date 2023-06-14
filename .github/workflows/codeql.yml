@@ -4,21 +4,24 @@ on:
   push:
     branches:
       - '**'
-  pull_request:
-    branches: [ 'main' ]
   schedule:
     - cron: "30 1 * * 1"
 
 jobs:
   analyze:
     name: Analyze
-    runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     container:
-      image: superbench/superbench:v0.8.0-cuda12.1
+      image: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     permissions:
       actions: read
       contents: read
       security-events: write
+      packages: read
 
     strategy:
       fail-fast: false
@@ -28,6 +31,10 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
+
+    - name: Check disk space
+      run: |
+        df -h
 
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v2
@@ -39,8 +46,7 @@ jobs:
         git config --global --add safe.directory /__w/mscclpp/mscclpp
         curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
         tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
-        export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.1/compat/lib.real
-        /tmp/cmake-3.26.4-linux-x86_64/bin/cmake .
+        MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release .
         make -j
 
     - name: Perform CodeQL Analysis

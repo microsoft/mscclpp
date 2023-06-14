@@ -19,7 +19,7 @@ constexpr size_t MAX_BLOCKS_NUM = 32;
 
 #define ALIGN 4
 
-__constant__ mscclpp::channel::SimpleDeviceChannel constDevChans[2];
+__constant__ mscclpp::channel::DirectChannel constDirChans[2];
 
 inline int getBlockNum(size_t count) {
   return std::min((count + THRES_BYTES_PER_BLOCK - 1) / THRES_BYTES_PER_BLOCK, MAX_BLOCKS_NUM);
@@ -36,13 +36,13 @@ __global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock) {
   size_t blockDataSize = min(dataSize - startIndex, dataPerBlock);
   int globalIndex = blockIdx.x * blockDim.x + threadIdx.x;
 
-  mscclpp::channel::SimpleDeviceChannel sendConn = constDevChans[0];
-  mscclpp::channel::SimpleDeviceChannel recvConn = constDevChans[1];
+  mscclpp::channel::DirectChannel sendConn = constDirChans[0];
+  mscclpp::channel::DirectChannel recvConn = constDirChans[1];
 
-  sendConn.putDirect(startIndex, blockDataSize, threadIdx.x, blockDim.x);
+  sendConn.put(startIndex, startIndex, blockDataSize, threadIdx.x, blockDim.x);
   deviceSyncer.sync(gridDim.x);
   if (globalIndex == 0) {
-    sendConn.signalDirect();
+    sendConn.signal();
     recvConn.wait();
   }
 }
@@ -54,7 +54,7 @@ class SendRecvTestColl : public BaseTestColl {
 
   void runColl(const TestArgs& args, cudaStream_t stream) override;
   void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) override;
-  void getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) override;
+  void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) override;
   void setupCollTest(size_t size) override;
 };
 
@@ -65,9 +65,9 @@ void SendRecvTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   kernel<<<blockNum, BLOCK_THREADS_NUM, 0, stream>>>(args.rank, sendBytes, bytesPerBlock);
 }
 
-void SendRecvTestColl::getBw(const double deltaSec, double& algBW /*OUT*/, double& busBw /*OUT*/) {
+void SendRecvTestColl::getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) {
   double baseBw = (double)(paramCount_ * typeSize_) / 1.0E9 / deltaSec;
-  algBW = baseBw;
+  algBw = baseBw;
   double factor = 1;
   busBw = baseBw * factor;
 }
@@ -103,20 +103,24 @@ void SendRecvTestColl::setupCollTest(size_t size) {
 
 class SendRecvTestEngine : public BaseTestEngine {
  public:
-  SendRecvTestEngine() : BaseTestEngine(false){};
+  SendRecvTestEngine(const TestArgs& args);
   ~SendRecvTestEngine() override = default;
 
   void allocateBuffer() override;
   void setupConnections() override;
 
- private:
   std::vector<void*> getSendBuff() override;
-  void* getExpectedBuff() override;
   void* getRecvBuff() override;
+  void* getScratchBuff() override;
+
+ private:
+  void* getExpectedBuff() override;
 
   std::vector<std::shared_ptr<int>> devicePtrs_;
   std::shared_ptr<int[]> expectedBuff_;
 };
+
+SendRecvTestEngine::SendRecvTestEngine(const TestArgs& args) : BaseTestEngine(args) { inPlace_ = false; }
 
 void SendRecvTestEngine::allocateBuffer() {
   std::shared_ptr<int> sendBuff = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
@@ -133,17 +137,20 @@ void SendRecvTestEngine::setupConnections() {
   int sendToRank = (args_.rank + 1) % worldSize;
   int recvFromRank = (args_.rank - 1 + worldSize) % worldSize;
   std::array<int, 2> ranks = {sendToRank, recvFromRank};
+  auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
 
-  std::vector<mscclpp::channel::ChannelId> chanIds;
+  std::vector<std::shared_ptr<mscclpp::DirectEpoch>> directEpochs;
 
-  chanIds.push_back(chanService_->addChannel(
-      comm_->connectOnSetup(sendToRank, 0, getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice))));
+  auto sendConn =
+      comm_->connectOnSetup(sendToRank, 0, getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice));
+  directEpochs.push_back(std::make_shared<mscclpp::DirectEpoch>(*comm_, sendConn));
   if (recvFromRank != sendToRank) {
-    chanIds.push_back(chanService_->addChannel(
-        comm_->connectOnSetup(recvFromRank, 0, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice))));
+    auto recvConn =
+        comm_->connectOnSetup(recvFromRank, 0, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice));
+    directEpochs.push_back(std::make_shared<mscclpp::DirectEpoch>(*comm_, recvConn));
   } else {
     // reuse the send channel if worldSize is 2
-    chanIds.push_back(chanIds[0]);
+    directEpochs.push_back(directEpochs[0]);
   }
   comm_->setup();
 
@@ -160,14 +167,13 @@ void SendRecvTestEngine::setupConnections() {
 
   // swap to make sure devicePtrs_[0] in local rank write to devicePtrs_[1] in remote rank
   std::swap(futureRemoteMemory[0], futureRemoteMemory[1]);
-  std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
+  std::vector<mscclpp::channel::DirectChannel> dirChannels;
   for (int i : {0, 1}) {
     // We assume ranks in the same node
-    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
-        chanService_->deviceChannel(chanIds[i]), futureRemoteMemory[i].get().data(), localMemories[i].data()));
+    dirChannels.emplace_back(directEpochs[i]->deviceHandle(), futureRemoteMemory[i].get(),
+                             (void*)localMemories[i].data());
   }
-  cudaMemcpyToSymbol(constDevChans, devChannels.data(),
-                     sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size());
+  cudaMemcpyToSymbol(constDirChans, dirChannels.data(), sizeof(mscclpp::channel::DirectChannel) * dirChannels.size());
 }
 
 std::vector<void*> SendRecvTestEngine::getSendBuff() { return {devicePtrs_[0].get()}; }
@@ -176,5 +182,10 @@ void* SendRecvTestEngine::getExpectedBuff() { return expectedBuff_.get(); }
 
 void* SendRecvTestEngine::getRecvBuff() { return devicePtrs_[1].get(); }
 
-std::shared_ptr<BaseTestEngine> getTestEngine() { return std::make_shared<SendRecvTestEngine>(); }
+void* SendRecvTestEngine::getScratchBuff() { return nullptr; }
+
+std::shared_ptr<BaseTestEngine> getTestEngine(const TestArgs& args) {
+  return std::make_shared<SendRecvTestEngine>(args);
+}
+
 std::shared_ptr<BaseTestColl> getTestColl() { return std::make_shared<SendRecvTestColl>(); }

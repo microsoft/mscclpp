@@ -1,6 +1,10 @@
 #ifndef MSCCLPP_CONCURRENCY_HPP_
 #define MSCCLPP_CONCURRENCY_HPP_
 
+#include <stdint.h>
+
+#include <mscclpp/poll.hpp>
+
 namespace mscclpp {
 struct DeviceSyncer {
  public:
@@ -14,19 +18,19 @@ struct DeviceSyncer {
     int maxOldCnt = blockNum - 1;
     __syncthreads();
     if (threadIdx.x == 0) {
+      // Need a `__threadfence()` before to flip `flag`.
+      __threadfence();
       int tmpIsAdd = isAdd_ ^ 1;
       if (tmpIsAdd) {
         if (atomicAdd(&count_, 1) == maxOldCnt) {
           flag_ = 1;
         }
-        while (!flag_) {
-        }
+        POLL_MAYBE_JAILBREAK(!flag_, 1000000000);
       } else {
         if (atomicSub(&count_, 1) == 1) {
           flag_ = 0;
         }
-        while (flag_) {
-        }
+        POLL_MAYBE_JAILBREAK(flag_, 1000000000);
       }
       isAdd_ = tmpIsAdd;
     }

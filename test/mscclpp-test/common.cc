@@ -1,22 +1,36 @@
+#include "common.hpp"
+
 #include <cuda.h>
 #include <getopt.h>
 #include <libgen.h>
+#include <mpi.h>
+#include <numa.h>
+#include <unistd.h>
 
+#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <mscclpp/utils.hpp>
+#include <sstream>
 #include <string>
 #include <type_traits>
 
-#include "common.hpp"
-
-int is_main_proc = 0;
+int isMainProc = 0;
 
 mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
                             mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
                             mscclpp::Transport::IB6, mscclpp::Transport::IB7};
+
+#define PRINT(__message)                    \
+  do {                                      \
+    if (isMainProc) std::cout << __message; \
+  } while (0);
+
+#define PRECISION(__val) std::fixed << std::setprecision(2) << __val
 
 namespace {
 
@@ -34,37 +48,39 @@ int kernel_num = 0;
 int cudaGraphLaunches = 15;
 
 double parseSize(const char* value) {
+  std::string valueStr(value);
+  std::istringstream iss(valueStr);
   long long int units;
   double size;
   char size_lit;
-  int count = sscanf(value, "%lf %1s", &size, &size_lit);
 
-  switch (count) {
-    case 2:
-      switch (size_lit) {
-        case 'G':
-        case 'g':
-          units = 1024 * 1024 * 1024;
-          break;
-        case 'M':
-        case 'm':
-          units = 1024 * 1024;
-          break;
-        case 'K':
-        case 'k':
-          units = 1024;
-          break;
-        default:
-          return -1.0;
-      };
-      break;
-    case 1:
-      units = 1;
-      break;
-    default:
-      return -1.0;
+  if (iss >> size) {
+    iss >> std::ws;  // eat whitespace
+    iss >> size_lit;
+  } else {
+    return -1.0;
   }
 
+  if (!std::isspace(size_lit)) {
+    switch (size_lit) {
+      case 'G':
+      case 'g':
+        units = 1024 * 1024 * 1024;
+        break;
+      case 'M':
+      case 'm':
+        units = 1024 * 1024;
+        break;
+      case 'K':
+      case 'k':
+        units = 1024;
+        break;
+      default:
+        return -1.0;
+    };
+  } else {
+    units = 1;
+  }
   return size * units;
 }
 
@@ -72,17 +88,65 @@ double allreduceTime(int worldSize, double value, int average) {
   double accumulator = value;
 
   if (average != 0) {
-    MPI_Op op =
-        average == 1 ? MPI_SUM : average == 2 ? MPI_MIN : average == 3 ? MPI_MAX : average == 4 ? MPI_SUM : MPI_Op();
+    MPI_Op op;
+    if (average == 1) {
+      op = MPI_SUM;
+    } else if (average == 2) {
+      op = MPI_MIN;
+    } else if (average == 3) {
+      op = MPI_MAX;
+    } else if (average == 4) {
+      op = MPI_SUM;
+    }
     MPI_Allreduce(MPI_IN_PLACE, (void*)&accumulator, 1, MPI_DOUBLE, op, MPI_COMM_WORLD);
   }
 
   if (average == 1) accumulator /= worldSize;
   return accumulator;
 }
+
+const std::string getBusId(int cudaDev) {
+  // On most systems, the PCI bus ID comes back as in the 0000:00:00.0
+  // format. Still need to allocate proper space in case PCI domain goes
+  // higher.
+  char busIdChar[] = "00000000:00:00.0";
+  CUDATHROW(cudaDeviceGetPCIBusId(busIdChar, sizeof(busIdChar), cudaDev));
+  // we need the hex in lower case format
+  for (int i = 0; i < sizeof(busIdChar); i++) {
+    busIdChar[i] = std::tolower(busIdChar[i]);
+  }
+  return std::string(busIdChar);
+}
 }  // namespace
 
-BaseTestEngine::BaseTestEngine(bool inPlace) : error_(0), inPlace_(inPlace) {
+int getDeviceNumaNode(int cudaDev) {
+  std::string busId = getBusId(cudaDev);
+  std::string file_str = "/sys/bus/pci/devices/" + busId + "/numa_node";
+  std::ifstream file(file_str);
+  int numaNode;
+  if (file.is_open()) {
+    if (!(file >> numaNode)) {
+      throw std::runtime_error("Failed to read NUMA node from file: " + file_str);
+    }
+  } else {
+    throw std::runtime_error("Failed to open file: " + file_str);
+  }
+  return numaNode;
+}
+
+void numaBind(int node) {
+  int totalNumNumaNodes = numa_num_configured_nodes();
+  if (node < 0 || node >= totalNumNumaNodes) {
+    throw std::runtime_error("Invalid NUMA node " + std::to_string(node) + ", must be between 0 and " +
+                             std::to_string(totalNumNumaNodes));
+  }
+  nodemask_t mask;
+  nodemask_zero(&mask);
+  nodemask_set_compat(&mask, node);
+  numa_bind_compat(&mask);
+}
+
+BaseTestEngine::BaseTestEngine(const TestArgs& args) : args_(args), inPlace_(true), error_(0) {
   this->coll_ = getTestColl();
   CUDATHROW(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
 }
@@ -92,6 +156,7 @@ BaseTestEngine::~BaseTestEngine() { cudaStreamDestroy(stream_); }
 void BaseTestColl::setupCollTest(const TestArgs& args, size_t size) {
   this->worldSize_ = args.totalRanks;
   this->typeSize_ = sizeof(int);
+  this->kernelNum_ = args.kernelNum;
   this->setupCollTest(size);
 }
 
@@ -141,19 +206,24 @@ void BaseTestEngine::runTest() {
   }
   CUDATHROW(cudaDeviceSynchronize());
 
-  PRINT("#\n");
-  PRINT("# %10s  %12s           in-place                       out-of-place          \n", "", "");
-  PRINT("# %10s  %12s  %7s  %6s  %6s  %6s  %7s  %6s  %6s  %6s\n", "size", "count", "time", "algbw", "busbw", "#wrong",
-        "time", "algbw", "busbw", "#wrong");
-  PRINT("# %10s  %12s  %7s  %6s  %6s  %5s  %7s  %6s  %6s  %5s\n", "(B)", "(elements)", "(us)", "(GB/s)", "(GB/s)", "",
-        "(us)", "(GB/s)", "(GB/s)", "");
+  std::stringstream ss;
+  ss << "#\n";
+  ss << "#                                        in-place                       out-of-place\n";
+  ss << "#       size         count     time   algbw   busbw  #wrong     time   algbw   busbw  #wrong\n";
+  ss << "#        (B)    (elements)     (us)  (GB/s)  (GB/s)             (us)  (GB/s)  (GB/s)\n";
+  PRINT(ss.str());
+
+  ss.str(std::string());
 
   // Benchmark
   for (size_t size = args_.minBytes; size <= args_.maxBytes;
        size = ((args_.stepFactor > 1) ? size * args_.stepFactor : size + args_.stepBytes)) {
     coll_->setupCollTest(args_, size);
     this->coll_->initData(this->args_, this->getSendBuff(), this->getExpectedBuff());
-    PRINT("%12li  %12li", max(coll_->getSendBytes(), coll_->getExpectedBytes()), coll_->getParamBytes() / sizeof(int));
+
+    ss << std::setw(12) << std::max(coll_->getSendBytes(), coll_->getExpectedBytes()) << "  " << std::setw(12)
+       << coll_->getParamBytes() / sizeof(int);
+
     double deltaSec = benchTime();
 
     size_t nErrors = 0;
@@ -183,32 +253,36 @@ void BaseTestEngine::runTest() {
     double algBw, busBw;
     this->coll_->getBw(deltaSec, algBw, busBw);
     if (!this->inPlace_) {
-      PRINT("                                 ");
+      ss << "                                 ";
     }
     if (args_.reportErrors) {
-      PRINT("  %7s  %6.2f  %6.2f  %5g", timeStr, algBw, busBw, (double)nErrors);
+      ss << "  " << std::setw(7) << timeStr << "  " << std::setw(6) << PRECISION(algBw) << "  " << std::setw(6)
+         << PRECISION(busBw) << "  " << std::setw(5) << nErrors;
     } else {
-      PRINT("  %7s  %6.2f  %6.2f  %5s", timeStr, algBw, busBw, "N/A");
+      ss << "  " << std::setw(7) << timeStr << "  " << std::setw(6) << PRECISION(algBw) << "  " << std::setw(6)
+         << PRECISION(busBw);
     }
-    PRINT("\n");
+    ss << "\n";
+    PRINT(ss.str());
+    ss.str(std::string());
   }
   PRINT("\n");
 }
 
-void BaseTestEngine::bootstrap(const TestArgs& args) {
-  this->args_ = args;
+void BaseTestEngine::bootstrap() {
   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(args_.rank, args_.totalRanks);
   mscclpp::UniqueId id;
   if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
   bootstrap->initialize(id);
   comm_ = std::make_shared<mscclpp::Communicator>(bootstrap);
-  chanService_ = std::make_shared<mscclpp::channel::DeviceChannelService>(*comm_);
 }
 
 void BaseTestEngine::setupTest() {
+  this->chanService_ = this->createChannelService();
   this->setupConnections();
   this->chanService_->startProxy();
+  this->coll_->setChanService(this->chanService_);
 }
 
 size_t BaseTestEngine::checkData() {
@@ -225,6 +299,102 @@ size_t BaseTestEngine::checkData() {
     }
   }
   return nErrors;
+}
+
+std::shared_ptr<mscclpp::channel::BaseChannelService> BaseTestEngine::createChannelService() {
+  return std::make_shared<mscclpp::channel::DeviceChannelService>(*comm_);
+}
+
+void BaseTestEngine::setupMeshConnectionsInternal(
+    std::vector<std::shared_ptr<mscclpp::Connection>>& connections, mscclpp::RegisteredMemory& inputBufRegMem,
+    mscclpp::RegisteredMemory& outputBufRegMem,
+    std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories, void* inputBuff,
+    size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes) {
+  const int worldSize = args_.totalRanks;
+  const int rank = args_.rank;
+  const int nRanksPerNode = args_.nRanksPerNode;
+  const int thisNode = rank / nRanksPerNode;
+  const mscclpp::Transport ibTransport = IBs[args_.gpuNum];
+  const bool isOutPlace = (outputBuff != nullptr);
+
+  inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
+  if (isOutPlace) {
+    outputBufRegMem = comm_->registerMemory(outputBuff, outputBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
+  }
+
+  auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
+  for (int r = 0; r < worldSize; r++) {
+    if (r == rank) {
+      continue;
+    }
+    mscclpp::Transport transport;
+    if (rankToNode(r) == thisNode) {
+      transport = mscclpp::Transport::CudaIpc;
+    } else {
+      transport = ibTransport;
+    }
+    // Connect with all other ranks
+    connections.push_back(comm_->connectOnSetup(r, 0, transport));
+
+    if (isOutPlace) {
+      comm_->sendMemoryOnSetup(outputBufRegMem, r, 0);
+    } else {
+      comm_->sendMemoryOnSetup(inputBufRegMem, r, 0);
+    }
+    auto remoteMemory = comm_->recvMemoryOnSetup(r, 0);
+    remoteRegMemories.push_back(remoteMemory);
+  }
+  comm_->setup();
+}
+
+// Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
+// TODO(saemal): retrun the actual vector instead of void
+void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels,
+                                          void* inputBuff, size_t inputBuffBytes, void* outputBuff,
+                                          size_t outputBuffBytes, SetupChannelFunc setupChannel) {
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  mscclpp::RegisteredMemory inputBufRegMem;
+  mscclpp::RegisteredMemory outputBufRegMem;
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
+
+  setupMeshConnectionsInternal(connections, inputBufRegMem, outputBufRegMem, remoteRegMemories, inputBuff,
+                               inputBuffBytes, outputBuff, outputBuffBytes);
+
+  if (setupChannel != nullptr) {
+    setupChannel(connections, remoteRegMemories, inputBufRegMem);
+  } else {
+    auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
+    for (size_t i = 0; i < connections.size(); ++i) {
+      devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
+          service->deviceChannel(service->addChannel(connections[i])), service->addMemory(remoteRegMemories[i].get()),
+          service->addMemory(inputBufRegMem)));
+    }
+  }
+
+  comm_->setup();
+}
+
+void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::DirectChannel>& dirChannels, void* inputBuff,
+                                          size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes) {
+  const bool isOutPlace = (outputBuff != nullptr);
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  mscclpp::RegisteredMemory inputBufRegMem;
+  mscclpp::RegisteredMemory outputBufRegMem;
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
+
+  setupMeshConnectionsInternal(connections, inputBufRegMem, outputBufRegMem, remoteRegMemories, inputBuff,
+                               inputBuffBytes, outputBuff, outputBuffBytes);
+
+  std::vector<std::shared_ptr<mscclpp::DirectEpoch>> dirEpochs;
+  for (auto& conn : connections) {
+    dirEpochs.emplace_back(std::make_shared<mscclpp::DirectEpoch>(*comm_, conn));
+  }
+  comm_->setup();
+
+  for (size_t i = 0; i < dirEpochs.size(); ++i) {
+    dirChannels.emplace_back(dirEpochs[i]->deviceHandle(), remoteRegMemories[i].get(), inputBufRegMem.data(),
+                             (isOutPlace ? outputBufRegMem.data() : nullptr));
+  }
 }
 
 void run(int argc, char* argv[]);
@@ -342,15 +512,16 @@ void run(int argc, char* argv[]) {
   MPI_Comm_size(shmcomm, &nRanksPerNode);
   MPI_Comm_free(&shmcomm);
   localRank = rank % nRanksPerNode;
-  is_main_proc = (rank == 0) ? 1 : 0;
+  isMainProc = (rank == 0) ? 1 : 0;
 
-  PRINT(
-      "# minBytes %ld maxBytes %ld step: %ld(%s) warmup iters: %d iters: %d validation: %d graph: %d, "
-      "kernel num: %d\n",
-      minBytes, maxBytes, (stepFactor > 1) ? stepFactor : stepBytes, (stepFactor > 1) ? "factor" : "bytes",
-      warmup_iters, iters, datacheck, cudaGraphLaunches, kernel_num);
-  PRINT("#\n");
-  PRINT("# Using devices\n");
+  std::stringstream ss;
+  ss << "# minBytes " << minBytes << " maxBytes " << maxBytes
+     << " step: " << ((stepFactor > 1) ? stepFactor : stepBytes) << "(" << ((stepFactor > 1) ? "factor" : "bytes")
+     << ") warmup iters: " << warmup_iters << " iters: " << iters << " validation: " << datacheck
+     << " graph: " << cudaGraphLaunches << " kernel num: " << kernel_num << "\n";
+  ss << "#\n# Using devices\n";
+  PRINT(ss.str());
+  ss.str(std::string());
 
   constexpr int MAX_LINE = 2048;
   char line[MAX_LINE];
@@ -370,7 +541,11 @@ void run(int argc, char* argv[]) {
   // Gather all output in rank order to root (0)
   MPI_Gather(line, MAX_LINE, MPI_BYTE, lines.get(), MAX_LINE, MPI_BYTE, 0, MPI_COMM_WORLD);
   if (rank == 0) {
-    for (int r = 0; r < totalRanks; r++) PRINT("%s", &lines[MAX_LINE * r]);
+    for (int r = 0; r < totalRanks; r++) {
+      ss << &lines[MAX_LINE * r];
+    }
+    PRINT(ss.str());
+    ss.str(std::string());
   }
   MPI_Allreduce(MPI_IN_PLACE, &maxMem, 1, MPI_LONG, MPI_MIN, MPI_COMM_WORLD);
 
@@ -378,16 +553,19 @@ void run(int argc, char* argv[]) {
   size_t memMaxBytes = (maxMem - (1 << 30)) / (datacheck ? 3 : 2);
   if (maxBytes > memMaxBytes) {
     maxBytes = memMaxBytes;
-    PRINT("#\n# Reducing maxBytes to %ld due to memory limitation\n", maxBytes);
+    ss << "#\n# Reducing maxBytes to " << maxBytes << " due to memory limitation\n";
+    PRINT(ss.str());
+    ss.str(std::string());
   }
 
   CUDATHROW(cudaSetDevice(cudaDev));
   TestArgs args = {minBytes, maxBytes,  stepBytes,     stepFactor, totalRanks, rank,
                    cudaDev,  localRank, nRanksPerNode, kernel_num, datacheck};
-  PRINT("#\n");
-  PRINT("# Initializing MSCCL++\n");
-  auto testEngine = getTestEngine();
-  testEngine->bootstrap(args);
+
+  PRINT("#\n# Initializing MSCCL++\n");
+
+  auto testEngine = getTestEngine(args);
+  testEngine->bootstrap();
   testEngine->allocateBuffer();
   PRINT("# Setting up the connection in MSCCL++\n");
   testEngine->setupTest();
@@ -399,8 +577,11 @@ void run(int argc, char* argv[]) {
   int error = testEngine->getTestErrors();
   MPI_Allreduce(MPI_IN_PLACE, &error, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-  PRINT("# Out of bounds values : %d %s\n", error, error ? "FAILED" : "OK");
-  PRINT("#\n");
+  ss << "# Out of bounds values : " << error << " " << (error ? "FAILED" : "OK") << "\n#\n";
+  PRINT(ss.str());
 
   MPI_Finalize();
+  if (error != 0) {
+    exit(1);
+  }
 }
