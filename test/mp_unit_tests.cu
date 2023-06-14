@@ -201,7 +201,11 @@ TEST_F(BootstrapTest, TimeoutWithId) {
   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
   mscclpp::UniqueId id = bootstrap->createUniqueId();
 
-  ASSERT_THROW(bootstrap->initialize(id), mscclpp::Error);
+  try {
+    bootstrap->initialize(id);
+  } catch (const mscclpp::Error& e) {
+    ASSERT_EQ(e.getErrorCode(), mscclpp::ErrorCode::Timeout);
+  }
 
   // Timeout should be sligtly greater than 1 second
   ASSERT_GT(timer.elapsed(), 1000000);

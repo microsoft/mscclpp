@@ -1,9 +1,7 @@
 #include "connection.hpp"
 
-#include <algorithm>
 #include <mscclpp/utils.hpp>
 
-#include "checks_internal.hpp"
 #include "debug.h"
 #include "infiniband/verbs.h"
 #include "npkit/npkit.h"

@@ -27,10 +27,8 @@ class BaseError : public std::runtime_error {
   int getErrorCode() const;
   const char* what() const noexcept override;
 
- private:
-  int errorCode_;
-
  protected:
+  int errorCode_;
   std::string message_;
 };
 
@@ -38,6 +36,7 @@ class Error : public BaseError {
  public:
   Error(const std::string& message, ErrorCode errorCode);
   virtual ~Error() = default;
+  ErrorCode getErrorCode() const;
 };
 
 class SysError : public BaseError {

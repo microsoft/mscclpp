@@ -4,8 +4,6 @@
 #include <malloc.h>
 #include <unistd.h>
 
-#include <cassert>
-#include <cstdlib>
 #include <cstring>
 #include <mscclpp/core.hpp>
 #include <mscclpp/fifo.hpp>
@@ -13,7 +11,6 @@
 #include <string>
 
 #include "api.h"
-#include "checks_internal.hpp"
 #include "debug.h"
 
 #define MAXCONNECTIONS 64

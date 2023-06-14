@@ -33,6 +33,8 @@ MSCCLPP_API_CPP Error::Error(const std::string& message, ErrorCode errorCode) : 
   message_ = message + " (Mscclpp failure: " + errorToString(errorCode) + ")";
 }
 
+MSCCLPP_API_CPP ErrorCode Error::getErrorCode() const { return static_cast<ErrorCode>(errorCode_); }
+
 MSCCLPP_API_CPP SysError::SysError(const std::string& message, int errorCode) : BaseError(errorCode) {
   message_ = message + " (System failure: " + std::strerror(errorCode) + ")";
 }

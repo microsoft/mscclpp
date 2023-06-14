@@ -1,13 +1,13 @@
 #include "utils_internal.hpp"
 
-#include <cuda_runtime.h>
-#include <stdlib.h>
 #include <unistd.h>
 
+#include <cstring>
 #include <memory>
+#include <mscclpp/errors.hpp>
 #include <string>
 
-#include "checks_internal.hpp"
+#include "debug.h"
 
 namespace {
 constexpr char HOSTID_FILE[32] = "/proc/sys/kernel/random/boot_id";
