@@ -54,15 +54,16 @@ steps:
   displayName: Deploy Test Env
   inputs:
     targetType: filePath
-    filePath: test/mscclpp-test/deploy/deploy.sh
+    filePath: test/deploy/deploy.sh
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
-  name: RunTests
-  displayName: Run multi-nodes test
+  name: RunMscclppTest
+  displayName: Run multi-nodes mscclpp-test
   inputs:
     targetType: 'inline'
     script: |
+      set -e
       HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
@@ -71,7 +72,25 @@ steps:
       tail -f output/mscclpp-it-000000 &
       CHILD_PID=$!
       parallel-ssh -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
-      -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh'
+      -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mscclpp-test'
+      kill $CHILD_PID
+
+- task: Bash@3
+  name: RunMultiNodeUnitTest
+  displayName: Run multi-nodes unit tests
+  inputs:
+    targetType: 'inline'
+    script: |
+      set -e
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
+      SSH_OPTION="StrictHostKeyChecking=no"
+      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      mkdir -p output
+      touch output/mscclpp-it-000000
+      tail -f output/mscclpp-it-000000 &
+      CHILD_PID=$!
+      parallel-ssh -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
+      -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mp-ut'
       kill $CHILD_PID
 
 - task: AzureCLI@2
