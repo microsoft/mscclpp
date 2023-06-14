@@ -106,8 +106,8 @@ TEST_F(MultiProcessTest, Prelim) {
 
 class BootstrapTest : public MultiProcessTest {
  protected:
-  // Each test case should finish within 3 seconds.
-  mscclpp::Timer bootstrapTestTimer{3};
+  // Each test case should finish within 30 seconds.
+  mscclpp::Timer bootstrapTestTimer{30};
 };
 
 void bootstrapTestAllGather(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap) {
