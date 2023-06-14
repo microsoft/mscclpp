@@ -1,8 +1,7 @@
 #include <numa.h>
 
 #include <fstream>
-#include <mscclpp/checks.hpp>
-#include <mscclpp/errors.hpp>
+#include <mscclpp/cuda_utils.hpp>
 
 // Convert a logical cudaDev index to the NVML device minor number
 static const std::string getBusId(int cudaDev) {

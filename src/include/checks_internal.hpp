@@ -1,7 +1,7 @@
 #ifndef MSCCLPP_CHECKS_OLD_HPP_
 #define MSCCLPP_CHECKS_OLD_HPP_
 
-#include <mscclpp/checks.hpp>
+#include <mscclpp/errors.hpp>
 
 #include "debug.h"
 
