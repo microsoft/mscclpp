@@ -1,7 +1,6 @@
 #include <mscclpp/channel.hpp>
 
 #include "api.h"
-#include "checks_internal.hpp"
 #include "debug.h"
 #include "numa.hpp"
 

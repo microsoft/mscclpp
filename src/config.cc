@@ -5,7 +5,7 @@ Config Config::instance_;
 
 Config* Config::getInstance() { return &instance_; }
 
-time_t Config::getBootstrapConnectionTimeoutConfig() { return bootstrapConnectionTimeout; }
+int Config::getBootstrapConnectionTimeoutConfig() { return bootstrapConnectionTimeout; }
 
-void Config::setBootstrapConnectionTimeoutConfig(time_t timeout) { bootstrapConnectionTimeout = timeout; }
+void Config::setBootstrapConnectionTimeoutConfig(int timeout) { bootstrapConnectionTimeout = timeout; }
 }  // namespace mscclpp
