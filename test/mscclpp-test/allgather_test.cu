@@ -33,7 +33,7 @@ __device__ void allgather0(mscclpp::channel::SimpleDeviceChannel devChan, int ra
 
 __device__ void localAllGather(mscclpp::channel::SimpleDeviceChannel devChan, int rank, int worldSize,
                                int nranksPerNode, int remoteRank, uint64_t offset, uint64_t size,
-                               bool flushAndSignal = true) {
+                               bool flushAfterSignal = true) {
   // this allgather algorithm works as follows:
   // Step 1: GPU rank i sends data to GPU rank (i+1) % nranksPerNode
   // and waits for data from GPU rank (i-1) % nranksPerNode
@@ -43,8 +43,8 @@ __device__ void localAllGather(mscclpp::channel::SimpleDeviceChannel devChan, in
   for (int i = 1; i < nranksPerNode; i++) {
     if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)) {
       // put your data to GPU (rank+i) % nranksPerNode and signal in one call
-      if (flushAndSignal && (threadIdx.x % 32) == 0) devChan.putWithSignalAndFlush(offset, size);
-      if (!flushAndSignal && (threadIdx.x % 32) == 0) devChan.putWithSignal(offset, size);
+      if (flushAfterSignal && (threadIdx.x % 32) == 0) devChan.putWithSignalAndFlush(offset, size);
+      if (!flushAfterSignal && (threadIdx.x % 32) == 0) devChan.putWithSignal(offset, size);
     }
     // wait for the data from GPU (rank-i) % nranksPerNode to arrive
     if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode)) {
