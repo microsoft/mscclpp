@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_TESTS_COMMON_H_
 #define MSCCLPP_TESTS_COMMON_H_
 

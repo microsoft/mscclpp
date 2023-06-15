@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 target_sources(unit_tests PRIVATE
     core_tests.cc
     cuda_utils_tests.cc

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <mscclpp/core.hpp>
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/epoch.hpp>

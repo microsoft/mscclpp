@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_ERRORS_HPP_
 #define MSCCLPP_ERRORS_HPP_
 

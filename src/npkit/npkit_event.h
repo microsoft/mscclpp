@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef NPKIT_EVENT_H_
 #define NPKIT_EVENT_H_
 

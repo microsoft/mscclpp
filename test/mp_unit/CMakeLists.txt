@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 target_sources(mp_unit_tests PRIVATE
     bootstrap_tests.cc
     ib_tests.cu

@@ -1,5 +1,8 @@
 #include <sys/resource.h>
 
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <cstring>
 #include <mscclpp/core.hpp>
 #include <mscclpp/errors.hpp>
