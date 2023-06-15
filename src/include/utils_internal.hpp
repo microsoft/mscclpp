@@ -31,10 +31,6 @@ struct netIf {
 int parseStringList(const char* string, struct netIf* ifList, int maxList);
 bool matchIfList(const char* string, int port, struct netIf* ifList, int listSize, bool matchExact);
 
-using TimePoint = std::chrono::steady_clock::time_point;
-TimePoint getClock();
-int64_t elapsedClock(TimePoint start, TimePoint end);
-
 template <class T>
 inline void hashCombine(std::size_t& hash, const T& v) {
   std::hash<T> hasher;

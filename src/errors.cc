@@ -20,7 +20,7 @@ std::string errorToString(enum ErrorCode error) {
   }
 }
 
-BaseError::BaseError(std::string message, int errorCode)
+BaseError::BaseError(const std::string& message, int errorCode)
     : std::runtime_error(""), message_(message), errorCode_(errorCode) {}
 
 BaseError::BaseError(int errorCode) : std::runtime_error(""), errorCode_(errorCode) {}
@@ -29,21 +29,27 @@ int BaseError::getErrorCode() const { return errorCode_; }
 
 const char* BaseError::what() const noexcept { return message_.c_str(); }
 
-MSCCLPP_API_CPP Error::Error(std::string message, ErrorCode errorCode) : BaseError(static_cast<int>(errorCode)) {
+MSCCLPP_API_CPP Error::Error(const std::string& message, ErrorCode errorCode) : BaseError(static_cast<int>(errorCode)) {
   message_ = message + " (Mscclpp failure: " + errorToString(errorCode) + ")";
 }
 
-MSCCLPP_API_CPP CudaError::CudaError(std::string message, cudaError_t errorCode) : BaseError(errorCode) {
+MSCCLPP_API_CPP ErrorCode Error::getErrorCode() const { return static_cast<ErrorCode>(errorCode_); }
+
+MSCCLPP_API_CPP SysError::SysError(const std::string& message, int errorCode) : BaseError(errorCode) {
+  message_ = message + " (System failure: " + std::strerror(errorCode) + ")";
+}
+
+MSCCLPP_API_CPP CudaError::CudaError(const std::string& message, cudaError_t errorCode) : BaseError(errorCode) {
   message_ = message + " (Cuda failure: " + cudaGetErrorString(errorCode) + ")";
 }
 
-MSCCLPP_API_CPP CuError::CuError(std::string message, CUresult errorCode) : BaseError(errorCode) {
+MSCCLPP_API_CPP CuError::CuError(const std::string& message, CUresult errorCode) : BaseError(errorCode) {
   const char* errStr;
   cuGetErrorString(errorCode, &errStr);
   message_ = message + " (Cu failure: " + errStr + ")";
 }
 
-MSCCLPP_API_CPP IbError::IbError(std::string message, int errorCode) : BaseError(errorCode) {
+MSCCLPP_API_CPP IbError::IbError(const std::string& message, int errorCode) : BaseError(errorCode) {
   message_ = message + " (Ib failure: " + std::strerror(errorCode) + ")";
 }
 

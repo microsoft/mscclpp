@@ -1,13 +1,13 @@
 #include "utils_internal.hpp"
 
-#include <cuda_runtime.h>
-#include <stdlib.h>
 #include <unistd.h>
 
+#include <cstring>
 #include <memory>
+#include <mscclpp/errors.hpp>
 #include <string>
 
-#include "checks_internal.hpp"
+#include "debug.h"
 
 namespace {
 constexpr char HOSTID_FILE[32] = "/proc/sys/kernel/random/boot_id";
@@ -164,12 +164,6 @@ bool matchIfList(const char* string, int port, netIf* ifList, int listSize, bool
     }
   }
   return false;
-}
-
-TimePoint getClock() { return std::chrono::steady_clock::now(); }
-
-int64_t elapsedClock(TimePoint start, TimePoint end) {
-  return std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
 }
 
 /* get any bytes of random data from /dev/urandom */

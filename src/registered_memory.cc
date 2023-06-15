@@ -3,9 +3,9 @@
 #include <cuda.h>
 
 #include <algorithm>
+#include <mscclpp/cuda_utils.hpp>
 
 #include "api.h"
-#include "checks_internal.hpp"
 #include "debug.h"
 #include "utils_internal.hpp"
 

@@ -1,10 +1,10 @@
 #include "communicator.hpp"
 
 #include <mscclpp/core.hpp>
+#include <mscclpp/cuda_utils.hpp>
 #include <sstream>
 
 #include "api.h"
-#include "checks_internal.hpp"
 #include "connection.hpp"
 #include "debug.h"
 #include "registered_memory.hpp"
