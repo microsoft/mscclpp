@@ -1,5 +1,5 @@
-#include <mscclpp/checks.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/epoch.hpp>
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/proxy.hpp>

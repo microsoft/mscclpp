@@ -4,5 +4,6 @@ target_sources(unit_tests PRIVATE
     errors_tests.cc
     fifo_tests.cu
     numa_tests.cc
+    socket_tests.cc
     utils_tests.cc
 )

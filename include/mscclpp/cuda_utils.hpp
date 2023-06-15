@@ -1,29 +1,44 @@
 #ifndef MSCCLPP_CUDA_UTILS_HPP_
 #define MSCCLPP_CUDA_UTILS_HPP_
 
-// #include <type_traits>
 #include <cuda_runtime.h>
 
 #include <cstring>
 #include <memory>
-#include <mscclpp/checks.hpp>
+#include <mscclpp/errors.hpp>
+
+#define MSCCLPP_CUDATHROW(cmd)                                                                                       \
+  do {                                                                                                               \
+    cudaError_t err = cmd;                                                                                           \
+    if (err != cudaSuccess) {                                                                                        \
+      throw mscclpp::CudaError(std::string("Call to " #cmd " failed. ") + __FILE__ + ":" + std::to_string(__LINE__), \
+                               err);                                                                                 \
+    }                                                                                                                \
+  } while (false)
+
+#define MSCCLPP_CUTHROW(cmd)                                                                                      \
+  do {                                                                                                            \
+    CUresult err = cmd;                                                                                           \
+    if (err != CUDA_SUCCESS) {                                                                                    \
+      throw mscclpp::CuError(std::string("Call to " #cmd " failed.") + __FILE__ + ":" + std::to_string(__LINE__), \
+                             err);                                                                                \
+    }                                                                                                             \
+  } while (false)
 
 namespace mscclpp {
 
 // A RAII guard that will cudaThreadExchangeStreamCaptureMode to cudaStreamCaptureModeRelaxed on construction and
 // restore the previous mode on destruction. This is helpful when we want to avoid CUDA graph capture.
 struct AvoidCudaGraphCaptureGuard {
-  AvoidCudaGraphCaptureGuard() : mode_(cudaStreamCaptureModeRelaxed) {
-    MSCCLPP_CUDATHROW(cudaThreadExchangeStreamCaptureMode(&mode_));
-  }
-  ~AvoidCudaGraphCaptureGuard() { cudaThreadExchangeStreamCaptureMode(&mode_); }
+  AvoidCudaGraphCaptureGuard();
+  ~AvoidCudaGraphCaptureGuard();
   cudaStreamCaptureMode mode_;
 };
 
 // A RAII wrapper around cudaStream_t that will call cudaStreamDestroy on destruction.
 struct CudaStreamWithFlags {
-  CudaStreamWithFlags(unsigned int flags) { MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream_, flags)); }
-  ~CudaStreamWithFlags() { cudaStreamDestroy(stream_); }
+  CudaStreamWithFlags(unsigned int flags);
+  ~CudaStreamWithFlags();
   operator cudaStream_t() const { return stream_; }
   cudaStream_t stream_;
 };
