@@ -2,12 +2,16 @@
 
 #include <cuda.h>
 #include <getopt.h>
+#include <libgen.h>
 #include <mpi.h>
+#include <numa.h>
 #include <unistd.h>
 
+#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <mscclpp/utils.hpp>
@@ -44,37 +48,39 @@ int kernel_num = 0;
 int cudaGraphLaunches = 15;
 
 double parseSize(const char* value) {
+  std::string valueStr(value);
+  std::istringstream iss(valueStr);
   long long int units;
   double size;
   char size_lit;
-  int count = sscanf(value, "%lf %1s", &size, &size_lit);
 
-  switch (count) {
-    case 2:
-      switch (size_lit) {
-        case 'G':
-        case 'g':
-          units = 1024 * 1024 * 1024;
-          break;
-        case 'M':
-        case 'm':
-          units = 1024 * 1024;
-          break;
-        case 'K':
-        case 'k':
-          units = 1024;
-          break;
-        default:
-          return -1.0;
-      };
-      break;
-    case 1:
-      units = 1;
-      break;
-    default:
-      return -1.0;
+  if (iss >> size) {
+    iss >> std::ws;  // eat whitespace
+    iss >> size_lit;
+  } else {
+    return -1.0;
   }
 
+  if (!std::isspace(size_lit)) {
+    switch (size_lit) {
+      case 'G':
+      case 'g':
+        units = 1024 * 1024 * 1024;
+        break;
+      case 'M':
+      case 'm':
+        units = 1024 * 1024;
+        break;
+      case 'K':
+      case 'k':
+        units = 1024;
+        break;
+      default:
+        return -1.0;
+    };
+  } else {
+    units = 1;
+  }
   return size * units;
 }
 
@@ -98,7 +104,47 @@ double allreduceTime(int worldSize, double value, int average) {
   if (average == 1) accumulator /= worldSize;
   return accumulator;
 }
+
+const std::string getBusId(int cudaDev) {
+  // On most systems, the PCI bus ID comes back as in the 0000:00:00.0
+  // format. Still need to allocate proper space in case PCI domain goes
+  // higher.
+  char busIdChar[] = "00000000:00:00.0";
+  CUDATHROW(cudaDeviceGetPCIBusId(busIdChar, sizeof(busIdChar), cudaDev));
+  // we need the hex in lower case format
+  for (int i = 0; i < sizeof(busIdChar); i++) {
+    busIdChar[i] = std::tolower(busIdChar[i]);
+  }
+  return std::string(busIdChar);
+}
 }  // namespace
+
+int getDeviceNumaNode(int cudaDev) {
+  std::string busId = getBusId(cudaDev);
+  std::string file_str = "/sys/bus/pci/devices/" + busId + "/numa_node";
+  std::ifstream file(file_str);
+  int numaNode;
+  if (file.is_open()) {
+    if (!(file >> numaNode)) {
+      throw std::runtime_error("Failed to read NUMA node from file: " + file_str);
+    }
+  } else {
+    throw std::runtime_error("Failed to open file: " + file_str);
+  }
+  return numaNode;
+}
+
+void numaBind(int node) {
+  int totalNumNumaNodes = numa_num_configured_nodes();
+  if (node < 0 || node >= totalNumNumaNodes) {
+    throw std::runtime_error("Invalid NUMA node " + std::to_string(node) + ", must be between 0 and " +
+                             std::to_string(totalNumNumaNodes));
+  }
+  nodemask_t mask;
+  nodemask_zero(&mask);
+  nodemask_set_compat(&mask, node);
+  numa_bind_compat(&mask);
+}
 
 BaseTestEngine::BaseTestEngine(const TestArgs& args) : args_(args), inPlace_(true), error_(0) {
   this->coll_ = getTestColl();
@@ -110,6 +156,7 @@ BaseTestEngine::~BaseTestEngine() { cudaStreamDestroy(stream_); }
 void BaseTestColl::setupCollTest(const TestArgs& args, size_t size) {
   this->worldSize_ = args.totalRanks;
   this->typeSize_ = sizeof(int);
+  this->kernelNum_ = args.kernelNum;
   this->setupCollTest(size);
 }
 
@@ -229,12 +276,13 @@ void BaseTestEngine::bootstrap() {
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
   bootstrap->initialize(id);
   comm_ = std::make_shared<mscclpp::Communicator>(bootstrap);
-  chanService_ = std::make_shared<mscclpp::channel::DeviceChannelService>(*comm_);
 }
 
 void BaseTestEngine::setupTest() {
+  this->chanService_ = this->createChannelService();
   this->setupConnections();
   this->chanService_->startProxy();
+  this->coll_->setChanService(this->chanService_);
 }
 
 size_t BaseTestEngine::checkData() {
@@ -251,6 +299,10 @@ size_t BaseTestEngine::checkData() {
     }
   }
   return nErrors;
+}
+
+std::shared_ptr<mscclpp::channel::BaseChannelService> BaseTestEngine::createChannelService() {
+  return std::make_shared<mscclpp::channel::DeviceChannelService>(*comm_);
 }
 
 void BaseTestEngine::setupMeshConnectionsInternal(
@@ -299,7 +351,7 @@ void BaseTestEngine::setupMeshConnectionsInternal(
 // TODO(saemal): retrun the actual vector instead of void
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels,
                                           void* inputBuff, size_t inputBuffBytes, void* outputBuff,
-                                          size_t outputBuffBytes) {
+                                          size_t outputBuffBytes, SetupChannelFunc setupChannel) {
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
   mscclpp::RegisteredMemory inputBufRegMem;
   mscclpp::RegisteredMemory outputBufRegMem;
@@ -308,10 +360,15 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
   setupMeshConnectionsInternal(connections, inputBufRegMem, outputBufRegMem, remoteRegMemories, inputBuff,
                                inputBuffBytes, outputBuff, outputBuffBytes);
 
-  for (size_t i = 0; i < connections.size(); ++i) {
-    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
-        chanService_->deviceChannel(chanService_->addChannel(connections[i])),
-        chanService_->addMemory(remoteRegMemories[i].get()), chanService_->addMemory(inputBufRegMem)));
+  if (setupChannel != nullptr) {
+    setupChannel(connections, remoteRegMemories, inputBufRegMem);
+  } else {
+    auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
+    for (size_t i = 0; i < connections.size(); ++i) {
+      devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
+          service->deviceChannel(service->addChannel(connections[i])), service->addMemory(remoteRegMemories[i].get()),
+          service->addMemory(inputBufRegMem)));
+    }
   }
 
   comm_->setup();
@@ -510,8 +567,6 @@ void run(int argc, char* argv[]) {
   auto testEngine = getTestEngine(args);
   testEngine->bootstrap();
   testEngine->allocateBuffer();
-  int* inputBuff = (int*)testEngine->getSendBuff()[0];
-  int* scratchBuff = (int*)testEngine->getScratchBuff();
   PRINT("# Setting up the connection in MSCCL++\n");
   testEngine->setupTest();
   testEngine->barrier();
@@ -526,4 +581,7 @@ void run(int argc, char* argv[]) {
   PRINT(ss.str());
 
   MPI_Finalize();
+  if (error != 0) {
+    exit(1);
+  }
 }

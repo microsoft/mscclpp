@@ -187,7 +187,15 @@ struct DeviceChannel {
   DeviceProxyFifo fifo_;
 };
 
-class DeviceChannelService {
+class BaseChannelService {
+ public:
+  BaseChannelService() = default;
+  virtual ~BaseChannelService() = default;
+  virtual void startProxy() = 0;
+  virtual void stopProxy() = 0;
+};
+
+class DeviceChannelService : public BaseChannelService {
  public:
   DeviceChannelService(Communicator& communicator);
 
