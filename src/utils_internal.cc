@@ -3,6 +3,7 @@
 #include <unistd.h>
 
 #include <cstring>
+#include <fstream>
 #include <memory>
 #include <mscclpp/errors.hpp>
 #include <string>
@@ -35,8 +36,8 @@ std::string int64ToBusId(int64_t id) {
 
 int64_t busIdToInt64(const std::string busId) {
   char hexStr[17];  // Longest possible int64 hex string + null terminator.
-  int hexOffset = 0;
-  for (int i = 0; hexOffset < sizeof(hexStr) - 1 && i < busId.length(); ++i) {
+  size_t hexOffset = 0;
+  for (size_t i = 0; hexOffset < sizeof(hexStr) - 1 && i < busId.length(); ++i) {
     char c = busId[i];
     if (c == '.' || c == ':') continue;
     if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) {
@@ -66,27 +67,21 @@ uint64_t getHash(const char* string, int n) {
  * This string can be overridden by using the MSCCLPP_HOSTID env var.
  */
 uint64_t computeHostHash(void) {
-  char hostHash[1024];
+  const size_t hashLen = 1024;
+  char hostHash[hashLen];
+
+  std::string hostName = getHostName(hashLen, '\0');
+  strncpy(hostHash, hostName.c_str(), hostName.size());
+
   char* hostId;
-
-  // Fall back is the full hostname if something fails
-  std::string hostName = getHostName(sizeof(hostHash), '\0');
-  strncpy(hostHash, hostName.c_str(), sizeof(hostHash));
-  int offset = strlen(hostHash);
-
   if ((hostId = getenv("MSCCLPP_HOSTID")) != NULL) {
     INFO(MSCCLPP_ENV, "MSCCLPP_HOSTID set by environment to %s", hostId);
-    strncpy(hostHash, hostId, sizeof(hostHash));
-  } else {
-    FILE* file = fopen(HOSTID_FILE, "r");
-    if (file != nullptr) {
-      char* p;
-      if (fscanf(file, "%ms", &p) == 1) {
-        strncpy(hostHash + offset, p, sizeof(hostHash) - offset - 1);
-        free(p);
-      }
+    strncpy(hostHash, hostId, hashLen);
+  } else if (hostName.size() < hashLen) {
+    std::ifstream file(HOSTID_FILE, std::ios::binary);
+    if (file.is_open()) {
+      file.read(hostHash + hostName.size(), hashLen - hostName.size());
     }
-    fclose(file);
   }
 
   // Make sure the string is terminated

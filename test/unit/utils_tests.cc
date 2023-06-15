@@ -46,4 +46,7 @@ TEST(UtilsTest, ScopedTimer) {
 TEST(UtilsTest, getHostName) {
   std::string hostname = mscclpp::getHostName(1024, '.');
   EXPECT_FALSE(hostname.empty());
+  EXPECT_LE(hostname.size(), 1024);
+
+  EXPECT_EQ(mscclpp::getHostName(1024, hostname[0]).size(), 0);
 }

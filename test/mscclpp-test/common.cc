@@ -97,6 +97,8 @@ double allreduceTime(int worldSize, double value, int average) {
       op = MPI_MAX;
     } else if (average == 4) {
       op = MPI_SUM;
+    } else {
+      throw std::runtime_error("Invalid average type " + std::to_string(average));
     }
     MPI_Allreduce(MPI_IN_PLACE, (void*)&accumulator, 1, MPI_DOUBLE, op, MPI_COMM_WORLD);
   }
@@ -112,7 +114,7 @@ const std::string getBusId(int cudaDev) {
   char busIdChar[] = "00000000:00:00.0";
   CUDATHROW(cudaDeviceGetPCIBusId(busIdChar, sizeof(busIdChar), cudaDev));
   // we need the hex in lower case format
-  for (int i = 0; i < sizeof(busIdChar); i++) {
+  for (size_t i = 0; i < sizeof(busIdChar); i++) {
     busIdChar[i] = std::tolower(busIdChar[i]);
   }
   return std::string(busIdChar);
