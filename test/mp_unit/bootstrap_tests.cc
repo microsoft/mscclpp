@@ -80,7 +80,7 @@ TEST_F(BootstrapTest, ResumeWithIpPortPair) {
 
 TEST_F(BootstrapTest, ExitBeforeConnect) {
   auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
-  mscclpp::UniqueId id = bootstrap->createUniqueId();
+  bootstrap->createUniqueId();
 }
 
 TEST_F(BootstrapTest, TimeoutWithId) {

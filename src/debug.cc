@@ -13,10 +13,11 @@
 #include <unistd.h>
 
 #include <mscclpp/utils.hpp>
+#include <string>
 
 int mscclppDebugLevel = -1;
 static int pid = -1;
-static char hostname[1024];
+static std::string hostname;
 thread_local int mscclppDebugNoWarn = 0;
 char mscclppLastError[1024] = "";          // Global string for the last error in human readable form
 uint64_t mscclppDebugMask = MSCCLPP_INIT;  // Default debug sub-system mask is INIT
@@ -102,7 +103,7 @@ void mscclppDebugInit() {
   }
 
   // Cache pid and hostname
-  strncpy(hostname, mscclpp::getHostName(1024, '.').c_str(), 1024);
+  hostname = mscclpp::getHostName(1024, '.');
   pid = getpid();
 
   /* Parse and expand the MSCCLPP_DEBUG_FILE path and
@@ -124,7 +125,7 @@ void mscclppDebugInit() {
           *dfn++ = '%';
           break;
         case 'h':  // %h = hostname
-          dfn += snprintf(dfn, PATH_MAX, "%s", hostname);
+          dfn += snprintf(dfn, PATH_MAX, "%s", hostname.c_str());
           break;
         case 'p':  // %p = pid
           dfn += snprintf(dfn, PATH_MAX, "%d", pid);
@@ -186,16 +187,16 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
   char buffer[1024];
   size_t len = 0;
   if (level == MSCCLPP_LOG_WARN) {
-    len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] %s:%d MSCCLPP WARN ", hostname, pid, tid, cudaDev, filefunc,
-                   line);
+    len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] %s:%d MSCCLPP WARN ", hostname.c_str(), pid, tid, cudaDev,
+                   filefunc, line);
   } else if (level == MSCCLPP_LOG_INFO) {
-    len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] MSCCLPP INFO ", hostname, pid, tid, cudaDev);
+    len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] MSCCLPP INFO ", hostname.c_str(), pid, tid, cudaDev);
   } else if (level == MSCCLPP_LOG_TRACE && flags == MSCCLPP_CALL) {
-    len = snprintf(buffer, sizeof(buffer), "%s:%d:%d MSCCLPP CALL ", hostname, pid, tid);
+    len = snprintf(buffer, sizeof(buffer), "%s:%d:%d MSCCLPP CALL ", hostname.c_str(), pid, tid);
   } else if (level == MSCCLPP_LOG_TRACE) {
     auto delta = std::chrono::steady_clock::now() - mscclppEpoch;
     double timestamp = std::chrono::duration_cast<std::chrono::duration<double>>(delta).count() * 1000;
-    len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] %f %s:%d MSCCLPP TRACE ", hostname, pid, tid, cudaDev,
+    len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] %f %s:%d MSCCLPP TRACE ", hostname.c_str(), pid, tid, cudaDev,
                    timestamp, filefunc, line);
   }
 
