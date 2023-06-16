@@ -67,7 +67,7 @@ uint64_t getHash(const char* string, int n) {
 uint64_t computeHostHash(void) {
   const size_t hashLen = 1024;
   char hostHash[hashLen];
-  
+
   memset(hostHash, 0, hashLen);
 
   std::string hostName = getHostName(hashLen, '\0');
