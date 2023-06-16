@@ -94,7 +94,7 @@ TEST_F(MultiProcessTest, Prelim) {
   // Test to make sure the MPI environment is set up correctly
   ASSERT_GE(gEnv->worldSize, 2);
 }
-#include <iostream>
+
 TEST_F(MultiProcessTest, HostName) {
   const size_t maxNameLen = 1024;
   std::vector<char> buffer(gEnv->worldSize * maxNameLen, '\0');
