@@ -46,6 +46,7 @@ int iters = 20;
 int average = 1;
 int kernel_num = 0;
 int cudaGraphLaunches = 15;
+std::string output_file;
 
 double parseSize(const char* value) {
   std::string valueStr(value);
@@ -415,12 +416,13 @@ int main(int argc, char* argv[]) {
                               {"cudagraph", required_argument, 0, 'G'},
                               {"average", required_argument, 0, 'a'},
                               {"kernel_num", required_argument, 0, 'k'},
+                              {"output_file", required_argument, 0, 'o'},
                               {"help", no_argument, 0, 'h'},
                               {}};
 
   while (1) {
     int c;
-    c = getopt_long(argc, argv, "b:e:i:f:n:w:c:G:a:k:h:", longopts, &longindex);
+    c = getopt_long(argc, argv, "b:e:i:f:n:w:c:G:a:k:o:h:", longopts, &longindex);
 
     if (c == -1) break;
 
@@ -469,6 +471,9 @@ int main(int argc, char* argv[]) {
       case 'k':
         kernel_num = (int)strtol(optarg, NULL, 0);
         break;
+      case 'o':
+        output_file = optarg;
+        break;
       case 'h':
       default:
         if (c != 'h') printf("invalid option '%c'\n", c);
@@ -486,6 +491,7 @@ int main(int argc, char* argv[]) {
             "[-C,--report_cputime <0/1>] \n\t"
             "[-a,--average <0/1/2/3> report average iteration time <0=RANK0/1=AVG/2=MIN/3=MAX>] \n\t"
             "[-k,--kernel_num <kernel number of commnication primitive>] \n\t"
+            "[-o, --output_file <output file name>] \n\t"
             "[-h,--help]\n",
             basename(argv[0]));
         return 0;

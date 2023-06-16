@@ -1,0 +1,7 @@
+{"name": "allgather", "kernel": 1, "ranks": 8, "ranksPerNode": 8, "busBw": 255, "dataSize": 1073741824}
+{"name": "allgather", "kernel": 2, "ranks": 16, "ranksPerNode": 8, "busBw": 230, "dataSize": 1073741824}
+{"name": "allgather", "kernel": 3, "ranks": 8, "ranksPerNode": 8, "latency": 72.42, "dataSize": 1024}
+{"name": "allreduce", "kernel": 1, "ranks": 8, "ranksPerNode": 8, "busBw": 242, "dataSize": 1073741824}
+{"name": "allreduce", "kernel": 2, "ranks": 8, "ranksPerNode": 8, "latency": 5.70, "dataSize": 1024}
+{"name": "alltoall", "kernel": 0, "ranks": 16, "ranksPerNode": 8, "busBw": 43, "dataSize": 1073741824}
+{"name": "alltoall", "kernel": 1, "ranks": 8, "ranksPerNode": 8, "busBw": 240, "dataSize": 1073741824}
