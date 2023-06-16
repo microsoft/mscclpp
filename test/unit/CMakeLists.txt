@@ -6,4 +6,5 @@ target_sources(unit_tests PRIVATE
     numa_tests.cc
     socket_tests.cc
     utils_tests.cc
+    utils_internal_tests.cc
 )

@@ -10,22 +10,20 @@
 
 #include "debug.h"
 
-namespace {
 constexpr char HOSTID_FILE[32] = "/proc/sys/kernel/random/boot_id";
 
-bool matchIf(const char* string, const char* ref, bool matchExact) {
+static bool matchIf(const char* string, const char* ref, bool matchExact) {
   // Make sure to include '\0' in the exact case
   int matchLen = matchExact ? strlen(string) + 1 : strlen(ref);
   return strncmp(string, ref, matchLen) == 0;
 }
 
-bool matchPort(const int port1, const int port2) {
+static bool matchPort(const int port1, const int port2) {
   if (port1 == -1) return true;
   if (port2 == -1) return true;
   if (port1 == port2) return true;
   return false;
 }
-}  // namespace
 
 namespace mscclpp {
 std::string int64ToBusId(int64_t id) {

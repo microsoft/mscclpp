@@ -37,10 +37,6 @@ void CommunicatorTestBase::TearDown() {
 
 void CommunicatorTestBase::setNumRanksToUse(int num) { numRanksToUse = num; }
 
-int CommunicatorTestBase::rankToLocalRank(int rank) const { return rank % gEnv->nRanksPerNode; }
-
-int CommunicatorTestBase::rankToNode(int rank) const { return rank / gEnv->nRanksPerNode; }
-
 void CommunicatorTestBase::connectMesh(bool useIbOnly) {
   for (int i = 0; i < numRanksToUse; i++) {
     if (i != gEnv->rank) {
