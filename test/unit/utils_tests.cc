@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include <thread>
 #include <mscclpp/errors.hpp>
 #include <mscclpp/utils.hpp>
+#include <thread>
 
 TEST(UtilsTest, Timer) {
   mscclpp::Timer timer;
