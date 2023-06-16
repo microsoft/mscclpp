@@ -1,7 +1,7 @@
-#include <sys/resource.h>
-
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
+
+#include <sys/resource.h>
 
 #include <cstring>
 #include <mscclpp/core.hpp>
