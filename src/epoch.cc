@@ -26,14 +26,14 @@ MSCCLPP_API_CPP HostEpoch::HostEpoch(Communicator& communicator, std::shared_ptr
 
 MSCCLPP_API_CPP void HostEpoch::wait() {
   (*expectedInboundEpochId_) += 1;
-  while (*(volatile uint64_t*)&(inboundEpochId_) < (*expectedInboundEpochId_)) {
+  while (*(volatile uint64_t*)inboundEpochId_.get() < (*expectedInboundEpochId_)) {
   }
 }
 
 MSCCLPP_API_CPP DirectEpoch::DirectEpoch(Communicator& communicator, std::shared_ptr<Connection> connection)
-    : expectedInboundEpochId_(allocUniqueCuda<uint64_t>()),
-      outboundEpochId_(allocUniqueCuda<uint64_t>()),
-      localInboundEpochId_(allocUniqueCuda<uint64_t>()) {
+    : localInboundEpochId_(allocUniqueCuda<uint64_t>()),
+      expectedInboundEpochId_(allocUniqueCuda<uint64_t>()),
+      outboundEpochId_(allocUniqueCuda<uint64_t>()) {
   if (connection->transport() != Transport::CudaIpc) {
     throw Error("DirectEpoch can only be used with CudaIpc transport", ErrorCode::InvalidUsage);
   }

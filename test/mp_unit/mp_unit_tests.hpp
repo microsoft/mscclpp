@@ -26,6 +26,10 @@ class MultiProcessTestEnv : public ::testing::Environment {
 
 extern MultiProcessTestEnv* gEnv;
 
+mscclpp::Transport ibIdToTransport(int id);
+int rankToLocalRank(int rank);
+int rankToNode(int rank);
+
 class MultiProcessTest : public ::testing::Test {
  protected:
   void TearDown() override;
@@ -77,16 +81,12 @@ class IbPeerToPeerTest : public IbTestBase {
   std::array<mscclpp::IbMrInfo, 2> mrInfo;
 };
 
-mscclpp::Transport ibIdToTransport(int id);
-
 class CommunicatorTestBase : public MultiProcessTest {
  protected:
   void SetUp() override;
   void TearDown() override;
 
   void setNumRanksToUse(int num);
-  int rankToLocalRank(int rank) const;
-  int rankToNode(int rank) const;
   void connectMesh(bool useIbOnly = false);
 
   // Register a local memory and receive corresponding remote memories

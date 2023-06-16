@@ -1,6 +1,10 @@
 #include "mp_unit_tests.hpp"
 
 void DirectChannelOneToOneTest::SetUp() {
+  // Need at least two ranks within a node
+  if (gEnv->nRanksPerNode < 2) {
+    GTEST_SKIP();
+  }
   // Use only two ranks
   setNumRanksToUse(2);
   CommunicatorTestBase::SetUp();

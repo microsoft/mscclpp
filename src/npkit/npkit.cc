@@ -106,8 +106,6 @@ void NpKit::Dump(const std::string& dump_dir) {
 }
 
 void NpKit::Shutdown() {
-  uint64_t i = 0;
-
   // Free CPU event data structures
   cpu_event_buffers_.clear();
   cpu_collect_contexts_.reset();
