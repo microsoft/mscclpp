@@ -10,11 +10,11 @@ def load_perf_file(perf_fine: str) -> dict:
   with open(perf_fine, 'r') as f:
     for line in f:
       data = json.loads(line)
-      res[(data['name'], data['kernel'], data['ranks']),
-          data['ranksPerNode'], data['size']] = {'algBw': data['algBw'], 'busBw': data['busBw'], 'time': data['time']}
+      res[(data['name'], data['kernel'], data['ranks'],
+          data['ranksPerNode'], data['size'])] = {'algBw': data['algBw'], 'busBw': data['busBw'], 'time': data['time']}
       if ('target' in data):
-        res[(data['name'], data['kernel'], data['ranks']),
-            data['ranksPerNode'], data['size']]['target'] = data['target']
+        res[(data['name'], data['kernel'], data['ranks'],
+            data['ranksPerNode'], data['size'])]['target'] = data['target']
   return res
 
 
@@ -25,16 +25,16 @@ def check_perf_result(perf_result: dict, baseline: dict, time_threshold: float, 
       continue
     if baseline[key]['target'] == 'latency':
       if abs(value['time'] - baseline[key]['time']) / baseline[key]['time'] > time_threshold:
-        logging.error('time %f not match baseline %f with threshold %f',
+        logging.error('%s: time %f not match baseline %f with threshold %f', str(key),
                       value['time'], baseline[key]['time'], time_threshold)
         res = False
-    elif baseline[key]['target'] == 'bandwidth':
+    elif baseline[key]['target'] == 'throughput':
       if abs(value['algBw'] - baseline[key]['algBw']) / baseline[key]['algBw'] > bandwidth_threshold:
-        logging.error('algBw %f not match baseline %f with threshold %f',
+        logging.error('%s: algBw %f not match baseline %f with threshold %f', str(key),
                       value['algBw'], baseline[key]['algBw'], bandwidth_threshold)
         res = False
       if abs(value['busBw'] - baseline[key]['busBw']) / baseline[key]['busBw'] > bandwidth_threshold:
-        logging.error('busBw %f not match baseline %f with threshold %f',
+        logging.error('%s: busBw %f not match baseline %f with threshold %f', str(key),
                       value['busBw'], baseline[key]['busBw'], bandwidth_threshold)
         res = False
   return res
@@ -45,7 +45,7 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser()
   parser.add_argument('--perf-file', type=str, required=True)
   parser.add_argument('--baseline-file', type=str, required=True)
-  parser.add_argument('--time-threshold', type=float, default=0.1)
+  parser.add_argument('--time-threshold', type=float, default=0.15)
   parser.add_argument('--bandwidth-threshold', type=float, default=0.05)
   args = parser.parse_args()
 

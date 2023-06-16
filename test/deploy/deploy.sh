@@ -6,6 +6,7 @@ DST_DIR="/tmp/mscclpp"
 HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile"
 DEPLOY_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy"
 SSH_OPTION="StrictHostKeyChecking=no"
+MSCCLPP_TEST_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/mscclpp-test"
 
 chmod 400 ${KeyFilePath}
 ssh-keygen -t rsa -f sshkey -P ""
@@ -28,6 +29,8 @@ parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${SRC_
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION sshkey ${DST_DIR}
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION sshkey.pub ${DST_DIR}
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${DEPLOY_DIR}/* ${DST_DIR}
+parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${MSCCLPP_TEST_DIR}/*.jsonl ${DST_DIR}
+parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${MSCCLPP_TEST_DIR}/check_perf_result.py ${DST_DIR}
 
 # force to pull the latest image
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \

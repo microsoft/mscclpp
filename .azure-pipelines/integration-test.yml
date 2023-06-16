@@ -35,10 +35,10 @@ steps:
     script: |
       set -e
       export PATH=/usr/local/mpi/bin:$PATH
-      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2
-      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1
-      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2
-      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -o output.jsonl
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
@@ -49,7 +49,7 @@ steps:
     script: |
       set -e
       export PATH=/usr/local/mpi/bin:$PATH
-      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2 -o output.jsonl
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
@@ -60,9 +60,9 @@ steps:
     script: |
       set -e
       export PATH=/usr/local/mpi/bin:$PATH
-      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2
-      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1
-      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -o output.jsonl
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
@@ -73,6 +73,16 @@ steps:
     script: |
       set -e
       export PATH=/usr/local/mpi/bin:$PATH
-      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2
-      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -o output.jsonl
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: CheckPerfNumber
+  displayName: Check collective primitives performance
+  inputs:
+    targetType: 'inline'
+    script: |
+      set -e
+      python3 test/mscclpp-test/check_perf_result.py --perf-file output.jsonl --baseline-file test/mscclpp-test/perf_ndmv4.jsonl
     workingDirectory: '$(System.DefaultWorkingDirectory)'
