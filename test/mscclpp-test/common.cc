@@ -15,6 +15,7 @@
 #include <iomanip>
 #include <iostream>
 #include <mscclpp/utils.hpp>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -147,7 +148,8 @@ void numaBind(int node) {
   numa_bind_compat(&mask);
 }
 
-BaseTestEngine::BaseTestEngine(const TestArgs& args) : args_(args), inPlace_(true), error_(0) {
+BaseTestEngine::BaseTestEngine(const TestArgs& args, const std::string& name)
+    : args_(args), name_(name), inPlace_(true), error_(0) {
   this->coll_ = getTestColl();
   CUDATHROW(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
 }
@@ -253,6 +255,18 @@ void BaseTestEngine::runTest() {
     }
     double algBw, busBw;
     this->coll_->getBw(deltaSec, algBw, busBw);
+    if (!output_file.empty()) {
+      nlohmann::json perfOutput = {{"name", name_},
+                                   {"kernel", args_.kernelNum},
+                                   {"ranks", args_.totalRanks},
+                                   {"ranksPerNode", args_.nRanksPerNode},
+                                   {"size", size},
+                                   {"time", timeUsec},
+                                   {"algBw", algBw},
+                                   {"busBw", busBw}};
+      std::ofstream out(output_file, std::ios_base::app);
+      if (isMainProc) out << perfOutput << std::endl;
+    }
     if (!this->inPlace_) {
       ss << "                                 ";
     }

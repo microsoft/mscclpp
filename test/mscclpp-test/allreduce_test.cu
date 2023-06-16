@@ -359,7 +359,9 @@ class AllReduceTestEngine : public BaseTestEngine {
   std::shared_ptr<int[]> expectedBuff_;
 };
 
-AllReduceTestEngine::AllReduceTestEngine(const TestArgs& args) : BaseTestEngine(args) { inPlace_ = isInPlace(); }
+AllReduceTestEngine::AllReduceTestEngine(const TestArgs& args) : BaseTestEngine(args, "allreduce") {
+  inPlace_ = isInPlace();
+}
 
 bool AllReduceTestEngine::isUsePacket() const { return (args_.kernelNum == 2); }
 
