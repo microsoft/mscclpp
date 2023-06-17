@@ -33,7 +33,8 @@ struct DeviceProxyFifo {
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->head, 1);
 
     // only one of these two polls need to be met to proceed. Either the tail has advanced enough or where we need to
-    // write to is 0
+    // write to is 0. However, the first condition is faster to check since the tail is flushed periodically anyways but
+    // for the second condition we need to read CPU memory.
     OR_POLL_MAYBE_JAILBREAK(curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->tailReplica),
                             *(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0,
                             1000000000);
@@ -44,11 +45,10 @@ struct DeviceProxyFifo {
   }
 
   __forceinline__ __device__ void sync(uint64_t curFifoHead) {
-    // We need to wait for two conditions to be met to ensure the CPU is done flushing. (1) wait for the tail
-    // to go pass by curFifoHead (this is safety net) and (2) wait for the work element value to change to 0.
-    POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]) != 0 &&
-                             *(volatile uint64_t*)(this->tailReplica) <= curFifoHead,
-                         1000000000);
+    // same as push but in this case checking the fist condition is probably faster since for tail to be pushed we need
+    // to wait for cudaMemcpy to be done.
+    OR_POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]) != 0,
+                            *(volatile uint64_t*)(this->tailReplica) <= curFifoHead, 1000000000);
   }
 #endif  // __CUDACC__
 
