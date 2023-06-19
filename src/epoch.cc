@@ -55,16 +55,19 @@ MSCCLPP_API_CPP SmEpoch::SmEpoch(Communicator& communicator, std::shared_ptr<Con
     remoteInboundEpochIdsRegMem_ = setupInboundEpochId(communicator, connection.get(), localInboundEpochId_.get());
     INFO(MSCCLPP_INIT, "Creating a direct epoch for CudaIPC transport from %d to %d",
          communicator.bootstrapper()->getRank(), connection->remoteRank());
+    isRemoteInboundEpochIdSet_ = true;
   } else if (AllIBTransports.has(connection->transport())) {
     // We don't need to really with any of the IB transports, since the values will be local
     INFO(MSCCLPP_INIT, "Creating a direct epoch for IB transport from %d to %d", communicator.bootstrapper()->getRank(),
          connection->remoteRank());
+    isRemoteInboundEpochIdSet_ = false;
   }
 }
 
 MSCCLPP_API_CPP SmEpoch::DeviceHandle SmEpoch::deviceHandle() {
   SmEpoch::DeviceHandle device;
-  device.remoteInboundEpochId = reinterpret_cast<uint64_t*>(remoteInboundEpochIdsRegMem_.get().data());
+  device.remoteInboundEpochId =
+      isRemoteInboundEpochIdSet_ ? reinterpret_cast<uint64_t*>(remoteInboundEpochIdsRegMem_.get().data()) : nullptr;
   device.inboundEpochId = localInboundEpochId_.get();
   device.expectedInboundEpochId = expectedInboundEpochId_.get();
   device.outboundEpochId = outboundEpochId_.get();

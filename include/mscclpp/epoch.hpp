@@ -130,6 +130,7 @@ class SmEpoch : public BaseEpoch<CudaDeleter, CudaDeleter> {
   };
 
   DeviceHandle deviceHandle();
+  bool isRemoteInboundEpochIdSet_;
 };
 
 }  // namespace mscclpp
