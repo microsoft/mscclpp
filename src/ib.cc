@@ -190,6 +190,7 @@ IbQp::WrInfo IbQp::getNewWrInfo() {
   ibv_sge* sge_ = &this->sges[wrn];
   wr_->sg_list = sge_;
   wr_->num_sge = 1;
+  wr_->next = nullptr;
   if (wrn > 0) {
     this->wrs[wrn - 1].next = wr_;
   }
@@ -205,7 +206,6 @@ void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
   wrInfo.wr->wr.rdma.remote_addr = (uint64_t)(info.addr) + dstOffset;
   wrInfo.wr->wr.rdma.rkey = info.rkey;
-  wrInfo.wr->next = nullptr;
   wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
   wrInfo.sge->length = size;
   wrInfo.sge->lkey = mr->getLkey();
@@ -232,7 +232,6 @@ void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size,
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
   wrInfo.wr->wr.rdma.remote_addr = (uint64_t)(info.addr) + dstOffset;
   wrInfo.wr->wr.rdma.rkey = info.rkey;
-  wrInfo.wr->next = nullptr;
   wrInfo.wr->imm_data = immData;
   wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
   wrInfo.sge->length = size;
