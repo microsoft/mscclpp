@@ -37,7 +37,7 @@ struct DeviceProxyFifo {
     // for the second condition we need to read CPU memory.
     OR_POLL_MAYBE_JAILBREAK(curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->tailReplica),
                             *(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0,
-                            1000000000);
+                            1000000);
 
     ProxyTrigger* triggerPtr = (ProxyTrigger*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]);
     asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
@@ -48,7 +48,7 @@ struct DeviceProxyFifo {
     // same as push but in this case checking the fist condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
     OR_POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]) != 0,
-                            *(volatile uint64_t*)(this->tailReplica) <= curFifoHead, 1000000000);
+                            *(volatile uint64_t*)(this->tailReplica) <= curFifoHead, 1000000);
   }
 #endif  // __CUDACC__
 
