@@ -29,7 +29,6 @@ parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${SRC_
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION sshkey ${DST_DIR}
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION sshkey.pub ${DST_DIR}
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${DEPLOY_DIR}/* ${DST_DIR}
-parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${MSCCLPP_TEST_DIR}/*.jsonl ${DST_DIR}
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${MSCCLPP_TEST_DIR}/check_perf_result.py ${DST_DIR}
 
 # force to pull the latest image
