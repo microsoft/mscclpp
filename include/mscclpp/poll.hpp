@@ -38,6 +38,23 @@
     }                                                \
   } while (0);
 
+// the as POLL_MAYBE_JAILBREAK except that __cond1 is checked before __cond2
+// this is specially useful when __cond1 is faster to check
+#define OR_POLL_MAYBE_JAILBREAK(__cond1, __cond2, __max_spin_cnt) \
+  do {                                                            \
+    uint64_t __spin_cnt = 0;                                      \
+    while (true) {                                                \
+      if (!(__cond1)) {                                           \
+        break;                                                    \
+      } else if (!(__cond2)) {                                    \
+        break;                                                    \
+      }                                                           \
+      if (__spin_cnt++ == __max_spin_cnt) {                       \
+        POLL_PRINT_ON_STUCK(__cond);                              \
+      }                                                           \
+    }                                                             \
+  } while (0);
+
 #endif  // __CUDACC__
 
 #endif  // MSCCLPP_POLL_HPP_
