@@ -139,18 +139,18 @@ void SendRecvTestEngine::setupConnections() {
   std::array<int, 2> ranks = {sendToRank, recvFromRank};
   auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
 
-  std::vector<std::shared_ptr<mscclpp::DirectEpoch>> directEpochs;
+  std::vector<std::shared_ptr<mscclpp::SmEpoch>> smEpochs;
 
   auto sendConn =
       comm_->connectOnSetup(sendToRank, 0, getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice));
-  directEpochs.push_back(std::make_shared<mscclpp::DirectEpoch>(*comm_, sendConn));
+  smEpochs.push_back(std::make_shared<mscclpp::SmEpoch>(*comm_, sendConn));
   if (recvFromRank != sendToRank) {
     auto recvConn =
         comm_->connectOnSetup(recvFromRank, 0, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice));
-    directEpochs.push_back(std::make_shared<mscclpp::DirectEpoch>(*comm_, recvConn));
+    smEpochs.push_back(std::make_shared<mscclpp::SmEpoch>(*comm_, recvConn));
   } else {
     // reuse the send channel if worldSize is 2
-    directEpochs.push_back(directEpochs[0]);
+    smEpochs.push_back(smEpochs[0]);
   }
   comm_->setup();
 
@@ -170,8 +170,7 @@ void SendRecvTestEngine::setupConnections() {
   std::vector<mscclpp::channel::DirectChannel> dirChannels;
   for (int i : {0, 1}) {
     // We assume ranks in the same node
-    dirChannels.emplace_back(directEpochs[i]->deviceHandle(), futureRemoteMemory[i].get(),
-                             (void*)localMemories[i].data());
+    dirChannels.emplace_back(smEpochs[i]->deviceHandle(), futureRemoteMemory[i].get(), (void*)localMemories[i].data());
   }
   cudaMemcpyToSymbol(constDirChans, dirChannels.data(), sizeof(mscclpp::channel::DirectChannel) * dirChannels.size());
 }

@@ -47,11 +47,11 @@ void DirectChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::channe
 
     communicator->setup();
 
-    directEpochs[r] = std::make_shared<mscclpp::DirectEpoch>(*communicator, conn);
+    smEpochs[r] = std::make_shared<mscclpp::SmEpoch>(*communicator, conn);
 
     communicator->setup();
 
-    dirChannels.emplace_back(directEpochs[r]->deviceHandle(), remoteMemory.get(), inputBufRegMem.data(),
+    dirChannels.emplace_back(smEpochs[r]->deviceHandle(), remoteMemory.get(), inputBufRegMem.data(),
                              (isInPlace ? nullptr : outputBufRegMem.data()));
   }
 }

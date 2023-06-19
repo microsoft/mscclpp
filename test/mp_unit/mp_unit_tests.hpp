@@ -138,7 +138,7 @@ class DirectChannelOneToOneTest : public CommunicatorTestBase {
   void setupMeshConnections(std::vector<mscclpp::channel::DirectChannel>& dirChannels, void* inputBuff,
                             size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0);
 
-  std::unordered_map<int, std::shared_ptr<mscclpp::DirectEpoch>> directEpochs;
+  std::unordered_map<int, std::shared_ptr<mscclpp::SmEpoch>> smEpochs;
 };
 
 #endif  // MSCCLPP_MP_UNIT_TESTS_HPP_

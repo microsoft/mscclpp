@@ -387,14 +387,14 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::DirectCh
   setupMeshConnectionsInternal(connections, inputBufRegMem, outputBufRegMem, remoteRegMemories, inputBuff,
                                inputBuffBytes, outputBuff, outputBuffBytes);
 
-  std::vector<std::shared_ptr<mscclpp::DirectEpoch>> dirEpochs;
+  std::vector<std::shared_ptr<mscclpp::SmEpoch>> smEpochs;
   for (auto& conn : connections) {
-    dirEpochs.emplace_back(std::make_shared<mscclpp::DirectEpoch>(*comm_, conn));
+    smEpochs.emplace_back(std::make_shared<mscclpp::SmEpoch>(*comm_, conn));
   }
   comm_->setup();
 
-  for (size_t i = 0; i < dirEpochs.size(); ++i) {
-    dirChannels.emplace_back(dirEpochs[i]->deviceHandle(), remoteRegMemories[i].get(), inputBufRegMem.data(),
+  for (size_t i = 0; i < smEpochs.size(); ++i) {
+    dirChannels.emplace_back(smEpochs[i]->deviceHandle(), remoteRegMemories[i].get(), inputBufRegMem.data(),
                              (isOutPlace ? outputBufRegMem.data() : nullptr));
   }
 }

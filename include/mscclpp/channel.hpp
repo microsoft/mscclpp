@@ -270,7 +270,7 @@ struct SimpleDeviceChannel {
 struct DirectChannel {
  public:
   DirectChannel() = default;
-  DirectChannel(DirectEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src, void* tmp = nullptr)
+  DirectChannel(SmEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src, void* tmp = nullptr)
       : epoch_(epoch), src_(src), tmp_(tmp) {
     if (!dst.transports().has(Transport::CudaIpc)) {
       throw Error("DirectChannel: dst must be registered with CudaIpc", ErrorCode::InvalidUsage);
@@ -340,7 +340,7 @@ struct DirectChannel {
   __forceinline__ __device__ void wait() { epoch_.wait(); }
 #endif  // __CUDACC__
  private:
-  DirectEpoch::DeviceHandle epoch_;
+  SmEpoch::DeviceHandle epoch_;
   void* src_;
   void* dst_;
   void* tmp_;

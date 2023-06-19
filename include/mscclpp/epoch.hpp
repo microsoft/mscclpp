@@ -8,40 +8,64 @@
 
 namespace mscclpp {
 
-template <template <typename> typename Deleter>
+/// @brief A base class for epochs.
+///
+/// An epoch is a synchronization mechanism that allows the local peer to wait for the remote peer to complete a data
+/// transfer. The local peer signals the remote peer that it has completed a data transfer by incrementing the outbound
+/// epoch ID. The incremented outbound epoch ID is copied to the remote peer's inbound epoch ID so that the remote peer
+/// can wait for the local peer to complete a data transfer. Vice versa, the remote peer signals the local peer that it
+/// has completed a data transfer by incrementing the remote peer's outbound epoch ID and copying the incremented value
+/// to the local peer's inbound epoch ID.
+///
+/// @tparam InboundDeleter The deleter for inbound epoch IDs. This is either `std::default_delete` for host memory or
+/// @ref CudaDeleter for device memory.
+/// @tparam OutboundDeleter The deleter for outbound epoch IDs. This is either `std::default_delete` for host memory or
+/// @ref CudaDeleter for device memory.
+template <template <typename> typename InboundDeleter, template <typename> typename OutboundDeleter>
 class BaseEpoch {
+ protected:
+  /// @brief The registered memory for the remote peer's inbound epoch ID.
+  NonblockingFuture<RegisteredMemory> remoteInboundEpochIdsRegMem_;
+
+  /// @brief The inbound epoch ID that is incremented by the remote peer and waited on by the local peer.
+  ///
+  /// The location of @ref localInboundEpochId_ can be either on the host or on the device.
+  std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> localInboundEpochId_;
+
+  /// @brief The expected inbound epoch ID to be incremented by the local peer and compared to the
+  /// @ref localInboundEpochId_.
+  ///
+  /// The location of @ref expectedInboundEpochId_ can be either on the host or on the device.
+  std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> expectedInboundEpochId_;
+
+  /// @brief The outbound epoch ID that is incremented by the local peer and copied to the remote peer's @ref
+  /// localInboundEpochId_.
+  ///
+  /// The location of @ref outboundEpochId_ can be either on the host or on the device.
+  std::unique_ptr<uint64_t, OutboundDeleter<uint64_t>> outboundEpochId_;
+
+ public:
+  /// @brief Constructs a BaseEpoch.
+  ///
+  /// @param localInboundEpochId The inbound epoch ID
+  /// @param expectedInboundEpochId The expected inbound epoch ID
+  /// @param outboundEpochId The outbound epoch ID
+  BaseEpoch(std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> localInboundEpochId,
+            std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> expectedInboundEpochId,
+            std::unique_ptr<uint64_t, OutboundDeleter<uint64_t>> outboundEpochId)
+      : localInboundEpochId_(std::move(localInboundEpochId)),
+        expectedInboundEpochId_(std::move(expectedInboundEpochId)),
+        outboundEpochId_(std::move(outboundEpochId)) {}
+};
+
+class DeviceEpoch : public BaseEpoch<CudaDeleter, std::default_delete> {
  private:
   std::shared_ptr<Connection> connection_;
 
- protected:
-  NonblockingFuture<RegisteredMemory> remoteInboundEpochIdsRegMem_;
-  uint64_t outBoundEpochId_;                                             // always on the host
-  std::unique_ptr<uint64_t, Deleter<uint64_t>> inboundEpochId_;          // could be device or host
-  std::unique_ptr<uint64_t, Deleter<uint64_t>> expectedInboundEpochId_;  // could be device or host
-
- public:
-  BaseEpoch(std::shared_ptr<Connection> connection, std::unique_ptr<uint64_t, Deleter<uint64_t>> inboundEpochId,
-            std::unique_ptr<uint64_t, Deleter<uint64_t>> expectedInboundEpochId)
-      : connection_(connection),
-        outBoundEpochId_(0),
-        inboundEpochId_(std::move(inboundEpochId)),
-        expectedInboundEpochId_(std::move(expectedInboundEpochId)) {}
-
-  void setup(Communicator& communicator) {
-    auto localInboundEpochIdsRegMem =
-        communicator.registerMemory(inboundEpochId_.get(), sizeof(uint64_t), connection_->transport());
-    communicator.sendMemoryOnSetup(localInboundEpochIdsRegMem, connection_->remoteRank(), connection_->tag());
-    remoteInboundEpochIdsRegMem_ = communicator.recvMemoryOnSetup(connection_->remoteRank(), connection_->tag());
-  }
-
-  void signal() {
-    connection_->updateAndSync(remoteInboundEpochIdsRegMem_.get(), 0, &outBoundEpochId_, outBoundEpochId_ + 1);
-  }
-};
-
-class DeviceEpoch : public BaseEpoch<CudaDeleter> {
  public:
   DeviceEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
+
+  void signal();
 
   struct DeviceHandle {
 #ifdef __CUDACC__
@@ -58,23 +82,22 @@ class DeviceEpoch : public BaseEpoch<CudaDeleter> {
   DeviceHandle deviceHandle();
 };
 
-class HostEpoch : public BaseEpoch<std::default_delete> {
+class HostEpoch : public BaseEpoch<std::default_delete, std::default_delete> {
  public:
   HostEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
 
-  // void incrementAndSignal();
+  void signal();
   void wait();
+
+ private:
+  std::shared_ptr<Connection> connection_;
 };
 
-class DirectEpoch {
-  NonblockingFuture<RegisteredMemory> remoteInboundEpochIdsRegMem_;
-  std::unique_ptr<uint64_t, CudaDeleter<uint64_t>> localInboundEpochId_;
-  std::unique_ptr<uint64_t, CudaDeleter<uint64_t>> expectedInboundEpochId_;
-  std::unique_ptr<uint64_t, CudaDeleter<uint64_t>> outboundEpochId_;
-
+class SmEpoch : public BaseEpoch<CudaDeleter, CudaDeleter> {
  public:
-  DirectEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
-  DirectEpoch() = default;
+  SmEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
+  SmEpoch() = default;
+
   struct DeviceHandle {
 #ifdef __CUDACC__
     __forceinline__ __device__ void wait() {
@@ -83,16 +106,16 @@ class DirectEpoch {
     }
 
     __forceinline__ __device__ void signal() {
-      // This fence ensures that the writes from a preceding putDirect() are visible on the peer GPU before the
-      // incremented epoch id is visible.
+      // This fence ensures that preceding writes are visible on the peer GPU before the incremented `outboundEpochId`
+      // is visible.
       __threadfence_system();
       epochIncrement();
-      *remoteInboundEpochId = *outboundEpochId;
+      *remoteInboundEpochId = epochGetLocal();
     }
 
     __forceinline__ __device__ void signalPacket() {
       epochIncrement();
-      *remoteInboundEpochId = *outboundEpochId;
+      *remoteInboundEpochId = epochGetLocal();
     }
 
     __forceinline__ __device__ void epochIncrement() { *outboundEpochId += 1; }
