@@ -376,7 +376,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
   comm_->setup();
 }
 
-void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::DirectChannel>& dirChannels, void* inputBuff,
+void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SmChannel>& smChannels, void* inputBuff,
                                           size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes) {
   const bool isOutPlace = (outputBuff != nullptr);
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
@@ -394,8 +394,8 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::DirectCh
   comm_->setup();
 
   for (size_t i = 0; i < smEpochs.size(); ++i) {
-    dirChannels.emplace_back(smEpochs[i]->deviceHandle(), remoteRegMemories[i].get(), inputBufRegMem.data(),
-                             (isOutPlace ? outputBufRegMem.data() : nullptr));
+    smChannels.emplace_back(smEpochs[i]->deviceHandle(), remoteRegMemories[i].get(), inputBufRegMem.data(),
+                            (isOutPlace ? outputBufRegMem.data() : nullptr));
   }
 }
 

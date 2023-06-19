@@ -130,12 +130,12 @@ class DeviceChannelOneToOneTest : public CommunicatorTestBase {
   std::shared_ptr<mscclpp::channel::DeviceChannelService> channelService;
 };
 
-class DirectChannelOneToOneTest : public CommunicatorTestBase {
+class SmChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   void SetUp() override;
   void TearDown() override;
 
-  void setupMeshConnections(std::vector<mscclpp::channel::DirectChannel>& dirChannels, void* inputBuff,
+  void setupMeshConnections(std::vector<mscclpp::channel::SmChannel>& smChannels, void* inputBuff,
                             size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0);
 
   std::unordered_map<int, std::shared_ptr<mscclpp::SmEpoch>> smEpochs;

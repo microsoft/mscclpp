@@ -267,13 +267,13 @@ struct SimpleDeviceChannel {
 };
 
 // A direct version of DeviceChannel only for CudaIpc
-struct DirectChannel {
+struct SmChannel {
  public:
-  DirectChannel() = default;
-  DirectChannel(SmEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src, void* tmp = nullptr)
-      : epoch_(epoch), src_(src), tmp_(tmp) {
+  SmChannel() = default;
+  SmChannel(SmEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src, void* getPacketBuffer = nullptr)
+      : epoch_(epoch), src_(src), getPacketBuffer_(getPacketBuffer) {
     if (!dst.transports().has(Transport::CudaIpc)) {
-      throw Error("DirectChannel: dst must be registered with CudaIpc", ErrorCode::InvalidUsage);
+      throw Error("SmChannel: dst must be registered with CudaIpc", ErrorCode::InvalidUsage);
     }
     dst_ = dst.data();
   };
@@ -320,11 +320,11 @@ struct DirectChannel {
   __forceinline__ __device__ void getPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
                                             uint32_t numThreads, uint32_t flag) {
     // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-    ChannelPacket* tmpBase = (ChannelPacket*)((char*)tmp_ + srcOffset);
+    ChannelPacket* getPacketBufferBase = (ChannelPacket*)((char*)getPacketBuffer_ + srcOffset);
     uint2* srcBase = (uint2*)((char*)src_ + dstOffset);
     size_t nElem = size / sizeof(uint2);
     for (size_t i = threadId; i < nElem; i += numThreads) {
-      ChannelPacket* pkt = &tmpBase[i];
+      ChannelPacket* pkt = &getPacketBufferBase[i];
       srcBase[i] = pkt->read(flag);
     }
   }
@@ -343,7 +343,7 @@ struct DirectChannel {
   SmEpoch::DeviceHandle epoch_;
   void* src_;
   void* dst_;
-  void* tmp_;
+  void* getPacketBuffer_;
 };
 
 }  // namespace channel

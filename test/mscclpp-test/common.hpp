@@ -99,7 +99,7 @@ class BaseTestEngine {
   void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* inputBuff,
                             size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0,
                             SetupChannelFunc setupChannel = nullptr);
-  void setupMeshConnections(std::vector<mscclpp::channel::DirectChannel>& dirChannels, void* inputBuff,
+  void setupMeshConnections(std::vector<mscclpp::channel::SmChannel>& smChannels, void* inputBuff,
                             size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes = 0);
 
   const TestArgs args_;

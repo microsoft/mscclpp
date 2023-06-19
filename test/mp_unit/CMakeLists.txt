@@ -4,5 +4,5 @@ target_sources(mp_unit_tests PRIVATE
     ib_tests.cu
     communicator_tests.cu
     device_channel_tests.cu
-    direct_channel_tests.cu
+    sm_channel_tests.cu
 )
