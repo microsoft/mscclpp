@@ -1,6 +1,7 @@
 #ifndef MSCCLPP_CHANNEL_HPP_
 #define MSCCLPP_CHANNEL_HPP_
 
+#include <mscclpp/concurrency.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/epoch.hpp>
 #include <mscclpp/fifo.hpp>
@@ -187,6 +188,80 @@ struct DeviceChannel {
   DeviceProxyFifo fifo_;
 };
 
+struct SmDeviceChannel {
+  SmDeviceChannel() = default;
+
+  SmDeviceChannel(uint32_t epochId, SmEpoch::DeviceHandle epoch, DeviceProxyFifo fifo)
+      : epochId_(epochId), epoch_(epoch), fifo_(fifo), devSyncer_() {}
+
+  SmDeviceChannel(const SmDeviceChannel& other) = default;
+
+  SmDeviceChannel& operator=(SmDeviceChannel& other) = default;
+
+#ifdef __CUDACC__
+  __forceinline__ __device__ void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
+                                      uint64_t size) {
+    fifo_.push(ChannelTrigger(TriggerData, dst, dstOffset, src, srcOffset, size, epochId_).value);
+  }
+
+  __forceinline__ __device__ void put(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
+    put(dst, offset, src, offset, size);
+  }
+
+  __forceinline__ __device__ void flush() {
+    uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, epochId_).value);
+    fifo_.sync(curFifoHead);
+  }
+
+  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, void* src, uint64_t size,
+                                            MemoryId remoteGetPacketMem, MemoryId localPutPacketMem,
+                                            void* putPacketBuffer, uint32_t threadId, uint32_t numThreads,
+                                            uint32_t numBlocks, uint32_t flag) {
+    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+    uint32_t* srcBase = (uint32_t*)((char*)src + srcOffset);
+    ChannelPacket* putPacketBufferBase = (ChannelPacket*)((char*)putPacketBuffer + srcOffset * 2);
+    size_t nElem = size / sizeof(uint64_t);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      ChannelPacket* pkt = &putPacketBufferBase[i];
+      pkt->write(srcBase[2 * i], srcBase[2 * i + 1], flag);
+    }
+    devSyncer_.sync(numBlocks);
+    if (threadId == 0) {
+      // Send data from the local putPacketBuffer to the remote getPacketBuffer
+      put(remoteGetPacketMem, dstOffset * 2, localPutPacketMem, srcOffset * 2, size * 2);
+    }
+  }
+
+  __forceinline__ __device__ void getPacket(uint64_t srcOffset, void* src, uint64_t size, void* getPacketBuffer,
+                                            uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+    ChannelPacket* getPacketBufferBase = (ChannelPacket*)((char*)getPacketBuffer + srcOffset * 2);
+    uint2* srcBase = (uint2*)((char*)src + srcOffset);
+    size_t nElem = size / sizeof(uint2);
+    for (size_t i = threadId; i < nElem; i += numThreads) {
+      ChannelPacket* pkt = &getPacketBufferBase[i];
+      srcBase[i] = pkt->read(flag);
+    }
+  }
+
+  __forceinline__ __device__ void epochIncrement() { epoch_.epochIncrement(); }
+
+  __forceinline__ __device__ uint64_t epochGetLocal() const { return epoch_.epochGetLocal(); }
+
+  __forceinline__ __device__ void wait() { epoch_.wait(); }
+
+#endif  // __CUDACC__
+
+  uint32_t epochId_;
+
+  SmEpoch::DeviceHandle epoch_;
+
+  // this is a concurrent fifo which is multiple threads from the device
+  // can produce for and the sole proxy thread consumes it.
+  DeviceProxyFifo fifo_;
+  DeviceSyncer devSyncer_;  // do we need this?
+};
+
 class BaseChannelService {
  public:
   BaseChannelService() = default;
@@ -212,6 +287,32 @@ class DeviceChannelService : public BaseChannelService {
  private:
   Communicator& communicator_;
   std::vector<Channel> channels_;
+  std::vector<RegisteredMemory> memories_;
+  Proxy proxy_;
+  int deviceNumaNode;
+
+  void bindThread();
+
+  ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
+};
+
+class SmDeviceChannelService : public BaseChannelService {
+ public:
+  SmDeviceChannelService(Communicator& communicator);
+
+  uint32_t addEpoch(std::shared_ptr<Connection> connection);
+
+  MemoryId addMemory(RegisteredMemory memory);
+
+  SmDeviceChannel deviceChannel(uint32_t id);
+
+  void startProxy();
+  void stopProxy();
+
+ private:
+  Communicator& communicator_;
+  std::vector<SmEpoch> epochs_;
+  std::vector<std::shared_ptr<Connection>> connections_;
   std::vector<RegisteredMemory> memories_;
   Proxy proxy_;
   int deviceNumaNode;
@@ -264,6 +365,61 @@ struct SimpleDeviceChannel {
   DeviceChannel devChan_;
   MemoryId dst_;
   MemoryId src_;
+};
+
+struct SimpleSmDeviceChannel {
+  SimpleSmDeviceChannel() = default;
+
+  SimpleSmDeviceChannel(SmDeviceChannel devChan, MemoryId remoteGetPacketMem, MemoryId localPutPacketMem, void* src,
+                        void* putPacketBuffer, void* getPacketBuffer)
+      : devChan_(devChan),
+        remoteGetPacketMem_(remoteGetPacketMem),
+        localPutPacketMem_(localPutPacketMem),
+        src_(src),
+        putPacketBuffer_(putPacketBuffer),
+        getPacketBuffer_(getPacketBuffer) {}
+
+  SimpleSmDeviceChannel(SmDeviceChannel devChan) : devChan_(devChan) {}
+
+  SimpleSmDeviceChannel(const SimpleSmDeviceChannel& other) = default;
+
+  SimpleSmDeviceChannel& operator=(SimpleSmDeviceChannel& other) = default;
+
+#ifdef __CUDACC__
+  __forceinline__ __device__ void put(uint64_t getOffset, uint64_t putOffset, uint64_t size) {
+    devChan_.put(remoteGetPacketMem_, getOffset, localPutPacketMem_, putOffset, size);
+  }
+
+  __forceinline__ __device__ void put(uint64_t offset, uint64_t size) { put(offset, offset, size); }
+
+  __forceinline__ __device__ void flush() { devChan_.flush(); }
+
+  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                            uint32_t numThreads, uint32_t numBlocks, uint32_t flag) {
+    devChan_.putPacket(dstOffset, srcOffset, src_, size, remoteGetPacketMem_, localPutPacketMem_, putPacketBuffer_,
+                       threadId, numThreads, numBlocks, flag);
+  }
+
+  __forceinline__ __device__ void getPacket(uint64_t srcOffset, uint64_t size, uint32_t threadId, uint32_t numThreads,
+                                            uint32_t flag) {
+    devChan_.getPacket(srcOffset, src_, size, getPacketBuffer_, threadId, numThreads, flag);
+  }
+
+  __forceinline__ __device__ void epochIncrement() { devChan_.epochIncrement(); }
+
+  __forceinline__ __device__ uint64_t epochGetLocal() const { return devChan_.epochGetLocal(); }
+
+  __forceinline__ __device__ void wait() { devChan_.wait(); }
+
+#endif  // __CUDACC__
+
+  SmDeviceChannel devChan_;
+  MemoryId remoteGetPacketMem_;
+  MemoryId localPutPacketMem_;
+
+  void* src_;
+  void* putPacketBuffer_;
+  void* getPacketBuffer_;
 };
 
 // A direct version of DeviceChannel only for CudaIpc

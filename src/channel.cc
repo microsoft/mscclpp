@@ -66,5 +66,58 @@ ProxyHandlerResult DeviceChannelService::handleTrigger(ProxyTrigger triggerRaw) 
   return result;
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// TODO(chhwang): reduce redundancy below
+
+MSCCLPP_API_CPP SmDeviceChannelService::SmDeviceChannelService(Communicator& communicator)
+    : communicator_(communicator),
+      proxy_([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
+  int cudaDevice;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
+  deviceNumaNode = getDeviceNumaNode(cudaDevice);
+}
+
+MSCCLPP_API_CPP uint32_t SmDeviceChannelService::addEpoch(std::shared_ptr<Connection> connection) {
+  epochs_.emplace_back(communicator_, connection);
+  connections_.emplace_back(connection);
+  return epochs_.size() - 1;
+}
+
+MSCCLPP_API_CPP MemoryId SmDeviceChannelService::addMemory(RegisteredMemory memory) {
+  memories_.push_back(memory);
+  return memories_.size() - 1;
+}
+
+MSCCLPP_API_CPP SmDeviceChannel SmDeviceChannelService::deviceChannel(uint32_t id) {
+  return SmDeviceChannel(id, epochs_[id].deviceHandle(), proxy_.fifo().deviceFifo());
+}
+
+MSCCLPP_API_CPP void SmDeviceChannelService::startProxy() { proxy_.start(); }
+
+MSCCLPP_API_CPP void SmDeviceChannelService::stopProxy() { proxy_.stop(); }
+
+MSCCLPP_API_CPP void SmDeviceChannelService::bindThread() {
+  if (deviceNumaNode >= 0) {
+    numaBind(deviceNumaNode);
+    INFO(MSCCLPP_INIT, "NUMA node of SmDeviceChannelService proxy thread is set to %d", deviceNumaNode);
+  }
+}
+
+ProxyHandlerResult SmDeviceChannelService::handleTrigger(ProxyTrigger triggerRaw) {
+  ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
+  auto& conn = connections_[trigger->fields.chanId];
+
+  auto result = ProxyHandlerResult::Continue;
+
+  if (trigger->fields.type & TriggerData) {
+    RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
+    RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
+    conn->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset, trigger->fields.size);
+  }
+
+  return result;
+}
+
 }  // namespace channel
 }  // namespace mscclpp
