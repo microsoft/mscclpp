@@ -1,5 +1,6 @@
 #include <atomic>
 #include <mscclpp/core.hpp>
+#include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/proxy.hpp>
 #include <mscclpp/utils.hpp>
 #include <thread>
@@ -38,8 +39,13 @@ MSCCLPP_API_CPP Proxy::~Proxy() {
 }
 
 MSCCLPP_API_CPP void Proxy::start() {
+  int cudaDevice;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
+
   pimpl->running = true;
-  pimpl->service = std::thread([this] {
+  pimpl->service = std::thread([this, cudaDevice] {
+    MSCCLPP_CUDATHROW(cudaSetDevice(cudaDevice));
+
     pimpl->threadInit();
 
     ProxyHandler handler = this->pimpl->handler;
