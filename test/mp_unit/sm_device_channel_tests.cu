@@ -65,6 +65,7 @@ __global__ void kernelSmDevicePacketPingPong(int* buff, int rank, int nElem, int
   int getOffset = (rank == 0) ? 10000000 : 0;
   int threadId = threadIdx.x + blockIdx.x * blockDim.x;
   int numThreads = blockDim.x * gridDim.x;
+  int flusher = 0;
   for (int i = 0; i < nTries; i++) {
     uint64_t flag = (uint64_t)i + 1;
 
@@ -78,6 +79,11 @@ __global__ void kernelSmDevicePacketPingPong(int* buff, int rank, int nElem, int
       }
       // __syncthreads();
       smDevChan.putPacket(0, 0, nElem * sizeof(int), threadId, numThreads, gridDim.x, flag);
+      flusher++;
+      if (flusher == 64) {
+        if (threadId == 0) smDevChan.flush();
+        flusher = 0;
+      }
     } else {
       smDevChan.getPacket(0, nElem * sizeof(int), threadId, numThreads, flag);
       // If each thread reads 8 bytes at once, we don't need a barrier after getPacket().
@@ -194,6 +200,8 @@ TEST_F(SmDeviceChannelOneToOneTest, PacketPingPongIb) {
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
+
+  communicator->bootstrapper()->barrier();
 
   channelService->stopProxy();
 }
