@@ -87,10 +87,8 @@ class BaseTestEngine {
   double benchTime();
 
   void setupMeshConnectionsInternal(
-      std::vector<std::shared_ptr<mscclpp::Connection>>& connections, mscclpp::RegisteredMemory& inputBufRegMem,
-      mscclpp::RegisteredMemory& outputBufRegMem,
-      std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories, void* inputBuff,
-      size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes);
+      std::vector<std::shared_ptr<mscclpp::Connection>>& connections, mscclpp::RegisteredMemory& localMemory,
+      std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories);
 
  protected:
   using SetupChannelFunc = std::function<void(std::vector<std::shared_ptr<mscclpp::Connection>>,
@@ -99,8 +97,11 @@ class BaseTestEngine {
   void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, void* inputBuff,
                             size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0,
                             SetupChannelFunc setupChannel = nullptr);
-  void setupMeshConnections(std::vector<mscclpp::channel::SmChannel>& smChannels, void* inputBuff,
-                            size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes = 0);
+  void setupMeshConnections(std::vector<mscclpp::channel::SmChannel>& smChannels,
+                            std::vector<mscclpp::channel::SimpleSmDeviceChannel>& smDevChannels, void* inputBuff,
+                            size_t inputBuffBytes, void* putPacketBuff = nullptr, size_t putPacketBuffBytes = 0,
+                            void* getPacketBuff = nullptr, size_t getPacketBuffBytes = 0, void* outputBuff = nullptr,
+                            size_t outputBuffBytes = 0);
 
   const TestArgs args_;
   bool inPlace_;

@@ -304,6 +304,7 @@ class SmDeviceChannelService : public BaseChannelService {
 
   MemoryId addMemory(RegisteredMemory memory);
 
+  const SmEpoch& epoch(uint32_t id) const;
   SmDeviceChannel deviceChannel(uint32_t id);
 
   void startProxy();

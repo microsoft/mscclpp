@@ -89,6 +89,8 @@ MSCCLPP_API_CPP MemoryId SmDeviceChannelService::addMemory(RegisteredMemory memo
   return memories_.size() - 1;
 }
 
+MSCCLPP_API_CPP const SmEpoch& SmDeviceChannelService::epoch(uint32_t id) const { return epochs_[id]; }
+
 MSCCLPP_API_CPP SmDeviceChannel SmDeviceChannelService::deviceChannel(uint32_t id) {
   return SmDeviceChannel(id, epochs_[id].deviceHandle(), proxy_.fifo().deviceFifo());
 }

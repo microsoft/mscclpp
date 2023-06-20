@@ -64,7 +64,7 @@ MSCCLPP_API_CPP SmEpoch::SmEpoch(Communicator& communicator, std::shared_ptr<Con
   }
 }
 
-MSCCLPP_API_CPP SmEpoch::DeviceHandle SmEpoch::deviceHandle() {
+MSCCLPP_API_CPP SmEpoch::DeviceHandle SmEpoch::deviceHandle() const {
   SmEpoch::DeviceHandle device;
   device.remoteInboundEpochId =
       isRemoteInboundEpochIdSet_ ? reinterpret_cast<uint64_t*>(remoteInboundEpochIdsRegMem_.get().data()) : nullptr;

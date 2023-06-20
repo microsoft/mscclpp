@@ -129,7 +129,7 @@ class SmEpoch : public BaseEpoch<CudaDeleter, CudaDeleter> {
     uint64_t* expectedInboundEpochId;
   };
 
-  DeviceHandle deviceHandle();
+  DeviceHandle deviceHandle() const;
   bool isRemoteInboundEpochIdSet_;
 };
 
