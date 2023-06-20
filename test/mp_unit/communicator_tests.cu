@@ -13,6 +13,9 @@ void CommunicatorTestBase::SetUp() {
   }
   ASSERT_LE(numRanksToUse, gEnv->worldSize);
 
+  ibTransport = ibIdToTransport(rankToLocalRank(gEnv->rank));
+  MSCCLPP_CUDATHROW(cudaSetDevice(rankToLocalRank(gEnv->rank)));
+
   std::shared_ptr<mscclpp::Bootstrap> bootstrap;
   mscclpp::UniqueId id;
   if (gEnv->rank < numRanksToUse) {
@@ -26,7 +29,6 @@ void CommunicatorTestBase::SetUp() {
   }
   bootstrap->initialize(id);
   communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
-  ibTransport = ibIdToTransport(rankToLocalRank(gEnv->rank));
 }
 
 void CommunicatorTestBase::TearDown() {

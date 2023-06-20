@@ -116,6 +116,11 @@ ProxyHandlerResult SmDeviceChannelService::handleTrigger(ProxyTrigger triggerRaw
     conn->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset, trigger->fields.size);
   }
 
+  if (trigger->fields.type & TriggerSync) {
+    conn->flush();
+    result = ProxyHandlerResult::FlushFifoTailAndContinue;
+  }
+
   return result;
 }
 
