@@ -148,6 +148,8 @@ class SmDeviceChannelOneToOneTest : public CommunicatorTestBase {
 
   void setupMeshConnections(std::vector<mscclpp::channel::SimpleSmDeviceChannel>& smDevChannels, bool useIbOnly,
                             void* inputBuff, size_t inputBuffBytes);
+  void testPacketPingPong(bool useIbOnly);
+  void testPacketPingPongPerf(bool useIbOnly);
 
   std::shared_ptr<mscclpp::channel::SmDeviceChannelService> channelService;
   std::shared_ptr<mscclpp::channel::ChannelPacket> putPacketBuffer;
