@@ -329,6 +329,7 @@ void AllReduceTestColl::setupCollTest(size_t size) {
   recvCount_ = base;
   paramCount_ = base;
   recvCount_ = base;
+  expectedCount_ = base;
 
   mscclpp::DeviceSyncer syncer = {};
   CUDATHROW(cudaMemcpyToSymbol(deviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
