@@ -329,6 +329,7 @@ void AllReduceTestColl::setupCollTest(size_t size) {
   recvCount_ = base;
   paramCount_ = base;
   recvCount_ = base;
+  expectedCount_ = base;
 
   mscclpp::DeviceSyncer syncer = {};
   CUDATHROW(cudaMemcpyToSymbol(deviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
@@ -358,7 +359,9 @@ class AllReduceTestEngine : public BaseTestEngine {
   std::shared_ptr<int[]> expectedBuff_;
 };
 
-AllReduceTestEngine::AllReduceTestEngine(const TestArgs& args) : BaseTestEngine(args) { inPlace_ = isInPlace(); }
+AllReduceTestEngine::AllReduceTestEngine(const TestArgs& args) : BaseTestEngine(args, "allreduce") {
+  inPlace_ = isInPlace();
+}
 
 bool AllReduceTestEngine::isUsePacket() const { return (args_.kernelNum == 2); }
 
