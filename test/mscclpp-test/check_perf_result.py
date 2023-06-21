@@ -65,6 +65,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--perf-file", type=str, required=True)
     parser.add_argument("--baseline-file", type=str, required=True)
+    # We use different threshold for latency and bandwidth. For latency,
+    # small data size is used which introduces more variance. For bandwidth, the performance is more stable.
     parser.add_argument("--time-threshold", type=float, default=0.15)
     parser.add_argument("--bandwidth-threshold", type=float, default=0.05)
     args = parser.parse_args()
