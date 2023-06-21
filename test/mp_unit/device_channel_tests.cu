@@ -94,7 +94,7 @@ __global__ void kernelDevicePingPong(int* buff, int rank, int nElem, int* ret) {
     }
     flusher++;
     if (flusher == 100) {
-      devChan.flush();
+      if (threadIdx.x == 0) devChan.flush();
       flusher = 0;
     }
   }

@@ -101,8 +101,7 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int rem
     if (pimpl->rankToHash_[remoteRank] != pimpl->rankToHash_[pimpl->bootstrap_->getRank()]) {
       std::stringstream ss;
       ss << "Cuda IPC connection can only be made within a node: " << remoteRank << "(" << std::hex
-         << pimpl->rankToHash_[pimpl->bootstrap_->getRank()] << ")"
-         << " != " << pimpl->bootstrap_->getRank() << "(" << std::hex
+         << pimpl->rankToHash_[remoteRank] << ") != " << pimpl->bootstrap_->getRank() << "(" << std::hex
          << pimpl->rankToHash_[pimpl->bootstrap_->getRank()] << ")";
       throw mscclpp::Error(ss.str(), ErrorCode::InvalidUsage);
     }

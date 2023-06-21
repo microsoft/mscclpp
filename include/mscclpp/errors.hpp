@@ -31,8 +31,8 @@ class BaseError : public std::runtime_error {
   const char* what() const noexcept override;
 
  protected:
-  int errorCode_;
   std::string message_;
+  int errorCode_;
 };
 
 class Error : public BaseError {
