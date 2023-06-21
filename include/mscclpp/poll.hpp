@@ -4,11 +4,10 @@
 #ifdef __CUDACC__
 
 #ifndef NDEBUG
-#include <stdio.h>
-#define POLL_PRINT_ON_STUCK(__cond)                             \
-  do {                                                          \
-    printf("mscclpp: spin is stuck. condition: " #__cond "\n"); \
-  } while (0);
+// TODO(chhwang): https://github.com/microsoft/mscclpp/issues/99
+#define POLL_PRINT_ON_STUCK(__cond)
+// #include <stdio.h>
+// #define POLL_PRINT_ON_STUCK(__cond) do { printf("mscclpp: spin is stuck. condition: " #__cond "\n"); } while (0);
 #else  // NDEBUG
 #define POLL_PRINT_ON_STUCK(__cond)
 #endif  // NDEBUG
