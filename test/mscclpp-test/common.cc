@@ -52,7 +52,7 @@ double parseSize(const char* value) {
   std::istringstream iss(valueStr);
   long long int units;
   double size;
-  char size_lit;
+  char size_lit = 0;
 
   if (iss >> size) {
     iss >> std::ws;  // eat whitespace
@@ -61,7 +61,7 @@ double parseSize(const char* value) {
     return -1.0;
   }
 
-  if (!std::isspace(size_lit)) {
+  if (size_lit != 0 && !std::isspace(size_lit)) {
     switch (size_lit) {
       case 'G':
       case 'g':

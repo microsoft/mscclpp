@@ -10,7 +10,7 @@
 __constant__ mscclpp::channel::SimpleDeviceChannel constDevFstRoundChans[16];
 __constant__ mscclpp::channel::SimpleDeviceChannel constDevSndRoundChans[16];
 
-__constant__ mscclpp::channel::SmChannel constSmChans[16];
+__constant__ mscclpp::channel::SmChannel constSmChans[8];
 __device__ mscclpp::channel::SimpleSmDeviceChannel globalSmDevChans[16];
 
 // TODO(chhwang): need an interface for this.
@@ -228,14 +228,14 @@ __device__ void allreduce1(int* buff, int* scratch, int rank, int worldSize, siz
 __device__ void allreduce2(int* buff, void* putPktBuf, void* getPktBuf, void* result, int rank, int nRanksPerNode,
                            int worldSize, size_t nelems) {
   int chanIdx = blockIdx.x / BLOCKS_PER_PEER;
-  // int numPeers = worldSize - 1;
+  int numPeersPerNode = nRanksPerNode - 1;
   size_t nPkts = nelems / 2;  // 2 elems per packet, assume nelems is even
   size_t pktBytes = nPkts * sizeof(mscclpp::channel::ChannelPacket);
   mscclpp::channel::SmChannel smChan = constSmChans[chanIdx];
   uint32_t flag = (uint32_t)smChan.epochGetLocal() + 1;  // +1 as flag should be non-zero
   size_t srcOffset =
       ((blockIdx.x % BLOCKS_PER_PEER) * nelems * sizeof(int) / BLOCKS_PER_PEER);  // offset for this block
-  size_t dstOffset = ((flag & 1) ? 0 : pktBytes * nRanksPerNode) +                // double buffering
+  size_t dstOffset = ((flag & 1) ? 0 : pktBytes * numPeersPerNode) +              // double buffering
                      ((chanIdx < rank ? rank - 1 : rank) * pktBytes) +            // offset for this rank
                      (srcOffset * 2);  // offset for this block: twice of srcOffset because 2 elems per packet
 
@@ -243,14 +243,14 @@ __device__ void allreduce2(int* buff, void* putPktBuf, void* getPktBuf, void* re
 
   int2* src = (int2*)buff;
   int2* res = (int2*)result;  // cumulate into here
-  mscclpp::channel::ChannelPacket* tmpPtr =
-      (mscclpp::channel::ChannelPacket*)getPktBuf + ((flag & 1) ? 0 : nPkts * nRanksPerNode);  // double buffering
+  mscclpp::channel::ChannelPacket* getPktPtr =
+      (mscclpp::channel::ChannelPacket*)getPktBuf + ((flag & 1) ? 0 : nPkts * numPeersPerNode);  // double buffering
   for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPkts; idx += blockDim.x * gridDim.x) {
     int x = 0;
     int y = 0;
-    for (int peerIdx = 0; peerIdx < nRanksPerNode / 2; ++peerIdx) {
-      mscclpp::channel::ChannelPacket* pkt0 = tmpPtr + 2 * peerIdx * nPkts;
-      mscclpp::channel::ChannelPacket* pkt1 = tmpPtr + (2 * peerIdx + 1) * nPkts;
+    for (int peerIdx = 0; peerIdx < numPeersPerNode / 2; ++peerIdx) {
+      mscclpp::channel::ChannelPacket* pkt0 = getPktPtr + 2 * peerIdx * nPkts;
+      mscclpp::channel::ChannelPacket* pkt1 = getPktPtr + (2 * peerIdx + 1) * nPkts;
       uint2 data0 = pkt0[idx].read(flag);
       uint2 data1 = pkt1[idx].read(flag);
       x += (int)data0.x;
@@ -258,8 +258,8 @@ __device__ void allreduce2(int* buff, void* putPktBuf, void* getPktBuf, void* re
       x += (int)data1.x;
       y += (int)data1.y;
     }
-    if (nRanksPerNode & 1) {
-      mscclpp::channel::ChannelPacket* pkt = tmpPtr + (nRanksPerNode - 1) * nPkts;
+    if (numPeersPerNode & 1) {
+      mscclpp::channel::ChannelPacket* pkt = getPktPtr + (numPeersPerNode - 1) * nPkts;
       uint2 data = pkt[idx].read(flag);
       x += (int)data.x;
       y += (int)data.y;
@@ -352,6 +352,7 @@ class AllReduceTestEngine : public BaseTestEngine {
   ~AllReduceTestEngine() = default;
 
   void allocateBuffer() override;
+  std::shared_ptr<mscclpp::channel::BaseChannelService> createChannelService() override;
   void setupConnections() override;
 
   bool isUsePacket() const;
@@ -399,6 +400,14 @@ void AllReduceTestEngine::allocateBuffer() {
   }
 
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
+}
+
+std::shared_ptr<mscclpp::channel::BaseChannelService> AllReduceTestEngine::createChannelService() {
+  if (isUsePacket()) {
+    return std::make_shared<mscclpp::channel::SmDeviceChannelService>(*comm_);
+  } else {
+    return std::make_shared<mscclpp::channel::DeviceChannelService>(*comm_);
+  }
 }
 
 void AllReduceTestEngine::setupConnections() {
