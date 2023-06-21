@@ -409,7 +409,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SmChanne
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
       smChannels.emplace_back(service->epoch(cidToEid[cid]).deviceHandle(), remoteRegMemories[cid].get(),
-                              inputBufRegMem.data(), (getPacketBuff) ? getPacketBufRegMem.data() : nullptr);
+                              inputBufRegMem.data(), (outputBuff) ? outputBufRegMem.data() : nullptr);
     } else {
       if (putPacketBuff == nullptr || getPacketBuff == nullptr) {
         throw std::runtime_error("IB transport requires putPacketBuff and getPacketBuff");
