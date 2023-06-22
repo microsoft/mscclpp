@@ -88,7 +88,8 @@ class BaseTestEngine {
 
   void setupMeshConnectionsInternal(
       std::vector<std::shared_ptr<mscclpp::Connection>>& connections, mscclpp::RegisteredMemory& localMemory,
-      std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories);
+      std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories,
+      bool addConnections = true);
 
  protected:
   using SetupChannelFunc = std::function<void(std::vector<std::shared_ptr<mscclpp::Connection>>,

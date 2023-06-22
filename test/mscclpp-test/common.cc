@@ -309,7 +309,7 @@ std::shared_ptr<mscclpp::channel::BaseChannelService> BaseTestEngine::createChan
 
 void BaseTestEngine::setupMeshConnectionsInternal(
     std::vector<std::shared_ptr<mscclpp::Connection>>& connections, mscclpp::RegisteredMemory& localRegMemory,
-    std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories) {
+    std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories, bool addConnections) {
   const int worldSize = args_.totalRanks;
   const int rank = args_.rank;
   const int nRanksPerNode = args_.nRanksPerNode;
@@ -321,15 +321,16 @@ void BaseTestEngine::setupMeshConnectionsInternal(
     if (r == rank) {
       continue;
     }
-    mscclpp::Transport transport;
-    if (rankToNode(r) == thisNode) {
-      transport = mscclpp::Transport::CudaIpc;
-    } else {
-      transport = ibTransport;
+    if (addConnections) {
+      mscclpp::Transport transport;
+      if (rankToNode(r) == thisNode) {
+        transport = mscclpp::Transport::CudaIpc;
+      } else {
+        transport = ibTransport;
+      }
+      // Connect with all other ranks
+      connections.push_back(comm_->connectOnSetup(r, 0, transport));
     }
-    // Connect with all other ranks
-    connections.push_back(comm_->connectOnSetup(r, 0, transport));
-
     comm_->sendMemoryOnSetup(localRegMemory, r, 0);
     auto remoteMemory = comm_->recvMemoryOnSetup(r, 0);
     remoteRegMemories.push_back(remoteMemory);
@@ -396,6 +397,11 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SmChanne
 
   setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
 
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoriesOutput;
+  if (outputBuff) {
+    setupMeshConnectionsInternal(connections, outputBufRegMem, remoteRegMemoriesOutput, false);
+  }
+
   auto service = std::dynamic_pointer_cast<mscclpp::channel::SmDeviceChannelService>(chanService_);
 
   std::unordered_map<size_t, uint32_t> cidToEid;
@@ -408,7 +414,8 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SmChanne
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-      smChannels.emplace_back(service->epoch(cidToEid[cid]).deviceHandle(), remoteRegMemories[cid].get(),
+      smChannels.emplace_back(service->epoch(cidToEid[cid]).deviceHandle(),
+                              (outputBuff) ? remoteRegMemoriesOutput[cid].get() : remoteRegMemories[cid].get(),
                               inputBufRegMem.data(), (outputBuff) ? outputBufRegMem.data() : nullptr);
     } else {
       if (putPacketBuff == nullptr || getPacketBuff == nullptr) {

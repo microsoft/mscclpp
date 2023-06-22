@@ -258,7 +258,6 @@ __device__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
   mscclpp::channel::ChannelPacket* putPktPtr = (mscclpp::channel::ChannelPacket*)((char*)putPktBuf + pktBufOffset);
 
   // Phase 1: Local AllReduce. Read from buff, write to putPktBuf (for single node) or to result (for 2 nodes)
-
   if (numPeersPerNode == 0) {
     // One rank per node: write data to putPktBuf directly
     for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPkts; idx += blockDim.x * gridDim.x) {
@@ -337,7 +336,7 @@ __device__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
 
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     smDevChan.epochIncrement();
-    printf("%d %d\n", res[0].x, res[0].y);
+    // printf("%d %d\n", res[0].x, res[0].y);
   }
 }
 
@@ -382,7 +381,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     tmpBuff = scratchPacketBuff;
   }
   kernel<<<nBlocks, 1024, 0, stream>>>(inputBuff, tmpBuff, resultBuff, putPacketBuff, getPacketBuff, rank,
-                                       args.nRanksPerNode, worldSize, paramCount_, scratchDataCount, kernelNum);
+                                      args.nRanksPerNode, worldSize, paramCount_, scratchDataCount, kernelNum);
 }
 
 void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
