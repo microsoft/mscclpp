@@ -10,6 +10,34 @@
 namespace mscclpp {
 namespace channel {
 
+MSCCLPP_API_CPP DeviceChannel::DeviceChannel(ChannelId channelId, DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo)
+    : channelId_(channelId), epoch_(epoch), fifo_(fifo) {}
+
+MSCCLPP_API_CPP SmDeviceChannel::SmDeviceChannel(uint32_t epochId, SmEpoch::DeviceHandle epoch, DeviceProxyFifo fifo)
+    : epochId_(epochId), epoch_(epoch), fifo_(fifo), devSyncer_() {}
+
+MSCCLPP_API_CPP SimpleDeviceChannel::SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src)
+    : devChan_(devChan), dst_(dst), src_(src) {}
+
+MSCCLPP_API_CPP SimpleSmDeviceChannel::SimpleSmDeviceChannel(SmDeviceChannel devChan, MemoryId remoteGetPacketMem,
+                                                             MemoryId localPutPacketMem, void* src,
+                                                             void* putPacketBuffer, void* getPacketBuffer)
+    : devChan_(devChan),
+      remoteGetPacketMem_(remoteGetPacketMem),
+      localPutPacketMem_(localPutPacketMem),
+      src_(src),
+      putPacketBuffer_(putPacketBuffer),
+      getPacketBuffer_(getPacketBuffer) {}
+
+MSCCLPP_API_CPP SmChannel::SmChannel(SmEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src,
+                                     void* getPacketBuffer)
+    : epoch_(epoch), src_(src), getPacketBuffer_(getPacketBuffer) {
+  if (!dst.transports().has(Transport::CudaIpc)) {
+    throw Error("SmChannel: dst must be registered with CudaIpc", ErrorCode::InvalidUsage);
+  }
+  dst_ = dst.data();
+}
+
 MSCCLPP_API_CPP DeviceChannelService::DeviceChannelService(Communicator& communicator)
     : communicator_(communicator),
       proxy_([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {

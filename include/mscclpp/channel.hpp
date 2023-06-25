@@ -133,8 +133,7 @@ union ChannelPacket {
 struct DeviceChannel {
   DeviceChannel() = default;
 
-  DeviceChannel(ChannelId channelId, DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo)
-      : channelId_(channelId), epoch_(epoch), fifo_(fifo) {}
+  DeviceChannel(ChannelId channelId, DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
 
   DeviceChannel(const DeviceChannel& other) = default;
 
@@ -194,8 +193,7 @@ struct DeviceChannel {
 struct SmDeviceChannel {
   SmDeviceChannel() = default;
 
-  SmDeviceChannel(uint32_t epochId, SmEpoch::DeviceHandle epoch, DeviceProxyFifo fifo)
-      : epochId_(epochId), epoch_(epoch), fifo_(fifo), devSyncer_() {}
+  SmDeviceChannel(uint32_t epochId, SmEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
 
   SmDeviceChannel(const SmDeviceChannel& other) = default;
 
@@ -329,7 +327,7 @@ class SmDeviceChannelService : public BaseChannelService {
 struct SimpleDeviceChannel {
   SimpleDeviceChannel() = default;
 
-  SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src) : devChan_(devChan), dst_(dst), src_(src) {}
+  SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src);
 
   SimpleDeviceChannel(DeviceChannel devChan) : devChan_(devChan) {}
 
@@ -375,13 +373,7 @@ struct SimpleSmDeviceChannel {
   SimpleSmDeviceChannel() = default;
 
   SimpleSmDeviceChannel(SmDeviceChannel devChan, MemoryId remoteGetPacketMem, MemoryId localPutPacketMem, void* src,
-                        void* putPacketBuffer, void* getPacketBuffer)
-      : devChan_(devChan),
-        remoteGetPacketMem_(remoteGetPacketMem),
-        localPutPacketMem_(localPutPacketMem),
-        src_(src),
-        putPacketBuffer_(putPacketBuffer),
-        getPacketBuffer_(getPacketBuffer) {}
+                        void* putPacketBuffer, void* getPacketBuffer);
 
   SimpleSmDeviceChannel(SmDeviceChannel devChan) : devChan_(devChan) {}
 
@@ -430,13 +422,7 @@ struct SimpleSmDeviceChannel {
 struct SmChannel {
  public:
   SmChannel() = default;
-  SmChannel(SmEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src, void* getPacketBuffer = nullptr)
-      : epoch_(epoch), src_(src), getPacketBuffer_(getPacketBuffer) {
-    if (!dst.transports().has(Transport::CudaIpc)) {
-      throw Error("SmChannel: dst must be registered with CudaIpc", ErrorCode::InvalidUsage);
-    }
-    dst_ = dst.data();
-  };
+  SmChannel(SmEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src, void* getPacketBuffer = nullptr);
 
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
