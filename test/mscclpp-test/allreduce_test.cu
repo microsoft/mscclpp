@@ -384,7 +384,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     tmpBuff = scratchPacketBuff;
   }
   kernel<<<nBlocks, 1024, 0, stream>>>(inputBuff, tmpBuff, resultBuff, putPacketBuff, getPacketBuff, rank,
-                                      args.nRanksPerNode, worldSize, paramCount_, scratchDataCount, kernelNum);
+                                       args.nRanksPerNode, worldSize, paramCount_, scratchDataCount, kernelNum);
 }
 
 void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
