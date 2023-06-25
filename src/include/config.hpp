@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_CONFIG_H_
 #define MSCCLPP_CONFIG_H_
 

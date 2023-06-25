@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_PROXY_HPP_
 #define MSCCLPP_PROXY_HPP_
 

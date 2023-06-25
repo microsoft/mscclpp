@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 function(add_test_executable name sources)
     add_executable(${name} ${sources})
     target_link_libraries(${name} mscclpp CUDA::cudart CUDA::cuda_driver)

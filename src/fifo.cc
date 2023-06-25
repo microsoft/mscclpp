@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <emmintrin.h>
 
 #include <mscclpp/cuda_utils.hpp>

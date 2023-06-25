@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_CUDA_UTILS_HPP_
 #define MSCCLPP_CUDA_UTILS_HPP_
 
