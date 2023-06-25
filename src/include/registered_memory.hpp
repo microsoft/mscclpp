@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_REGISTERED_MEMORY_HPP_
 #define MSCCLPP_REGISTERED_MEMORY_HPP_
 

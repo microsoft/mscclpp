@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_TESTS_COMMON_H_
 #define MSCCLPP_TESTS_COMMON_H_
 
@@ -64,7 +67,7 @@ class BaseTestColl {
 
 class BaseTestEngine {
  public:
-  BaseTestEngine(const TestArgs& args);
+  BaseTestEngine(const TestArgs& args, const std::string& name);
   virtual ~BaseTestEngine();
   virtual void allocateBuffer() = 0;
 
@@ -105,6 +108,7 @@ class BaseTestEngine {
                             size_t outputBuffBytes = 0);
 
   const TestArgs args_;
+  const std::string name_;
   bool inPlace_;
   std::shared_ptr<BaseTestColl> coll_;
   std::shared_ptr<mscclpp::Communicator> comm_;

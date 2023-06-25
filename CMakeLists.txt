@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 cmake_minimum_required(VERSION 3.26)
 project(mscclpp LANGUAGES CUDA CXX)
 set(CMAKE_CXX_STANDARD 17)

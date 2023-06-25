@@ -10,11 +10,6 @@ jobs:
     runs-on: ubuntu-20.04
 
     steps:
-    - name: Check git version
-      env:
-        min-ver: "2.18"
-      run: dpkg --compare-versions $(git version | awk '{print $3}') ge ${{ env.min-ver }}
-
     - name: Check out Git repository
       uses: actions/checkout@v3
 
@@ -28,15 +23,32 @@ jobs:
         clang-format -style=file --verbose --Werror --dry-run ${CPPSOURCES}
         clang-format --dry-run ${PYTHONCPPSOURCES}
 
+  pylint:
+    runs-on: ubuntu-20.04
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v3
+  
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.8
+
+      - name: Install Python dependencies
+        run: python3.8 -m pip install black
+
+      - name: Run linters
+        uses: wearerequired/lint-action@v2
+        with:
+          black: true
+          black_auto_fix: false
+          black_args: "--config .black --check"
+
   spelling:
     runs-on: ubuntu-20.04
 
     steps:
-    - name: Check git version
-      env:
-        min-ver: "2.18"
-      run: dpkg --compare-versions $(git version | awk '{print $3}') ge ${{ env.min-ver }}
-
     - name: Check out Git repository
       uses: actions/checkout@v3
 

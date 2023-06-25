@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_CORE_HPP_
 #define MSCCLPP_CORE_HPP_
 

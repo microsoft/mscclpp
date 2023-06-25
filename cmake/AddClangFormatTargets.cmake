@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 # Add targets to run clang-format
 
 find_program(CLANG_FORMAT clang-format)

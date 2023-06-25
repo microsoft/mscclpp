@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_POLL_HPP_
 #define MSCCLPP_POLL_HPP_
 

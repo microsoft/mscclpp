@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef NPKIT_STRUCT_H_
 #define NPKIT_STRUCT_H_
 

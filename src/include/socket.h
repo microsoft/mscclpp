@@ -1,8 +1,5 @@
-/*************************************************************************
- * Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
- *
- * See LICENSE.txt for license information
- ************************************************************************/
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
 
 #ifndef MSCCLPP_SOCKET_H_
 #define MSCCLPP_SOCKET_H_

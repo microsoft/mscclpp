@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <cuda_runtime.h>
 
 #include <cassert>
@@ -324,7 +327,7 @@ class AllGatherTestEngine : public BaseTestEngine {
   std::shared_ptr<int[]> expectedBuff_;
 };
 
-AllGatherTestEngine::AllGatherTestEngine(const TestArgs& args) : BaseTestEngine(args) {}
+AllGatherTestEngine::AllGatherTestEngine(const TestArgs& args) : BaseTestEngine(args, "allgather") {}
 
 void AllGatherTestEngine::allocateBuffer() {
   sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));

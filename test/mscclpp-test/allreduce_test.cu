@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <cassert>
 #include <mscclpp/concurrency.hpp>
 #include <vector>
@@ -409,7 +412,6 @@ void AllReduceTestColl::setupCollTest(size_t size) {
   sendCount_ = count;
   recvCount_ = count;
   paramCount_ = count;
-  recvCount_ = count;
   expectedCount_ = count;
 
   mscclpp::DeviceSyncer syncer = {};
@@ -444,7 +446,9 @@ class AllReduceTestEngine : public BaseTestEngine {
   std::shared_ptr<int[]> expectedBuff_;
 };
 
-AllReduceTestEngine::AllReduceTestEngine(const TestArgs& args) : BaseTestEngine(args) { inPlace_ = isInPlace(); }
+AllReduceTestEngine::AllReduceTestEngine(const TestArgs& args) : BaseTestEngine(args, "allreduce") {
+  inPlace_ = isInPlace();
+}
 
 bool AllReduceTestEngine::isUsePacket() const { return (args_.kernelNum == 2); }
 

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -120,7 +123,7 @@ class SendRecvTestEngine : public BaseTestEngine {
   std::shared_ptr<int[]> expectedBuff_;
 };
 
-SendRecvTestEngine::SendRecvTestEngine(const TestArgs& args) : BaseTestEngine(args) { inPlace_ = false; }
+SendRecvTestEngine::SendRecvTestEngine(const TestArgs& args) : BaseTestEngine(args, "sendrecv") { inPlace_ = false; }
 
 void SendRecvTestEngine::allocateBuffer() {
   std::shared_ptr<int> sendBuff = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
