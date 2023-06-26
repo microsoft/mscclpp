@@ -33,7 +33,7 @@ class Channel;
 // This is just a numeric ID. Each HostConnection will have an internal array indexed by these handles
 // mapping to the actual
 using MemoryId = uint32_t;
-struct ChannelDeviceHandle;
+struct DeviceChannelHandle;
 
 class ProxyService {
  public:
@@ -44,7 +44,7 @@ class ProxyService {
   MemoryId addMemory(RegisteredMemory memory);
 
   Channel channel(ChannelId id) const;
-  ChannelDeviceHandle deviceChannel(ChannelId id);
+  DeviceChannelHandle deviceChannel(ChannelId id);
 
   void startProxy();
   void stopProxy();
@@ -106,14 +106,14 @@ union ChannelTrigger {
 #endif  // __CUDACC__
 };
 
-struct ChannelDeviceHandle {
-  ChannelDeviceHandle() = default;
+struct DeviceChannelHandle {
+  DeviceChannelHandle() = default;
 
-  ChannelDeviceHandle(ChannelId channelId, Host2DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
+  DeviceChannelHandle(ChannelId channelId, Host2DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
 
-  ChannelDeviceHandle(const ChannelDeviceHandle& other) = default;
+  DeviceChannelHandle(const DeviceChannelHandle& other) = default;
 
-  ChannelDeviceHandle& operator=(ChannelDeviceHandle& other) = default;
+  DeviceChannelHandle& operator=(DeviceChannelHandle& other) = default;
 
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
@@ -166,16 +166,16 @@ struct ChannelDeviceHandle {
   DeviceProxyFifo fifo_;
 };
 
-struct SimpleChannelDeviceHandle {
-  SimpleChannelDeviceHandle() = default;
+struct SimpleDeviceChannelHandle {
+  SimpleDeviceChannelHandle() = default;
 
-  SimpleChannelDeviceHandle(ChannelDeviceHandle devChan, MemoryId dst, MemoryId src);
+  SimpleDeviceChannelHandle(DeviceChannelHandle devChan, MemoryId dst, MemoryId src);
 
-  SimpleChannelDeviceHandle(ChannelDeviceHandle devChan) : devChan_(devChan) {}
+  SimpleDeviceChannelHandle(DeviceChannelHandle devChan) : devChan_(devChan) {}
 
-  SimpleChannelDeviceHandle(const SimpleChannelDeviceHandle& other) = default;
+  SimpleDeviceChannelHandle(const SimpleDeviceChannelHandle& other) = default;
 
-  SimpleChannelDeviceHandle& operator=(SimpleChannelDeviceHandle& other) = default;
+  SimpleDeviceChannelHandle& operator=(SimpleDeviceChannelHandle& other) = default;
 
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
@@ -206,7 +206,7 @@ struct SimpleChannelDeviceHandle {
 
 #endif  // __CUDACC__
 
-  ChannelDeviceHandle devChan_;
+  DeviceChannelHandle devChan_;
   MemoryId dst_;
   MemoryId src_;
 };

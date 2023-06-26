@@ -11,11 +11,11 @@ namespace mscclpp {
 namespace channel {
 namespace proxy {
 
-MSCCLPP_API_CPP ChannelDeviceHandle::ChannelDeviceHandle(ChannelId channelId, Host2DeviceEpoch::DeviceHandle epoch,
+MSCCLPP_API_CPP DeviceChannelHandle::DeviceChannelHandle(ChannelId channelId, Host2DeviceEpoch::DeviceHandle epoch,
                                                          DeviceProxyFifo fifo)
     : channelId_(channelId), epoch_(epoch), fifo_(fifo) {}
 
-MSCCLPP_API_CPP SimpleChannelDeviceHandle::SimpleChannelDeviceHandle(ChannelDeviceHandle devChan, MemoryId dst,
+MSCCLPP_API_CPP SimpleDeviceChannelHandle::SimpleDeviceChannelHandle(DeviceChannelHandle devChan, MemoryId dst,
                                                                      MemoryId src)
     : devChan_(devChan), dst_(dst), src_(src) {}
 
@@ -39,8 +39,8 @@ MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {
 
 MSCCLPP_API_CPP Channel ProxyService::channel(ChannelId id) const { return channels_[id]; }
 
-MSCCLPP_API_CPP ChannelDeviceHandle ProxyService::deviceChannel(ChannelId id) {
-  return ChannelDeviceHandle(id, channels_[id].epoch().deviceHandle(), proxy_.fifo().deviceFifo());
+MSCCLPP_API_CPP DeviceChannelHandle ProxyService::deviceChannel(ChannelId id) {
+  return DeviceChannelHandle(id, channels_[id].epoch().deviceHandle(), proxy_.fifo().deviceFifo());
 }
 
 MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_.start(); }
