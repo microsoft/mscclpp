@@ -46,7 +46,7 @@ void SmDeviceChannelOneToOneTest::setupMeshConnections(
     communicator->setup();
 
     smDevChannels.emplace_back(channelService->deviceChannel(eid), channelService->addMemory(remoteMemory.get()),
-                               channelService->addMemory(putPacketBufRegMem), inputBuff, putPacketBufRegMem.data(),
+                               channelService->addMemory(putPacketBufRegMem), putPacketBufRegMem.data(),
                                getPacketBufRegMem.data());
   }
 }
@@ -60,12 +60,13 @@ __global__ void kernelSmDevicePacketPingPong(int* buff, int rank, int nElem, int
   if (rank > 1) return;
 
   mscclpp::channel::SimpleSmDeviceChannel& smDevChan = gChannelOneToOneTestSmDevChans;
-  volatile int* sendBuff = (volatile int*)buff;
+  volatile int* buffPtr = (volatile int*)buff;
   int putOffset = (rank == 0) ? 0 : 10000000;
   int getOffset = (rank == 0) ? 10000000 : 0;
   int threadId = threadIdx.x + blockIdx.x * blockDim.x;
   int numThreads = blockDim.x * gridDim.x;
   int flusher = 0;
+  const size_t nPkt = nElem / 2;
   for (int i = 0; i < nTries; i++) {
     uint64_t flag = (uint64_t)i + 1;
 
@@ -74,33 +75,40 @@ __global__ void kernelSmDevicePacketPingPong(int* buff, int rank, int nElem, int
     if ((rank ^ (i & 1)) == 0) {
       if (CheckCorrectness) {
         // If each thread writes 8 bytes at once, we don't need a barrier before putPacket().
-        for (int j = threadId; j < nElem / 2; j += numThreads) {
-          sendBuff[2 * j] = putOffset + i + 2 * j;
-          sendBuff[2 * j + 1] = putOffset + i + 2 * j + 1;
+        for (int j = threadId; j < nPkt; j += numThreads) {
+          buffPtr[2 * j] = putOffset + i + 2 * j;
+          buffPtr[2 * j + 1] = putOffset + i + 2 * j + 1;
         }
         // __syncthreads();
       }
-      smDevChan.putPacket(0, 0, nElem * sizeof(int), threadId, numThreads, gridDim.x, flag);
+      mscclpp::channel::putPackets(smDevChan.putPacketBuffer_, 0, buff, 0, nElem * sizeof(int), threadId, numThreads,
+                                   flag);
+      gChannelOneToOneTestSmDevChansSyncer.sync(gridDim.x);
+      if (threadId == 0) {
+        // Send data from the local putPacketBuffer to the remote getPacketBuffer
+        smDevChan.put(0, nPkt * sizeof(mscclpp::channel::ChannelPacket));
+      }
       flusher++;
       if (flusher == 64) {
         if (threadId == 0) smDevChan.flush();
         flusher = 0;
       }
     } else {
-      smDevChan.getPacket(0, nElem * sizeof(int), threadId, numThreads, flag);
+      mscclpp::channel::getPackets(buff, 0, smDevChan.getPacketBuffer_, 0, nElem * sizeof(int), threadId, numThreads,
+                                   flag);
       if (CheckCorrectness) {
         // If each thread reads 8 bytes at once, we don't need a barrier after getPacket().
         // __syncthreads();
-        for (int j = threadId; j < nElem / 2; j += numThreads) {
-          if (sendBuff[2 * j] != getOffset + i + 2 * j) {
-            // printf("ERROR: rank = %d, sendBuff[%d] = %d, expected %d. Skipping following errors\n", rank, 2 * j,
-            //        sendBuff[2 * j], getOffset + i + 2 * j);
+        for (int j = threadId; j < nPkt; j += numThreads) {
+          if (buffPtr[2 * j] != getOffset + i + 2 * j) {
+            // printf("ERROR: rank = %d, buffPtr[%d] = %d, expected %d. Skipping following errors\n", rank, 2 * j,
+            //        buffPtr[2 * j], getOffset + i + 2 * j);
             *ret = 1;
             break;
           }
-          if (sendBuff[2 * j + 1] != getOffset + i + 2 * j + 1) {
-            // printf("ERROR: rank = %d, sendBuff[%d] = %d, expected %d. Skipping following errors\n", rank, 2 * j + 1,
-            //        sendBuff[2 * j + 1], getOffset + i + 2 * j + 1);
+          if (buffPtr[2 * j + 1] != getOffset + i + 2 * j + 1) {
+            // printf("ERROR: rank = %d, buffPtr[%d] = %d, expected %d. Skipping following errors\n", rank, 2 * j + 1,
+            //        buffPtr[2 * j + 1], getOffset + i + 2 * j + 1);
             *ret = 1;
             break;
           }

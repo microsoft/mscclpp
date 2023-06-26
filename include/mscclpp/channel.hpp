@@ -130,6 +130,32 @@ union ChannelPacket {
 #endif  // __CUDACC__
 };
 
+#ifdef __CUDACC__
+__forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
+                                           uint64_t srcSize, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+  // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+  uint32_t* srcBase = (uint32_t*)((char*)src + srcOffset);
+  ChannelPacket* dstBase = (ChannelPacket*)((char*)dst + dstOffset);
+  size_t nElem = srcSize / sizeof(uint64_t);
+  for (size_t i = threadId; i < nElem; i += numThreads) {
+    ChannelPacket* pkt = &dstBase[i];
+    pkt->write(srcBase[2 * i], srcBase[2 * i + 1], flag);
+  }
+}
+
+__forceinline__ __device__ void getPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
+                                           uint64_t dstSize, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+  // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+  ChannelPacket* srcBase = (ChannelPacket*)((char*)src + srcOffset);
+  uint2* dstBase = (uint2*)((char*)dst + dstOffset);
+  size_t nElem = dstSize / sizeof(uint2);
+  for (size_t i = threadId; i < nElem; i += numThreads) {
+    ChannelPacket* pkt = &srcBase[i];
+    dstBase[i] = pkt->read(flag);
+  }
+}
+#endif  // __CUDACC__
+
 struct DeviceChannel {
   DeviceChannel() = default;
 
@@ -214,37 +240,6 @@ struct SmDeviceChannel {
     fifo_.sync(curFifoHead);
   }
 
-  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, void* src, uint64_t size,
-                                            MemoryId remoteGetPacketMem, MemoryId localPutPacketMem,
-                                            void* putPacketBuffer, uint32_t threadId, uint32_t numThreads,
-                                            uint32_t numBlocks, uint32_t flag) {
-    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-    uint32_t* srcBase = (uint32_t*)((char*)src + srcOffset);
-    ChannelPacket* putPacketBufferBase = (ChannelPacket*)((char*)putPacketBuffer + srcOffset * 2);
-    size_t nElem = size / sizeof(uint64_t);
-    for (size_t i = threadId; i < nElem; i += numThreads) {
-      ChannelPacket* pkt = &putPacketBufferBase[i];
-      pkt->write(srcBase[2 * i], srcBase[2 * i + 1], flag);
-    }
-    devSyncer_.sync(numBlocks);
-    if (threadId == 0) {
-      // Send data from the local putPacketBuffer to the remote getPacketBuffer
-      put(remoteGetPacketMem, dstOffset * 2, localPutPacketMem, srcOffset * 2, size * 2);
-    }
-  }
-
-  __forceinline__ __device__ void getPacket(uint64_t srcOffset, void* src, uint64_t size, void* getPacketBuffer,
-                                            uint32_t threadId, uint32_t numThreads, uint32_t flag) {
-    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-    ChannelPacket* getPacketBufferBase = (ChannelPacket*)((char*)getPacketBuffer + srcOffset * 2);
-    uint2* srcBase = (uint2*)((char*)src + srcOffset);
-    size_t nElem = size / sizeof(uint2);
-    for (size_t i = threadId; i < nElem; i += numThreads) {
-      ChannelPacket* pkt = &getPacketBufferBase[i];
-      srcBase[i] = pkt->read(flag);
-    }
-  }
-
   __forceinline__ __device__ void epochIncrement() { epoch_.epochIncrement(); }
 
   __forceinline__ __device__ uint64_t epochGetLocal() const { return epoch_.epochGetLocal(); }
@@ -260,7 +255,6 @@ struct SmDeviceChannel {
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
   DeviceProxyFifo fifo_;
-  DeviceSyncer devSyncer_;  // do we need this?
 };
 
 class BaseChannelService {
@@ -372,7 +366,7 @@ struct SimpleDeviceChannel {
 struct SimpleSmDeviceChannel {
   SimpleSmDeviceChannel() = default;
 
-  SimpleSmDeviceChannel(SmDeviceChannel devChan, MemoryId remoteGetPacketMem, MemoryId localPutPacketMem, void* src,
+  SimpleSmDeviceChannel(SmDeviceChannel devChan, MemoryId remoteGetPacketMem, MemoryId localPutPacketMem,
                         void* putPacketBuffer, void* getPacketBuffer);
 
   SimpleSmDeviceChannel(SmDeviceChannel devChan) : devChan_(devChan) {}
@@ -390,17 +384,6 @@ struct SimpleSmDeviceChannel {
 
   __forceinline__ __device__ void flush() { devChan_.flush(); }
 
-  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
-                                            uint32_t numThreads, uint32_t numBlocks, uint32_t flag) {
-    devChan_.putPacket(dstOffset, srcOffset, src_, size, remoteGetPacketMem_, localPutPacketMem_, putPacketBuffer_,
-                       threadId, numThreads, numBlocks, flag);
-  }
-
-  __forceinline__ __device__ void getPacket(uint64_t srcOffset, uint64_t size, uint32_t threadId, uint32_t numThreads,
-                                            uint32_t flag) {
-    devChan_.getPacket(srcOffset, src_, size, getPacketBuffer_, threadId, numThreads, flag);
-  }
-
   __forceinline__ __device__ void epochIncrement() { devChan_.epochIncrement(); }
 
   __forceinline__ __device__ uint64_t epochGetLocal() const { return devChan_.epochGetLocal(); }
@@ -413,7 +396,6 @@ struct SimpleSmDeviceChannel {
   MemoryId remoteGetPacketMem_;
   MemoryId localPutPacketMem_;
 
-  void* src_;
   void* putPacketBuffer_;
   void* getPacketBuffer_;
 };
@@ -439,42 +421,6 @@ struct SmChannel {
     }
   }
 
-  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
-                                            uint32_t numThreads, uint32_t flag) {
-    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-    uint32_t* srcBase = (uint32_t*)((char*)src_ + srcOffset);
-    ChannelPacket* dstBase = (ChannelPacket*)((char*)dst_ + dstOffset);
-    size_t nElem = size / sizeof(uint64_t);
-    for (size_t i = threadId; i < nElem; i += numThreads) {
-      ChannelPacket* pkt = &dstBase[i];
-      pkt->write(srcBase[2 * i], srcBase[2 * i + 1], flag);
-    }
-  }
-
-  __forceinline__ __device__ void putPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
-                                            uint32_t numThreads) {
-    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-    uint32_t* srcBase = (uint32_t*)((char*)src_ + srcOffset);
-    ChannelPacket* dstBase = (ChannelPacket*)((char*)dst_ + dstOffset);
-    size_t nElem = size / sizeof(uint64_t);
-    for (size_t i = threadId; i < nElem; i += numThreads) {
-      ChannelPacket* pkt = &dstBase[i];
-      pkt->write(srcBase[2 * i], srcBase[2 * i + 1]);
-    }
-  }
-
-  __forceinline__ __device__ void getPacket(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
-                                            uint32_t numThreads, uint32_t flag) {
-    // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-    ChannelPacket* getPacketBufferBase = (ChannelPacket*)((char*)getPacketBuffer_ + srcOffset);
-    uint2* srcBase = (uint2*)((char*)src_ + dstOffset);
-    size_t nElem = size / sizeof(uint2);
-    for (size_t i = threadId; i < nElem; i += numThreads) {
-      ChannelPacket* pkt = &getPacketBufferBase[i];
-      srcBase[i] = pkt->read(flag);
-    }
-  }
-
   __forceinline__ __device__ void signal() { epoch_.signal(); }
 
   __forceinline__ __device__ void signalPacket() { epoch_.signalPacket(); }
@@ -485,7 +431,7 @@ struct SmChannel {
 
   __forceinline__ __device__ void wait() { epoch_.wait(); }
 #endif  // __CUDACC__
- private:
+
   SmEpoch::DeviceHandle epoch_;
   void* src_;
   void* dst_;

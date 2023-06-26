@@ -441,7 +441,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SmChanne
       }
       smDevChannels.emplace_back(
           service->deviceChannel(cidToEid[cid]), service->addMemory(remoteRegMemories[cid].get()),
-          service->addMemory(putPacketBufRegMem), inputBuff, putPacketBufRegMem.data(), getPacketBufRegMem.data());
+          service->addMemory(putPacketBufRegMem), putPacketBufRegMem.data(), getPacketBufRegMem.data());
     }
   }
 }

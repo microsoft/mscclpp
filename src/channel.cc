@@ -14,18 +14,17 @@ MSCCLPP_API_CPP DeviceChannel::DeviceChannel(ChannelId channelId, DeviceEpoch::D
     : channelId_(channelId), epoch_(epoch), fifo_(fifo) {}
 
 MSCCLPP_API_CPP SmDeviceChannel::SmDeviceChannel(uint32_t epochId, SmEpoch::DeviceHandle epoch, DeviceProxyFifo fifo)
-    : epochId_(epochId), epoch_(epoch), fifo_(fifo), devSyncer_() {}
+    : epochId_(epochId), epoch_(epoch), fifo_(fifo) {}
 
 MSCCLPP_API_CPP SimpleDeviceChannel::SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src)
     : devChan_(devChan), dst_(dst), src_(src) {}
 
 MSCCLPP_API_CPP SimpleSmDeviceChannel::SimpleSmDeviceChannel(SmDeviceChannel devChan, MemoryId remoteGetPacketMem,
-                                                             MemoryId localPutPacketMem, void* src,
-                                                             void* putPacketBuffer, void* getPacketBuffer)
+                                                             MemoryId localPutPacketMem, void* putPacketBuffer,
+                                                             void* getPacketBuffer)
     : devChan_(devChan),
       remoteGetPacketMem_(remoteGetPacketMem),
       localPutPacketMem_(localPutPacketMem),
-      src_(src),
       putPacketBuffer_(putPacketBuffer),
       getPacketBuffer_(getPacketBuffer) {}
 
