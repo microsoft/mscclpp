@@ -77,12 +77,10 @@ __device__ void localReduce(int* buff, int* scratch, int rank, int nRanksPerNode
     mscclpp::channel::SimpleDeviceChannel& devFstSendChan = constDevFstRoundChans[peerSendId];
     mscclpp::channel::SimpleDeviceChannel& devFstRecvChan = constDevFstRoundChans[peerRecvId];
     int rankIdexInNode = rank % nRanksPerNode;
+    // use double buffer to overlap communication and computation
     size_t offset = (((startChunkIndex + rankIdexInNode + i) % worldSize) * nelems + offsetInChunk) * sizeof(int);
-    // if (isComm) {
-    //   printf("Rank %d, offset %ld, remoteSendToRank: %d\n", rank, offset, remoteSendToRank);
-    // }
     if (isComm) {
-      devFstSendChan.putWithSignal(offset, nelems * sizeof(int));
+      devFstSendChan.putWithSignal(offset, nelems * sizeof(int) / 2);
       devFstRecvChan.wait();
     }
     deviceSyncer.sync(gridDim.x);
@@ -90,8 +88,19 @@ __device__ void localReduce(int* buff, int* scratch, int rank, int nRanksPerNode
     offset = ((startChunkIndex + rankIdexInNode) * nelems + offsetInChunk) * sizeof(int);
     int* dst = (int*)((char*)buff + offset);
     int* src = (int*)((char*)scratch + offset);
-    vectorSum(dst, src, nelems);
+    vectorSum(dst, src, nelems / 2);
+
+    offset = (((startChunkIndex + rankIdexInNode + i) % worldSize) * nelems + offsetInChunk + nelems / 2) * sizeof(int);
+    if (isComm) {
+      devFstSendChan.putWithSignal(offset, nelems * sizeof(int) / 2);
+      devFstRecvChan.wait();
+    }
     deviceSyncer.sync(gridDim.x);
+    // reduce the results here
+    offset = ((startChunkIndex + rankIdexInNode) * nelems + offsetInChunk + nelems / 2) * sizeof(int);
+    dst = (int*)((char*)buff + offset);
+    src = (int*)((char*)scratch + offset);
+    vectorSum(dst, src, nelems / 2);
   }
 }
 

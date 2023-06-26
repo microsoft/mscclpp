@@ -315,8 +315,8 @@ size_t BaseTestEngine::checkData() {
   CUDATHROW(cudaMemcpy(recvData.data(), recvBuff, recvBytes, cudaMemcpyDeviceToHost));
   for (size_t i = 0; i < recvData.size(); i++) {
     if (recvData[i] != ((int*)expectedBuff)[i]) {
-      // std::cout << "Error at "<< args_.rank << " index " << i << ": expected " << ((int*)expectedBuff)[i] << ", got " << recvData[i]
-      //           << std::endl;
+      std::cout << "Error at " << args_.rank << " index " << i << ": expected " << ((int*)expectedBuff)[i] << ", got "
+                << recvData[i] << std::endl;
       nErrors++;
     }
   }
