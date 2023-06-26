@@ -63,25 +63,35 @@ __device__ void vectorSumSingleBlock(int* dst, int* src, size_t nElem) {
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
-__device__ void localReduce(int* buff, int* scratch, int rank, int nRanksPerNode, int startChunkIndex,
+__device__ void localReduce(int* buff, int* scratch, int rank, int nRanksPerNode, int worldSize, int startChunkIndex,
                             size_t offsetInChunk, size_t nelems) {
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int startRankInNode = (rank / nRanksPerNode) * nRanksPerNode;
 
   for (int i = 1; i < nRanksPerNode; ++i) {
-    int remoteSendRank = (rank + i) % nRanksPerNode + startRankInNode;
-    int remoteRecvRank = (rank + nRanksPerNode - 1) % nRanksPerNode + startRankInNode;
-    int peerSendId = (remoteSendRank < rank) ? remoteSendRank : remoteSendRank - 1;
-    int peerRecvId = (remoteRecvRank < rank) ? remoteRecvRank : remoteRecvRank - 1;
+    int remoteSendToRank = (rank + i) % nRanksPerNode + startRankInNode;
+    int remoteRecvFromRank = (rank + nRanksPerNode - i) % nRanksPerNode + startRankInNode;
+    int peerSendId = (remoteSendToRank < rank) ? remoteSendToRank : remoteSendToRank - 1;
+    int peerRecvId = (remoteRecvFromRank < rank) ? remoteRecvFromRank : remoteRecvFromRank - 1;
 
     mscclpp::channel::SimpleDeviceChannel& devFstSendChan = constDevFstRoundChans[peerSendId];
     mscclpp::channel::SimpleDeviceChannel& devFstRecvChan = constDevFstRoundChans[peerRecvId];
+    int rankIdexInNode = rank % nRanksPerNode;
+    size_t offset = (((startChunkIndex + rankIdexInNode + i) % worldSize) * nelems + offsetInChunk) * sizeof(int);
+    // if (isComm) {
+    //   printf("Rank %d, offset %ld, remoteSendToRank: %d\n", rank, offset, remoteSendToRank);
+    // }
     if (isComm) {
-      size_t offset = ((startChunkIndex + i) * nelems + offsetInChunk) * sizeof(int);
       devFstSendChan.putWithSignal(offset, nelems * sizeof(int));
       devFstRecvChan.wait();
     }
+    deviceSyncer.sync(gridDim.x);
     // reduce the results here
+    offset = ((startChunkIndex + rankIdexInNode) * nelems + offsetInChunk) * sizeof(int);
+    int* dst = (int*)((char*)buff + offset);
+    int* src = (int*)((char*)scratch + offset);
+    vectorSum(dst, src, nelems);
+    deviceSyncer.sync(gridDim.x);
   }
 }
 
@@ -91,10 +101,11 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
   int pipelineSize = 3;
   // step 1: local reduce
   int startChunkIndex = (rank + nRanksPerNode) % worldSize;
-  localReduce(buff, scratch, rank, nRanksPerNode, startChunkIndex, 0, nelems / pipelineSize);
+  localReduce(buff, scratch, rank, nRanksPerNode, worldSize, startChunkIndex, 0, nelems / pipelineSize);
   deviceSyncer.sync(gridDim.x);
   // step 2: transfer local reduce result to peer, and do another round local reduce
-  localReduce(buff, scratch, rank, nRanksPerNode, startChunkIndex, nelems / pipelineSize, 2 * nelems / pipelineSize);
+  localReduce(buff, scratch, rank, nRanksPerNode, worldSize, startChunkIndex, nelems / pipelineSize,
+              2 * nelems / pipelineSize);
   // cross-node exchange
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int remoteRank = (rank + nRanksPerNode) % nRanksPerNode;
@@ -116,7 +127,7 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
 
   // step 3: transfer local reduce result to peer, and do another round local reduce
   startChunkIndex = rank;
-  localReduce(buff, scratch, rank, nRanksPerNode, startChunkIndex, 0, nelems);
+  localReduce(buff, scratch, rank, nRanksPerNode, worldSize, startChunkIndex, 0, nelems);
   // cross-node exchange
   remoteRank = (rank + nRanksPerNode) % nRanksPerNode;
   peer = (remoteRank < rank) ? remoteRank : remoteRank - 1;
@@ -130,7 +141,7 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
   }
   deviceSyncer.sync(gridDim.x);
   startChunkIndex = (rank + nRanksPerNode) % worldSize;
-  localReduce(buff, scratch, rank, nRanksPerNode, startChunkIndex, 0, nelems);
+  localReduce(buff, scratch, rank, nRanksPerNode, worldSize, startChunkIndex, 0, nelems);
 }
 
 __device__ void allGather() {}
@@ -346,8 +357,9 @@ __device__ void allreduce2(int* buff, int* scratch, void* result, int rank, int 
 
 __device__ void allreduce3(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize,
                            size_t nelems) {
-  reduceScatter(buff, scratch, rank, nRanksPerNode, worldSize, nelems);
-  allGather();
+  localReduce(buff, scratch, rank, nRanksPerNode, worldSize, 0, 0, nelems / worldSize);
+  // reduceScatter(buff, scratch, rank, nRanksPerNode, worldSize, nelems);
+  // allGather();
 }
 
 __global__ void kernel(int* buff, int* scratch, void* result, int rank, int worldSize, size_t nelems,
@@ -394,7 +406,8 @@ void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBu
   std::vector<int> dataHost(std::max(sendCount_, recvCount_), rank);
   CUDATHROW(cudaMemcpy(sendBuff[0], dataHost.data(), sendCount_ * typeSize_, cudaMemcpyHostToDevice));
 
-  for (size_t i = 0; i < recvCount_; i++) {
+  int n = recvCount_ / worldSize;
+  for (size_t i = n * rank; i < n * (rank + 1); i++) {
     dataHost[i] = worldSize * (worldSize - 1) / 2;
   }
   std::memcpy(expectedBuff, dataHost.data(), recvCount_ * typeSize_);
@@ -403,7 +416,7 @@ void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBu
 void AllReduceTestColl::getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) {
   double baseBw = (double)(paramCount_ * typeSize_) / 1.0E9 / deltaSec;
   algBw = baseBw;
-  double factor = (2 * (double)(worldSize_ - 1)) / ((double)worldSize_);
+  double factor = ((double)(worldSize_ - 1)) / ((double)worldSize_);
   busBw = baseBw * factor;
 }
 
