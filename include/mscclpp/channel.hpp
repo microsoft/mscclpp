@@ -17,14 +17,14 @@ namespace channel {
 class Channel {
  public:
   Channel(Communicator& communicator, std::shared_ptr<Connection> connection)
-      : connection_(connection), epoch_(std::make_shared<DeviceEpoch>(communicator, connection)){};
+      : connection_(connection), epoch_(std::make_shared<Host2DeviceEpoch>(communicator, connection)){};
 
   Connection& connection() { return *connection_; }
-  DeviceEpoch& epoch() { return *epoch_; }
+  Host2DeviceEpoch& epoch() { return *epoch_; }
 
  private:
   std::shared_ptr<Connection> connection_;
-  std::shared_ptr<DeviceEpoch> epoch_;
+  std::shared_ptr<Host2DeviceEpoch> epoch_;
 };
 
 using ChannelId = uint32_t;
@@ -133,7 +133,7 @@ union ChannelPacket {
 struct DeviceChannel {
   DeviceChannel() = default;
 
-  DeviceChannel(ChannelId channelId, DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
+  DeviceChannel(ChannelId channelId, Host2DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
 
   DeviceChannel(const DeviceChannel& other) = default;
 
@@ -183,7 +183,7 @@ struct DeviceChannel {
 
   ChannelId channelId_;
 
-  DeviceEpoch::DeviceHandle epoch_;
+  Host2DeviceEpoch::DeviceHandle epoch_;
 
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
@@ -193,7 +193,7 @@ struct DeviceChannel {
 struct SmDeviceChannel {
   SmDeviceChannel() = default;
 
-  SmDeviceChannel(uint32_t epochId, SmEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
+  SmDeviceChannel(uint32_t epochId, SmDevice2DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
 
   SmDeviceChannel(const SmDeviceChannel& other) = default;
 
@@ -255,7 +255,7 @@ struct SmDeviceChannel {
 
   uint32_t epochId_;
 
-  SmEpoch::DeviceHandle epoch_;
+  SmDevice2DeviceEpoch::DeviceHandle epoch_;
 
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
@@ -305,7 +305,7 @@ class SmDeviceChannelService : public BaseChannelService {
 
   MemoryId addMemory(RegisteredMemory memory);
 
-  const SmEpoch& epoch(uint32_t id) const;
+  const SmDevice2DeviceEpoch& epoch(uint32_t id) const;
   SmDeviceChannel deviceChannel(uint32_t id);
 
   void startProxy();
@@ -313,7 +313,7 @@ class SmDeviceChannelService : public BaseChannelService {
 
  private:
   Communicator& communicator_;
-  std::vector<SmEpoch> epochs_;
+  std::vector<SmDevice2DeviceEpoch> epochs_;
   std::vector<std::shared_ptr<Connection>> connections_;
   std::vector<RegisteredMemory> memories_;
   Proxy proxy_;
@@ -422,7 +422,7 @@ struct SimpleSmDeviceChannel {
 struct SmChannel {
  public:
   SmChannel() = default;
-  SmChannel(SmEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src, void* getPacketBuffer = nullptr);
+  SmChannel(SmDevice2DeviceEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src, void* getPacketBuffer = nullptr);
 
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
@@ -486,7 +486,7 @@ struct SmChannel {
   __forceinline__ __device__ void wait() { epoch_.wait(); }
 #endif  // __CUDACC__
  private:
-  SmEpoch::DeviceHandle epoch_;
+  SmDevice2DeviceEpoch::DeviceHandle epoch_;
   void* src_;
   void* dst_;
   void* getPacketBuffer_;

@@ -10,10 +10,12 @@
 namespace mscclpp {
 namespace channel {
 
-MSCCLPP_API_CPP DeviceChannel::DeviceChannel(ChannelId channelId, DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo)
+MSCCLPP_API_CPP DeviceChannel::DeviceChannel(ChannelId channelId, Host2DeviceEpoch::DeviceHandle epoch,
+                                             DeviceProxyFifo fifo)
     : channelId_(channelId), epoch_(epoch), fifo_(fifo) {}
 
-MSCCLPP_API_CPP SmDeviceChannel::SmDeviceChannel(uint32_t epochId, SmEpoch::DeviceHandle epoch, DeviceProxyFifo fifo)
+MSCCLPP_API_CPP SmDeviceChannel::SmDeviceChannel(uint32_t epochId, SmDevice2DeviceEpoch::DeviceHandle epoch,
+                                                 DeviceProxyFifo fifo)
     : epochId_(epochId), epoch_(epoch), fifo_(fifo), devSyncer_() {}
 
 MSCCLPP_API_CPP SimpleDeviceChannel::SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src)
@@ -29,7 +31,7 @@ MSCCLPP_API_CPP SimpleSmDeviceChannel::SimpleSmDeviceChannel(SmDeviceChannel dev
       putPacketBuffer_(putPacketBuffer),
       getPacketBuffer_(getPacketBuffer) {}
 
-MSCCLPP_API_CPP SmChannel::SmChannel(SmEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src,
+MSCCLPP_API_CPP SmChannel::SmChannel(SmDevice2DeviceEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src,
                                      void* getPacketBuffer)
     : epoch_(epoch), src_(src), getPacketBuffer_(getPacketBuffer) {
   if (!dst.transports().has(Transport::CudaIpc)) {
@@ -120,7 +122,7 @@ MSCCLPP_API_CPP MemoryId SmDeviceChannelService::addMemory(RegisteredMemory memo
   return memories_.size() - 1;
 }
 
-MSCCLPP_API_CPP const SmEpoch& SmDeviceChannelService::epoch(uint32_t id) const { return epochs_[id]; }
+MSCCLPP_API_CPP const SmDevice2DeviceEpoch& SmDeviceChannelService::epoch(uint32_t id) const { return epochs_[id]; }
 
 MSCCLPP_API_CPP SmDeviceChannel SmDeviceChannelService::deviceChannel(uint32_t id) {
   return SmDeviceChannel(id, epochs_[id].deviceHandle(), proxy_.fifo().deviceFifo());

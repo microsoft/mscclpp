@@ -141,7 +141,7 @@ class SmChannelOneToOneTest : public CommunicatorTestBase {
   void setupMeshConnections(std::vector<mscclpp::channel::SmChannel>& smChannels, void* inputBuff,
                             size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0);
 
-  std::unordered_map<int, std::shared_ptr<mscclpp::SmEpoch>> smEpochs;
+  std::unordered_map<int, std::shared_ptr<mscclpp::SmDevice2DeviceEpoch>> smEpochs;
 };
 
 class SmDeviceChannelOneToOneTest : public CommunicatorTestBase {

@@ -61,12 +61,12 @@ class BaseEpoch {
         outboundEpochId_(std::move(outboundEpochId)) {}
 };
 
-class DeviceEpoch : public BaseEpoch<CudaDeleter, std::default_delete> {
+class Host2DeviceEpoch : public BaseEpoch<CudaDeleter, std::default_delete> {
  private:
   std::shared_ptr<Connection> connection_;
 
  public:
-  DeviceEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
+  Host2DeviceEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
 
   void signal();
 
@@ -85,9 +85,9 @@ class DeviceEpoch : public BaseEpoch<CudaDeleter, std::default_delete> {
   DeviceHandle deviceHandle();
 };
 
-class HostEpoch : public BaseEpoch<std::default_delete, std::default_delete> {
+class Host2HostEpoch : public BaseEpoch<std::default_delete, std::default_delete> {
  public:
-  HostEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
+  Host2HostEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
 
   void signal();
   void wait();
@@ -96,10 +96,10 @@ class HostEpoch : public BaseEpoch<std::default_delete, std::default_delete> {
   std::shared_ptr<Connection> connection_;
 };
 
-class SmEpoch : public BaseEpoch<CudaDeleter, CudaDeleter> {
+class SmDevice2DeviceEpoch : public BaseEpoch<CudaDeleter, CudaDeleter> {
  public:
-  SmEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
-  SmEpoch() = default;
+  SmDevice2DeviceEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
+  SmDevice2DeviceEpoch() = default;
 
   struct DeviceHandle {
 #ifdef __CUDACC__

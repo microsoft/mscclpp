@@ -142,15 +142,15 @@ void SendRecvTestEngine::setupConnections() {
   std::array<int, 2> ranks = {sendToRank, recvFromRank};
   auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
 
-  std::vector<std::shared_ptr<mscclpp::SmEpoch>> smEpochs;
+  std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceEpoch>> smEpochs;
 
   auto sendConn =
       comm_->connectOnSetup(sendToRank, 0, getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice));
-  smEpochs.push_back(std::make_shared<mscclpp::SmEpoch>(*comm_, sendConn));
+  smEpochs.push_back(std::make_shared<mscclpp::SmDevice2DeviceEpoch>(*comm_, sendConn));
   if (recvFromRank != sendToRank) {
     auto recvConn =
         comm_->connectOnSetup(recvFromRank, 0, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice));
-    smEpochs.push_back(std::make_shared<mscclpp::SmEpoch>(*comm_, recvConn));
+    smEpochs.push_back(std::make_shared<mscclpp::SmDevice2DeviceEpoch>(*comm_, recvConn));
   } else {
     // reuse the send channel if worldSize is 2
     smEpochs.push_back(smEpochs[0]);

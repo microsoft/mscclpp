@@ -49,7 +49,7 @@ void SmChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::channel::S
 
     communicator->setup();
 
-    smEpochs[r] = std::make_shared<mscclpp::SmEpoch>(*communicator, conn);
+    smEpochs[r] = std::make_shared<mscclpp::SmDevice2DeviceEpoch>(*communicator, conn);
 
     communicator->setup();
 
