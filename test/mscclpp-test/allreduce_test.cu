@@ -125,7 +125,7 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
                               size_t nelems  // much be divisible by 3
 ) {
   int pipelineSize = 3;
-  size_t chunkSize = nelems / worldSize;
+  const size_t chunkSize = nelems / worldSize;
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
@@ -149,10 +149,10 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
     }
     deviceSyncer.sync(gridDim.x);
     // reduce to related rank
-    size_t offset = (rank * chunkSize) * sizeof(int);
+    size_t offset = rank * chunkSize * sizeof(int);
     int* dst = (int*)((char*)buff + offset);
     int* src = (int*)((char*)scratch + offset);
-    vectorSum(dst, src, chunkSize * sizeof(int) / pipelineSize);
+    vectorSum(dst, src, chunkSize / pipelineSize);
     if (isComm) {
       devChan.flush();
     }
@@ -173,7 +173,7 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
     offset = (rank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
     dst = (int*)((char*)buff + offset);
     src = (int*)((char*)scratch + offset);
-    vectorSum(dst, src, 2 * chunkSize / pipelineSize * sizeof(int));
+    vectorSum(dst, src, 2 * chunkSize / pipelineSize);
     if (isComm) {
       devChan.flush();
     }
