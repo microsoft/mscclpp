@@ -129,13 +129,12 @@ class DeviceChannelOneToOneTest : public CommunicatorTestBase {
   void SetUp() override;
   void TearDown() override;
 
-  void setupMeshConnections(std::vector<mscclpp::channel::proxy::SimpleDeviceChannelHandle>& devChannels,
-                            bool useIbOnly, void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr,
-                            size_t recvBuffBytes = 0);
+  void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannelHandle>& devChannels, bool useIbOnly,
+                            void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
   void testPacketPingPong(bool useIbOnly);
   void testPacketPingPongPerf(bool useIbOnly);
 
-  std::shared_ptr<mscclpp::channel::proxy::ProxyService> channelService;
+  std::shared_ptr<mscclpp::channel::ProxyService> channelService;
 };
 
 class SmChannelOneToOneTest : public CommunicatorTestBase {
@@ -143,7 +142,7 @@ class SmChannelOneToOneTest : public CommunicatorTestBase {
   void SetUp() override;
   void TearDown() override;
 
-  void setupMeshConnections(std::vector<mscclpp::channel::sm::SmChannel>& smChannels, void* inputBuff,
+  void setupMeshConnections(std::vector<mscclpp::channel::SmChannel>& smChannels, void* inputBuff,
                             size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0);
 
   std::unordered_map<int, std::shared_ptr<mscclpp::SmDevice2DeviceEpoch>> smEpochs;

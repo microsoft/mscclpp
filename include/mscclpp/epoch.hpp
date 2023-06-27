@@ -68,6 +68,8 @@ class Host2DeviceEpoch : public BaseEpoch<CudaDeleter, std::default_delete> {
  public:
   Host2DeviceEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
 
+  // same write api as connection
+  std::shared_ptr<Connection> connection();
   void signal();
 
   struct DeviceHandle {
@@ -89,6 +91,7 @@ class Host2HostEpoch : public BaseEpoch<std::default_delete, std::default_delete
  public:
   Host2HostEpoch(Communicator& communicator, std::shared_ptr<Connection> connection);
 
+  std::shared_ptr<Connection> connection();
   void signal();
   void wait();
 

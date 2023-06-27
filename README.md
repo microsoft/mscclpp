@@ -27,7 +27,7 @@ MSCCL++ v0.2 supports the following features.
 MSCCL++ provides inter-GPU communication interfaces to be called by a GPU thread. For example, the `put()` method in the following example copies 1KB data from the local GPU to a remote GPU. `devChan` is a peer-to-peer communication channel initialized before the kernel execution from the host side, which consists of information on send/receive buffers.
 
 ```cpp
-__device__ mscclpp::channel::proxy::SimpleDeviceChannelHandle devChan;
+__device__ mscclpp::channel::SimpleDeviceChannelHandle devChan;
 __global__ void gpuKernel() {
   ...
   // Only one thread is needed for this method.
@@ -67,7 +67,7 @@ mscclpp::Communicator comm(bootstrap);
 // Setup connections here using `comm`
 ...
 // Construct the default channel service
-mscclpp::channel::proxy::ProxyService channelService(comm);
+mscclpp::channel::ProxyService channelService(comm);
 // Start the proxy
 channelService.startProxy();
 // Run the user application, i.e., launch GPU kernels here

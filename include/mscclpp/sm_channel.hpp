@@ -10,7 +10,6 @@
 
 namespace mscclpp {
 namespace channel {
-namespace sm {
 
 // A direct version of DeviceChannel only for CudaIpc
 struct SmChannel {
@@ -60,7 +59,6 @@ struct SmChannel {
   void* getPacketBuffer_;
 };
 
-}  // namespace sm
 }  // namespace channel
 }  // namespace mscclpp
 

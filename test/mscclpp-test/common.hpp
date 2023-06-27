@@ -46,9 +46,7 @@ class BaseTestColl {
   virtual void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) = 0;
 
   void setupCollTest(const TestArgs& args, size_t size);
-  void setChanService(std::shared_ptr<mscclpp::channel::proxy::BaseProxyService> chanService) {
-    chanService_ = chanService;
-  }
+  void setChanService(std::shared_ptr<mscclpp::channel::BaseProxyService> chanService) { chanService_ = chanService; }
   size_t getSendBytes() { return sendCount_ * typeSize_; }
   size_t getRecvBytes() { return recvCount_ * typeSize_; }
   size_t getExpectedBytes() { return expectedCount_ * typeSize_; }
@@ -63,7 +61,7 @@ class BaseTestColl {
   int worldSize_;
   int kernelNum_;
 
-  std::shared_ptr<mscclpp::channel::proxy::BaseProxyService> chanService_;
+  std::shared_ptr<mscclpp::channel::BaseProxyService> chanService_;
 
  private:
   virtual void setupCollTest(size_t size) = 0;
@@ -88,7 +86,7 @@ class BaseTestEngine {
 
  private:
   virtual void setupConnections() = 0;
-  virtual std::shared_ptr<mscclpp::channel::proxy::BaseProxyService> createChannelService();
+  virtual std::shared_ptr<mscclpp::channel::BaseProxyService> createChannelService();
   virtual void* getExpectedBuff() = 0;
 
   double benchTime();
@@ -102,21 +100,21 @@ class BaseTestEngine {
   using SetupChannelFunc = std::function<void(std::vector<std::shared_ptr<mscclpp::Connection>>,
                                               std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>&,
                                               const mscclpp::RegisteredMemory&)>;
-  void setupMeshConnections(std::vector<mscclpp::channel::proxy::SimpleDeviceChannelHandle>& devChannels,
-                            void* inputBuff, size_t inputBuffBytes, void* outputBuff = nullptr,
-                            size_t outputBuffBytes = 0, SetupChannelFunc setupChannel = nullptr);
-  void setupMeshConnections(std::vector<mscclpp::channel::sm::SmChannel>& smChannels,
-                            std::vector<mscclpp::channel::proxy::SimpleDeviceChannelHandle>& devChannels,
-                            void* inputBuff, size_t inputBuffBytes, void* putPacketBuff = nullptr,
-                            size_t putPacketBuffBytes = 0, void* getPacketBuff = nullptr, size_t getPacketBuffBytes = 0,
-                            void* outputBuff = nullptr, size_t outputBuffBytes = 0);
+  void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannelHandle>& devChannels, void* inputBuff,
+                            size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0,
+                            SetupChannelFunc setupChannel = nullptr);
+  void setupMeshConnections(std::vector<mscclpp::channel::SmChannel>& smChannels,
+                            std::vector<mscclpp::channel::SimpleDeviceChannelHandle>& devChannels, void* inputBuff,
+                            size_t inputBuffBytes, void* putPacketBuff = nullptr, size_t putPacketBuffBytes = 0,
+                            void* getPacketBuff = nullptr, size_t getPacketBuffBytes = 0, void* outputBuff = nullptr,
+                            size_t outputBuffBytes = 0);
 
   const TestArgs args_;
   const std::string name_;
   bool inPlace_;
   std::shared_ptr<BaseTestColl> coll_;
   std::shared_ptr<mscclpp::Communicator> comm_;
-  std::shared_ptr<mscclpp::channel::proxy::BaseProxyService> chanService_;
+  std::shared_ptr<mscclpp::channel::BaseProxyService> chanService_;
   cudaStream_t stream_;
   int error_;
 };

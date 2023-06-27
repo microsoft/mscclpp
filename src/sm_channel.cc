@@ -8,7 +8,6 @@
 
 namespace mscclpp {
 namespace channel {
-namespace sm {
 
 MSCCLPP_API_CPP SmChannel::SmChannel(SmDevice2DeviceEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src,
                                      void* getPacketBuffer)
@@ -19,6 +18,5 @@ MSCCLPP_API_CPP SmChannel::SmChannel(SmDevice2DeviceEpoch::DeviceHandle epoch, R
   dst_ = dst.data();
 }
 
-}  // namespace sm
 }  // namespace channel
 }  // namespace mscclpp

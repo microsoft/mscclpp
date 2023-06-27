@@ -9,11 +9,10 @@
 
 namespace mscclpp {
 namespace channel {
-namespace proxy {
 
-MSCCLPP_API_CPP DeviceChannelHandle::DeviceChannelHandle(ChannelId channelId, Host2DeviceEpoch::DeviceHandle epoch,
+MSCCLPP_API_CPP DeviceChannelHandle::DeviceChannelHandle(EpochId epochId, Host2DeviceEpoch::DeviceHandle epoch,
                                                          DeviceProxyFifo fifo)
-    : channelId_(channelId), epoch_(epoch), fifo_(fifo) {}
+    : epochId_(epochId), epoch_(epoch), fifo_(fifo) {}
 
 MSCCLPP_API_CPP SimpleDeviceChannelHandle::SimpleDeviceChannelHandle(DeviceChannelHandle devChan, MemoryId dst,
                                                                      MemoryId src)
@@ -27,9 +26,9 @@ MSCCLPP_API_CPP ProxyService::ProxyService(Communicator& communicator)
   deviceNumaNode = getDeviceNumaNode(cudaDevice);
 }
 
-MSCCLPP_API_CPP ChannelId ProxyService::addChannel(std::shared_ptr<Connection> connection) {
-  channels_.push_back(Channel(communicator_, connection));
-  return channels_.size() - 1;
+MSCCLPP_API_CPP EpochId ProxyService::addEpoch(std::shared_ptr<Connection> connection) {
+  epochs_.push_back(std::make_shared<Host2DeviceEpoch>(communicator_, connection));
+  return epochs_.size() - 1;
 }
 
 MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {
@@ -37,10 +36,10 @@ MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {
   return memories_.size() - 1;
 }
 
-MSCCLPP_API_CPP Channel ProxyService::channel(ChannelId id) const { return channels_[id]; }
+MSCCLPP_API_CPP std::shared_ptr<Host2DeviceEpoch> ProxyService::epoch(EpochId id) const { return epochs_[id]; }
 
-MSCCLPP_API_CPP DeviceChannelHandle ProxyService::deviceChannel(ChannelId id) {
-  return DeviceChannelHandle(id, channels_[id].epoch().deviceHandle(), proxy_.fifo().deviceFifo());
+MSCCLPP_API_CPP DeviceChannelHandle ProxyService::deviceChannel(EpochId id) {
+  return DeviceChannelHandle(id, epochs_[id]->deviceHandle(), proxy_.fifo().deviceFifo());
 }
 
 MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_.start(); }
@@ -56,28 +55,27 @@ MSCCLPP_API_CPP void ProxyService::bindThread() {
 
 ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
   ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
-  Channel& channel = channels_[trigger->fields.chanId];
+  std::shared_ptr<Host2DeviceEpoch> epoch = epochs_[trigger->fields.chanId];
 
   auto result = ProxyHandlerResult::Continue;
 
   if (trigger->fields.type & TriggerData) {
     RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
     RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
-    channel.connection().write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset, trigger->fields.size);
+    epoch->connection()->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset, trigger->fields.size);
   }
 
   if (trigger->fields.type & TriggerFlag) {
-    channel.epoch().signal();
+    epoch->signal();
   }
 
   if (trigger->fields.type & TriggerSync) {
-    channel.connection().flush();
+    epoch->connection()->flush();
     result = ProxyHandlerResult::FlushFifoTailAndContinue;
   }
 
   return result;
 }
 
-}  // namespace proxy
 }  // namespace channel
 }  // namespace mscclpp

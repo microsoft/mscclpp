@@ -11,24 +11,9 @@
 
 namespace mscclpp {
 namespace channel {
-namespace proxy {
 
-// A Channel pairs a Connection with an Epoch
-class Channel {
- public:
-  Channel(Communicator& communicator, std::shared_ptr<Connection> connection)
-      : connection_(connection), epoch_(std::make_shared<Host2DeviceEpoch>(communicator, connection)){};
+using EpochId = uint32_t;
 
-  Connection& connection() { return *connection_; }
-  Host2DeviceEpoch& epoch() { return *epoch_; }
-
- private:
-  std::shared_ptr<Connection> connection_;
-  std::shared_ptr<Host2DeviceEpoch> epoch_;
-};
-
-using ChannelId = uint32_t;
-class Channel;
 // This is just a numeric ID. Each HostConnection will have an internal array indexed by these handles
 // mapping to the actual
 using MemoryId = uint32_t;
@@ -46,19 +31,19 @@ class ProxyService : public BaseProxyService {
  public:
   ProxyService(Communicator& communicator);
 
-  ChannelId addChannel(std::shared_ptr<Connection> connection);
+  EpochId addEpoch(std::shared_ptr<Connection> connection);
 
   MemoryId addMemory(RegisteredMemory memory);
 
-  Channel channel(ChannelId id) const;
-  DeviceChannelHandle deviceChannel(ChannelId id);
+  std::shared_ptr<Host2DeviceEpoch> epoch(EpochId id) const;
+  DeviceChannelHandle deviceChannel(EpochId id);
 
   void startProxy();
   void stopProxy();
 
  private:
   Communicator& communicator_;
-  std::vector<Channel> channels_;
+  std::vector<std::shared_ptr<Host2DeviceEpoch>> epochs_;
   std::vector<RegisteredMemory> memories_;
   Proxy proxy_;
   int deviceNumaNode;
@@ -116,7 +101,7 @@ union ChannelTrigger {
 struct DeviceChannelHandle {
   DeviceChannelHandle() = default;
 
-  DeviceChannelHandle(ChannelId channelId, Host2DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
+  DeviceChannelHandle(EpochId EpochId, Host2DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
 
   DeviceChannelHandle(const DeviceChannelHandle& other) = default;
 
@@ -125,18 +110,18 @@ struct DeviceChannelHandle {
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
                                       uint64_t size) {
-    fifo_.push(ChannelTrigger(TriggerData, dst, dstOffset, src, srcOffset, size, channelId_).value);
+    fifo_.push(ChannelTrigger(TriggerData, dst, dstOffset, src, srcOffset, size, epochId_).value);
   }
 
   __forceinline__ __device__ void put(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
     put(dst, offset, src, offset, size);
   }
 
-  __forceinline__ __device__ void signal() { fifo_.push(ChannelTrigger(TriggerFlag, 0, 0, 0, 0, 1, channelId_).value); }
+  __forceinline__ __device__ void signal() { fifo_.push(ChannelTrigger(TriggerFlag, 0, 0, 0, 0, 1, epochId_).value); }
 
   __forceinline__ __device__ void putWithSignal(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
                                                 uint64_t size) {
-    fifo_.push(ChannelTrigger(TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, size, channelId_).value);
+    fifo_.push(ChannelTrigger(TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, size, epochId_).value);
   }
 
   __forceinline__ __device__ void putWithSignal(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
@@ -146,8 +131,7 @@ struct DeviceChannelHandle {
   __forceinline__ __device__ void putWithSignalAndFlush(MemoryId dst, uint64_t dstOffset, MemoryId src,
                                                         uint64_t srcOffset, uint64_t size) {
     uint64_t curFifoHead = fifo_.push(
-        ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, channelId_)
-            .value);
+        ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, epochId_).value);
     fifo_.sync(curFifoHead);
   }
 
@@ -156,7 +140,7 @@ struct DeviceChannelHandle {
   }
 
   __forceinline__ __device__ void flush() {
-    uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, channelId_).value);
+    uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, epochId_).value);
     fifo_.sync(curFifoHead);
   }
 
@@ -164,7 +148,7 @@ struct DeviceChannelHandle {
 
 #endif  // __CUDACC__
 
-  ChannelId channelId_;
+  EpochId epochId_;
 
   Host2DeviceEpoch::DeviceHandle epoch_;
 
@@ -218,7 +202,6 @@ struct SimpleDeviceChannelHandle {
   MemoryId src_;
 };
 
-}  // namespace proxy
 }  // namespace channel
 }  // namespace mscclpp
 

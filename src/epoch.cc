@@ -22,6 +22,8 @@ MSCCLPP_API_CPP Host2DeviceEpoch::Host2DeviceEpoch(Communicator& communicator, s
   remoteInboundEpochIdsRegMem_ = setupInboundEpochId(communicator, connection.get(), localInboundEpochId_.get());
 }
 
+MSCCLPP_API_CPP std::shared_ptr<Connection> Host2DeviceEpoch::connection() { return connection_; }
+
 MSCCLPP_API_CPP void Host2DeviceEpoch::signal() {
   connection_->updateAndSync(remoteInboundEpochIdsRegMem_.get(), 0, outboundEpochId_.get(), *outboundEpochId_ + 1);
 }
@@ -41,6 +43,8 @@ MSCCLPP_API_CPP Host2HostEpoch::Host2HostEpoch(Communicator& communicator, std::
   }
   remoteInboundEpochIdsRegMem_ = setupInboundEpochId(communicator, connection.get(), localInboundEpochId_.get());
 }
+
+MSCCLPP_API_CPP std::shared_ptr<Connection> Host2HostEpoch::connection() { return connection_; }
 
 MSCCLPP_API_CPP void Host2HostEpoch::signal() {
   connection_->updateAndSync(remoteInboundEpochIdsRegMem_.get(), 0, outboundEpochId_.get(), *outboundEpochId_ + 1);
