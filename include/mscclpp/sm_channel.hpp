@@ -5,8 +5,8 @@
 #define MSCCLPP_SM_CHANNEL_HPP_
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/epoch.hpp>
 #include <mscclpp/packet.hpp>
+#include <mscclpp/semaphore.hpp>
 
 namespace mscclpp {
 namespace channel {
@@ -15,7 +15,8 @@ namespace channel {
 struct SmChannel {
  public:
   SmChannel() = default;
-  SmChannel(SmDevice2DeviceEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src, void* getPacketBuffer = nullptr);
+  SmChannel(SmDevice2DeviceSemaphore::DeviceHandle semaphore, RegisteredMemory dst, void* src,
+            void* getPacketBuffer = nullptr);
 
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
@@ -42,18 +43,18 @@ struct SmChannel {
     mscclpp::packet::getPackets(src_, dstOffset, getPacketBuffer_, srcOffset, size, threadId, numThreads, flag);
   }
 
-  __forceinline__ __device__ void signal() { epoch_.signal(); }
+  __forceinline__ __device__ void signal() { semaphore_.signal(); }
 
-  __forceinline__ __device__ void signalPacket() { epoch_.signalPacket(); }
+  __forceinline__ __device__ void signalPacket() { semaphore_.signalPacket(); }
 
-  __forceinline__ __device__ void epochIncrement() { epoch_.epochIncrement(); }
+  __forceinline__ __device__ void semaphoreIncrement() { semaphore_.semaphoreIncrement(); }
 
-  __forceinline__ __device__ uint64_t epochGetLocal() const { return epoch_.epochGetLocal(); }
+  __forceinline__ __device__ uint64_t semaphoreGetLocal() const { return semaphore_.semaphoreGetLocal(); }
 
-  __forceinline__ __device__ void wait() { epoch_.wait(); }
+  __forceinline__ __device__ void wait() { semaphore_.wait(); }
 #endif  // __CUDACC__
  private:
-  SmDevice2DeviceEpoch::DeviceHandle epoch_;
+  SmDevice2DeviceSemaphore::DeviceHandle semaphore_;
   void* src_;
   void* dst_;
   void* getPacketBuffer_;

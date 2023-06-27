@@ -111,7 +111,7 @@ extern char mscclppLastError[];
 
 #ifdef ENABLE_TRACE
 #define TRACE(FLAGS, ...) mscclppDebugLog(MSCCLPP_LOG_TRACE, (FLAGS), __func__, __LINE__, __VA_ARGS__)
-extern std::chrono::steady_clock::time_point mscclppEpoch;
+extern std::chrono::steady_clock::time_point mscclppSemaphore;
 #else
 #define TRACE(...)
 #endif

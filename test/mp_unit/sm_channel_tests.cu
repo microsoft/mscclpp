@@ -49,11 +49,11 @@ void SmChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::channel::S
 
     communicator->setup();
 
-    smEpochs[r] = std::make_shared<mscclpp::SmDevice2DeviceEpoch>(*communicator, conn);
+    smSemaphores[r] = std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*communicator, conn);
 
     communicator->setup();
 
-    smChannels.emplace_back(smEpochs[r]->deviceHandle(), remoteMemory.get(), inputBufRegMem.data(),
+    smChannels.emplace_back(smSemaphores[r]->deviceHandle(), remoteMemory.get(), inputBufRegMem.data(),
                             (isInPlace ? nullptr : outputBufRegMem.data()));
   }
 }

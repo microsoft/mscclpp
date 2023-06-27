@@ -177,14 +177,14 @@ class AllGatherChannelService : public mscclpp::channel::BaseProxyService {
   void setSendBytes(size_t sendBytes) { this->sendBytes_ = sendBytes; }
   void addRemoteMemory(mscclpp::RegisteredMemory memory) { remoteMemories_.push_back(memory); }
   void setLocalMemory(mscclpp::RegisteredMemory memory) { localMemory_ = memory; }
-  mscclpp::channel::EpochId addEpoch(std::shared_ptr<mscclpp::Connection> connection) {
-    epochs_.push_back(std::make_shared<mscclpp::Host2DeviceEpoch>(communicator_, connection));
-    return epochs_.size() - 1;
+  mscclpp::channel::SemaphoreId addSemaphore(std::shared_ptr<mscclpp::Connection> connection) {
+    semaphores_.push_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(communicator_, connection));
+    return semaphores_.size() - 1;
   }
   std::vector<mscclpp::channel::DeviceChannelHandle> deviceChannels() {
     std::vector<mscclpp::channel::DeviceChannelHandle> result;
-    for (auto& epoch : epochs_) {
-      result.push_back(mscclpp::channel::DeviceChannelHandle(0, epoch->deviceHandle(), proxy_.fifo().deviceFifo()));
+    for (auto& semaphore : semaphores_) {
+      result.push_back(mscclpp::channel::DeviceChannelHandle(0, semaphore->deviceHandle(), proxy_.fifo().deviceFifo()));
     }
     return result;
   }
@@ -197,7 +197,7 @@ class AllGatherChannelService : public mscclpp::channel::BaseProxyService {
 
   mscclpp::Proxy proxy_;
   mscclpp::Communicator& communicator_;
-  std::vector<std::shared_ptr<mscclpp::Host2DeviceEpoch>> epochs_;
+  std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> semaphores_;
   std::vector<mscclpp::RegisteredMemory> remoteMemories_;
   mscclpp::RegisteredMemory localMemory_;
 
@@ -228,12 +228,12 @@ mscclpp::ProxyHandlerResult AllGatherChannelService::handleTrigger(mscclpp::Prox
       continue;
     }
     int index = (r < rank_) ? r : r - 1;
-    epochs_[index]->connection()->write(remoteMemories_[index], offset, localMemory_, offset, sendBytes_);
-    epochs_[index]->signal();
+    semaphores_[index]->connection()->write(remoteMemories_[index], offset, localMemory_, offset, sendBytes_);
+    semaphores_[index]->signal();
   }
   bool flushIpc = false;
-  for (auto& epoch : epochs_) {
-    auto conn = epoch->connection();
+  for (auto& semaphore : semaphores_) {
+    auto conn = semaphore->connection();
     if (conn->transport() == mscclpp::Transport::CudaIpc && !flushIpc) {
       // since all the cudaIpc channels are using the same cuda stream, we only need to flush one of them
       conn->flush();
@@ -346,9 +346,9 @@ void AllGatherTestEngine::setupConnections() {
                          [&](std::vector<std::shared_ptr<mscclpp::Connection>> conns,
                              std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteMemories,
                              const mscclpp::RegisteredMemory& localMemory) {
-                           std::vector<mscclpp::channel::EpochId> epochIds;
+                           std::vector<mscclpp::channel::SemaphoreId> semaphoreIds;
                            for (int i = 0; i < conns.size(); ++i) {
-                             service->addEpoch(conns[i]);
+                             service->addSemaphore(conns[i]);
                              service->addRemoteMemory(remoteMemories[i].get());
                            }
                            service->setLocalMemory(localMemory);

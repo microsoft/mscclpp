@@ -49,7 +49,7 @@ void DeviceChannelOneToOneTest::setupMeshConnections(
 
     communicator->setup();
 
-    mscclpp::channel::EpochId cid = channelService->addEpoch(conn);
+    mscclpp::channel::SemaphoreId cid = channelService->addSemaphore(conn);
     communicator->setup();
 
     devChannels.emplace_back(channelService->deviceChannel(cid), channelService->addMemory(remoteMemory.get()),

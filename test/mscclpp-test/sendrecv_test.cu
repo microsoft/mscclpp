@@ -7,7 +7,7 @@
 #include <cstring>
 #include <iostream>
 #include <mscclpp/concurrency.hpp>
-#include <mscclpp/epoch.hpp>
+#include <mscclpp/semaphore.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <string>
 #include <vector>
@@ -142,18 +142,18 @@ void SendRecvTestEngine::setupConnections() {
   std::array<int, 2> ranks = {sendToRank, recvFromRank};
   auto service = std::dynamic_pointer_cast<mscclpp::channel::ProxyService>(chanService_);
 
-  std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceEpoch>> smEpochs;
+  std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
 
   auto sendConn =
       comm_->connectOnSetup(sendToRank, 0, getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice));
-  smEpochs.push_back(std::make_shared<mscclpp::SmDevice2DeviceEpoch>(*comm_, sendConn));
+  smSemaphores.push_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, sendConn));
   if (recvFromRank != sendToRank) {
     auto recvConn =
         comm_->connectOnSetup(recvFromRank, 0, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice));
-    smEpochs.push_back(std::make_shared<mscclpp::SmDevice2DeviceEpoch>(*comm_, recvConn));
+    smSemaphores.push_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, recvConn));
   } else {
     // reuse the send channel if worldSize is 2
-    smEpochs.push_back(smEpochs[0]);
+    smSemaphores.push_back(smSemaphores[0]);
   }
   comm_->setup();
 
@@ -173,7 +173,8 @@ void SendRecvTestEngine::setupConnections() {
   std::vector<mscclpp::channel::SmChannel> smChannels;
   for (int i : {0, 1}) {
     // We assume ranks in the same node
-    smChannels.emplace_back(smEpochs[i]->deviceHandle(), futureRemoteMemory[i].get(), (void*)localMemories[i].data());
+    smChannels.emplace_back(smSemaphores[i]->deviceHandle(), futureRemoteMemory[i].get(),
+                            (void*)localMemories[i].data());
   }
   cudaMemcpyToSymbol(constSmChans, smChannels.data(), sizeof(mscclpp::channel::SmChannel) * smChannels.size());
 }

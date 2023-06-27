@@ -380,7 +380,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
     auto service = std::dynamic_pointer_cast<mscclpp::channel::ProxyService>(chanService_);
     for (size_t i = 0; i < connections.size(); ++i) {
       devChannels.push_back(mscclpp::channel::SimpleDeviceChannelHandle(
-          service->deviceChannel(service->addEpoch(connections[i])), service->addMemory(remoteRegMemories[i].get()),
+          service->deviceChannel(service->addSemaphore(connections[i])), service->addMemory(remoteRegMemories[i].get()),
           service->addMemory(inputBufRegMem)));
     }
   }
@@ -420,22 +420,22 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SmChanne
     setupMeshConnectionsInternal(connections, outputBufRegMem, remoteRegMemoriesOutput, false);
   }
 
-  std::unordered_map<size_t, std::shared_ptr<mscclpp::SmDevice2DeviceEpoch>> smEpochs;
-  std::unordered_map<size_t, mscclpp::channel::EpochId> connIdToChanId;
+  std::unordered_map<size_t, std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
+  std::unordered_map<size_t, mscclpp::channel::SemaphoreId> connIdToChanId;
   auto service = std::dynamic_pointer_cast<mscclpp::channel::ProxyService>(chanService_);
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-      smEpochs.emplace(cid, std::make_shared<mscclpp::SmDevice2DeviceEpoch>(*comm_, connections[cid]));
+      smSemaphores.emplace(cid, std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, connections[cid]));
     } else {
-      connIdToChanId[cid] = service->addEpoch(connections[cid]);
+      connIdToChanId[cid] = service->addSemaphore(connections[cid]);
     }
   }
   comm_->setup();
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-      smChannels.emplace_back(smEpochs[cid]->deviceHandle(),
+      smChannels.emplace_back(smSemaphores[cid]->deviceHandle(),
                               (outputBuff) ? remoteRegMemoriesOutput[cid].get() : remoteRegMemories[cid].get(),
                               inputBufRegMem.data(), (outputBuff) ? outputBufRegMem.data() : nullptr);
     } else {

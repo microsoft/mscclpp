@@ -5,14 +5,14 @@
 #define MSCCLPP_PROXY_CHANNEL_HPP_
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/epoch.hpp>
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/proxy.hpp>
+#include <mscclpp/semaphore.hpp>
 
 namespace mscclpp {
 namespace channel {
 
-using EpochId = uint32_t;
+using SemaphoreId = uint32_t;
 
 // This is just a numeric ID. Each HostConnection will have an internal array indexed by these handles
 // mapping to the actual
@@ -31,19 +31,19 @@ class ProxyService : public BaseProxyService {
  public:
   ProxyService(Communicator& communicator);
 
-  EpochId addEpoch(std::shared_ptr<Connection> connection);
+  SemaphoreId addSemaphore(std::shared_ptr<Connection> connection);
 
   MemoryId addMemory(RegisteredMemory memory);
 
-  std::shared_ptr<Host2DeviceEpoch> epoch(EpochId id) const;
-  DeviceChannelHandle deviceChannel(EpochId id);
+  std::shared_ptr<Host2DeviceSemaphore> semaphore(SemaphoreId id) const;
+  DeviceChannelHandle deviceChannel(SemaphoreId id);
 
   void startProxy();
   void stopProxy();
 
  private:
   Communicator& communicator_;
-  std::vector<std::shared_ptr<Host2DeviceEpoch>> epochs_;
+  std::vector<std::shared_ptr<Host2DeviceSemaphore>> semaphores_;
   std::vector<RegisteredMemory> memories_;
   Proxy proxy_;
   int deviceNumaNode;
@@ -101,7 +101,7 @@ union ChannelTrigger {
 struct DeviceChannelHandle {
   DeviceChannelHandle() = default;
 
-  DeviceChannelHandle(EpochId EpochId, Host2DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
+  DeviceChannelHandle(SemaphoreId SemaphoreId, Host2DeviceSemaphore::DeviceHandle semaphore, DeviceProxyFifo fifo);
 
   DeviceChannelHandle(const DeviceChannelHandle& other) = default;
 
@@ -110,18 +110,20 @@ struct DeviceChannelHandle {
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
                                       uint64_t size) {
-    fifo_.push(ChannelTrigger(TriggerData, dst, dstOffset, src, srcOffset, size, epochId_).value);
+    fifo_.push(ChannelTrigger(TriggerData, dst, dstOffset, src, srcOffset, size, semaphoreId_).value);
   }
 
   __forceinline__ __device__ void put(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
     put(dst, offset, src, offset, size);
   }
 
-  __forceinline__ __device__ void signal() { fifo_.push(ChannelTrigger(TriggerFlag, 0, 0, 0, 0, 1, epochId_).value); }
+  __forceinline__ __device__ void signal() {
+    fifo_.push(ChannelTrigger(TriggerFlag, 0, 0, 0, 0, 1, semaphoreId_).value);
+  }
 
   __forceinline__ __device__ void putWithSignal(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
                                                 uint64_t size) {
-    fifo_.push(ChannelTrigger(TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, size, epochId_).value);
+    fifo_.push(ChannelTrigger(TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, size, semaphoreId_).value);
   }
 
   __forceinline__ __device__ void putWithSignal(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
@@ -131,7 +133,8 @@ struct DeviceChannelHandle {
   __forceinline__ __device__ void putWithSignalAndFlush(MemoryId dst, uint64_t dstOffset, MemoryId src,
                                                         uint64_t srcOffset, uint64_t size) {
     uint64_t curFifoHead = fifo_.push(
-        ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, epochId_).value);
+        ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, semaphoreId_)
+            .value);
     fifo_.sync(curFifoHead);
   }
 
@@ -140,17 +143,17 @@ struct DeviceChannelHandle {
   }
 
   __forceinline__ __device__ void flush() {
-    uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, epochId_).value);
+    uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, semaphoreId_).value);
     fifo_.sync(curFifoHead);
   }
 
-  __forceinline__ __device__ void wait() { epoch_.wait(); }
+  __forceinline__ __device__ void wait() { semaphore_.wait(); }
 
 #endif  // __CUDACC__
 
-  EpochId epochId_;
+  SemaphoreId semaphoreId_;
 
-  Host2DeviceEpoch::DeviceHandle epoch_;
+  Host2DeviceSemaphore::DeviceHandle semaphore_;
 
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.

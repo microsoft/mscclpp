@@ -211,7 +211,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   int cudaNum = rankToLocalRank(rank);
   std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
   mscclpp::Transport ibTransport = mscclpp::getIBTransportByDeviceName(ibDevStr);
-  std::vector<mscclpp::channel::EpochId> epochIds;
+  std::vector<mscclpp::channel::SemaphoreId> semaphoreIds;
   std::vector<mscclpp::RegisteredMemory> localMemories;
   std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemories;
 
@@ -224,7 +224,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
       transport = ibTransport;
     }
     // Connect with all other ranks
-    epochIds.push_back(channelService.addEpoch(comm.connectOnSetup(r, 0, transport)));
+    semaphoreIds.push_back(channelService.addSemaphore(comm.connectOnSetup(r, 0, transport)));
     auto memory = comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport);
     localMemories.push_back(memory);
     comm.sendMemoryOnSetup(memory, r, 0);
@@ -234,8 +234,8 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   comm.setup();
 
   std::vector<mscclpp::channel::SimpleDeviceChannelHandle> devChannels;
-  for (size_t i = 0; i < epochIds.size(); ++i) {
-    devChannels.push_back(mscclpp::channel::SimpleDeviceChannelHandle(channelService.deviceChannel(epochIds[i]),
+  for (size_t i = 0; i < semaphoreIds.size(); ++i) {
+    devChannels.push_back(mscclpp::channel::SimpleDeviceChannelHandle(channelService.deviceChannel(semaphoreIds[i]),
                                                                       channelService.addMemory(remoteMemories[i].get()),
                                                                       channelService.addMemory(localMemories[i])));
   }
