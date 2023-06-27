@@ -314,8 +314,11 @@ size_t BaseTestEngine::checkData() {
   std::vector<int> recvData(recvBytes / sizeof(int), 0);
   CUDATHROW(cudaMemcpy(recvData.data(), recvBuff, recvBytes, cudaMemcpyDeviceToHost));
   for (size_t i = 0; i < recvData.size(); i++) {
-    const int chunkSize = args_.maxBytes / sizeof(int) / args_.totalRanks;
-    if (recvData[i] != ((int*)expectedBuff)[i] && (i / chunkSize == (size_t)args_.rank)) {
+    if (recvData[i] != ((int*)expectedBuff)[i]) {
+      if (args_.rank == 3) {
+        std::cout << "Error at index " << i << ": expected " << ((int*)expectedBuff)[i] << ", got " << recvData[i]
+                  << std::endl;
+      }
       nErrors++;
     }
   }
