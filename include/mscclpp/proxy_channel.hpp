@@ -8,11 +8,11 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/epoch.hpp>
 #include <mscclpp/fifo.hpp>
-#include <mscclpp/packet.hpp>
 #include <mscclpp/proxy.hpp>
 
 namespace mscclpp {
 namespace channel {
+namespace proxy {
 
 // A Channel pairs a Connection with an Epoch
 class Channel {
@@ -29,15 +29,42 @@ class Channel {
 };
 
 using ChannelId = uint32_t;
+class Channel;
+// This is just a numeric ID. Each HostConnection will have an internal array indexed by these handles
+// mapping to the actual
+using MemoryId = uint32_t;
+struct DeviceChannelHandle;
+
+class ProxyService {
+ public:
+  ProxyService(Communicator& communicator);
+
+  ChannelId addChannel(std::shared_ptr<Connection> connection);
+
+  MemoryId addMemory(RegisteredMemory memory);
+
+  Channel channel(ChannelId id) const;
+  DeviceChannelHandle deviceChannel(ChannelId id);
+
+  void startProxy();
+  void stopProxy();
+
+ private:
+  Communicator& communicator_;
+  std::vector<Channel> channels_;
+  std::vector<RegisteredMemory> memories_;
+  Proxy proxy_;
+  int deviceNumaNode;
+
+  void bindThread();
+
+  ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
+};
 
 using TriggerType = uint64_t;
 const TriggerType TriggerData = 0x1;
 const TriggerType TriggerFlag = 0x2;
 const TriggerType TriggerSync = 0x4;
-
-// This is just a numeric ID. Each HostConnection will have an internal array indexed by these handles
-// mapping to the actual
-using MemoryId = uint32_t;
 
 #define MSCCLPP_BITS_SIZE 32
 #define MSCCLPP_BITS_OFFSET 32
@@ -79,14 +106,14 @@ union ChannelTrigger {
 #endif  // __CUDACC__
 };
 
-struct DeviceChannel {
-  DeviceChannel() = default;
+struct DeviceChannelHandle {
+  DeviceChannelHandle() = default;
 
-  DeviceChannel(ChannelId channelId, Host2DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
+  DeviceChannelHandle(ChannelId channelId, Host2DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
 
-  DeviceChannel(const DeviceChannel& other) = default;
+  DeviceChannelHandle(const DeviceChannelHandle& other) = default;
 
-  DeviceChannel& operator=(DeviceChannel& other) = default;
+  DeviceChannelHandle& operator=(DeviceChannelHandle& other) = default;
 
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
@@ -139,50 +166,16 @@ struct DeviceChannel {
   DeviceProxyFifo fifo_;
 };
 
-class BaseChannelService {
- public:
-  BaseChannelService() = default;
-  virtual ~BaseChannelService() = default;
-  virtual void startProxy() = 0;
-  virtual void stopProxy() = 0;
-};
+struct SimpleDeviceChannelHandle {
+  SimpleDeviceChannelHandle() = default;
 
-class DeviceChannelService : public BaseChannelService {
- public:
-  DeviceChannelService(Communicator& communicator);
+  SimpleDeviceChannelHandle(DeviceChannelHandle devChan, MemoryId dst, MemoryId src);
 
-  ChannelId addChannel(std::shared_ptr<Connection> connection);
+  SimpleDeviceChannelHandle(DeviceChannelHandle devChan) : devChan_(devChan) {}
 
-  MemoryId addMemory(RegisteredMemory memory);
+  SimpleDeviceChannelHandle(const SimpleDeviceChannelHandle& other) = default;
 
-  Channel channel(ChannelId id) const;
-  DeviceChannel deviceChannel(ChannelId id);
-
-  void startProxy();
-  void stopProxy();
-
- private:
-  Communicator& communicator_;
-  std::vector<Channel> channels_;
-  std::vector<RegisteredMemory> memories_;
-  Proxy proxy_;
-  int deviceNumaNode;
-
-  void bindThread();
-
-  ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
-};
-
-struct SimpleDeviceChannel {
-  SimpleDeviceChannel() = default;
-
-  SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src);
-
-  SimpleDeviceChannel(DeviceChannel devChan) : devChan_(devChan) {}
-
-  SimpleDeviceChannel(const SimpleDeviceChannel& other) = default;
-
-  SimpleDeviceChannel& operator=(SimpleDeviceChannel& other) = default;
+  SimpleDeviceChannelHandle& operator=(SimpleDeviceChannelHandle& other) = default;
 
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
@@ -213,59 +206,12 @@ struct SimpleDeviceChannel {
 
 #endif  // __CUDACC__
 
-  DeviceChannel devChan_;
+  DeviceChannelHandle devChan_;
   MemoryId dst_;
   MemoryId src_;
 };
 
-// A direct version of DeviceChannel only for CudaIpc
-struct SmChannel {
- public:
-  SmChannel() = default;
-  SmChannel(SmDevice2DeviceEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src, void* getPacketBuffer = nullptr);
-
-#ifdef __CUDACC__
-  __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
-                                      uint32_t numThreads) {
-    // assume the memory is aligned to 8 bytes
-    uint64_t* srcAddr = (uint64_t*)((char*)src_ + srcOffset);
-    uint64_t* dstAddr = (uint64_t*)((char*)dst_ + dstOffset);
-    uint64_t ele;
-    size_t nElem = size % sizeof(uint64_t) ? (size + sizeof(uint64_t)) / sizeof(uint64_t) : size / sizeof(uint64_t);
-    for (size_t i = threadId; i < nElem; i += numThreads) {
-      // load to register first
-      ele = srcAddr[i];
-      dstAddr[i] = ele;
-    }
-  }
-
-  __forceinline__ __device__ void putPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
-                                             uint32_t numThreads, uint32_t flag) {
-    mscclpp::packet::putPackets(dst_, dstOffset, src_, srcOffset, size, threadId, numThreads, flag);
-  }
-
-  __forceinline__ __device__ void getPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
-                                             uint32_t numThreads, uint32_t flag) {
-    mscclpp::packet::getPackets(src_, dstOffset, getPacketBuffer_, srcOffset, size, threadId, numThreads, flag);
-  }
-
-  __forceinline__ __device__ void signal() { epoch_.signal(); }
-
-  __forceinline__ __device__ void signalPacket() { epoch_.signalPacket(); }
-
-  __forceinline__ __device__ void epochIncrement() { epoch_.epochIncrement(); }
-
-  __forceinline__ __device__ uint64_t epochGetLocal() const { return epoch_.epochGetLocal(); }
-
-  __forceinline__ __device__ void wait() { epoch_.wait(); }
-#endif  // __CUDACC__
- private:
-  SmDevice2DeviceEpoch::DeviceHandle epoch_;
-  void* src_;
-  void* dst_;
-  void* getPacketBuffer_;
-};
-
+}  // namespace proxy
 }  // namespace channel
 }  // namespace mscclpp
 

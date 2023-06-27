@@ -49,7 +49,7 @@ void SmChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::channel::S
 
     communicator->setup();
 
-    smEpochs[r] = std::make_shared<mscclpp::SmEpoch>(*communicator, conn);
+    smEpochs[r] = std::make_shared<mscclpp::SmDevice2DeviceEpoch>(*communicator, conn);
 
     communicator->setup();
 
@@ -160,17 +160,16 @@ __global__ void kernelDirectPacketPingPong(int* buff, int rank, int nElem, int* 
     // rank=0: 0, 1, 0, 1, ...
     // rank=1: 1, 0, 1, 0, ...
     if ((rank ^ (i & 1)) == 0) {
-      // If each thread writes 8 bytes at once, we don't need a barrier before putPacket().
+      // If each thread writes 8 bytes at once, we don't need a barrier before putPackets().
       for (int j = threadIdx.x; j < nElem / 2; j += blockDim.x) {
         sendBuff[2 * j] = putOffset + i + 2 * j;
         sendBuff[2 * j + 1] = putOffset + i + 2 * j + 1;
       }
       // __syncthreads();
-      mscclpp::packet::putPackets(smChan.dst_, 0, smChan.src_, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      smChan.putPackets(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
     } else {
-      mscclpp::packet::getPackets(smChan.src_, 0, smChan.getPacketBuffer_, 0, nElem * sizeof(int), threadIdx.x,
-                                  blockDim.x, flag);
-      // If each thread reads 8 bytes at once, we don't need a barrier after getPacket().
+      smChan.getPackets(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
       // __syncthreads();
       for (int j = threadIdx.x; j < nElem / 2; j += blockDim.x) {
         if (sendBuff[2 * j] != getOffset + i + 2 * j) {

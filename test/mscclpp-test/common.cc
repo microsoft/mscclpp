@@ -420,13 +420,13 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SmChanne
     setupMeshConnectionsInternal(connections, outputBufRegMem, remoteRegMemoriesOutput, false);
   }
 
-  std::unordered_map<size_t, std::shared_ptr<mscclpp::SmEpoch>> smEpochs;
+  std::unordered_map<size_t, std::shared_ptr<mscclpp::SmDevice2DeviceEpoch>> smEpochs;
   std::unordered_map<size_t, mscclpp::channel::ChannelId> connIdToChanId;
   auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-      smEpochs.emplace(cid, std::make_shared<mscclpp::SmEpoch>(*comm_, connections[cid]));
+      smEpochs.emplace(cid, std::make_shared<mscclpp::SmDevice2DeviceEpoch>(*comm_, connections[cid]));
     } else {
       connIdToChanId[cid] = service->addChannel(connections[cid]);
     }

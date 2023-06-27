@@ -10,13 +10,14 @@
 namespace mscclpp {
 namespace channel {
 
-MSCCLPP_API_CPP DeviceChannel::DeviceChannel(ChannelId channelId, DeviceEpoch::DeviceHandle epoch, DeviceProxyFifo fifo)
+MSCCLPP_API_CPP DeviceChannel::DeviceChannel(ChannelId channelId, Host2DeviceEpoch::DeviceHandle epoch,
+                                             DeviceProxyFifo fifo)
     : channelId_(channelId), epoch_(epoch), fifo_(fifo) {}
 
 MSCCLPP_API_CPP SimpleDeviceChannel::SimpleDeviceChannel(DeviceChannel devChan, MemoryId dst, MemoryId src)
     : devChan_(devChan), dst_(dst), src_(src) {}
 
-MSCCLPP_API_CPP SmChannel::SmChannel(SmEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src,
+MSCCLPP_API_CPP SmChannel::SmChannel(SmDevice2DeviceEpoch::DeviceHandle epoch, RegisteredMemory dst, void* src,
                                      void* getPacketBuffer)
     : epoch_(epoch), src_(src), getPacketBuffer_(getPacketBuffer) {
   if (!dst.transports().has(Transport::CudaIpc)) {

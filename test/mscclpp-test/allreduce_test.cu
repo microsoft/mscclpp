@@ -271,8 +271,7 @@ __device__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
                        ((smChanIdx < localRank ? localRank - 1 : localRank) * pktBytes) +  // offset for this rank
                        (srcOffset * 2);  // offset for this block: twice of srcOffset because 2 elems per packet
     // Write data to the peer's scratch
-    mscclpp::packet::putPackets(smChan.dst_, dstOffset, smChan.src_, srcOffset, nelems / BLOCKS_PER_PEER * sizeof(int),
-                                threadIdx.x, blockDim.x, flag);
+    smChan.putPackets(dstOffset, srcOffset, nelems / BLOCKS_PER_PEER * sizeof(int), threadIdx.x, blockDim.x, flag);
     // Read data from my scratch, reduce data with my buff, and write the result to my putPktBuf or to result
     const bool isSingleNode = (worldSize == nRanksPerNode);
     for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPkts; idx += blockDim.x * gridDim.x) {

@@ -172,7 +172,7 @@ __global__ void kernelDeviceLLPingPong(int* buff, mscclpp::packet::LL* putPktBuf
     // rank=1: 1, 0, 1, 0, ...
     if ((rank ^ (i & 1)) == 0) {
       if (CheckCorrectness) {
-        // If each thread writes 8 bytes at once, we don't need a barrier before putPacket().
+        // If each thread writes 8 bytes at once, we don't need a barrier before putPackets().
         for (int j = threadId; j < nPkt; j += numThreads) {
           buffPtr[2 * j] = putOffset + i + 2 * j;
           buffPtr[2 * j + 1] = putOffset + i + 2 * j + 1;
@@ -193,7 +193,7 @@ __global__ void kernelDeviceLLPingPong(int* buff, mscclpp::packet::LL* putPktBuf
     } else {
       mscclpp::packet::getPackets(buff, 0, getPktBuf, 0, nElem * sizeof(int), threadId, numThreads, flag);
       if (CheckCorrectness) {
-        // If each thread reads 8 bytes at once, we don't need a barrier after getPacket().
+        // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
         // __syncthreads();
         for (int j = threadId; j < nPkt; j += numThreads) {
           if (buffPtr[2 * j] != getOffset + i + 2 * j) {
