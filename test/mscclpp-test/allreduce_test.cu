@@ -63,8 +63,8 @@ __device__ void vectorSumSingleBlock(int* dst, int* src, size_t nElem) {
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
-__device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanksPerNode, int worldSize,
-                                   int startChunkIndex, size_t offsetInChunk, size_t nelems) {
+__device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanksPerNode, int startChunkIndex,
+                                   size_t offsetInChunk, size_t chunkSize, size_t nelems) {
   if (nRanksPerNode == 1) {
     return;
   }
@@ -80,8 +80,9 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
     mscclpp::channel::SimpleDeviceChannel& devFstSendChan = constDevFstRoundChans[peerSendId];
     mscclpp::channel::SimpleDeviceChannel& devFstRecvChan = constDevFstRoundChans[peerRecvId];
     int rankIdexInNode = rank % nRanksPerNode;
-    size_t srcOffset = (((startChunkIndex + rankIdexInNode + i) % worldSize) * nelems + offsetInChunk) * sizeof(int);
-    size_t dstOffset = rank * nelems * sizeof(int);
+    size_t srcOffset =
+        (((rankIdexInNode + i) % nRanksPerNode + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
+    size_t dstOffset = rank * chunkSize * sizeof(int);
 
     if (i == 1) {
       if (isComm) {
@@ -100,8 +101,8 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
       }
 
       deviceSyncer.sync(gridDim.x);
-      size_t offset = ((startChunkIndex + rankIdexInNode) * nelems + offsetInChunk) * sizeof(int);
-      size_t scratchOffset = preRemoteRecvFromRank * nelems * sizeof(int);
+      size_t offset = ((startChunkIndex + rankIdexInNode) * chunkSize + offsetInChunk) * sizeof(int);
+      size_t scratchOffset = preRemoteRecvFromRank * chunkSize * sizeof(int);
       int* dst = (int*)((char*)buff + offset);
       int* src = (int*)((char*)scratch + scratchOffset);
       vectorSum(dst, src, nelems);
@@ -112,8 +113,8 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
         devFstRecvChan.wait();
       }
       deviceSyncer.sync(gridDim.x);
-      size_t offset = ((startChunkIndex + rankIdexInNode) * nelems + offsetInChunk) * sizeof(int);
-      size_t scratchOffset = remoteRecvFromRank * nelems * sizeof(int);
+      size_t offset = ((startChunkIndex + rankIdexInNode) * chunkSize + offsetInChunk) * sizeof(int);
+      size_t scratchOffset = remoteRecvFromRank * chunkSize * sizeof(int);
       int* dst = (int*)((char*)buff + offset);
       int* src = (int*)((char*)scratch + scratchOffset);
       vectorSum(dst, src, nelems);
@@ -132,11 +133,11 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
   if (peerNodeId != rank / nRanksPerNode) {
     // step 1: local reduce
     int startChunkIndex = peerNodeId * nRanksPerNode;
-    localReduceScatter(buff, scratch, rank, nRanksPerNode, worldSize, startChunkIndex, 0, chunkSize / pipelineSize);
+    localReduceScatter(buff, scratch, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize / pipelineSize);
     deviceSyncer.sync(gridDim.x);
 
     // step 2: transfer local reduce result to peer, and do another round local reduce
-    localReduceScatter(buff, scratch, rank, nRanksPerNode, worldSize, startChunkIndex, chunkSize / pipelineSize,
+    localReduceScatter(buff, scratch, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize, chunkSize,
                        2 * chunkSize / pipelineSize);
     // cross-node exchange
     int peer = (peerRank < rank) ? peerRank : peerRank - 1;
@@ -159,8 +160,8 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
     deviceSyncer.sync(gridDim.x);
 
     // step 3: transfer local reduce result to peer, and do another round local reduce
-    startChunkIndex = rank / nRanksPerNode * nRanksPerNode;
-    localReduceScatter(buff, scratch, rank, nRanksPerNode, worldSize, startChunkIndex, 0, nelems);
+    startChunkIndex = (rank / nRanksPerNode) * nRanksPerNode;
+    localReduceScatter(buff, scratch, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize);
     // cross-node exchange
     if (isComm) {
       size_t offset = (peerRank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
@@ -179,7 +180,7 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
     }
     deviceSyncer.sync(gridDim.x);
   } else {
-    localReduceScatter(buff, scratch, rank, nRanksPerNode, worldSize, 0, 0, chunkSize);
+    localReduceScatter(buff, scratch, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize);
   }
 }
 

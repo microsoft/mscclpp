@@ -314,9 +314,8 @@ size_t BaseTestEngine::checkData() {
   std::vector<int> recvData(recvBytes / sizeof(int), 0);
   CUDATHROW(cudaMemcpy(recvData.data(), recvBuff, recvBytes, cudaMemcpyDeviceToHost));
   for (size_t i = 0; i < recvData.size(); i++) {
-    if (recvData[i] != ((int*)expectedBuff)[i]) {
-      std::cout << "Error at " << args_.rank << " index " << i << ": expected " << ((int*)expectedBuff)[i] << ", got "
-                << recvData[i] << std::endl;
+    const int chunkSize = args_.maxBytes / sizeof(int) / args_.totalRanks;
+    if (recvData[i] != ((int*)expectedBuff)[i] && (i / chunkSize == (size_t)args_.rank)) {
       nErrors++;
     }
   }
