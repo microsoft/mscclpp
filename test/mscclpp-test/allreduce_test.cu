@@ -82,17 +82,42 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
     int rankIdexInNode = rank % nRanksPerNode;
     size_t srcOffset = (((startChunkIndex + rankIdexInNode + i) % worldSize) * nelems + offsetInChunk) * sizeof(int);
     size_t dstOffset = rank * nelems * sizeof(int);
-    if (isComm) {
-      devFstSendChan.putWithSignal(dstOffset, srcOffset, nelems * sizeof(int));
-      devFstRecvChan.wait();
+
+    if (i == 1) {
+      if (isComm) {
+        devFstSendChan.putWithSignal(dstOffset, srcOffset, nelems * sizeof(int));
+      }
+    } else {
+      int pre = i - 1;
+      int preRemoteRecvFromRank = (rank + nRanksPerNode - pre) % nRanksPerNode + startRankInNode;
+      int prePeerRecvId = (preRemoteRecvFromRank < rank) ? preRemoteRecvFromRank : preRemoteRecvFromRank - 1;
+
+      // overlap communication and computation
+      mscclpp::channel::SimpleDeviceChannel& preDevFstSendChan = constDevFstRoundChans[prePeerRecvId];
+      if (isComm) {
+        preDevFstSendChan.wait();
+        devFstSendChan.putWithSignal(dstOffset, srcOffset, nelems * sizeof(int));
+      }
+
+      deviceSyncer.sync(gridDim.x);
+      size_t offset = ((startChunkIndex + rankIdexInNode) * nelems + offsetInChunk) * sizeof(int);
+      size_t scratchOffset = preRemoteRecvFromRank * nelems * sizeof(int);
+      int* dst = (int*)((char*)buff + offset);
+      int* src = (int*)((char*)scratch + scratchOffset);
+      vectorSum(dst, src, nelems);
     }
-    deviceSyncer.sync(gridDim.x);
-    // reduce the results here
-    size_t offset = ((startChunkIndex + rankIdexInNode) * nelems + offsetInChunk) * sizeof(int);
-    size_t scratchOffset = remoteRecvFromRank * nelems * sizeof(int);
-    int* dst = (int*)((char*)buff + offset);
-    int* src = (int*)((char*)scratch + scratchOffset);
-    vectorSum(dst, src, nelems);
+    // for last iteration, wait for the last send
+    if (i == nRanksPerNode - 1) {
+      if (isComm) {
+        devFstRecvChan.wait();
+      }
+      deviceSyncer.sync(gridDim.x);
+      size_t offset = ((startChunkIndex + rankIdexInNode) * nelems + offsetInChunk) * sizeof(int);
+      size_t scratchOffset = remoteRecvFromRank * nelems * sizeof(int);
+      int* dst = (int*)((char*)buff + offset);
+      int* src = (int*)((char*)scratch + scratchOffset);
+      vectorSum(dst, src, nelems);
+    }
   }
 }
 
