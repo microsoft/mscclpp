@@ -1,10 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_CHANNEL_HPP_
-#define MSCCLPP_CHANNEL_HPP_
+#ifndef MSCCLPP_PROXY_CHANNEL_HPP_
+#define MSCCLPP_PROXY_CHANNEL_HPP_
 
-#include <mscclpp/concurrency.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/epoch.hpp>
 #include <mscclpp/fifo.hpp>
@@ -35,7 +34,15 @@ class Channel;
 using MemoryId = uint32_t;
 struct DeviceChannelHandle;
 
-class ProxyService {
+class BaseProxyService {
+ public:
+  BaseProxyService() = default;
+  virtual ~BaseProxyService() = default;
+  virtual void startProxy() = 0;
+  virtual void stopProxy() = 0;
+};
+
+class ProxyService : public BaseProxyService {
  public:
   ProxyService(Communicator& communicator);
 
@@ -215,4 +222,4 @@ struct SimpleDeviceChannelHandle {
 }  // namespace channel
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_CHANNEL_HPP_
+#endif  // MSCCLPP_PROXY_CHANNEL_HPP_

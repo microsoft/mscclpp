@@ -7,7 +7,7 @@
 #include "common.hpp"
 
 #define ALIGN 4
-__constant__ mscclpp::channel::SimpleDeviceChannel constDevChans[16];
+__constant__ mscclpp::channel::proxy::SimpleDeviceChannelHandle constDevChans[16];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 void* localRecvBuff;
 void* localSendBuff;
@@ -15,7 +15,7 @@ void* localSendBuff;
 __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
   int remoteRank = (blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   for (int i = 1; i < nRanksPerNode; i++) {
-    mscclpp::channel::SimpleDeviceChannel devChan = constDevChans[blockIdx.x];
+    mscclpp::channel::proxy::SimpleDeviceChannelHandle devChan = constDevChans[blockIdx.x];
     if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank + i) % nRanksPerNode) {
       devChan.putWithSignalAndFlush(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
                                     nElements * sizeof(int));
@@ -30,7 +30,7 @@ __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
 
 __device__ void alltoall0(int rank, int worldSize, size_t nElements) {
   int remoteRank = (blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
-  mscclpp::channel::SimpleDeviceChannel devChan = constDevChans[blockIdx.x];
+  mscclpp::channel::proxy::SimpleDeviceChannelHandle devChan = constDevChans[blockIdx.x];
   if (threadIdx.x == 0) {
     devChan.putWithSignal(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
                           nElements * sizeof(int));
@@ -145,12 +145,12 @@ void AllToAllTestEngine::allocateBuffer() {
 }
 
 void AllToAllTestEngine::setupConnections() {
-  std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
+  std::vector<mscclpp::channel::proxy::SimpleDeviceChannelHandle> devChannels;
   setupMeshConnections(devChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
 
-  assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));
+  assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::channel::proxy::SimpleDeviceChannelHandle));
   CUDATHROW(cudaMemcpyToSymbol(constDevChans, devChannels.data(),
-                               sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size()));
+                               sizeof(mscclpp::channel::proxy::SimpleDeviceChannelHandle) * devChannels.size()));
 }
 
 std::vector<void*> AllToAllTestEngine::getSendBuff() { return {sendBuff_.get()}; }

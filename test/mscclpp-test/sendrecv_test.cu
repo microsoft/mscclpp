@@ -6,9 +6,9 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
-#include <mscclpp/channel.hpp>
 #include <mscclpp/concurrency.hpp>
 #include <mscclpp/epoch.hpp>
+#include <mscclpp/sm_channel.hpp>
 #include <string>
 #include <vector>
 
@@ -22,7 +22,7 @@ constexpr size_t MAX_BLOCKS_NUM = 32;
 
 #define ALIGN 4
 
-__constant__ mscclpp::channel::SmChannel constSmChans[2];
+__constant__ mscclpp::channel::sm::SmChannel constSmChans[2];
 
 inline int getBlockNum(size_t count) {
   return std::min((count + THRES_BYTES_PER_BLOCK - 1) / THRES_BYTES_PER_BLOCK, MAX_BLOCKS_NUM);
@@ -39,8 +39,8 @@ __global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock) {
   size_t blockDataSize = min(dataSize - startIndex, dataPerBlock);
   int globalIndex = blockIdx.x * blockDim.x + threadIdx.x;
 
-  mscclpp::channel::SmChannel sendConn = constSmChans[0];
-  mscclpp::channel::SmChannel recvConn = constSmChans[1];
+  mscclpp::channel::sm::SmChannel sendConn = constSmChans[0];
+  mscclpp::channel::sm::SmChannel recvConn = constSmChans[1];
 
   sendConn.put(startIndex, startIndex, blockDataSize, threadIdx.x, blockDim.x);
   deviceSyncer.sync(gridDim.x);
@@ -140,7 +140,7 @@ void SendRecvTestEngine::setupConnections() {
   int sendToRank = (args_.rank + 1) % worldSize;
   int recvFromRank = (args_.rank - 1 + worldSize) % worldSize;
   std::array<int, 2> ranks = {sendToRank, recvFromRank};
-  auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
+  auto service = std::dynamic_pointer_cast<mscclpp::channel::proxy::ProxyService>(chanService_);
 
   std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceEpoch>> smEpochs;
 
@@ -170,12 +170,12 @@ void SendRecvTestEngine::setupConnections() {
 
   // swap to make sure devicePtrs_[0] in local rank write to devicePtrs_[1] in remote rank
   std::swap(futureRemoteMemory[0], futureRemoteMemory[1]);
-  std::vector<mscclpp::channel::SmChannel> smChannels;
+  std::vector<mscclpp::channel::sm::SmChannel> smChannels;
   for (int i : {0, 1}) {
     // We assume ranks in the same node
     smChannels.emplace_back(smEpochs[i]->deviceHandle(), futureRemoteMemory[i].get(), (void*)localMemories[i].data());
   }
-  cudaMemcpyToSymbol(constSmChans, smChannels.data(), sizeof(mscclpp::channel::SmChannel) * smChannels.size());
+  cudaMemcpyToSymbol(constSmChans, smChannels.data(), sizeof(mscclpp::channel::sm::SmChannel) * smChannels.size());
 }
 
 std::vector<void*> SendRecvTestEngine::getSendBuff() { return {devicePtrs_[0].get()}; }

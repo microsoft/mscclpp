@@ -1,20 +1,22 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <mscclpp/concurrency.hpp>
+
 #include "mp_unit_tests.hpp"
 
 void DeviceChannelOneToOneTest::SetUp() {
   // Use only two ranks
   setNumRanksToUse(2);
   CommunicatorTestBase::SetUp();
-  channelService = std::make_shared<mscclpp::channel::DeviceChannelService>(*communicator.get());
+  channelService = std::make_shared<mscclpp::channel::proxy::ProxyService>(*communicator.get());
 }
 
 void DeviceChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
-void DeviceChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels,
-                                                     bool useIbOnly, void* sendBuff, size_t sendBuffBytes,
-                                                     void* recvBuff, size_t recvBuffBytes) {
+void DeviceChannelOneToOneTest::setupMeshConnections(
+    std::vector<mscclpp::channel::proxy::SimpleDeviceChannelHandle>& devChannels, bool useIbOnly, void* sendBuff,
+    size_t sendBuffBytes, void* recvBuff, size_t recvBuffBytes) {
   const int rank = communicator->bootstrapper()->getRank();
   const int worldSize = communicator->bootstrapper()->getNranks();
   const bool isInPlace = (recvBuff == nullptr);
@@ -47,7 +49,7 @@ void DeviceChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::channe
 
     communicator->setup();
 
-    mscclpp::channel::ChannelId cid = channelService->addChannel(conn);
+    mscclpp::channel::proxy::ChannelId cid = channelService->addChannel(conn);
     communicator->setup();
 
     devChannels.emplace_back(channelService->deviceChannel(cid), channelService->addMemory(remoteMemory.get()),
@@ -55,10 +57,10 @@ void DeviceChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::channe
   }
 }
 
-__constant__ mscclpp::channel::SimpleDeviceChannel gChannelOneToOneTestConstDevChans;
+__constant__ mscclpp::channel::proxy::SimpleDeviceChannelHandle gChannelOneToOneTestConstDevChans;
 
 __global__ void kernelDevicePingPong(int* buff, int rank, int nElem, int* ret) {
-  mscclpp::channel::SimpleDeviceChannel& devChan = gChannelOneToOneTestConstDevChans;
+  mscclpp::channel::proxy::SimpleDeviceChannelHandle& devChan = gChannelOneToOneTestConstDevChans;
   volatile int* sendBuff = (volatile int*)buff;
   int nTries = 1000;
   int flusher = 0;
@@ -115,13 +117,13 @@ TEST_F(DeviceChannelOneToOneTest, PingPongIb) {
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
+  std::vector<mscclpp::channel::proxy::SimpleDeviceChannelHandle> devChannels;
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
   setupMeshConnections(devChannels, true, buff.get(), nElem * sizeof(int));
 
   ASSERT_EQ(devChannels.size(), 1);
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstDevChans, devChannels.data(),
-                                       sizeof(mscclpp::channel::SimpleDeviceChannel)));
+                                       sizeof(mscclpp::channel::proxy::SimpleDeviceChannelHandle)));
 
   channelService->startProxy();
 
@@ -157,7 +159,7 @@ __global__ void kernelDeviceLLPingPong(int* buff, mscclpp::packet::LL* putPktBuf
                                        int rank, int nElem, int nTries, int* ret) {
   if (rank > 1) return;
 
-  mscclpp::channel::SimpleDeviceChannel& devChan = gChannelOneToOneTestConstDevChans;
+  mscclpp::channel::proxy::SimpleDeviceChannelHandle& devChan = gChannelOneToOneTestConstDevChans;
   volatile int* buffPtr = (volatile int*)buff;
   int putOffset = (rank == 0) ? 0 : 10000000;
   int getOffset = (rank == 0) ? 10000000 : 0;
@@ -221,7 +223,7 @@ void DeviceChannelOneToOneTest::testPacketPingPong(bool useIbOnly) {
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
+  std::vector<mscclpp::channel::proxy::SimpleDeviceChannelHandle> devChannels;
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
 
   const size_t nPacket = (nElem * sizeof(int) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
@@ -233,7 +235,7 @@ void DeviceChannelOneToOneTest::testPacketPingPong(bool useIbOnly) {
 
   ASSERT_EQ(devChannels.size(), 1);
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstDevChans, devChannels.data(),
-                                       sizeof(mscclpp::channel::SimpleDeviceChannel)));
+                                       sizeof(mscclpp::channel::proxy::SimpleDeviceChannelHandle)));
 
   mscclpp::DeviceSyncer syncer = {};
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestDevChansSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
@@ -282,7 +284,7 @@ void DeviceChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
+  std::vector<mscclpp::channel::proxy::SimpleDeviceChannelHandle> devChannels;
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
 
   const size_t nPacket = (nElem * sizeof(int) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
@@ -294,7 +296,7 @@ void DeviceChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
 
   ASSERT_EQ(devChannels.size(), 1);
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstDevChans, devChannels.data(),
-                                       sizeof(mscclpp::channel::SimpleDeviceChannel)));
+                                       sizeof(mscclpp::channel::proxy::SimpleDeviceChannelHandle)));
 
   mscclpp::DeviceSyncer syncer = {};
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestDevChansSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
