@@ -166,10 +166,10 @@ __global__ void kernelDirectPacketPingPong(int* buff, int rank, int nElem, int* 
         sendBuff[2 * j + 1] = putOffset + i + 2 * j + 1;
       }
       // __syncthreads();
-      mscclpp::channel::putPackets(smChan.dst_, 0, smChan.src_, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      mscclpp::packet::putPackets(smChan.dst_, 0, smChan.src_, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
     } else {
-      mscclpp::channel::getPackets(smChan.src_, 0, smChan.getPacketBuffer_, 0, nElem * sizeof(int), threadIdx.x,
-                                   blockDim.x, flag);
+      mscclpp::packet::getPackets(smChan.src_, 0, smChan.getPacketBuffer_, 0, nElem * sizeof(int), threadIdx.x,
+                                  blockDim.x, flag);
       // If each thread reads 8 bytes at once, we don't need a barrier after getPacket().
       // __syncthreads();
       for (int j = threadIdx.x; j < nElem / 2; j += blockDim.x) {

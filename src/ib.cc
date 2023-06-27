@@ -394,7 +394,9 @@ MSCCLPP_API_CPP std::string getIBDeviceName(Transport ibTransport) {
       throw std::invalid_argument("Not an IB transport");
   }
   if (ibTransportIndex >= num) {
-    throw std::out_of_range("IB transport out of range");
+    std::stringstream ss;
+    ss << "IB transport out of range: " << ibTransportIndex << " >= " << num;
+    throw std::out_of_range(ss.str());
   }
   return devices[ibTransportIndex]->name;
 }

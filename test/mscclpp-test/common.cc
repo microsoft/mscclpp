@@ -389,7 +389,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDe
 }
 
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SmChannel>& smChannels,
-                                          std::vector<mscclpp::channel::SimpleSmDeviceChannel>& smDevChannels,
+                                          std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels,
                                           void* inputBuff, size_t inputBuffBytes, void* putPacketBuff,
                                           size_t putPacketBuffBytes, void* getPacketBuff, size_t getPacketBuffBytes,
                                           void* outputBuff, size_t outputBuffBytes) {
@@ -420,28 +420,31 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SmChanne
     setupMeshConnectionsInternal(connections, outputBufRegMem, remoteRegMemoriesOutput, false);
   }
 
-  auto service = std::dynamic_pointer_cast<mscclpp::channel::SmDeviceChannelService>(chanService_);
+  std::unordered_map<size_t, std::shared_ptr<mscclpp::SmEpoch>> smEpochs;
+  std::unordered_map<size_t, mscclpp::channel::ChannelId> connIdToChanId;
+  auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
 
-  std::unordered_map<size_t, uint32_t> cidToEid;
   for (size_t cid = 0; cid < connections.size(); ++cid) {
-    std::shared_ptr<mscclpp::Connection> conn = connections[cid];
-    uint32_t eid = service->addEpoch(conn);
-    cidToEid[cid] = eid;
+    if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+      smEpochs.emplace(cid, std::make_shared<mscclpp::SmEpoch>(*comm_, connections[cid]));
+    } else {
+      connIdToChanId[cid] = service->addChannel(connections[cid]);
+    }
   }
   comm_->setup();
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-      smChannels.emplace_back(service->epoch(cidToEid[cid]).deviceHandle(),
+      smChannels.emplace_back(smEpochs[cid]->deviceHandle(),
                               (outputBuff) ? remoteRegMemoriesOutput[cid].get() : remoteRegMemories[cid].get(),
                               inputBufRegMem.data(), (outputBuff) ? outputBufRegMem.data() : nullptr);
     } else {
       if (putPacketBuff == nullptr || getPacketBuff == nullptr) {
         throw std::runtime_error("IB transport requires putPacketBuff and getPacketBuff");
       }
-      smDevChannels.emplace_back(
-          service->deviceChannel(cidToEid[cid]), service->addMemory(remoteRegMemories[cid].get()),
-          service->addMemory(putPacketBufRegMem), putPacketBufRegMem.data(), getPacketBufRegMem.data());
+      devChannels.emplace_back(service->deviceChannel(connIdToChanId[cid]),
+                               service->addMemory(remoteRegMemories[cid].get()),
+                               service->addMemory(putPacketBufRegMem));
     }
   }
 }

@@ -78,84 +78,6 @@ union ChannelTrigger {
 #endif  // __CUDACC__
 };
 
-union ChannelPacket {
-  // Flags have to be *after* data, because otherwise, an incomplete receive from the network may receive the flag but
-  // not the data. Note this is assuming that either we receive contiguous chunks of data (sockets) or data is written
-  // with an atomicity of 8 bytes (IB/RDMA).
-  struct {
-    uint32_t data1;
-    uint32_t flag1;
-    uint32_t data2;
-    uint32_t flag2;
-  };
-
-  struct {
-    uint64_t x;
-    uint64_t y;
-  } vec;
-
-  uint64_t v[2];
-
-#ifdef __CUDACC__
-  __forceinline__ __device__ ChannelPacket() {}
-  __forceinline__ __device__ void write(uint32_t val1, uint32_t val2, uint32_t flag) {
-    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"(val1), "r"(flag), "r"(val2), "r"(flag));
-  }
-  __forceinline__ __device__ void write(uint32_t val1, uint32_t val2) {
-    asm volatile("st.volatile.global.v4.u32 [%0], {%1,1,%2,1};" ::"l"(v), "r"(val1), "r"(val2));
-  }
-  __forceinline__ __device__ void write(uint64_t val, uint32_t flag) {
-    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"((uint32_t)val), "r"(flag),
-                 "r"((uint32_t)(val >> 32)), "r"(flag));
-  }
-  __forceinline__ __device__ void write(uint64_t val) {
-    asm volatile("st.volatile.global.v4.u32 [%0], {%1,1,%2,1};" ::"l"(v), "r"((uint32_t)val),
-                 "r"((uint32_t)(val >> 32)));
-  }
-  __forceinline__ __device__ uint2 read(uint32_t flag) {
-    uint2 data;
-    uint32_t flag1, flag2;
-    do {
-      asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
-                   : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2)
-                   : "l"(v));
-    } while ((flag1 != flag) || (flag2 != flag));
-    return data;
-  }
-  __forceinline__ __device__ uint2 read() { return read(1); }
-  __forceinline__ __device__ void clear() {
-    vec.x = 0;
-    vec.y = 0;
-  }
-#endif  // __CUDACC__
-};
-
-#ifdef __CUDACC__
-__forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
-                                           uint64_t srcSize, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
-  // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-  uint32_t* srcBase = (uint32_t*)((char*)src + srcOffset);
-  ChannelPacket* dstBase = (ChannelPacket*)((char*)dst + dstOffset);
-  size_t nElem = srcSize / sizeof(uint64_t);
-  for (size_t i = threadId; i < nElem; i += numThreads) {
-    ChannelPacket* pkt = &dstBase[i];
-    pkt->write(srcBase[2 * i], srcBase[2 * i + 1], flag);
-  }
-}
-
-__forceinline__ __device__ void getPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
-                                           uint64_t dstSize, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
-  // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-  ChannelPacket* srcBase = (ChannelPacket*)((char*)src + srcOffset);
-  uint2* dstBase = (uint2*)((char*)dst + dstOffset);
-  size_t nElem = dstSize / sizeof(uint2);
-  for (size_t i = threadId; i < nElem; i += numThreads) {
-    ChannelPacket* pkt = &srcBase[i];
-    dstBase[i] = pkt->read(flag);
-  }
-}
-#endif  // __CUDACC__
-
 struct DeviceChannel {
   DeviceChannel() = default;
 
@@ -216,47 +138,6 @@ struct DeviceChannel {
   DeviceProxyFifo fifo_;
 };
 
-struct SmDeviceChannel {
-  SmDeviceChannel() = default;
-
-  SmDeviceChannel(uint32_t epochId, SmEpoch::DeviceHandle epoch, DeviceProxyFifo fifo);
-
-  SmDeviceChannel(const SmDeviceChannel& other) = default;
-
-  SmDeviceChannel& operator=(SmDeviceChannel& other) = default;
-
-#ifdef __CUDACC__
-  __forceinline__ __device__ void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
-                                      uint64_t size) {
-    fifo_.push(ChannelTrigger(TriggerData, dst, dstOffset, src, srcOffset, size, epochId_).value);
-  }
-
-  __forceinline__ __device__ void put(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
-    put(dst, offset, src, offset, size);
-  }
-
-  __forceinline__ __device__ void flush() {
-    uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, epochId_).value);
-    fifo_.sync(curFifoHead);
-  }
-
-  __forceinline__ __device__ void epochIncrement() { epoch_.epochIncrement(); }
-
-  __forceinline__ __device__ uint64_t epochGetLocal() const { return epoch_.epochGetLocal(); }
-
-  __forceinline__ __device__ void wait() { epoch_.wait(); }
-
-#endif  // __CUDACC__
-
-  uint32_t epochId_;
-
-  SmEpoch::DeviceHandle epoch_;
-
-  // this is a concurrent fifo which is multiple threads from the device
-  // can produce for and the sole proxy thread consumes it.
-  DeviceProxyFifo fifo_;
-};
-
 class BaseChannelService {
  public:
   BaseChannelService() = default;
@@ -282,33 +163,6 @@ class DeviceChannelService : public BaseChannelService {
  private:
   Communicator& communicator_;
   std::vector<Channel> channels_;
-  std::vector<RegisteredMemory> memories_;
-  Proxy proxy_;
-  int deviceNumaNode;
-
-  void bindThread();
-
-  ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
-};
-
-class SmDeviceChannelService : public BaseChannelService {
- public:
-  SmDeviceChannelService(Communicator& communicator);
-
-  uint32_t addEpoch(std::shared_ptr<Connection> connection);
-
-  MemoryId addMemory(RegisteredMemory memory);
-
-  const SmEpoch& epoch(uint32_t id) const;
-  SmDeviceChannel deviceChannel(uint32_t id);
-
-  void startProxy();
-  void stopProxy();
-
- private:
-  Communicator& communicator_;
-  std::vector<SmEpoch> epochs_;
-  std::vector<std::shared_ptr<Connection>> connections_;
   std::vector<RegisteredMemory> memories_;
   Proxy proxy_;
   int deviceNumaNode;
@@ -361,43 +215,6 @@ struct SimpleDeviceChannel {
   DeviceChannel devChan_;
   MemoryId dst_;
   MemoryId src_;
-};
-
-struct SimpleSmDeviceChannel {
-  SimpleSmDeviceChannel() = default;
-
-  SimpleSmDeviceChannel(SmDeviceChannel devChan, MemoryId remoteGetPacketMem, MemoryId localPutPacketMem,
-                        void* putPacketBuffer, void* getPacketBuffer);
-
-  SimpleSmDeviceChannel(SmDeviceChannel devChan) : devChan_(devChan) {}
-
-  SimpleSmDeviceChannel(const SimpleSmDeviceChannel& other) = default;
-
-  SimpleSmDeviceChannel& operator=(SimpleSmDeviceChannel& other) = default;
-
-#ifdef __CUDACC__
-  __forceinline__ __device__ void put(uint64_t getOffset, uint64_t putOffset, uint64_t size) {
-    devChan_.put(remoteGetPacketMem_, getOffset, localPutPacketMem_, putOffset, size);
-  }
-
-  __forceinline__ __device__ void put(uint64_t offset, uint64_t size) { put(offset, offset, size); }
-
-  __forceinline__ __device__ void flush() { devChan_.flush(); }
-
-  __forceinline__ __device__ void epochIncrement() { devChan_.epochIncrement(); }
-
-  __forceinline__ __device__ uint64_t epochGetLocal() const { return devChan_.epochGetLocal(); }
-
-  __forceinline__ __device__ void wait() { devChan_.wait(); }
-
-#endif  // __CUDACC__
-
-  SmDeviceChannel devChan_;
-  MemoryId remoteGetPacketMem_;
-  MemoryId localPutPacketMem_;
-
-  void* putPacketBuffer_;
-  void* getPacketBuffer_;
 };
 
 // A direct version of DeviceChannel only for CudaIpc

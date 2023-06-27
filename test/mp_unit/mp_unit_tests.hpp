@@ -8,6 +8,7 @@
 
 #include <mscclpp/channel.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/packet.hpp>
 #include <mscclpp/utils.hpp>
 
 #include "ib.hpp"
@@ -129,6 +130,8 @@ class DeviceChannelOneToOneTest : public CommunicatorTestBase {
 
   void setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels, bool useIbOnly,
                             void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
+  void testPacketPingPong(bool useIbOnly);
+  void testPacketPingPongPerf(bool useIbOnly);
 
   std::shared_ptr<mscclpp::channel::DeviceChannelService> channelService;
 };
@@ -142,21 +145,6 @@ class SmChannelOneToOneTest : public CommunicatorTestBase {
                             size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0);
 
   std::unordered_map<int, std::shared_ptr<mscclpp::SmEpoch>> smEpochs;
-};
-
-class SmDeviceChannelOneToOneTest : public CommunicatorTestBase {
- protected:
-  void SetUp() override;
-  void TearDown() override;
-
-  void setupMeshConnections(std::vector<mscclpp::channel::SimpleSmDeviceChannel>& smDevChannels, bool useIbOnly,
-                            void* inputBuff, size_t inputBuffBytes);
-  void testPacketPingPong(bool useIbOnly);
-  void testPacketPingPongPerf(bool useIbOnly);
-
-  std::shared_ptr<mscclpp::channel::SmDeviceChannelService> channelService;
-  std::shared_ptr<mscclpp::channel::ChannelPacket> putPacketBuffer;
-  std::shared_ptr<mscclpp::channel::ChannelPacket> getPacketBuffer;
 };
 
 #endif  // MSCCLPP_MP_UNIT_TESTS_HPP_
