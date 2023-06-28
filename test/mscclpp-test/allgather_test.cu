@@ -94,9 +94,9 @@ __device__ void allgather2(mscclpp::channel::SimpleDeviceChannel devChan, int ra
 
   // sync here to make sure IB flush dose not block the CUDA IPC traffic
   __syncthreads();
-  // since all CUDA IPC share the same CUDA stream, only need to flush one of devChans
-  if ((remoteRank % nranksPerNode == rank % nranksPerNode) ||
-      (remoteRank / nranksPerNode == rank / nranksPerNode && rank % nranksPerNode == 0)) {
+  // need to flush ib channel here to avoid cq overflow. since the send data is immutable, we don't need to flush for
+  // IPC channel
+  if (remoteRank % nranksPerNode == rank % nranksPerNode) {
     if ((threadIdx.x % 32) == 0) devChan.flush();
   }
   __syncthreads();
@@ -119,8 +119,7 @@ __device__ void allgather2(mscclpp::channel::SimpleDeviceChannel devChan, int ra
   }
 
   __syncthreads();
-  if ((remoteRank % nranksPerNode == rank % nranksPerNode) ||
-      (remoteRank / nranksPerNode == rank / nranksPerNode && rank % nranksPerNode == 0)) {
+  if (remoteRank % nranksPerNode == rank % nranksPerNode) {
     if ((threadIdx.x % 32) == 0) devChan.flush();
   }
   __syncthreads();
