@@ -12,6 +12,8 @@
 #include <stddef.h>
 #include <sys/socket.h>
 
+namespace mscclpp {
+
 #define MAX_IFS 16
 #define MAX_IF_NAME_SIZE 16
 #define SLEEP_INT 1000  // connection retry sleep interval in usec
@@ -19,47 +21,45 @@
 #define MSCCLPP_SOCKET_MAGIC 0x564ab9f2fc4b9d6cULL
 
 /* Common socket address storage structure for IPv4/IPv6 */
-union mscclppSocketAddress {
+union SocketAddress {
   struct sockaddr sa;
   struct sockaddr_in sin;
   struct sockaddr_in6 sin6;
 };
 
-enum mscclppSocketState {
-  mscclppSocketStateNone = 0,
-  mscclppSocketStateInitialized = 1,
-  mscclppSocketStateAccepting = 2,
-  mscclppSocketStateAccepted = 3,
-  mscclppSocketStateConnecting = 4,
-  mscclppSocketStateConnectPolling = 5,
-  mscclppSocketStateConnected = 6,
-  mscclppSocketStateReady = 7,
-  mscclppSocketStateClosed = 8,
-  mscclppSocketStateError = 9,
-  mscclppSocketStateNum = 10
+enum SocketState {
+  SocketStateNone = 0,
+  SocketStateInitialized = 1,
+  SocketStateAccepting = 2,
+  SocketStateAccepted = 3,
+  SocketStateConnecting = 4,
+  SocketStateConnectPolling = 5,
+  SocketStateConnected = 6,
+  SocketStateReady = 7,
+  SocketStateClosed = 8,
+  SocketStateError = 9,
+  SocketStateNum = 10
 };
 
-enum mscclppSocketType {
-  mscclppSocketTypeUnknown = 0,
-  mscclppSocketTypeBootstrap = 1,
-  mscclppSocketTypeProxy = 2,
-  mscclppSocketTypeNetSocket = 3,
-  mscclppSocketTypeNetIb = 4
+enum SocketType {
+  SocketTypeUnknown = 0,
+  SocketTypeBootstrap = 1,
+  SocketTypeProxy = 2,
+  SocketTypeNetSocket = 3,
+  SocketTypeNetIb = 4
 };
 
-const char* mscclppSocketToString(union mscclppSocketAddress* addr, char* buf, const int numericHostForm = 1);
-void mscclppSocketGetAddrFromString(union mscclppSocketAddress* ua, const char* ip_port_pair);
-int mscclppFindInterfaceMatchSubnet(char* ifNames, union mscclppSocketAddress* localAddrs,
-                                    union mscclppSocketAddress* remoteAddr, int ifNameMaxSize, int maxIfs);
-int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress* ifAddrs, int ifNameMaxSize, int maxIfs);
-
-namespace mscclpp {
+const char* SocketToString(union SocketAddress* addr, char* buf, const int numericHostForm = 1);
+void SocketGetAddrFromString(union SocketAddress* ua, const char* ip_port_pair);
+int FindInterfaceMatchSubnet(char* ifNames, union SocketAddress* localAddrs, union SocketAddress* remoteAddr,
+                             int ifNameMaxSize, int maxIfs);
+int FindInterfaces(char* ifNames, union SocketAddress* ifAddrs, int ifNameMaxSize, int maxIfs,
+                   const char* inputIfName = nullptr);
 
 class Socket {
  public:
-  Socket(const mscclppSocketAddress* addr = nullptr, uint64_t magic = MSCCLPP_SOCKET_MAGIC,
-         enum mscclppSocketType type = mscclppSocketTypeUnknown, volatile uint32_t* abortFlag = nullptr,
-         int asyncFlag = 0);
+  Socket(const SocketAddress* addr = nullptr, uint64_t magic = MSCCLPP_SOCKET_MAGIC,
+         enum SocketType type = SocketTypeUnknown, volatile uint32_t* abortFlag = nullptr, int asyncFlag = 0);
   ~Socket();
 
   void listen();
@@ -75,10 +75,10 @@ class Socket {
   int getAcceptRetries() const { return acceptRetries_; }
   volatile uint32_t* getAbortFlag() const { return abortFlag_; }
   int getAsyncFlag() const { return asyncFlag_; }
-  enum mscclppSocketState getState() const { return state_; }
+  enum SocketState getState() const { return state_; }
   uint64_t getMagic() const { return magic_; }
-  enum mscclppSocketType getType() const { return type_; }
-  mscclppSocketAddress getAddr() const { return addr_; }
+  enum SocketType getType() const { return type_; }
+  SocketAddress getAddr() const { return addr_; }
   int getSalen() const { return salen_; }
 
  private:
@@ -99,11 +99,11 @@ class Socket {
   int acceptRetries_;
   volatile uint32_t* abortFlag_;
   int asyncFlag_;
-  enum mscclppSocketState state_;
+  enum SocketState state_;
   uint64_t magic_;
-  enum mscclppSocketType type_;
+  enum SocketType type_;
 
-  union mscclppSocketAddress addr_;
+  union SocketAddress addr_;
   int salen_;
 };
 

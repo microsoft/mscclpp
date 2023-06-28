@@ -12,9 +12,9 @@ TEST(Socket, ListenAndConnect) {
   mscclpp::Timer timeout(3);
 
   std::string ipPortPair = "127.0.0.1:51512";
-  mscclppSocketAddress listenAddr;
+  mscclpp::SocketAddress listenAddr;
 
-  ASSERT_NO_THROW(mscclppSocketGetAddrFromString(&listenAddr, ipPortPair.c_str()));
+  ASSERT_NO_THROW(mscclpp::SocketGetAddrFromString(&listenAddr, ipPortPair.c_str()));
 
   mscclpp::Socket listenSock(&listenAddr);
   listenSock.listen();
