@@ -24,7 +24,7 @@ uint64_t mscclppDebugMask = MSCCLPP_INIT;  // Default debug sub-system mask is I
 FILE* mscclppDebugFile = stdout;
 mscclppLogHandler_t mscclppDebugLogHandler = NULL;
 pthread_mutex_t mscclppDebugLock = PTHREAD_MUTEX_INITIALIZER;
-std::chrono::steady_clock::time_point mscclppSemaphore;
+std::chrono::steady_clock::time_point mscclppEpoch;
 
 static __thread int tid = -1;
 
@@ -148,7 +148,7 @@ void mscclppDebugInit() {
 
   if (mscclppDebugLogHandler == NULL) mscclppDebugLogHandler = mscclppDefaultLogHandler;
 
-  mscclppSemaphore = std::chrono::steady_clock::now();
+  mscclppEpoch = std::chrono::steady_clock::now();
   __atomic_store_n(&mscclppDebugLevel, tempNcclDebugLevel, __ATOMIC_RELEASE);
   pthread_mutex_unlock(&mscclppDebugLock);
 }
@@ -194,7 +194,7 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
   } else if (level == MSCCLPP_LOG_TRACE && flags == MSCCLPP_CALL) {
     len = snprintf(buffer, sizeof(buffer), "%s:%d:%d MSCCLPP CALL ", hostname.c_str(), pid, tid);
   } else if (level == MSCCLPP_LOG_TRACE) {
-    auto delta = std::chrono::steady_clock::now() - mscclppSemaphore;
+    auto delta = std::chrono::steady_clock::now() - mscclppEpoch;
     double timestamp = std::chrono::duration_cast<std::chrono::duration<double>>(delta).count() * 1000;
     len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] %f %s:%d MSCCLPP TRACE ", hostname.c_str(), pid, tid, cudaDev,
                    timestamp, filefunc, line);
