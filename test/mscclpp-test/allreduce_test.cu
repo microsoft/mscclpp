@@ -125,6 +125,16 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
 __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNode, int worldSize,
                               size_t nelems  // much be divisible by 3
 ) {
+  // this reduce-scatter algorithm works as follows:
+  // Step 1: each node does a local reduce-scatter on peer node data chunks with 1/pipeline portion of chunk data. For
+  // example, 2 nodes and each node has 2 ranks. rank 0 and rank 1 perform reduce-scatter on chunk 2 and chunk 3, with
+  // 1/pipeline portion of the data.
+  // Step 2: each node does a local reduce-scatter on peers data chunks with (pipeline-1)/pipeline portion of chunk
+  // data. Meanwhile, exchange the reduced data of the previous step with its cross-node neighbor (same local rank
+  // number on the other node) via IB. Then performs a reduce operation.
+  // Step 3:  each node does a local reduce-scatter on local ranks, meanwhile exchange the reduced data of the previous
+  // step with its cross-node neighbor (same local rank number on the other node) via IB. Then performs a reduce
+  // operation.
   int pipelineSize = 3;
   const size_t chunkSize = nelems / worldSize;
   int peerRank = (rank + nRanksPerNode) % worldSize;
@@ -142,8 +152,7 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
   localReduceScatter(buff, scratch, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize / pipelineSize);
   deviceSyncer.sync(gridDim.x);
 
-  // step 2: transfer local reduce result to peer, and do another round local reduce
-  // cross-node exchange
+  // step 2: local reduce and exchange data with neighbor
   if (isComm) {
     size_t offset = (peerRank * chunkSize) * sizeof(int);
     // opposite side
@@ -165,7 +174,7 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
   }
   deviceSyncer.sync(gridDim.x);
 
-  // step 3: transfer local reduce result to peer, and do another round local reduce
+  // step 3: local reduce and exchange data with neighbor
   startChunkIndex = (rank / nRanksPerNode) * nRanksPerNode;
   if (isComm) {
     size_t offset = (peerRank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
@@ -239,7 +248,6 @@ __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nel
   }
 
   // Step 1
-  // local allgather & cross node exchange
   if (isComm) {
     devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
                           (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
@@ -251,7 +259,6 @@ __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nel
   }
   deviceSyncer.sync(gridDim.x);
   // Step 2
-  // local allgather
   if (isComm) {
     devChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
                           nelemsPerGPU / pipelineSize * sizeof(int));
@@ -259,7 +266,6 @@ __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nel
   localAllGather(rank, nRanksPerNode, peerRank * nelemsPerGPU * sizeof(int),
                  (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
 
-  // cross-node exchange
   if (isComm) {
     devChan.wait();
     devChan.flush();
@@ -267,7 +273,6 @@ __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nel
   deviceSyncer.sync(gridDim.x);
 
   // Step 3
-  // local allgather
   localAllGather(rank, nRanksPerNode,
                  (peerRank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
                  nelemsPerGPU / pipelineSize * sizeof(int));
