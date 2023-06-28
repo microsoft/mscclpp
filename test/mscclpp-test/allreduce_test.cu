@@ -228,41 +228,38 @@ __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nel
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
-
-  // Step 1
-  // local allgather
-  localAllGather(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
-  if (peerNodeId == rank / nRanksPerNode) {
-    return;
-  }
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   mscclpp::channel::SimpleDeviceChannel& devChan = constDevSndRoundChans[peer];
-  if (isComm) {
-    // cross-node exchange
-    devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
-                          (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
-    devChan.wait();
+
+  if (peerNodeId == rank / nRanksPerNode) {
+    localAllGather(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+    return;
   }
 
-  deviceSyncer.sync(gridDim.x);
+  // Step 1
+  // local allgather & cross node exchange
   if (isComm) {
+    devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
+                          (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
+  }
+  localAllGather(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+  if (isComm) {
+    devChan.wait();
     devChan.flush();
   }
   deviceSyncer.sync(gridDim.x);
   // Step 2
   // local allgather
+  if (isComm) {
+    devChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
+                          nelemsPerGPU / pipelineSize * sizeof(int));
+  }
   localAllGather(rank, nRanksPerNode, peerRank * nelemsPerGPU * sizeof(int),
                  (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
 
   // cross-node exchange
   if (isComm) {
-    // opposite side
-    devChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
-                          nelemsPerGPU / pipelineSize * sizeof(int));
     devChan.wait();
-  }
-  deviceSyncer.sync(gridDim.x);
-  if (isComm) {
     devChan.flush();
   }
   deviceSyncer.sync(gridDim.x);
