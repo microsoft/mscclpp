@@ -234,7 +234,7 @@ __device__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
                            int nRanksPerNode, int worldSize, size_t nelems) {
   int numPeersPerNode = nRanksPerNode - 1;
   size_t nPkts = nelems / 2;  // 2 elems per packet, assume nelems is even
-  size_t pktBytes = nPkts * sizeof(mscclpp::packet::LL);
+  size_t pktBytes = nPkts * sizeof(mscclpp::LLPacket);
 
   // Channel to a local peer
   int smChanIdx = blockIdx.x / BLOCKS_PER_PEER;
@@ -250,11 +250,11 @@ __device__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
   int2* src = (int2*)buff;
   int2* res = (int2*)result;
   // double buffering
-  size_t scratchOffset = (flag & 1) ? 0 : nPkts * max(numPeersPerNode, 1) * sizeof(mscclpp::packet::LL);
-  mscclpp::packet::LL* scratchPtr = (mscclpp::packet::LL*)((char*)scratch + scratchOffset);
-  size_t pktBufOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::packet::LL);
-  mscclpp::packet::LL* getPktPtr = (mscclpp::packet::LL*)((char*)getPktBuf + pktBufOffset);
-  mscclpp::packet::LL* putPktPtr = (mscclpp::packet::LL*)((char*)putPktBuf + pktBufOffset);
+  size_t scratchOffset = (flag & 1) ? 0 : nPkts * max(numPeersPerNode, 1) * sizeof(mscclpp::LLPacket);
+  mscclpp::LLPacket* scratchPtr = (mscclpp::LLPacket*)((char*)scratch + scratchOffset);
+  size_t pktBufOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LLPacket);
+  mscclpp::LLPacket* getPktPtr = (mscclpp::LLPacket*)((char*)getPktBuf + pktBufOffset);
+  mscclpp::LLPacket* putPktPtr = (mscclpp::LLPacket*)((char*)putPktBuf + pktBufOffset);
 
   // Phase 1: Local AllReduce. Read from buff, write to putPktBuf (for single node) or to result (for 2 nodes)
   if (numPeersPerNode == 0) {
@@ -278,8 +278,8 @@ __device__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
       int x = 0;
       int y = 0;
       for (int peerIdx = 0; peerIdx < numPeersPerNode / 2; ++peerIdx) {
-        mscclpp::packet::LL* pkt0 = scratchPtr + 2 * peerIdx * nPkts;
-        mscclpp::packet::LL* pkt1 = scratchPtr + (2 * peerIdx + 1) * nPkts;
+        mscclpp::LLPacket* pkt0 = scratchPtr + 2 * peerIdx * nPkts;
+        mscclpp::LLPacket* pkt1 = scratchPtr + (2 * peerIdx + 1) * nPkts;
         uint2 data0 = pkt0[idx].read(flag);
         uint2 data1 = pkt1[idx].read(flag);
         x += (int)data0.x;
@@ -288,7 +288,7 @@ __device__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
         y += (int)data1.y;
       }
       if (numPeersPerNode & 1) {
-        mscclpp::packet::LL* pkt = scratchPtr + (numPeersPerNode - 1) * nPkts;
+        mscclpp::LLPacket* pkt = scratchPtr + (numPeersPerNode - 1) * nPkts;
         uint2 data = pkt[idx].read(flag);
         x += (int)data.x;
         y += (int)data.y;
@@ -434,9 +434,9 @@ class AllReduceTestEngine : public BaseTestEngine {
   std::shared_ptr<int> inputBuff_;
   std::shared_ptr<int> scratchBuff_;
   std::shared_ptr<int> resultBuff_;
-  std::shared_ptr<mscclpp::packet::LL> scratchPacketBuff_;
-  std::shared_ptr<mscclpp::packet::LL> putPacketBuff_;
-  std::shared_ptr<mscclpp::packet::LL> getPacketBuff_;
+  std::shared_ptr<mscclpp::LLPacket> scratchPacketBuff_;
+  std::shared_ptr<mscclpp::LLPacket> putPacketBuff_;
+  std::shared_ptr<mscclpp::LLPacket> getPacketBuff_;
   std::shared_ptr<int[]> expectedBuff_;
 };
 
@@ -461,11 +461,11 @@ void AllReduceTestEngine::allocateBuffer() {
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     // 2x for double-buffering
     const size_t scratchBuffNelem = nPacket * std::max(args_.nRanksPerNode - 1, 1) * 2;
-    scratchPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::packet::LL>(scratchBuffNelem);
+    scratchPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
     scratchPacketBuff = scratchPacketBuff_.get();
     const size_t packetBuffNelem = nPacket * 2;
-    putPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::packet::LL>(packetBuffNelem);
-    getPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::packet::LL>(packetBuffNelem);
+    putPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
+    getPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
     putPacketBuff = putPacketBuff_.get();
     getPacketBuff = getPacketBuff_.get();
   }
@@ -488,8 +488,8 @@ void AllReduceTestEngine::setupConnections() {
 
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     const size_t scratchPacketBuffBytes =
-        nPacket * std::max(args_.nRanksPerNode - 1, 1) * 2 * sizeof(mscclpp::packet::LL);
-    const size_t packetBuffBytes = nPacket * 2 * sizeof(mscclpp::packet::LL);
+        nPacket * std::max(args_.nRanksPerNode - 1, 1) * 2 * sizeof(mscclpp::LLPacket);
+    const size_t packetBuffBytes = nPacket * 2 * sizeof(mscclpp::LLPacket);
     setupMeshConnections(smChannels, devChannels, inputBuff_.get(), args_.maxBytes, putPacketBuff_.get(),
                          packetBuffBytes, getPacketBuff_.get(), packetBuffBytes, scratchPacketBuff_.get(),
                          scratchPacketBuffBytes);

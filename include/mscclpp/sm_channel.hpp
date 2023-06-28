@@ -34,12 +34,12 @@ struct SmChannel {
 
   __forceinline__ __device__ void putPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
                                              uint32_t numThreads, uint32_t flag) {
-    mscclpp::packet::putPackets(dst_, dstOffset, src_, srcOffset, size, threadId, numThreads, flag);
+    mscclpp::putPackets(dst_, dstOffset, src_, srcOffset, size, threadId, numThreads, flag);
   }
 
   __forceinline__ __device__ void getPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
                                              uint32_t numThreads, uint32_t flag) {
-    mscclpp::packet::getPackets(src_, dstOffset, getPacketBuffer_, srcOffset, size, threadId, numThreads, flag);
+    mscclpp::getPackets(src_, dstOffset, getPacketBuffer_, srcOffset, size, threadId, numThreads, flag);
   }
 
   __forceinline__ __device__ void signal() { semaphore_.signal(); }

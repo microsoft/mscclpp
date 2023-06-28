@@ -155,8 +155,8 @@ TEST_F(DeviceChannelOneToOneTest, PingPongIb) {
 __device__ mscclpp::DeviceSyncer gChannelOneToOneTestDevChansSyncer;
 
 template <bool CheckCorrectness>
-__global__ void kernelDeviceLLPingPong(int* buff, mscclpp::packet::LL* putPktBuf, mscclpp::packet::LL* getPktBuf,
-                                       int rank, int nElem, int nTries, int* ret) {
+__global__ void kernelDeviceLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, mscclpp::LLPacket* getPktBuf, int rank,
+                                       int nElem, int nTries, int* ret) {
   if (rank > 1) return;
 
   mscclpp::SimpleProxyChannel& devChan = gChannelOneToOneTestConstDevChans;
@@ -181,11 +181,11 @@ __global__ void kernelDeviceLLPingPong(int* buff, mscclpp::packet::LL* putPktBuf
         }
         // __syncthreads();
       }
-      mscclpp::packet::putPackets(putPktBuf, 0, buff, 0, nElem * sizeof(int), threadId, numThreads, flag);
+      mscclpp::putPackets(putPktBuf, 0, buff, 0, nElem * sizeof(int), threadId, numThreads, flag);
       gChannelOneToOneTestDevChansSyncer.sync(gridDim.x);
       if (threadId == 0) {
         // Send data from the local putPacketBuffer to the remote getPacketBuffer
-        devChan.put(0, nPkt * sizeof(mscclpp::packet::LL));
+        devChan.put(0, nPkt * sizeof(mscclpp::LLPacket));
       }
       flusher++;
       if (flusher == 64) {
@@ -193,7 +193,7 @@ __global__ void kernelDeviceLLPingPong(int* buff, mscclpp::packet::LL* putPktBuf
         flusher = 0;
       }
     } else {
-      mscclpp::packet::getPackets(buff, 0, getPktBuf, 0, nElem * sizeof(int), threadId, numThreads, flag);
+      mscclpp::getPackets(buff, 0, getPktBuf, 0, nElem * sizeof(int), threadId, numThreads, flag);
       if (CheckCorrectness) {
         // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
         // __syncthreads();
@@ -227,11 +227,11 @@ void DeviceChannelOneToOneTest::testPacketPingPong(bool useIbOnly) {
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
 
   const size_t nPacket = (nElem * sizeof(int) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
-  auto putPacketBuffer = mscclpp::allocSharedCuda<mscclpp::packet::LL>(nPacket);
-  auto getPacketBuffer = mscclpp::allocSharedCuda<mscclpp::packet::LL>(nPacket);
+  auto putPacketBuffer = mscclpp::allocSharedCuda<mscclpp::LLPacket>(nPacket);
+  auto getPacketBuffer = mscclpp::allocSharedCuda<mscclpp::LLPacket>(nPacket);
 
-  setupMeshConnections(devChannels, useIbOnly, putPacketBuffer.get(), nPacket * sizeof(mscclpp::packet::LL),
-                       getPacketBuffer.get(), nPacket * sizeof(mscclpp::packet::LL));
+  setupMeshConnections(devChannels, useIbOnly, putPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket),
+                       getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket));
 
   ASSERT_EQ(devChannels.size(), 1);
   MSCCLPP_CUDATHROW(
@@ -288,11 +288,11 @@ void DeviceChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
 
   const size_t nPacket = (nElem * sizeof(int) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
-  auto putPacketBuffer = mscclpp::allocSharedCuda<mscclpp::packet::LL>(nPacket);
-  auto getPacketBuffer = mscclpp::allocSharedCuda<mscclpp::packet::LL>(nPacket);
+  auto putPacketBuffer = mscclpp::allocSharedCuda<mscclpp::LLPacket>(nPacket);
+  auto getPacketBuffer = mscclpp::allocSharedCuda<mscclpp::LLPacket>(nPacket);
 
-  setupMeshConnections(devChannels, useIbOnly, putPacketBuffer.get(), nPacket * sizeof(mscclpp::packet::LL),
-                       getPacketBuffer.get(), nPacket * sizeof(mscclpp::packet::LL));
+  setupMeshConnections(devChannels, useIbOnly, putPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket),
+                       getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket));
 
   ASSERT_EQ(devChannels.size(), 1);
   MSCCLPP_CUDATHROW(

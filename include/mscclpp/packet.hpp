@@ -5,9 +5,8 @@
 #define MSCCLPP_PACKET_HPP_
 
 namespace mscclpp {
-namespace packet {
 
-union LL {
+union LLPacket {
   // Assume data is written with an atomicity of 8 bytes (IB/RDMA).
   struct {
     uint32_t data1;
@@ -24,7 +23,7 @@ union LL {
   uint64_t v[2];
 
 #ifdef __CUDACC__
-  __forceinline__ __device__ LL() {}
+  __forceinline__ __device__ LLPacket() {}
   __forceinline__ __device__ void write(uint32_t val1, uint32_t val2, uint32_t flag) {
     asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"(val1), "r"(flag), "r"(val2), "r"(flag));
   }
@@ -62,10 +61,10 @@ __forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* 
                                            uint64_t srcSize, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
   uint32_t* srcBase = (uint32_t*)((char*)src + srcOffset);
-  LL* dstBase = (LL*)((char*)dst + dstOffset);
+  LLPacket* dstBase = (LLPacket*)((char*)dst + dstOffset);
   size_t nElem = srcSize / sizeof(uint64_t);
   for (size_t i = threadId; i < nElem; i += numThreads) {
-    LL* pkt = &dstBase[i];
+    LLPacket* pkt = &dstBase[i];
     pkt->write(srcBase[2 * i], srcBase[2 * i + 1], flag);
   }
 }
@@ -73,17 +72,16 @@ __forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* 
 __forceinline__ __device__ void getPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
                                            uint64_t dstSize, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-  LL* srcBase = (LL*)((char*)src + srcOffset);
+  LLPacket* srcBase = (LLPacket*)((char*)src + srcOffset);
   uint2* dstBase = (uint2*)((char*)dst + dstOffset);
   size_t nElem = dstSize / sizeof(uint2);
   for (size_t i = threadId; i < nElem; i += numThreads) {
-    LL* pkt = &srcBase[i];
+    LLPacket* pkt = &srcBase[i];
     dstBase[i] = pkt->read(flag);
   }
 }
 #endif  // __CUDACC__
 
-};  // namespace packet
 };  // namespace mscclpp
 
 #endif  // MSCCLPP_PACKET_HPP_
