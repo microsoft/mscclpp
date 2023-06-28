@@ -24,29 +24,29 @@ MSCCL++ v0.2 supports the following features.
 
 ### In-Kernel Communication Interfaces
 
-MSCCL++ provides inter-GPU communication interfaces to be called by a GPU thread. For example, the `put()` method in the following example copies 1KB data from the local GPU to a remote GPU. `devChan` is a peer-to-peer communication channel initialized before the kernel execution from the host side, which consists of information on send/receive buffers.
+MSCCL++ provides inter-GPU communication interfaces to be called by a GPU thread. For example, the `put()` method in the following example copies 1KB data from the local GPU to a remote GPU. `channel` is a peer-to-peer communication channel between two GPUs, which consists of information on send/receive buffers. `channel` is initialized from the host side before the kernel execution.
 
 ```cpp
-__device__ mscclpp::SimpleDeviceChannelHandle devChan;
+__device__ mscclpp::SimpleProxyChannel channel;
 __global__ void gpuKernel() {
   ...
   // Only one thread is needed for this method.
-  devChan.put(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024);
+  channel.put(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024);
   ...
 }
 ```
 
-MSCCL++ also provides efficient synchronization methods, `signal()`, `flush()`, and `wait()`. For example, we can implement a simple barrier between two ranks (peer-to-peer connected through `devChan`) as follows. Explanation of each method is inlined.
+MSCCL++ also provides efficient synchronization methods, `signal()`, `flush()`, and `wait()`. For example, we can implement a simple barrier between two ranks (peer-to-peer connected through `channel`) as follows. Explanation of each method is inlined.
 
 ```cpp
 // Only one thread is needed for this function.
 __device__ void barrier() {
   // Inform the peer GPU that I have arrived at this point.
-  devChan.signal();
-  // Immediately flush all previous requests sent via this channel.
-  devChan.flush();
+  channel.signal();
+  // Flush the previous signal() call, which will wait for completion of signaling.
+  channel.flush();
   // Wait for the peer GPU to call signal().
-  devChan.wait();
+  channel.wait();
   // Now this thread is synchronized with the remote GPU’s thread.
   // Users may call a local synchronize functions (e.g., __syncthreads())
   // to synchronize other local threads as well with the remote side.
@@ -57,7 +57,7 @@ MSCCL++ provides consistent in-kernel interfaces, i.e., the above interfaces are
 
 ### Host-Side Communication Proxy
 
-Some in-kernel communication interfaces of MSCCL++ send requests (called triggers) to a GPU-external helper that conducts key functionalities such as DMA or RDMA. This helper is called a channel service or a proxy. MSCCL++ provides a default implementation of a proxy, which is a background host thread that busy polls triggers from GPUs and conducts functionalities accordingly. For example, the following is a typical host-side code for MSCCL++.
+Some in-kernel communication interfaces of MSCCL++ send requests (called triggers) to a GPU-external helper that conducts key functionalities such as DMA or RDMA. This helper is called a proxy service or a proxy in short. MSCCL++ provides a default implementation of a proxy, which is a background host thread that busy polls triggers from GPUs and conducts functionalities accordingly. For example, the following is a typical host-side code for MSCCL++.
 
 ```cpp
 // Bootstrap: initialize control-plane connections between all ranks
@@ -66,14 +66,14 @@ auto bootstrap = std::make_shared<mscclpp::Bootstrap>(rank, world_size);
 mscclpp::Communicator comm(bootstrap);
 // Setup connections here using `comm`
 ...
-// Construct the default channel service
-mscclpp::ProxyService channelService(comm);
+// Construct the default proxy
+mscclpp::ProxyService proxyService(comm);
 // Start the proxy
-channelService.startProxy();
+proxyService.startProxy();
 // Run the user application, i.e., launch GPU kernels here
 ...
 // Stop the proxy after the application is finished
-channelService.stopProxy();
+proxyService.stopProxy();
 ```
 
 While the default implementation already enables any kinds of communication, MSCCL++ also supports users to easily implement their own customized proxies for further optimization. For example, the following example re-defines how to interpret triggers from GPUs.
