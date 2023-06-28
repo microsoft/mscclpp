@@ -7,7 +7,6 @@
 #include "debug.h"
 
 namespace mscclpp {
-namespace channel {
 
 MSCCLPP_API_CPP SmChannel::SmChannel(SmDevice2DeviceSemaphore::DeviceHandle semaphore, RegisteredMemory dst, void* src,
                                      void* getPacketBuffer)
@@ -18,5 +17,4 @@ MSCCLPP_API_CPP SmChannel::SmChannel(SmDevice2DeviceSemaphore::DeviceHandle sema
   dst_ = dst.data();
 }
 
-}  // namespace channel
 }  // namespace mscclpp

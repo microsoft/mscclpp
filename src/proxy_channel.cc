@@ -8,15 +8,12 @@
 #include "numa.hpp"
 
 namespace mscclpp {
-namespace channel {
 
-MSCCLPP_API_CPP DeviceChannelHandle::DeviceChannelHandle(SemaphoreId semaphoreId,
-                                                         Host2DeviceSemaphore::DeviceHandle semaphore,
-                                                         DeviceProxyFifo fifo)
+MSCCLPP_API_CPP ProxyChannel::ProxyChannel(SemaphoreId semaphoreId, Host2DeviceSemaphore::DeviceHandle semaphore,
+                                           DeviceProxyFifo fifo)
     : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo) {}
 
-MSCCLPP_API_CPP SimpleDeviceChannelHandle::SimpleDeviceChannelHandle(DeviceChannelHandle devChan, MemoryId dst,
-                                                                     MemoryId src)
+MSCCLPP_API_CPP SimpleProxyChannel::SimpleProxyChannel(ProxyChannel devChan, MemoryId dst, MemoryId src)
     : devChan_(devChan), dst_(dst), src_(src) {}
 
 MSCCLPP_API_CPP ProxyService::ProxyService(Communicator& communicator)
@@ -41,8 +38,8 @@ MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(Se
   return semaphores_[id];
 }
 
-MSCCLPP_API_CPP DeviceChannelHandle ProxyService::deviceChannel(SemaphoreId id) {
-  return DeviceChannelHandle(id, semaphores_[id]->deviceHandle(), proxy_.fifo().deviceFifo());
+MSCCLPP_API_CPP ProxyChannel ProxyService::deviceChannel(SemaphoreId id) {
+  return ProxyChannel(id, semaphores_[id]->deviceHandle(), proxy_.fifo().deviceFifo());
 }
 
 MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_.start(); }
@@ -81,5 +78,4 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
   return result;
 }
 
-}  // namespace channel
 }  // namespace mscclpp

@@ -15,7 +15,7 @@ void SmChannelOneToOneTest::SetUp() {
 
 void SmChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
-void SmChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::channel::SmChannel>& smChannels, void* inputBuff,
+void SmChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels, void* inputBuff,
                                                  size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes) {
   const int rank = communicator->bootstrapper()->getRank();
   const int worldSize = communicator->bootstrapper()->getNranks();
@@ -58,10 +58,10 @@ void SmChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::channel::S
   }
 }
 
-__constant__ mscclpp::channel::SmChannel gChannelOneToOneTestConstSmChans;
+__constant__ mscclpp::SmChannel gChannelOneToOneTestConstSmChans;
 
 __global__ void kernelDirectPingPong(int* buff, int rank, int nElem, int* ret) {
-  mscclpp::channel::SmChannel& smChan = gChannelOneToOneTestConstSmChans;
+  mscclpp::SmChannel& smChan = gChannelOneToOneTestConstSmChans;
   volatile int* sendBuff = (volatile int*)buff;
   int nTries = 1000;
   int rank1Offset = 10000000;
@@ -112,13 +112,13 @@ TEST_F(SmChannelOneToOneTest, PingPong) {
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::channel::SmChannel> smChannels;
+  std::vector<mscclpp::SmChannel> smChannels;
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
   setupMeshConnections(smChannels, buff.get(), nElem * sizeof(int));
 
   ASSERT_EQ(smChannels.size(), 1);
   MSCCLPP_CUDATHROW(
-      cudaMemcpyToSymbol(gChannelOneToOneTestConstSmChans, smChannels.data(), sizeof(mscclpp::channel::SmChannel)));
+      cudaMemcpyToSymbol(gChannelOneToOneTestConstSmChans, smChannels.data(), sizeof(mscclpp::SmChannel)));
 
   std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
 
@@ -149,7 +149,7 @@ TEST_F(SmChannelOneToOneTest, PingPong) {
 __global__ void kernelDirectPacketPingPong(int* buff, int rank, int nElem, int* ret) {
   if (rank > 1) return;
 
-  mscclpp::channel::SmChannel& smChan = gChannelOneToOneTestConstSmChans;
+  mscclpp::SmChannel& smChan = gChannelOneToOneTestConstSmChans;
   volatile int* sendBuff = (volatile int*)buff;
   int nTries = 1000;
   int putOffset = (rank == 0) ? 0 : 10000000;
@@ -196,14 +196,14 @@ TEST_F(SmChannelOneToOneTest, PacketPingPong) {
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::channel::SmChannel> smChannels;
+  std::vector<mscclpp::SmChannel> smChannels;
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
   std::shared_ptr<int> intermBuff = mscclpp::allocSharedCuda<int>(nElem * 2);
   setupMeshConnections(smChannels, buff.get(), nElem * sizeof(int), intermBuff.get(), nElem * 2 * sizeof(int));
 
   ASSERT_EQ(smChannels.size(), 1);
   MSCCLPP_CUDATHROW(
-      cudaMemcpyToSymbol(gChannelOneToOneTestConstSmChans, smChannels.data(), sizeof(mscclpp::channel::SmChannel)));
+      cudaMemcpyToSymbol(gChannelOneToOneTestConstSmChans, smChannels.data(), sizeof(mscclpp::SmChannel)));
 
   std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
 

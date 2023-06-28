@@ -10,14 +10,13 @@
 #include <mscclpp/semaphore.hpp>
 
 namespace mscclpp {
-namespace channel {
 
 using SemaphoreId = uint32_t;
 
 // This is just a numeric ID. Each HostConnection will have an internal array indexed by these handles
 // mapping to the actual
 using MemoryId = uint32_t;
-struct DeviceChannelHandle;
+struct ProxyChannel;
 
 class BaseProxyService {
  public:
@@ -36,7 +35,7 @@ class ProxyService : public BaseProxyService {
   MemoryId addMemory(RegisteredMemory memory);
 
   std::shared_ptr<Host2DeviceSemaphore> semaphore(SemaphoreId id) const;
-  DeviceChannelHandle deviceChannel(SemaphoreId id);
+  ProxyChannel deviceChannel(SemaphoreId id);
 
   void startProxy();
   void stopProxy();
@@ -98,14 +97,14 @@ union ChannelTrigger {
 #endif  // __CUDACC__
 };
 
-struct DeviceChannelHandle {
-  DeviceChannelHandle() = default;
+struct ProxyChannel {
+  ProxyChannel() = default;
 
-  DeviceChannelHandle(SemaphoreId SemaphoreId, Host2DeviceSemaphore::DeviceHandle semaphore, DeviceProxyFifo fifo);
+  ProxyChannel(SemaphoreId SemaphoreId, Host2DeviceSemaphore::DeviceHandle semaphore, DeviceProxyFifo fifo);
 
-  DeviceChannelHandle(const DeviceChannelHandle& other) = default;
+  ProxyChannel(const ProxyChannel& other) = default;
 
-  DeviceChannelHandle& operator=(DeviceChannelHandle& other) = default;
+  ProxyChannel& operator=(ProxyChannel& other) = default;
 
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
@@ -160,16 +159,16 @@ struct DeviceChannelHandle {
   DeviceProxyFifo fifo_;
 };
 
-struct SimpleDeviceChannelHandle {
-  SimpleDeviceChannelHandle() = default;
+struct SimpleProxyChannel {
+  SimpleProxyChannel() = default;
 
-  SimpleDeviceChannelHandle(DeviceChannelHandle devChan, MemoryId dst, MemoryId src);
+  SimpleProxyChannel(ProxyChannel devChan, MemoryId dst, MemoryId src);
 
-  SimpleDeviceChannelHandle(DeviceChannelHandle devChan) : devChan_(devChan) {}
+  SimpleProxyChannel(ProxyChannel devChan) : devChan_(devChan) {}
 
-  SimpleDeviceChannelHandle(const SimpleDeviceChannelHandle& other) = default;
+  SimpleProxyChannel(const SimpleProxyChannel& other) = default;
 
-  SimpleDeviceChannelHandle& operator=(SimpleDeviceChannelHandle& other) = default;
+  SimpleProxyChannel& operator=(SimpleProxyChannel& other) = default;
 
 #ifdef __CUDACC__
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
@@ -200,12 +199,11 @@ struct SimpleDeviceChannelHandle {
 
 #endif  // __CUDACC__
 
-  DeviceChannelHandle devChan_;
+  ProxyChannel devChan_;
   MemoryId dst_;
   MemoryId src_;
 };
 
-}  // namespace channel
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_PROXY_CHANNEL_HPP_

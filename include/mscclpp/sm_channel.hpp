@@ -9,7 +9,6 @@
 #include <mscclpp/semaphore.hpp>
 
 namespace mscclpp {
-namespace channel {
 
 // A direct version of DeviceChannel only for CudaIpc
 struct SmChannel {
@@ -60,7 +59,6 @@ struct SmChannel {
   void* getPacketBuffer_;
 };
 
-}  // namespace channel
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_SM_CHANNEL_HPP_
