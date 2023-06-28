@@ -70,6 +70,7 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
   }
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int startRankInNode = (rank / nRanksPerNode) * nRanksPerNode;
+  int rankIdexInNode = rank % nRanksPerNode;
 
   for (int i = 1; i < nRanksPerNode; ++i) {
     int remoteSendToRank = (rank + i) % nRanksPerNode + startRankInNode;
@@ -79,7 +80,6 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
 
     mscclpp::channel::SimpleDeviceChannel& devFstSendChan = constDevFstRoundChans[peerSendId];
     mscclpp::channel::SimpleDeviceChannel& devFstRecvChan = constDevFstRoundChans[peerRecvId];
-    int rankIdexInNode = rank % nRanksPerNode;
     size_t srcOffset =
         (((rankIdexInNode + i) % nRanksPerNode + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
     size_t dstOffset = rank * chunkSize * sizeof(int);

@@ -507,7 +507,6 @@ int main(int argc, char* argv[]) {
             "[-c,--check <0/1>] \n\t"
             "[-T,--timeout <time in seconds>] \n\t"
             "[-G,--cudagraph <num graph launches>] \n\t"
-            "[-C,--report_cputime <0/1>] \n\t"
             "[-a,--average <0/1/2/3> report average iteration time <0=RANK0/1=AVG/2=MIN/3=MAX>] \n\t"
             "[-k,--kernel_num <kernel number of commnication primitive>] \n\t"
             "[-o, --output_file <output file name>] \n\t"
