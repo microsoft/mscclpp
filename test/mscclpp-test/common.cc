@@ -421,14 +421,14 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
   }
 
   std::unordered_map<size_t, std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
-  std::unordered_map<size_t, mscclpp::SemaphoreId> connIdToChanId;
+  std::unordered_map<size_t, mscclpp::SemaphoreId> connIdToSemId;
   auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
       smSemaphores.emplace(cid, std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, connections[cid]));
     } else {
-      connIdToChanId[cid] = service->addSemaphore(connections[cid]);
+      connIdToSemId[cid] = service->addSemaphore(connections[cid]);
     }
   }
   comm_->setup();
@@ -442,7 +442,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
       if (putPacketBuff == nullptr || getPacketBuff == nullptr) {
         throw std::runtime_error("IB transport requires putPacketBuff and getPacketBuff");
       }
-      devChannels.emplace_back(service->deviceChannel(connIdToChanId[cid]),
+      devChannels.emplace_back(service->deviceChannel(connIdToSemId[cid]),
                                service->addMemory(remoteRegMemories[cid].get()),
                                service->addMemory(putPacketBufRegMem));
     }
