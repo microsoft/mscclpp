@@ -21,6 +21,8 @@
 #include "debug.h"
 #include "utils_internal.hpp"
 
+namespace mscclpp {
+
 #define MSCCLPP_SOCKET_SEND 0
 #define MSCCLPP_SOCKET_RECV 1
 
@@ -28,7 +30,7 @@
  *
  * Output: "IPv4/IPv6 address<port>"
  */
-const char* mscclppSocketToString(union mscclppSocketAddress* addr, char* buf, const int numericHostForm /*= 1*/) {
+const char* SocketToString(union SocketAddress* addr, char* buf, const int numericHostForm /*= 1*/) {
   if (buf == NULL || addr == NULL) return NULL;
   struct sockaddr* saddr = &addr->sa;
   if (saddr->sa_family != AF_INET && saddr->sa_family != AF_INET6) {
@@ -40,12 +42,12 @@ const char* mscclppSocketToString(union mscclppSocketAddress* addr, char* buf, c
    * (When not set, this will still happen in case the node's name cannot be determined.)
    */
   int flag = NI_NUMERICSERV | (numericHostForm ? NI_NUMERICHOST : 0);
-  (void)getnameinfo(saddr, sizeof(union mscclppSocketAddress), host, NI_MAXHOST, service, NI_MAXSERV, flag);
+  (void)getnameinfo(saddr, sizeof(union SocketAddress), host, NI_MAXHOST, service, NI_MAXSERV, flag);
   sprintf(buf, "%s<%s>", host, service);
   return buf;
 }
 
-static uint16_t socketToPort(union mscclppSocketAddress* addr) {
+static uint16_t socketToPort(union SocketAddress* addr) {
   struct sockaddr* saddr = &addr->sa;
   return ntohs(saddr->sa_family == AF_INET ? addr->sin.sin_port : addr->sin6.sin6_port);
 }
@@ -65,7 +67,7 @@ static int envSocketFamily(void) {
   return family;
 }
 
-static int findInterfaces(const char* prefixList, char* names, union mscclppSocketAddress* addrs, int sock_family,
+static int findInterfaces(const char* prefixList, char* names, union SocketAddress* addrs, int sock_family,
                           int maxIfNameSize, int maxIfs) {
 #ifdef ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
@@ -88,7 +90,7 @@ static int findInterfaces(const char* prefixList, char* names, union mscclppSock
     if (family != AF_INET && family != AF_INET6) continue;
 
     TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Found interface %s:%s", interface->ifa_name,
-          mscclppSocketToString((union mscclppSocketAddress*)interface->ifa_addr, line));
+          SocketToString((union SocketAddress*)interface->ifa_addr, line));
 
     /* Allow the caller to force the socket family type */
     if (sock_family != -1 && family != sock_family) continue;
@@ -128,7 +130,7 @@ static int findInterfaces(const char* prefixList, char* names, union mscclppSock
   return found;
 }
 
-static bool matchSubnet(struct ifaddrs local_if, union mscclppSocketAddress* remote) {
+static bool matchSubnet(struct ifaddrs local_if, union SocketAddress* remote) {
   /* Check family first */
   int family = local_if.ifa_addr->sa_family;
   if (family != remote->sa.sa_family) {
@@ -171,8 +173,8 @@ static bool matchSubnet(struct ifaddrs local_if, union mscclppSocketAddress* rem
   }
 }
 
-int mscclppFindInterfaceMatchSubnet(char* ifNames, union mscclppSocketAddress* localAddrs,
-                                    union mscclppSocketAddress* remoteAddr, int ifNameMaxSize, int maxIfs) {
+int FindInterfaceMatchSubnet(char* ifNames, union SocketAddress* localAddrs, union SocketAddress* remoteAddr,
+                             int ifNameMaxSize, int maxIfs) {
 #ifdef ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
 #endif
@@ -200,20 +202,19 @@ int mscclppFindInterfaceMatchSubnet(char* ifNames, union mscclppSocketAddress* l
     strncpy(ifNames + found * ifNameMaxSize, interface->ifa_name, ifNameMaxSize);
 
     TRACE(MSCCLPP_INIT | MSCCLPP_NET, "NET : Found interface %s:%s in the same subnet as remote address %s",
-          interface->ifa_name, mscclppSocketToString(localAddrs + found, line),
-          mscclppSocketToString(remoteAddr, line_a));
+          interface->ifa_name, SocketToString(localAddrs + found, line), SocketToString(remoteAddr, line_a));
     found++;
     if (found == maxIfs) break;
   }
 
   if (found == 0) {
-    WARN("Net : No interface found in the same subnet as remote address %s", mscclppSocketToString(remoteAddr, line_a));
+    WARN("Net : No interface found in the same subnet as remote address %s", SocketToString(remoteAddr, line_a));
   }
   freeifaddrs(interfaces);
   return found;
 }
 
-void mscclppSocketGetAddrFromString(union mscclppSocketAddress* ua, const char* ip_port_pair) {
+void SocketGetAddrFromString(union SocketAddress* ua, const char* ip_port_pair) {
   if (!(ip_port_pair && strlen(ip_port_pair) > 1)) {
     throw mscclpp::Error("Net : string is null", mscclpp::ErrorCode::InvalidUsage);
   }
@@ -289,14 +290,18 @@ void mscclppSocketGetAddrFromString(union mscclppSocketAddress* ua, const char* 
   }
 }
 
-int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress* ifAddrs, int ifNameMaxSize, int maxIfs) {
+int FindInterfaces(char* ifNames, union SocketAddress* ifAddrs, int ifNameMaxSize, int maxIfs,
+                   const char* inputIfName) {
   static int shownIfName = 0;
   int nIfs = 0;
   // Allow user to force the INET socket family selection
   int sock_family = envSocketFamily();
   // User specified interface
   char* env = getenv("MSCCLPP_SOCKET_IFNAME");
-  if (env && strlen(env) > 1) {
+  if (inputIfName) {
+    INFO(MSCCLPP_NET, "using iterface %s", inputIfName);
+    nIfs = findInterfaces(inputIfName, ifNames, ifAddrs, sock_family, ifNameMaxSize, maxIfs);
+  } else if (env && strlen(env) > 1) {
     INFO(MSCCLPP_ENV, "MSCCLPP_SOCKET_IFNAME set by environment to %s", env);
     // Specified by user : find or fail
     if (shownIfName++ == 0) INFO(MSCCLPP_NET, "MSCCLPP_SOCKET_IFNAME set to %s", env);
@@ -311,9 +316,9 @@ int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress* ifAddrs, in
       if (commId && strlen(commId) > 1) {
         INFO(MSCCLPP_ENV, "MSCCLPP_COMM_ID set by environment to %s", commId);
         // Try to find interface that is in the same subnet as the IP in comm id
-        union mscclppSocketAddress idAddr;
-        mscclppSocketGetAddrFromString(&idAddr, commId);
-        nIfs = mscclppFindInterfaceMatchSubnet(ifNames, ifAddrs, &idAddr, ifNameMaxSize, maxIfs);
+        union SocketAddress idAddr;
+        SocketGetAddrFromString(&idAddr, commId);
+        nIfs = FindInterfaceMatchSubnet(ifNames, ifAddrs, &idAddr, ifNameMaxSize, maxIfs);
       }
     }
     // Then look for anything else (but not docker or lo)
@@ -325,30 +330,28 @@ int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress* ifAddrs, in
   return nIfs;
 }
 
-namespace mscclpp {
-
-Socket::Socket(const mscclppSocketAddress* addr, uint64_t magic, enum mscclppSocketType type,
-               volatile uint32_t* abortFlag, int asyncFlag) {
+Socket::Socket(const SocketAddress* addr, uint64_t magic, enum SocketType type, volatile uint32_t* abortFlag,
+               int asyncFlag) {
   fd_ = -1;
   acceptFd_ = -1;
   connectRetries_ = 0;
   acceptRetries_ = 0;
   abortFlag_ = abortFlag;
   asyncFlag_ = asyncFlag;
-  state_ = mscclppSocketStateInitialized;
+  state_ = SocketStateInitialized;
   magic_ = magic;
   type_ = type;
 
   if (addr) {
     /* IPv4/IPv6 support */
     int family;
-    memcpy(&addr_, addr, sizeof(union mscclppSocketAddress));
+    memcpy(&addr_, addr, sizeof(union SocketAddress));
     family = addr_.sa.sa_family;
     if (family != AF_INET && family != AF_INET6) {
       char line[SOCKET_NAME_MAXLEN + 1];
       std::stringstream ss;
-      ss << "mscclppSocketInit: connecting to address " << mscclppSocketToString(&addr_, line) << " with family "
-         << family << " is neither AF_INET(" << AF_INET << ") nor AF_INET6(" << AF_INET6 << ")";
+      ss << "mscclppSocketInit: connecting to address " << SocketToString(&addr_, line) << " with family " << family
+         << " is neither AF_INET(" << AF_INET << ") nor AF_INET6(" << AF_INET6 << ")";
       throw Error(ss.str(), ErrorCode::InvalidUsage);
     }
     salen_ = (family == AF_INET) ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
@@ -359,7 +362,7 @@ Socket::Socket(const mscclppSocketAddress* addr, uint64_t magic, enum mscclppSoc
       throw SysError("socket creation failed", errno);
     }
   } else {
-    memset(&addr_, 0, sizeof(union mscclppSocketAddress));
+    memset(&addr_, 0, sizeof(union SocketAddress));
   }
 
   /* Set socket as non-blocking if async or if we need to be able to abort */
@@ -408,7 +411,7 @@ void Socket::listen() {
 
 #ifdef ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
-  TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Listening on socket %s", mscclppSocketToString(&addr_, line));
+  TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Listening on socket %s", SocketToString(&addr_, line));
 #endif
 
   /* Put the socket in listen mode
@@ -417,7 +420,7 @@ void Socket::listen() {
   if (::listen(fd_, 16384) != 0) {
     throw SysError("listen failed", errno);
   }
-  state_ = mscclppSocketStateReady;
+  state_ = SocketStateReady;
 }
 
 void Socket::connect(int64_t timeout) {
@@ -431,27 +434,26 @@ void Socket::connect(int64_t timeout) {
     throw Error("file descriptor is -1", ErrorCode::InvalidUsage);
   }
 
-  if (state_ != mscclppSocketStateInitialized) {
+  if (state_ != SocketStateInitialized) {
     std::stringstream ss;
     ss << "wrong socket state " << state_;
-    if (state_ == mscclppSocketStateError) throw Error(ss.str(), ErrorCode::RemoteError);
+    if (state_ == SocketStateError) throw Error(ss.str(), ErrorCode::RemoteError);
     throw Error(ss.str(), ErrorCode::InternalError);
   }
-  TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Connecting to socket %s", mscclppSocketToString(&addr_, line));
+  TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Connecting to socket %s", SocketToString(&addr_, line));
 
   if (setsockopt(fd_, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(int)) != 0) {
     throw SysError("setsockopt(TCP_NODELAY) failed", errno);
   }
 
-  state_ = mscclppSocketStateConnecting;
+  state_ = SocketStateConnecting;
   do {
     progressState();
     if (timeout > 0 && timer.elapsed() > timeout) {
       throw Error("connect timeout", ErrorCode::Timeout);
     }
   } while (asyncFlag_ == 0 && (abortFlag_ == NULL || *abortFlag_ == 0) &&
-           (state_ == mscclppSocketStateConnecting || state_ == mscclppSocketStateConnectPolling ||
-            state_ == mscclppSocketStateConnected));
+           (state_ == SocketStateConnecting || state_ == SocketStateConnectPolling || state_ == SocketStateConnected));
 
   if (abortFlag_ && *abortFlag_ != 0) throw Error("aborted", ErrorCode::Aborted);
 }
@@ -462,7 +464,7 @@ void Socket::accept(const Socket* listenSocket, int64_t timeout) {
   if (listenSocket == NULL) {
     throw Error("listenSocket is NULL", ErrorCode::InvalidUsage);
   }
-  if (listenSocket->getState() != mscclppSocketStateReady) {
+  if (listenSocket->getState() != SocketStateReady) {
     throw Error("listenSocket is in error state " + std::to_string(listenSocket->getState()), ErrorCode::InternalError);
   }
 
@@ -478,7 +480,7 @@ void Socket::accept(const Socket* listenSocket, int64_t timeout) {
     salen_ = listenSocket->getSalen();
 
     acceptFd_ = listenSocket->getFd();
-    state_ = mscclppSocketStateAccepting;
+    state_ = SocketStateAccepting;
   }
 
   do {
@@ -487,14 +489,14 @@ void Socket::accept(const Socket* listenSocket, int64_t timeout) {
       throw Error("accept timeout", ErrorCode::Timeout);
     }
   } while (asyncFlag_ == 0 && (abortFlag_ == NULL || *abortFlag_ == 0) &&
-           (state_ == mscclppSocketStateAccepting || state_ == mscclppSocketStateAccepted));
+           (state_ == SocketStateAccepting || state_ == SocketStateAccepted));
 
   if (abortFlag_ && *abortFlag_ != 0) throw Error("aborted", ErrorCode::Aborted);
 }
 
 void Socket::send(void* ptr, int size) {
   int offset = 0;
-  if (state_ != mscclppSocketStateReady) {
+  if (state_ != SocketStateReady) {
     std::stringstream ss;
     ss << "socket state (" << state_ << ") is not ready";
     throw Error(ss.str(), ErrorCode::InternalError);
@@ -504,7 +506,7 @@ void Socket::send(void* ptr, int size) {
 
 void Socket::recv(void* ptr, int size) {
   int offset = 0;
-  if (state_ != mscclppSocketStateReady) {
+  if (state_ != SocketStateReady) {
     std::stringstream ss;
     ss << "socket state (" << state_ << ") is not ready";
     throw Error(ss.str(), ErrorCode::InternalError);
@@ -514,33 +516,33 @@ void Socket::recv(void* ptr, int size) {
 
 void Socket::close() {
   if (fd_ >= 0) ::close(fd_);
-  state_ = mscclppSocketStateClosed;
+  state_ = SocketStateClosed;
   fd_ = -1;
 }
 
 void Socket::progressState() {
-  if (state_ == mscclppSocketStateAccepting) {
+  if (state_ == SocketStateAccepting) {
     tryAccept();
   }
-  if (state_ == mscclppSocketStateAccepted) {
+  if (state_ == SocketStateAccepted) {
     finalizeAccept();
   }
-  if (state_ == mscclppSocketStateConnecting) {
+  if (state_ == SocketStateConnecting) {
     startConnect();
   }
-  if (state_ == mscclppSocketStateConnectPolling) {
+  if (state_ == SocketStateConnectPolling) {
     pollConnect();
   }
-  if (state_ == mscclppSocketStateConnected) {
+  if (state_ == SocketStateConnected) {
     finalizeConnect();
   }
 }
 
 void Socket::tryAccept() {
-  socklen_t socklen = sizeof(union mscclppSocketAddress);
+  socklen_t socklen = sizeof(union SocketAddress);
   fd_ = ::accept(acceptFd_, &addr_.sa, &socklen);
   if (fd_ != -1) {
-    state_ = mscclppSocketStateAccepted;
+    state_ = SocketStateAccepted;
   } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
     std::stringstream ss;
     ss << "accept failed (fd " << acceptFd_ << ")";
@@ -554,7 +556,7 @@ void Socket::tryAccept() {
 
 void Socket::finalizeAccept() {
   uint64_t magic;
-  enum mscclppSocketType type;
+  enum SocketType type;
   int received = 0;
   socketProgress(MSCCLPP_SOCKET_RECV, &magic, sizeof(magic), &received);
   if (received == 0) return;
@@ -564,20 +566,20 @@ void Socket::finalizeAccept() {
     ::close(fd_);
     fd_ = -1;
     // Ignore spurious connection and accept again
-    state_ = mscclppSocketStateAccepting;
+    state_ = SocketStateAccepting;
     return;
   } else {
     received = 0;
     socketWait(MSCCLPP_SOCKET_RECV, &type, sizeof(type), &received);
     if (type != type_) {
-      state_ = mscclppSocketStateError;
+      state_ = SocketStateError;
       ::close(fd_);
       fd_ = -1;
       std::stringstream ss;
       ss << "wrong socket type " << type << " != " << type_;
       throw Error(ss.str(), ErrorCode::InternalError);
     } else {
-      state_ = mscclppSocketStateReady;
+      state_ = SocketStateReady;
     }
   }
 }
@@ -586,10 +588,10 @@ void Socket::startConnect() {
   /* blocking/non-blocking connect() is determined by asyncFlag. */
   int ret = ::connect(fd_, &addr_.sa, salen_);
   if (ret == 0) {
-    state_ = mscclppSocketStateConnected;
+    state_ = SocketStateConnected;
     return;
   } else if (errno == EINPROGRESS) {
-    state_ = mscclppSocketStateConnectPolling;
+    state_ = SocketStateConnectPolling;
     return;
   } else if (errno == ECONNREFUSED || errno == ETIMEDOUT) {
     usleep(SLEEP_INT);
@@ -597,9 +599,9 @@ void Socket::startConnect() {
     return;
   } else {
     char line[SOCKET_NAME_MAXLEN + 1];
-    state_ = mscclppSocketStateError;
+    state_ = SocketStateError;
     std::stringstream ss;
-    ss << "connect to " << mscclppSocketToString(&addr_, line) << " failed";
+    ss << "connect to " << SocketToString(&addr_, line) << " failed";
     throw SysError(ss.str(), errno);
   }
 }
@@ -625,7 +627,7 @@ void Socket::pollConnect() {
   }
 
   if (ret == 0) {
-    state_ = mscclppSocketStateConnected;
+    state_ = SocketStateConnected;
   } else if (ret == ECONNREFUSED || ret == ETIMEDOUT) {
     if (++connectRetries_ % 1000 == 0) {
       INFO(MSCCLPP_ALL, "Call to connect returned %s, retrying", strerror(errno));
@@ -634,9 +636,9 @@ void Socket::pollConnect() {
 
     ::close(fd_);
     fd_ = ::socket(addr_.sa.sa_family, SOCK_STREAM, 0);
-    state_ = mscclppSocketStateConnecting;
+    state_ = SocketStateConnecting;
   } else if (ret != EINPROGRESS) {
-    state_ = mscclppSocketStateError;
+    state_ = SocketStateError;
     throw Error("connect failed", ErrorCode::SystemError);
   }
 }
@@ -648,7 +650,7 @@ void Socket::finalizeConnect() {
   socketWait(MSCCLPP_SOCKET_SEND, &magic_, sizeof(magic_), &sent);
   sent = 0;
   socketWait(MSCCLPP_SOCKET_SEND, &type_, sizeof(type_), &sent);
-  state_ = mscclppSocketStateReady;
+  state_ = SocketStateReady;
 }
 
 void Socket::socketProgressOpt(int op, void* ptr, int size, int* offset, int block, int* closed) {
@@ -683,7 +685,7 @@ void Socket::socketProgress(int op, void* ptr, int size, int* offset) {
   socketProgressOpt(op, ptr, size, offset, 0, &closed);
   if (closed) {
     char line[SOCKET_NAME_MAXLEN + 1];
-    throw Error("connection closed by remote peer " + std::string(mscclppSocketToString(&addr_, line, 0)),
+    throw Error("connection closed by remote peer " + std::string(SocketToString(&addr_, line, 0)),
                 ErrorCode::RemoteError);
   }
 }

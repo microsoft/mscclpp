@@ -47,7 +47,8 @@ class Bootstrap : public BaseBootstrap {
   UniqueId getUniqueId() const;
 
   void initialize(UniqueId uniqueId);
-  void initialize(std::string ipPortPair);
+  // the acceptable formats are "ip:port" or "interface:ip:port"
+  void initialize(std::string ifIpPortTrio);
   int getRank() override;
   int getNranks() override;
   void send(void* data, int size, int peer, int tag) override;
