@@ -222,7 +222,8 @@ mscclpp::ProxyHandlerResult AllGatherChannelService::handleTrigger(mscclpp::Prox
     // this is not a valid trigger
     throw std::runtime_error("Invalid trigger");
   }
-  for (int r = 0; r < worldSize_; r++) {
+  for (int i = 0; i < worldSize_; i++) {
+    int r = (rank_ + i) % worldSize_;
     if (r == rank_) {
       continue;
     }
