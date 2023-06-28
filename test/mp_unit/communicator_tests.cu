@@ -4,7 +4,7 @@
 #include <mpi.h>
 
 #include <mscclpp/cuda_utils.hpp>
-#include <mscclpp/epoch.hpp>
+#include <mscclpp/semaphore.hpp>
 
 #include "mp_unit_tests.hpp"
 
@@ -15,6 +15,9 @@ void CommunicatorTestBase::SetUp() {
     numRanksToUse = gEnv->worldSize;
   }
   ASSERT_LE(numRanksToUse, gEnv->worldSize);
+
+  ibTransport = ibIdToTransport(rankToLocalRank(gEnv->rank));
+  MSCCLPP_CUDATHROW(cudaSetDevice(rankToLocalRank(gEnv->rank)));
 
   std::shared_ptr<mscclpp::Bootstrap> bootstrap;
   mscclpp::UniqueId id;
@@ -29,7 +32,6 @@ void CommunicatorTestBase::SetUp() {
   }
   bootstrap->initialize(id);
   communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
-  ibTransport = ibIdToTransport(rankToLocalRank(gEnv->rank));
 }
 
 void CommunicatorTestBase::TearDown() {
@@ -182,20 +184,21 @@ TEST_F(CommunicatorTest, BasicWrite) {
   communicator->bootstrapper()->barrier();
 }
 
-__global__ void kernelWaitEpochs(mscclpp::DeviceEpoch::DeviceHandle* deviceEpochs, int rank, int worldSize) {
+__global__ void kernelWaitSemaphores(mscclpp::Host2DeviceSemaphore::DeviceHandle* deviceSemaphores, int rank,
+                                     int worldSize) {
   int tid = threadIdx.x;
   if (tid != rank && tid < worldSize) {
-    deviceEpochs[tid].wait();
+    deviceSemaphores[tid].wait();
   }
 }
 
-TEST_F(CommunicatorTest, WriteWithDeviceEpochs) {
+TEST_F(CommunicatorTest, WriteWithDeviceSemaphores) {
   if (gEnv->rank >= numRanksToUse) return;
 
-  std::unordered_map<int, std::shared_ptr<mscclpp::DeviceEpoch>> epochs;
+  std::unordered_map<int, std::shared_ptr<mscclpp::Host2DeviceSemaphore>> semaphores;
   for (auto entry : connections) {
     auto& conn = entry.second;
-    epochs.insert({entry.first, std::make_shared<mscclpp::DeviceEpoch>(*communicator.get(), conn)});
+    semaphores.insert({entry.first, std::make_shared<mscclpp::Host2DeviceSemaphore>(*communicator.get(), conn)});
   }
   communicator->setup();
   communicator->bootstrapper()->barrier();
@@ -203,12 +206,12 @@ TEST_F(CommunicatorTest, WriteWithDeviceEpochs) {
   deviceBufferInit();
   communicator->bootstrapper()->barrier();
 
-  auto deviceEpochHandles = mscclpp::allocSharedCuda<mscclpp::DeviceEpoch::DeviceHandle>(gEnv->worldSize);
+  auto deviceSemaphoreHandles = mscclpp::allocSharedCuda<mscclpp::Host2DeviceSemaphore::DeviceHandle>(gEnv->worldSize);
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank) {
-      mscclpp::DeviceEpoch::DeviceHandle deviceHandle = epochs[i]->deviceHandle();
-      mscclpp::memcpyCuda<mscclpp::DeviceEpoch::DeviceHandle>(deviceEpochHandles.get() + i, &deviceHandle, 1,
-                                                              cudaMemcpyHostToDevice);
+      mscclpp::Host2DeviceSemaphore::DeviceHandle deviceHandle = semaphores[i]->deviceHandle();
+      mscclpp::memcpyCuda<mscclpp::Host2DeviceSemaphore::DeviceHandle>(deviceSemaphoreHandles.get() + i, &deviceHandle,
+                                                                       1, cudaMemcpyHostToDevice);
     }
   }
   communicator->bootstrapper()->barrier();
@@ -217,26 +220,26 @@ TEST_F(CommunicatorTest, WriteWithDeviceEpochs) {
 
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank) {
-      epochs[i]->signal();
+      semaphores[i]->signal();
     }
   }
 
-  kernelWaitEpochs<<<1, gEnv->worldSize>>>(deviceEpochHandles.get(), gEnv->rank, gEnv->worldSize);
+  kernelWaitSemaphores<<<1, gEnv->worldSize>>>(deviceSemaphoreHandles.get(), gEnv->rank, gEnv->worldSize);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   ASSERT_TRUE(testWriteCorrectness());
   communicator->bootstrapper()->barrier();
 }
 
-TEST_F(CommunicatorTest, WriteWithHostEpochs) {
+TEST_F(CommunicatorTest, WriteWithHostSemaphores) {
   if (gEnv->rank >= numRanksToUse) return;
 
-  std::unordered_map<int, std::shared_ptr<mscclpp::HostEpoch>> epochs;
+  std::unordered_map<int, std::shared_ptr<mscclpp::Host2HostSemaphore>> semaphores;
   for (auto entry : connections) {
     auto& conn = entry.second;
-    // HostEpoch cannot be used with CudaIpc transport
+    // Host2HostSemaphore cannot be used with CudaIpc transport
     if (conn->transport() == mscclpp::Transport::CudaIpc) continue;
-    epochs.insert({entry.first, std::make_shared<mscclpp::HostEpoch>(*communicator.get(), conn)});
+    semaphores.insert({entry.first, std::make_shared<mscclpp::Host2HostSemaphore>(*communicator.get(), conn)});
   }
   communicator->setup();
   communicator->bootstrapper()->barrier();
@@ -248,25 +251,25 @@ TEST_F(CommunicatorTest, WriteWithHostEpochs) {
 
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
-      epochs[i]->signal();
+      semaphores[i]->signal();
     }
   }
 
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
-      epochs[i]->wait();
+      semaphores[i]->wait();
     }
   }
 
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
-      epochs[i]->signal();
+      semaphores[i]->signal();
     }
   }
 
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
-      epochs[i]->wait();
+      semaphores[i]->wait();
     }
   }
 

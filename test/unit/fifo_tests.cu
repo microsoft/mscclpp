@@ -7,6 +7,8 @@
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/utils.hpp>
 
+#include "numa.hpp"
+
 #define FLUSH_PERIOD (MSCCLPP_PROXY_FIFO_SIZE)  // should not exceed MSCCLPP_PROXY_FIFO_SIZE
 #define ITER 10000                              // should be larger than MSCCLPP_PROXY_FIFO_SIZE for proper testing
 
@@ -28,6 +30,11 @@ __global__ void kernelFifoTest() {
 
 TEST(FifoTest, HostProxyFifo) {
   ASSERT_LE(FLUSH_PERIOD, MSCCLPP_PROXY_FIFO_SIZE);
+
+  int cudaNum;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaNum));
+  int numaNode = mscclpp::getDeviceNumaNode(cudaNum);
+  mscclpp::numaBind(numaNode);
 
   mscclpp::HostProxyFifo hostFifo;
   mscclpp::DeviceProxyFifo devFifo = hostFifo.deviceFifo();
