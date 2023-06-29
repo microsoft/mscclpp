@@ -62,32 +62,15 @@ __device__ void localAllGather(mscclpp::SimpleProxyChannel devChan, int rank, in
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
 __device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, uint64_t size) {
-  // this allgather algorithm works as follows:
-  // Step 1: GPU rank i sends data to GPU rank (i+1) % nranksPerNode
-  // and waits for data from GPU rank (i-1) % nranksPerNode
-  // Step 2: GPU rank i sends data to GPU rank (i+2) % nranksPerNode
-  // ...
-  // This order is much better for DMA engine for NVLinks
   if (nRanksPerNode == 1) return;
 
-  int startRankInNode = (rank / nRanksPerNode) * nRanksPerNode;
-  for (int i = 1; i < nRanksPerNode; i++) {
-    int remoteSendToRank = (rank + i) % nRanksPerNode + startRankInNode;
-    int remoteRecvFromRank = (rank + nRanksPerNode - i) % nRanksPerNode + startRankInNode;
-    int peerSendId = (remoteSendToRank < rank) ? remoteSendToRank : remoteSendToRank - 1;
-    int peerRecvId = (remoteRecvFromRank < rank) ? remoteRecvFromRank : remoteRecvFromRank - 1;
-
-    mscclpp::SmChannel& smSendChan = constSmChans[peerSendId];
-    mscclpp::SmChannel& smRecvChan = constSmChans[peerRecvId];
-    // wait for the data from GPU (rank-i) % nranksPerNode to arrive
-    smSendChan.put(offset, offset, size, threadIdx.x + blockIdx.x * blockDim.x, blockDim.x * gridDim.x);
-    deviceSyncer.sync(gridDim.x);
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-      smSendChan.signal();
-      smRecvChan.wait();
-    }
-    deviceSyncer.sync(gridDim.x);
-  }
+  size_t nPeer = nRanksPerNode - 1;
+  size_t blocksPerPeer = gridDim.x / nPeer;  // assume no remainder
+  size_t peerIdx = blockIdx.x / blocksPerPeer;
+  size_t sizePerBlock = size / blocksPerPeer;
+  size_t blockIdxPerPeer = blockIdx.x % blocksPerPeer;
+  offset += sizePerBlock * blockIdxPerPeer;
+  constSmChans[peerIdx].put(offset, offset, sizePerBlock, threadIdx.x, blockDim.x);
 }
 
 __device__ void allgather1(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nranksPerNode,
@@ -304,7 +287,7 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   int nBlocks;
   int nThreads;
   if (kernelNum == 4) {
-    nBlocks = 24;
+    nBlocks = 56;
     nThreads = 1024;
   } else {
     nBlocks = 1;
