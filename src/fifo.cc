@@ -1,4 +1,6 @@
-#include <cuda_runtime.h>
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <emmintrin.h>
 
 #include <mscclpp/cuda_utils.hpp>
@@ -6,7 +8,6 @@
 #include <stdexcept>
 
 #include "api.h"
-#include "checks_internal.hpp"
 
 namespace mscclpp {
 

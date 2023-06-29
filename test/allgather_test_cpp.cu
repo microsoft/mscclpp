@@ -1,5 +1,8 @@
-#include <mscclpp/channel.hpp>
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <mscclpp/core.hpp>
+#include <mscclpp/proxy_channel.hpp>
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
 #include "mpi.h"
@@ -48,9 +51,9 @@ static double getTime(void) {
   return (tspec.tv_nsec / 1.0e9) + tspec.tv_sec;
 }
 
-__constant__ mscclpp::channel::SimpleDeviceChannel constDevChans[16];
+__constant__ mscclpp::SimpleProxyChannel constDevChans[16];
 
-__device__ void allgather0(mscclpp::channel::SimpleDeviceChannel devChan, int rank, int world_size, int remoteRank,
+__device__ void allgather0(mscclpp::SimpleProxyChannel devChan, int rank, int world_size, int remoteRank,
                            size_t nelemsPerGPU) {
   // this allgather is really simple and implemented as an alltoall
 
@@ -66,8 +69,8 @@ __device__ void allgather0(mscclpp::channel::SimpleDeviceChannel devChan, int ra
   if ((threadIdx.x % 32) == 0) devChan.wait();
 }
 
-__device__ void localAllGather(mscclpp::channel::SimpleDeviceChannel devChan, int rank, int world_size,
-                               int nranksPerNode, int remoteRank, uint64_t offset, uint64_t size) {
+__device__ void localAllGather(mscclpp::SimpleProxyChannel devChan, int rank, int world_size, int nranksPerNode,
+                               int remoteRank, uint64_t offset, uint64_t size) {
   // this allgather algorithm works as follows:
   // Step 1: GPU rank i sends data to GPU rank (i+1) % nranksPerNode
   // and waits for data from GPU rank (i-1) % nranksPerNode
@@ -87,7 +90,7 @@ __device__ void localAllGather(mscclpp::channel::SimpleDeviceChannel devChan, in
   }
 }
 
-__device__ void allgather1(mscclpp::channel::SimpleDeviceChannel devChan, int rank, int world_size, int nranksPerNode,
+__device__ void allgather1(mscclpp::SimpleProxyChannel devChan, int rank, int world_size, int nranksPerNode,
                            int remoteRank, size_t nelemsPerGPU) {
   localAllGather(devChan, rank, world_size, nranksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
@@ -95,7 +98,7 @@ __device__ void allgather1(mscclpp::channel::SimpleDeviceChannel devChan, int ra
     if ((threadIdx.x % 32) == 0) devChan.flush();
 }
 
-__device__ void allgather2(mscclpp::channel::SimpleDeviceChannel devChan, int rank, int world_size, int nranksPerNode,
+__device__ void allgather2(mscclpp::SimpleProxyChannel devChan, int rank, int world_size, int nranksPerNode,
                            int remoteRank, size_t nelemsPerGPU) {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
@@ -163,7 +166,7 @@ __global__ void kernel(int rank, int world_size, int nranksPerNode, size_t nelem
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   // Each warp is responsible for one of the remote ranks
-  mscclpp::channel::SimpleDeviceChannel devChan = constDevChans[warpId];
+  mscclpp::SimpleProxyChannel devChan = constDevChans[warpId];
 
   if (kernel == 0)
     allgather0(devChan, rank, world_size, remoteRank, nelemsPerGPU);
@@ -203,12 +206,12 @@ void initializeAndAllocateAllGatherData(int rank, int world_size, size_t dataSiz
 }
 
 void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& comm,
-                             mscclpp::channel::DeviceChannelService& channelService, int* data_d, size_t dataSize) {
+                             mscclpp::ProxyService& channelService, int* data_d, size_t dataSize) {
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
   std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
   mscclpp::Transport ibTransport = mscclpp::getIBTransportByDeviceName(ibDevStr);
-  std::vector<mscclpp::channel::ChannelId> channelIds;
+  std::vector<mscclpp::SemaphoreId> semaphoreIds;
   std::vector<mscclpp::RegisteredMemory> localMemories;
   std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemories;
 
@@ -221,7 +224,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
       transport = ibTransport;
     }
     // Connect with all other ranks
-    channelIds.push_back(channelService.addChannel(comm.connectOnSetup(r, 0, transport)));
+    semaphoreIds.push_back(channelService.addSemaphore(comm.connectOnSetup(r, 0, transport)));
     auto memory = comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport);
     localMemories.push_back(memory);
     comm.sendMemoryOnSetup(memory, r, 0);
@@ -230,16 +233,16 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
 
   comm.setup();
 
-  std::vector<mscclpp::channel::SimpleDeviceChannel> devChannels;
-  for (size_t i = 0; i < channelIds.size(); ++i) {
-    devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(channelService.deviceChannel(channelIds[i]),
-                                                                channelService.addMemory(remoteMemories[i].get()),
-                                                                channelService.addMemory(localMemories[i])));
+  std::vector<mscclpp::SimpleProxyChannel> devChannels;
+  for (size_t i = 0; i < semaphoreIds.size(); ++i) {
+    devChannels.push_back(mscclpp::SimpleProxyChannel(channelService.deviceChannel(semaphoreIds[i]),
+                                                      channelService.addMemory(remoteMemories[i].get()),
+                                                      channelService.addMemory(localMemories[i])));
   }
 
-  assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::channel::SimpleDeviceChannel));
-  CUDACHECK(cudaMemcpyToSymbol(constDevChans, devChannels.data(),
-                               sizeof(mscclpp::channel::SimpleDeviceChannel) * devChannels.size()));
+  assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::SimpleProxyChannel));
+  CUDACHECK(
+      cudaMemcpyToSymbol(constDevChans, devChannels.data(), sizeof(mscclpp::SimpleProxyChannel) * devChannels.size()));
 }
 
 void printUsage(const char* prog, bool isMpi) {
@@ -391,7 +394,7 @@ int main(int argc, const char* argv[]) {
     auto bootstrapper = std::make_shared<mscclpp::Bootstrap>(rank, world_size);
     bootstrapper->initialize(ip_port);
     mscclpp::Communicator comm(bootstrapper);
-    mscclpp::channel::DeviceChannelService channelService(comm);
+    mscclpp::ProxyService channelService(comm);
 
     if (rank == 0) printf("Initializing data for allgather test\n");
     initializeAndAllocateAllGatherData(rank, world_size, dataSize, nelemsPerGPU, &data_h, &data_d);

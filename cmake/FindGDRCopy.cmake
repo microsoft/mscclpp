@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 # Find the GDRCopy libraries
 #
 # The following variables are optionally searched for defaults

@@ -1,14 +1,16 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_POLL_HPP_
 #define MSCCLPP_POLL_HPP_
 
 #ifdef __CUDACC__
 
 #ifndef NDEBUG
-#include <stdio.h>
-#define POLL_PRINT_ON_STUCK(__cond)                             \
-  do {                                                          \
-    printf("mscclpp: spin is stuck. condition: " #__cond "\n"); \
-  } while (0);
+// TODO(chhwang): https://github.com/microsoft/mscclpp/issues/99
+#define POLL_PRINT_ON_STUCK(__cond)
+// #include <stdio.h>
+// #define POLL_PRINT_ON_STUCK(__cond) do { printf("mscclpp: spin is stuck. condition: " #__cond "\n"); } while (0);
 #else  // NDEBUG
 #define POLL_PRINT_ON_STUCK(__cond)
 #endif  // NDEBUG
@@ -36,6 +38,23 @@
         POLL_PRINT_ON_STUCK(__cond);                 \
       }                                              \
     }                                                \
+  } while (0);
+
+// the as POLL_MAYBE_JAILBREAK except that __cond1 is checked before __cond2
+// this is specially useful when __cond1 is faster to check
+#define OR_POLL_MAYBE_JAILBREAK(__cond1, __cond2, __max_spin_cnt) \
+  do {                                                            \
+    uint64_t __spin_cnt = 0;                                      \
+    while (true) {                                                \
+      if (!(__cond1)) {                                           \
+        break;                                                    \
+      } else if (!(__cond2)) {                                    \
+        break;                                                    \
+      }                                                           \
+      if (__spin_cnt++ == __max_spin_cnt) {                       \
+        POLL_PRINT_ON_STUCK(__cond);                              \
+      }                                                           \
+    }                                                             \
   } while (0);
 
 #endif  // __CUDACC__

@@ -13,64 +13,24 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "checks_internal.hpp"
+#include <mscclpp/errors.hpp>
+#include <mscclpp/utils.hpp>
+#include <sstream>
+
 #include "config.hpp"
 #include "debug.h"
 #include "utils_internal.hpp"
 
-static mscclppResult_t socketProgressOpt(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset,
-                                         int block, int* closed) {
-  int bytes = 0;
-  *closed = 0;
-  char* data = (char*)ptr;
-  char line[SOCKET_NAME_MAXLEN + 1];
-  do {
-    if (op == MSCCLPP_SOCKET_RECV) bytes = recv(sock->fd, data + (*offset), size - (*offset), block ? 0 : MSG_DONTWAIT);
-    if (op == MSCCLPP_SOCKET_SEND)
-      bytes = send(sock->fd, data + (*offset), size - (*offset), block ? MSG_NOSIGNAL : MSG_DONTWAIT | MSG_NOSIGNAL);
-    if (op == MSCCLPP_SOCKET_RECV && bytes == 0) {
-      *closed = 1;
-      return mscclppSuccess;
-    }
-    if (bytes == -1) {
-      if (errno != EINTR && errno != EWOULDBLOCK && errno != EAGAIN) {
-        WARN("socketProgressOpt: Call to recv from %s failed : %s", mscclppSocketToString(&sock->addr, line),
-             strerror(errno));
-        return mscclppRemoteError;
-      } else {
-        bytes = 0;
-      }
-    }
-    (*offset) += bytes;
-    if (sock->abortFlag && *sock->abortFlag != 0) {
-      INFO(MSCCLPP_NET, "socketProgressOpt: abort called");
-      return mscclppInternalError;
-    }
-  } while (bytes > 0 && (*offset) < size);
-  return mscclppSuccess;
-}
+namespace mscclpp {
 
-static mscclppResult_t socketProgress(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset) {
-  int closed;
-  MSCCLPPCHECK(socketProgressOpt(op, sock, ptr, size, offset, 0, &closed));
-  if (closed) {
-    char line[SOCKET_NAME_MAXLEN + 1];
-    WARN("socketProgress: Connection closed by remote peer %s", mscclppSocketToString(&sock->addr, line, 0));
-    return mscclppRemoteError;
-  }
-  return mscclppSuccess;
-}
-
-static mscclppResult_t socketWait(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset) {
-  while (*offset < size) MSCCLPPCHECK(socketProgress(op, sock, ptr, size, offset));
-  return mscclppSuccess;
-}
+#define MSCCLPP_SOCKET_SEND 0
+#define MSCCLPP_SOCKET_RECV 1
 
 /* Format a string representation of a (union mscclppSocketAddress *) socket address using getnameinfo()
  *
  * Output: "IPv4/IPv6 address<port>"
  */
-const char* mscclppSocketToString(union mscclppSocketAddress* addr, char* buf, const int numericHostForm /*= 1*/) {
+const char* SocketToString(union SocketAddress* addr, char* buf, const int numericHostForm /*= 1*/) {
   if (buf == NULL || addr == NULL) return NULL;
   struct sockaddr* saddr = &addr->sa;
   if (saddr->sa_family != AF_INET && saddr->sa_family != AF_INET6) {
@@ -82,12 +42,12 @@ const char* mscclppSocketToString(union mscclppSocketAddress* addr, char* buf, c
    * (When not set, this will still happen in case the node's name cannot be determined.)
    */
   int flag = NI_NUMERICSERV | (numericHostForm ? NI_NUMERICHOST : 0);
-  (void)getnameinfo(saddr, sizeof(union mscclppSocketAddress), host, NI_MAXHOST, service, NI_MAXSERV, flag);
+  (void)getnameinfo(saddr, sizeof(union SocketAddress), host, NI_MAXHOST, service, NI_MAXSERV, flag);
   sprintf(buf, "%s<%s>", host, service);
   return buf;
 }
 
-static uint16_t socketToPort(union mscclppSocketAddress* addr) {
+static uint16_t socketToPort(union SocketAddress* addr) {
   struct sockaddr* saddr = &addr->sa;
   return ntohs(saddr->sa_family == AF_INET ? addr->sin.sin_port : addr->sin6.sin6_port);
 }
@@ -107,7 +67,7 @@ static int envSocketFamily(void) {
   return family;
 }
 
-static int findInterfaces(const char* prefixList, char* names, union mscclppSocketAddress* addrs, int sock_family,
+static int findInterfaces(const char* prefixList, char* names, union SocketAddress* addrs, int sock_family,
                           int maxIfNameSize, int maxIfs) {
 #ifdef ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
@@ -130,7 +90,7 @@ static int findInterfaces(const char* prefixList, char* names, union mscclppSock
     if (family != AF_INET && family != AF_INET6) continue;
 
     TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Found interface %s:%s", interface->ifa_name,
-          mscclppSocketToString((union mscclppSocketAddress*)interface->ifa_addr, line));
+          SocketToString((union SocketAddress*)interface->ifa_addr, line));
 
     /* Allow the caller to force the socket family type */
     if (sock_family != -1 && family != sock_family) continue;
@@ -170,7 +130,7 @@ static int findInterfaces(const char* prefixList, char* names, union mscclppSock
   return found;
 }
 
-static bool matchSubnet(struct ifaddrs local_if, union mscclppSocketAddress* remote) {
+static bool matchSubnet(struct ifaddrs local_if, union SocketAddress* remote) {
   /* Check family first */
   int family = local_if.ifa_addr->sa_family;
   if (family != remote->sa.sa_family) {
@@ -213,8 +173,8 @@ static bool matchSubnet(struct ifaddrs local_if, union mscclppSocketAddress* rem
   }
 }
 
-int mscclppFindInterfaceMatchSubnet(char* ifNames, union mscclppSocketAddress* localAddrs,
-                                    union mscclppSocketAddress* remoteAddr, int ifNameMaxSize, int maxIfs) {
+int FindInterfaceMatchSubnet(char* ifNames, union SocketAddress* localAddrs, union SocketAddress* remoteAddr,
+                             int ifNameMaxSize, int maxIfs) {
 #ifdef ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
 #endif
@@ -242,23 +202,21 @@ int mscclppFindInterfaceMatchSubnet(char* ifNames, union mscclppSocketAddress* l
     strncpy(ifNames + found * ifNameMaxSize, interface->ifa_name, ifNameMaxSize);
 
     TRACE(MSCCLPP_INIT | MSCCLPP_NET, "NET : Found interface %s:%s in the same subnet as remote address %s",
-          interface->ifa_name, mscclppSocketToString(localAddrs + found, line),
-          mscclppSocketToString(remoteAddr, line_a));
+          interface->ifa_name, SocketToString(localAddrs + found, line), SocketToString(remoteAddr, line_a));
     found++;
     if (found == maxIfs) break;
   }
 
   if (found == 0) {
-    WARN("Net : No interface found in the same subnet as remote address %s", mscclppSocketToString(remoteAddr, line_a));
+    WARN("Net : No interface found in the same subnet as remote address %s", SocketToString(remoteAddr, line_a));
   }
   freeifaddrs(interfaces);
   return found;
 }
 
-mscclppResult_t mscclppSocketGetAddrFromString(union mscclppSocketAddress* ua, const char* ip_port_pair) {
+void SocketGetAddrFromString(union SocketAddress* ua, const char* ip_port_pair) {
   if (!(ip_port_pair && strlen(ip_port_pair) > 1)) {
-    WARN("Net : string is null");
-    return mscclppInvalidArgument;
+    throw mscclpp::Error("Net : string is null", mscclpp::ErrorCode::InvalidUsage);
   }
 
   bool ipv6 = ip_port_pair[0] == '[';
@@ -267,8 +225,7 @@ mscclppResult_t mscclppSocketGetAddrFromString(union mscclppSocketAddress* ua, c
     struct mscclpp::netIf ni;
     // parse <ip_or_hostname>:<port> string, expect one pair
     if (mscclpp::parseStringList(ip_port_pair, &ni, 1) != 1) {
-      WARN("Net : No valid <IPv4_or_hostname>:<port> pair found");
-      return mscclppInvalidArgument;
+      throw mscclpp::Error("Net : No valid <IPv4_or_hostname>:<port> pair found", mscclpp::ErrorCode::InvalidUsage);
     }
 
     struct addrinfo hints, *p;
@@ -278,8 +235,9 @@ mscclppResult_t mscclppSocketGetAddrFromString(union mscclppSocketAddress* ua, c
     hints.ai_socktype = SOCK_STREAM;
 
     if ((rv = getaddrinfo(ni.prefix, NULL, &hints, &p)) != 0) {
-      WARN("Net : error encountered when getting address info : %s", gai_strerror(rv));
-      return mscclppInvalidArgument;
+      std::stringstream ss;
+      ss << "Net : error encountered when getting address info : " << gai_strerror(rv);
+      throw mscclpp::Error(ss.str(), mscclpp::ErrorCode::InvalidUsage);
     }
 
     // use the first
@@ -297,8 +255,7 @@ mscclppResult_t mscclppSocketGetAddrFromString(union mscclppSocketAddress* ua, c
       sin6.sin6_flowinfo = 0;           // needed by IPv6, but possibly obsolete
       sin6.sin6_scope_id = 0;           // should be global scope, set to 0
     } else {
-      WARN("Net : unsupported IP family");
-      return mscclppInvalidArgument;
+      throw mscclpp::Error("Net : unsupported IP family", mscclpp::ErrorCode::InvalidUsage);
     }
 
     freeaddrinfo(p);  // all done with this structure
@@ -311,7 +268,7 @@ mscclppResult_t mscclppSocketGetAddrFromString(union mscclppSocketAddress* ua, c
     }
     if (i == len) {
       WARN("Net : No valid [IPv6]:port pair found");
-      return mscclppInvalidArgument;
+      throw mscclpp::Error("Net : No valid [IPv6]:port pair found", mscclpp::ErrorCode::InvalidUsage);
     }
     bool global_scope = (j == -1 ? true : false);  // If no % found, global scope; otherwise, link scope
 
@@ -331,17 +288,20 @@ mscclppResult_t mscclppSocketGetAddrFromString(union mscclppSocketAddress* ua, c
     sin6.sin6_flowinfo = 0;                                           // needed by IPv6, but possibly obsolete
     sin6.sin6_scope_id = global_scope ? 0 : if_nametoindex(if_name);  // 0 if global scope; intf index if link scope
   }
-  return mscclppSuccess;
 }
 
-int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress* ifAddrs, int ifNameMaxSize, int maxIfs) {
+int FindInterfaces(char* ifNames, union SocketAddress* ifAddrs, int ifNameMaxSize, int maxIfs,
+                   const char* inputIfName) {
   static int shownIfName = 0;
   int nIfs = 0;
   // Allow user to force the INET socket family selection
   int sock_family = envSocketFamily();
   // User specified interface
   char* env = getenv("MSCCLPP_SOCKET_IFNAME");
-  if (env && strlen(env) > 1) {
+  if (inputIfName) {
+    INFO(MSCCLPP_NET, "using iterface %s", inputIfName);
+    nIfs = findInterfaces(inputIfName, ifNames, ifAddrs, sock_family, ifNameMaxSize, maxIfs);
+  } else if (env && strlen(env) > 1) {
     INFO(MSCCLPP_ENV, "MSCCLPP_SOCKET_IFNAME set by environment to %s", env);
     // Specified by user : find or fail
     if (shownIfName++ == 0) INFO(MSCCLPP_NET, "MSCCLPP_SOCKET_IFNAME set to %s", env);
@@ -356,9 +316,9 @@ int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress* ifAddrs, in
       if (commId && strlen(commId) > 1) {
         INFO(MSCCLPP_ENV, "MSCCLPP_COMM_ID set by environment to %s", commId);
         // Try to find interface that is in the same subnet as the IP in comm id
-        union mscclppSocketAddress idAddr;
-        mscclppSocketGetAddrFromString(&idAddr, commId);
-        nIfs = mscclppFindInterfaceMatchSubnet(ifNames, ifAddrs, &idAddr, ifNameMaxSize, maxIfs);
+        union SocketAddress idAddr;
+        SocketGetAddrFromString(&idAddr, commId);
+        nIfs = FindInterfaceMatchSubnet(ifNames, ifAddrs, &idAddr, ifNameMaxSize, maxIfs);
       }
     }
     // Then look for anything else (but not docker or lo)
@@ -370,497 +330,368 @@ int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress* ifAddrs, in
   return nIfs;
 }
 
-mscclppResult_t mscclppSocketListen(struct mscclppSocket* sock) {
-  if (sock == NULL) {
-    WARN("mscclppSocketListen: pass NULL socket");
-    return mscclppInvalidArgument;
-  }
-  if (sock->fd == -1) {
-    WARN("mscclppSocketListen: file descriptor is -1");
-    return mscclppInvalidArgument;
+Socket::Socket(const SocketAddress* addr, uint64_t magic, enum SocketType type, volatile uint32_t* abortFlag,
+               int asyncFlag) {
+  fd_ = -1;
+  acceptFd_ = -1;
+  connectRetries_ = 0;
+  acceptRetries_ = 0;
+  abortFlag_ = abortFlag;
+  asyncFlag_ = asyncFlag;
+  state_ = SocketStateInitialized;
+  magic_ = magic;
+  type_ = type;
+
+  if (addr) {
+    /* IPv4/IPv6 support */
+    int family;
+    memcpy(&addr_, addr, sizeof(union SocketAddress));
+    family = addr_.sa.sa_family;
+    if (family != AF_INET && family != AF_INET6) {
+      char line[SOCKET_NAME_MAXLEN + 1];
+      std::stringstream ss;
+      ss << "mscclppSocketInit: connecting to address " << SocketToString(&addr_, line) << " with family " << family
+         << " is neither AF_INET(" << AF_INET << ") nor AF_INET6(" << AF_INET6 << ")";
+      throw Error(ss.str(), ErrorCode::InvalidUsage);
+    }
+    salen_ = (family == AF_INET) ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+
+    /* Connect to a hostname / port */
+    fd_ = ::socket(family, SOCK_STREAM, 0);
+    if (fd_ == -1) {
+      throw SysError("socket creation failed", errno);
+    }
+  } else {
+    memset(&addr_, 0, sizeof(union SocketAddress));
   }
 
-  if (socketToPort(&sock->addr)) {
+  /* Set socket as non-blocking if async or if we need to be able to abort */
+  if ((asyncFlag_ || abortFlag_) && fd_ >= 0) {
+    int flags = fcntl(fd_, F_GETFL);
+    if (flags == -1) {
+      throw SysError("fcntl(F_GETFL) failed", errno);
+    }
+    if (fcntl(fd_, F_SETFL, flags | O_NONBLOCK) == -1) {
+      throw SysError("fcntl(F_SETFL) failed", errno);
+    }
+  }
+}
+
+Socket::~Socket() { close(); }
+
+void Socket::listen() {
+  if (fd_ == -1) {
+    throw Error("file descriptor is -1", ErrorCode::InvalidUsage);
+  }
+
+  if (socketToPort(&addr_)) {
     // Port is forced by env. Make sure we get the port.
     int opt = 1;
 #if defined(SO_REUSEPORT)
-    SYSCHECK(setsockopt(sock->fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)), "setsockopt");
+    if (::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) != 0) {
+      throw SysError("::setsockopt(SO_REUSEADDR | SO_REUSEPORT) failed", errno);
+    }
 #else
-    SYSCHECK(setsockopt(sock->fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)), "setsockopt");
+    if (::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) != 0) {
+      throw SysError("setsockopt(SO_REUSEADDR) failed", errno);
+    }
 #endif
   }
 
   // addr port should be 0 (Any port)
-  SYSCHECK(bind(sock->fd, &sock->addr.sa, sock->salen), "bind");
+  if (::bind(fd_, &addr_.sa, salen_) != 0) {
+    throw SysError("bind failed", errno);
+  }
 
   /* Get the assigned Port */
-  socklen_t size = sock->salen;
-  SYSCHECK(getsockname(sock->fd, &sock->addr.sa, &size), "getsockname");
+  socklen_t size = salen_;
+  if (::getsockname(fd_, &addr_.sa, &size) != 0) {
+    throw SysError("getsockname failed", errno);
+  }
 
 #ifdef ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
-  TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Listening on socket %s", mscclppSocketToString(&sock->addr, line));
+  TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Listening on socket %s", SocketToString(&addr_, line));
 #endif
 
   /* Put the socket in listen mode
    * NB: The backlog will be silently truncated to the value in /proc/sys/net/core/somaxconn
    */
-  SYSCHECK(listen(sock->fd, 16384), "listen");
-  sock->state = mscclppSocketStateReady;
-  return mscclppSuccess;
+  if (::listen(fd_, 16384) != 0) {
+    throw SysError("listen failed", errno);
+  }
+  state_ = SocketStateReady;
 }
 
-mscclppResult_t mscclppSocketGetAddr(struct mscclppSocket* sock, union mscclppSocketAddress* addr) {
-  if (sock == NULL) {
-    WARN("mscclppSocketGetAddr: pass NULL socket");
-    return mscclppInvalidArgument;
-  }
-  if (sock->state != mscclppSocketStateReady) return mscclppInternalError;
-  memcpy(addr, &sock->addr, sizeof(union mscclppSocketAddress));
-  return mscclppSuccess;
-}
-
-static mscclppResult_t socketTryAccept(struct mscclppSocket* sock) {
-  static bool timeInitialized = false;
-  static mscclpp::TimePoint initTime;
-  if (!timeInitialized) {
-    timeInitialized = true;
-    initTime = mscclpp::getClock();
-  }
-
-  mscclpp::Config* config = mscclpp::Config::getInstance();
-  time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
-  socklen_t socklen = sizeof(union mscclppSocketAddress);
-  sock->fd = accept(sock->acceptFd, &sock->addr.sa, &socklen);
-  if (sock->fd != -1) {
-    sock->state = mscclppSocketStateAccepted;
-    timeInitialized = false;
-  } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
-    WARN("socketTryAccept: get errno %d that is not EAGAIN or EWOULDBLOCK", errno);
-    timeInitialized = false;
-    return mscclppSystemError;
-  } else if (mscclpp::elapsedClock(mscclpp::getClock(), initTime) > acceptTimeout) {
-    WARN("socketTryAccept: exceeded timeout (%ld) sec", acceptTimeout);
-    timeInitialized = false;
-    return mscclppRemoteError;
-  } else {
-    usleep(SLEEP_INT);
-    if (++sock->acceptRetries % 1000 == 0)
-      INFO(MSCCLPP_ALL, "socketTryAccept: Call to try accept returned %s, retrying", strerror(errno));
-  }
-  return mscclppSuccess;
-}
-
-static mscclppResult_t socketFinalizeAccept(struct mscclppSocket* sock) {
-  uint64_t magic;
-  enum mscclppSocketType type;
-  int received = 0;
-  MSCCLPPCHECK(mscclppSocketProgress(MSCCLPP_SOCKET_RECV, sock, &magic, sizeof(magic), &received));
-  if (received == 0) return mscclppSuccess;
-  MSCCLPPCHECK(socketWait(MSCCLPP_SOCKET_RECV, sock, &magic, sizeof(magic), &received));
-  if (magic != sock->magic) {
-    WARN("socketFinalizeAccept: wrong magic %lx != %lx", magic, sock->magic);
-    close(sock->fd);
-    sock->fd = -1;
-    // Ignore spurious connection and accept again
-    sock->state = mscclppSocketStateAccepting;
-    return mscclppSuccess;
-  } else {
-    received = 0;
-    MSCCLPPCHECK(socketWait(MSCCLPP_SOCKET_RECV, sock, &type, sizeof(type), &received));
-    if (type != sock->type) {
-      WARN("socketFinalizeAccept: wrong type %d != %d", type, sock->type);
-      sock->state = mscclppSocketStateError;
-      close(sock->fd);
-      sock->fd = -1;
-      return mscclppInternalError;
-    } else {
-      sock->state = mscclppSocketStateReady;
-    }
-  }
-  return mscclppSuccess;
-}
-
-static mscclppResult_t socketStartConnect(struct mscclppSocket* sock) {
-  static bool timeInitialized = false;
-  static mscclpp::TimePoint initTime;
-  if (!timeInitialized) {
-    timeInitialized = true;
-    initTime = mscclpp::getClock();
-  }
-
-  mscclpp::Config* config = mscclpp::Config::getInstance();
-  time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
-
-  /* blocking/non-blocking connect() is determined by asyncFlag. */
-  int ret = connect(sock->fd, &sock->addr.sa, sock->salen);
-  if (ret == 0) {
-    sock->state = mscclppSocketStateConnected;
-    timeInitialized = false;
-    return mscclppSuccess;
-  } else if (errno == EINPROGRESS) {
-    sock->state = mscclppSocketStateConnectPolling;
-    return mscclppSuccess;
-  } else if (errno == ECONNREFUSED || errno == ETIMEDOUT) {
-    if (mscclpp::elapsedClock(mscclpp::getClock(), initTime) > acceptTimeout) {
-      WARN("socketStartConnect: exceeded timeout (%ld) sec", acceptTimeout);
-      sock->state = mscclppSocketStateError;
-      timeInitialized = false;
-      return mscclppRemoteError;
-    }
-    usleep(SLEEP_INT);
-    if (++sock->connectRetries % 1000 == 0) INFO(MSCCLPP_ALL, "Call to connect returned %s, retrying", strerror(errno));
-    return mscclppSuccess;
-  } else {
-    char line[SOCKET_NAME_MAXLEN + 1];
-    sock->state = mscclppSocketStateError;
-    WARN("socketStartConnect: Connect to %s failed : %s", mscclppSocketToString(&sock->addr, line), strerror(errno));
-    timeInitialized = false;
-    return mscclppSystemError;
-  }
-}
-
-static mscclppResult_t socketPollConnect(struct mscclppSocket* sock) {
-  static bool timeInitialized = false;
-  static mscclpp::TimePoint initTime;
-  if (!timeInitialized) {
-    timeInitialized = true;
-    initTime = mscclpp::getClock();
-  }
-
-  mscclpp::Config* config = mscclpp::Config::getInstance();
-  time_t acceptTimeout = config->getBootstrapConnectionTimeoutConfig();
-
-  struct pollfd pfd;
-  int timeout = 1, ret;
-  socklen_t rlen = sizeof(int);
-
-  memset(&pfd, 0, sizeof(struct pollfd));
-  pfd.fd = sock->fd;
-  pfd.events = POLLOUT;
-  SYSCHECK(ret = poll(&pfd, 1, timeout), "poll");
-  if (ret == 0) {
-    timeInitialized = false;
-    return mscclppSuccess;
-  }
-
-  /* check socket status */
-  EQCHECK(ret == 1 && (pfd.revents & POLLOUT), 0);
-  SYSCHECK(getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, (void*)&ret, &rlen), "getsockopt");
-
-  if (ret == 0) {
-    timeInitialized = false;
-    sock->state = mscclppSocketStateConnected;
-  } else if (ret == ECONNREFUSED || ret == ETIMEDOUT) {
-    if (mscclpp::elapsedClock(mscclpp::getClock(), initTime) > acceptTimeout) {
-      WARN("socketPollConnect: exceeded timeout (%ld) sec", acceptTimeout);
-      sock->state = mscclppSocketStateError;
-      return mscclppRemoteError;
-    }
-    if (++sock->connectRetries % 1000 == 0) {
-      INFO(MSCCLPP_ALL, "Call to connect returned %s, retrying", strerror(errno));
-    }
-    usleep(SLEEP_INT);
-
-    close(sock->fd);
-    sock->fd = socket(sock->addr.sa.sa_family, SOCK_STREAM, 0);
-    sock->state = mscclppSocketStateConnecting;
-  } else if (ret != EINPROGRESS) {
-    sock->state = mscclppSocketStateError;
-    return mscclppSystemError;
-  }
-  return mscclppSuccess;
-}
-
-mscclppResult_t mscclppSocketPollConnect(struct mscclppSocket* sock) {
-  if (sock == NULL) {
-    WARN("mscclppSocketPollConnect: pass NULL socket");
-    return mscclppInvalidArgument;
-  }
-  MSCCLPPCHECK(socketPollConnect(sock));
-  return mscclppSuccess;
-}
-
-static mscclppResult_t socketFinalizeConnect(struct mscclppSocket* sock) {
-  int sent = 0;
-  MSCCLPPCHECK(socketProgress(MSCCLPP_SOCKET_SEND, sock, &sock->magic, sizeof(sock->magic), &sent));
-  if (sent == 0) return mscclppSuccess;
-  MSCCLPPCHECK(socketWait(MSCCLPP_SOCKET_SEND, sock, &sock->magic, sizeof(sock->magic), &sent));
-  sent = 0;
-  MSCCLPPCHECK(socketWait(MSCCLPP_SOCKET_SEND, sock, &sock->type, sizeof(sock->type), &sent));
-  sock->state = mscclppSocketStateReady;
-  return mscclppSuccess;
-}
-
-static mscclppResult_t socketProgressState(struct mscclppSocket* sock) {
-  if (sock->state == mscclppSocketStateAccepting) {
-    MSCCLPPCHECK(socketTryAccept(sock));
-  }
-  if (sock->state == mscclppSocketStateAccepted) {
-    MSCCLPPCHECK(socketFinalizeAccept(sock));
-  }
-  if (sock->state == mscclppSocketStateConnecting) {
-    MSCCLPPCHECK(socketStartConnect(sock));
-  }
-  if (sock->state == mscclppSocketStateConnectPolling) {
-    MSCCLPPCHECK(socketPollConnect(sock));
-  }
-  if (sock->state == mscclppSocketStateConnected) {
-    MSCCLPPCHECK(socketFinalizeConnect(sock));
-  }
-  return mscclppSuccess;
-}
-
-// mscclppResult_t mscclppSocketReady(struct mscclppSocket* sock, int *running) {
-//   if (sock == NULL) {
-//     *running = 0;
-//     return mscclppSuccess;
-//   }
-//   if (sock->state == mscclppSocketStateError || sock->state == mscclppSocketStateClosed) {
-//     WARN("mscclppSocketReady: unexpected socket state %d", sock->state);
-//     return mscclppRemoteError;
-//   }
-//   *running = (sock->state == mscclppSocketStateReady) ? 1 : 0;
-//   if (*running == 0) {
-//     MSCCLPPCHECK(socketProgressState(sock));
-//     *running = (sock->state == mscclppSocketStateReady) ? 1 : 0;
-//   }
-//   return mscclppSuccess;
-// }
-
-mscclppResult_t mscclppSocketConnect(struct mscclppSocket* sock) {
+void Socket::connect(int64_t timeout) {
+  mscclpp::Timer timer;
 #ifdef ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
 #endif
   const int one = 1;
 
-  if (sock == NULL) {
-    WARN("mscclppSocketConnect: pass NULL socket");
-    return mscclppInvalidArgument;
-  }
-  if (sock->fd == -1) {
-    WARN("mscclppSocketConnect: file descriptor is -1");
-    return mscclppInvalidArgument;
+  if (fd_ == -1) {
+    throw Error("file descriptor is -1", ErrorCode::InvalidUsage);
   }
 
-  if (sock->state != mscclppSocketStateInitialized) {
-    WARN("mscclppSocketConnect: wrong socket state %d", sock->state);
-    if (sock->state == mscclppSocketStateError) return mscclppRemoteError;
-    return mscclppInternalError;
+  if (state_ != SocketStateInitialized) {
+    std::stringstream ss;
+    ss << "wrong socket state " << state_;
+    if (state_ == SocketStateError) throw Error(ss.str(), ErrorCode::RemoteError);
+    throw Error(ss.str(), ErrorCode::InternalError);
   }
-  TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Connecting to socket %s", mscclppSocketToString(&sock->addr, line));
+  TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Connecting to socket %s", SocketToString(&addr_, line));
 
-  SYSCHECK(setsockopt(sock->fd, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(int)), "setsockopt");
+  if (setsockopt(fd_, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(int)) != 0) {
+    throw SysError("setsockopt(TCP_NODELAY) failed", errno);
+  }
 
-  sock->state = mscclppSocketStateConnecting;
+  state_ = SocketStateConnecting;
   do {
-    MSCCLPPCHECK(socketProgressState(sock));
-  } while (sock->asyncFlag == 0 && (sock->abortFlag == NULL || *sock->abortFlag == 0) &&
-           (sock->state == mscclppSocketStateConnecting || sock->state == mscclppSocketStateConnectPolling ||
-            sock->state == mscclppSocketStateConnected));
+    progressState();
+    if (timeout > 0 && timer.elapsed() > timeout) {
+      throw Error("connect timeout", ErrorCode::Timeout);
+    }
+  } while (asyncFlag_ == 0 && (abortFlag_ == NULL || *abortFlag_ == 0) &&
+           (state_ == SocketStateConnecting || state_ == SocketStateConnectPolling || state_ == SocketStateConnected));
 
-  if (sock->abortFlag && *sock->abortFlag != 0) return mscclppInternalError;
-
-  switch (sock->state) {
-    case mscclppSocketStateConnecting:
-    case mscclppSocketStateConnectPolling:
-    case mscclppSocketStateConnected:
-    case mscclppSocketStateReady:
-      return mscclppSuccess;
-    case mscclppSocketStateError:
-      return mscclppSystemError;
-    default:
-      WARN("mscclppSocketConnect: wrong socket state %d", sock->state);
-      return mscclppInternalError;
-  }
+  if (abortFlag_ && *abortFlag_ != 0) throw Error("aborted", ErrorCode::Aborted);
 }
 
-mscclppResult_t mscclppSocketAccept(struct mscclppSocket* sock, struct mscclppSocket* listenSock) {
-  mscclppResult_t ret = mscclppSuccess;
+void Socket::accept(const Socket* listenSocket, int64_t timeout) {
+  mscclpp::Timer timer;
 
-  if (listenSock == NULL || sock == NULL) {
-    WARN("mscclppSocketAccept: pass NULL socket");
-    ret = mscclppInvalidArgument;
-    goto exit;
+  if (listenSocket == NULL) {
+    throw Error("listenSocket is NULL", ErrorCode::InvalidUsage);
   }
-  if (listenSock->state != mscclppSocketStateReady) {
-    WARN("mscclppSocketAccept: wrong socket state %d", listenSock->state);
-    if (listenSock->state == mscclppSocketStateError)
-      ret = mscclppSystemError;
-    else
-      ret = mscclppInternalError;
-    goto exit;
+  if (listenSocket->getState() != SocketStateReady) {
+    throw Error("listenSocket is in error state " + std::to_string(listenSocket->getState()), ErrorCode::InternalError);
   }
 
-  if (sock->acceptFd == -1) {
-    memcpy(sock, listenSock, sizeof(struct mscclppSocket));
-    sock->acceptFd = listenSock->fd;
-    sock->state = mscclppSocketStateAccepting;
+  if (acceptFd_ == -1) {
+    fd_ = listenSocket->getFd();
+    connectRetries_ = listenSocket->getConnectRetries();
+    acceptRetries_ = listenSocket->getAcceptRetries();
+    abortFlag_ = listenSocket->getAbortFlag();
+    asyncFlag_ = listenSocket->getAsyncFlag();
+    magic_ = listenSocket->getMagic();
+    type_ = listenSocket->getType();
+    addr_ = listenSocket->getAddr();
+    salen_ = listenSocket->getSalen();
+
+    acceptFd_ = listenSocket->getFd();
+    state_ = SocketStateAccepting;
   }
 
   do {
-    MSCCLPPCHECKGOTO(socketProgressState(sock), ret, exit);
-  } while (sock->asyncFlag == 0 && (sock->abortFlag == NULL || *sock->abortFlag == 0) &&
-           (sock->state == mscclppSocketStateAccepting || sock->state == mscclppSocketStateAccepted));
+    progressState();
+    if (timeout > 0 && timer.elapsed() > timeout) {
+      throw Error("accept timeout", ErrorCode::Timeout);
+    }
+  } while (asyncFlag_ == 0 && (abortFlag_ == NULL || *abortFlag_ == 0) &&
+           (state_ == SocketStateAccepting || state_ == SocketStateAccepted));
 
-  if (sock->abortFlag && *sock->abortFlag != 0) return mscclppInternalError;
-
-  switch (sock->state) {
-    case mscclppSocketStateAccepting:
-    case mscclppSocketStateAccepted:
-    case mscclppSocketStateReady:
-      ret = mscclppSuccess;
-      break;
-    case mscclppSocketStateError:
-      ret = mscclppSystemError;
-      break;
-    default:
-      WARN("mscclppSocketAccept: wrong socket state %d", sock->state);
-      ret = mscclppInternalError;
-      break;
-  }
-
-exit:
-  return ret;
+  if (abortFlag_ && *abortFlag_ != 0) throw Error("aborted", ErrorCode::Aborted);
 }
 
-mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, const mscclppSocketAddress* addr, uint64_t magic,
-                                  enum mscclppSocketType type, volatile uint32_t* abortFlag, int asyncFlag) {
-  mscclppResult_t ret = mscclppSuccess;
+void Socket::send(void* ptr, int size) {
+  int offset = 0;
+  if (state_ != SocketStateReady) {
+    std::stringstream ss;
+    ss << "socket state (" << state_ << ") is not ready";
+    throw Error(ss.str(), ErrorCode::InternalError);
+  }
+  socketWait(MSCCLPP_SOCKET_SEND, ptr, size, &offset);
+}
 
-  if (sock == NULL) goto exit;
-  sock->connectRetries = 0;
-  sock->acceptRetries = 0;
-  sock->abortFlag = abortFlag;
-  sock->asyncFlag = asyncFlag;
-  sock->state = mscclppSocketStateInitialized;
-  sock->magic = magic;
-  sock->type = type;
-  sock->fd = -1;
-  sock->acceptFd = -1;
+void Socket::recv(void* ptr, int size) {
+  int offset = 0;
+  if (state_ != SocketStateReady) {
+    std::stringstream ss;
+    ss << "socket state (" << state_ << ") is not ready";
+    throw Error(ss.str(), ErrorCode::InternalError);
+  }
+  socketWait(MSCCLPP_SOCKET_RECV, ptr, size, &offset);
+}
 
-  if (addr) {
-    /* IPv4/IPv6 support */
-    int family;
-    memcpy(&sock->addr, addr, sizeof(union mscclppSocketAddress));
-    family = sock->addr.sa.sa_family;
-    if (family != AF_INET && family != AF_INET6) {
-      char line[SOCKET_NAME_MAXLEN + 1];
-      WARN("mscclppSocketInit: connecting to address %s with family %d is neither AF_INET(%d) nor AF_INET6(%d)",
-           mscclppSocketToString(&sock->addr, line), family, AF_INET, AF_INET6);
-      ret = mscclppInternalError;
-      goto fail;
-    }
-    sock->salen = (family == AF_INET) ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+void Socket::close() {
+  if (fd_ >= 0) ::close(fd_);
+  state_ = SocketStateClosed;
+  fd_ = -1;
+}
 
-    /* Connect to a hostname / port */
-    sock->fd = socket(family, SOCK_STREAM, 0);
-    if (sock->fd == -1) {
-      WARN("mscclppSocketInit: Socket creation failed : %s", strerror(errno));
-      ret = mscclppSystemError;
-      goto fail;
-    }
+void Socket::progressState() {
+  if (state_ == SocketStateAccepting) {
+    tryAccept();
+  }
+  if (state_ == SocketStateAccepted) {
+    finalizeAccept();
+  }
+  if (state_ == SocketStateConnecting) {
+    startConnect();
+  }
+  if (state_ == SocketStateConnectPolling) {
+    pollConnect();
+  }
+  if (state_ == SocketStateConnected) {
+    finalizeConnect();
+  }
+}
+
+void Socket::tryAccept() {
+  socklen_t socklen = sizeof(union SocketAddress);
+  fd_ = ::accept(acceptFd_, &addr_.sa, &socklen);
+  if (fd_ != -1) {
+    state_ = SocketStateAccepted;
+  } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+    std::stringstream ss;
+    ss << "accept failed (fd " << acceptFd_ << ")";
+    throw SysError(ss.str(), errno);
   } else {
-    memset(&sock->addr, 0, sizeof(union mscclppSocketAddress));
+    usleep(SLEEP_INT);
+    if (++acceptRetries_ % 1000 == 0)
+      INFO(MSCCLPP_ALL, "tryAccept: Call to try accept returned %s, retrying", strerror(errno));
   }
-
-  /* Set socket as non-blocking if async or if we need to be able to abort */
-  if ((sock->asyncFlag || sock->abortFlag) && sock->fd >= 0) {
-    int flags;
-    EQCHECKGOTO(flags = fcntl(sock->fd, F_GETFL), -1, ret, fail);
-    SYSCHECKGOTO(fcntl(sock->fd, F_SETFL, flags | O_NONBLOCK), ret, fail);
-  }
-
-exit:
-  return ret;
-fail:
-  goto exit;
 }
 
-mscclppResult_t mscclppSocketProgress(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset) {
-  if (sock == NULL) {
-    WARN("mscclppSocketProgress: pass NULL socket");
-    return mscclppInvalidArgument;
+void Socket::finalizeAccept() {
+  uint64_t magic;
+  enum SocketType type;
+  int received = 0;
+  socketProgress(MSCCLPP_SOCKET_RECV, &magic, sizeof(magic), &received);
+  if (received == 0) return;
+  socketWait(MSCCLPP_SOCKET_RECV, &magic, sizeof(magic), &received);
+  if (magic != magic_) {
+    WARN("finalizeAccept: wrong magic %lx != %lx", magic, magic_);
+    ::close(fd_);
+    fd_ = -1;
+    // Ignore spurious connection and accept again
+    state_ = SocketStateAccepting;
+    return;
+  } else {
+    received = 0;
+    socketWait(MSCCLPP_SOCKET_RECV, &type, sizeof(type), &received);
+    if (type != type_) {
+      state_ = SocketStateError;
+      ::close(fd_);
+      fd_ = -1;
+      std::stringstream ss;
+      ss << "wrong socket type " << type << " != " << type_;
+      throw Error(ss.str(), ErrorCode::InternalError);
+    } else {
+      state_ = SocketStateReady;
+    }
   }
-  MSCCLPPCHECK(socketProgress(op, sock, ptr, size, offset));
-  return mscclppSuccess;
 }
 
-// mscclppResult_t mscclppSocketWait(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset) {
-//   if (sock == NULL) {
-//     WARN("mscclppSocketWait: pass NULL socket");
-//     return mscclppInvalidArgument;
-//   }
-//   MSCCLPPCHECK(socketWait(op, sock, ptr, size, offset));
-//   return mscclppSuccess;
-// }
-
-mscclppResult_t mscclppSocketSend(struct mscclppSocket* sock, void* ptr, int size) {
-  int offset = 0;
-  if (sock == NULL) {
-    WARN("mscclppSocketSend: pass NULL socket");
-    return mscclppInvalidArgument;
+void Socket::startConnect() {
+  /* blocking/non-blocking connect() is determined by asyncFlag. */
+  int ret = ::connect(fd_, &addr_.sa, salen_);
+  if (ret == 0) {
+    state_ = SocketStateConnected;
+    return;
+  } else if (errno == EINPROGRESS) {
+    state_ = SocketStateConnectPolling;
+    return;
+  } else if (errno == ECONNREFUSED || errno == ETIMEDOUT) {
+    usleep(SLEEP_INT);
+    if (++connectRetries_ % 1000 == 0) INFO(MSCCLPP_ALL, "Call to connect returned %s, retrying", strerror(errno));
+    return;
+  } else {
+    char line[SOCKET_NAME_MAXLEN + 1];
+    state_ = SocketStateError;
+    std::stringstream ss;
+    ss << "connect to " << SocketToString(&addr_, line) << " failed";
+    throw SysError(ss.str(), errno);
   }
-  if (sock->state != mscclppSocketStateReady) {
-    WARN("mscclppSocketSend: socket state (%d) is not ready", sock->state);
-    return mscclppInternalError;
-  }
-  MSCCLPPCHECK(socketWait(MSCCLPP_SOCKET_SEND, sock, ptr, size, &offset));
-  return mscclppSuccess;
 }
 
-mscclppResult_t mscclppSocketRecv(struct mscclppSocket* sock, void* ptr, int size) {
-  int offset = 0;
-  if (sock == NULL) {
-    WARN("mscclppSocketRecv: pass NULL socket");
-    return mscclppInvalidArgument;
+void Socket::pollConnect() {
+  struct pollfd pfd;
+  int timeout = 1, ret;
+  socklen_t rlen = sizeof(int);
+
+  memset(&pfd, 0, sizeof(struct pollfd));
+  pfd.fd = fd_;
+  pfd.events = POLLOUT;
+  ret = ::poll(&pfd, 1, timeout);
+  if (ret == -1) throw SysError("poll failed", errno);
+  if (ret == 0) return;
+
+  /* check socket status */
+  if ((ret == 1 && (pfd.revents & POLLOUT)) == 0) {
+    throw Error("poll failed", ErrorCode::InternalError);
   }
-  if (sock->state != mscclppSocketStateReady) {
-    WARN("mscclppSocketRecv: socket state (%d) is not ready", sock->state);
-    return mscclppInternalError;
+  if (getsockopt(fd_, SOL_SOCKET, SO_ERROR, (void*)&ret, &rlen) == -1) {
+    throw SysError("getsockopt failed", errno);
   }
-  MSCCLPPCHECK(socketWait(MSCCLPP_SOCKET_RECV, sock, ptr, size, &offset));
-  return mscclppSuccess;
+
+  if (ret == 0) {
+    state_ = SocketStateConnected;
+  } else if (ret == ECONNREFUSED || ret == ETIMEDOUT) {
+    if (++connectRetries_ % 1000 == 0) {
+      INFO(MSCCLPP_ALL, "Call to connect returned %s, retrying", strerror(errno));
+    }
+    usleep(SLEEP_INT);
+
+    ::close(fd_);
+    fd_ = ::socket(addr_.sa.sa_family, SOCK_STREAM, 0);
+    state_ = SocketStateConnecting;
+  } else if (ret != EINPROGRESS) {
+    state_ = SocketStateError;
+    throw Error("connect failed", ErrorCode::SystemError);
+  }
 }
 
-// Receive or detect connection closed
-// mscclppResult_t mscclppSocketTryRecv(struct mscclppSocket* sock, void* ptr, int size, int* closed) {
-//   int offset = 0;
-//   if (sock == NULL) {
-//     WARN("mscclppSocketTryRecv: pass NULL socket");
-//     return mscclppInvalidArgument;
-//   }
-//   *closed = 0;
-//   while (offset < size) {
-//     MSCCLPPCHECK(socketProgressOpt(MSCCLPP_SOCKET_RECV, sock, ptr, size, &offset, 0, closed));
-//     if (*closed) return mscclppSuccess;
-//   }
-//   return mscclppSuccess;
-// }
-
-mscclppResult_t mscclppSocketClose(struct mscclppSocket* sock) {
-  if (sock != NULL) {
-    if (sock->fd >= 0) close(sock->fd);
-    sock->state = mscclppSocketStateClosed;
-    sock->fd = -1;
-  }
-  return mscclppSuccess;
+void Socket::finalizeConnect() {
+  int sent = 0;
+  socketProgress(MSCCLPP_SOCKET_SEND, &magic_, sizeof(magic_), &sent);
+  if (sent == 0) return;
+  socketWait(MSCCLPP_SOCKET_SEND, &magic_, sizeof(magic_), &sent);
+  sent = 0;
+  socketWait(MSCCLPP_SOCKET_SEND, &type_, sizeof(type_), &sent);
+  state_ = SocketStateReady;
 }
 
-// mscclppResult_t mscclppSocketGetFd(struct mscclppSocket* sock, int* fd) {
-//   if (sock == NULL) {
-//     WARN("mscclppSocketGetFd: pass NULL socket");
-//     return mscclppInvalidArgument;
-//   }
-//   if (fd) *fd = sock->fd;
-//   return mscclppSuccess;
-// }
+void Socket::socketProgressOpt(int op, void* ptr, int size, int* offset, int block, int* closed) {
+  int bytes = 0;
+  *closed = 0;
+  char* data = (char*)ptr;
 
-// mscclppResult_t mscclppSocketSetFd(int fd, struct mscclppSocket* sock) {
-//   if (sock == NULL) {
-//     WARN("mscclppSocketGetFd: pass NULL socket");
-//     return mscclppInvalidArgument;
-//   }
-//   sock->fd = fd;
-//   return mscclppSuccess;
-// }
+  do {
+    if (op == MSCCLPP_SOCKET_RECV) bytes = ::recv(fd_, data + (*offset), size - (*offset), block ? 0 : MSG_DONTWAIT);
+    if (op == MSCCLPP_SOCKET_SEND)
+      bytes = ::send(fd_, data + (*offset), size - (*offset), block ? MSG_NOSIGNAL : MSG_DONTWAIT | MSG_NOSIGNAL);
+    if (op == MSCCLPP_SOCKET_RECV && bytes == 0) {
+      *closed = 1;
+      return;
+    }
+    if (bytes == -1) {
+      if (errno != EINTR && errno != EWOULDBLOCK && errno != EAGAIN) {
+        throw SysError("recv failed", errno);
+      } else {
+        bytes = 0;
+      }
+    }
+    (*offset) += bytes;
+    if (abortFlag_ && *abortFlag_ != 0) {
+      throw Error("aborted", ErrorCode::Aborted);
+    }
+  } while (bytes > 0 && (*offset) < size);
+}
+
+void Socket::socketProgress(int op, void* ptr, int size, int* offset) {
+  int closed;
+  socketProgressOpt(op, ptr, size, offset, 0, &closed);
+  if (closed) {
+    char line[SOCKET_NAME_MAXLEN + 1];
+    throw Error("connection closed by remote peer " + std::string(SocketToString(&addr_, line, 0)),
+                ErrorCode::RemoteError);
+  }
+}
+
+void Socket::socketWait(int op, void* ptr, int size, int* offset) {
+  while (*offset < size) socketProgress(op, ptr, size, offset);
+}
+
+}  // namespace mscclpp

@@ -1,11 +1,14 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
-#include <mscclpp/channel.hpp>
 #include <mscclpp/concurrency.hpp>
-#include <mscclpp/epoch.hpp>
+#include <mscclpp/semaphore.hpp>
+#include <mscclpp/sm_channel.hpp>
 #include <string>
 #include <vector>
 
@@ -19,7 +22,7 @@ constexpr size_t MAX_BLOCKS_NUM = 32;
 
 #define ALIGN 4
 
-__constant__ mscclpp::channel::DirectChannel constDirChans[2];
+__constant__ mscclpp::SmChannel constSmChans[2];
 
 inline int getBlockNum(size_t count) {
   return std::min((count + THRES_BYTES_PER_BLOCK - 1) / THRES_BYTES_PER_BLOCK, MAX_BLOCKS_NUM);
@@ -36,8 +39,8 @@ __global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock) {
   size_t blockDataSize = min(dataSize - startIndex, dataPerBlock);
   int globalIndex = blockIdx.x * blockDim.x + threadIdx.x;
 
-  mscclpp::channel::DirectChannel sendConn = constDirChans[0];
-  mscclpp::channel::DirectChannel recvConn = constDirChans[1];
+  mscclpp::SmChannel sendConn = constSmChans[0];
+  mscclpp::SmChannel recvConn = constSmChans[1];
 
   sendConn.put(startIndex, startIndex, blockDataSize, threadIdx.x, blockDim.x);
   deviceSyncer.sync(gridDim.x);
@@ -120,7 +123,7 @@ class SendRecvTestEngine : public BaseTestEngine {
   std::shared_ptr<int[]> expectedBuff_;
 };
 
-SendRecvTestEngine::SendRecvTestEngine(const TestArgs& args) : BaseTestEngine(args) { inPlace_ = false; }
+SendRecvTestEngine::SendRecvTestEngine(const TestArgs& args) : BaseTestEngine(args, "sendrecv") { inPlace_ = false; }
 
 void SendRecvTestEngine::allocateBuffer() {
   std::shared_ptr<int> sendBuff = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
@@ -137,20 +140,20 @@ void SendRecvTestEngine::setupConnections() {
   int sendToRank = (args_.rank + 1) % worldSize;
   int recvFromRank = (args_.rank - 1 + worldSize) % worldSize;
   std::array<int, 2> ranks = {sendToRank, recvFromRank};
-  auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
+  auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
 
-  std::vector<std::shared_ptr<mscclpp::DirectEpoch>> directEpochs;
+  std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
 
   auto sendConn =
       comm_->connectOnSetup(sendToRank, 0, getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice));
-  directEpochs.push_back(std::make_shared<mscclpp::DirectEpoch>(*comm_, sendConn));
+  smSemaphores.push_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, sendConn));
   if (recvFromRank != sendToRank) {
     auto recvConn =
         comm_->connectOnSetup(recvFromRank, 0, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice));
-    directEpochs.push_back(std::make_shared<mscclpp::DirectEpoch>(*comm_, recvConn));
+    smSemaphores.push_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, recvConn));
   } else {
     // reuse the send channel if worldSize is 2
-    directEpochs.push_back(directEpochs[0]);
+    smSemaphores.push_back(smSemaphores[0]);
   }
   comm_->setup();
 
@@ -167,13 +170,13 @@ void SendRecvTestEngine::setupConnections() {
 
   // swap to make sure devicePtrs_[0] in local rank write to devicePtrs_[1] in remote rank
   std::swap(futureRemoteMemory[0], futureRemoteMemory[1]);
-  std::vector<mscclpp::channel::DirectChannel> dirChannels;
+  std::vector<mscclpp::SmChannel> smChannels;
   for (int i : {0, 1}) {
     // We assume ranks in the same node
-    dirChannels.emplace_back(directEpochs[i]->deviceHandle(), futureRemoteMemory[i].get(),
-                             (void*)localMemories[i].data());
+    smChannels.emplace_back(smSemaphores[i]->deviceHandle(), futureRemoteMemory[i].get(),
+                            (void*)localMemories[i].data());
   }
-  cudaMemcpyToSymbol(constDirChans, dirChannels.data(), sizeof(mscclpp::channel::DirectChannel) * dirChannels.size());
+  cudaMemcpyToSymbol(constSmChans, smChannels.data(), sizeof(mscclpp::SmChannel) * smChannels.size());
 }
 
 std::vector<void*> SendRecvTestEngine::getSendBuff() { return {devicePtrs_[0].get()}; }

@@ -1,16 +1,18 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_CONFIG_H_
 #define MSCCLPP_CONFIG_H_
 
-#include <time.h>
-
 namespace mscclpp {
+
 class Config {
  public:
-  time_t bootstrapConnectionTimeout = 30;
+  int bootstrapConnectionTimeout = 30;
 
   static Config* getInstance();
-  time_t getBootstrapConnectionTimeoutConfig();
-  void setBootstrapConnectionTimeoutConfig(time_t timeout);
+  int getBootstrapConnectionTimeoutConfig();
+  void setBootstrapConnectionTimeoutConfig(int timeout);
 
  private:
   Config() = default;
@@ -19,6 +21,7 @@ class Config {
 
   static Config instance_;
 };
+
 }  // namespace mscclpp
 
 #endif  // end include guard

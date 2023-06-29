@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_CORE_HPP_
 #define MSCCLPP_CORE_HPP_
 
@@ -44,7 +47,8 @@ class Bootstrap : public BaseBootstrap {
   UniqueId getUniqueId() const;
 
   void initialize(UniqueId uniqueId);
-  void initialize(std::string ipPortPair);
+  // the acceptable formats are "ip:port" or "interface:ip:port"
+  void initialize(std::string ifIpPortTrio);
   int getRank() override;
   int getNranks() override;
   void send(void* data, int size, int peer, int tag) override;
@@ -218,7 +222,7 @@ class NonblockingFuture {
 
   bool ready() const { return future.wait_for(std::chrono::seconds(0)) == std::future_status::ready; }
 
-  T get() {
+  T get() const {
     if (!ready()) throw Error("NonblockingFuture::get() called before ready", ErrorCode::InvalidUsage);
     return future.get();
   }

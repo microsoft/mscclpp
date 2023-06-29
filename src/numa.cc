@@ -1,8 +1,10 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <numa.h>
 
 #include <fstream>
-#include <mscclpp/checks.hpp>
-#include <mscclpp/errors.hpp>
+#include <mscclpp/cuda_utils.hpp>
 
 // Convert a logical cudaDev index to the NVML device minor number
 static const std::string getBusId(int cudaDev) {
@@ -12,7 +14,7 @@ static const std::string getBusId(int cudaDev) {
   char busIdChar[] = "00000000:00:00.0";
   MSCCLPP_CUDATHROW(cudaDeviceGetPCIBusId(busIdChar, sizeof(busIdChar), cudaDev));
   // we need the hex in lower case format
-  for (int i = 0; i < sizeof(busIdChar); i++) {
+  for (size_t i = 0; i < sizeof(busIdChar); i++) {
     busIdChar[i] = std::tolower(busIdChar[i]);
   }
   return std::string(busIdChar);

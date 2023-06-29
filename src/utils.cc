@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <signal.h>
 #include <unistd.h>
 
@@ -60,7 +63,7 @@ std::string getHostName(int maxlen, const char delim) {
   int i = 0;
   while ((hostname[i] != delim) && (hostname[i] != '\0') && (i < maxlen - 1)) i++;
   hostname[i] = '\0';
-  return hostname;
+  return hostname.substr(0, i);
 }
 
 }  // namespace mscclpp

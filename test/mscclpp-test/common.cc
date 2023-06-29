@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include "common.hpp"
 
 #include <cuda.h>
@@ -15,6 +18,7 @@
 #include <iomanip>
 #include <iostream>
 #include <mscclpp/utils.hpp>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -46,13 +50,14 @@ int iters = 20;
 int average = 1;
 int kernel_num = 0;
 int cudaGraphLaunches = 15;
+std::string output_file;
 
 double parseSize(const char* value) {
   std::string valueStr(value);
   std::istringstream iss(valueStr);
   long long int units;
   double size;
-  char size_lit;
+  char size_lit = 0;
 
   if (iss >> size) {
     iss >> std::ws;  // eat whitespace
@@ -61,7 +66,7 @@ double parseSize(const char* value) {
     return -1.0;
   }
 
-  if (!std::isspace(size_lit)) {
+  if (size_lit != 0 && !std::isspace(size_lit)) {
     switch (size_lit) {
       case 'G':
       case 'g':
@@ -97,6 +102,8 @@ double allreduceTime(int worldSize, double value, int average) {
       op = MPI_MAX;
     } else if (average == 4) {
       op = MPI_SUM;
+    } else {
+      throw std::runtime_error("Invalid average type " + std::to_string(average));
     }
     MPI_Allreduce(MPI_IN_PLACE, (void*)&accumulator, 1, MPI_DOUBLE, op, MPI_COMM_WORLD);
   }
@@ -112,7 +119,7 @@ const std::string getBusId(int cudaDev) {
   char busIdChar[] = "00000000:00:00.0";
   CUDATHROW(cudaDeviceGetPCIBusId(busIdChar, sizeof(busIdChar), cudaDev));
   // we need the hex in lower case format
-  for (int i = 0; i < sizeof(busIdChar); i++) {
+  for (size_t i = 0; i < sizeof(busIdChar); i++) {
     busIdChar[i] = std::tolower(busIdChar[i]);
   }
   return std::string(busIdChar);
@@ -146,7 +153,8 @@ void numaBind(int node) {
   numa_bind_compat(&mask);
 }
 
-BaseTestEngine::BaseTestEngine(const TestArgs& args) : args_(args), inPlace_(true), error_(0) {
+BaseTestEngine::BaseTestEngine(const TestArgs& args, const std::string& name)
+    : args_(args), name_(name), inPlace_(true), error_(0) {
   this->coll_ = getTestColl();
   CUDATHROW(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
 }
@@ -252,6 +260,18 @@ void BaseTestEngine::runTest() {
     }
     double algBw, busBw;
     this->coll_->getBw(deltaSec, algBw, busBw);
+    if (!output_file.empty()) {
+      nlohmann::json perfOutput = {{"name", name_},
+                                   {"kernel", args_.kernelNum},
+                                   {"ranks", args_.totalRanks},
+                                   {"ranksPerNode", args_.nRanksPerNode},
+                                   {"size", size},
+                                   {"time", timeUsec},
+                                   {"algBw", algBw},
+                                   {"busBw", busBw}};
+      std::ofstream out(output_file, std::ios_base::app);
+      if (isMainProc) out << perfOutput << std::endl;
+    }
     if (!this->inPlace_) {
       ss << "                                 ";
     }
@@ -301,46 +321,35 @@ size_t BaseTestEngine::checkData() {
   return nErrors;
 }
 
-std::shared_ptr<mscclpp::channel::BaseChannelService> BaseTestEngine::createChannelService() {
-  return std::make_shared<mscclpp::channel::DeviceChannelService>(*comm_);
+std::shared_ptr<mscclpp::BaseProxyService> BaseTestEngine::createChannelService() {
+  return std::make_shared<mscclpp::ProxyService>(*comm_);
 }
 
 void BaseTestEngine::setupMeshConnectionsInternal(
-    std::vector<std::shared_ptr<mscclpp::Connection>>& connections, mscclpp::RegisteredMemory& inputBufRegMem,
-    mscclpp::RegisteredMemory& outputBufRegMem,
-    std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories, void* inputBuff,
-    size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes) {
+    std::vector<std::shared_ptr<mscclpp::Connection>>& connections, mscclpp::RegisteredMemory& localRegMemory,
+    std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories, bool addConnections) {
   const int worldSize = args_.totalRanks;
   const int rank = args_.rank;
   const int nRanksPerNode = args_.nRanksPerNode;
   const int thisNode = rank / nRanksPerNode;
   const mscclpp::Transport ibTransport = IBs[args_.gpuNum];
-  const bool isOutPlace = (outputBuff != nullptr);
-
-  inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
-  if (isOutPlace) {
-    outputBufRegMem = comm_->registerMemory(outputBuff, outputBuffBytes, mscclpp::Transport::CudaIpc | ibTransport);
-  }
 
   auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
   for (int r = 0; r < worldSize; r++) {
     if (r == rank) {
       continue;
     }
-    mscclpp::Transport transport;
-    if (rankToNode(r) == thisNode) {
-      transport = mscclpp::Transport::CudaIpc;
-    } else {
-      transport = ibTransport;
+    if (addConnections) {
+      mscclpp::Transport transport;
+      if (rankToNode(r) == thisNode) {
+        transport = mscclpp::Transport::CudaIpc;
+      } else {
+        transport = ibTransport;
+      }
+      // Connect with all other ranks
+      connections.push_back(comm_->connectOnSetup(r, 0, transport));
     }
-    // Connect with all other ranks
-    connections.push_back(comm_->connectOnSetup(r, 0, transport));
-
-    if (isOutPlace) {
-      comm_->sendMemoryOnSetup(outputBufRegMem, r, 0);
-    } else {
-      comm_->sendMemoryOnSetup(inputBufRegMem, r, 0);
-    }
+    comm_->sendMemoryOnSetup(localRegMemory, r, 0);
     auto remoteMemory = comm_->recvMemoryOnSetup(r, 0);
     remoteRegMemories.push_back(remoteMemory);
   }
@@ -349,51 +358,94 @@ void BaseTestEngine::setupMeshConnectionsInternal(
 
 // Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
 // TODO(saemal): retrun the actual vector instead of void
-void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::SimpleDeviceChannel>& devChannels,
-                                          void* inputBuff, size_t inputBuffBytes, void* outputBuff,
-                                          size_t outputBuffBytes, SetupChannelFunc setupChannel) {
-  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
-  mscclpp::RegisteredMemory inputBufRegMem;
+void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& devChannels, void* inputBuff,
+                                          size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes,
+                                          SetupChannelFunc setupChannel) {
+  const mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc | IBs[args_.gpuNum];
+  mscclpp::RegisteredMemory inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, allTransports);
   mscclpp::RegisteredMemory outputBufRegMem;
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
+  if (outputBuff) {
+    outputBufRegMem = comm_->registerMemory(outputBuff, outputBuffBytes, allTransports);
+  }
 
-  setupMeshConnectionsInternal(connections, inputBufRegMem, outputBufRegMem, remoteRegMemories, inputBuff,
-                               inputBuffBytes, outputBuff, outputBuffBytes);
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
+  mscclpp::RegisteredMemory& localRegMemory = (outputBuff) ? outputBufRegMem : inputBufRegMem;
+
+  setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
 
   if (setupChannel != nullptr) {
     setupChannel(connections, remoteRegMemories, inputBufRegMem);
   } else {
-    auto service = std::dynamic_pointer_cast<mscclpp::channel::DeviceChannelService>(chanService_);
+    auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
     for (size_t i = 0; i < connections.size(); ++i) {
-      devChannels.push_back(mscclpp::channel::SimpleDeviceChannel(
-          service->deviceChannel(service->addChannel(connections[i])), service->addMemory(remoteRegMemories[i].get()),
-          service->addMemory(inputBufRegMem)));
+      devChannels.push_back(mscclpp::SimpleProxyChannel(service->deviceChannel(service->addSemaphore(connections[i])),
+                                                        service->addMemory(remoteRegMemories[i].get()),
+                                                        service->addMemory(inputBufRegMem)));
     }
   }
 
   comm_->setup();
 }
 
-void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::channel::DirectChannel>& dirChannels, void* inputBuff,
-                                          size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes) {
-  const bool isOutPlace = (outputBuff != nullptr);
-  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
-  mscclpp::RegisteredMemory inputBufRegMem;
+void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels,
+                                          std::vector<mscclpp::SimpleProxyChannel>& devChannels, void* inputBuff,
+                                          size_t inputBuffBytes, void* putPacketBuff, size_t putPacketBuffBytes,
+                                          void* getPacketBuff, size_t getPacketBuffBytes, void* outputBuff,
+                                          size_t outputBuffBytes) {
+  const mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc | IBs[args_.gpuNum];
+  mscclpp::RegisteredMemory inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, allTransports);
+  mscclpp::RegisteredMemory putPacketBufRegMem;
+  mscclpp::RegisteredMemory getPacketBufRegMem;
   mscclpp::RegisteredMemory outputBufRegMem;
+  if (putPacketBuff) {
+    putPacketBufRegMem = comm_->registerMemory(putPacketBuff, putPacketBuffBytes, allTransports);
+  }
+  if (getPacketBuff) {
+    getPacketBufRegMem = comm_->registerMemory(getPacketBuff, getPacketBuffBytes, allTransports);
+  }
+  if (outputBuff) {
+    outputBufRegMem = comm_->registerMemory(outputBuff, outputBuffBytes, allTransports);
+  }
+
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
   std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
+  mscclpp::RegisteredMemory& localRegMemory =
+      (getPacketBuff) ? getPacketBufRegMem : ((outputBuff) ? outputBufRegMem : inputBufRegMem);
 
-  setupMeshConnectionsInternal(connections, inputBufRegMem, outputBufRegMem, remoteRegMemories, inputBuff,
-                               inputBuffBytes, outputBuff, outputBuffBytes);
+  setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
 
-  std::vector<std::shared_ptr<mscclpp::DirectEpoch>> dirEpochs;
-  for (auto& conn : connections) {
-    dirEpochs.emplace_back(std::make_shared<mscclpp::DirectEpoch>(*comm_, conn));
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoriesOutput;
+  if (outputBuff) {
+    setupMeshConnectionsInternal(connections, outputBufRegMem, remoteRegMemoriesOutput, false);
+  }
+
+  std::unordered_map<size_t, std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
+  std::unordered_map<size_t, mscclpp::SemaphoreId> connIdToSemId;
+  auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
+
+  for (size_t cid = 0; cid < connections.size(); ++cid) {
+    if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+      smSemaphores.emplace(cid, std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, connections[cid]));
+    } else {
+      connIdToSemId[cid] = service->addSemaphore(connections[cid]);
+    }
   }
   comm_->setup();
 
-  for (size_t i = 0; i < dirEpochs.size(); ++i) {
-    dirChannels.emplace_back(dirEpochs[i]->deviceHandle(), remoteRegMemories[i].get(), inputBufRegMem.data(),
-                             (isOutPlace ? outputBufRegMem.data() : nullptr));
+  for (size_t cid = 0; cid < connections.size(); ++cid) {
+    if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+      smChannels.emplace_back(smSemaphores[cid]->deviceHandle(),
+                              (outputBuff) ? remoteRegMemoriesOutput[cid].get() : remoteRegMemories[cid].get(),
+                              inputBufRegMem.data(), (outputBuff) ? outputBufRegMem.data() : nullptr);
+    } else {
+      if (putPacketBuff == nullptr || getPacketBuff == nullptr) {
+        throw std::runtime_error("IB transport requires putPacketBuff and getPacketBuff");
+      }
+      devChannels.emplace_back(service->deviceChannel(connIdToSemId[cid]),
+                               service->addMemory(remoteRegMemories[cid].get()),
+                               service->addMemory(putPacketBufRegMem));
+    }
   }
 }
 
@@ -415,12 +467,13 @@ int main(int argc, char* argv[]) {
                               {"cudagraph", required_argument, 0, 'G'},
                               {"average", required_argument, 0, 'a'},
                               {"kernel_num", required_argument, 0, 'k'},
+                              {"output_file", required_argument, 0, 'o'},
                               {"help", no_argument, 0, 'h'},
                               {}};
 
   while (1) {
     int c;
-    c = getopt_long(argc, argv, "b:e:i:f:n:w:c:G:a:k:h:", longopts, &longindex);
+    c = getopt_long(argc, argv, "b:e:i:f:n:w:c:G:a:k:o:h:", longopts, &longindex);
 
     if (c == -1) break;
 
@@ -469,6 +522,9 @@ int main(int argc, char* argv[]) {
       case 'k':
         kernel_num = (int)strtol(optarg, NULL, 0);
         break;
+      case 'o':
+        output_file = optarg;
+        break;
       case 'h':
       default:
         if (c != 'h') printf("invalid option '%c'\n", c);
@@ -486,6 +542,7 @@ int main(int argc, char* argv[]) {
             "[-C,--report_cputime <0/1>] \n\t"
             "[-a,--average <0/1/2/3> report average iteration time <0=RANK0/1=AVG/2=MIN/3=MAX>] \n\t"
             "[-k,--kernel_num <kernel number of commnication primitive>] \n\t"
+            "[-o, --output_file <output file name>] \n\t"
             "[-h,--help]\n",
             basename(argv[0]));
         return 0;

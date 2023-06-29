@@ -1,8 +1,5 @@
-/*************************************************************************
- * Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
- *
- * See LICENSE.txt for license information
- ************************************************************************/
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
 
 #ifndef MSCCLPP_SOCKET_H_
 #define MSCCLPP_SOCKET_H_
@@ -15,7 +12,7 @@
 #include <stddef.h>
 #include <sys/socket.h>
 
-#include "mscclpp.h"
+namespace mscclpp {
 
 #define MAX_IFS 16
 #define MAX_IF_NAME_SIZE 16
@@ -24,79 +21,92 @@
 #define MSCCLPP_SOCKET_MAGIC 0x564ab9f2fc4b9d6cULL
 
 /* Common socket address storage structure for IPv4/IPv6 */
-union mscclppSocketAddress {
+union SocketAddress {
   struct sockaddr sa;
   struct sockaddr_in sin;
   struct sockaddr_in6 sin6;
 };
 
-enum mscclppSocketState {
-  mscclppSocketStateNone = 0,
-  mscclppSocketStateInitialized = 1,
-  mscclppSocketStateAccepting = 2,
-  mscclppSocketStateAccepted = 3,
-  mscclppSocketStateConnecting = 4,
-  mscclppSocketStateConnectPolling = 5,
-  mscclppSocketStateConnected = 6,
-  mscclppSocketStateReady = 7,
-  mscclppSocketStateClosed = 8,
-  mscclppSocketStateError = 9,
-  mscclppSocketStateNum = 10
+enum SocketState {
+  SocketStateNone = 0,
+  SocketStateInitialized = 1,
+  SocketStateAccepting = 2,
+  SocketStateAccepted = 3,
+  SocketStateConnecting = 4,
+  SocketStateConnectPolling = 5,
+  SocketStateConnected = 6,
+  SocketStateReady = 7,
+  SocketStateClosed = 8,
+  SocketStateError = 9,
+  SocketStateNum = 10
 };
 
-enum mscclppSocketType {
-  mscclppSocketTypeUnknown = 0,
-  mscclppSocketTypeBootstrap = 1,
-  mscclppSocketTypeProxy = 2,
-  mscclppSocketTypeNetSocket = 3,
-  mscclppSocketTypeNetIb = 4
+enum SocketType {
+  SocketTypeUnknown = 0,
+  SocketTypeBootstrap = 1,
+  SocketTypeProxy = 2,
+  SocketTypeNetSocket = 3,
+  SocketTypeNetIb = 4
 };
 
-struct mscclppSocket {
-  int fd;
-  int acceptFd;
-  int connectRetries;
-  int acceptRetries;
-  union mscclppSocketAddress addr;
-  volatile uint32_t* abortFlag;
-  int asyncFlag;
-  enum mscclppSocketState state;
-  int salen;
-  uint64_t magic;
-  enum mscclppSocketType type;
+const char* SocketToString(union SocketAddress* addr, char* buf, const int numericHostForm = 1);
+void SocketGetAddrFromString(union SocketAddress* ua, const char* ip_port_pair);
+int FindInterfaceMatchSubnet(char* ifNames, union SocketAddress* localAddrs, union SocketAddress* remoteAddr,
+                             int ifNameMaxSize, int maxIfs);
+int FindInterfaces(char* ifNames, union SocketAddress* ifAddrs, int ifNameMaxSize, int maxIfs,
+                   const char* inputIfName = nullptr);
+
+class Socket {
+ public:
+  Socket(const SocketAddress* addr = nullptr, uint64_t magic = MSCCLPP_SOCKET_MAGIC,
+         enum SocketType type = SocketTypeUnknown, volatile uint32_t* abortFlag = nullptr, int asyncFlag = 0);
+  ~Socket();
+
+  void listen();
+  void connect(int64_t timeout = -1);
+  void accept(const Socket* listenSocket, int64_t timeout = -1);
+  void send(void* ptr, int size);
+  void recv(void* ptr, int size);
+  void close();
+
+  int getFd() const { return fd_; }
+  int getAcceptFd() const { return acceptFd_; }
+  int getConnectRetries() const { return connectRetries_; }
+  int getAcceptRetries() const { return acceptRetries_; }
+  volatile uint32_t* getAbortFlag() const { return abortFlag_; }
+  int getAsyncFlag() const { return asyncFlag_; }
+  enum SocketState getState() const { return state_; }
+  uint64_t getMagic() const { return magic_; }
+  enum SocketType getType() const { return type_; }
+  SocketAddress getAddr() const { return addr_; }
+  int getSalen() const { return salen_; }
+
+ private:
+  void tryAccept();
+  void finalizeAccept();
+  void startConnect();
+  void pollConnect();
+  void finalizeConnect();
+  void progressState();
+
+  void socketProgressOpt(int op, void* ptr, int size, int* offset, int block, int* closed);
+  void socketProgress(int op, void* ptr, int size, int* offset);
+  void socketWait(int op, void* ptr, int size, int* offset);
+
+  int fd_;
+  int acceptFd_;
+  int connectRetries_;
+  int acceptRetries_;
+  volatile uint32_t* abortFlag_;
+  int asyncFlag_;
+  enum SocketState state_;
+  uint64_t magic_;
+  enum SocketType type_;
+
+  union SocketAddress addr_;
+  int salen_;
 };
 
-const char* mscclppSocketToString(union mscclppSocketAddress* addr, char* buf, const int numericHostForm = 1);
-mscclppResult_t mscclppSocketGetAddrFromString(union mscclppSocketAddress* ua, const char* ip_port_pair);
-int mscclppFindInterfaceMatchSubnet(char* ifNames, union mscclppSocketAddress* localAddrs,
-                                    union mscclppSocketAddress* remoteAddr, int ifNameMaxSize, int maxIfs);
-int mscclppFindInterfaces(char* ifNames, union mscclppSocketAddress* ifAddrs, int ifNameMaxSize, int maxIfs);
+}  // namespace mscclpp
 
-// Initialize a socket
-mscclppResult_t mscclppSocketInit(struct mscclppSocket* sock, const mscclppSocketAddress* addr = NULL,
-                                  uint64_t magic = MSCCLPP_SOCKET_MAGIC,
-                                  enum mscclppSocketType type = mscclppSocketTypeUnknown,
-                                  volatile uint32_t* abortFlag = NULL, int asyncFlag = 0);
-// Create a listening socket. sock->addr can be pre-filled with IP & port info. sock->fd is set after a successful call
-mscclppResult_t mscclppSocketListen(struct mscclppSocket* sock);
-mscclppResult_t mscclppSocketGetAddr(struct mscclppSocket* sock, union mscclppSocketAddress* addr);
-// Connect to sock->addr. sock->fd is set after a successful call.
-mscclppResult_t mscclppSocketConnect(struct mscclppSocket* sock);
-// Return socket connection state.
-// mscclppResult_t mscclppSocketReady(struct mscclppSocket* sock, int *running);
-// Accept an incoming connection from listenSock->fd and keep the file descriptor in sock->fd, with the remote side
-// IP/port in sock->addr.
-mscclppResult_t mscclppSocketAccept(struct mscclppSocket* sock, struct mscclppSocket* ulistenSock);
-// mscclppResult_t mscclppSocketGetFd(struct mscclppSocket* sock, int* fd);
-// mscclppResult_t mscclppSocketSetFd(int fd, struct mscclppSocket* sock);
-
-#define MSCCLPP_SOCKET_SEND 0
-#define MSCCLPP_SOCKET_RECV 1
-
-mscclppResult_t mscclppSocketProgress(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset);
-// mscclppResult_t mscclppSocketWait(int op, struct mscclppSocket* sock, void* ptr, int size, int* offset);
-mscclppResult_t mscclppSocketSend(struct mscclppSocket* sock, void* ptr, int size);
-mscclppResult_t mscclppSocketRecv(struct mscclppSocket* sock, void* ptr, int size);
-// mscclppResult_t mscclppSocketTryRecv(struct mscclppSocket* sock, void* ptr, int size, int* closed);
-mscclppResult_t mscclppSocketClose(struct mscclppSocket* sock);
-#endif
+#endif  // MSCCLPP_SOCKET_H_

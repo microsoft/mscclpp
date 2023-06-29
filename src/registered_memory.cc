@@ -1,11 +1,14 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include "registered_memory.hpp"
 
 #include <cuda.h>
 
 #include <algorithm>
+#include <mscclpp/cuda_utils.hpp>
 
 #include "api.h"
-#include "checks_internal.hpp"
 #include "debug.h"
 #include "utils_internal.hpp"
 
@@ -67,7 +70,7 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
   std::copy_n(reinterpret_cast<char*>(&pimpl->rank), sizeof(pimpl->rank), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->hostHash), sizeof(pimpl->hostHash), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->transports), sizeof(pimpl->transports), std::back_inserter(result));
-  if (pimpl->transportInfos.size() > std::numeric_limits<int8_t>::max()) {
+  if (pimpl->transportInfos.size() > static_cast<size_t>(std::numeric_limits<int8_t>::max())) {
     throw mscclpp::Error("Too many transport info entries", ErrorCode::InternalError);
   }
   int8_t transportCount = pimpl->transportInfos.size();

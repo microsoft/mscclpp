@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_CONCURRENCY_HPP_
 #define MSCCLPP_CONCURRENCY_HPP_
 
@@ -17,6 +20,7 @@ struct DeviceSyncer {
   __forceinline__ __device__ void sync(int blockNum) {
     int maxOldCnt = blockNum - 1;
     __syncthreads();
+    if (blockNum == 1) return;
     if (threadIdx.x == 0) {
       // Need a `__threadfence()` before to flip `flag`.
       __threadfence();

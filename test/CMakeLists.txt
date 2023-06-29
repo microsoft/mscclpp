@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 function(add_test_executable name sources)
     add_executable(${name} ${sources})
     target_link_libraries(${name} mscclpp CUDA::cudart CUDA::cuda_driver)
@@ -12,19 +15,21 @@ endfunction()
 add_test_executable(allgather_test_cpp allgather_test_cpp.cu)
 add_test_executable(allgather_test_host_offloading allgather_test_host_offloading.cu)
 
-add_executable(mp_unit_tests mp_unit_tests.cu)
-target_link_libraries(mp_unit_tests mscclpp CUDA::cudart CUDA::cuda_driver MPI::MPI_CXX GTest::gtest_main GTest::gmock_main)
-target_include_directories(mp_unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/include)
-gtest_discover_tests(mp_unit_tests DISCOVERY_MODE PRE_TEST)
-
 configure_file(run_mpi_test.sh.in run_mpi_test.sh)
 
 # Unit tests
 add_executable(unit_tests)
 target_link_libraries(unit_tests GTest::gtest_main GTest::gmock_main mscclpp CUDA::cudart CUDA::cuda_driver)
 target_include_directories(unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/include)
-add_subdirectory(unit) # This adds the sources to the mscclpp target
+add_subdirectory(unit)
 gtest_discover_tests(unit_tests DISCOVERY_MODE PRE_TEST)
+
+# Multi-process unit tests
+add_executable(mp_unit_tests)
+target_link_libraries(mp_unit_tests mscclpp CUDA::cudart CUDA::cuda_driver MPI::MPI_CXX GTest::gtest_main GTest::gmock_main)
+target_include_directories(mp_unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/include)
+add_subdirectory(mp_unit)
+gtest_discover_tests(mp_unit_tests DISCOVERY_MODE PRE_TEST)
 
 # Msccclpp_test
 add_subdirectory(mscclpp-test)
