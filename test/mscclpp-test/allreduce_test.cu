@@ -564,9 +564,8 @@ __global__ void kernel(void* buff, void* scratch, void* result, void* putPktBuf,
     allreduce1((int*)buff, (int*)scratch, rank, worldSize, nelems, scratchDataCount);
   else if (kernel == 2)
     allreduce2((int*)buff, scratch, putPktBuf, getPktBuf, result, rank, nRanksPerNode, worldSize, nelems);
-  else if (kernel == 3) {
+  else if (kernel == 3)
     allreduce3((int*)buff, (int*)scratch, result, rank, nRanksPerNode, worldSize, nelems);
-  }
 }
 
 class AllReduceTestColl : public BaseTestColl {
