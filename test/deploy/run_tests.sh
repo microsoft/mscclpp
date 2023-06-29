@@ -39,7 +39,6 @@ function run_mscclpp_test()
     -npernode 8 /root/mscclpp/build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 0 -o /root/mscclpp/output.jsonl
 
   echo "========================Run performance check==============================="
-  sleep 10000
   python3 /root/mscclpp/check_perf_result.py --perf-file /root/mscclpp/output.jsonl \
     --baseline-file /root/mscclpp/perf_ndmv4.jsonl
 }
