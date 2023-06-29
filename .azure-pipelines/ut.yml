@@ -30,6 +30,17 @@ jobs:
         make -j
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
+  - task: Bash@3
+    name: LockGPUClock
+    displayName: Lock GPU clock frequency
+    inputs:
+      targetType: 'inline'
+      script: |
+        nvidia-smi -pm 1
+        for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+          nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
+        done
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
     name: UnitTests
