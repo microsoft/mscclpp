@@ -4,6 +4,7 @@
 #include <cuda_runtime.h>
 
 #include <cassert>
+#include <mscclpp/concurrency.hpp>
 #include <string>
 
 #include "common.hpp"
@@ -17,6 +18,8 @@ constexpr uint64_t MAGIC = 0xdeadbeef;
 
 __constant__ mscclpp::SimpleProxyChannel constDevChans[16];
 __constant__ mscclpp::ProxyChannel constRawDevChan[16];
+
+__constant__ mscclpp::SmChannel constSmChans[8];
 
 __device__ void allgather0(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int remoteRank,
                            size_t nelemsPerGPU) {
@@ -53,6 +56,37 @@ __device__ void localAllGather(mscclpp::SimpleProxyChannel devChan, int rank, in
       if ((threadIdx.x % 32) == 0) devChan.wait();
     }
     asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nranksPerNode - 1) * 32) : "memory");
+  }
+}
+
+__device__ mscclpp::DeviceSyncer deviceSyncer;
+
+__device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, uint64_t size) {
+  // this allgather algorithm works as follows:
+  // Step 1: GPU rank i sends data to GPU rank (i+1) % nranksPerNode
+  // and waits for data from GPU rank (i-1) % nranksPerNode
+  // Step 2: GPU rank i sends data to GPU rank (i+2) % nranksPerNode
+  // ...
+  // This order is much better for DMA engine for NVLinks
+  if (nRanksPerNode == 1) return;
+
+  int startRankInNode = (rank / nRanksPerNode) * nRanksPerNode;
+  for (int i = 1; i < nRanksPerNode; i++) {
+    int remoteSendToRank = (rank + i) % nRanksPerNode + startRankInNode;
+    int remoteRecvFromRank = (rank + nRanksPerNode - i) % nRanksPerNode + startRankInNode;
+    int peerSendId = (remoteSendToRank < rank) ? remoteSendToRank : remoteSendToRank - 1;
+    int peerRecvId = (remoteRecvFromRank < rank) ? remoteRecvFromRank : remoteRecvFromRank - 1;
+
+    mscclpp::SmChannel& smSendChan = constSmChans[peerSendId];
+    mscclpp::SmChannel& smRecvChan = constSmChans[peerRecvId];
+    // wait for the data from GPU (rank-i) % nranksPerNode to arrive
+    smSendChan.put(offset, offset, size, threadIdx.x + blockIdx.x * blockDim.x, blockDim.x * gridDim.x);
+    deviceSyncer.sync(gridDim.x);
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+      smSendChan.signal();
+      smRecvChan.wait();
+    }
+    deviceSyncer.sync(gridDim.x);
   }
 }
 
@@ -148,6 +182,10 @@ __device__ void allgather3(mscclpp::ProxyChannel devChan, int rank, int worldSiz
   }
 }
 
+__device__ void allgather4(int rank, int nranksPerNode, size_t nelemsPerGPU) {
+  localAllGatherSm(rank, nranksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+}
+
 __global__ void kernel(int rank, int worldSize, int nranksPerNode, size_t nelemsPerGPU, int kernel) {
   // find the mapping between remoteRank and devConns
   int warpId = threadIdx.x / 32;
@@ -164,6 +202,8 @@ __global__ void kernel(int rank, int worldSize, int nranksPerNode, size_t nelems
   else if (kernel == 3) {
     mscclpp::ProxyChannel devChan = constRawDevChan[warpId];
     allgather3(devChan, rank, worldSize);
+  } else if (kernel == 4) {
+    allgather4(rank, nranksPerNode, nelemsPerGPU);
   }
 }
 
@@ -261,7 +301,16 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int rank = args.rank;
   const int nRanksPerNode = args.nRanksPerNode;
   const int kernelNum = args.kernelNum;
-  kernel<<<1, 32 * (worldSize - 1), 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_, kernelNum);
+  int nBlocks;
+  int nThreads;
+  if (kernelNum == 4) {
+    nBlocks = 24;
+    nThreads = 1024;
+  } else {
+    nBlocks = 1;
+    nThreads = 32 * (worldSize - 1);
+  }
+  kernel<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_, kernelNum);
 }
 
 void AllGatherTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
@@ -303,6 +352,8 @@ void AllGatherTestColl::setupCollTest(size_t size) {
     auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
     service->setSendBytes(sendCount_ * typeSize_);
   }
+  mscclpp::DeviceSyncer syncer = {};
+  CUDATHROW(cudaMemcpyToSymbol(deviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
 }
 
 class AllGatherTestEngine : public BaseTestEngine {
@@ -339,6 +390,11 @@ void AllGatherTestEngine::setupConnections() {
     assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::SimpleProxyChannel));
     CUDATHROW(cudaMemcpyToSymbol(constDevChans, devChannels.data(),
                                  sizeof(mscclpp::SimpleProxyChannel) * devChannels.size()));
+
+    std::vector<mscclpp::SmChannel> smChannels;
+    setupMeshConnections(smChannels, sendBuff_.get(), args_.maxBytes);
+    assert(smChannels.size() < sizeof(constSmChans) / sizeof(mscclpp::SmChannel));
+    CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannels.data(), sizeof(mscclpp::SmChannel) * smChannels.size()));
   } else {
     auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
     setupMeshConnections(devChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,

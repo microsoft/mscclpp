@@ -32,6 +32,10 @@ struct SmChannel {
     }
   }
 
+  __forceinline__ __device__ void put(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
+    put(offset, offset, size, threadId, numThreads);
+  }
+
   __forceinline__ __device__ void putPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
                                              uint32_t numThreads, uint32_t flag) {
     mscclpp::putPackets(dst_, dstOffset, src_, srcOffset, size, threadId, numThreads, flag);
