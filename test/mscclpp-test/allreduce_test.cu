@@ -200,6 +200,7 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
   }
 }
 
+// Run with a single thread only.
 __device__ void localAllGather(int rank, int nRanksPerNode, uint64_t offset, uint64_t size) {
   // this allgather algorithm works as follows:
   // Step 1: GPU rank i sends data to GPU rank (i+1) % nranksPerNode
@@ -207,10 +208,8 @@ __device__ void localAllGather(int rank, int nRanksPerNode, uint64_t offset, uin
   // Step 2: GPU rank i sends data to GPU rank (i+2) % nranksPerNode
   // ...
   // This order is much better for DMA engine for NVLinks
-  if (nRanksPerNode == 1) {
-    return;
-  }
-  int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
+  if (nRanksPerNode == 1) return;
+
   int startRankInNode = (rank / nRanksPerNode) * nRanksPerNode;
   for (int i = 1; i < nRanksPerNode; i++) {
     int remoteSendToRank = (rank + i) % nRanksPerNode + startRankInNode;
@@ -221,14 +220,12 @@ __device__ void localAllGather(int rank, int nRanksPerNode, uint64_t offset, uin
     mscclpp::SimpleProxyChannel& devSendChan = constDevSndRoundChans[peerSendId];
     mscclpp::SimpleProxyChannel& devRecvChan = constDevSndRoundChans[peerRecvId];
     // wait for the data from GPU (rank-i) % nranksPerNode to arrive
-    if (isComm) {
-      devSendChan.putWithSignal(offset, size);
-      devRecvChan.wait();
-    }
-    deviceSyncer.sync(gridDim.x);
+    devSendChan.putWithSignal(offset, size);
+    devRecvChan.wait();
   }
 }
 
+// Run with a single thread only.
 __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
@@ -241,7 +238,6 @@ __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nel
   // Step 3: each node does a local allgather for the last time with the rest of the data
 
   int pipelineSize = 3;
-  int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
@@ -253,30 +249,18 @@ __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nel
   }
 
   // Step 1
-  if (isComm) {
-    devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
-                          (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
-  }
+  devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
+                        (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
   localAllGather(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
-  if (isComm) {
-    devChan.wait();
-    devChan.flush();
-  }
-  deviceSyncer.sync(gridDim.x);
+  devChan.wait();
+  devChan.flush();
   // Step 2
-  if (isComm) {
-    devChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
-                          nelemsPerGPU / pipelineSize * sizeof(int));
-  }
+  devChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
+                        nelemsPerGPU / pipelineSize * sizeof(int));
   localAllGather(rank, nRanksPerNode, peerRank * nelemsPerGPU * sizeof(int),
                  (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
-
-  if (isComm) {
-    devChan.wait();
-    devChan.flush();
-  }
-  deviceSyncer.sync(gridDim.x);
-
+  devChan.wait();
+  devChan.flush();
   // Step 3
   localAllGather(rank, nRanksPerNode,
                  (peerRank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
@@ -553,7 +537,9 @@ __device__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
 __device__ void allreduce3(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize,
                            size_t nelems) {
   reduceScatter(buff, scratch, rank, nRanksPerNode, worldSize, nelems);
-  allGather(rank, worldSize, nRanksPerNode, nelems / worldSize);
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    allGather(rank, worldSize, nRanksPerNode, nelems / worldSize);
+  }
 }
 
 __global__ void kernel(void* buff, void* scratch, void* result, void* putPktBuf, void* getPktBuf, int rank,
@@ -589,10 +575,10 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
 
   int nBlocks;
   void* tmpBuff;
-  if (kernelNum == 0 || kernelNum == 3) {
+  if (kernelNum == 0) {
     nBlocks = nPeers * BLOCKS_PER_PEER;
     tmpBuff = scratchBuff;
-  } else if (kernelNum == 1) {
+  } else if (kernelNum == 1 || kernelNum == 3) {
     nBlocks = 24;
     tmpBuff = scratchBuff;
   } else {
