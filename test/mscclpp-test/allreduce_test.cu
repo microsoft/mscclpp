@@ -642,7 +642,6 @@ class AllReduceTestEngine : public BaseTestEngine {
   ~AllReduceTestEngine() = default;
 
   void allocateBuffer() override;
-  std::shared_ptr<mscclpp::BaseProxyService> createChannelService() override;
   void setupConnections() override;
 
   bool isUsePacket() const;
@@ -695,14 +694,6 @@ void AllReduceTestEngine::allocateBuffer() {
   }
 
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
-}
-
-std::shared_ptr<mscclpp::BaseProxyService> AllReduceTestEngine::createChannelService() {
-  if (isUsePacket()) {
-    return std::make_shared<mscclpp::ProxyService>(*comm_);
-  } else {
-    return std::make_shared<mscclpp::ProxyService>(*comm_);
-  }
 }
 
 void AllReduceTestEngine::setupConnections() {
