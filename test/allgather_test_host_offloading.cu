@@ -3,9 +3,9 @@
 
 #include <mscclpp/core.hpp>
 #include <mscclpp/cuda_utils.hpp>
-#include <mscclpp/epoch.hpp>
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/proxy.hpp>
+#include <mscclpp/semaphore.hpp>
 #include <numa.hpp>
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
@@ -45,8 +45,8 @@ static double getTime(void) {
   return (tspec.tv_nsec / 1.0e9) + tspec.tv_sec;
 }
 
-__global__ void kernel(int r, int nranks, mscclpp::DeviceProxyFifo fifo, mscclpp::DeviceEpoch::DeviceHandle* handles,
-                       int handleIndex) {
+__global__ void kernel(int r, int nranks, mscclpp::DeviceProxyFifo fifo,
+                       mscclpp::Host2DeviceSemaphore::DeviceHandle* handles, int handleIndex) {
   int tid = threadIdx.x;
   __syncthreads();
   // uint64_t tail;
@@ -96,9 +96,9 @@ class MyProxyService {
   mscclpp::Proxy proxy_;
   std::vector<mscclpp::RegisteredMemory> remoteMemories_;
   mscclpp::RegisteredMemory localMemory_;
-  std::vector<std::shared_ptr<mscclpp::HostEpoch>> hostEpochs_;
-  std::vector<std::shared_ptr<mscclpp::DeviceEpoch>> deviceEpochs1_;
-  std::vector<std::shared_ptr<mscclpp::DeviceEpoch>> deviceEpochs2_;
+  std::vector<std::shared_ptr<mscclpp::Host2HostSemaphore>> hostSemaphores_;
+  std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> deviceSemaphores1_;
+  std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> deviceSemaphores2_;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections_;
   int dataSize_;
 
@@ -121,9 +121,9 @@ class MyProxyService {
     localMemory_ = comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport);
     for (int r = 0; r < world_size; ++r) {
       if (r == rank) {
-        hostEpochs_.emplace_back(nullptr);
-        deviceEpochs1_.emplace_back(nullptr);
-        deviceEpochs2_.emplace_back(nullptr);
+        hostSemaphores_.emplace_back(nullptr);
+        deviceSemaphores1_.emplace_back(nullptr);
+        deviceSemaphores2_.emplace_back(nullptr);
         continue;
       }
       mscclpp::Transport transport;
@@ -135,12 +135,12 @@ class MyProxyService {
       // Connect with all other ranks
       connections_[r] = comm.connectOnSetup(r, 0, transport);
       if (rankToNode(r) == thisNode) {
-        hostEpochs_.emplace_back(nullptr);
+        hostSemaphores_.emplace_back(nullptr);
       } else {
-        hostEpochs_.emplace_back(std::make_shared<mscclpp::HostEpoch>(comm, connections_[r]));
+        hostSemaphores_.emplace_back(std::make_shared<mscclpp::Host2HostSemaphore>(comm, connections_[r]));
       }
-      deviceEpochs1_.emplace_back(std::make_shared<mscclpp::DeviceEpoch>(comm, connections_[r]));
-      deviceEpochs2_.emplace_back(std::make_shared<mscclpp::DeviceEpoch>(comm, connections_[r]));
+      deviceSemaphores1_.emplace_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(comm, connections_[r]));
+      deviceSemaphores2_.emplace_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(comm, connections_[r]));
       comm.sendMemoryOnSetup(localMemory_, r, 0);
 
       remoteMemoriesFuture[r] = comm.recvMemoryOnSetup(r, 0);
@@ -171,9 +171,9 @@ class MyProxyService {
         connections_[nghr]->write(remoteMemories_[nghr], rank * dataSizePerRank, localMemory_, rank * dataSizePerRank,
                                   dataSizePerRank);
         if (triggerRaw.fst == 1)
-          deviceEpochs1_[nghr]->signal();
+          deviceSemaphores1_[nghr]->signal();
         else
-          deviceEpochs2_[nghr]->signal();
+          deviceSemaphores2_[nghr]->signal();
         if ((flusher % 64) == 0 && mscclpp::AllIBTransports.has(connections_[nghr]->transport())) {
           // if we are using IB transport, we need a flush every once in a while
           connections_[nghr]->flush();
@@ -190,9 +190,9 @@ class MyProxyService {
 
   mscclpp::HostProxyFifo& fifo() { return proxy_.fifo(); }
 
-  mscclpp::DeviceEpoch::DeviceHandle getDeviceHandle1(int r) { return deviceEpochs1_[r]->deviceHandle(); }
+  mscclpp::Host2DeviceSemaphore::DeviceHandle getDeviceHandle1(int r) { return deviceSemaphores1_[r]->deviceHandle(); }
 
-  mscclpp::DeviceEpoch::DeviceHandle getDeviceHandle2(int r) { return deviceEpochs2_[r]->deviceHandle(); }
+  mscclpp::Host2DeviceSemaphore::DeviceHandle getDeviceHandle2(int r) { return deviceSemaphores2_[r]->deviceHandle(); }
 };
 
 std::unordered_map<std::string, std::string> parseArgs(int argc, char* argv[]) {
@@ -265,23 +265,23 @@ int main(int argc, char* argv[]) {
   if (rank == 0) printf("Testing the correctness of AllGather implementation\n");
   cudaStream_t stream;
   CUCHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-  mscclpp::DeviceEpoch::DeviceHandle* deviceHandles1;
-  mscclpp::DeviceEpoch::DeviceHandle* deviceHandles2;
+  mscclpp::Host2DeviceSemaphore::DeviceHandle* deviceHandles1;
+  mscclpp::Host2DeviceSemaphore::DeviceHandle* deviceHandles2;
 
-  CUCHECK(cudaMalloc(&deviceHandles1, sizeof(mscclpp::DeviceEpoch::DeviceHandle) * world_size));
+  CUCHECK(cudaMalloc(&deviceHandles1, sizeof(mscclpp::Host2DeviceSemaphore::DeviceHandle) * world_size));
   for (int i = 0; i < world_size; ++i) {
     if (i == rank) continue;
     auto handle = proxyService.getDeviceHandle1(i);
-    CUCHECK(
-        cudaMemcpy(&deviceHandles1[i], &handle, sizeof(mscclpp::DeviceEpoch::DeviceHandle), cudaMemcpyHostToDevice));
+    CUCHECK(cudaMemcpy(&deviceHandles1[i], &handle, sizeof(mscclpp::Host2DeviceSemaphore::DeviceHandle),
+                       cudaMemcpyHostToDevice));
   }
 
-  CUCHECK(cudaMalloc(&deviceHandles2, sizeof(mscclpp::DeviceEpoch::DeviceHandle) * world_size));
+  CUCHECK(cudaMalloc(&deviceHandles2, sizeof(mscclpp::Host2DeviceSemaphore::DeviceHandle) * world_size));
   for (int i = 0; i < world_size; ++i) {
     if (i == rank) continue;
     auto handle = proxyService.getDeviceHandle2(i);
-    CUCHECK(
-        cudaMemcpy(&deviceHandles2[i], &handle, sizeof(mscclpp::DeviceEpoch::DeviceHandle), cudaMemcpyHostToDevice));
+    CUCHECK(cudaMemcpy(&deviceHandles2[i], &handle, sizeof(mscclpp::Host2DeviceSemaphore::DeviceHandle),
+                       cudaMemcpyHostToDevice));
   }
 
   kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles1, 1);

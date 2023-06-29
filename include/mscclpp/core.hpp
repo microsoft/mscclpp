@@ -222,7 +222,7 @@ class NonblockingFuture {
 
   bool ready() const { return future.wait_for(std::chrono::seconds(0)) == std::future_status::ready; }
 
-  T get() {
+  T get() const {
     if (!ready()) throw Error("NonblockingFuture::get() called before ready", ErrorCode::InvalidUsage);
     return future.get();
   }
