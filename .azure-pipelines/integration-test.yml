@@ -96,7 +96,6 @@ steps:
   inputs:
     targetType: 'inline'
     script: |
-      sleep 10000
       set -e
       python3 test/mscclpp-test/check_perf_result.py --perf-file output.jsonl --baseline-file test/deploy/perf_ndmv4.jsonl
     workingDirectory: '$(System.DefaultWorkingDirectory)'
