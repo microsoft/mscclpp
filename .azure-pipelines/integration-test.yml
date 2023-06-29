@@ -33,9 +33,9 @@ steps:
   inputs:
     targetType: 'inline'
     script: |
-      nvidia-smi -pm 1
+      sudo nvidia-smi -pm 1
       for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
-        nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
+        sudo nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
       done
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -75,6 +75,7 @@ steps:
       mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -o output.jsonl
       mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
       mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
+      mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
