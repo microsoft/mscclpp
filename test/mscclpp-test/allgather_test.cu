@@ -61,16 +61,43 @@ __device__ void localAllGather(mscclpp::SimpleProxyChannel devChan, int rank, in
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
+// This kernel is the most performant when the number of blocks is a multiple of (nRanksPerNode - 1).
 __device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, uint64_t size) {
   if (nRanksPerNode == 1) return;
 
-  size_t nPeer = nRanksPerNode - 1;
-  size_t blocksPerPeer = gridDim.x / nPeer;  // assume no remainder
-  size_t peerIdx = blockIdx.x / blocksPerPeer;
-  size_t sizePerBlock = size / blocksPerPeer;
-  size_t blockIdxPerPeer = blockIdx.x % blocksPerPeer;
-  offset += sizePerBlock * blockIdxPerPeer;
-  constSmChans[peerIdx].put(offset, offset, sizePerBlock, threadIdx.x, blockDim.x);
+  const size_t nBlocks = gridDim.x;
+  const size_t nPeer = nRanksPerNode - 1;
+  const size_t peerIdx = blockIdx.x % nPeer;
+  const size_t nBlockForThisPeer = nBlocks / nPeer + (nBlocks % nPeer > peerIdx ? 1 : 0);
+  const size_t peerLocalBlockIdx = blockIdx.x / nPeer;
+
+  // Split the data into chunks for aligned data access. Ignore the remainder here and let the last block handle it.
+  constexpr size_t chunkBytes = 128;  // heuristic value
+  const size_t nChunk = size / chunkBytes;
+  const size_t nMinChunkPerBlock = nChunk / nBlockForThisPeer;
+  const size_t nRemainderChunk = nChunk % nBlockForThisPeer;
+
+  // Distribute chunks to blocks
+  size_t nChunkForThisBlock;
+  size_t offsetForThisBlock;
+  if (peerLocalBlockIdx < nRemainderChunk) {
+    nChunkForThisBlock = nMinChunkPerBlock + 1;
+    offsetForThisBlock = (nMinChunkPerBlock + 1) * peerLocalBlockIdx;
+  } else {
+    nChunkForThisBlock = nMinChunkPerBlock;
+    offsetForThisBlock =
+        (nMinChunkPerBlock + 1) * nRemainderChunk + (peerLocalBlockIdx - nRemainderChunk) * nMinChunkPerBlock;
+  }
+  offsetForThisBlock *= chunkBytes;
+
+  // Calculate the size of the data for this block
+  size_t sizeForThisBlock = nChunkForThisBlock * chunkBytes;
+  const size_t lastChunkSize = size - nChunk * chunkBytes;
+  if (lastChunkSize > 0 && peerLocalBlockIdx == nBlockForThisPeer - 1) {
+    sizeForThisBlock += lastChunkSize;
+  }
+
+  constSmChans[peerIdx].put(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
 
 __device__ void allgather1(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nRanksPerNode,
