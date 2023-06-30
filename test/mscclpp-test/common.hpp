@@ -37,11 +37,19 @@ struct TestArgs {
   int reportErrors;
 };
 
+struct KernelRestriction {
+  int kernelNum;
+  std::string kernelName;
+  bool compatibleWithMultiNodes;
+  int countDivisorForMultiNodes;
+};
+
 class BaseTestColl {
  public:
   BaseTestColl() {}
   virtual ~BaseTestColl() {}
   virtual void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) = 0;
+  virtual std::vector<KernelRestriction> getKernelRestrictions() = 0;
   virtual void runColl(const TestArgs& args, cudaStream_t stream) = 0;
   virtual void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) = 0;
 
