@@ -37,49 +37,76 @@ __device__ void allgather0(mscclpp::SimpleProxyChannel devChan, int rank, int wo
   if (threadIdx.x % 32 == 0) devChan.wait();
 }
 
-__device__ void localAllGather(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nranksPerNode,
+__device__ void localAllGather(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nRanksPerNode,
                                int remoteRank, uint64_t offset, uint64_t size, bool flushAfterSignal = true) {
   // this allgather algorithm works as follows:
-  // Step 1: GPU rank i sends data to GPU rank (i+1) % nranksPerNode
-  // and waits for data from GPU rank (i-1) % nranksPerNode
-  // Step 2: GPU rank i sends data to GPU rank (i+2) % nranksPerNode
+  // Step 1: GPU rank i sends data to GPU rank (i+1) % nRanksPerNode
+  // and waits for data from GPU rank (i-1) % nRanksPerNode
+  // Step 2: GPU rank i sends data to GPU rank (i+2) % nRanksPerNode
   // ...
   // This order is much better for DMA engine for NVLinks
-  for (int i = 1; i < nranksPerNode; i++) {
-    if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)) {
-      // put your data to GPU (rank+i) % nranksPerNode and signal in one call
+  for (int i = 1; i < nRanksPerNode; i++) {
+    if ((remoteRank % nRanksPerNode) == ((rank + i) % nRanksPerNode)) {
+      // put your data to GPU (rank+i) % nRanksPerNode and signal in one call
       if (flushAfterSignal && (threadIdx.x % 32) == 0) devChan.putWithSignalAndFlush(offset, size);
       if (!flushAfterSignal && (threadIdx.x % 32) == 0) devChan.putWithSignal(offset, size);
     }
-    // wait for the data from GPU (rank-i) % nranksPerNode to arrive
-    if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode)) {
+    // wait for the data from GPU (rank-i) % nRanksPerNode to arrive
+    if ((remoteRank % nRanksPerNode) == ((rank - i + nRanksPerNode) % nRanksPerNode)) {
       if ((threadIdx.x % 32) == 0) devChan.wait();
     }
-    asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nranksPerNode - 1) * 32) : "memory");
+    asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nRanksPerNode - 1) * 32) : "memory");
   }
 }
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
+// This kernel is the most performant when the number of blocks is a multiple of (nRanksPerNode - 1).
 __device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, uint64_t size) {
   if (nRanksPerNode == 1) return;
 
-  size_t nPeer = nRanksPerNode - 1;
-  size_t blocksPerPeer = gridDim.x / nPeer;  // assume no remainder
-  size_t peerIdx = blockIdx.x / blocksPerPeer;
-  size_t sizePerBlock = size / blocksPerPeer;
-  size_t blockIdxPerPeer = blockIdx.x % blocksPerPeer;
-  offset += sizePerBlock * blockIdxPerPeer;
-  constSmChans[peerIdx].put(offset, offset, sizePerBlock, threadIdx.x, blockDim.x);
+  const size_t nBlocks = gridDim.x;
+  const size_t nPeer = nRanksPerNode - 1;
+  const size_t peerIdx = blockIdx.x % nPeer;
+  const size_t nBlockForThisPeer = nBlocks / nPeer + (nBlocks % nPeer > peerIdx ? 1 : 0);
+  const size_t peerLocalBlockIdx = blockIdx.x / nPeer;
+
+  // Split the data into chunks for aligned data access. Ignore the remainder here and let the last block handle it.
+  constexpr size_t chunkBytes = 128;  // heuristic value
+  const size_t nChunk = size / chunkBytes;
+  const size_t nMinChunkPerBlock = nChunk / nBlockForThisPeer;
+  const size_t nRemainderChunk = nChunk % nBlockForThisPeer;
+
+  // Distribute chunks to blocks
+  size_t nChunkForThisBlock;
+  size_t offsetForThisBlock;
+  if (peerLocalBlockIdx < nRemainderChunk) {
+    nChunkForThisBlock = nMinChunkPerBlock + 1;
+    offsetForThisBlock = (nMinChunkPerBlock + 1) * peerLocalBlockIdx;
+  } else {
+    nChunkForThisBlock = nMinChunkPerBlock;
+    offsetForThisBlock =
+        (nMinChunkPerBlock + 1) * nRemainderChunk + (peerLocalBlockIdx - nRemainderChunk) * nMinChunkPerBlock;
+  }
+  offsetForThisBlock *= chunkBytes;
+
+  // Calculate the size of the data for this block
+  size_t sizeForThisBlock = nChunkForThisBlock * chunkBytes;
+  const size_t lastChunkSize = size - nChunk * chunkBytes;
+  if (lastChunkSize > 0 && peerLocalBlockIdx == nBlockForThisPeer - 1) {
+    sizeForThisBlock += lastChunkSize;
+  }
+
+  constSmChans[peerIdx].put(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
 
-__device__ void allgather1(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nranksPerNode,
+__device__ void allgather1(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nRanksPerNode,
                            int remoteRank, size_t nelemsPerGPU) {
-  localAllGather(devChan, rank, worldSize, nranksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
+  localAllGather(devChan, rank, worldSize, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
 }
 
-__device__ void allgather2(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nranksPerNode,
+__device__ void allgather2(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nRanksPerNode,
                            int remoteRank, size_t nelemsPerGPU) {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
@@ -95,12 +122,12 @@ __device__ void allgather2(mscclpp::SimpleProxyChannel devChan, int rank, int wo
 
   // Step 1
   // local allgather
-  if (remoteRank / nranksPerNode == rank / nranksPerNode) {
-    localAllGather(devChan, rank, worldSize, nranksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
+  if (remoteRank / nRanksPerNode == rank / nRanksPerNode) {
+    localAllGather(devChan, rank, worldSize, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                    nelemsPerGPU * sizeof(int), false);
   }
   // cross-node exchange
-  if (remoteRank % nranksPerNode == rank % nranksPerNode) {
+  if (remoteRank % nRanksPerNode == rank % nRanksPerNode) {
     // opposite side
     if ((threadIdx.x % 32) == 0)
       devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
@@ -112,21 +139,21 @@ __device__ void allgather2(mscclpp::SimpleProxyChannel devChan, int rank, int wo
   __syncthreads();
   // need to flush ib channel here to avoid cq overflow. since we won't change send suffer after send, we don't need
   // to flush for IPC channel.
-  if (remoteRank % nranksPerNode == rank % nranksPerNode) {
+  if (remoteRank % nRanksPerNode == rank % nRanksPerNode) {
     if ((threadIdx.x % 32) == 0) devChan.flush();
   }
   __syncthreads();
 
   // Step 2
   // local allgather
-  int otherNghr = (rank + nranksPerNode) % worldSize;
-  if (remoteRank / nranksPerNode == rank / nranksPerNode) {
-    localAllGather(devChan, rank, worldSize, nranksPerNode, remoteRank, otherNghr * nelemsPerGPU * sizeof(int),
+  int otherNghr = (rank + nRanksPerNode) % worldSize;
+  if (remoteRank / nRanksPerNode == rank / nRanksPerNode) {
+    localAllGather(devChan, rank, worldSize, nRanksPerNode, remoteRank, otherNghr * nelemsPerGPU * sizeof(int),
                    (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int), false);
   }
 
   // cross-node exchange
-  if (remoteRank % nranksPerNode == rank % nranksPerNode) {
+  if (remoteRank % nRanksPerNode == rank % nRanksPerNode) {
     // opposite side
     if ((threadIdx.x % 32) == 0)
       devChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
@@ -135,15 +162,15 @@ __device__ void allgather2(mscclpp::SimpleProxyChannel devChan, int rank, int wo
   }
 
   __syncthreads();
-  if (remoteRank % nranksPerNode == rank % nranksPerNode) {
+  if (remoteRank % nRanksPerNode == rank % nRanksPerNode) {
     if ((threadIdx.x % 32) == 0) devChan.flush();
   }
   __syncthreads();
 
   // Step 3
   // local allgather
-  if (remoteRank / nranksPerNode == rank / nranksPerNode) {
-    localAllGather(devChan, rank, worldSize, nranksPerNode, remoteRank,
+  if (remoteRank / nRanksPerNode == rank / nRanksPerNode) {
+    localAllGather(devChan, rank, worldSize, nRanksPerNode, remoteRank,
                    (otherNghr * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
                    nelemsPerGPU / pipelineSize * sizeof(int));
   }
@@ -165,28 +192,76 @@ __device__ void allgather3(mscclpp::ProxyChannel devChan, int rank, int worldSiz
   }
 }
 
-__device__ void allgather4(int rank, int nranksPerNode, size_t nelemsPerGPU) {
-  localAllGatherSm(rank, nranksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+// Run with a single thread only.
+__device__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
+  // this allgather is a pipelined and hierarchical one and only works for two nodes
+  // it is implemented as follows:
+  // Step 1: each node does a local allgather and concurrently,
+  // local GPU i exchange (piplineSize-1)/pipelineSize portion of their data with
+  // its cross-node neighbor (local GPU i on the other node) via IB
+  // Step 2: each node does a local allgather again with the data just received from its
+  // cross-node neighbor in step 1, and concurrently, exchange the rest of the data with
+  // its cross-node neighbor
+  // Step 3: each node does a local allgather for the last time with the rest of the data
+
+  int pipelineSize = 3;
+  int peerRank = (rank + nRanksPerNode) % worldSize;
+  int peerNodeId = peerRank / nRanksPerNode;
+  int peer = (peerRank < rank) ? peerRank : peerRank - 1;
+  mscclpp::SimpleProxyChannel& devChan = constDevChans[peer];
+
+  if (peerNodeId == rank / nRanksPerNode) {
+    localAllGatherSm(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+    return;
+  }
+
+  // Step 1
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
+                          (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
+  }
+  localAllGatherSm(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    devChan.wait();
+    devChan.flush();
+  }
+  deviceSyncer.sync(gridDim.x);
+  // Step 2
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    devChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
+                          nelemsPerGPU / pipelineSize * sizeof(int));
+  }
+  localAllGatherSm(rank, nRanksPerNode, peerRank * nelemsPerGPU * sizeof(int),
+                   (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    devChan.wait();
+    devChan.flush();
+  }
+  deviceSyncer.sync(gridDim.x);
+  // Step 3
+  localAllGatherSm(rank, nRanksPerNode,
+                   (peerRank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
+                   nelemsPerGPU / pipelineSize * sizeof(int));
 }
 
-__global__ void kernel(int rank, int worldSize, int nranksPerNode, size_t nelemsPerGPU, int kernel) {
+__global__ void kernel(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU, int kernel) {
   // find the mapping between remoteRank and devConns
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   // Each warp is responsible for one of the remote ranks
   mscclpp::SimpleProxyChannel devChan = constDevChans[warpId];
 
-  if (kernel == 0)
+  if (kernel == 0) {
     allgather0(devChan, rank, worldSize, remoteRank, nelemsPerGPU);
-  else if (kernel == 1)
-    allgather1(devChan, rank, worldSize, nranksPerNode, remoteRank, nelemsPerGPU);
-  else if (kernel == 2)
-    allgather2(devChan, rank, worldSize, nranksPerNode, remoteRank, nelemsPerGPU);
-  else if (kernel == 3) {
+  } else if (kernel == 1) {
+    allgather1(devChan, rank, worldSize, nRanksPerNode, remoteRank, nelemsPerGPU);
+  } else if (kernel == 2) {
+    allgather2(devChan, rank, worldSize, nRanksPerNode, remoteRank, nelemsPerGPU);
+  } else if (kernel == 3) {
     mscclpp::ProxyChannel devChan = constRawDevChan[warpId];
     allgather3(devChan, rank, worldSize);
   } else if (kernel == 4) {
-    allgather4(rank, nranksPerNode, nelemsPerGPU);
+    allgather4(rank, worldSize, nRanksPerNode, nelemsPerGPU);
   }
 }
 
