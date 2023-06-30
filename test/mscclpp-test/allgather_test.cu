@@ -62,10 +62,9 @@ __device__ void localAllGather(mscclpp::SimpleProxyChannel devChan, int rank, in
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
 // This kernel is the most performant when the number of blocks is a multiple of (nRanksPerNode - 1).
-__device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, uint64_t size) {
+__device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, uint64_t size, size_t nBlocks) {
   if (nRanksPerNode == 1) return;
-
-  const size_t nBlocks = gridDim.x;
+  if (blockIdx.x >= nBlocks) return;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t peerIdx = blockIdx.x % nPeer;
   const size_t nBlockForThisPeer = nBlocks / nPeer + (nBlocks % nPeer > peerIdx ? 1 : 0);
@@ -209,39 +208,43 @@ __device__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   mscclpp::SimpleProxyChannel& devChan = constDevChans[peer];
+  const size_t nBlocksForLocalAllGather = gridDim.x - 1;
 
   if (peerNodeId == rank / nRanksPerNode) {
-    localAllGatherSm(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+    localAllGatherSm(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int),
+                     nBlocksForLocalAllGather);
     return;
   }
 
+  constexpr size_t alignment = 128;
+  size_t step1Bytes = (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int);
+  step1Bytes = step1Bytes / alignment * alignment;
+  const size_t step2Bytes = nelemsPerGPU * sizeof(int) - step1Bytes;
+
   // Step 1
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
-    devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
-                          (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
+  if (threadIdx.x == 0 && blockIdx.x == (gridDim.x - 1)) {
+    devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
   }
-  localAllGatherSm(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+  localAllGatherSm(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int),
+                   nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     devChan.wait();
     devChan.flush();
   }
   deviceSyncer.sync(gridDim.x);
   // Step 2
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
-    devChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
-                          nelemsPerGPU / pipelineSize * sizeof(int));
+  if (threadIdx.x == 0 && blockIdx.x == (gridDim.x - 1)) {
+    devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
   }
-  localAllGatherSm(rank, nRanksPerNode, peerRank * nelemsPerGPU * sizeof(int),
-                   (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
+  localAllGatherSm(rank, nRanksPerNode, peerRank * nelemsPerGPU * sizeof(int), step1Bytes, nBlocksForLocalAllGather);
+  if (threadIdx.x == 0 && blockIdx.x == (gridDim.x - 1)) {
     devChan.wait();
     devChan.flush();
   }
   deviceSyncer.sync(gridDim.x);
   // Step 3
-  localAllGatherSm(rank, nRanksPerNode,
-                   (peerRank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
-                   nelemsPerGPU / pipelineSize * sizeof(int));
+  localAllGatherSm(rank, nRanksPerNode, (peerRank * nelemsPerGPU * sizeof(int) + step1Bytes), step2Bytes,
+                   nBlocksForLocalAllGather);
 }
 
 __global__ void kernel(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU, int kernel) {
@@ -362,7 +365,7 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   int nBlocks;
   int nThreads;
   if (kernelNum == 4) {
-    nBlocks = 56;
+    nBlocks = 57;
     nThreads = 1024;
   } else {
     nBlocks = 1;
