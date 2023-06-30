@@ -65,6 +65,7 @@ class AllToAllTestColl : public BaseTestColl {
   void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) override;
   void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) override;
   void setupCollTest(size_t size) override;
+  std::vector<KernelRestriction> getKernelRestrictions() override;
 };
 
 void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
@@ -111,6 +112,12 @@ void AllToAllTestColl::setupCollTest(size_t size) {
 
   mscclpp::DeviceSyncer syncer = {};
   CUDATHROW(cudaMemcpyToSymbol(deviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
+}
+
+std::vector<KernelRestriction> AllToAllTestColl::getKernelRestrictions() {
+  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes}
+          {0, "alltoall0", true, 1},
+          {1, "alltoall1", false, 1}};
 }
 
 class AllToAllTestEngine : public BaseTestEngine {

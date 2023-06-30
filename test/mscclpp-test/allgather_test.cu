@@ -355,6 +355,7 @@ class AllGatherTestColl : public BaseTestColl {
   void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) override;
   void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) override;
   void setupCollTest(size_t size) override;
+  std::vector<KernelRestriction> getKernelRestrictions() override;
 };
 
 void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
@@ -415,6 +416,14 @@ void AllGatherTestColl::setupCollTest(size_t size) {
   }
   mscclpp::DeviceSyncer syncer = {};
   CUDATHROW(cudaMemcpyToSymbol(deviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
+}
+
+std::vector<KernelRestriction> AllGatherTestColl::getKernelRestrictions() {
+  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes}
+          {0, "allgather0", true, 1},
+          {1, "allgather1", false, 1},
+          {2, "allgather2", true, 3},
+          {3, "allgather3", true, 1}};
 }
 
 class AllGatherTestEngine : public BaseTestEngine {

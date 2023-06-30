@@ -124,6 +124,29 @@ const std::string getBusId(int cudaDev) {
   }
   return std::string(busIdChar);
 }
+
+void validateArgsForDeviceKernel(const std::vector<KernelRestriction>& restrictions, int kernelNum, size_t paramCount,
+                                 int worldSize, int nRanksPerNode) {
+  auto iter = std::find_if(restrictions.begin(), restrictions.end(), [kernelNum](const KernelRestriction& restriction) {
+    return restriction.kernelNum == kernelNum;
+  });
+  if (iter == restrictions.end()) {
+    PRINT("no restriction for kernelNum=" << kernelNum << std::endl);
+    return;
+  }
+  std::stringstream ss;
+  bool isOnMultiNodes = worldSize / nRanksPerNode > 1;
+  if (isOnMultiNodes && !iter->compatibleWithMultiNodes) {
+    ss << "kernel is not compatible with multi nodes, kernelNum=" << kernelNum << ", name=" << iter->kernelName
+       << ", worldSize=" << worldSize << ", nRanksPerNode=" << nRanksPerNode;
+    throw std::invalid_argument(ss.str());
+  }
+  if (isOnMultiNodes && paramCount % iter->countDivisorForMultiNodes != 0) {
+    ss << "kernel is not compatible with input size, kernelNum=" << kernelNum << ", name=" << iter->kernelName
+       << ", paramCount=" << paramCount << ", countDivisorForMultiNodes=" << iter->countDivisorForMultiNodes;
+    throw std::invalid_argument(ss.str());
+  }
+}
 }  // namespace
 
 int getDeviceNumaNode(int cudaDev) {
@@ -201,6 +224,8 @@ void BaseTestEngine::runTest() {
   // warm-up for large size
   this->coll_->setupCollTest(args_, args_.maxBytes);
   this->barrier();
+  validateArgsForDeviceKernel(coll_->getKernelRestrictions(), args_.kernelNum, coll_->getParamBytes() / sizeof(int),
+                              args_.totalRanks, args_.nRanksPerNode);
   for (int iter = 0; iter < warmup_iters; iter++) {
     this->coll_->runColl(args_, stream_);
   }
@@ -209,6 +234,8 @@ void BaseTestEngine::runTest() {
   // warm-up for small size
   this->coll_->setupCollTest(args_, args_.minBytes);
   this->barrier();
+  validateArgsForDeviceKernel(coll_->getKernelRestrictions(), args_.kernelNum, coll_->getParamBytes() / sizeof(int),
+                              args_.totalRanks, args_.nRanksPerNode);
   for (int iter = 0; iter < warmup_iters; iter++) {
     this->coll_->runColl(args_, stream_);
   }
@@ -232,6 +259,8 @@ void BaseTestEngine::runTest() {
     ss << std::setw(12) << std::max(coll_->getSendBytes(), coll_->getExpectedBytes()) << "  " << std::setw(12)
        << coll_->getParamBytes() / sizeof(int);
 
+    validateArgsForDeviceKernel(coll_->getKernelRestrictions(), args_.kernelNum, coll_->getParamBytes() / sizeof(int),
+                                args_.totalRanks, args_.nRanksPerNode);
     double deltaSec = benchTime();
 
     size_t nErrors = 0;

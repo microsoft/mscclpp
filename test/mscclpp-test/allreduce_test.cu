@@ -563,6 +563,7 @@ class AllReduceTestColl : public BaseTestColl {
   void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) override;
   void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) override;
   void setupCollTest(size_t size) override;
+  std::vector<KernelRestriction> getKernelRestrictions() override;
 };
 
 void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
@@ -620,6 +621,14 @@ void AllReduceTestColl::setupCollTest(size_t size) {
   uint64_t initFlag = 1;
   CUDATHROW(cudaMemcpyToSymbol(deviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
   CUDATHROW(cudaMemcpyToSymbol(globalFlag, &initFlag, sizeof(uint64_t)));
+}
+
+std::vector<KernelRestriction> AllReduceTestColl::getKernelRestrictions() {
+  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes}
+          {0, "allreduce0", true, 1},
+          {1, "allreduce1", true, 1},
+          {2, "allreduce2", true, 1},
+          {3, "allreduce3", true, 3}};
 }
 
 class AllReduceTestEngine : public BaseTestEngine {
