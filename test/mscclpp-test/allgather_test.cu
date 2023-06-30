@@ -191,7 +191,6 @@ __device__ void allgather3(mscclpp::ProxyChannel devChan, int rank, int worldSiz
   }
 }
 
-// Run with a single thread only.
 __device__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
@@ -423,7 +422,8 @@ std::vector<KernelRestriction> AllGatherTestColl::getKernelRestrictions() {
           {0, "allgather0", true, 1},
           {1, "allgather1", false, 1},
           {2, "allgather2", true, 3},
-          {3, "allgather3", true, 1}};
+          {3, "allgather3", true, 1},
+          {4, "allgather4", true, 1}};
 }
 
 class AllGatherTestEngine : public BaseTestEngine {
