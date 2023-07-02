@@ -423,7 +423,7 @@ std::vector<KernelRestriction> AllGatherTestColl::getKernelRestrictions() {
           {1, "allgather1", false, 1},
           {2, "allgather2", true, 3},
           {3, "allgather3", true, 1},
-          {4, "allgather4", true, 1}};
+          {4, "allgather4", true, 3}};
 }
 
 class AllGatherTestEngine : public BaseTestEngine {
