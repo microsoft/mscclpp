@@ -291,7 +291,7 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
   size_t offsetForThisBlock;
   if (peerLocalBlockIdx < nRemainderMicroChunk) {
     nMicroChunkForThisBlock = nMinMicroChunkPerBlock + 1;
-    offsetForThisBlock = (nMicroChunkForThisBlock + 1) * peerLocalBlockIdx;
+    offsetForThisBlock = (nMinMicroChunkPerBlock + 1) * peerLocalBlockIdx;
   } else {
     nMicroChunkForThisBlock = nMinMicroChunkPerBlock;
     offsetForThisBlock = (nMinMicroChunkPerBlock + 1) * nRemainderMicroChunk +
@@ -325,6 +325,7 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
     int* src = (int*)((char*)scratch + scratchOffset);
     vectorSum(dst, src, nelems);
   }
+  deviceSyncer.sync(gridDim.x);
 }
 
 __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPerNode, int worldSize,
@@ -774,7 +775,6 @@ __device__ void allreduce3(int* buff, int* scratch, void* result, int rank, int 
 __device__ void allreduce4(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize,
                            size_t nelems) {
   reduceScatterSm(buff, scratch, rank, nRanksPerNode, worldSize, nelems);
-  deviceSyncer.sync(gridDim.x);
   allGatherSm(rank, worldSize, nRanksPerNode, nelems / worldSize);
 }
 
