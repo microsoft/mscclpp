@@ -18,17 +18,34 @@ struct SmChannel {
             void* getPacketBuffer = nullptr);
 
 #ifdef __CUDACC__
+
+  __forceinline__ __device__ void fetch128(ulong2& v, const ulong2* p) {
+    asm volatile("ld.volatile.global.v2.u64 {%0,%1}, [%2];" : "=l"(v.x), "=l"(v.y) : "l"(p) : "memory");
+  }
+  __forceinline__ __device__ void store128(ulong2* p, ulong2& v) {
+    asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(p), "l"(v.x), "l"(v.y) : "memory");
+  }
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
                                       uint32_t numThreads) {
+    constexpr int WARP_SIZE = 32;
     // assume the memory is aligned to 8 bytes
-    uint64_t* srcAddr = (uint64_t*)((char*)src_ + srcOffset);
-    uint64_t* dstAddr = (uint64_t*)((char*)dst_ + dstOffset);
-    uint64_t ele;
-    size_t nElem = size % sizeof(uint64_t) ? (size + sizeof(uint64_t)) / sizeof(uint64_t) : size / sizeof(uint64_t);
-    for (size_t i = threadId; i < nElem; i += numThreads) {
-      // load to register first
-      ele = srcAddr[i];
-      dstAddr[i] = ele;
+    ulong2* srcAddr = (ulong2*)((char*)src_ + srcOffset);
+    ulong2* dstAddr = (ulong2*)((char*)dst_ + dstOffset);
+    ulong2 ele[1];
+    int warpId = threadId / WARP_SIZE;
+    int tidInWarp = threadId % WARP_SIZE;
+    size_t offset = warpId * WARP_SIZE + tidInWarp;
+    size_t nElem = size % sizeof(ulong2) ? (size + sizeof(ulong2)) / sizeof(ulong2) : size / sizeof(ulong2);
+    for (size_t i = offset; i < nElem; i += numThreads) {
+// load to register first
+#pragma unroll
+      for (int j = 0; j < 1; j++) {
+        fetch128(ele[j], srcAddr + i + j * WARP_SIZE);
+      }
+#pragma unroll
+      for (int j = 0; j < 1; j++) {
+        store128(dstAddr + i + j * WARP_SIZE, ele[j]);
+      }
     }
   }
 

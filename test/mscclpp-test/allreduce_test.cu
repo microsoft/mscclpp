@@ -76,7 +76,7 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
   }
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int startRankInNode = (rank / nRanksPerNode) * nRanksPerNode;
-  int rankIdexInNode = rank % nRanksPerNode;
+  int rankIndexInNode = rank % nRanksPerNode;
 
   for (int i = 1; i < nRanksPerNode; ++i) {
     int remoteSendToRank = (rank + i) % nRanksPerNode + startRankInNode;
@@ -87,7 +87,7 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
     mscclpp::SimpleProxyChannel& devFstSendChan = constDevFstRoundChans[peerSendId];
     mscclpp::SimpleProxyChannel& devFstRecvChan = constDevFstRoundChans[peerRecvId];
     size_t srcOffset =
-        (((rankIdexInNode + i) % nRanksPerNode + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
+        (((rankIndexInNode + i) % nRanksPerNode + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
     size_t dstOffset = rank * chunkSize * sizeof(int);
 
     if (i == 1) {
@@ -107,7 +107,7 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
       }
 
       deviceSyncer.sync(gridDim.x);
-      size_t offset = ((startChunkIndex + rankIdexInNode) * chunkSize + offsetInChunk) * sizeof(int);
+      size_t offset = ((startChunkIndex + rankIndexInNode) * chunkSize + offsetInChunk) * sizeof(int);
       size_t scratchOffset = preRemoteRecvFromRank * chunkSize * sizeof(int);
       int* dst = (int*)((char*)buff + offset);
       int* src = (int*)((char*)scratch + scratchOffset);
@@ -119,7 +119,7 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
         devFstRecvChan.wait();
       }
       deviceSyncer.sync(gridDim.x);
-      size_t offset = ((startChunkIndex + rankIdexInNode) * chunkSize + offsetInChunk) * sizeof(int);
+      size_t offset = ((startChunkIndex + rankIndexInNode) * chunkSize + offsetInChunk) * sizeof(int);
       size_t scratchOffset = remoteRecvFromRank * chunkSize * sizeof(int);
       int* dst = (int*)((char*)buff + offset);
       int* src = (int*)((char*)scratch + scratchOffset);
