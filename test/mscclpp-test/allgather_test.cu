@@ -97,6 +97,11 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, u
   }
 
   constSmChans[peerIdx].put(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
+  deviceSyncer.sync((gridDim.x - 1));
+  if (threadIdx.x == 0 && peerLocalBlockIdx == 0) {
+    constSmChans[peerIdx].signal();
+    constSmChans[peerIdx].wait();
+  }
 }
 
 __device__ void allgather1(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nRanksPerNode,
