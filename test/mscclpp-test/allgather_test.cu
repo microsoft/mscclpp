@@ -97,7 +97,7 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, u
   }
 
   constSmChans[peerIdx].put(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
-  deviceSyncer.sync((gridDim.x - 1));
+  deviceSyncer.sync(nBlocks);
   if (threadIdx.x == 0 && peerLocalBlockIdx == 0) {
     constSmChans[peerIdx].signal();
     constSmChans[peerIdx].wait();
@@ -212,7 +212,7 @@ __device__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   mscclpp::SimpleProxyChannel& devChan = constDevChans[peer];
-  const size_t nBlocksForLocalAllGather = gridDim.x - 1;
+  const size_t nBlocksForLocalAllGather = gridDim.x;
 
   if (peerNodeId == rank / nRanksPerNode) {
     localAllGatherSm(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int),
@@ -226,7 +226,7 @@ __device__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
   const size_t step2Bytes = nelemsPerGPU * sizeof(int) - step1Bytes;
 
   // Step 1
-  if (threadIdx.x == 0 && blockIdx.x == (gridDim.x - 1)) {
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
     devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
   }
   localAllGatherSm(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int),
@@ -235,17 +235,17 @@ __device__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
     devChan.wait();
     devChan.flush();
   }
-  deviceSyncer.sync(gridDim.x);
+  deviceSyncer.sync(nBlocksForLocalAllGather);
   // Step 2
-  if (threadIdx.x == 0 && blockIdx.x == (gridDim.x - 1)) {
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
     devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
   }
   localAllGatherSm(rank, nRanksPerNode, peerRank * nelemsPerGPU * sizeof(int), step1Bytes, nBlocksForLocalAllGather);
-  if (threadIdx.x == 0 && blockIdx.x == (gridDim.x - 1)) {
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
     devChan.wait();
     devChan.flush();
   }
-  deviceSyncer.sync(gridDim.x);
+  deviceSyncer.sync(nBlocksForLocalAllGather);
   // Step 3
   localAllGatherSm(rank, nRanksPerNode, (peerRank * nelemsPerGPU * sizeof(int) + step1Bytes), step2Bytes,
                    nBlocksForLocalAllGather);
@@ -370,7 +370,7 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   int nBlocks;
   int nThreads;
   if (kernelNum == 4) {
-    nBlocks = 57;
+    nBlocks = 56;
     nThreads = 1024;
   } else {
     nBlocks = 1;
@@ -477,7 +477,7 @@ void AllGatherTestEngine::setupConnections() {
                              std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteMemories,
                              const mscclpp::RegisteredMemory& localMemory) {
                            std::vector<mscclpp::SemaphoreId> semaphoreIds;
-                           for (int i = 0; i < conns.size(); ++i) {
+                           for (size_t i = 0; i < conns.size(); ++i) {
                              service->addSemaphore(conns[i]);
                              service->addRemoteMemory(remoteMemories[i].get());
                            }

@@ -35,11 +35,16 @@ struct DeviceProxyFifo {
   __forceinline__ __device__ uint64_t push(ProxyTrigger trigger) {
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->head, 1);
 
-    // only one of these two polls need to be met to proceed. Either the tail has advanced enough or where we need to
+    // Only one of two conditions need to be met to proceed. Either the tail has advanced enough or where we need to
     // write to is 0. However, the first condition is faster to check since the tail is flushed periodically anyways but
     // for the second condition we need to read CPU memory.
-    OR_POLL_MAYBE_JAILBREAK(curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->tailReplica),
-                            *(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0, 1000000);
+    // As volatile access is slow, we first check using the bare pointer and then use the volatile pointer if the
+    // condition is not met.
+    if (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *(this->tailReplica)) {
+      OR_POLL_MAYBE_JAILBREAK(curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->tailReplica),
+                              *(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0,
+                              1000000);
+    }
 
     ProxyTrigger* triggerPtr = (ProxyTrigger*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]);
     asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
