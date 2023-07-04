@@ -62,13 +62,16 @@ __device__ void localAllGather(mscclpp::SimpleProxyChannel devChan, int rank, in
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
 // This kernel is the most performant when the number of blocks is a multiple of (nRanksPerNode - 1).
-__device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, uint64_t size, size_t nBlocks) {
+__device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunkIndex, uint64_t offsetInRankChunk,
+                                 uint64_t rankChunkSize, uint64_t size, size_t nBlocks) {
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t peerIdx = blockIdx.x % nPeer;
   const size_t nBlockForThisPeer = nBlocks / nPeer + (nBlocks % nPeer > peerIdx ? 1 : 0);
   const size_t peerLocalBlockIdx = blockIdx.x / nPeer;
+  const size_t rankLocalIndex = rank % nRanksPerNode;
+  const int remoteRankLocalIndex = (peerIdx < rankLocalIndex ? peerIdx : peerIdx + 1);
 
   // Split the data into chunks for aligned data access. Ignore the remainder here and let the last block handle it.
   constexpr size_t chunkBytes = 128;  // heuristic value
@@ -95,13 +98,13 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, u
   if (lastChunkSize > 0 && peerLocalBlockIdx == nBlockForThisPeer - 1) {
     sizeForThisBlock += lastChunkSize;
   }
-
-  constSmChans[peerIdx].put(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
-  deviceSyncer.sync(nBlocks);
   if (threadIdx.x == 0 && peerLocalBlockIdx == 0) {
     constSmChans[peerIdx].signal();
     constSmChans[peerIdx].wait();
   }
+  deviceSyncer.sync(nBlocks);
+  size_t offset = rankChunkSize * (startRankChunkIndex + remoteRankLocalIndex) + offsetInRankChunk;
+  constSmChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
 
 __device__ void allgather1(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nRanksPerNode,
@@ -213,10 +216,12 @@ __device__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   mscclpp::SimpleProxyChannel& devChan = constDevChans[peer];
   const size_t nBlocksForLocalAllGather = gridDim.x;
+  const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
+  const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
+  const int startRankIndexInPeerNode = (peerRank / nRanksPerNode) * nRanksPerNode;
 
   if (peerNodeId == rank / nRanksPerNode) {
-    localAllGatherSm(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int),
-                     nBlocksForLocalAllGather);
+    localAllGatherSm(rank, nRanksPerNode, 0, 0, rankChunkSize, rankChunkSize, nBlocksForLocalAllGather);
     return;
   }
 
@@ -229,7 +234,7 @@ __device__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
   }
-  localAllGatherSm(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int),
+  localAllGatherSm(rank, nRanksPerNode, startRankIndexInLocalNode, 0, rankChunkSize, rankChunkSize,
                    nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     devChan.wait();
@@ -240,14 +245,15 @@ __device__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
   }
-  localAllGatherSm(rank, nRanksPerNode, peerRank * nelemsPerGPU * sizeof(int), step1Bytes, nBlocksForLocalAllGather);
+  localAllGatherSm(rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
+                   nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     devChan.wait();
     devChan.flush();
   }
   deviceSyncer.sync(nBlocksForLocalAllGather);
   // Step 3
-  localAllGatherSm(rank, nRanksPerNode, (peerRank * nelemsPerGPU * sizeof(int) + step1Bytes), step2Bytes,
+  localAllGatherSm(rank, nRanksPerNode, startRankIndexInPeerNode, step1Bytes, rankChunkSize, step2Bytes,
                    nBlocksForLocalAllGather);
 }
 
@@ -370,7 +376,7 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   int nBlocks;
   int nThreads;
   if (kernelNum == 4) {
-    nBlocks = 14;
+    nBlocks = 21;
     nThreads = 1024;
   } else {
     nBlocks = 1;
