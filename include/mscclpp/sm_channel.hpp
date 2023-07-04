@@ -50,8 +50,36 @@ struct SmChannel {
     }
   }
 
+  __forceinline__ __device__ void get(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+                                      uint32_t numThreads) {
+    constexpr int WARP_SIZE = 32;
+    // assume the memory is aligned to 8 bytes
+    ulong2* srcAddr = (ulong2*)((char*)src_ + srcOffset);
+    ulong2* dstAddr = (ulong2*)((char*)dst_ + dstOffset);
+    ulong2 ele[UNROLL];
+    int warpId = threadId / WARP_SIZE;
+    int tidInWarp = threadId % WARP_SIZE;
+    size_t offset = warpId * WARP_SIZE * UNROLL + tidInWarp;
+    size_t nElem = size % sizeof(ulong2) ? (size + sizeof(ulong2)) / sizeof(ulong2) : size / sizeof(ulong2);
+    for (size_t i = offset; i < nElem; i += numThreads * UNROLL) {
+// load to register first
+#pragma unroll
+      for (int j = 0; j < UNROLL; j++) {
+        fetch128(ele[j], dstAddr + i + j * WARP_SIZE);
+      }
+#pragma unroll
+      for (int j = 0; j < UNROLL; j++) {
+        store128(srcAddr + i + j * WARP_SIZE, ele[j]);
+      }
+    }
+  }
+
   __forceinline__ __device__ void put(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
     put(offset, offset, size, threadId, numThreads);
+  }
+
+  __forceinline__ __device__ void get(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
+    get(offset, offset, size, threadId, numThreads);
   }
 
   __forceinline__ __device__ void putPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,

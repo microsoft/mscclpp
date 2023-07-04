@@ -95,13 +95,13 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, u
   if (lastChunkSize > 0 && peerLocalBlockIdx == nBlockForThisPeer - 1) {
     sizeForThisBlock += lastChunkSize;
   }
-
-  constSmChans[peerIdx].put(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
-  deviceSyncer.sync(nBlocks);
   if (threadIdx.x == 0 && peerLocalBlockIdx == 0) {
     constSmChans[peerIdx].signal();
     constSmChans[peerIdx].wait();
   }
+  deviceSyncer.sync(nBlocks);
+
+  constSmChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
 
 __device__ void allgather1(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nRanksPerNode,
