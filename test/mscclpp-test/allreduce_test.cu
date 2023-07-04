@@ -305,9 +305,10 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
     sizeForThisBlock += lastMicroChunkSize;
   }
 
-  int remoteRank = (peerIdx < rank ? peerIdx : peerIdx + 1);
+  size_t localRank = rank % nRanksPerNode;
+  size_t remoteRank = (peerIdx < localRank ? peerIdx : peerIdx + 1);
   size_t srcOffset = ((remoteRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
-  size_t dstOffset = (rank * chunkSize + offsetInChunk) * sizeof(int);
+  size_t dstOffset = ((localRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
   constSmOutOfPlaceChans[peerIdx].put(dstOffset + offsetForThisBlock, srcOffset + offsetForThisBlock, sizeForThisBlock,
                                       threadIdx.x, blockDim.x);
   if (peerLocalBlockIdx == 0 && threadIdx.x == 0) {
@@ -316,12 +317,11 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
   }
   deviceSyncer.sync(gridDim.x);
 
-  int rankIndexInNode = rank % nRanksPerNode;
+  size_t offset = ((localRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
+  int* dst = (int*)((char*)buff + offset);
   for (int i = 1; i < nRanksPerNode; ++i) {
-    int remoteRank = (rankIndexInNode + i) % nRanksPerNode + startChunkIndex;
-    size_t offset = ((startChunkIndex + rankIndexInNode) * chunkSize + offsetInChunk) * sizeof(int);
+    size_t remoteRank = (localRank + i) % nRanksPerNode + startChunkIndex;
     size_t scratchOffset = (remoteRank * chunkSize + offsetInChunk) * sizeof(int);
-    int* dst = (int*)((char*)buff + offset);
     int* src = (int*)((char*)scratch + scratchOffset);
     vectorSum(dst, src, nelems);
   }
