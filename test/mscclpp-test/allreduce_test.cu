@@ -866,7 +866,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     nBlocks = 24;
     tmpBuff = scratchBuff;
   } else if (kernelNum == 4) {
-    nBlocks = 21;
+    nBlocks = 28;
     tmpBuff = scratchBuff;
   } else {
     nBlocks = std::max(args.nRanksPerNode - 1, 1) * BLOCKS_PER_PEER;
