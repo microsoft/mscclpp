@@ -436,12 +436,16 @@ __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPer
 }
 
 // This kernel is the most performant when the number of blocks is a multiple of (nRanksPerNode - 1).
-__device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, uint64_t size) {
+__device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunkIndex, uint64_t offsetInRankChunk,
+                                 uint64_t rankChunkSize, uint64_t size, size_t nBlocks) {
   if (nRanksPerNode == 1) return;
+  if (blockIdx.x >= nBlocks) return;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t peerIdx = blockIdx.x % nPeer;
-  const size_t nBlockForThisPeer = gridDim.x / nPeer + (gridDim.x % nPeer > peerIdx ? 1 : 0);
+  const size_t nBlockForThisPeer = nBlocks / nPeer + (nBlocks % nPeer > peerIdx ? 1 : 0);
   const size_t peerLocalBlockIdx = blockIdx.x / nPeer;
+  const size_t rankLocalIndex = rank % nRanksPerNode;
+  const int remoteRankLocalIndex = (peerIdx < rankLocalIndex ? peerIdx : peerIdx + 1);
 
   // Split the data into chunks for aligned data access. Ignore the remainder here and let the last block handle it.
   constexpr size_t chunkBytes = 128;  // heuristic value
@@ -468,13 +472,13 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, uint64_t offset, u
   if (lastChunkSize > 0 && peerLocalBlockIdx == nBlockForThisPeer - 1) {
     sizeForThisBlock += lastChunkSize;
   }
-
-  constSmInPlaceChans[peerIdx].put(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
-  deviceSyncer.sync(gridDim.x);
   if (threadIdx.x == 0 && peerLocalBlockIdx == 0) {
     constSmInPlaceChans[peerIdx].signal();
     constSmInPlaceChans[peerIdx].wait();
   }
+  deviceSyncer.sync(nBlocks);
+  size_t offset = rankChunkSize * (startRankChunkIndex + remoteRankLocalIndex) + offsetInRankChunk;
+  constSmInPlaceChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
 
 // This is an allgather4 equivalent
@@ -494,8 +498,13 @@ __device__ void allGatherSm(int rank, int worldSize, int nRanksPerNode, size_t n
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   mscclpp::SimpleProxyChannel& devChan = constDevSndRoundChans[peer];
+  const size_t nBlocksForLocalAllGather = gridDim.x;
+  const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
+  const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
+  const int startRankIndexInPeerNode = (peerRank / nRanksPerNode) * nRanksPerNode;
+
   if (peerNodeId == rank / nRanksPerNode) {
-    localAllGatherSm(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+    localAllGatherSm(rank, nRanksPerNode, 0, 0, rankChunkSize, rankChunkSize, nBlocksForLocalAllGather);
     return;
   }
 
@@ -508,24 +517,27 @@ __device__ void allGatherSm(int rank, int worldSize, int nRanksPerNode, size_t n
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
   }
-  localAllGatherSm(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+  localAllGatherSm(rank, nRanksPerNode, startRankIndexInLocalNode, 0, rankChunkSize, rankChunkSize,
+                   nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     devChan.wait();
     devChan.flush();
   }
-  deviceSyncer.sync(gridDim.x);
+  deviceSyncer.sync(nBlocksForLocalAllGather);
   // Step 2
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
   }
-  localAllGatherSm(rank, nRanksPerNode, peerRank * nelemsPerGPU * sizeof(int), step1Bytes);
+  localAllGatherSm(rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
+                   nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     devChan.wait();
     devChan.flush();
   }
-  deviceSyncer.sync(gridDim.x);
+  deviceSyncer.sync(nBlocksForLocalAllGather);
   // Step 3
-  localAllGatherSm(rank, nRanksPerNode, (peerRank * nelemsPerGPU * sizeof(int) + step1Bytes), step2Bytes);
+  localAllGatherSm(rank, nRanksPerNode, startRankIndexInPeerNode, step1Bytes, rankChunkSize, step2Bytes,
+                   nBlocksForLocalAllGather);
 }
 
 __device__ void allreduce0(int* buff, int* scratch, int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
