@@ -16,6 +16,7 @@ __constant__ mscclpp::SimpleProxyChannel constDevSndRoundChans[16];
 
 __constant__ mscclpp::SmChannel constSmInPlaceChans[8];
 __constant__ mscclpp::SmChannel constSmOutOfPlaceChans[8];
+__constant__ mscclpp::SmChannel constSmOutOfPlaceGetChans[8];
 __device__ uint64_t globalFlag;
 
 // TODO(chhwang): need an interface for this.
@@ -305,22 +306,22 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
     sizeForThisBlock += lastMicroChunkSize;
   }
 
-  size_t localRank = rank % nRanksPerNode;
-  size_t remoteRank = (peerIdx < localRank ? peerIdx : peerIdx + 1);
-  size_t srcOffset = ((remoteRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
-  size_t dstOffset = ((localRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
-  constSmOutOfPlaceChans[peerIdx].put(dstOffset + offsetForThisBlock, srcOffset + offsetForThisBlock, sizeForThisBlock,
-                                      threadIdx.x, blockDim.x);
+  size_t localRankIndexInNode = rank % nRanksPerNode;
+  size_t remoteRankIndexInNode = (peerIdx < localRankIndexInNode ? peerIdx : peerIdx + 1);
+  size_t srcOffset = ((remoteRankIndexInNode + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
+  size_t dstOffset = ((localRankIndexInNode + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
   if (peerLocalBlockIdx == 0 && threadIdx.x == 0) {
-    constSmOutOfPlaceChans[peerIdx].signal();
-    constSmOutOfPlaceChans[peerIdx].wait();
+    constSmOutOfPlaceGetChans[peerIdx].signal();
+    constSmOutOfPlaceGetChans[peerIdx].wait();
   }
   deviceSyncer.sync(gridDim.x);
-
+  constSmOutOfPlaceGetChans[peerIdx].get(dstOffset + offsetForThisBlock, srcOffset + offsetForThisBlock,
+                                         sizeForThisBlock, threadIdx.x, blockDim.x);
+  deviceSyncer.sync(gridDim.x);
   int* dst = (int*)((char*)buff + dstOffset);
 #if 0
   for (int r = 1; r < nRanksPerNode; ++r) {
-    size_t remoteRank = (localRank + r) % nRanksPerNode;
+    size_t remoteRank = (localRankIndexInNode + r) % nRanksPerNode;
     size_t scratchOffset = ((remoteRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
     int* src = (int*)((char*)scratch + scratchOffset);
     vectorSum(dst, src, nelems);
@@ -332,7 +333,7 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
   for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nInt4; i += blockDim.x * gridDim.x) {
     int4 sum = make_int4(0, 0, 0, 0);
     for (int r = 1; r < nRanksPerNode; ++r) {
-      size_t remoteRank = (localRank + r) % nRanksPerNode;
+      size_t remoteRank = (localRankIndexInNode + r) % nRanksPerNode;
       size_t scratchOffset = ((remoteRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
       int4* src4 = (int4*)((char*)scratch + scratchOffset);
       sum.w += src4[i].w;
@@ -350,7 +351,7 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
     for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nLastInts; i += blockDim.x * gridDim.x) {
       int sum = 0;
       for (int r = 1; r < nRanksPerNode; ++r) {
-        size_t remoteRank = (localRank + r) % nRanksPerNode;
+        size_t remoteRank = (localRankIndexInNode + r) % nRanksPerNode;
         size_t scratchOffset = ((remoteRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
         int* src = (int*)((char*)scratch + scratchOffset);
         int* srcLast = src + nInt4 * 4;
@@ -865,7 +866,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     nBlocks = 24;
     tmpBuff = scratchBuff;
   } else if (kernelNum == 4) {
-    nBlocks = 14;
+    nBlocks = 21;
     tmpBuff = scratchBuff;
   } else {
     nBlocks = std::max(args.nRanksPerNode - 1, 1) * BLOCKS_PER_PEER;
@@ -1002,6 +1003,7 @@ void AllReduceTestEngine::setupConnections() {
 
     std::vector<mscclpp::SmChannel> smOutOfPlaceChannels;
     std::vector<mscclpp::SmChannel> smInPlaceChannels;
+    std::vector<mscclpp::SmChannel> smOutputPlaceGetChannels;
 
     // Send data from local inputBuff to remote scratchBuff (out-of-place)
     setupMeshConnections(fstRoundChannels, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
@@ -1024,6 +1026,12 @@ void AllReduceTestEngine::setupConnections() {
     assert(smInPlaceChannels.size() < sizeof(constSmInPlaceChans) / sizeof(mscclpp::SmChannel));
     CUDATHROW(cudaMemcpyToSymbol(constSmInPlaceChans, smInPlaceChannels.data(),
                                  sizeof(mscclpp::SmChannel) * smInPlaceChannels.size()));
+
+    setupMeshConnections(smOutputPlaceGetChannels, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes,
+                         ChannelSemantic::GET);
+    assert(smOutputPlaceGetChannels.size() < sizeof(smOutputPlaceGetChannels) / sizeof(mscclpp::SmChannel));
+    CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceGetChans, smOutputPlaceGetChannels.data(),
+                                 sizeof(mscclpp::SmChannel) * smOutputPlaceGetChannels.size()));
   }
 }
 

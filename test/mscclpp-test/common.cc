@@ -418,15 +418,12 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SimpleProxyChanne
 }
 
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels, void* inputBuff,
-                                          size_t inputBuffBytes, void* getPacketBuff, size_t getPacketBuffBytes,
-                                          void* outputBuff, size_t outputBuffBytes) {
+                                          size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes,
+                                          ChannelSemantic semantic) {
   const mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc | IBs[args_.gpuNum];
   mscclpp::RegisteredMemory inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, allTransports);
   mscclpp::RegisteredMemory getPacketBufRegMem;
   mscclpp::RegisteredMemory outputBufRegMem;
-  if (getPacketBuff) {
-    getPacketBufRegMem = comm_->registerMemory(getPacketBuff, getPacketBuffBytes, allTransports);
-  }
   if (outputBuff) {
     outputBufRegMem = comm_->registerMemory(outputBuff, outputBuffBytes, allTransports);
   }
@@ -434,17 +431,10 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
   std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
   mscclpp::RegisteredMemory& localRegMemory =
-      (getPacketBuff) ? getPacketBufRegMem : ((outputBuff) ? outputBufRegMem : inputBufRegMem);
-
+      (outputBuff && semantic == ChannelSemantic::PUT) ? outputBufRegMem : inputBufRegMem;
   setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
 
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoriesOutput;
-  if (outputBuff) {
-    setupMeshConnectionsInternal(connections, outputBufRegMem, remoteRegMemoriesOutput, false);
-  }
-
   std::unordered_map<size_t, std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
-
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
       smSemaphores.emplace(cid, std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, connections[cid]));
@@ -454,9 +444,9 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-      smChannels.emplace_back(smSemaphores[cid]->deviceHandle(),
-                              (outputBuff) ? remoteRegMemoriesOutput[cid].get() : remoteRegMemories[cid].get(),
-                              inputBufRegMem.data(), (outputBuff) ? outputBufRegMem.data() : nullptr);
+      smChannels.emplace_back(smSemaphores[cid]->deviceHandle(), remoteRegMemories[cid].get(),
+                              (outputBuff && semantic == ChannelSemantic::GET) ? outputBuff : inputBufRegMem.data(),
+                              nullptr);
     }
   }
 }
