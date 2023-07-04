@@ -317,14 +317,49 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
   }
   deviceSyncer.sync(gridDim.x);
 
-  size_t offset = ((localRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
-  int* dst = (int*)((char*)buff + offset);
-  for (int i = 1; i < nRanksPerNode; ++i) {
-    size_t remoteRank = (localRank + i) % nRanksPerNode + startChunkIndex;
-    size_t scratchOffset = (remoteRank * chunkSize + offsetInChunk) * sizeof(int);
+  int* dst = (int*)((char*)buff + dstOffset);
+#if 0
+  for (int r = 1; r < nRanksPerNode; ++r) {
+    size_t remoteRank = (localRank + r) % nRanksPerNode;
+    size_t scratchOffset = ((remoteRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
     int* src = (int*)((char*)scratch + scratchOffset);
     vectorSum(dst, src, nelems);
   }
+#else
+  size_t nInt4 = nelems / 4;
+  size_t nLastInts = nelems % 4;
+  int4* dst4 = (int4*)dst;
+  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nInt4; i += blockDim.x * gridDim.x) {
+    int4 sum = make_int4(0, 0, 0, 0);
+    for (int r = 1; r < nRanksPerNode; ++r) {
+      size_t remoteRank = (localRank + r) % nRanksPerNode;
+      size_t scratchOffset = ((remoteRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
+      int4* src4 = (int4*)((char*)scratch + scratchOffset);
+      sum.w += src4[i].w;
+      sum.x += src4[i].x;
+      sum.y += src4[i].y;
+      sum.z += src4[i].z;
+    }
+    dst4[i].w += sum.w;
+    dst4[i].x += sum.x;
+    dst4[i].y += sum.y;
+    dst4[i].z += sum.z;
+  }
+  if (nLastInts > 0) {
+    int* dstLast = dst + nInt4 * 4;
+    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nLastInts; i += blockDim.x * gridDim.x) {
+      int sum = 0;
+      for (int r = 1; r < nRanksPerNode; ++r) {
+        size_t remoteRank = (localRank + r) % nRanksPerNode;
+        size_t scratchOffset = ((remoteRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
+        int* src = (int*)((char*)scratch + scratchOffset);
+        int* srcLast = src + nInt4 * 4;
+        sum += srcLast[i];
+      }
+      dstLast[i] += sum;
+    }
+  }
+#endif
 }
 
 __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPerNode, int worldSize,
