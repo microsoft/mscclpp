@@ -370,7 +370,7 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   int nBlocks;
   int nThreads;
   if (kernelNum == 4) {
-    nBlocks = 56;
+    nBlocks = 14;
     nThreads = 1024;
   } else {
     nBlocks = 1;
