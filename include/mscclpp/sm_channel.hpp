@@ -25,7 +25,7 @@ struct SmChannel {
   __forceinline__ __device__ void store128(ulong2* p, ulong2& v) {
     asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(p), "l"(v.x), "l"(v.y) : "memory");
   }
-#define UNROLL 4
+#define UNROLL 1
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
                                       uint32_t numThreads) {
     constexpr int WARP_SIZE = 32;
