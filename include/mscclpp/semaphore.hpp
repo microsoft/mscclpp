@@ -11,7 +11,7 @@
 
 namespace mscclpp {
 
-/// @brief A base class for semaphores.
+/// A base class for semaphores.
 ///
 /// An semaphore is a synchronization mechanism that allows the local peer to wait for the remote peer to complete a
 /// data transfer. The local peer signals the remote peer that it has completed a data transfer by incrementing the
@@ -21,36 +21,35 @@ namespace mscclpp {
 /// copying the incremented value to the local peer's inbound semaphore ID.
 ///
 /// @tparam InboundDeleter The deleter for inbound semaphore IDs. This is either `std::default_delete` for host memory
-/// or
-/// @ref CudaDeleter for device memory.
+/// or @ref CudaDeleter for device memory.
 /// @tparam OutboundDeleter The deleter for outbound semaphore IDs. This is either `std::default_delete` for host memory
-/// or
-/// @ref CudaDeleter for device memory.
+/// or @ref CudaDeleter for device memory.
+///
 template <template <typename> typename InboundDeleter, template <typename> typename OutboundDeleter>
 class BaseSemaphore {
  protected:
-  /// @brief The registered memory for the remote peer's inbound semaphore ID.
+  /// The registered memory for the remote peer's inbound semaphore ID.
   NonblockingFuture<RegisteredMemory> remoteInboundSemaphoreIdsRegMem_;
 
-  /// @brief The inbound semaphore ID that is incremented by the remote peer and waited on by the local peer.
+  /// The inbound semaphore ID that is incremented by the remote peer and waited on by the local peer.
   ///
   /// The location of @ref localInboundSemaphore_ can be either on the host or on the device.
   std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> localInboundSemaphore_;
 
-  /// @brief The expected inbound semaphore ID to be incremented by the local peer and compared to the
+  /// The expected inbound semaphore ID to be incremented by the local peer and compared to the
   /// @ref localInboundSemaphore_.
   ///
   /// The location of @ref expectedInboundSemaphore_ can be either on the host or on the device.
   std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> expectedInboundSemaphore_;
 
-  /// @brief The outbound semaphore ID that is incremented by the local peer and copied to the remote peer's @ref
+  /// The outbound semaphore ID that is incremented by the local peer and copied to the remote peer's @ref
   /// localInboundSemaphore_.
   ///
   /// The location of @ref outboundSemaphore_ can be either on the host or on the device.
   std::unique_ptr<uint64_t, OutboundDeleter<uint64_t>> outboundSemaphore_;
 
  public:
-  /// @brief Constructs a BaseSemaphore.
+  /// Constructs a BaseSemaphore.
   ///
   /// @param localInboundSemaphoreId The inbound semaphore ID
   /// @param expectedInboundSemaphoreId The expected inbound semaphore ID
