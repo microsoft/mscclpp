@@ -20,7 +20,7 @@ namespace mscclpp {
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
 
-/// Unique ID for a process. This is a @ref MSCCLPP_UNIQUE_ID_BYTES byte array that uniquely identifies a process.
+/// Unique ID for a process. This is a MSCCLPP_UNIQUE_ID_BYTES byte array that uniquely identifies a process.
 struct UniqueId {
   char internal[MSCCLPP_UNIQUE_ID_BYTES];
 };
@@ -285,15 +285,6 @@ inline TransportFlags operator^(Transport transport1, Transport transport2) {
   return TransportFlags(transport1) ^ transport2;
 }
 
-/// A constant TransportFlags object representing no transports.
-extern const TransportFlags NoTransports;
-
-/// A constant TransportFlags object representing all InfiniBand transports.
-extern const TransportFlags AllIBTransports;
-
-/// A constant TransportFlags object representing all transports.
-extern const TransportFlags AllTransports;
-
 /// Get the number of available InfiniBand devices.
 ///
 /// @return The number of available InfiniBand devices.
@@ -314,21 +305,52 @@ Transport getIBTransportByDeviceName(const std::string& ibDeviceName);
 class Communicator;
 class Connection;
 
+/// Represents a block of memory that has been registered to a @ref Communicator.
 class RegisteredMemory {
  protected:
   struct Impl;
 
  public:
+  /// Default constructor.
   RegisteredMemory() = default;
+
+  /// Constructor that takes a shared pointer to an implementation object.
+  ///
+  /// @param pimpl A shared pointer to an implementation object.
   RegisteredMemory(std::shared_ptr<Impl> pimpl);
+
+  /// Destructor.
   ~RegisteredMemory();
 
+  /// Get a pointer to the memory block.
+  ///
+  /// @return A pointer to the memory block.
   void* data();
+
+  /// Get the size of the memory block.
+  ///
+  /// @return The size of the memory block.
   size_t size();
+
+  /// Get the rank of the process that owns the memory block.
+  ///
+  /// @return The rank of the process that owns the memory block.
   int rank();
+
+  /// Get the transport flags associated with the memory block.
+  ///
+  /// @return The transport flags associated with the memory block.
   TransportFlags transports();
 
+  /// Serialize the RegisteredMemory object to a vector of characters.
+  ///
+  /// @return A vector of characters representing the serialized RegisteredMemory object.
   std::vector<char> serialize();
+
+  /// Deserialize a RegisteredMemory object from a vector of characters.
+  ///
+  /// @param data A vector of characters representing a serialized RegisteredMemory object.
+  /// @return A deserialized RegisteredMemory object.
   static RegisteredMemory deserialize(const std::vector<char>& data);
 
   friend class Connection;
@@ -341,51 +363,124 @@ class RegisteredMemory {
   std::shared_ptr<Impl> pimpl;
 };
 
+/// Represents a connection between two processes.
 class Connection {
  public:
+  /// Write data from a source @ref RegisteredMemory to a destination @ref RegisteredMemory.
+  ///
+  /// @param dst The destination @ref RegisteredMemory.
+  /// @param dstOffset The offset in bytes from the start of the destination @ref RegisteredMemory.
+  /// @param src The source @ref RegisteredMemory.
+  /// @param srcOffset The offset in bytes from the start of the source @ref RegisteredMemory.
+  /// @param size The number of bytes to write.
   virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                      uint64_t size) = 0;
 
-  // src must be a CPU memory
+  /// Update a 8-byte value in a destination @ref RegisteredMemory and synchronize the change with the remote process.
+  ///
+  /// @param dst The destination @ref RegisteredMemory.
+  /// @param dstOffset The offset in bytes from the start of the destination @ref RegisteredMemory.
+  /// @param src A pointer to the value to update.
+  /// @param newValue The new value to write.
   virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
 
+  /// Flush any pending writes to the remote process.
   virtual void flush() = 0;
 
+  /// Get the rank of the remote process.
+  ///
+  /// @return The rank of the remote process.
   virtual int remoteRank() = 0;
 
+  /// Get the tag associated with the connection.
+  ///
+  /// @return The tag associated with the connection.
   virtual int tag() = 0;
 
+  /// Get the transport used by the local process.
+  ///
+  /// @return The transport used by the local process.
   virtual Transport transport() = 0;
 
+  /// Get the transport used by the remote process.
+  ///
+  /// @return The transport used by the remote process.
   virtual Transport remoteTransport() = 0;
 
  protected:
-  static std::shared_ptr<RegisteredMemory::Impl> getRegisteredMemoryImpl(RegisteredMemory&);
+  /// Get the implementation object associated with a @ref RegisteredMemory object.
+  ///
+  /// @param memory The @ref RegisteredMemory object.
+  /// @return A shared pointer to the implementation object.
+  static std::shared_ptr<RegisteredMemory::Impl> getRegisteredMemoryImpl(RegisteredMemory& memory);
 };
 
+/// A base class for objects that can be set up during @ref Communicator::setup().
 struct Setuppable {
-  virtual void beginSetup(std::shared_ptr<BaseBootstrap>) {}
-  virtual void endSetup(std::shared_ptr<BaseBootstrap>) {}
+  /// Called inside @ref Communicator::setup() before any call to @ref endSetup() of any @ref Setuppable object that is
+  /// being set up within the same @ref Communicator::setup() call.
+  ///
+  /// @param bootstrap A shared pointer to the bootstrap implementation.
+  virtual void beginSetup(std::shared_ptr<BaseBootstrap> /*bootstrap*/) {}
+
+  /// Called inside @ref Communicator::setup() after all calls to @ref beginSetup() of all @ref Setuppable objects that
+  /// are being set up within the same @ref Communicator::setup() call.
+  ///
+  /// @param bootstrap A shared pointer to the bootstrap implementation.
+  virtual void endSetup(std::shared_ptr<BaseBootstrap> /*bootstrap*/) {}
 };
 
+/// A non-blocking future that can be used to check if a value is ready and retrieve it.
 template <typename T>
 class NonblockingFuture {
   std::shared_future<T> future;
 
  public:
+  /// Default constructor.
   NonblockingFuture() = default;
-  NonblockingFuture(std::shared_future<T>&& future) : future(std::move(future)) {}
-  NonblockingFuture(const NonblockingFuture&) = default;
 
+  /// Constructor that takes a shared future and moves it into the NonblockingFuture.
+  ///
+  /// @param future The shared future to move.
+  NonblockingFuture(std::shared_future<T>&& future) : future(std::move(future)) {}
+
+  /// Copy constructor.
+  ///
+  /// @param other The @ref NonblockingFuture to copy.
+  NonblockingFuture(const NonblockingFuture& other) = default;
+
+  /// Check if the value is ready to be retrieved.
+  ///
+  /// @return True if the value is ready, false otherwise.
   bool ready() const { return future.wait_for(std::chrono::seconds(0)) == std::future_status::ready; }
 
+  /// Get the value.
+  ///
+  /// @return The value.
+  ///
+  /// @throws Error if the value is not ready.
   T get() const {
     if (!ready()) throw Error("NonblockingFuture::get() called before ready", ErrorCode::InvalidUsage);
     return future.get();
   }
 };
 
+/// A class that sets up all registered memories and connections between processes.
+///
+/// A typical way to use this class:
+///   1. Call @ref connectOnSetup() to declare connections between the calling process with other processes.
+///   2. Call @ref registerMemory() to register memory regions that will be used for communication.
+///   3. Call @ref sendMemoryOnSetup() or @ref recvMemoryOnSetup() to send/receive registered memory regions to/from
+///      other processes.
+///   4. Call @ref setup() to set up all registered memories and connections declared in the previous steps.
+///   5. Call @ref NonblockingFuture<RegisteredMemory>::get() to get the registered memory regions received from other
+///      processes.
+///   6. All done; use connections and registered memories to build channels.
+///
 class Communicator {
+ protected:
+  struct Impl;
+
  public:
   /// Initializes the communicator with a given bootstrap implementation.
   ///
@@ -455,13 +550,22 @@ class Communicator {
   /// that have been registered after the (n-1)-th call.
   void setup();
 
-  /// Private implementation of the Communicator class.
-  struct Impl;
+  friend class RegisteredMemory::Impl;
+  friend class IBConnection;
 
  private:
   /// Unique pointer to the implementation of the Communicator class.
   std::unique_ptr<Impl> pimpl;
 };
+
+/// A constant TransportFlags object representing no transports.
+extern const TransportFlags NoTransports;
+
+/// A constant TransportFlags object representing all InfiniBand transports.
+extern const TransportFlags AllIBTransports;
+
+/// A constant TransportFlags object representing all transports.
+extern const TransportFlags AllTransports;
 
 }  // namespace mscclpp
 
