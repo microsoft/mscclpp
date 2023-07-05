@@ -88,7 +88,7 @@ void AllToAllTestColl::initData(const TestArgs& args, std::vector<void*> sendBuf
   }
   CUDATHROW(cudaMemcpy(sendBuff[0], dataHost.data(), sendCount_ * typeSize_, cudaMemcpyHostToDevice));
   for (size_t i = 0; i < recvCount_ / paramCount_; i++) {
-    for (int j = 0; j < paramCount_; j++) {
+    for (size_t j = 0; j < paramCount_; j++) {
       dataHost[i * paramCount_ + j] = i * recvCount_ + rank * paramCount_ + j;
     }
   }

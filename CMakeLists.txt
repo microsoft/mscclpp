@@ -6,6 +6,7 @@ project(mscclpp LANGUAGES CUDA CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall,-Wextra")
 
 option(ENABLE_TRACE "Enable tracing" OFF)
 option(USE_MPI_FOR_TESTS "Use MPI for tests" ON)
@@ -27,11 +28,11 @@ if(CUDAToolkit_FOUND)
     endif()
 
     if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 11)
-        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_80,code=sm_80")
+        set(CMAKE_CUDA_ARCHITECTURES 80)
     endif()
 
     if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12)
-        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_90,code=sm_90")
+        set(CMAKE_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES} 90)
     endif()
 endif()
 

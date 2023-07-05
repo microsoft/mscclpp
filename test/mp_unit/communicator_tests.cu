@@ -104,7 +104,7 @@ void CommunicatorTest::SetUp() {
     }
   }
 
-  for (int n = 0; n < numBuffers; n++) {
+  for (size_t n = 0; n < numBuffers; n++) {
     devicePtr[n] = mscclpp::allocSharedCuda<int>(deviceBufferSize / sizeof(int));
     registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, mscclpp::Transport::CudaIpc | ibTransport, 0, remoteRanks,
                         localMemory[n], remoteMemory[n]);
@@ -122,7 +122,7 @@ void CommunicatorTest::deviceBufferInit() {
   size_t dataCount = deviceBufferSize / sizeof(int);
   for (int n = 0; n < (int)devicePtr.size(); n++) {
     std::vector<int> hostBuffer(dataCount, 0);
-    for (int i = 0; i < dataCount; i++) {
+    for (size_t i = 0; i < dataCount; i++) {
       hostBuffer[i] = gEnv->rank + n * gEnv->worldSize;
     }
     mscclpp::memcpyCuda<int>(devicePtr[n].get(), hostBuffer.data(), dataCount, cudaMemcpyHostToDevice);
@@ -130,7 +130,7 @@ void CommunicatorTest::deviceBufferInit() {
 }
 
 void CommunicatorTest::writeToRemote(int dataCountPerRank) {
-  for (int n = 0; n < numBuffers; n++) {
+  for (size_t n = 0; n < numBuffers; n++) {
     for (int i = 0; i < gEnv->worldSize; i++) {
       if (i != gEnv->rank) {
         auto& conn = connections.at(i);
@@ -152,7 +152,7 @@ bool CommunicatorTest::testWriteCorrectness(bool skipLocal) {
       if (((i / gEnv->nRanksPerNode) == (gEnv->rank / gEnv->nRanksPerNode)) && skipLocal) {
         continue;
       }
-      for (int j = i * dataCount / gEnv->worldSize; j < (i + 1) * dataCount / gEnv->worldSize; j++) {
+      for (size_t j = i * dataCount / gEnv->worldSize; j < (i + 1) * dataCount / gEnv->worldSize; j++) {
         if (hostBuffer[j] != i + n * gEnv->worldSize) {
           return false;
         }
