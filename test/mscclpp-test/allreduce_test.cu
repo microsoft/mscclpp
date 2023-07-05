@@ -1006,7 +1006,7 @@ void AllReduceTestEngine::setupConnections() {
 
     setupMeshConnections(smOutputPlaceGetChannels, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes,
                          ChannelSemantic::GET);
-    assert(smOutputPlaceGetChannels.size() < sizeof(smOutputPlaceGetChannels) / sizeof(mscclpp::SmChannel));
+    assert(smOutputPlaceGetChannels.size() < sizeof(constSmOutOfPlaceGetChans) / sizeof(mscclpp::SmChannel));
     CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceGetChans, smOutputPlaceGetChannels.data(),
                                  sizeof(mscclpp::SmChannel) * smOutputPlaceGetChannels.size()));
   }
