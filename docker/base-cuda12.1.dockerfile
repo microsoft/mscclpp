@@ -45,7 +45,7 @@ RUN cd /tmp && \
     make -j && \
     make install && \
     cd .. && \
-    rm -rf /tmp/openmpi-${OPENMPI_VERSION}
+    rm -rf /tmp/openmpi-${OPENMPI_VERSION}*
 
 ENV PATH="${PATH}:/usr/local/mpi/bin" \
     LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/mpi/lib:/usr/local/cuda-12.1/compat:/usr/local/cuda-12.1/lib64"
