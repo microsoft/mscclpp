@@ -26,10 +26,10 @@ struct alignas(16) ProxyTrigger {
 ///
 /// The FIFO has a head pointer allocated on the device which starts at 0 and goes up to 2^64-1, which is almost
 /// infinity. There are two copies of the tail, one on the device, @ref DeviceProxyFifo::tailReplica, and another on the
-/// host, @ref HostProxyFifo::Impl::hostTail. The host always has the "true" tail and occasionally pushes it to the copy
-/// on the device. Therefore, most of the time, the device has a stale version. The invariants are: tailReplica <=
-/// hostTail <= head. The @ref push() function increments head, hostTail is updated in @ref HostProxyFifo::pop(), and
-/// it occasionally flushes it to tailReplica via @ref HostProxyFifo::flushTail().
+/// host, namely, hostTail. The host always has the "true" tail and occasionally pushes it to the copy on the device.
+/// Therefore, most of the time, the device has a stale version. The invariants are: tailReplica <= hostTail <= head.
+/// The @ref push() function increments head, hostTail is updated in @ref HostProxyFifo::pop(), and it occasionally
+/// flushes it to tailReplica via @ref HostProxyFifo::flushTail().
 ///
 /// Duplicating the tail is a good idea because the FIFO is large enough, and we do not need frequent updates for the
 /// tail as there is usually enough space for device threads to push their work into.
@@ -72,8 +72,7 @@ struct DeviceProxyFifo {
 
   /// The FIFO buffer that is allocated on the host via `cudaHostAlloc()`.
   ProxyTrigger* triggers;
-  /// Replica of the FIFO tail that is allocated on device. @ref HostProxyFifo::Impl::hostTail is the true tail on the
-  /// host and pused occasionally to this replica.
+  /// Replica of the FIFO tail that is allocated on device.
   uint64_t* tailReplica;
   /// The FIFO head. Allocated on the device and only accessed by the device.
   uint64_t* head;

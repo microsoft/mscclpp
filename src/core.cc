@@ -82,6 +82,10 @@ const TransportFlags AllIBTransports = Transport::IB0 | Transport::IB1 | Transpo
 
 const TransportFlags AllTransports = AllIBTransports | Transport::CudaIpc;
 
+void Setuppable::beginSetup(std::shared_ptr<BaseBootstrap>) {}
+
+void Setuppable::endSetup(std::shared_ptr<BaseBootstrap>) {}
+
 }  // namespace mscclpp
 
 namespace std {

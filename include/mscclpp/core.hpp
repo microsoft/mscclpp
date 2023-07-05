@@ -421,13 +421,13 @@ struct Setuppable {
   /// being set up within the same @ref Communicator::setup() call.
   ///
   /// @param bootstrap A shared pointer to the bootstrap implementation.
-  virtual void beginSetup(std::shared_ptr<BaseBootstrap> /*bootstrap*/) {}
+  virtual void beginSetup(std::shared_ptr<BaseBootstrap> bootstrap);
 
   /// Called inside @ref Communicator::setup() after all calls to @ref beginSetup() of all @ref Setuppable objects that
   /// are being set up within the same @ref Communicator::setup() call.
   ///
   /// @param bootstrap A shared pointer to the bootstrap implementation.
-  virtual void endSetup(std::shared_ptr<BaseBootstrap> /*bootstrap*/) {}
+  virtual void endSetup(std::shared_ptr<BaseBootstrap> bootstrap);
 };
 
 /// A non-blocking future that can be used to check if a value is ready and retrieve it.
@@ -533,8 +533,7 @@ class Communicator {
   ///
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag of the connection for identifying it.
-  /// @param transportType The type of transport to be used (mscclppTransportP2P or mscclppTransportIB).
-  /// @param ibDev The name of the IB device to be used.
+  /// @param transport The type of transport to be used.
   /// @return std::shared_ptr<Connection> A shared pointer to the connection.
   std::shared_ptr<Connection> connectOnSetup(int remoteRank, int tag, Transport transport);
 
