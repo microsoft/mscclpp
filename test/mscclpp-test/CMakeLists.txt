@@ -6,7 +6,8 @@ FetchContent_MakeAvailable(json)
 
 function(add_mscclpp_test_executable name sources)
     add_executable(${name} ${sources} common.cc)
-    target_link_libraries(${name} mscclpp MPI::MPI_CXX CUDA::cudart CUDA::cuda_driver MSCCLPP::numa nlohmann_json::nlohmann_json)
+    target_link_libraries(${name} ${TEST_LIBS_COMMON} MPI::MPI_CXX nlohmann_json::nlohmann_json)
+    target_include_directories(${name} ${TEST_INC_COMMON})
 endfunction()
 
 add_mscclpp_test_executable(sendrecv_test_perf sendrecv_test.cu)
