@@ -69,6 +69,7 @@ if(USE_NPKIT)
 endif()
 add_subdirectory(include)
 add_subdirectory(src)
+install(TARGETS mscclpp LIBRARY DESTINATION lib)
 
 # Tests
 add_subdirectory(test)
