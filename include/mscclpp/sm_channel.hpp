@@ -10,6 +10,40 @@
 
 namespace mscclpp {
 
+namespace detail {
+#ifdef __CUDACC__
+template <typename T>
+__forceinline__ __device__ void load(T& v, const T* p) {
+  v = *p;
+}
+template <>
+__forceinline__ __device__ void load<ulong2>(ulong2& v, const ulong2* p) {
+  asm volatile("ld.volatile.global.v2.u64 {%0,%1}, [%2];" : "=l"(v.x), "=l"(v.y) : "l"(p) : "memory");
+}
+template <>
+__forceinline__ __device__ void load<int4>(int4& v, const int4* p) {
+  asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
+               : "=r"(v.w), "=r"(v.x), "=r"(v.y), "=r"(v.z)
+               : "l"(p)
+               : "memory");
+}
+
+template <typename T>
+__forceinline__ __device__ void store(T* p, const T& v) {
+  *p = v;
+}
+template <>
+__forceinline__ __device__ void store<ulong2>(ulong2* p, const ulong2& v) {
+  asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(p), "l"(v.x), "l"(v.y) : "memory");
+}
+template <>
+__forceinline__ __device__ void store<int4>(int4* p, const int4& v) {
+  asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(p), "r"(v.w), "r"(v.x), "r"(v.y), "r"(v.z)
+               : "memory");
+}
+#endif  // __CUDACC__
+}  // namespace detail
+
 // A direct version of DeviceChannel only for CudaIpc
 struct SmChannel {
  public:
@@ -19,16 +53,22 @@ struct SmChannel {
 
 #ifdef __CUDACC__
 
-  __forceinline__ __device__ void fetch128(ulong2& v, const ulong2* p) {
-    asm volatile("ld.volatile.global.v2.u64 {%0,%1}, [%2];" : "=l"(v.x), "=l"(v.y) : "l"(p) : "memory");
+  template <typename T>
+  __forceinline__ __device__ T read(uint64_t index) {
+    T v;
+    detail::load<T>(v, (T*)dst_ + index);
+    return v;
   }
-  __forceinline__ __device__ void store128(ulong2* p, ulong2& v) {
-    asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(p), "l"(v.x), "l"(v.y) : "memory");
+
+  template <typename T>
+  __forceinline__ __device__ void write(uint64_t index, const T& v) {
+    detail::store<T>((T*)dst_ + index, v);
   }
-#define UNROLL 1
+
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
                                       uint32_t numThreads) {
     constexpr int WARP_SIZE = 32;
+    constexpr int UNROLL = 1;
     // assume the memory is aligned to 8 bytes
     ulong2* srcAddr = (ulong2*)((char*)src_ + srcOffset);
     ulong2* dstAddr = (ulong2*)((char*)dst_ + dstOffset);
@@ -41,11 +81,11 @@ struct SmChannel {
 // load to register first
 #pragma unroll
       for (int j = 0; j < UNROLL; j++) {
-        fetch128(ele[j], srcAddr + i + j * WARP_SIZE);
+        detail::load<ulong2>(ele[j], srcAddr + i + j * WARP_SIZE);
       }
 #pragma unroll
       for (int j = 0; j < UNROLL; j++) {
-        store128(dstAddr + i + j * WARP_SIZE, ele[j]);
+        detail::store<ulong2>(dstAddr + i + j * WARP_SIZE, ele[j]);
       }
     }
   }
@@ -53,6 +93,7 @@ struct SmChannel {
   __forceinline__ __device__ void get(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
                                       uint32_t numThreads) {
     constexpr int WARP_SIZE = 32;
+    constexpr int UNROLL = 1;
     // assume the memory is aligned to 8 bytes
     ulong2* srcAddr = (ulong2*)((char*)src_ + srcOffset);
     ulong2* dstAddr = (ulong2*)((char*)dst_ + dstOffset);
@@ -65,11 +106,11 @@ struct SmChannel {
 // load to register first
 #pragma unroll
       for (int j = 0; j < UNROLL; j++) {
-        fetch128(ele[j], dstAddr + i + j * WARP_SIZE);
+        detail::load<ulong2>(ele[j], dstAddr + i + j * WARP_SIZE);
       }
 #pragma unroll
       for (int j = 0; j < UNROLL; j++) {
-        store128(srcAddr + i + j * WARP_SIZE, ele[j]);
+        detail::store<ulong2>(srcAddr + i + j * WARP_SIZE, ele[j]);
       }
     }
   }

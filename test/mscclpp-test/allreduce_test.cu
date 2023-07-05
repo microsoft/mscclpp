@@ -272,95 +272,49 @@ __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nel
 __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRanksPerNode, int startChunkIndex,
                                      size_t offsetInChunk, size_t chunkSize, size_t nelems) {
   if (nRanksPerNode == 1) return;
-
-  const size_t size = nelems * sizeof(int);
   const int nPeer = nRanksPerNode - 1;
-  const size_t peerIdx = blockIdx.x % nPeer;
-  const size_t nBlockForThisPeer = gridDim.x / nPeer + (gridDim.x % nPeer > peerIdx ? 1 : 0);
-  const size_t peerLocalBlockIdx = blockIdx.x / nPeer;
+  mscclpp::SmChannel* smChans = constSmOutOfPlaceGetChans;
 
-  // Split the data into micro-chunks for aligned data access. Ignore the remainder here and let the last block handle
-  // it.
-  constexpr size_t microChunkBytes = 128;  // heuristic value
-  const size_t nMicroChunk = size / microChunkBytes;
-  const size_t nMinMicroChunkPerBlock = nMicroChunk / nBlockForThisPeer;
-  const size_t nRemainderMicroChunk = nMicroChunk % nBlockForThisPeer;
+  const size_t localRankIndexInNode = rank % nRanksPerNode;
+  const size_t indexOffset = ((localRankIndexInNode + startChunkIndex) * chunkSize + offsetInChunk);
+  const size_t indexOffset4 = indexOffset / 4;
 
-  // Distribute micro-chunks to blocks
-  size_t nMicroChunkForThisBlock;
-  size_t offsetForThisBlock;
-  if (peerLocalBlockIdx < nRemainderMicroChunk) {
-    nMicroChunkForThisBlock = nMinMicroChunkPerBlock + 1;
-    offsetForThisBlock = (nMinMicroChunkPerBlock + 1) * peerLocalBlockIdx;
-  } else {
-    nMicroChunkForThisBlock = nMinMicroChunkPerBlock;
-    offsetForThisBlock = (nMinMicroChunkPerBlock + 1) * nRemainderMicroChunk +
-                         (peerLocalBlockIdx - nRemainderMicroChunk) * nMinMicroChunkPerBlock;
+  int4* buff4 = (int4*)buff;
+
+  for (int peerIdx = threadIdx.x + blockIdx.x * blockDim.x; peerIdx < nPeer; peerIdx += blockDim.x * gridDim.x) {
+    smChans[peerIdx].signal();
   }
-  offsetForThisBlock *= microChunkBytes;
-
-  // Calculate the size of the data for this block
-  size_t sizeForThisBlock = nMicroChunkForThisBlock * microChunkBytes;
-  const size_t lastMicroChunkSize = size - nMicroChunk * microChunkBytes;
-  if (lastMicroChunkSize > 0 && peerLocalBlockIdx == nBlockForThisPeer - 1) {
-    sizeForThisBlock += lastMicroChunkSize;
-  }
-
-  size_t localRankIndexInNode = rank % nRanksPerNode;
-  size_t remoteRankIndexInNode = (peerIdx < localRankIndexInNode ? peerIdx : peerIdx + 1);
-  size_t srcOffset = ((remoteRankIndexInNode + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
-  size_t dstOffset = ((localRankIndexInNode + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
-  if (peerLocalBlockIdx == 0 && threadIdx.x == 0) {
-    constSmOutOfPlaceGetChans[peerIdx].signal();
-    constSmOutOfPlaceGetChans[peerIdx].wait();
+  for (int peerIdx = threadIdx.x + blockIdx.x * blockDim.x; peerIdx < nPeer; peerIdx += blockDim.x * gridDim.x) {
+    smChans[peerIdx].wait();
   }
   deviceSyncer.sync(gridDim.x);
-  constSmOutOfPlaceGetChans[peerIdx].get(dstOffset + offsetForThisBlock, srcOffset + offsetForThisBlock,
-                                         sizeForThisBlock, threadIdx.x, blockDim.x);
-  deviceSyncer.sync(gridDim.x);
-  int* dst = (int*)((char*)buff + dstOffset);
-#if 0
-  for (int r = 1; r < nRanksPerNode; ++r) {
-    size_t remoteRank = (localRankIndexInNode + r) % nRanksPerNode;
-    size_t scratchOffset = ((remoteRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
-    int* src = (int*)((char*)scratch + scratchOffset);
-    vectorSum(dst, src, nelems);
-  }
-#else
-  size_t nInt4 = nelems / 4;
-  size_t nLastInts = nelems % 4;
-  int4* dst4 = (int4*)dst;
-  for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nInt4; i += blockDim.x * gridDim.x) {
+
+  const size_t nInt4 = nelems / 4;
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * gridDim.x) {
     int4 sum = make_int4(0, 0, 0, 0);
-    for (int r = 1; r < nRanksPerNode; ++r) {
-      size_t remoteRank = (localRankIndexInNode + r) % nRanksPerNode;
-      size_t scratchOffset = ((remoteRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
-      int4* src4 = (int4*)((char*)scratch + scratchOffset);
-      sum.w += src4[i].w;
-      sum.x += src4[i].x;
-      sum.y += src4[i].y;
-      sum.z += src4[i].z;
+
+    for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      int4 val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
+      sum.w += val.w;
+      sum.x += val.x;
+      sum.y += val.y;
+      sum.z += val.z;
     }
-    dst4[i].w += sum.w;
-    dst4[i].x += sum.x;
-    dst4[i].y += sum.y;
-    dst4[i].z += sum.z;
+    buff4[indexOffset4 + idx].w += sum.w;
+    buff4[indexOffset4 + idx].x += sum.x;
+    buff4[indexOffset4 + idx].y += sum.y;
+    buff4[indexOffset4 + idx].z += sum.z;
   }
-  if (nLastInts > 0) {
-    int* dstLast = dst + nInt4 * 4;
-    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < nLastInts; i += blockDim.x * gridDim.x) {
-      int sum = 0;
-      for (int r = 1; r < nRanksPerNode; ++r) {
-        size_t remoteRank = (localRankIndexInNode + r) % nRanksPerNode;
-        size_t scratchOffset = ((remoteRank + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
-        int* src = (int*)((char*)scratch + scratchOffset);
-        int* srcLast = src + nInt4 * 4;
-        sum += srcLast[i];
-      }
-      dstLast[i] += sum;
+
+  const size_t nLastInts = nelems % 4;
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nLastInts; idx += blockDim.x * gridDim.x) {
+    int sum = 0;
+    for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      int val = smChans[peerIdx].read<int>(indexOffset + nInt4 * 4 + idx);
+      sum += val;
     }
+    buff[indexOffset + nInt4 * 4 + idx] += sum;
   }
-#endif
 }
 
 __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPerNode, int worldSize,
@@ -858,22 +812,28 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const size_t scratchDataCount = chunk.size * nPeers;
 
   int nBlocks;
+  int nThreadsPerBlock;
   void* tmpBuff;
   if (kernelNum == 0) {
     nBlocks = nPeers * BLOCKS_PER_PEER;
     tmpBuff = scratchBuff;
+    nThreadsPerBlock = 1024;
   } else if (kernelNum == 1 || kernelNum == 3) {
     nBlocks = 24;
     tmpBuff = scratchBuff;
+    nThreadsPerBlock = 1024;
   } else if (kernelNum == 4) {
-    nBlocks = 28;
+    nBlocks = 70;
     tmpBuff = scratchBuff;
+    nThreadsPerBlock = 256;
   } else {
     nBlocks = std::max(args.nRanksPerNode - 1, 1) * BLOCKS_PER_PEER;
     tmpBuff = scratchPacketBuff;
+    nThreadsPerBlock = 1024;
   }
-  kernel<<<nBlocks, 1024, 0, stream>>>(inputBuff, tmpBuff, resultBuff, putPacketBuff, getPacketBuff, rank,
-                                       args.nRanksPerNode, worldSize, paramCount_, scratchDataCount, kernelNum);
+  kernel<<<nBlocks, nThreadsPerBlock, 0, stream>>>(inputBuff, tmpBuff, resultBuff, putPacketBuff, getPacketBuff, rank,
+                                                   args.nRanksPerNode, worldSize, paramCount_, scratchDataCount,
+                                                   kernelNum);
 }
 
 void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
