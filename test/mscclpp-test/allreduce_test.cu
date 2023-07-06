@@ -8,7 +8,6 @@
 
 #include "common.hpp"
 
-#define ALIGN 4
 #define BLOCKS_PER_PEER 1
 
 __constant__ mscclpp::SimpleProxyChannel constDevFstRoundChans[16];
@@ -325,8 +324,8 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
 }
 
 __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPerNode, int worldSize,
-                                size_t nelems,  // must be divisible by 3
-                                int nBlocksForReduceScatter) {
+                                size_t nelems  // must be divisible by 3
+) {
   // this reduce-scatter algorithm works as follows:
   // Step 1: each node does a local reduce-scatter on peer node data chunks with 1/pipeline portion of chunk data. For
   // example, 2 nodes and each node has 2 ranks. rank 0 and rank 1 perform reduce-scatter on chunk 2 and chunk 3, with
@@ -338,9 +337,12 @@ __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPer
   // step with its cross-node neighbor (same local rank number on the other node) via IB. Then performs a reduce
   // operation.
   int pipelineSize = 3;
+  float nBlocksForReduceScatterRatio = 0.8;
   const size_t chunkSize = nelems / worldSize;
   const int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
+  int nBlocksForReduceScatter =
+      (int)(nBlocksForReduceScatterRatio * gridDim.x) / (nRanksPerNode - 1) * (nRanksPerNode - 1);
   int isComm = (threadIdx.x == 0) && (blockIdx.x == nBlocksForReduceScatter);
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   int nBlocksRemain = gridDim.x - nBlocksForReduceScatter;
@@ -783,15 +785,14 @@ __device__ void allreduce3(int* buff, int* scratch, void* result, int rank, int 
 }
 
 __device__ void allreduce4(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize,
-                           size_t nelems, int nBlocksForReduceScatter) {
-  reduceScatterSm(buff, scratch, rank, nRanksPerNode, worldSize, nelems, nBlocksForReduceScatter);
+                           size_t nelems) {
+  reduceScatterSm(buff, scratch, rank, nRanksPerNode, worldSize, nelems);
   deviceSyncer.sync(gridDim.x);
   allGatherSm(rank, worldSize, nRanksPerNode, nelems / worldSize);
 }
 
 __global__ void kernel(void* buff, void* scratch, void* result, void* putPktBuf, void* getPktBuf, int rank,
-                       int nRanksPerNode, int worldSize, size_t nelems, size_t scratchDataCount,
-                       int nBlocksForReduceScatter, int kernel) {
+                       int nRanksPerNode, int worldSize, size_t nelems, size_t scratchDataCount, int kernel) {
   if (kernel == 0)
     allreduce0((int*)buff, (int*)scratch, rank, worldSize, nelems, scratchDataCount);
   else if (kernel == 1)
@@ -801,7 +802,7 @@ __global__ void kernel(void* buff, void* scratch, void* result, void* putPktBuf,
   else if (kernel == 3)
     allreduce3((int*)buff, (int*)scratch, result, rank, nRanksPerNode, worldSize, nelems);
   else if (kernel == 4)
-    allreduce4((int*)buff, (int*)scratch, result, rank, nRanksPerNode, worldSize, nelems, nBlocksForReduceScatter);
+    allreduce4((int*)buff, (int*)scratch, result, rank, nRanksPerNode, worldSize, nelems);
 }
 
 class AllReduceTestColl : public BaseTestColl {
@@ -826,7 +827,6 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
 
   int nBlocks;
   int nThreadsPerBlock;
-  int nBlocksForReduceScatter;
   void* tmpBuff;
   if (kernelNum == 0) {
     nBlocks = nPeers * BLOCKS_PER_PEER;
@@ -837,10 +837,9 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     tmpBuff = scratchBuff;
     nThreadsPerBlock = 1024;
   } else if (kernelNum == 4) {
-    nBlocks = 90;
-    nBlocksForReduceScatter = 70;
+    nBlocks = 45;
     tmpBuff = scratchBuff;
-    nThreadsPerBlock = 256;
+    nThreadsPerBlock = 512;
   } else {
     nBlocks = std::max(args.nRanksPerNode - 1, 1) * BLOCKS_PER_PEER;
     tmpBuff = scratchPacketBuff;
@@ -848,7 +847,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   }
   kernel<<<nBlocks, nThreadsPerBlock, 0, stream>>>(inputBuff, tmpBuff, resultBuff, putPacketBuff, getPacketBuff, rank,
                                                    args.nRanksPerNode, worldSize, paramCount_, scratchDataCount,
-                                                   nBlocksForReduceScatter, kernelNum);
+                                                   kernelNum);
 }
 
 void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
@@ -887,12 +886,18 @@ void AllReduceTestColl::setupCollTest(size_t size) {
 }
 
 std::vector<KernelRestriction> AllReduceTestColl::getKernelRestrictions() {
-  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes}
-          {0, "allreduce0", true, 1},
-          {1, "allreduce1", true, 1},
-          {2, "allreduce2", true, 1},
-          {3, "allreduce3", true, 3},
-          {4, "allreduce4", true, 3}};
+  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes, alignedBytes}
+          {0, "allreduce0", true, 1, .alignedBytes = 4 * worldSize_},
+          {1, "allreduce1", true, 1, .alignedBytes = 4 * worldSize_},
+          {2, "allreduce2", true, 1, .alignedBytes = 4 * worldSize_},
+          {3, "allreduce3", true, 3, .alignedBytes = 4 * worldSize_},
+          {
+              4,
+              "allreduce4",
+              true,
+              3,
+              .alignedBytes = 16 * worldSize_ /*use ulong2 to transfer data*/,
+          }};
 }
 
 class AllReduceTestEngine : public BaseTestEngine {

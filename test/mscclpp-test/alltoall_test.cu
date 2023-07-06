@@ -6,7 +6,6 @@
 
 #include "common.hpp"
 
-#define ALIGN 4
 __constant__ mscclpp::SimpleProxyChannel constDevChans[16];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 void* localRecvBuff;
@@ -104,7 +103,7 @@ void AllToAllTestColl::getBw(const double deltaSec, double& algBw, double& busBw
 
 void AllToAllTestColl::setupCollTest(size_t size) {
   size_t count = size / typeSize_;
-  size_t base = (count / worldSize_ / (ALIGN)) * ALIGN * worldSize_;
+  size_t base = count;
   sendCount_ = base;
   recvCount_ = base;
   paramCount_ = base / worldSize_;
@@ -116,8 +115,8 @@ void AllToAllTestColl::setupCollTest(size_t size) {
 
 std::vector<KernelRestriction> AllToAllTestColl::getKernelRestrictions() {
   return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes}
-          {0, "alltoall0", true, 1},
-          {1, "alltoall1", false, 1}};
+          {0, "alltoall0", true, 1, 4 * worldSize_},
+          {1, "alltoall1", false, 1, 4 * worldSize_}};
 }
 
 class AllToAllTestEngine : public BaseTestEngine {
