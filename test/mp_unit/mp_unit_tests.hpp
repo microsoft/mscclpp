@@ -124,7 +124,7 @@ class CommunicatorTest : public CommunicatorTestBase {
   std::vector<std::unordered_map<int, mscclpp::RegisteredMemory>> remoteMemory;
 };
 
-class DeviceChannelOneToOneTest : public CommunicatorTestBase {
+class ProxyChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   void SetUp() override;
   void TearDown() override;
