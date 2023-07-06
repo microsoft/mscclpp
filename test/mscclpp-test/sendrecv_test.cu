@@ -79,8 +79,8 @@ void SendRecvTestColl::getBw(const double deltaSec, double& algBw /*OUT*/, doubl
 }
 
 std::vector<KernelRestriction> SendRecvTestColl::getKernelRestrictions() {
-  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes}
-          {0, "sendrecv0", false, 1}};
+  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes, alignedBytes}
+          {0, "sendrecv0", false, 1, 16 /*use ulong2 to transfer data*/}};
 }
 
 void SendRecvTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {

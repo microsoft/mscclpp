@@ -44,6 +44,7 @@ struct KernelRestriction {
   std::string kernelName;
   bool compatibleWithMultiNodes;
   int countDivisorForMultiNodes;
+  int alignedBytes;
 };
 
 class BaseTestColl {

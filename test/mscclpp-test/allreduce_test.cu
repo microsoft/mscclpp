@@ -8,7 +8,6 @@
 
 #include "common.hpp"
 
-#define ALIGN 4
 #define BLOCKS_PER_PEER 1
 
 __constant__ mscclpp::SimpleProxyChannel constDevFstRoundChans[16];
@@ -887,12 +886,18 @@ void AllReduceTestColl::setupCollTest(size_t size) {
 }
 
 std::vector<KernelRestriction> AllReduceTestColl::getKernelRestrictions() {
-  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes}
-          {0, "allreduce0", true, 1},
-          {1, "allreduce1", true, 1},
-          {2, "allreduce2", true, 1},
-          {3, "allreduce3", true, 3},
-          {4, "allreduce4", true, 3}};
+  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes, alignedBytes}
+          {0, "allreduce0", true, 1, .alignedBytes = 4 * worldSize_},
+          {1, "allreduce1", true, 1, .alignedBytes = 4 * worldSize_},
+          {2, "allreduce2", true, 1, .alignedBytes = 4 * worldSize_},
+          {3, "allreduce3", true, 3, .alignedBytes = 4 * worldSize_},
+          {
+              4,
+              "allreduce4",
+              true,
+              3,
+              .alignedBytes = 16 * worldSize_ /*use ulong2 to transfer data*/,
+          }};
 }
 
 class AllReduceTestEngine : public BaseTestEngine {

@@ -9,8 +9,6 @@
 
 #include "common.hpp"
 
-#define ALIGN 4
-
 namespace {
 auto isUsingHostOffload = [](int kernelNum) { return kernelNum == 3; };
 constexpr uint64_t MAGIC = 0xdeadbeef;
@@ -415,7 +413,7 @@ void AllGatherTestColl::getBw(const double deltaSec, double& algBw, double& busB
 
 void AllGatherTestColl::setupCollTest(size_t size) {
   size_t count = size / typeSize_;
-  size_t base = (count / (ALIGN * worldSize_)) * ALIGN;
+  size_t base = (count / worldSize_);
   sendCount_ = base;
   recvCount_ = base * worldSize_;
   paramCount_ = base;
@@ -429,12 +427,12 @@ void AllGatherTestColl::setupCollTest(size_t size) {
 }
 
 std::vector<KernelRestriction> AllGatherTestColl::getKernelRestrictions() {
-  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes}
-          {0, "allgather0", true, 1},
-          {1, "allgather1", false, 1},
-          {2, "allgather2", true, 3},
-          {3, "allgather3", true, 1},
-          {4, "allgather4", true, 3}};
+  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes, alignedBytes}
+          {0, "allgather0", true, 1, 4 * worldSize_},
+          {1, "allgather1", false, 1, 4 * worldSize_},
+          {2, "allgather2", true, 3, 4 * worldSize_},
+          {3, "allgather3", true, 1, 4 * worldSize_},
+          {4, "allgather4", true, 3, 16 * worldSize_ /*use ulong2 to transfer data*/}};
 }
 
 class AllGatherTestEngine : public BaseTestEngine {
