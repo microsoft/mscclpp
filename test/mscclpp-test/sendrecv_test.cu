@@ -59,13 +59,16 @@ class SendRecvTestColl : public BaseTestColl {
   void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) override;
   void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) override;
   void setupCollTest(size_t size) override;
+  std::vector<KernelRestriction> getKernelRestrictions() override;
 };
 
 void SendRecvTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   size_t sendBytes = sendCount_ * typeSize_;
   int blockNum = getBlockNum(sendBytes);
   size_t bytesPerBlock = (sendBytes + blockNum - 1) / blockNum;
-  kernel<<<blockNum, BLOCK_THREADS_NUM, 0, stream>>>(args.rank, sendBytes, bytesPerBlock);
+  if (kernelNum_ == 0) {
+    kernel<<<blockNum, BLOCK_THREADS_NUM, 0, stream>>>(args.rank, sendBytes, bytesPerBlock);
+  }
 }
 
 void SendRecvTestColl::getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) {
@@ -73,6 +76,11 @@ void SendRecvTestColl::getBw(const double deltaSec, double& algBw /*OUT*/, doubl
   algBw = baseBw;
   double factor = 1;
   busBw = baseBw * factor;
+}
+
+std::vector<KernelRestriction> SendRecvTestColl::getKernelRestrictions() {
+  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes, alignedBytes}
+          {0, "sendrecv0", false, 1, 16 /*use ulong2 to transfer data*/}};
 }
 
 void SendRecvTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
