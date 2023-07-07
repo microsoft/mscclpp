@@ -20,7 +20,9 @@ void validateTransport(RegisteredMemory mem, Transport transport) {
 
 // Connection
 
-std::shared_ptr<RegisteredMemory::Impl> Connection::getRegisteredMemoryImpl(RegisteredMemory& mem) { return mem.pimpl; }
+std::shared_ptr<RegisteredMemory::Impl> Connection::getRegisteredMemoryImpl(RegisteredMemory& memory) {
+  return memory.pimpl;
+}
 
 // ConnectionBase
 

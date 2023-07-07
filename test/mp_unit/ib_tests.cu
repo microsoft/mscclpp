@@ -62,7 +62,7 @@ void IbPeerToPeerTest::stageSend(uint32_t size, uint64_t wrId, uint64_t srcOffse
   qp->stageSend(mr, remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled);
 }
 
-void IbPeerToPeerTest::stageAtomicAdd(uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, uint64_t addVal) {
+void IbPeerToPeerTest::stageAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal) {
   const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
   qp->stageAtomicAdd(mr, remoteMrInfo, wrId, dstOffset, addVal);
 }
@@ -257,7 +257,7 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
       qp->postSend();
 #else
       // For reference: send the first element using AtomicAdd. This should see the correct result.
-      stageAtomicAdd(0, 0, 0, 1);
+      stageAtomicAdd(0, 0, 1);
       qp->postSend();
 #endif
 

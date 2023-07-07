@@ -6,7 +6,7 @@
 
 #include "common.hpp"
 
-__constant__ mscclpp::SimpleProxyChannel constDevChans[16];
+__constant__ mscclpp::SimpleProxyChannel constProxyChans[16];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 void* localRecvBuff;
 void* localSendBuff;
@@ -14,14 +14,14 @@ void* localSendBuff;
 __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
   int remoteRank = (blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   for (int i = 1; i < nRanksPerNode; i++) {
-    mscclpp::SimpleProxyChannel devChan = constDevChans[blockIdx.x];
+    mscclpp::SimpleProxyChannel proxyChan = constProxyChans[blockIdx.x];
     if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank + i) % nRanksPerNode) {
-      devChan.putWithSignalAndFlush(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
-                                    nElements * sizeof(int));
+      proxyChan.putWithSignalAndFlush(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
+                                      nElements * sizeof(int));
     }
     // wait for the data from GPU (rank-i) % nranksPerNode to arrive
     if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank - i + nRanksPerNode) % nRanksPerNode) {
-      devChan.wait();
+      proxyChan.wait();
     }
     deviceSyncer.sync(nRanksPerNode - 1);
   }
@@ -29,16 +29,16 @@ __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
 
 __global__ void alltoall0(int rank, int worldSize, size_t nElements) {
   int remoteRank = (blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
-  mscclpp::SimpleProxyChannel devChan = constDevChans[blockIdx.x];
+  mscclpp::SimpleProxyChannel proxyChan = constProxyChans[blockIdx.x];
   if (threadIdx.x == 0) {
-    devChan.putWithSignal(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
-                          nElements * sizeof(int));
+    proxyChan.putWithSignal(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
+                            nElements * sizeof(int));
   }
 
   deviceSyncer.sync(gridDim.x);
   if (threadIdx.x == 0) {
-    devChan.flush();
-    devChan.wait();
+    proxyChan.flush();
+    proxyChan.wait();
   }
 }
 
@@ -82,7 +82,7 @@ void AllToAllTestColl::initData(const TestArgs& args, std::vector<void*> sendBuf
   }
   CUDATHROW(cudaMemcpy(sendBuff[0], dataHost.data(), sendCount_ * typeSize_, cudaMemcpyHostToDevice));
   for (size_t i = 0; i < recvCount_ / paramCount_; i++) {
-    for (int j = 0; j < paramCount_; j++) {
+    for (size_t j = 0; j < paramCount_; j++) {
       dataHost[i * paramCount_ + j] = i * recvCount_ + rank * paramCount_ + j;
     }
   }
@@ -146,12 +146,12 @@ void AllToAllTestEngine::allocateBuffer() {
 }
 
 void AllToAllTestEngine::setupConnections() {
-  std::vector<mscclpp::SimpleProxyChannel> devChannels;
-  setupMeshConnections(devChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
+  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  setupMeshConnections(proxyChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
 
-  assert(devChannels.size() < sizeof(constDevChans) / sizeof(mscclpp::SimpleProxyChannel));
-  CUDATHROW(
-      cudaMemcpyToSymbol(constDevChans, devChannels.data(), sizeof(mscclpp::SimpleProxyChannel) * devChannels.size()));
+  assert(proxyChannels.size() < sizeof(constProxyChans) / sizeof(mscclpp::SimpleProxyChannel));
+  CUDATHROW(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
+                               sizeof(mscclpp::SimpleProxyChannel) * proxyChannels.size()));
 }
 
 std::vector<void*> AllToAllTestEngine::getSendBuff() { return {sendBuff_.get()}; }

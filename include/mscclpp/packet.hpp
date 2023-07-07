@@ -6,6 +6,7 @@
 
 namespace mscclpp {
 
+/// LL (low latency) protocol packet.
 union LLPacket {
   // Assume data is written with an atomicity of 8 bytes (IB/RDMA).
   struct {
@@ -24,20 +25,26 @@ union LLPacket {
 
 #ifdef __CUDACC__
   __forceinline__ __device__ LLPacket() {}
+
+  /// Write 8 bytes of data to the packet.
+  /// @param val1 The first 4-byte data to write.
+  /// @param val2 The second 4-byte data to write.
+  /// @param flag The flag to write.
   __forceinline__ __device__ void write(uint32_t val1, uint32_t val2, uint32_t flag) {
     asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"(val1), "r"(flag), "r"(val2), "r"(flag));
   }
-  __forceinline__ __device__ void write(uint32_t val1, uint32_t val2) {
-    asm volatile("st.volatile.global.v4.u32 [%0], {%1,1,%2,1};" ::"l"(v), "r"(val1), "r"(val2));
-  }
+
+  /// Write 8 bytes of data to the packet.
+  /// @param val The 8-byte data to write.
+  /// @param flag The flag to write.
   __forceinline__ __device__ void write(uint64_t val, uint32_t flag) {
     asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"((uint32_t)val), "r"(flag),
                  "r"((uint32_t)(val >> 32)), "r"(flag));
   }
-  __forceinline__ __device__ void write(uint64_t val) {
-    asm volatile("st.volatile.global.v4.u32 [%0], {%1,1,%2,1};" ::"l"(v), "r"((uint32_t)val),
-                 "r"((uint32_t)(val >> 32)));
-  }
+
+  /// Read 8 bytes of data from the packet.
+  /// @param flag The flag to read.
+  /// @return The 8-byte data read.
   __forceinline__ __device__ uint2 read(uint32_t flag) {
     uint2 data;
     uint32_t flag1, flag2;
@@ -48,7 +55,8 @@ union LLPacket {
     } while ((flag1 != flag) || (flag2 != flag));
     return data;
   }
-  __forceinline__ __device__ uint2 read() { return read(1); }
+
+  /// Clear the packet.
   __forceinline__ __device__ void clear() {
     vec.x = 0;
     vec.y = 0;
@@ -58,11 +66,11 @@ union LLPacket {
 
 #ifdef __CUDACC__
 __forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
-                                           uint64_t srcSize, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+                                           uint64_t srcBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
   uint32_t* srcBase = (uint32_t*)((char*)src + srcOffset);
   LLPacket* dstBase = (LLPacket*)((char*)dst + dstOffset);
-  size_t nElem = srcSize / sizeof(uint64_t);
+  size_t nElem = srcBytes / sizeof(uint64_t);
   for (size_t i = threadId; i < nElem; i += numThreads) {
     LLPacket* pkt = &dstBase[i];
     pkt->write(srcBase[2 * i], srcBase[2 * i + 1], flag);
@@ -70,11 +78,11 @@ __forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* 
 }
 
 __forceinline__ __device__ void getPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
-                                           uint64_t dstSize, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+                                           uint64_t dstBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
   LLPacket* srcBase = (LLPacket*)((char*)src + srcOffset);
   uint2* dstBase = (uint2*)((char*)dst + dstOffset);
-  size_t nElem = dstSize / sizeof(uint2);
+  size_t nElem = dstBytes / sizeof(uint2);
   for (size_t i = threadId; i < nElem; i += numThreads) {
     LLPacket* pkt = &srcBase[i];
     dstBase[i] = pkt->read(flag);
