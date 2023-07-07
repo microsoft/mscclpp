@@ -10,6 +10,8 @@
 #include <memory>
 #include <mscclpp/errors.hpp>
 
+/// Throw @ref mscclpp::CudaError if @p cmd does not return cudaSuccess.
+/// @param cmd The command to execute.
 #define MSCCLPP_CUDATHROW(cmd)                                                                                       \
   do {                                                                                                               \
     cudaError_t err = cmd;                                                                                           \
@@ -19,6 +21,8 @@
     }                                                                                                                \
   } while (false)
 
+/// Throw @ref mscclpp::CuError if @p cmd does not return CUDA_SUCCESS.
+/// @param cmd The command to execute.
 #define MSCCLPP_CUTHROW(cmd)                                                                                      \
   do {                                                                                                            \
     CUresult err = cmd;                                                                                           \
@@ -30,15 +34,15 @@
 
 namespace mscclpp {
 
-// A RAII guard that will cudaThreadExchangeStreamCaptureMode to cudaStreamCaptureModeRelaxed on construction and
-// restore the previous mode on destruction. This is helpful when we want to avoid CUDA graph capture.
+/// A RAII guard that will cudaThreadExchangeStreamCaptureMode to cudaStreamCaptureModeRelaxed on construction and
+/// restore the previous mode on destruction. This is helpful when we want to avoid CUDA graph capture.
 struct AvoidCudaGraphCaptureGuard {
   AvoidCudaGraphCaptureGuard();
   ~AvoidCudaGraphCaptureGuard();
   cudaStreamCaptureMode mode_;
 };
 
-// A RAII wrapper around cudaStream_t that will call cudaStreamDestroy on destruction.
+/// A RAII wrapper around cudaStream_t that will call cudaStreamDestroy on destruction.
 struct CudaStreamWithFlags {
   CudaStreamWithFlags(unsigned int flags);
   ~CudaStreamWithFlags();
@@ -48,6 +52,10 @@ struct CudaStreamWithFlags {
 
 namespace detail {
 
+/// A wrapper of cudaMalloc that sets the allocated memory to zero.
+/// @tparam T Type of each element in the allocated memory.
+/// @param nelem Number of elements to allocate.
+/// @return A pointer to the allocated memory.
 template <class T>
 T* cudaCalloc(size_t nelem) {
   AvoidCudaGraphCaptureGuard cgcGuard;
@@ -59,6 +67,10 @@ T* cudaCalloc(size_t nelem) {
   return ptr;
 }
 
+/// A wrapper of cudaHostAlloc that sets the allocated memory to zero.
+/// @tparam T Type of each element in the allocated memory.
+/// @param nelem Number of elements to allocate.
+/// @return A pointer to the allocated memory.
 template <class T>
 T* cudaHostCalloc(size_t nelem) {
   AvoidCudaGraphCaptureGuard cgcGuard;
@@ -68,6 +80,15 @@ T* cudaHostCalloc(size_t nelem) {
   return ptr;
 }
 
+/// A template function that allocates memory while ensuring that the memory will be freed when the returned object is
+/// destroyed.
+/// @tparam T Type of each element in the allocated memory.
+/// @tparam alloc A function that allocates memory.
+/// @tparam Deleter A deleter that will be used to free the allocated memory.
+/// @tparam Memory The type of the returned object.
+/// @param nelem Number of elements to allocate.
+/// @return An object of type @p Memory that will free the allocated memory when destroyed.
+///
 template <class T, T*(alloc)(size_t), class Deleter, class Memory>
 Memory safeAlloc(size_t nelem) {
   T* ptr = nullptr;
@@ -84,7 +105,8 @@ Memory safeAlloc(size_t nelem) {
 
 }  // namespace detail
 
-// A deleter that calls cudaFree for use with std::unique_ptr/std::shared_ptr.
+/// A deleter that calls cudaFree for use with std::unique_ptr or std::shared_ptr.
+/// @tparam T Type of each element in the allocated memory.
 template <class T>
 struct CudaDeleter {
   using TPtrOrArray = std::conditional_t<std::is_array_v<T>, T, T*>;
@@ -94,7 +116,8 @@ struct CudaDeleter {
   }
 };
 
-// A deleter that calls cudaFreeHost for use with std::unique_ptr/std::shared_ptr.
+/// A deleter that calls cudaFreeHost for use with std::unique_ptr or std::shared_ptr.
+/// @tparam T Type of each element in the allocated memory.
 template <class T>
 struct CudaHostDeleter {
   using TPtrOrArray = std::conditional_t<std::is_array_v<T>, T, T*>;
@@ -104,22 +127,34 @@ struct CudaHostDeleter {
   }
 };
 
-// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
+/// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
+/// @tparam T Type of each element in the allocated memory.
+/// @param count Number of elements to allocate.
+/// @return A std::shared_ptr to the allocated memory.
 template <class T>
 std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, std::shared_ptr<T>>(count);
 }
 
+/// Unique device pointer that will call cudaFree on destruction.
+/// @tparam T Type of each element in the allocated memory.
 template <class T>
 using UniqueCudaPtr = std::unique_ptr<T, CudaDeleter<T>>;
 
-// Allocates memory on the device and returns a std::unique_ptr to it. The memory is zeroed out.
+/// Allocates memory on the device and returns a std::unique_ptr to it. The memory is zeroed out.
+/// @tparam T Type of each element in the allocated memory.
+/// @param count Number of elements to allocate.
+/// @return A std::unique_ptr to the allocated memory.
 template <class T>
 UniqueCudaPtr<T> allocUniqueCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, UniqueCudaPtr<T>>(count);
 }
 
-// Allocates memory with cudaHostAlloc, constructs an object of type T in it and returns a std::shared_ptr to it.
+/// Allocates memory with cudaHostAlloc, constructs an object of type T in it and returns a std::shared_ptr to it.
+/// @tparam T Type of the object to construct.
+/// @tparam Args Types of the arguments to pass to the constructor.
+/// @param args Arguments to pass to the constructor.
+/// @return A std::shared_ptr to the allocated memory.
 template <class T, typename... Args>
 std::shared_ptr<T> makeSharedCudaHost(Args&&... args) {
   auto ptr = detail::safeAlloc<T, detail::cudaHostCalloc<T>, CudaHostDeleter<T>, std::shared_ptr<T>>(1);
@@ -127,8 +162,11 @@ std::shared_ptr<T> makeSharedCudaHost(Args&&... args) {
   return ptr;
 }
 
-// Allocates an array of objects of type T with cudaHostAlloc, default constructs each element and returns a
-// std::shared_ptr to it.
+/// Allocates an array of objects of type T with cudaHostAlloc, default constructs each element and returns a
+/// std::shared_ptr to it.
+/// @tparam T Type of the object to construct.
+/// @param count Number of elements to allocate.
+/// @return A std::shared_ptr to the allocated memory.
 template <class T>
 std::shared_ptr<T[]> makeSharedCudaHost(size_t count) {
   using TElem = std::remove_extent_t<T>;
@@ -139,10 +177,16 @@ std::shared_ptr<T[]> makeSharedCudaHost(size_t count) {
   return ptr;
 }
 
+/// Unique CUDA host pointer that will call cudaFreeHost on destruction.
+/// @tparam T Type of each element in the allocated memory.
 template <class T>
 using UniqueCudaHostPtr = std::unique_ptr<T, CudaHostDeleter<T>>;
 
-// Allocates memory with cudaHostAlloc, constructs an object of type T in it and returns a std::unique_ptr to it.
+/// Allocates memory with cudaHostAlloc, constructs an object of type T in it and returns a std::unique_ptr to it.
+/// @tparam T Type of the object to construct.
+/// @tparam Args Types of the arguments to pass to the constructor.
+/// @param args Arguments to pass to the constructor.
+/// @return A std::unique_ptr to the allocated memory.
 template <class T, typename... Args, std::enable_if_t<false == std::is_array_v<T>, bool> = true>
 UniqueCudaHostPtr<T> makeUniqueCudaHost(Args&&... args) {
   auto ptr = detail::safeAlloc<T, detail::cudaHostCalloc<T>, CudaHostDeleter<T>, UniqueCudaHostPtr<T>>(1);
@@ -150,8 +194,11 @@ UniqueCudaHostPtr<T> makeUniqueCudaHost(Args&&... args) {
   return ptr;
 }
 
-// Allocates an array of objects of type T with cudaHostAlloc, default constructs each element and returns a
-// std::unique_ptr to it.
+/// Allocates an array of objects of type T with cudaHostAlloc, default constructs each element and returns a
+/// std::unique_ptr to it.
+/// @tparam T Type of the object to construct.
+/// @param count Number of elements to allocate.
+/// @return A std::unique_ptr to the allocated memory.
 template <class T, std::enable_if_t<true == std::is_array_v<T>, bool> = true>
 UniqueCudaHostPtr<T> makeUniqueCudaHost(size_t count) {
   using TElem = std::remove_extent_t<T>;
@@ -162,14 +209,25 @@ UniqueCudaHostPtr<T> makeUniqueCudaHost(size_t count) {
   return ptr;
 }
 
-// Asynchronous cudaMemcpy without capture into a CUDA graph.
+/// Asynchronous cudaMemcpy without capture into a CUDA graph.
+/// @tparam T Type of each element in the allocated memory.
+/// @param dst Destination pointer.
+/// @param src Source pointer.
+/// @param count Number of elements to copy.
+/// @param stream CUDA stream to use.
+/// @param kind Type of cudaMemcpy to perform.
 template <class T>
 void memcpyCudaAsync(T* dst, const T* src, size_t count, cudaStream_t stream, cudaMemcpyKind kind = cudaMemcpyDefault) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, count * sizeof(T), kind, stream));
 }
 
-// Synchronous cudaMemcpy without capture into a CUDA graph.
+/// Synchronous cudaMemcpy without capture into a CUDA graph.
+/// @tparam T Type of each element in the allocated memory.
+/// @param dst Destination pointer.
+/// @param src Source pointer.
+/// @param count Number of elements to copy.
+/// @param kind Type of cudaMemcpy to perform.
 template <class T>
 void memcpyCuda(T* dst, const T* src, size_t count, cudaMemcpyKind kind = cudaMemcpyDefault) {
   AvoidCudaGraphCaptureGuard cgcGuard;

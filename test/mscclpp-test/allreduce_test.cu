@@ -153,7 +153,7 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
   int peerNodeId = peerRank / nRanksPerNode;
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  mscclpp::SimpleProxyChannel& devChan = constDevFstRoundChans[peer];
+  mscclpp::SimpleProxyChannel& proxyChan = constDevFstRoundChans[peer];
   if (peerNodeId == rank / nRanksPerNode) {
     localReduceScatter(buff, scratch, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize);
     return;
@@ -168,12 +168,12 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
   if (isComm) {
     size_t offset = (peerRank * chunkSize) * sizeof(int);
     // opposite side
-    devChan.putWithSignal(offset, (chunkSize / pipelineSize * sizeof(int)));
+    proxyChan.putWithSignal(offset, (chunkSize / pipelineSize * sizeof(int)));
   }
   localReduceScatter(buff, scratch, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize, chunkSize,
                      2 * chunkSize / pipelineSize);
   if (isComm) {
-    devChan.wait();
+    proxyChan.wait();
   }
   deviceSyncer.sync(gridDim.x);
   // reduce data received from peer to related rank
@@ -182,7 +182,7 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
   int* src = (int*)((char*)scratch + offset);
   vectorSum(dst, src, chunkSize / pipelineSize);
   if (isComm) {
-    devChan.flush();
+    proxyChan.flush();
   }
   deviceSyncer.sync(gridDim.x);
 
@@ -190,11 +190,11 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
   startChunkIndex = (rank / nRanksPerNode) * nRanksPerNode;
   if (isComm) {
     size_t offset = (peerRank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
-    devChan.putWithSignal(offset, (pipelineSize - 1) * chunkSize / pipelineSize * sizeof(int));
+    proxyChan.putWithSignal(offset, (pipelineSize - 1) * chunkSize / pipelineSize * sizeof(int));
   }
   localReduceScatter(buff, scratch, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize);
   if (isComm) {
-    devChan.wait();
+    proxyChan.wait();
   }
   deviceSyncer.sync(gridDim.x);
   // reduce to related rank
@@ -203,7 +203,7 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
   src = (int*)((char*)scratch + offset);
   vectorSum(dst, src, 2 * chunkSize / pipelineSize);
   if (isComm) {
-    devChan.flush();
+    proxyChan.flush();
   }
 }
 
@@ -248,7 +248,7 @@ __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nel
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  mscclpp::SimpleProxyChannel& devChan = constDevSndRoundChans[peer];
+  mscclpp::SimpleProxyChannel& proxyChan = constDevSndRoundChans[peer];
 
   if (peerNodeId == rank / nRanksPerNode) {
     localAllGather(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
@@ -256,18 +256,18 @@ __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nel
   }
 
   // Step 1
-  devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
-                        (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
+  proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
+                          (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
   localAllGather(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
-  devChan.wait();
-  devChan.flush();
+  proxyChan.wait();
+  proxyChan.flush();
   // Step 2
-  devChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
-                        nelemsPerGPU / pipelineSize * sizeof(int));
+  proxyChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
+                          nelemsPerGPU / pipelineSize * sizeof(int));
   localAllGather(rank, nRanksPerNode, peerRank * nelemsPerGPU * sizeof(int),
                  (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
-  devChan.wait();
-  devChan.flush();
+  proxyChan.wait();
+  proxyChan.flush();
   // Step 3
   localAllGather(rank, nRanksPerNode,
                  (peerRank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
@@ -346,7 +346,7 @@ __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPer
   int isComm = (threadIdx.x == 0) && (blockIdx.x == nBlocksForReduceScatter);
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   int nBlocksRemain = gridDim.x - nBlocksForReduceScatter;
-  mscclpp::SimpleProxyChannel& devChan = constDevFstRoundChans[peer];
+  mscclpp::SimpleProxyChannel& proxyChan = constDevFstRoundChans[peer];
   if (peerNodeId == rank / nRanksPerNode) {
     localReduceScatterSm(buff, scratch, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, nBlocksForReduceScatter);
     return;
@@ -362,12 +362,12 @@ __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPer
   if (isComm) {
     size_t offset = (peerRank * chunkSize) * sizeof(int);
     // opposite side
-    devChan.putWithSignal(offset, (chunkSize / pipelineSize * sizeof(int)));
+    proxyChan.putWithSignal(offset, (chunkSize / pipelineSize * sizeof(int)));
   }
   localReduceScatterSm(buff, scratch, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize, chunkSize,
                        2 * chunkSize / pipelineSize, nBlocksForReduceScatter);
   if (isComm) {
-    devChan.wait();
+    proxyChan.wait();
   }
   if (blockIdx.x >= nBlocksForReduceScatter) {
     ibDeviceSyncer.sync(nBlocksRemain);
@@ -378,7 +378,7 @@ __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPer
     vectorSum(dst, src, chunkSize / pipelineSize, blockIdx.x - nBlocksForReduceScatter, nBlocksRemain);
   }
   if (isComm) {
-    devChan.flush();
+    proxyChan.flush();
   }
   deviceSyncer.sync(gridDim.x);
 
@@ -386,12 +386,12 @@ __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPer
   startChunkIndex = (rank / nRanksPerNode) * nRanksPerNode;
   if (isComm) {
     size_t offset = (peerRank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
-    devChan.putWithSignal(offset, (pipelineSize - 1) * chunkSize / pipelineSize * sizeof(int));
+    proxyChan.putWithSignal(offset, (pipelineSize - 1) * chunkSize / pipelineSize * sizeof(int));
   }
   localReduceScatterSm(buff, scratch, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize,
                        nBlocksForReduceScatter);
   if (isComm) {
-    devChan.wait();
+    proxyChan.wait();
   }
   deviceSyncer.sync(gridDim.x);
   // reduce to related rank, can not overlap since localReduceScatter also calculate the sum
@@ -400,7 +400,7 @@ __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPer
   int* src = (int*)((char*)scratch + offset);
   vectorSum(dst, src, 2 * chunkSize / pipelineSize);
   if (isComm) {
-    devChan.flush();
+    proxyChan.flush();
   }
 }
 
@@ -466,7 +466,7 @@ __device__ void allGatherSm(int rank, int worldSize, int nRanksPerNode, size_t n
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  mscclpp::SimpleProxyChannel& devChan = constDevSndRoundChans[peer];
+  mscclpp::SimpleProxyChannel& proxyChan = constDevSndRoundChans[peer];
   const size_t nBlocksForLocalAllGather = gridDim.x;
   const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
   const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
@@ -484,24 +484,24 @@ __device__ void allGatherSm(int rank, int worldSize, int nRanksPerNode, size_t n
 
   // Step 1
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
+    proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
   }
   localAllGatherSm(rank, nRanksPerNode, startRankIndexInLocalNode, 0, rankChunkSize, rankChunkSize,
                    nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    devChan.wait();
-    devChan.flush();
+    proxyChan.wait();
+    proxyChan.flush();
   }
   deviceSyncer.sync(nBlocksForLocalAllGather);
   // Step 2
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    devChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
+    proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
   }
   localAllGatherSm(rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
                    nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    devChan.wait();
-    devChan.flush();
+    proxyChan.wait();
+    proxyChan.flush();
   }
   deviceSyncer.sync(nBlocksForLocalAllGather);
   // Step 3
@@ -683,7 +683,7 @@ __device__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
 
   // Channel to a remote peer that has the same local rank as me
   int localRank = rank % nRanksPerNode;
-  mscclpp::SimpleProxyChannel devChan = constDevFstRoundChans[localRank];
+  mscclpp::SimpleProxyChannel proxyChan = constDevFstRoundChans[localRank];
 
   // Flag for packets. Initially 1
   uint32_t flag = (uint32_t)globalFlag;
@@ -756,9 +756,9 @@ __device__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
 
     // Write my putPktBuf to the remote peer's getPktBuf
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-      devChan.put(pktBufOffset, pktBytes);
+      proxyChan.put(pktBufOffset, pktBytes);
       if ((flag & 63) == 0) {
-        devChan.flush();
+        proxyChan.flush();
       }
     }
 
@@ -963,22 +963,22 @@ void AllReduceTestEngine::allocateBuffer() {
 void AllReduceTestEngine::setupConnections() {
   if (isUsePacket()) {
     std::vector<mscclpp::SmChannel> smChannels;
-    std::vector<mscclpp::SimpleProxyChannel> devChannels;
+    std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
 
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     const size_t scratchPacketBuffBytes =
         nPacket * std::max(args_.nRanksPerNode - 1, 1) * 2 * sizeof(mscclpp::LLPacket);
     const size_t packetBuffBytes = nPacket * 2 * sizeof(mscclpp::LLPacket);
-    setupMeshConnections(smChannels, devChannels, inputBuff_.get(), args_.maxBytes, putPacketBuff_.get(),
+    setupMeshConnections(smChannels, proxyChannels, inputBuff_.get(), args_.maxBytes, putPacketBuff_.get(),
                          packetBuffBytes, getPacketBuff_.get(), packetBuffBytes, scratchPacketBuff_.get(),
                          scratchPacketBuffBytes);
 
     assert(smChannels.size() < sizeof(constSmOutOfPlaceChans) / sizeof(mscclpp::SmChannel));
-    assert(devChannels.size() < sizeof(constDevFstRoundChans) / sizeof(mscclpp::SimpleProxyChannel));
+    assert(proxyChannels.size() < sizeof(constDevFstRoundChans) / sizeof(mscclpp::SimpleProxyChannel));
     CUDATHROW(
         cudaMemcpyToSymbol(constSmOutOfPlaceChans, smChannels.data(), sizeof(mscclpp::SmChannel) * smChannels.size()));
-    CUDATHROW(cudaMemcpyToSymbol(constDevFstRoundChans, devChannels.data(),
-                                 sizeof(mscclpp::SimpleProxyChannel) * devChannels.size()));
+    CUDATHROW(cudaMemcpyToSymbol(constDevFstRoundChans, proxyChannels.data(),
+                                 sizeof(mscclpp::SimpleProxyChannel) * proxyChannels.size()));
   } else {
     std::vector<mscclpp::SimpleProxyChannel> fstRoundChannels;
     std::vector<mscclpp::SimpleProxyChannel> sndRoundChannels;
