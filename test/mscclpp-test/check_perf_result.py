@@ -24,38 +24,23 @@ def load_perf_file(perf_fine: str) -> dict:
 
 def check_perf_result(perf_result: dict, baseline: dict, time_threshold: float, bandwidth_threshold: float) -> bool:
     res = True
+    threshold = None
     for key, value in perf_result.items():
         if key not in baseline:
             continue
         if baseline[key]["target"] == "latency":
-            if abs(value["time"] - baseline[key]["time"]) / baseline[key]["time"] > time_threshold:
-                logging.error(
-                    "%s: time %f not match baseline %f with threshold %f",
-                    str(key),
-                    value["time"],
-                    baseline[key]["time"],
-                    time_threshold,
-                )
-                res = False
-        elif baseline[key]["target"] == "throughput":
-            if abs(value["algBw"] - baseline[key]["algBw"]) / baseline[key]["algBw"] > bandwidth_threshold:
-                logging.error(
-                    "%s: algBw %f not match baseline %f with threshold %f",
-                    str(key),
-                    value["algBw"],
-                    baseline[key]["algBw"],
-                    bandwidth_threshold,
-                )
-                res = False
-            if abs(value["busBw"] - baseline[key]["busBw"]) / baseline[key]["busBw"] > bandwidth_threshold:
-                logging.error(
-                    "%s: busBw %f not match baseline %f with threshold %f",
-                    str(key),
-                    value["busBw"],
-                    baseline[key]["busBw"],
-                    bandwidth_threshold,
-                )
-                res = False
+            threshold = time_threshold
+        else:
+            threshold = bandwidth_threshold
+        if abs(value["time"] - baseline[key]["time"]) / baseline[key]["time"] > threshold:
+            logging.error(
+                "%s: time %f not match baseline %f with threshold %f",
+                str(key),
+                value["time"],
+                baseline[key]["time"],
+                time_threshold,
+            )
+            res = False
     return res
 
 
