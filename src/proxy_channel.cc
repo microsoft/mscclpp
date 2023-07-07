@@ -13,8 +13,8 @@ MSCCLPP_API_CPP ProxyChannel::ProxyChannel(SemaphoreId semaphoreId, Host2DeviceS
                                            DeviceProxyFifo fifo)
     : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo) {}
 
-MSCCLPP_API_CPP SimpleProxyChannel::SimpleProxyChannel(ProxyChannel devChan, MemoryId dst, MemoryId src)
-    : devChan_(devChan), dst_(dst), src_(src) {}
+MSCCLPP_API_CPP SimpleProxyChannel::SimpleProxyChannel(ProxyChannel proxyChan, MemoryId dst, MemoryId src)
+    : proxyChan_(proxyChan), dst_(dst), src_(src) {}
 
 MSCCLPP_API_CPP ProxyService::ProxyService(Communicator& communicator)
     : communicator_(communicator),

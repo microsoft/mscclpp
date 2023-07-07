@@ -62,19 +62,28 @@ class BaseSemaphore {
         outboundSemaphore_(std::move(outboundSemaphoreId)) {}
 };
 
+/// A semaphore for sending signals from the host to the device.
 class Host2DeviceSemaphore : public BaseSemaphore<CudaDeleter, std::default_delete> {
  private:
   std::shared_ptr<Connection> connection_;
 
  public:
+  /// Constructor.
+  /// @param communicator The communicator.
+  /// @param connection The connection associated with this semaphore.
   Host2DeviceSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
 
-  // same write api as connection
+  /// Returns the connection.
+  /// @return The connection associated with this semaphore.
   std::shared_ptr<Connection> connection();
+
+  /// Signal the device.
   void signal();
 
+  /// Device-side handle for @ref Host2DeviceSemaphore.
   struct DeviceHandle {
 #ifdef __CUDACC__
+    /// Wait for the host to signal.
     __forceinline__ __device__ void wait() {
       (*expectedInboundSemaphoreId) += 1;
       POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)(inboundSemaphoreId) < (*expectedInboundSemaphoreId), 1000000);
@@ -85,33 +94,58 @@ class Host2DeviceSemaphore : public BaseSemaphore<CudaDeleter, std::default_dele
     uint64_t* expectedInboundSemaphoreId;
   };
 
+  /// Returns the device-side handle.
   DeviceHandle deviceHandle();
 };
 
+/// A semaphore for sending signals from the local host to a remote host.
 class Host2HostSemaphore : public BaseSemaphore<std::default_delete, std::default_delete> {
  public:
+  /// Constructor
+  /// @param communicator The communicator.
+  /// @param connection The connection associated with this semaphore. @ref Transport::CudaIpc is not allowed for @ref
+  /// Host2HostSemaphore.
   Host2HostSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
 
+  /// Returns the connection.
+  /// @return The connection associated with this semaphore.
   std::shared_ptr<Connection> connection();
+
+  /// Signal the remote host.
   void signal();
+
+  /// Wait for the remote host to signal.
   void wait();
 
  private:
   std::shared_ptr<Connection> connection_;
 };
 
+/// A semaphore for sending signals from the local device to a peer device via SM.
 class SmDevice2DeviceSemaphore : public BaseSemaphore<CudaDeleter, CudaDeleter> {
  public:
+  /// Constructor.
+  /// @param communicator The communicator.
+  /// @param connection The connection associated with this semaphore.
   SmDevice2DeviceSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
+
+  /// Constructor.
   SmDevice2DeviceSemaphore() = default;
 
+  /// Device-side handle for @ref SmDevice2DeviceSemaphore.
   struct DeviceHandle {
 #ifdef __CUDACC__
+    /// Wait for the remote device to signal.
     __forceinline__ __device__ void wait() {
       (*expectedInboundSemaphoreId) += 1;
       POLL_MAYBE_JAILBREAK(*inboundSemaphoreId < (*expectedInboundSemaphoreId), 1000000);
     }
 
+    /// Signal the remote device.
+    ///
+    /// This function guarantees that all the memory operation before this function is completed before the remote
+    /// semaphore is signaled.
+    ///
     __forceinline__ __device__ void signal() {
       // This fence ensures that preceding writes are visible on the peer GPU before the incremented
       // `outboundSemaphoreId` is visible.
@@ -120,13 +154,21 @@ class SmDevice2DeviceSemaphore : public BaseSemaphore<CudaDeleter, CudaDeleter> 
       *remoteInboundSemaphoreId = semaphoreGetLocal();
     }
 
+    /// Signal the remote device for copied packets.
+    ///
+    /// Unlike @ref signal(), this function provides no guarantee on the completion of memory operations. This is
+    /// intended to be used with @ref putPackets() and @ref getPackets() that use flags inside packets to indicate the
+    /// completion of copies.
+    ///
     __forceinline__ __device__ void signalPacket() {
       semaphoreIncrement();
       *remoteInboundSemaphoreId = semaphoreGetLocal();
     }
 
+    /// Increase the counter of the local semaphore.
     __forceinline__ __device__ void semaphoreIncrement() { *outboundSemaphoreId += 1; }
 
+    /// Get the value of the local semaphore.
     __forceinline__ __device__ uint64_t semaphoreGetLocal() const { return *outboundSemaphoreId; }
 #endif  // __CUDACC__
 
@@ -136,7 +178,9 @@ class SmDevice2DeviceSemaphore : public BaseSemaphore<CudaDeleter, CudaDeleter> 
     uint64_t* expectedInboundSemaphoreId;
   };
 
+  /// Returns the device-side handle.
   DeviceHandle deviceHandle() const;
+
   bool isRemoteInboundSemaphoreIdSet_;
 };
 

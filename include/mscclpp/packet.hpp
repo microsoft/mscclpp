@@ -66,11 +66,11 @@ union LLPacket {
 
 #ifdef __CUDACC__
 __forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
-                                           uint64_t srcSize, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+                                           uint64_t srcBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
   uint32_t* srcBase = (uint32_t*)((char*)src + srcOffset);
   LLPacket* dstBase = (LLPacket*)((char*)dst + dstOffset);
-  size_t nElem = srcSize / sizeof(uint64_t);
+  size_t nElem = srcBytes / sizeof(uint64_t);
   for (size_t i = threadId; i < nElem; i += numThreads) {
     LLPacket* pkt = &dstBase[i];
     pkt->write(srcBase[2 * i], srcBase[2 * i + 1], flag);
@@ -78,11 +78,11 @@ __forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* 
 }
 
 __forceinline__ __device__ void getPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
-                                           uint64_t dstSize, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+                                           uint64_t dstBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
   LLPacket* srcBase = (LLPacket*)((char*)src + srcOffset);
   uint2* dstBase = (uint2*)((char*)dst + dstOffset);
-  size_t nElem = dstSize / sizeof(uint2);
+  size_t nElem = dstBytes / sizeof(uint2);
   for (size_t i = threadId; i < nElem; i += numThreads) {
     LLPacket* pkt = &srcBase[i];
     dstBase[i] = pkt->read(flag);

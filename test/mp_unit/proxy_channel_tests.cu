@@ -60,7 +60,7 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
 __constant__ mscclpp::SimpleProxyChannel gChannelOneToOneTestConstProxyChans;
 
 __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, int* ret) {
-  mscclpp::SimpleProxyChannel& devChan = gChannelOneToOneTestConstProxyChans;
+  mscclpp::SimpleProxyChannel& proxyChan = gChannelOneToOneTestConstProxyChans;
   volatile int* sendBuff = (volatile int*)buff;
   int nTries = 1000;
   int flusher = 0;
@@ -68,7 +68,7 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, int* ret) {
   for (int i = 0; i < nTries; i++) {
     if (rank == 0) {
       if (i > 0) {
-        if (threadIdx.x == 0) devChan.wait();
+        if (threadIdx.x == 0) proxyChan.wait();
         __syncthreads();
         for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
           if (sendBuff[j] != rank1Offset + i - 1 + j) {
@@ -83,10 +83,10 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, int* ret) {
       }
       __syncthreads();
       // __threadfence_system(); // not necessary if we make sendBuff volatile
-      if (threadIdx.x == 0) devChan.putWithSignal(0, nElem * sizeof(int));
+      if (threadIdx.x == 0) proxyChan.putWithSignal(0, nElem * sizeof(int));
     }
     if (rank == 1) {
-      if (threadIdx.x == 0) devChan.wait();
+      if (threadIdx.x == 0) proxyChan.wait();
       __syncthreads();
       for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
         if (sendBuff[j] != i + j) {
@@ -101,12 +101,12 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, int* ret) {
         }
         __syncthreads();
         // __threadfence_system(); // not necessary if we make sendBuff volatile
-        if (threadIdx.x == 0) devChan.putWithSignal(0, nElem * sizeof(int));
+        if (threadIdx.x == 0) proxyChan.putWithSignal(0, nElem * sizeof(int));
       }
     }
     flusher++;
     if (flusher == 100) {
-      if (threadIdx.x == 0) devChan.flush();
+      if (threadIdx.x == 0) proxyChan.flush();
       flusher = 0;
     }
   }
@@ -159,7 +159,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
                                       int nElem, int nTries, int* ret) {
   if (rank > 1) return;
 
-  mscclpp::SimpleProxyChannel& devChan = gChannelOneToOneTestConstProxyChans;
+  mscclpp::SimpleProxyChannel& proxyChan = gChannelOneToOneTestConstProxyChans;
   volatile int* buffPtr = (volatile int*)buff;
   int putOffset = (rank == 0) ? 0 : 10000000;
   int getOffset = (rank == 0) ? 10000000 : 0;
@@ -185,11 +185,11 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
       gChannelOneToOneTestProxyChansSyncer.sync(gridDim.x);
       if (threadId == 0) {
         // Send data from the local putPacketBuffer to the remote getPacketBuffer
-        devChan.put(0, nPkt * sizeof(mscclpp::LLPacket));
+        proxyChan.put(0, nPkt * sizeof(mscclpp::LLPacket));
       }
       flusher++;
       if (flusher == 64) {
-        if (threadId == 0) devChan.flush();
+        if (threadId == 0) proxyChan.flush();
         flusher = 0;
       }
     } else {

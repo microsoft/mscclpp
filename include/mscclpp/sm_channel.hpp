@@ -111,7 +111,14 @@ struct SmChannel {
 #endif  // __CUDACC__
 
  public:
+  /// Constructor.
   SmChannel() = default;
+
+  /// Constructor.
+  /// @param semaphore The semaphore used to synchronize the communication.
+  /// @param dst Registered memory of the destination.
+  /// @param src The source memory address.
+  /// @param getPacketBuffer The optional buffer used for @ref getPackets().
   SmChannel(SmDevice2DeviceSemaphore::DeviceHandle semaphore, RegisteredMemory dst, void* src,
             void* getPacketBuffer = nullptr);
 
@@ -138,8 +145,8 @@ struct SmChannel {
 
   /// Copy aligned data from the source memory to the destination memory.
   ///
-  /// This function is a warpper of @ref Element<T>::copy(). Unlike @ref Element<T>::copy(), this function can copy
-  /// remainder bytes when @p CopyRemainder is true. Still, the copying bytes must be a multiple of 4.
+  /// This function is a warpper of Element<T>::copy(). Unlike Element<T>::copy(), this function can copy remainder
+  /// bytes when @p CopyRemainder is true. Still, the copying bytes must be a multiple of 4.
   ///
   /// @tparam Alignment The alignment of the source and destination addresses. Should be 4, 8, or a multiple of 16.
   /// @tparam CopyRemainder Whether to copy remainder bytes when the number of bytes is not a multiple of @p Alignment.
@@ -191,6 +198,7 @@ struct SmChannel {
   /// @param threadId The index of the current thread among all threads running this function. This is different from
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
+  ///
   template <int Alignment = 16, bool CopyRemainder = true>
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
                                       uint32_t numThreads) {
@@ -209,6 +217,7 @@ struct SmChannel {
   /// @param threadId The index of the current thread among all threads running this function. This is different from
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
+  ///
   template <int Alignment = 16, bool CopyRemainder = true>
   __forceinline__ __device__ void get(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
                                       uint32_t numThreads) {
@@ -216,34 +225,94 @@ struct SmChannel {
     copy<Alignment, CopyRemainder>((char*)src_ + srcOffset, (char*)dst_ + dstOffset, bytes, threadId, numThreads);
   }
 
+  /// Copy data from the local memory to the remote memory.
+  ///
+  /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
+  ///
+  /// @tparam Alignment The alignment of the source and destination addresses. Should be 4, 8, or a multiple of 16.
+  /// @tparam CopyRemainder Whether to copy remainder bytes when the number of bytes is not a multiple of @p Alignment.
+  /// @param offset The offset in bytes of the local and remote addresses. Should be a multiple of @p Alignment.
+  /// @param bytes Bytes of the data to be copied. Should be a multiple of @p Alignment.
+  /// @param threadId The index of the current thread among all threads running this function. This is different from
+  /// the `threadIdx` in CUDA.
+  /// @param numThreads The total number of threads that run this function.
+  ///
   template <int Alignment = 16, bool CopyRemainder = true>
   __forceinline__ __device__ void put(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
     put<Alignment, CopyRemainder>(offset, offset, size, threadId, numThreads);
   }
 
+  /// Copy data from the remote memory to the local memory.
+  ///
+  /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
+  ///
+  /// @tparam Alignment The alignment of the source and destination addresses. Should be 4, 8, or a multiple of 16.
+  /// @tparam CopyRemainder Whether to copy remainder bytes when the number of bytes is not a multiple of @p Alignment.
+  /// @param offset The offset in bytes of the local and remote addresses. Should be a multiple of @p Alignment.
+  /// @param bytes Bytes of the data to be copied. Should be a multiple of @p Alignment.
+  /// @param threadId The index of the current thread among all threads running this function. This is different from
+  /// the `threadIdx` in CUDA.
+  /// @param numThreads The total number of threads that run this function.
+  ///
   template <int Alignment = 16, bool CopyRemainder = true>
   __forceinline__ __device__ void get(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
     get<Alignment, CopyRemainder>(offset, offset, size, threadId, numThreads);
   }
 
-  __forceinline__ __device__ void putPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+  /// Construct @ref LLPacket from the data in the local memory and write it on the remote memory.
+  ///
+  /// This function is intended to be collectively called by multiple threads. Each thread copies a part of packets.
+  ///
+  /// @param dstOffset The offset in bytes of the remote address.
+  /// @param srcOffset The offset in bytes of the local address.
+  /// @param bytes Bytes of the data to be copied.
+  /// @param threadId The index of the current thread among all threads running this function. This is different from
+  /// the `threadIdx` in CUDA.
+  /// @param numThreads The total number of threads that run this function.
+  ///
+  __forceinline__ __device__ void putPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
                                              uint32_t numThreads, uint32_t flag) {
-    mscclpp::putPackets(dst_, dstOffset, src_, srcOffset, size, threadId, numThreads, flag);
+    mscclpp::putPackets(dst_, dstOffset, src_, srcOffset, bytes, threadId, numThreads, flag);
   }
 
-  __forceinline__ __device__ void getPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
+  /// Retreive data from @ref LLPacket in the local packet buffer and write it on the local memory.
+  ///
+  /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
+  ///
+  /// @param dstOffset The offset in bytes of the local memory.
+  /// @param srcOffset The offset in bytes of the local packet buffer.
+  /// @param bytes Bytes of the data to be copied.
+  /// @param threadId The index of the current thread among all threads running this function. This is different from
+  /// the `threadIdx` in CUDA.
+  /// @param numThreads The total number of threads that run this function.
+  ///
+  __forceinline__ __device__ void getPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
                                              uint32_t numThreads, uint32_t flag) {
-    mscclpp::getPackets(src_, dstOffset, getPacketBuffer_, srcOffset, size, threadId, numThreads, flag);
+    mscclpp::getPackets(src_, dstOffset, getPacketBuffer_, srcOffset, bytes, threadId, numThreads, flag);
   }
 
+  /// Signal the remote semaphore.
+  ///
+  /// This function guarantees that all the memory operation before this function is completed before the remote
+  /// semaphore is signaled.
+  ///
   __forceinline__ __device__ void signal() { semaphore_.signal(); }
 
+  /// Signal the remote semaphore for copied packets.
+  ///
+  /// Unlike @ref signal(), this function provides no guarantee on the completion of memory operations. This is intended
+  /// to be used with @ref putPackets() and @ref getPackets() that use flags inside packets to indicate the completion
+  /// of copies.
+  ///
   __forceinline__ __device__ void signalPacket() { semaphore_.signalPacket(); }
 
+  /// Increase the counter of the local semaphore.
   __forceinline__ __device__ void semaphoreIncrement() { semaphore_.semaphoreIncrement(); }
 
+  /// Read the counter of the local semaphore.
   __forceinline__ __device__ uint64_t semaphoreGetLocal() const { return semaphore_.semaphoreGetLocal(); }
 
+  /// Wait for the remote semaphore to send a signal.
   __forceinline__ __device__ void wait() { semaphore_.wait(); }
 #endif  // __CUDACC__
 };

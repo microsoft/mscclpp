@@ -394,7 +394,7 @@ void BaseTestEngine::setupMeshConnectionsInternal(
 
 // Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
 // TODO(saemal): retrun the actual vector instead of void
-void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& devChannels, void* inputBuff,
+void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, void* inputBuff,
                                           size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes,
                                           SetupChannelFunc setupChannel) {
   const mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc | IBs[args_.gpuNum];
@@ -415,9 +415,9 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SimpleProxyChanne
   } else {
     auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
     for (size_t i = 0; i < connections.size(); ++i) {
-      devChannels.push_back(mscclpp::SimpleProxyChannel(service->deviceChannel(service->addSemaphore(connections[i])),
-                                                        service->addMemory(remoteRegMemories[i].get()),
-                                                        service->addMemory(inputBufRegMem)));
+      proxyChannels.push_back(mscclpp::SimpleProxyChannel(service->deviceChannel(service->addSemaphore(connections[i])),
+                                                          service->addMemory(remoteRegMemories[i].get()),
+                                                          service->addMemory(inputBufRegMem)));
     }
   }
 
@@ -459,7 +459,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
 }
 
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels,
-                                          std::vector<mscclpp::SimpleProxyChannel>& devChannels, void* inputBuff,
+                                          std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, void* inputBuff,
                                           size_t inputBuffBytes, void* putPacketBuff, size_t putPacketBuffBytes,
                                           void* getPacketBuff, size_t getPacketBuffBytes, void* outputBuff,
                                           size_t outputBuffBytes) {
@@ -512,9 +512,9 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
       if (putPacketBuff == nullptr || getPacketBuff == nullptr) {
         throw std::runtime_error("IB transport requires putPacketBuff and getPacketBuff");
       }
-      devChannels.emplace_back(service->deviceChannel(connIdToSemId[cid]),
-                               service->addMemory(remoteRegMemories[cid].get()),
-                               service->addMemory(putPacketBufRegMem));
+      proxyChannels.emplace_back(service->deviceChannel(connIdToSemId[cid]),
+                                 service->addMemory(remoteRegMemories[cid].get()),
+                                 service->addMemory(putPacketBufRegMem));
     }
   }
 }

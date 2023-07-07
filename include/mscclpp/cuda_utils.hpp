@@ -105,7 +105,7 @@ Memory safeAlloc(size_t nelem) {
 
 }  // namespace detail
 
-/// A deleter that calls cudaFree for use with std::unique_ptr/std::shared_ptr.
+/// A deleter that calls cudaFree for use with std::unique_ptr or std::shared_ptr.
 /// @tparam T Type of each element in the allocated memory.
 template <class T>
 struct CudaDeleter {
@@ -116,7 +116,7 @@ struct CudaDeleter {
   }
 };
 
-/// A deleter that calls cudaFreeHost for use with std::unique_ptr/std::shared_ptr.
+/// A deleter that calls cudaFreeHost for use with std::unique_ptr or std::shared_ptr.
 /// @tparam T Type of each element in the allocated memory.
 template <class T>
 struct CudaHostDeleter {
