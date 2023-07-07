@@ -391,7 +391,7 @@ int main(int argc, const char* argv[]) {
 
   try {
     if (rank == 0) printf("Initializing MSCCL++\n");
-    auto bootstrapper = std::make_shared<mscclpp::Bootstrap>(rank, world_size);
+    auto bootstrapper = std::make_shared<mscclpp::TcpBootstrap>(rank, world_size);
     bootstrapper->initialize(ip_port);
     mscclpp::Communicator comm(bootstrapper);
     mscclpp::ProxyService channelService(comm);

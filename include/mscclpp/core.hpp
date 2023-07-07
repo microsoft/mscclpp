@@ -23,10 +23,10 @@ struct UniqueId {
   char internal[MSCCLPP_UNIQUE_ID_BYTES];
 };
 
-class BaseBootstrap {
+class Bootstrap {
  public:
-  BaseBootstrap(){};
-  virtual ~BaseBootstrap() = default;
+  Bootstrap(){};
+  virtual ~Bootstrap() = default;
   virtual int getRank() = 0;
   virtual int getNranks() = 0;
   virtual void send(void* data, int size, int peer, int tag) = 0;
@@ -38,10 +38,10 @@ class BaseBootstrap {
   void recv(std::vector<char>& data, int peer, int tag);
 };
 
-class Bootstrap : public BaseBootstrap {
+class TcpBootstrap : public Bootstrap {
  public:
-  Bootstrap(int rank, int nRanks);
-  ~Bootstrap();
+  TcpBootstrap(int rank, int nRanks);
+  ~TcpBootstrap();
 
   UniqueId createUniqueId();
   UniqueId getUniqueId() const;
@@ -60,15 +60,6 @@ class Bootstrap : public BaseBootstrap {
   class Impl;
   std::unique_ptr<Impl> pimpl_;
 };
-
-/* Create a unique ID for communication. Only needs to be called by one process.
- * Use with mscclppCommInitRankFromId().
- * All processes need to provide the same ID to mscclppCommInitRankFromId().
- *
- * Outputs:
- *  uniqueId: the unique ID to be created
- */
-std::unique_ptr<UniqueId> getUniqueId();
 
 enum class Transport { Unknown, CudaIpc, IB0, IB1, IB2, IB3, IB4, IB5, IB6, IB7, NumTransports };
 
@@ -207,8 +198,8 @@ class Connection {
 };
 
 struct Setuppable {
-  virtual void beginSetup(std::shared_ptr<BaseBootstrap>) {}
-  virtual void endSetup(std::shared_ptr<BaseBootstrap>) {}
+  virtual void beginSetup(std::shared_ptr<Bootstrap>) {}
+  virtual void endSetup(std::shared_ptr<Bootstrap>) {}
 };
 
 template <typename T>
@@ -233,14 +224,14 @@ class Communicator {
   /* Initialize the communicator.
    *
    * Inputs:
-   *   bootstrap: an implementation of the of BaseBootstrap that the communicator will use
+   *   bootstrap: an implementation of the of Bootstrap that the communicator will use
    */
-  Communicator(std::shared_ptr<BaseBootstrap> bootstrap);
+  Communicator(std::shared_ptr<Bootstrap> bootstrap);
 
   ~Communicator();
 
   /* Return the bootstrapper held by this communicator. */
-  std::shared_ptr<BaseBootstrap> bootstrapper();
+  std::shared_ptr<Bootstrap> bootstrap();
 
   /* Register a region of GPU memory for use in this communicator.
    *

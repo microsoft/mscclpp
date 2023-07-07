@@ -195,7 +195,7 @@ double BaseTestEngine::benchTime() {
   return deltaSec;
 }
 
-void BaseTestEngine::barrier() { this->comm_->bootstrapper()->barrier(); }
+void BaseTestEngine::barrier() { this->comm_->bootstrap()->barrier(); }
 
 void BaseTestEngine::runTest() {
   // warm-up for large size
@@ -290,7 +290,7 @@ void BaseTestEngine::runTest() {
 }
 
 void BaseTestEngine::bootstrap() {
-  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(args_.rank, args_.totalRanks);
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(args_.rank, args_.totalRanks);
   mscclpp::UniqueId id;
   if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);

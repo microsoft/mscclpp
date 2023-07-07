@@ -9,25 +9,25 @@
 class LocalCommunicatorTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    bootstrap = std::make_shared<mscclpp::Bootstrap>(0, 1);
+    bootstrap = std::make_shared<mscclpp::TcpBootstrap>(0, 1);
     comm = std::make_shared<mscclpp::Communicator>(bootstrap);
   }
 
-  std::shared_ptr<mscclpp::Bootstrap> bootstrap;
+  std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   std::shared_ptr<mscclpp::Communicator> comm;
 };
 
 class MockSetuppable : public mscclpp::Setuppable {
  public:
-  MOCK_METHOD(void, beginSetup, (std::shared_ptr<mscclpp::BaseBootstrap> bootstrap), (override));
-  MOCK_METHOD(void, endSetup, (std::shared_ptr<mscclpp::BaseBootstrap> bootstrap), (override));
+  MOCK_METHOD(void, beginSetup, (std::shared_ptr<mscclpp::Bootstrap> bootstrap), (override));
+  MOCK_METHOD(void, endSetup, (std::shared_ptr<mscclpp::Bootstrap> bootstrap), (override));
 };
 
 TEST_F(LocalCommunicatorTest, OnSetup) {
   auto mockSetuppable = std::make_shared<MockSetuppable>();
   comm->onSetup(mockSetuppable);
-  EXPECT_CALL(*mockSetuppable, beginSetup(std::dynamic_pointer_cast<mscclpp::BaseBootstrap>(bootstrap)));
-  EXPECT_CALL(*mockSetuppable, endSetup(std::dynamic_pointer_cast<mscclpp::BaseBootstrap>(bootstrap)));
+  EXPECT_CALL(*mockSetuppable, beginSetup(std::dynamic_pointer_cast<mscclpp::Bootstrap>(bootstrap)));
+  EXPECT_CALL(*mockSetuppable, endSetup(std::dynamic_pointer_cast<mscclpp::Bootstrap>(bootstrap)));
   comm->setup();
 }
 

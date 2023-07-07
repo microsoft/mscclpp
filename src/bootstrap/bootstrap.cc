@@ -36,13 +36,13 @@ struct ExtInfo {
   SocketAddress extAddressListen;
 };
 
-MSCCLPP_API_CPP void BaseBootstrap::send(const std::vector<char>& data, int peer, int tag) {
+MSCCLPP_API_CPP void Bootstrap::send(const std::vector<char>& data, int peer, int tag) {
   size_t size = data.size();
   send((void*)&size, sizeof(size_t), peer, tag);
   send((void*)data.data(), data.size(), peer, tag + 1);
 }
 
-MSCCLPP_API_CPP void BaseBootstrap::recv(std::vector<char>& data, int peer, int tag) {
+MSCCLPP_API_CPP void Bootstrap::recv(std::vector<char>& data, int peer, int tag) {
   size_t size;
   recv((void*)&size, sizeof(size_t), peer, tag);
   data.resize(size);
@@ -55,7 +55,7 @@ struct UniqueIdInternal {
 };
 static_assert(sizeof(UniqueIdInternal) <= sizeof(UniqueId), "UniqueIdInternal is too large to fit into UniqueId");
 
-class Bootstrap::Impl {
+class TcpBootstrap::Impl {
  public:
   Impl(int rank, int nRanks);
   ~Impl();
@@ -106,7 +106,7 @@ class Bootstrap::Impl {
   void netInit(std::string ipPortPair, std::string interface);
 };
 
-Bootstrap::Impl::Impl(int rank, int nRanks)
+TcpBootstrap::Impl::Impl(int rank, int nRanks)
     : rank_(rank),
       nRanks_(nRanks),
       netInitialized(false),
@@ -115,13 +115,13 @@ Bootstrap::Impl::Impl(int rank, int nRanks)
       abortFlagStorage_(new uint32_t(0)),
       abortFlag_(abortFlagStorage_.get()) {}
 
-UniqueId Bootstrap::Impl::getUniqueId() const {
+UniqueId TcpBootstrap::Impl::getUniqueId() const {
   UniqueId ret;
   std::memcpy(&ret, &uniqueId_, sizeof(uniqueId_));
   return ret;
 }
 
-UniqueId Bootstrap::Impl::createUniqueId() {
+UniqueId TcpBootstrap::Impl::createUniqueId() {
   netInit("", "");
   getRandomData(&uniqueId_.magic, sizeof(uniqueId_.magic));
   std::memcpy(&uniqueId_.addr, &netIfAddr_, sizeof(SocketAddress));
@@ -129,11 +129,11 @@ UniqueId Bootstrap::Impl::createUniqueId() {
   return getUniqueId();
 }
 
-int Bootstrap::Impl::getRank() { return rank_; }
+int TcpBootstrap::Impl::getRank() { return rank_; }
 
-int Bootstrap::Impl::getNranks() { return nRanks_; }
+int TcpBootstrap::Impl::getNranks() { return nRanks_; }
 
-void Bootstrap::Impl::initialize(const UniqueId uniqueId) {
+void TcpBootstrap::Impl::initialize(const UniqueId uniqueId) {
   netInit("", "");
 
   std::memcpy(&uniqueId_, &uniqueId, sizeof(uniqueId_));
@@ -141,7 +141,7 @@ void Bootstrap::Impl::initialize(const UniqueId uniqueId) {
   establishConnections();
 }
 
-void Bootstrap::Impl::initialize(std::string ifIpPortTrio) {
+void TcpBootstrap::Impl::initialize(std::string ifIpPortTrio) {
   // first check if it is a trio
   int nColons = 0;
   for (auto c : ifIpPortTrio) {
@@ -170,7 +170,7 @@ void Bootstrap::Impl::initialize(std::string ifIpPortTrio) {
   establishConnections();
 }
 
-Bootstrap::Impl::~Impl() {
+TcpBootstrap::Impl::~Impl() {
   if (abortFlag_) {
     *abortFlag_ = 1;
   }
@@ -179,8 +179,8 @@ Bootstrap::Impl::~Impl() {
   }
 }
 
-void Bootstrap::Impl::getRemoteAddresses(Socket* listenSock, std::vector<SocketAddress>& rankAddresses,
-                                         std::vector<SocketAddress>& rankAddressesRoot, int& rank) {
+void TcpBootstrap::Impl::getRemoteAddresses(Socket* listenSock, std::vector<SocketAddress>& rankAddresses,
+                                            std::vector<SocketAddress>& rankAddressesRoot, int& rank) {
   ExtInfo info;
   SocketAddress zero;
   std::memset(&zero, 0, sizeof(SocketAddress));
@@ -209,15 +209,15 @@ void Bootstrap::Impl::getRemoteAddresses(Socket* listenSock, std::vector<SocketA
   rank = info.rank;
 }
 
-void Bootstrap::Impl::sendHandleToPeer(int peer, const std::vector<SocketAddress>& rankAddresses,
-                                       const std::vector<SocketAddress>& rankAddressesRoot) {
+void TcpBootstrap::Impl::sendHandleToPeer(int peer, const std::vector<SocketAddress>& rankAddresses,
+                                          const std::vector<SocketAddress>& rankAddressesRoot) {
   int next = (peer + 1) % nRanks_;
   Socket sock(&rankAddressesRoot[peer], uniqueId_.magic, SocketTypeBootstrap, abortFlag_);
   sock.connect();
   netSend(&sock, &rankAddresses[next], sizeof(SocketAddress));
 }
 
-void Bootstrap::Impl::bootstrapCreateRoot() {
+void TcpBootstrap::Impl::bootstrapCreateRoot() {
   listenSockRoot_ = std::make_unique<Socket>(&uniqueId_.addr, uniqueId_.magic, SocketTypeBootstrap, abortFlag_, 0);
   listenSockRoot_->listen();
   uniqueId_.addr = listenSockRoot_->getAddr();
@@ -232,7 +232,7 @@ void Bootstrap::Impl::bootstrapCreateRoot() {
   });
 }
 
-void Bootstrap::Impl::bootstrapRoot() {
+void TcpBootstrap::Impl::bootstrapRoot() {
   int numCollected = 0;
   std::vector<SocketAddress> rankAddresses(nRanks_, SocketAddress());
   // for initial rank <-> root information exchange
@@ -266,7 +266,7 @@ void Bootstrap::Impl::bootstrapRoot() {
   TRACE(MSCCLPP_INIT, "DONE");
 }
 
-void Bootstrap::Impl::netInit(std::string ipPortPair, std::string interface) {
+void TcpBootstrap::Impl::netInit(std::string ipPortPair, std::string interface) {
   if (netInitialized) return;
   if (!ipPortPair.empty()) {
     if (interface != "") {
@@ -285,30 +285,30 @@ void Bootstrap::Impl::netInit(std::string ipPortPair, std::string interface) {
   } else {
     int ret = FindInterfaces(netIfName_, &netIfAddr_, MAX_IF_NAME_SIZE, 1);
     if (ret <= 0) {
-      throw Error("Bootstrap : no socket interface found", ErrorCode::InternalError);
+      throw Error("TcpBootstrap : no socket interface found", ErrorCode::InternalError);
     }
   }
 
   char line[SOCKET_NAME_MAXLEN + MAX_IF_NAME_SIZE + 2];
   std::sprintf(line, " %s:", netIfName_);
   SocketToString(&netIfAddr_, line + strlen(line));
-  INFO(MSCCLPP_INIT, "Bootstrap : Using%s", line);
+  INFO(MSCCLPP_INIT, "TcpBootstrap : Using%s", line);
   netInitialized = true;
 }
 
-#define TIMEOUT(__exp)                                                   \
-  do {                                                                   \
-    try {                                                                \
-      __exp;                                                             \
-    } catch (const Error& e) {                                           \
-      if (e.getErrorCode() == ErrorCode::Timeout) {                      \
-        throw Error("Bootstrap connection timeout", ErrorCode::Timeout); \
-      }                                                                  \
-      throw;                                                             \
-    }                                                                    \
+#define TIMEOUT(__exp)                                                      \
+  do {                                                                      \
+    try {                                                                   \
+      __exp;                                                                \
+    } catch (const Error& e) {                                              \
+      if (e.getErrorCode() == ErrorCode::Timeout) {                         \
+        throw Error("TcpBootstrap connection timeout", ErrorCode::Timeout); \
+      }                                                                     \
+      throw;                                                                \
+    }                                                                       \
   } while (0);
 
-void Bootstrap::Impl::establishConnections() {
+void TcpBootstrap::Impl::establishConnections() {
   const int64_t connectionTimeoutUs = (int64_t)Config::getInstance()->getBootstrapConnectionTimeoutConfig() * 1000000;
   Timer timer;
   SocketAddress nextAddr;
@@ -318,7 +318,7 @@ void Bootstrap::Impl::establishConnections() {
 
   auto getLeftTime = [&]() {
     int64_t timeout = connectionTimeoutUs - timer.elapsed();
-    if (timeout <= 0) throw Error("Bootstrap connection timeout", ErrorCode::Timeout);
+    if (timeout <= 0) throw Error("TcpBootstrap connection timeout", ErrorCode::Timeout);
     return timeout;
   };
 
@@ -377,7 +377,7 @@ void Bootstrap::Impl::establishConnections() {
   TRACE(MSCCLPP_INIT, "rank %d nranks %d - DONE", rank_, nRanks_);
 }
 
-void Bootstrap::Impl::allGather(void* allData, int size) {
+void TcpBootstrap::Impl::allGather(void* allData, int size) {
   char* data = static_cast<char*>(allData);
   int rank = rank_;
   int nRanks = nRanks_;
@@ -401,7 +401,7 @@ void Bootstrap::Impl::allGather(void* allData, int size) {
   TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d - DONE", rank, nRanks, size);
 }
 
-std::shared_ptr<Socket> Bootstrap::Impl::getPeerSendSocket(int peer, int tag) {
+std::shared_ptr<Socket> TcpBootstrap::Impl::getPeerSendSocket(int peer, int tag) {
   auto it = peerSendSockets_.find(std::make_pair(peer, tag));
   if (it != peerSendSockets_.end()) {
     return it->second;
@@ -414,7 +414,7 @@ std::shared_ptr<Socket> Bootstrap::Impl::getPeerSendSocket(int peer, int tag) {
   return sock;
 }
 
-std::shared_ptr<Socket> Bootstrap::Impl::getPeerRecvSocket(int peer, int tag) {
+std::shared_ptr<Socket> TcpBootstrap::Impl::getPeerRecvSocket(int peer, int tag) {
   auto it = peerRecvSockets_.find(std::make_pair(peer, tag));
   if (it != peerRecvSockets_.end()) {
     return it->second;
@@ -432,12 +432,12 @@ std::shared_ptr<Socket> Bootstrap::Impl::getPeerRecvSocket(int peer, int tag) {
   }
 }
 
-void Bootstrap::Impl::netSend(Socket* sock, const void* data, int size) {
+void TcpBootstrap::Impl::netSend(Socket* sock, const void* data, int size) {
   sock->send(&size, sizeof(int));
   sock->send(const_cast<void*>(data), size);
 }
 
-void Bootstrap::Impl::netRecv(Socket* sock, void* data, int size) {
+void TcpBootstrap::Impl::netRecv(Socket* sock, void* data, int size) {
   int recvSize;
   sock->recv(&recvSize, sizeof(int));
   if (recvSize > size) {
@@ -448,19 +448,19 @@ void Bootstrap::Impl::netRecv(Socket* sock, void* data, int size) {
   sock->recv(data, std::min(recvSize, size));
 }
 
-void Bootstrap::Impl::send(void* data, int size, int peer, int tag) {
+void TcpBootstrap::Impl::send(void* data, int size, int peer, int tag) {
   auto sock = getPeerSendSocket(peer, tag);
   netSend(sock.get(), data, size);
 }
 
-void Bootstrap::Impl::recv(void* data, int size, int peer, int tag) {
+void TcpBootstrap::Impl::recv(void* data, int size, int peer, int tag) {
   auto sock = getPeerRecvSocket(peer, tag);
   netRecv(sock.get(), data, size);
 }
 
-void Bootstrap::Impl::barrier() { allGather(barrierArr_.data(), sizeof(int)); }
+void TcpBootstrap::Impl::barrier() { allGather(barrierArr_.data(), sizeof(int)); }
 
-void Bootstrap::Impl::close() {
+void TcpBootstrap::Impl::close() {
   listenSockRoot_.reset(nullptr);
   listenSock_.reset(nullptr);
   ringRecvSocket_.reset(nullptr);
@@ -469,28 +469,32 @@ void Bootstrap::Impl::close() {
   peerRecvSockets_.clear();
 }
 
-MSCCLPP_API_CPP Bootstrap::Bootstrap(int rank, int nRanks) { pimpl_ = std::make_unique<Impl>(rank, nRanks); }
+MSCCLPP_API_CPP TcpBootstrap::TcpBootstrap(int rank, int nRanks) { pimpl_ = std::make_unique<Impl>(rank, nRanks); }
 
-MSCCLPP_API_CPP UniqueId Bootstrap::createUniqueId() { return pimpl_->createUniqueId(); }
+MSCCLPP_API_CPP UniqueId TcpBootstrap::createUniqueId() { return pimpl_->createUniqueId(); }
 
-MSCCLPP_API_CPP UniqueId Bootstrap::getUniqueId() const { return pimpl_->getUniqueId(); }
+MSCCLPP_API_CPP UniqueId TcpBootstrap::getUniqueId() const { return pimpl_->getUniqueId(); }
 
-MSCCLPP_API_CPP int Bootstrap::getRank() { return pimpl_->getRank(); }
+MSCCLPP_API_CPP int TcpBootstrap::getRank() { return pimpl_->getRank(); }
 
-MSCCLPP_API_CPP int Bootstrap::getNranks() { return pimpl_->getNranks(); }
+MSCCLPP_API_CPP int TcpBootstrap::getNranks() { return pimpl_->getNranks(); }
 
-MSCCLPP_API_CPP void Bootstrap::send(void* data, int size, int peer, int tag) { pimpl_->send(data, size, peer, tag); }
+MSCCLPP_API_CPP void TcpBootstrap::send(void* data, int size, int peer, int tag) {
+  pimpl_->send(data, size, peer, tag);
+}
 
-MSCCLPP_API_CPP void Bootstrap::recv(void* data, int size, int peer, int tag) { pimpl_->recv(data, size, peer, tag); }
+MSCCLPP_API_CPP void TcpBootstrap::recv(void* data, int size, int peer, int tag) {
+  pimpl_->recv(data, size, peer, tag);
+}
 
-MSCCLPP_API_CPP void Bootstrap::allGather(void* allData, int size) { pimpl_->allGather(allData, size); }
+MSCCLPP_API_CPP void TcpBootstrap::allGather(void* allData, int size) { pimpl_->allGather(allData, size); }
 
-MSCCLPP_API_CPP void Bootstrap::initialize(UniqueId uniqueId) { pimpl_->initialize(uniqueId); }
+MSCCLPP_API_CPP void TcpBootstrap::initialize(UniqueId uniqueId) { pimpl_->initialize(uniqueId); }
 
-MSCCLPP_API_CPP void Bootstrap::initialize(std::string ipPortPair) { pimpl_->initialize(ipPortPair); }
+MSCCLPP_API_CPP void TcpBootstrap::initialize(std::string ipPortPair) { pimpl_->initialize(ipPortPair); }
 
-MSCCLPP_API_CPP void Bootstrap::barrier() { pimpl_->barrier(); }
+MSCCLPP_API_CPP void TcpBootstrap::barrier() { pimpl_->barrier(); }
 
-MSCCLPP_API_CPP Bootstrap::~Bootstrap() { pimpl_->close(); }
+MSCCLPP_API_CPP TcpBootstrap::~TcpBootstrap() { pimpl_->close(); }
 
 }  // namespace mscclpp
