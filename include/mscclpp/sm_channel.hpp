@@ -21,7 +21,7 @@ struct SmChannel {
 
 #ifdef __CUDACC__
   /// Helper for aligned data type access.
-  /// @tparam T The type to be checked.
+  /// @tparam T The data type.
   template <typename T>
   struct Element {
     static constexpr bool is4B = (sizeof(T) == 4);
@@ -40,7 +40,6 @@ struct SmChannel {
     /// This is a warpper of ld.volatile.global.* PTX instruction. Address alignment is not this function's
     /// responsibility.
     ///
-    /// @tparam T The type of the value to be loaded.
     /// @param v The value to be loaded.
     /// @param p The address of the value to be loaded.
     ///
@@ -67,7 +66,6 @@ struct SmChannel {
     /// This is a wrapper of st.volatile.global.* PTX instruction. Address alignment is not this function's
     /// responsibility.
     ///
-    /// @tparam T The type of the value to be written.
     /// @param p The address of the value to be written.
     /// @param v The value to be written.
     ///
@@ -93,7 +91,6 @@ struct SmChannel {
     ///
     /// This function is intended to be collectively called by multiple threads. Each thread copies a part of elements.
     ///
-    /// @tparam T The type of the elements to be copied.
     /// @param dst The destination address.
     /// @param src The source address.
     /// @param numElems The number of elements to be copied.
@@ -139,62 +136,46 @@ struct SmChannel {
     Element<T>::store((T*)dst_ + index, v);
   }
 
-  /// Copy 4-byte aligned data from the source memory to the destination memory.
+  /// Copy aligned data from the source memory to the destination memory.
   ///
-  /// This function is a warpper of @ref Element<T>::copy(). Unlike @ref Element<T>::copy(), this function does not
-  /// require complete alignment of the source and destination addresses. Still, the source and destination addresses
-  /// must be 4-byte aligned and the number of copying bytes must be a multiple of 4. @ref copy() tries to use larger
-  /// data types (up to 16-byte types) to copy more data at once.
+  /// This function is a warpper of @ref Element<T>::copy(). Unlike @ref Element<T>::copy(), this function can copy
+  /// remainder bytes when @p CopyRemainder is true. Still, the copying bytes must be a multiple of 4.
   ///
-  /// @tparam T The type of the elements to be copied.
-  /// @param dst The destination address. Should be 4-byte aligned.
-  /// @param src The source address. Should be 4-byte aligned.
-  /// @param bytes Bytes of the data to be copied. Should be a multiple of 4.
+  /// @tparam Alignment The alignment of the source and destination addresses. Should be 4, 8, or a multiple of 16.
+  /// @tparam CopyRemainder Whether to copy remainder bytes when the number of bytes is not a multiple of @p Alignment.
+  /// @param dst The destination address. Should be aligned to @p Alignment in the same way as @p src.
+  /// @param src The source address. Should be aligned to @p Alignment in the same way as @p dst.
+  /// @param bytes Bytes of the data to be copied. Should be a multiple of @p Alignment.
   /// @param threadId The index of the current thread among all threads running this function. This is different from
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
   ///
+  template <int Alignment = 4, bool CopyRemainder = true>
   __forceinline__ __device__ void copy(void* dst, void* src, uint64_t bytes, uint32_t threadId, uint32_t numThreads) {
-    // Align `dst` and `src` into 4-byte integers.
+    static_assert(Alignment == 4 || Alignment == 8 || Alignment % 16 == 0, "Unsupported alignment");
+    using Type = typename std::conditional<Alignment == 4, int,
+                                           typename std::conditional<Alignment == 8, long long, longlong2>::type>::type;
     int* dstInt = reinterpret_cast<int*>(dst);
     int* srcInt = reinterpret_cast<int*>(src);
     const uintptr_t dstPtr = reinterpret_cast<uintptr_t>(dst);
     const uintptr_t srcPtr = reinterpret_cast<uintptr_t>(src);
     const uint64_t numInt = bytes / sizeof(int);
-    if (numInt <= 4) {
-      // Handle this case separately to make the code for other cases simpler.
-      Element<int>::copy(dstInt, srcInt, numInt, threadId, numThreads);
-    } else if (dstPtr % 16 == srcPtr % 16) {
-      // 16-byte aligned.
-      longlong2* dstLongLong2 = reinterpret_cast<longlong2*>((dstPtr + 15) / 16 * 16);
-      longlong2* srcLongLong2 = reinterpret_cast<longlong2*>((srcPtr + 15) / 16 * 16);
-      // Copy the first 0-3 integers.
-      uint64_t nFirstInt = (reinterpret_cast<uintptr_t>(dstLongLong2) - dstPtr) / sizeof(int);
+    Type* dstElem = reinterpret_cast<Type*>((dstPtr + sizeof(Type) - 1) / sizeof(Type) * sizeof(Type));
+    Type* srcElem = reinterpret_cast<Type*>((srcPtr + sizeof(Type) - 1) / sizeof(Type) * sizeof(Type));
+    uint64_t nFirstInt = (reinterpret_cast<uintptr_t>(dstElem) - dstPtr) / sizeof(int);
+    if (CopyRemainder) {
+      // Copy the remainder integers at the beginning.
       Element<int>::copy(dstInt, srcInt, nFirstInt, threadId, numThreads);
-      // Copy 16-byte elements.
-      uint64_t nElem = (numInt - nFirstInt) / 4;
-      Element<longlong2>::copy(dstLongLong2, srcLongLong2, nElem, threadId, numThreads);
-      // Copy the last 0-3 integers.
-      uint64_t nLastInt = (numInt - nFirstInt) % 4;
-      Element<int>::copy(dstInt + nFirstInt + nElem * 4, srcInt + nFirstInt + nElem * 4, nLastInt, threadId,
-                         numThreads);
-    } else if (dstPtr % 8 == srcPtr % 8) {
-      // 8-byte aligned.
-      uint64_t* dstInt64 = reinterpret_cast<uint64_t*>((dstPtr + 7) / 8 * 8);
-      uint64_t* srcInt64 = reinterpret_cast<uint64_t*>((srcPtr + 7) / 8 * 8);
-      // Copy the first 0-1 integer.
-      uint64_t nFirstInt = (reinterpret_cast<uintptr_t>(dstInt64) - dstPtr) / sizeof(int);
-      Element<int>::copy(dstInt, srcInt, nFirstInt, threadId, numThreads);
-      // Copy 8-byte elements.
-      uint64_t nElem = (numInt - nFirstInt) / 2;
-      Element<uint64_t>::copy(dstInt64, srcInt64, nElem, threadId, numThreads);
-      // Copy the last 0-1 integer.
-      uint64_t nLastInt = (numInt - nFirstInt) % 2;
-      Element<int>::copy(dstInt + nFirstInt + nElem * 2, srcInt + nFirstInt + nElem * 2, nLastInt, threadId,
-                         numThreads);
-    } else {
-      // Only 4-byte aligned.
-      Element<int>::copy(dstInt, srcInt, numInt, threadId, numThreads);
+    }
+    // Copy elements.
+    constexpr uint64_t nIntPerElem = sizeof(Type) / sizeof(int);
+    uint64_t nElem = (numInt - nFirstInt) / nIntPerElem;
+    Element<Type>::copy(dstElem, srcElem, nElem, threadId, numThreads);
+    if (CopyRemainder && nIntPerElem > 1) {
+      // Copy the remainder integers at the end.
+      uint64_t nLastInt = (numInt - nFirstInt) % nIntPerElem;
+      Element<int>::copy(dstInt + nFirstInt + nElem * nIntPerElem, srcInt + nFirstInt + nElem * nIntPerElem, nLastInt,
+                         threadId, numThreads);
     }
   }
 
@@ -202,39 +183,47 @@ struct SmChannel {
   ///
   /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
   ///
-  /// @param dstOffset The offset in bytes of the remote address. Should be a multiple of 4.
-  /// @param srcOffset The offset in bytes of the local address. Should be a multiple of 4.
-  /// @param bytes Bytes of the data to be copied. Should be a multiple of 4.
+  /// @tparam Alignment The alignment of the source and destination addresses. Should be 4, 8, or a multiple of 16.
+  /// @tparam CopyRemainder Whether to copy remainder bytes when the number of bytes is not a multiple of @p Alignment.
+  /// @param dstOffset The offset in bytes of the remote address. Should be a multiple of @p Alignment.
+  /// @param srcOffset The offset in bytes of the local address. Should be a multiple of @p Alignment.
+  /// @param bytes Bytes of the data to be copied. Should be a multiple of @p Alignment.
   /// @param threadId The index of the current thread among all threads running this function. This is different from
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
+  template <int Alignment = 16, bool CopyRemainder = true>
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
                                       uint32_t numThreads) {
-    copy((char*)dst_ + dstOffset, (char*)src_ + srcOffset, bytes, threadId, numThreads);
+    copy<Alignment, CopyRemainder>((char*)dst_ + dstOffset, (char*)src_ + srcOffset, bytes, threadId, numThreads);
   }
 
   /// Copy data from the remote memory to the local memory.
   ///
   /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
   ///
-  /// @param dstOffset The offset in bytes of the remote address. Should be a multiple of 4.
-  /// @param srcOffset The offset in bytes of the local address. Should be a multiple of 4.
-  /// @param bytes Bytes of the data to be copied. Should be a multiple of 4.
+  /// @tparam Alignment The alignment of the source and destination addresses. Should be 4, 8, or a multiple of 16.
+  /// @tparam CopyRemainder Whether to copy remainder bytes when the number of bytes is not a multiple of @p Alignment.
+  /// @param dstOffset The offset in bytes of the remote address. Should be a multiple of @p Alignment.
+  /// @param srcOffset The offset in bytes of the local address. Should be a multiple of @p Alignment.
+  /// @param bytes Bytes of the data to be copied. Should be a multiple of @p Alignment.
   /// @param threadId The index of the current thread among all threads running this function. This is different from
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
+  template <int Alignment = 16, bool CopyRemainder = true>
   __forceinline__ __device__ void get(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
                                       uint32_t numThreads) {
     // Note that `dst` and `src` are swapped for `get()`.
-    copy((char*)src_ + srcOffset, (char*)dst_ + dstOffset, bytes, threadId, numThreads);
+    copy<Alignment, CopyRemainder>((char*)src_ + srcOffset, (char*)dst_ + dstOffset, bytes, threadId, numThreads);
   }
 
+  template <int Alignment = 16, bool CopyRemainder = true>
   __forceinline__ __device__ void put(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
-    put(offset, offset, size, threadId, numThreads);
+    put<Alignment, CopyRemainder>(offset, offset, size, threadId, numThreads);
   }
 
+  template <int Alignment = 16, bool CopyRemainder = true>
   __forceinline__ __device__ void get(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
-    get(offset, offset, size, threadId, numThreads);
+    get<Alignment, CopyRemainder>(offset, offset, size, threadId, numThreads);
   }
 
   __forceinline__ __device__ void putPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, uint32_t threadId,
