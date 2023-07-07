@@ -30,7 +30,6 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
-        printenv
         curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
         tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
         mkdir build && cd build
