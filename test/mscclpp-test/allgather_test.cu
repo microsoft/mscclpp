@@ -19,8 +19,12 @@ __constant__ mscclpp::ProxyChannel constRawDevChan[16];
 
 __constant__ mscclpp::SmChannel constSmChans[8];
 
-__device__ void allgather0(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int remoteRank,
-                           size_t nelemsPerGPU) {
+__global__ void allgather0(int rank, int worldSize, size_t nelemsPerGPU) {
+  int warpId = threadIdx.x / 32;
+
+  // Each warp is responsible for one of the remote ranks
+  mscclpp::SimpleProxyChannel devChan = constDevChans[warpId];
+
   // this allgather is really simple and implemented as an alltoall
 
   // this thread's role is a sender role
@@ -105,14 +109,24 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunk
   constSmChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
 
-__device__ void allgather1(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nRanksPerNode,
-                           int remoteRank, size_t nelemsPerGPU) {
+__global__ void allgather1(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
+  int warpId = threadIdx.x / 32;
+  int remoteRank = (warpId < rank) ? warpId : warpId + 1;
+
+  // Each warp is responsible for one of the remote ranks
+  mscclpp::SimpleProxyChannel devChan = constDevChans[warpId];
+
   localAllGather(devChan, rank, worldSize, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
 }
 
-__device__ void allgather2(mscclpp::SimpleProxyChannel devChan, int rank, int worldSize, int nRanksPerNode,
-                           int remoteRank, size_t nelemsPerGPU) {
+__global__ void allgather2(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
+  int warpId = threadIdx.x / 32;
+  int remoteRank = (warpId < rank) ? warpId : warpId + 1;
+
+  // Each warp is responsible for one of the remote ranks
+  mscclpp::SimpleProxyChannel devChan = constDevChans[warpId];
+
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
   // Step 1: each node does a local allgather and concurrently,
@@ -181,7 +195,12 @@ __device__ void allgather2(mscclpp::SimpleProxyChannel devChan, int rank, int wo
   }
 }
 
-__device__ void allgather3(mscclpp::ProxyChannel devChan, int rank, int worldSize) {
+__global__ void allgather3(int rank, int worldSize) {
+  int warpId = threadIdx.x / 32;
+
+  // Each warp is responsible for one of the remote ranks
+  mscclpp::ProxyChannel devChan = constRawDevChan[warpId];
+
   int tid = threadIdx.x;
   __syncthreads();
   if (tid == 0) {
@@ -197,7 +216,7 @@ __device__ void allgather3(mscclpp::ProxyChannel devChan, int rank, int worldSiz
   }
 }
 
-__device__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
+__global__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
   // Step 1: each node does a local allgather and concurrently,
@@ -253,27 +272,6 @@ __device__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
   // Step 3
   localAllGatherSm(rank, nRanksPerNode, startRankIndexInPeerNode, step1Bytes, rankChunkSize, step2Bytes,
                    nBlocksForLocalAllGather);
-}
-
-__global__ void kernel(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU, int kernel) {
-  // find the mapping between remoteRank and devConns
-  int warpId = threadIdx.x / 32;
-  int remoteRank = (warpId < rank) ? warpId : warpId + 1;
-  // Each warp is responsible for one of the remote ranks
-  mscclpp::SimpleProxyChannel devChan = constDevChans[warpId];
-
-  if (kernel == 0) {
-    allgather0(devChan, rank, worldSize, remoteRank, nelemsPerGPU);
-  } else if (kernel == 1) {
-    allgather1(devChan, rank, worldSize, nRanksPerNode, remoteRank, nelemsPerGPU);
-  } else if (kernel == 2) {
-    allgather2(devChan, rank, worldSize, nRanksPerNode, remoteRank, nelemsPerGPU);
-  } else if (kernel == 3) {
-    mscclpp::ProxyChannel devChan = constRawDevChan[warpId];
-    allgather3(devChan, rank, worldSize);
-  } else if (kernel == 4) {
-    allgather4(rank, worldSize, nRanksPerNode, nelemsPerGPU);
-  }
 }
 
 class AllGatherChannelService : public mscclpp::BaseProxyService {
@@ -380,7 +378,17 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     nBlocks = 1;
     nThreads = 32 * (worldSize - 1);
   }
-  kernel<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_, kernelNum);
+  if (kernelNum == 0) {
+    allgather0<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, paramCount_);
+  } else if (kernelNum == 1) {
+    allgather1<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
+  } else if (kernelNum == 2) {
+    allgather2<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
+  } else if (kernelNum == 3) {
+    allgather3<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize);
+  } else if (kernelNum == 4) {
+    allgather4<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
+  }
 }
 
 void AllGatherTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {

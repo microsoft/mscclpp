@@ -27,7 +27,7 @@ __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
   }
 }
 
-__device__ void alltoall0(int rank, int worldSize, size_t nElements) {
+__global__ void alltoall0(int rank, int worldSize, size_t nElements) {
   int remoteRank = (blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   mscclpp::SimpleProxyChannel devChan = constDevChans[blockIdx.x];
   if (threadIdx.x == 0) {
@@ -42,17 +42,8 @@ __device__ void alltoall0(int rank, int worldSize, size_t nElements) {
   }
 }
 
-__device__ void alltoall1(int rank, int nRanksPerNode, size_t nElements) {
+__global__ void alltoall1(int rank, int nRanksPerNode, size_t nElements) {
   localAlltoall(rank, nRanksPerNode, nElements);
-}
-
-__global__ void kernel(int rank, int worldSize, size_t nElements, int nRanksPerNode, int kernelNum) {
-  if (kernelNum == 0) {
-    alltoall0(rank, worldSize, nElements);
-  }
-  if (kernelNum == 1) {
-    alltoall1(rank, nRanksPerNode, nElements);
-  }
 }
 
 class AllToAllTestColl : public BaseTestColl {
@@ -74,7 +65,11 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int nRanksPerNode = args.nRanksPerNode;
   CUDATHROW(cudaMemcpyAsync((int*)localRecvBuff + paramCount_ * rank, (int*)localSendBuff + paramCount_ * rank,
                             paramCount_ * sizeof(int), cudaMemcpyDeviceToDevice, stream));
-  kernel<<<worldSize - 1, 32, 0, stream>>>(rank, worldSize, paramCount_, nRanksPerNode, kernelNum);
+  if (kernelNum == 0) {
+    alltoall0<<<worldSize - 1, 32, 0, stream>>>(rank, worldSize, paramCount_);
+  } else if (kernelNum == 1) {
+    alltoall1<<<worldSize - 1, 32, 0, stream>>>(rank, nRanksPerNode, paramCount_);
+  }
 }
 
 void AllToAllTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
