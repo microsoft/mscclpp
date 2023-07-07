@@ -4,104 +4,113 @@ trigger:
 # Do not run multi-nodes-test for PR, we can trigger it manually
 pr: none
 
-pool:
-  name: mscclpp-it
-container:
-  image: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+jobs:
+- job: MultiNodesTest
+  displayName: Multi nodes test
+  strategy:
+    matrix:
+      cuda11:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda11.8
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+  pool:
+    name: mscclpp-it
+  container:
+    image: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
 
-steps:
-- task: Bash@3
-  name: Build
-  displayName: Build
-  inputs:
-    targetType: 'inline'
-    script: |
-      curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
-      tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
-      mkdir build && cd build
-      MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
-      make -j
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+  steps:
+  - task: Bash@3
+    name: Build
+    displayName: Build
+    inputs:
+      targetType: 'inline'
+      script: |
+        curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
+        tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
+        mkdir build && cd build
+        MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
+        make -j
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-- task: DownloadSecureFile@1
-  name: SshKeyFile
-  displayName: Download key file
-  inputs:
-    secureFile: ssh.key
+  - task: DownloadSecureFile@1
+    name: SshKeyFile
+    displayName: Download key file
+    inputs:
+      secureFile: ssh.key
 
-- task: Bash@3
-  name: InstallPackages
-  displayName: Install Packages
-  inputs:
-    targetType: 'inline'
-    script: |
-      sudo apt-get update -y
-      sudo apt-get install pssh -y
-      curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+  - task: Bash@3
+    name: InstallPackages
+    displayName: Install Packages
+    inputs:
+      targetType: 'inline'
+      script: |
+        sudo apt-get update -y
+        sudo apt-get install pssh -y
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
-- task: AzureCLI@2
-  name: StartVMSS
-  displayName: Start VMSS
-  inputs:
-    azureSubscription: mscclpp
-    scriptType: bash
-    scriptLocation: inlineScript
-    inlineScript: |
-      az vmss start --name mscclpp-it-vmss --resource-group msccl-dev
+  - task: AzureCLI@2
+    name: StartVMSS
+    displayName: Start VMSS
+    inputs:
+      azureSubscription: mscclpp
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss start --name mscclpp-it-vmss --resource-group msccl-dev
 
-- task: Bash@3
-  name: DeployTestEnv
-  displayName: Deploy Test Env
-  inputs:
-    targetType: filePath
-    filePath: test/deploy/deploy.sh
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+  - task: Bash@3
+    name: DeployTestEnv
+    displayName: Deploy Test Env
+    inputs:
+      targetType: filePath
+      filePath: test/deploy/deploy.sh
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-- task: Bash@3
-  name: RunMscclppTest
-  displayName: Run multi-nodes mscclpp-test
-  inputs:
-    targetType: 'inline'
-    script: |
-      set -e
-      HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
-      SSH_OPTION="StrictHostKeyChecking=no"
-      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-      rm -rf output/*
-      mkdir -p output
-      touch output/mscclpp-it-000000
-      tail -f output/mscclpp-it-000000 &
-      CHILD_PID=$!
-      parallel-ssh -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
-      -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mscclpp-test'
-      kill $CHILD_PID
+  - task: Bash@3
+    name: RunMscclppTest
+    displayName: Run multi-nodes mscclpp-test
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        rm -rf output/*
+        mkdir -p output
+        touch output/mscclpp-it-000000
+        tail -f output/mscclpp-it-000000 &
+        CHILD_PID=$!
+        parallel-ssh -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mscclpp-test'
+        kill $CHILD_PID
 
-- task: Bash@3
-  name: RunMultiNodeUnitTest
-  displayName: Run multi-nodes unit tests
-  inputs:
-    targetType: 'inline'
-    script: |
-      set -e
-      HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
-      SSH_OPTION="StrictHostKeyChecking=no"
-      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-      rm -rf output/*
-      mkdir -p output
-      touch output/mscclpp-it-000000
-      tail -f output/mscclpp-it-000000 &
-      CHILD_PID=$!
-      parallel-ssh -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
-      -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mp-ut'
-      kill $CHILD_PID
+  - task: Bash@3
+    name: RunMultiNodeUnitTest
+    displayName: Run multi-nodes unit tests
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        rm -rf output/*
+        mkdir -p output
+        touch output/mscclpp-it-000000
+        tail -f output/mscclpp-it-000000 &
+        CHILD_PID=$!
+        parallel-ssh -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mp-ut'
+        kill $CHILD_PID
 
-- task: AzureCLI@2
-  name: StopVMSS
-  displayName: Deallocate VMSS
-  condition: always()
-  inputs:
-    azureSubscription: mscclpp
-    scriptType: bash
-    scriptLocation: inlineScript
-    inlineScript: |
-      az vmss deallocate  --name mscclpp-it-vmss --resource-group msccl-dev
+  - task: AzureCLI@2
+    name: StopVMSS
+    displayName: Deallocate VMSS
+    condition: always()
+    inputs:
+      azureSubscription: mscclpp
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss deallocate  --name mscclpp-it-vmss --resource-group msccl-dev
