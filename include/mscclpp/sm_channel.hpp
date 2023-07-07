@@ -275,7 +275,7 @@ struct SmChannel {
     mscclpp::putPackets(dst_, dstOffset, src_, srcOffset, bytes, threadId, numThreads, flag);
   }
 
-  /// Retreive data from @ref LLPacket in the local packet buffer and write it on the local memory.
+  /// Retrieve data from @ref LLPacket in the local packet buffer and write it on the local memory.
   ///
   /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
   ///

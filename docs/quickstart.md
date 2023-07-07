@@ -57,6 +57,12 @@ $ make -j mp_unit_tests
 $ mpirun -np 2 ./test/mp_unit_tests
 ```
 
+To run `mp_unit_tests` with more than two nodes, you need to specify the `-ip_port` argument that is accessible from all nodes. For example:
+
+```bash
+$ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.0.0.5:50000
+```
+
 ## mscclpp-test
 
 mscclpp-test is a set of performance benchmarks for MSCCL++. It requires MPI to be installed on the system.
