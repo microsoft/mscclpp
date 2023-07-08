@@ -1,0 +1,10 @@
+[build-system]
+requires = ["scikit-build-core"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "mscclpp"
+version = "0.0.1"
+
+[tool.scikit-build]
+build-dir = "build/{wheel_tag}"

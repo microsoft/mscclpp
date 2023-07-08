@@ -10,7 +10,6 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
 option(ENABLE_TRACE "Enable tracing" OFF)
 option(USE_MPI_FOR_TESTS "Use MPI for tests" ON)
 option(USE_NPKIT "Use NPKIT" ON)
-option(PYTHON_BINDINGS "Build Python bindings" ON)
 option(ALLOW_GDRCOPY "Use GDRCopy, if available" OFF)
 
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -76,7 +75,7 @@ add_subdirectory(include) # This adds the public headers to install with mscclpp
 add_subdirectory(src) # This adds the sources to the mscclpp target
 add_subdirectory(test)
 
-if(PYTHON_BINDINGS)
+if(SKBUILD)
     find_package(Python 3.8 COMPONENTS Interpreter Development.Module REQUIRED)
     FetchContent_Declare(nanobind GIT_REPOSITORY https://github.com/wjakob/nanobind.git GIT_TAG v1.4.0)
     FetchContent_MakeAvailable(nanobind)
