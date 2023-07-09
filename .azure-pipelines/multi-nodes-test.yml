@@ -16,7 +16,7 @@ jobs:
   pool:
     name: mscclpp-it
   container:
-    image: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+    image: $[ variables['containerImage'] ]
 
   steps:
   - task: Bash@3
