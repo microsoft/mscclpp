@@ -12,8 +12,15 @@ jobs:
   timeoutInMinutes: 30
   pool:
     name: mscclpp
+  strategy:
+    matrix:
+      cuda11:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda11.8
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+
   container:
-    image: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+    image: $[ variables['containerImage'] ]
     options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
 
   steps:

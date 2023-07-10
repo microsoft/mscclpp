@@ -12,7 +12,7 @@ jobs:
     name: Analyze
     runs-on: 'ubuntu-latest'
     container:
-      image: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+      image: ghcr.io/microsoft/mscclpp/mscclpp:base-${{ matrix.cuda-version }}
 
     permissions:
       actions: read
@@ -23,6 +23,7 @@ jobs:
       fail-fast: false
       matrix:
         language: [ 'cpp', 'python' ]
+        cuda-version: [ 'cuda11.8', 'cuda12.1' ]
 
     steps:
     - name: Checkout repository

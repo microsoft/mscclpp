@@ -33,11 +33,11 @@ parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${MSCCLPP
 
 # force to pull the latest image
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-  "sudo docker pull ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1"
+  "sudo docker pull ${CONTAINERIMAGE}"
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker run --rm -itd --privileged --net=host --ipc=host --gpus=all \
   -w /root -v ${DST_DIR}:/root/mscclpp --name=mscclpp-test \
-  --entrypoint /bin/bash ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1"
+  --entrypoint /bin/bash ${CONTAINERIMAGE}"
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker exec -t --user root mscclpp-test bash '/root/mscclpp/setup.sh'"
 
