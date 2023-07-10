@@ -17,6 +17,7 @@ const int ProxyStopCheckPeriod = 1000;
 // Unless explicitly requested, a flush of the tail to device memory is triggered for every ProxyFlushPeriod.
 // As long as MSCCLPP_PROXY_FIFO_SIZE is large enough, having a stale tail is not a problem.
 const int ProxyFlushPeriod = 4;
+static_assert(MSCCLPP_PROXY_FIFO_SIZE >= ProxyFlushPeriod, "MSCCLPP_PROXY_FIFO_SIZE is too small");
 
 struct Proxy::Impl {
   ProxyHandler handler;
