@@ -48,7 +48,7 @@ class TcpBootstrap : public Bootstrap {
 
   void initialize(UniqueId uniqueId);
   // the acceptable formats are "ip:port" or "interface:ip:port"
-  void initialize(std::string ifIpPortTrio);
+  void initialize(const std::string& ifIpPortTrio);
   int getRank() override;
   int getNranks() override;
   void send(void* data, int size, int peer, int tag) override;

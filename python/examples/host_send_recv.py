@@ -2,3 +2,53 @@
 # Licensed under the MIT license.
 
 import mscclpp
+import argparse
+import time
+from array import array
+
+parser = argparse.ArgumentParser()
+parser.add_argument('if_ip_port_trio', type=str)
+parser.add_argument('-r', '--root', action='store_true')
+parser.add_argument('-n', '--num-elements', type=int, default=10)
+args = parser.parse_args()
+
+if args.root:
+    rank = 0
+else:
+    rank = 1
+
+boot = mscclpp.TcpBootstrap.create(rank, 2)
+boot.initialize(args.if_ip_port_trio)
+
+comm = mscclpp.Communicator(boot)
+
+conn = comm.connect_on_setup(rank + 1 % 2, 0, mscclpp.Transport.IB0)
+
+memory = array('i', [0] * args.num_elements)
+ptr, elements = memory.buffer_info()
+size = elements * memory.itemsize
+my_reg_mem = comm.register_memory(ptr, size, mscclpp.Transport.IB0)
+
+other_reg_mem = None
+if rank == 0:
+    other_reg_mem = comm.recv_memory_on_setup(rank + 1 % 2, 0)
+else:
+    comm.send_memory_on_setup(my_reg_mem, rank + 1 % 2, 0)
+
+comm.setup()
+
+if rank == 0:
+    for i in range(args.num_elements):
+        memory[i] = i + 1
+    conn.write(other_reg_mem, 0, my_reg_mem, 0, size)
+    print('Done sending')
+else:
+    while memory[0] == 0:
+        time.sleep(0.1)
+    print('Received data')
+    for i in range(args.num_elements):
+        if memory[i] != i + 1:
+            print(f'Mismatch at index {i}: expected {i + 1}, got {memory[i]}')
+            break
+    else:
+        print('All data matched expected values')

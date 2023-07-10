@@ -59,8 +59,8 @@ class TcpBootstrap::Impl {
  public:
   Impl(int rank, int nRanks);
   ~Impl();
-  void initialize(const UniqueId uniqueId);
-  void initialize(std::string ifIpPortTrio);
+  void initialize(const UniqueId& uniqueId);
+  void initialize(const std::string& ifIpPortTrio);
   void establishConnections();
   UniqueId createUniqueId();
   UniqueId getUniqueId() const;
@@ -133,7 +133,7 @@ int TcpBootstrap::Impl::getRank() { return rank_; }
 
 int TcpBootstrap::Impl::getNranks() { return nRanks_; }
 
-void TcpBootstrap::Impl::initialize(const UniqueId uniqueId) {
+void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId) {
   netInit("", "");
 
   std::memcpy(&uniqueId_, &uniqueId, sizeof(uniqueId_));
@@ -141,7 +141,7 @@ void TcpBootstrap::Impl::initialize(const UniqueId uniqueId) {
   establishConnections();
 }
 
-void TcpBootstrap::Impl::initialize(std::string ifIpPortTrio) {
+void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio) {
   // first check if it is a trio
   int nColons = 0;
   for (auto c : ifIpPortTrio) {
@@ -491,7 +491,7 @@ MSCCLPP_API_CPP void TcpBootstrap::allGather(void* allData, int size) { pimpl_->
 
 MSCCLPP_API_CPP void TcpBootstrap::initialize(UniqueId uniqueId) { pimpl_->initialize(uniqueId); }
 
-MSCCLPP_API_CPP void TcpBootstrap::initialize(std::string ipPortPair) { pimpl_->initialize(ipPortPair); }
+MSCCLPP_API_CPP void TcpBootstrap::initialize(const std::string& ipPortPair) { pimpl_->initialize(ipPortPair); }
 
 MSCCLPP_API_CPP void TcpBootstrap::barrier() { pimpl_->barrier(); }
 

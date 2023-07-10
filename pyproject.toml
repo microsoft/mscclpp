@@ -8,3 +8,7 @@ version = "0.0.1"
 
 [tool.scikit-build]
 build-dir = "build/{wheel_tag}"
+
+[tool.scikit-build.cmake.define]
+BUILD_PYTHON_BINDINGS = "ON"
+BUILD_TESTS = "OFF"
