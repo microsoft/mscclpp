@@ -17,4 +17,3 @@ BUILD_TESTS = "OFF"
 line-length = 120
 target-version = ['py38']
 include = '\.pyi?$'
-extend-exclude = 'python/'
