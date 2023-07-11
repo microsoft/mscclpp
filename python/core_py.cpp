@@ -22,8 +22,14 @@ NB_MODULE(mscclpp, m) {
   nb::class_<Bootstrap>(m, "Bootstrap")
     .def("get_rank", &Bootstrap::getRank)
     .def("get_n_ranks", &Bootstrap::getNranks)
-    .def("send", (void (Bootstrap::*)(void*, int, int, int)) &Bootstrap::send, nb::arg("data"), nb::arg("size"), nb::arg("peer"), nb::arg("tag"))
-    .def("recv", (void (Bootstrap::*)(void*, int, int, int)) &Bootstrap::recv, nb::arg("data"), nb::arg("size"), nb::arg("peer"), nb::arg("tag"))
+    .def("send", [](Bootstrap* self, uintptr_t ptr, size_t size, int peer, int tag) {
+      void* data = reinterpret_cast<void*>(ptr);
+      self->send(data, size, peer, tag);
+    }, nb::arg("data"), nb::arg("size"), nb::arg("peer"), nb::arg("tag"))
+    .def("recv", [](Bootstrap* self, uintptr_t ptr, size_t size, int peer, int tag) {
+      void* data = reinterpret_cast<void*>(ptr);
+      self->recv(data, size, peer, tag);
+    }, nb::arg("data"), nb::arg("size"), nb::arg("peer"), nb::arg("tag"))
     .def("all_gather", &Bootstrap::allGather, nb::arg("allData"), nb::arg("size"))
     .def("barrier", &Bootstrap::barrier)
     .def("send", (void (Bootstrap::*)(const std::vector<char>&, int, int)) &Bootstrap::send, nb::arg("data"), nb::arg("peer"), nb::arg("tag"))
