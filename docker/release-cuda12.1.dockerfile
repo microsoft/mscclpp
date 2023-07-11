@@ -20,7 +20,7 @@ RUN rm -rf build && \
     mkdir build && \
     cd build && \
     ${CMAKE_HOME}/bin/cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${MSCCLPP_HOME} .. && \
-    make -j mscclpp mscclppStatic && \
+    make -j mscclpp mscclpp_static && \
     make install/fast && \
     strip ${MSCCLPP_HOME}/lib/libmscclpp.so.[0-9]*.[0-9]*.[0-9]*
 

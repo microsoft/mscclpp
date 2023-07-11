@@ -53,37 +53,37 @@ if(ALLOW_GDRCOPY)
     find_package(GDRCopy)
 endif()
 
-add_library(mscclppObj OBJECT)
-target_include_directories(mscclppObj
+add_library(mscclpp_obj OBJECT)
+target_include_directories(mscclpp_obj
     PRIVATE
     ${CUDAToolkit_INCLUDE_DIRS}
     ${IBVERBS_INCLUDE_DIRS}
     ${NUMA_INCLUDE_DIRS}
     ${GDRCOPY_INCLUDE_DIRS})
-target_link_libraries(mscclppObj PRIVATE ${CUDA_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} ${GDRCOPY_LIBRARIES})
-set_target_properties(mscclppObj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
+target_link_libraries(mscclpp_obj PRIVATE ${CUDA_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} ${GDRCOPY_LIBRARIES})
+set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 if(ENABLE_TRACE)
-    target_compile_definitions(mscclppObj PRIVATE ENABLE_TRACE)
+    target_compile_definitions(mscclpp_obj PRIVATE ENABLE_TRACE)
 endif()
 if(USE_NPKIT)
-    target_compile_definitions(mscclppObj PRIVATE ENABLE_NPKIT)
+    target_compile_definitions(mscclpp_obj PRIVATE ENABLE_NPKIT)
 endif()
 if(ALLOW_GDRCOPY AND GDRCOPY_FOUND)
-    target_compile_definitions(mscclppObj PRIVATE MSCCLPP_USE_GDRCOPY)
-    target_link_libraries(mscclppObj PRIVATE MSCCLPP::gdrcopy)
+    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_GDRCOPY)
+    target_link_libraries(mscclpp_obj PRIVATE MSCCLPP::gdrcopy)
 endif()
 
 # libmscclpp
 add_library(mscclpp SHARED)
-target_link_libraries(mscclpp PUBLIC mscclppObj)
+target_link_libraries(mscclpp PUBLIC mscclpp_obj)
 set_target_properties(mscclpp PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
-add_library(mscclppStatic STATIC)
-target_link_libraries(mscclppStatic PUBLIC mscclppObj)
-set_target_properties(mscclppStatic PROPERTIES OUTPUT_NAME mscclpp_static VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
+add_library(mscclpp_static STATIC)
+target_link_libraries(mscclpp_static PUBLIC mscclpp_obj)
+set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 add_subdirectory(include)
 add_subdirectory(src)
-install(TARGETS mscclpp mscclppStatic
+install(TARGETS mscclpp mscclpp_static
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib)
 
@@ -94,9 +94,5 @@ endif()
 
 # Python bindings
 if(BUILD_PYTHON_BINDINGS)
-    find_package(Python 3.8 COMPONENTS Interpreter Development.Module REQUIRED)
-    include(FetchContent)
-    FetchContent_Declare(nanobind GIT_REPOSITORY https://github.com/wjakob/nanobind.git GIT_TAG v1.4.0)
-    FetchContent_MakeAvailable(nanobind)
     add_subdirectory(python)
 endif()
