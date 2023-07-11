@@ -71,7 +71,7 @@ class IbPeerToPeerTest : public IbTestBase {
 
   void stageSend(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled);
 
-  void stageAtomicAdd(uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, uint64_t addVal);
+  void stageAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal);
 
   void stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
                         unsigned int immData);
@@ -124,12 +124,12 @@ class CommunicatorTest : public CommunicatorTestBase {
   std::vector<std::unordered_map<int, mscclpp::RegisteredMemory>> remoteMemory;
 };
 
-class DeviceChannelOneToOneTest : public CommunicatorTestBase {
+class ProxyChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   void SetUp() override;
   void TearDown() override;
 
-  void setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& devChannels, bool useIbOnly, void* sendBuff,
+  void setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, bool useIbOnly, void* sendBuff,
                             size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
   void testPacketPingPong(bool useIbOnly);
   void testPacketPingPongPerf(bool useIbOnly);

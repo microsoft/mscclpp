@@ -6,6 +6,6 @@ target_sources(mp_unit_tests PRIVATE
     bootstrap_tests.cc
     ib_tests.cu
     communicator_tests.cu
-    device_channel_tests.cu
+    proxy_channel_tests.cu
     sm_channel_tests.cu
 )

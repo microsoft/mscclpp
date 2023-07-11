@@ -8,5 +8,10 @@ chown root:root /root/.ssh/config
 chmod 400 /root/mscclpp/sshkey
 chown root:root /root/mscclpp/sshkey
 
+nvidia-smi -pm 1
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+    nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
+done
+
 mkdir -p /var/run/sshd
 /usr/sbin/sshd -p 22345

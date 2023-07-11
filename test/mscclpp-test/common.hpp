@@ -22,6 +22,8 @@
 int getDeviceNumaNode(int cudaDev);
 void numaBind(int node);
 
+enum class ChannelSemantic { PUT, GET };
+
 struct TestArgs {
   size_t minBytes;
   size_t maxBytes;
@@ -37,11 +39,20 @@ struct TestArgs {
   int reportErrors;
 };
 
+struct KernelRestriction {
+  int kernelNum;
+  std::string kernelName;
+  bool compatibleWithMultiNodes;
+  int countDivisorForMultiNodes;
+  int alignedBytes;
+};
+
 class BaseTestColl {
  public:
   BaseTestColl() {}
   virtual ~BaseTestColl() {}
   virtual void initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) = 0;
+  virtual std::vector<KernelRestriction> getKernelRestrictions() = 0;
   virtual void runColl(const TestArgs& args, cudaStream_t stream) = 0;
   virtual void getBw(const double deltaSec, double& algBw /*OUT*/, double& busBw /*OUT*/) = 0;
 
@@ -100,11 +111,14 @@ class BaseTestEngine {
   using SetupChannelFunc = std::function<void(std::vector<std::shared_ptr<mscclpp::Connection>>,
                                               std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>&,
                                               const mscclpp::RegisteredMemory&)>;
-  void setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& devChannels, void* inputBuff,
+  void setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, void* inputBuff,
                             size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0,
                             SetupChannelFunc setupChannel = nullptr);
+  void setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels, void* inputBuff, size_t inputBuffBytes,
+                            void* outputBuff = nullptr, size_t outputBuffBytes = 0,
+                            ChannelSemantic semantic = ChannelSemantic::PUT);
   void setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels,
-                            std::vector<mscclpp::SimpleProxyChannel>& devChannels, void* inputBuff,
+                            std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, void* inputBuff,
                             size_t inputBuffBytes, void* putPacketBuff = nullptr, size_t putPacketBuffBytes = 0,
                             void* getPacketBuff = nullptr, size_t getPacketBuffBytes = 0, void* outputBuff = nullptr,
                             size_t outputBuffBytes = 0);

@@ -12,8 +12,15 @@ jobs:
   timeoutInMinutes: 30
   pool:
     name: mscclpp
+  strategy:
+    matrix:
+      cuda11:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda11.8
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+
   container:
-    image: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+    image: $[ variables['containerImage'] ]
     options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
 
   steps:
@@ -30,6 +37,17 @@ jobs:
         make -j
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
+  - task: Bash@3
+    name: LockGPUClock
+    displayName: Lock GPU clock frequency
+    inputs:
+      targetType: 'inline'
+      script: |
+        sudo nvidia-smi -pm 1
+        for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+          sudo nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
+        done
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
     name: UnitTests

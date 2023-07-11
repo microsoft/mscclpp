@@ -6,7 +6,7 @@ See [Quick Start](docs/quickstart.md) to quickly get started.
 
 See the latest performance evaluation on Azure [NDmv4](docs/performance-ndmv4.md).
 
-Build our Doxygen document by running `doxygen` in [`docs/`](docs/) directory.
+Build our Doxygen document by running `doxygen` in [`docs/`](docs/) directory. Run `python3 -m http.server <PORT>` in `docs/doxygen/html/` directory to serve the generated HTML files.
 
 ## Overview
 
@@ -97,22 +97,22 @@ __global__ void gpuKernel() {
   ...
 }
 
-// Host-side custom channel service
-class CustomChannelService {
+// Host-side custom proxy service
+class CustomProxyService {
 private:
   mscclpp::Proxy proxy_;
 public:
-  CustomChannelService() : proxy_([&](mscclpp::ProxyTrigger trigger) {
-                                    // Custom trigger handler
-                                    if (trigger.fst == 1) {
-                                      // Handle request "1"
-                                    } else if (trigger.fst == 2) {
-                                      // Handle request "2"
-                                    } else if (trigger.fst == 0xdeadbeef) {
-                                      // Handle request "0xdeadbeef"
-                                    }
-                                  },
-                                  [&]() { /* Empty proxy initializer */ }) {}
+  CustomProxyService() : proxy_([&](mscclpp::ProxyTrigger trigger) {
+                                  // Custom trigger handler
+                                  if (trigger.fst == 1) {
+                                    // Handle request "1"
+                                  } else if (trigger.fst == 2) {
+                                    // Handle request "2"
+                                  } else if (trigger.fst == 0xdeadbeef) {
+                                    // Handle request "0xdeadbeef"
+                                  }
+                                },
+                                [&]() { /* Empty proxy initializer */ }) {}
   void startProxy() { proxy_.start(); }
   void stopProxy()  { proxy_.stop(); }
 };
@@ -139,7 +139,7 @@ MSCCL++ is under active development and a part of its features will be added in 
 ### MSCCL++ v0.2 (Latest Release)
 * Basic communication functionalities and new interfaces
     - GPU-side communication interfaces
-    - Host-side helpers: bootstrap, communicator, and channel service (proxy)
+    - Host-side helpers: bootstrap, communicator, and proxy
     - Supports both NVLink and InfiniBand
     - Supports both in-SM copy and DMA/RDMA
 * Communication performance optimization

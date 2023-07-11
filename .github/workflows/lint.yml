@@ -14,11 +14,13 @@ jobs:
       uses: actions/checkout@v3
 
     - name: Install ClangFormat
-      run: sudo apt-get install -y clang-format
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-format
 
     - name: Run cpplint
       run: |
-        CPPSOURCES=$(find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*" -not -path "./python/*")
+        CPPSOURCES=$(find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*")
         PYTHONCPPSOURCES=$(find ./python/src/ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
         clang-format -style=file --verbose --Werror --dry-run ${CPPSOURCES}
         clang-format --dry-run ${PYTHONCPPSOURCES}
@@ -43,7 +45,7 @@ jobs:
         with:
           black: true
           black_auto_fix: false
-          black_args: "--config .black --check"
+          black_args: "--config pyproject.toml --check"
 
   spelling:
     runs-on: ubuntu-20.04

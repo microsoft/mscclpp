@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "mscclpp"
-version = "0.0.1"
+version = "0.2.0"
 
 [tool.scikit-build]
 build-dir = "build/{wheel_tag}"
@@ -12,3 +12,9 @@ build-dir = "build/{wheel_tag}"
 [tool.scikit-build.cmake.define]
 BUILD_PYTHON_BINDINGS = "ON"
 BUILD_TESTS = "OFF"
+
+[tool.black]
+line-length = 120
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = 'python/'

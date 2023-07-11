@@ -124,6 +124,36 @@ const std::string getBusId(int cudaDev) {
   }
   return std::string(busIdChar);
 }
+
+void validateArgsForDeviceKernel(const std::vector<KernelRestriction>& restrictions, int kernelNum, size_t paramCount,
+                                 int worldSize, int nRanksPerNode, int typeSize = 4) {
+  auto iter = std::find_if(restrictions.begin(), restrictions.end(), [kernelNum](const KernelRestriction& restriction) {
+    return restriction.kernelNum == kernelNum;
+  });
+  if (iter == restrictions.end()) {
+    PRINT("no restriction for kernelNum=" << kernelNum << std::endl);
+    return;
+  }
+  std::stringstream ss;
+  bool isOnMultiNodes = worldSize / nRanksPerNode > 1;
+  if (isOnMultiNodes && !iter->compatibleWithMultiNodes) {
+    ss << "kernel is not compatible with multi nodes, kernelNum=" << kernelNum << ", name=" << iter->kernelName
+       << ", worldSize=" << worldSize << ", nRanksPerNode=" << nRanksPerNode;
+    throw std::invalid_argument(ss.str());
+  }
+  if (isOnMultiNodes && paramCount % iter->countDivisorForMultiNodes != 0) {
+    ss << "kernel is not compatible with input size, kernelNum=" << kernelNum << ", name=" << iter->kernelName
+       << ", paramCount=" << paramCount << ", countDivisorForMultiNodes=" << iter->countDivisorForMultiNodes;
+    throw std::invalid_argument(ss.str());
+  }
+  bool sizeAlignedForMultiNode = (paramCount * typeSize / iter->countDivisorForMultiNodes) % iter->alignedBytes == 0;
+  if (((paramCount * typeSize) % iter->alignedBytes != 0) || (isOnMultiNodes && !sizeAlignedForMultiNode)) {
+    ss << "kernel is not compatible with alignment restriction, kernelNum=" << kernelNum
+       << ", name=" << iter->kernelName << ", paramCount=" << paramCount << ", alignedBytes=" << iter->alignedBytes
+       << ", countDivisorForMultiNodes=" << iter->countDivisorForMultiNodes;
+    throw std::invalid_argument(ss.str());
+  }
+}
 }  // namespace
 
 int getDeviceNumaNode(int cudaDev) {
@@ -201,6 +231,8 @@ void BaseTestEngine::runTest() {
   // warm-up for large size
   this->coll_->setupCollTest(args_, args_.maxBytes);
   this->barrier();
+  validateArgsForDeviceKernel(coll_->getKernelRestrictions(), args_.kernelNum, coll_->getParamBytes() / sizeof(int),
+                              args_.totalRanks, args_.nRanksPerNode);
   for (int iter = 0; iter < warmup_iters; iter++) {
     this->coll_->runColl(args_, stream_);
   }
@@ -209,6 +241,8 @@ void BaseTestEngine::runTest() {
   // warm-up for small size
   this->coll_->setupCollTest(args_, args_.minBytes);
   this->barrier();
+  validateArgsForDeviceKernel(coll_->getKernelRestrictions(), args_.kernelNum, coll_->getParamBytes() / sizeof(int),
+                              args_.totalRanks, args_.nRanksPerNode);
   for (int iter = 0; iter < warmup_iters; iter++) {
     this->coll_->runColl(args_, stream_);
   }
@@ -232,6 +266,8 @@ void BaseTestEngine::runTest() {
     ss << std::setw(12) << std::max(coll_->getSendBytes(), coll_->getExpectedBytes()) << "  " << std::setw(12)
        << coll_->getParamBytes() / sizeof(int);
 
+    validateArgsForDeviceKernel(coll_->getKernelRestrictions(), args_.kernelNum, coll_->getParamBytes() / sizeof(int),
+                                args_.totalRanks, args_.nRanksPerNode);
     double deltaSec = benchTime();
 
     size_t nErrors = 0;
@@ -358,7 +394,7 @@ void BaseTestEngine::setupMeshConnectionsInternal(
 
 // Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
 // TODO(saemal): retrun the actual vector instead of void
-void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& devChannels, void* inputBuff,
+void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, void* inputBuff,
                                           size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes,
                                           SetupChannelFunc setupChannel) {
   const mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc | IBs[args_.gpuNum];
@@ -379,17 +415,51 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SimpleProxyChanne
   } else {
     auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
     for (size_t i = 0; i < connections.size(); ++i) {
-      devChannels.push_back(mscclpp::SimpleProxyChannel(service->deviceChannel(service->addSemaphore(connections[i])),
-                                                        service->addMemory(remoteRegMemories[i].get()),
-                                                        service->addMemory(inputBufRegMem)));
+      proxyChannels.push_back(mscclpp::SimpleProxyChannel(service->deviceChannel(service->addSemaphore(connections[i])),
+                                                          service->addMemory(remoteRegMemories[i].get()),
+                                                          service->addMemory(inputBufRegMem)));
     }
   }
 
   comm_->setup();
 }
 
+void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels, void* inputBuff,
+                                          size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes,
+                                          ChannelSemantic semantic) {
+  const mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc | IBs[args_.gpuNum];
+  mscclpp::RegisteredMemory inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, allTransports);
+  mscclpp::RegisteredMemory getPacketBufRegMem;
+  mscclpp::RegisteredMemory outputBufRegMem;
+  if (outputBuff) {
+    outputBufRegMem = comm_->registerMemory(outputBuff, outputBuffBytes, allTransports);
+  }
+
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
+  mscclpp::RegisteredMemory& localRegMemory =
+      (outputBuff && semantic == ChannelSemantic::PUT) ? outputBufRegMem : inputBufRegMem;
+  setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
+
+  std::unordered_map<size_t, std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
+  for (size_t cid = 0; cid < connections.size(); ++cid) {
+    if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+      smSemaphores.emplace(cid, std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, connections[cid]));
+    }
+  }
+  comm_->setup();
+
+  for (size_t cid = 0; cid < connections.size(); ++cid) {
+    if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+      smChannels.emplace_back(smSemaphores[cid]->deviceHandle(), remoteRegMemories[cid].get(),
+                              (outputBuff && semantic == ChannelSemantic::GET) ? outputBuff : inputBufRegMem.data(),
+                              nullptr);
+    }
+  }
+}
+
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels,
-                                          std::vector<mscclpp::SimpleProxyChannel>& devChannels, void* inputBuff,
+                                          std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, void* inputBuff,
                                           size_t inputBuffBytes, void* putPacketBuff, size_t putPacketBuffBytes,
                                           void* getPacketBuff, size_t getPacketBuffBytes, void* outputBuff,
                                           size_t outputBuffBytes) {
@@ -442,9 +512,9 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
       if (putPacketBuff == nullptr || getPacketBuff == nullptr) {
         throw std::runtime_error("IB transport requires putPacketBuff and getPacketBuff");
       }
-      devChannels.emplace_back(service->deviceChannel(connIdToSemId[cid]),
-                               service->addMemory(remoteRegMemories[cid].get()),
-                               service->addMemory(putPacketBufRegMem));
+      proxyChannels.emplace_back(service->deviceChannel(connIdToSemId[cid]),
+                                 service->addMemory(remoteRegMemories[cid].get()),
+                                 service->addMemory(putPacketBufRegMem));
     }
   }
 }
@@ -539,7 +609,6 @@ int main(int argc, char* argv[]) {
             "[-c,--check <0/1>] \n\t"
             "[-T,--timeout <time in seconds>] \n\t"
             "[-G,--cudagraph <num graph launches>] \n\t"
-            "[-C,--report_cputime <0/1>] \n\t"
             "[-a,--average <0/1/2/3> report average iteration time <0=RANK0/1=AVG/2=MIN/3=MAX>] \n\t"
             "[-k,--kernel_num <kernel number of commnication primitive>] \n\t"
             "[-o, --output_file <output file name>] \n\t"
