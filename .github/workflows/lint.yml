@@ -21,9 +21,7 @@ jobs:
     - name: Run cpplint
       run: |
         CPPSOURCES=$(find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*")
-        PYTHONCPPSOURCES=$(find ./python/src/ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
         clang-format -style=file --verbose --Werror --dry-run ${CPPSOURCES}
-        clang-format --dry-run ${PYTHONCPPSOURCES}
 
   pylint:
     runs-on: ubuntu-20.04
