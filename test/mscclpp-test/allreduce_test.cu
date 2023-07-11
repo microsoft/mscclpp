@@ -509,7 +509,7 @@ __device__ void allGatherSm(int rank, int worldSize, int nRanksPerNode, size_t n
                    nBlocksForLocalAllGather);
 }
 
-__device__ void allreduce0(int* buff, int* scratch, int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
+__global__ void allreduce0(int* buff, int* scratch, int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
   int peerId = blockIdx.x / BLOCKS_PER_PEER;
   int isComm = (threadIdx.x == 0) && (blockIdx.x % BLOCKS_PER_PEER == 0);
   int remoteRank = (peerId < rank) ? peerId : peerId + 1;
@@ -560,7 +560,7 @@ __device__ void allreduce0(int* buff, int* scratch, int rank, int worldSize, siz
   }
 }
 
-__device__ void allreduce1(int* buff, int* scratch, int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
+__global__ void allreduce1(int* buff, int* scratch, int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int remoteSendRank = (rank + 1) % worldSize;
   int remoteRecvRank = (rank + worldSize - 1) % worldSize;
@@ -671,7 +671,7 @@ __device__ void allreduce1(int* buff, int* scratch, int rank, int worldSize, siz
   }
 }
 
-__device__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getPktBuf, void* result, int rank,
+__global__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getPktBuf, void* result, int rank,
                            int nRanksPerNode, int worldSize, size_t nelems) {
   int numPeersPerNode = nRanksPerNode - 1;
   size_t nPkts = nelems / 2;  // 2 elems per packet, assume nelems is even
@@ -776,7 +776,7 @@ __device__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
   }
 }
 
-__device__ void allreduce3(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize,
+__global__ void allreduce3(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize,
                            size_t nelems) {
   reduceScatter(buff, scratch, rank, nRanksPerNode, worldSize, nelems);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
@@ -784,25 +784,11 @@ __device__ void allreduce3(int* buff, int* scratch, void* result, int rank, int 
   }
 }
 
-__device__ void allreduce4(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize,
+__global__ void allreduce4(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize,
                            size_t nelems) {
   reduceScatterSm(buff, scratch, rank, nRanksPerNode, worldSize, nelems);
   deviceSyncer.sync(gridDim.x);
   allGatherSm(rank, worldSize, nRanksPerNode, nelems / worldSize);
-}
-
-__global__ void kernel(void* buff, void* scratch, void* result, void* putPktBuf, void* getPktBuf, int rank,
-                       int nRanksPerNode, int worldSize, size_t nelems, size_t scratchDataCount, int kernel) {
-  if (kernel == 0)
-    allreduce0((int*)buff, (int*)scratch, rank, worldSize, nelems, scratchDataCount);
-  else if (kernel == 1)
-    allreduce1((int*)buff, (int*)scratch, rank, worldSize, nelems, scratchDataCount);
-  else if (kernel == 2)
-    allreduce2((int*)buff, scratch, putPktBuf, getPktBuf, result, rank, nRanksPerNode, worldSize, nelems);
-  else if (kernel == 3)
-    allreduce3((int*)buff, (int*)scratch, result, rank, nRanksPerNode, worldSize, nelems);
-  else if (kernel == 4)
-    allreduce4((int*)buff, (int*)scratch, result, rank, nRanksPerNode, worldSize, nelems);
 }
 
 class AllReduceTestColl : public BaseTestColl {
@@ -845,9 +831,21 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     tmpBuff = scratchPacketBuff;
     nThreadsPerBlock = 1024;
   }
-  kernel<<<nBlocks, nThreadsPerBlock, 0, stream>>>(inputBuff, tmpBuff, resultBuff, putPacketBuff, getPacketBuff, rank,
-                                                   args.nRanksPerNode, worldSize, paramCount_, scratchDataCount,
-                                                   kernelNum);
+  if (kernelNum == 0)
+    allreduce0<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, rank, worldSize, paramCount_,
+                                                         scratchDataCount);
+  else if (kernelNum == 1)
+    allreduce1<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, rank, worldSize, paramCount_,
+                                                         scratchDataCount);
+  else if (kernelNum == 2)
+    allreduce2<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, tmpBuff, putPacketBuff, getPacketBuff,
+                                                         resultBuff, rank, args.nRanksPerNode, worldSize, paramCount_);
+  else if (kernelNum == 3)
+    allreduce3<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, resultBuff, rank,
+                                                         args.nRanksPerNode, worldSize, paramCount_);
+  else if (kernelNum == 4)
+    allreduce4<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, resultBuff, rank,
+                                                         args.nRanksPerNode, worldSize, paramCount_);
 }
 
 void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
