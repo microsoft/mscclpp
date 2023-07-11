@@ -4,6 +4,7 @@
 nanobind_add_module(mscclpp_py core_py.cpp)
 set_target_properties(mscclpp_py PROPERTIES OUTPUT_NAME mscclpp)
 target_link_libraries(mscclpp_py PRIVATE mscclppStatic)
+target_include_directories(mscclpp_py PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 if (SKBUILD)
     install(TARGETS mscclpp_py LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR})
 else()
