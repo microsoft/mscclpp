@@ -10,6 +10,7 @@ parser.add_argument("if_ip_port_trio", type=str)
 parser.add_argument("-r", "--root", action="store_true")
 parser.add_argument("-n", "--num-elements", type=int, default=10)
 parser.add_argument("--gpu", action="store_true")
+parser.add_argument("--polling_num", type=int, default=100)
 args = parser.parse_args()
 
 if args.root:
@@ -58,12 +59,18 @@ if rank == 0:
     conn.write(other_reg_mem, 0, my_reg_mem, 0, size)
     print("Done sending")
 else:
-    while memory[0] == 0:
-        time.sleep(0.1)
-    print("Received data")
-    for i in range(args.num_elements):
-        if memory[i] != i + 1:
-            print(f"Mismatch at index {i}: expected {i + 1}, got {memory[i]}")
+    print("Checking for correctness")
+    # polling
+    for tries in range(args.polling_num):
+        all_correct = True
+        for i in range(args.num_elements):
+            if memory[i] != i + 1:
+                all_correct = False
+                break
+        if all_correct:
+            print("All data matched expected values")
             break
-    else:
-        print("All data matched expected values")
+        else:
+            time.sleep(0.1)
+    if all_correct == False:
+        print(f"Error: Mismatch at index {i}: expected {i + 1}, got {memory[i]}")
