@@ -15,15 +15,14 @@
 #include <mscclpp/errors.hpp>
 #include <string>
 #include <vector>
+#include <array>
 
 namespace mscclpp {
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
 
 /// Unique ID for a process. This is a MSCCLPP_UNIQUE_ID_BYTES byte array that uniquely identifies a process.
-struct UniqueId {
-  char internal[MSCCLPP_UNIQUE_ID_BYTES];
-};
+using UniqueId = std::array<uint8_t, MSCCLPP_UNIQUE_ID_BYTES>;
 
 /// Base class for bootstraps.
 class Bootstrap {
