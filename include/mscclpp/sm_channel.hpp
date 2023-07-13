@@ -331,6 +331,10 @@ struct SmChannel {
 #endif  // __CUDACC__
   };
 
+  /// Returns the device-side handle.
+  ///
+  /// User should make sure the SmChannel is not released when using the returned handle.
+  ///
   DeviceHandle deviceHandle() const;
 };
 
