@@ -982,10 +982,10 @@ void AllReduceTestEngine::setupConnections() {
     assert(smOutOfPlaceChannels_.size() < sizeof(constSmOutOfPlaceChans) / sizeof(mscclpp::SmChannel::DeviceHandle));
     assert(proxyChannels.size() < sizeof(constDevFstRoundChans) / sizeof(mscclpp::SimpleProxyChannel));
 
-    std::vector<mscclpp::SmChannel::DeviceHandle> smChannelHandles(smOutOfPlaceChannels_.size());
-    getChannelDeviceHandle(smOutOfPlaceChannels_, smChannelHandles);
-    CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceChans, smChannelHandles.data(),
-                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelHandles.size()));
+    std::vector<mscclpp::SmChannel::DeviceHandle> smChannelDeviceHandles(smOutOfPlaceChannels_.size());
+    getChannelDeviceHandle(smOutOfPlaceChannels_, smChannelDeviceHandles);
+    CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceChans, smChannelDeviceHandles.data(),
+                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelDeviceHandles.size()));
     CUDATHROW(cudaMemcpyToSymbol(constDevFstRoundChans, proxyChannels.data(),
                                  sizeof(mscclpp::SimpleProxyChannel) * proxyChannels.size()));
   } else {
@@ -1006,26 +1006,26 @@ void AllReduceTestEngine::setupConnections() {
 
     setupMeshConnections(smOutOfPlaceChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
     assert(smOutOfPlaceChannels_.size() < sizeof(constSmOutOfPlaceChans) / sizeof(mscclpp::SmChannel::DeviceHandle));
-    std::vector<mscclpp::SmChannel::DeviceHandle> smChannelHandles(smOutOfPlaceChannels_.size());
-    getChannelDeviceHandle(smOutOfPlaceChannels_, smChannelHandles);
-    CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceChans, smChannelHandles.data(),
-                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelHandles.size()));
+    std::vector<mscclpp::SmChannel::DeviceHandle> smChannelDeviceHandles(smOutOfPlaceChannels_.size());
+    getChannelDeviceHandle(smOutOfPlaceChannels_, smChannelDeviceHandles);
+    CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceChans, smChannelDeviceHandles.data(),
+                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelDeviceHandles.size()));
 
     setupMeshConnections(smInPlaceChannels_, inputBuff_.get(), args_.maxBytes);
     assert(smInPlaceChannels_.size() < sizeof(constSmInPlaceChans) / sizeof(mscclpp::SmChannel::DeviceHandle));
-    smChannelHandles.resize(smInPlaceChannels_.size());
-    getChannelDeviceHandle(smInPlaceChannels_, smChannelHandles);
-    CUDATHROW(cudaMemcpyToSymbol(constSmInPlaceChans, smChannelHandles.data(),
-                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelHandles.size()));
+    smChannelDeviceHandles.resize(smInPlaceChannels_.size());
+    getChannelDeviceHandle(smInPlaceChannels_, smChannelDeviceHandles);
+    CUDATHROW(cudaMemcpyToSymbol(constSmInPlaceChans, smChannelDeviceHandles.data(),
+                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelDeviceHandles.size()));
 
     setupMeshConnections(smOutputPlaceGetChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(),
                          args_.maxBytes, ChannelSemantic::GET);
     assert(smOutputPlaceGetChannels_.size() <
            sizeof(constSmOutOfPlaceGetChans) / sizeof(mscclpp::SmChannel::DeviceHandle));
-    smChannelHandles.resize(smOutputPlaceGetChannels_.size());
-    getChannelDeviceHandle(smOutputPlaceGetChannels_, smChannelHandles);
-    CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceGetChans, smChannelHandles.data(),
-                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelHandles.size()));
+    smChannelDeviceHandles.resize(smOutputPlaceGetChannels_.size());
+    getChannelDeviceHandle(smOutputPlaceGetChannels_, smChannelDeviceHandles);
+    CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceGetChans, smChannelDeviceHandles.data(),
+                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelDeviceHandles.size()));
   }
 }
 
