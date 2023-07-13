@@ -9,13 +9,13 @@
 #define MSCCLPP_PATCH 0
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
+#include <array>
 #include <bitset>
 #include <future>
 #include <memory>
 #include <mscclpp/errors.hpp>
 #include <string>
 #include <vector>
-#include <array>
 
 namespace mscclpp {
 
