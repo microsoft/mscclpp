@@ -3,6 +3,7 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cassert>
 #include <mscclpp/concurrency.hpp>
 #include <string>
@@ -17,7 +18,7 @@ constexpr uint64_t MAGIC = 0xdeadbeef;
 __constant__ mscclpp::SimpleProxyChannel constProxyChans[16];
 __constant__ mscclpp::ProxyChannel constRawProxyChan[16];
 
-__constant__ mscclpp::SmChannel constSmChans[8];
+__constant__ mscclpp::SmChannel::DeviceHandle constSmChans[8];
 
 __global__ void allgather0(int rank, int worldSize, size_t nelemsPerGPU) {
   int warpId = threadIdx.x / 32;
@@ -461,6 +462,7 @@ class AllGatherTestEngine : public BaseTestEngine {
 
   std::shared_ptr<int> sendBuff_;
   std::shared_ptr<int[]> expectedBuff_;
+  std::vector<mscclpp::SmChannel> smChannels_;
 };
 
 AllGatherTestEngine::AllGatherTestEngine(const TestArgs& args) : BaseTestEngine(args, "allgather") {}
@@ -478,10 +480,13 @@ void AllGatherTestEngine::setupConnections() {
     CUDATHROW(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
                                  sizeof(mscclpp::SimpleProxyChannel) * proxyChannels.size()));
 
-    std::vector<mscclpp::SmChannel> smChannels;
-    setupMeshConnections(smChannels, sendBuff_.get(), args_.maxBytes);
-    assert(smChannels.size() < sizeof(constSmChans) / sizeof(mscclpp::SmChannel));
-    CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannels.data(), sizeof(mscclpp::SmChannel) * smChannels.size()));
+    setupMeshConnections(smChannels_, sendBuff_.get(), args_.maxBytes);
+    std::vector<mscclpp::SmChannel::DeviceHandle> smChannelHandles(smChannels_.size());
+    assert(smChannels_.size() < sizeof(constSmChans) / sizeof(mscclpp::SmChannel::DeviceHandle));
+    std::transform(smChannels_.begin(), smChannels_.end(), smChannelHandles.begin(),
+                   [](const mscclpp::SmChannel& smChannel) { return smChannel.deviceHandle(); });
+    CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannelHandles.data(),
+                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelHandles.size()));
   } else {
     auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
     setupMeshConnections(proxyChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,

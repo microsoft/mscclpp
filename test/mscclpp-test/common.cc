@@ -451,7 +451,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-      smChannels.emplace_back(smSemaphores[cid]->deviceHandle(), remoteRegMemories[cid].get(),
+      smChannels.emplace_back(smSemaphores[cid], remoteRegMemories[cid].get(),
                               (outputBuff && semantic == ChannelSemantic::GET) ? outputBuff : inputBufRegMem.data(),
                               nullptr);
     }
@@ -505,7 +505,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-      smChannels.emplace_back(smSemaphores[cid]->deviceHandle(),
+      smChannels.emplace_back(smSemaphores[cid],
                               (outputBuff) ? remoteRegMemoriesOutput[cid].get() : remoteRegMemories[cid].get(),
                               inputBufRegMem.data(), (outputBuff) ? outputBufRegMem.data() : nullptr);
     } else {

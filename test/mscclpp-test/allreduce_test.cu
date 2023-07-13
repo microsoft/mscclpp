@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <algorithm>
 #include <cassert>
 #include <mscclpp/concurrency.hpp>
 #include <mscclpp/packet.hpp>
@@ -13,9 +14,9 @@
 __constant__ mscclpp::SimpleProxyChannel constDevFstRoundChans[16];
 __constant__ mscclpp::SimpleProxyChannel constDevSndRoundChans[16];
 
-__constant__ mscclpp::SmChannel constSmInPlaceChans[8];
-__constant__ mscclpp::SmChannel constSmOutOfPlaceChans[8];
-__constant__ mscclpp::SmChannel constSmOutOfPlaceGetChans[8];
+__constant__ mscclpp::SmChannel::DeviceHandle constSmInPlaceChans[8];
+__constant__ mscclpp::SmChannel::DeviceHandle constSmOutOfPlaceChans[8];
+__constant__ mscclpp::SmChannel::DeviceHandle constSmOutOfPlaceGetChans[8];
 __device__ uint64_t globalFlag;
 
 // TODO(chhwang): need an interface for this.
@@ -279,7 +280,7 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
   const int nPeer = nRanksPerNode - 1;
-  mscclpp::SmChannel* smChans = constSmOutOfPlaceGetChans;
+  mscclpp::SmChannel::DeviceHandle* smChans = constSmOutOfPlaceGetChans;
 
   const size_t localRankIndexInNode = rank % nRanksPerNode;
   const size_t indexOffset = ((localRankIndexInNode + startChunkIndex) * chunkSize + offsetInChunk);
@@ -679,7 +680,7 @@ __global__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
 
   // Channel to a local peer
   int smChanIdx = blockIdx.x / BLOCKS_PER_PEER;
-  mscclpp::SmChannel smChan = constSmOutOfPlaceChans[smChanIdx];
+  mscclpp::SmChannel::DeviceHandle smChan = constSmOutOfPlaceChans[smChanIdx];
 
   // Channel to a remote peer that has the same local rank as me
   int localRank = rank % nRanksPerNode;
@@ -923,6 +924,9 @@ class AllReduceTestEngine : public BaseTestEngine {
   std::shared_ptr<mscclpp::LLPacket> putPacketBuff_;
   std::shared_ptr<mscclpp::LLPacket> getPacketBuff_;
   std::shared_ptr<int[]> expectedBuff_;
+  std::vector<mscclpp::SmChannel> smOutOfPlaceChannels_;
+  std::vector<mscclpp::SmChannel> smInPlaceChannels_;
+  std::vector<mscclpp::SmChannel> smOutputPlaceGetChannels_;
 };
 
 AllReduceTestEngine::AllReduceTestEngine(const TestArgs& args) : BaseTestEngine(args, "allreduce") {
@@ -959,31 +963,34 @@ void AllReduceTestEngine::allocateBuffer() {
 }
 
 void AllReduceTestEngine::setupConnections() {
+  auto getChannelDeviceHandle = [](const std::vector<mscclpp::SmChannel>& in,
+                                   std::vector<mscclpp::SmChannel::DeviceHandle>& out) {
+    return std::transform(in.begin(), in.end(), out.begin(),
+                          [](const mscclpp::SmChannel& smChannel) { return smChannel.deviceHandle(); });
+  };
   if (isUsePacket()) {
-    std::vector<mscclpp::SmChannel> smChannels;
     std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
 
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     const size_t scratchPacketBuffBytes =
         nPacket * std::max(args_.nRanksPerNode - 1, 1) * 2 * sizeof(mscclpp::LLPacket);
     const size_t packetBuffBytes = nPacket * 2 * sizeof(mscclpp::LLPacket);
-    setupMeshConnections(smChannels, proxyChannels, inputBuff_.get(), args_.maxBytes, putPacketBuff_.get(),
+    setupMeshConnections(smOutOfPlaceChannels_, proxyChannels, inputBuff_.get(), args_.maxBytes, putPacketBuff_.get(),
                          packetBuffBytes, getPacketBuff_.get(), packetBuffBytes, scratchPacketBuff_.get(),
                          scratchPacketBuffBytes);
 
-    assert(smChannels.size() < sizeof(constSmOutOfPlaceChans) / sizeof(mscclpp::SmChannel));
+    assert(smOutOfPlaceChannels_.size() < sizeof(constSmOutOfPlaceChans) / sizeof(mscclpp::SmChannel::DeviceHandle));
     assert(proxyChannels.size() < sizeof(constDevFstRoundChans) / sizeof(mscclpp::SimpleProxyChannel));
-    CUDATHROW(
-        cudaMemcpyToSymbol(constSmOutOfPlaceChans, smChannels.data(), sizeof(mscclpp::SmChannel) * smChannels.size()));
+
+    std::vector<mscclpp::SmChannel::DeviceHandle> smChannelHandles(smOutOfPlaceChannels_.size());
+    getChannelDeviceHandle(smOutOfPlaceChannels_, smChannelHandles);
+    CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceChans, smChannelHandles.data(),
+                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelHandles.size()));
     CUDATHROW(cudaMemcpyToSymbol(constDevFstRoundChans, proxyChannels.data(),
                                  sizeof(mscclpp::SimpleProxyChannel) * proxyChannels.size()));
   } else {
     std::vector<mscclpp::SimpleProxyChannel> fstRoundChannels;
     std::vector<mscclpp::SimpleProxyChannel> sndRoundChannels;
-
-    std::vector<mscclpp::SmChannel> smOutOfPlaceChannels;
-    std::vector<mscclpp::SmChannel> smInPlaceChannels;
-    std::vector<mscclpp::SmChannel> smOutputPlaceGetChannels;
 
     // Send data from local inputBuff to remote scratchBuff (out-of-place)
     setupMeshConnections(fstRoundChannels, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
@@ -997,21 +1004,28 @@ void AllReduceTestEngine::setupConnections() {
     CUDATHROW(cudaMemcpyToSymbol(constDevSndRoundChans, sndRoundChannels.data(),
                                  sizeof(mscclpp::SimpleProxyChannel) * sndRoundChannels.size()));
 
-    setupMeshConnections(smOutOfPlaceChannels, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
-    assert(smOutOfPlaceChannels.size() < sizeof(constSmOutOfPlaceChans) / sizeof(mscclpp::SmChannel));
-    CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceChans, smOutOfPlaceChannels.data(),
-                                 sizeof(mscclpp::SmChannel) * smOutOfPlaceChannels.size()));
+    setupMeshConnections(smOutOfPlaceChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
+    assert(smOutOfPlaceChannels_.size() < sizeof(constSmOutOfPlaceChans) / sizeof(mscclpp::SmChannel::DeviceHandle));
+    std::vector<mscclpp::SmChannel::DeviceHandle> smChannelHandles(smOutOfPlaceChannels_.size());
+    getChannelDeviceHandle(smOutOfPlaceChannels_, smChannelHandles);
+    CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceChans, smChannelHandles.data(),
+                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelHandles.size()));
 
-    setupMeshConnections(smInPlaceChannels, inputBuff_.get(), args_.maxBytes);
-    assert(smInPlaceChannels.size() < sizeof(constSmInPlaceChans) / sizeof(mscclpp::SmChannel));
-    CUDATHROW(cudaMemcpyToSymbol(constSmInPlaceChans, smInPlaceChannels.data(),
-                                 sizeof(mscclpp::SmChannel) * smInPlaceChannels.size()));
+    setupMeshConnections(smInPlaceChannels_, inputBuff_.get(), args_.maxBytes);
+    assert(smInPlaceChannels_.size() < sizeof(constSmInPlaceChans) / sizeof(mscclpp::SmChannel::DeviceHandle));
+    smChannelHandles.resize(smInPlaceChannels_.size());
+    getChannelDeviceHandle(smInPlaceChannels_, smChannelHandles);
+    CUDATHROW(cudaMemcpyToSymbol(constSmInPlaceChans, smChannelHandles.data(),
+                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelHandles.size()));
 
-    setupMeshConnections(smOutputPlaceGetChannels, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes,
-                         ChannelSemantic::GET);
-    assert(smOutputPlaceGetChannels.size() < sizeof(constSmOutOfPlaceGetChans) / sizeof(mscclpp::SmChannel));
-    CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceGetChans, smOutputPlaceGetChannels.data(),
-                                 sizeof(mscclpp::SmChannel) * smOutputPlaceGetChannels.size()));
+    setupMeshConnections(smOutputPlaceGetChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(),
+                         args_.maxBytes, ChannelSemantic::GET);
+    assert(smOutputPlaceGetChannels_.size() <
+           sizeof(constSmOutOfPlaceGetChans) / sizeof(mscclpp::SmChannel::DeviceHandle));
+    smChannelHandles.resize(smOutputPlaceGetChannels_.size());
+    getChannelDeviceHandle(smOutputPlaceGetChannels_, smChannelHandles);
+    CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceGetChans, smChannelHandles.data(),
+                                 sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelHandles.size()));
   }
 }
 
