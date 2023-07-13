@@ -104,8 +104,11 @@ NB_MODULE(mscclpp, m) {
   nb::class_<Connection>(m, "Connection")
       .def("write", &Connection::write, nb::arg("dst"), nb::arg("dstOffset"), nb::arg("src"), nb::arg("srcOffset"),
            nb::arg("size"))
-      .def("update_and_sync", &Connection::updateAndSync, nb::arg("dst"), nb::arg("dstOffset"), nb::arg("src"),
-           nb::arg("newValue"))
+      .def("update_and_sync", 
+            [](Connection* self, RegisteredMemory dst, uint64_t dstOffset, uintptr_t src, uint64_t newValue){
+                self->updateAndSync(dst, dstOffset, (uint64_t*) src, newValue);
+            },
+            nb::arg("dst"), nb::arg("dstOffset"), nb::arg("src"), nb::arg("newValue"))
       .def("flush", &Connection::flush)
       .def("remote_rank", &Connection::remoteRank)
       .def("tag", &Connection::tag)
