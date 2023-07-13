@@ -1,0 +1,32 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
+#include <nanobind/nanobind.h>
+#include <nanobind/operators.h>
+#include <nanobind/stl/array.h>
+#include <nanobind/stl/shared_ptr.h>
+#include <nanobind/stl/string.h>
+
+#include <mscclpp/proxy_channel.hpp>
+
+namespace nb = nanobind;
+using namespace mscclpp;
+
+void register_proxy_channel(nb::module_& m) {
+  nb::class_<BaseProxyService>(m, "BaseProxyService")
+      .def("start_proxy", &BaseProxyService::startProxy)
+      .def("stop_proxy", &BaseProxyService::stopProxy);
+
+  nb::class_<ProxyService, BaseProxyService>(m, "ProxyService")
+      .def(nb::init<Communicator&>(), nb::arg("communicator"))
+      .def("start_proxy", &ProxyService::startProxy)
+      .def("stop_proxy", &ProxyService::stopProxy)
+      .def("add_semaphore", &ProxyService::addSemaphore, nb::arg("connection"))
+      .def("add_memory", &ProxyService::addMemory, nb::arg("memory"))
+      .def("semaphore", &ProxyService::semaphore, nb::arg("id"))
+      .def("device_channel", &ProxyService::deviceChannel, nb::arg("id"));
+
+  nb::class_<ProxyChannel>(m, "ProxyChannel")
+      .def(nb::init <SemaphoreId, Host2DeviceSemaphore::DeviceHandle, DeviceProxyFifo> (), nb::arg("semaphoreId"),
+                       nb::arg("semaphore"), nb::arg("fifo"));
+};

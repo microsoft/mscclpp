@@ -134,7 +134,7 @@ union ChannelTrigger {
 struct ProxyChannel {
   ProxyChannel() = default;
 
-  ProxyChannel(SemaphoreId SemaphoreId, Host2DeviceSemaphore::DeviceHandle semaphore, DeviceProxyFifo fifo);
+  ProxyChannel(SemaphoreId semaphoreId, Host2DeviceSemaphore::DeviceHandle semaphore, DeviceProxyFifo fifo);
 
   ProxyChannel(const ProxyChannel& other) = default;
 
