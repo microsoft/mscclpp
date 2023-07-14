@@ -18,7 +18,7 @@ void register_proxy_channel(nb::module_& m) {
       .def("stop_proxy", &BaseProxyService::stopProxy);
 
   nb::class_<ProxyService, BaseProxyService>(m, "ProxyService")
-      .def(nb::init<Communicator&>(), nb::arg("communicator"))
+      .def(nb::init<Communicator&>(), nb::arg("comm"))
       .def("start_proxy", &ProxyService::startProxy)
       .def("stop_proxy", &ProxyService::stopProxy)
       .def("add_semaphore", &ProxyService::addSemaphore, nb::arg("connection"))
@@ -27,6 +27,10 @@ void register_proxy_channel(nb::module_& m) {
       .def("device_channel", &ProxyService::deviceChannel, nb::arg("id"));
 
   nb::class_<ProxyChannel>(m, "ProxyChannel")
-      .def(nb::init <SemaphoreId, Host2DeviceSemaphore::DeviceHandle, DeviceProxyFifo> (), nb::arg("semaphoreId"),
-                       nb::arg("semaphore"), nb::arg("fifo"));
+      .def(nb::init<SemaphoreId, Host2DeviceSemaphore::DeviceHandle, DeviceProxyFifo>(), nb::arg("semaphoreId"),
+           nb::arg("semaphore"), nb::arg("fifo"));
+
+  nb::class_<SimpleProxyChannel>(m, "SimpleProxyChannel")
+      .def(nb::init<ProxyChannel, MemoryId, MemoryId>(), nb::arg("proxy_chan"), nb::arg("dst"), nb::arg("src"))
+      .def(nb::init<SimpleProxyChannel>(), nb::arg("proxy_chan"));
 };

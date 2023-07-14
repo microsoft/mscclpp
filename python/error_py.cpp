@@ -17,6 +17,7 @@ void register_error(nb::module_& m) {
       .value("InvalidUsage", ErrorCode::InvalidUsage)
       .value("Timeout", ErrorCode::Timeout)
       .value("Aborted", ErrorCode::Aborted);
+
   nb::class_<BaseError>(m, "BaseError")
       .def(nb::init<std::string&, int>(), nb::arg("message"), nb::arg("errorCode"))
       .def("get_error_code", &BaseError::getErrorCode)
