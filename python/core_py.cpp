@@ -20,7 +20,7 @@ void def_nonblocking_future(nb::handle& m, const std::string& typestr) {
       .def("get", &NonblockingFuture<T>::get);
 }
 
-NB_MODULE(mscclpp, m) {
+void register_core(nb::module_& m) {
   nb::class_<Bootstrap>(m, "Bootstrap")
       .def("get_rank", &Bootstrap::getRank)
       .def("get_n_ranks", &Bootstrap::getNranks)
