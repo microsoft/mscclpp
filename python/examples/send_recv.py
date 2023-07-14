@@ -5,6 +5,7 @@ import mscclpp
 import argparse
 import time
 
+
 def main(args):
     if args.root:
         rank = 0
@@ -66,6 +67,7 @@ def main(args):
                 break
             else:
                 time.sleep(0.1)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
