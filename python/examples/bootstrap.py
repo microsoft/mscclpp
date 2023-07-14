@@ -7,8 +7,17 @@ import multiprocessing as mp
 import logging
 import torch
 
-IB_TRANSPORTS = [mscclpp.Transport.IB0, mscclpp.Transport.IB1, mscclpp.Transport.IB2, mscclpp.Transport.IB3,
-                 mscclpp.Transport.IB4, mscclpp.Transport.IB5, mscclpp.Transport.IB6, mscclpp.Transport.IB7]
+IB_TRANSPORTS = [
+    mscclpp.Transport.IB0,
+    mscclpp.Transport.IB1,
+    mscclpp.Transport.IB2,
+    mscclpp.Transport.IB3,
+    mscclpp.Transport.IB4,
+    mscclpp.Transport.IB5,
+    mscclpp.Transport.IB6,
+    mscclpp.Transport.IB7,
+]
+
 
 def setup_connections(comm, rank, world_size, element_size, proxy_service):
     simple_proxy_channels = []
@@ -36,10 +45,12 @@ def setup_connections(comm, rank, world_size, element_size, proxy_service):
         proxy_channel = mscclpp.SimpleProxyChannel(
             proxy_service.device_channel(proxy_service.add_semaphore(conn)),
             proxy_service.add_memory(remote_memories[i].get()),
-            proxy_service.add_memory(reg_mem))
+            proxy_service.add_memory(reg_mem),
+        )
         simple_proxy_channels.append(proxy_channel)
     comm.setup()
     return simple_proxy_channels
+
 
 def run(rank, args):
     world_size = args.gpu_number
@@ -53,6 +64,7 @@ def run(rank, args):
 
     logging.info("Starting proxy service")
     proxy_service.start_proxy()
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -69,6 +81,7 @@ def main():
 
     for p in processes:
         p.join()
+
 
 if __name__ == "__main__":
     main()
