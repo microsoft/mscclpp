@@ -12,6 +12,13 @@
 namespace nb = nanobind;
 using namespace mscclpp;
 
+extern void register_error(nb::module_& m);
+extern void register_proxy_channel(nb::module_& m);
+extern void register_fifo(nb::module_& m);
+extern void register_semaphore(nb::module_& m);
+extern void register_config(nb::module_& m);
+extern void register_utils(nb::module_& m);
+
 template <typename T>
 void def_nonblocking_future(nb::handle& m, const std::string& typestr) {
   std::string pyclass_name = std::string("NonblockingFuture") + typestr;
@@ -133,4 +140,14 @@ void register_core(nb::module_& m) {
       .def("connect_on_setup", &Communicator::connectOnSetup, nb::arg("remoteRank"), nb::arg("tag"),
            nb::arg("transport"))
       .def("setup", &Communicator::setup);
+}
+
+NB_MODULE(mscclpp, m) {
+  register_error(m);
+  register_proxy_channel(m);
+  register_fifo(m);
+  register_semaphore(m);
+  register_config(m);
+  register_utils(m);
+  register_core(m);
 }

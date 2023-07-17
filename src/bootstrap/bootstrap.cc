@@ -4,6 +4,7 @@
 #include <sys/resource.h>
 
 #include <cstring>
+#include <mscclpp/config.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/errors.hpp>
 #include <sstream>
@@ -12,7 +13,6 @@
 #include <vector>
 
 #include "api.h"
-#include "config.hpp"
 #include "debug.h"
 #include "socket.h"
 #include "utils_internal.hpp"

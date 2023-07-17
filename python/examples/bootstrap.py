@@ -6,6 +6,7 @@ import argparse
 import multiprocessing as mp
 import logging
 import torch
+import sys
 
 IB_TRANSPORTS = [
     mscclpp.Transport.IB0,
@@ -54,19 +55,22 @@ def setup_connections(comm, rank, world_size, element_size, proxy_service):
 
 def run(rank, args):
     world_size = args.gpu_number
+    torch.cuda.set_device(rank)
+
     boot = mscclpp.TcpBootstrap.create(rank, world_size)
     boot.initialize(args.if_ip_port_trio)
     comm = mscclpp.Communicator(boot)
     proxy_service = mscclpp.ProxyService(comm)
 
-    logging.info("Setting up connections")
+    logging.info("Rank: %d, setting up connections", rank)
     setup_connections(comm, rank, world_size, args.num_elements, proxy_service)
 
-    logging.info("Starting proxy service")
+    logging.info("Rank: %d, starting proxy service", rank)
     proxy_service.start_proxy()
 
 
 def main():
+    logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
     parser = argparse.ArgumentParser()
     parser.add_argument("if_ip_port_trio", type=str)
     parser.add_argument("-n", "--num-elements", type=int, default=10)

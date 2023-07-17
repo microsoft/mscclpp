@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "config.hpp"
+#include <mscclpp/config.hpp>
 
 namespace mscclpp {
 Config Config::instance_;

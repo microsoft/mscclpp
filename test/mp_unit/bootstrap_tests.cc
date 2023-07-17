@@ -3,7 +3,8 @@
 
 #include <mpi.h>
 
-#include "config.hpp"
+#include <mscclpp/config.hpp>
+
 #include "mp_unit_tests.hpp"
 
 void BootstrapTest::bootstrapTestAllGather(std::shared_ptr<mscclpp::Bootstrap> bootstrap) {
