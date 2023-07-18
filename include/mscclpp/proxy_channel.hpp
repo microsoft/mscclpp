@@ -132,7 +132,7 @@ union ChannelTrigger {
 
 /// Proxy channel.
 struct ProxyChannel {
-  /// Use DeviceHandle<SimpleProxyChannel> in device code.
+  // Use DeviceHandle<ProxyChannel> in device code.
   typedef ProxyChannel DeviceHandle;
 
   ProxyChannel() = default;
@@ -234,7 +234,7 @@ struct ProxyChannel {
 
 /// Simple proxy channel with a single destination and source memory region.
 struct SimpleProxyChannel {
-  /// Use DeviceHandle<SimpleProxyChannel> in device code.
+  // Use DeviceHandle<SimpleProxyChannel> in device code.
   typedef SimpleProxyChannel DeviceHandle;
 
   /// Default constructor.

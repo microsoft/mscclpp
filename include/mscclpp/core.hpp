@@ -566,11 +566,11 @@ extern const TransportFlags AllIBTransports;
 /// A constant TransportFlags object representing all transports.
 extern const TransportFlags AllTransports;
 
-/// The struct which could be safety used in device side.
+/// A type which could be safety used in device side.
 template <class T>
 using DeviceHandle = typename T::DeviceHandle;
 
-/// Retrieve the instance which can be used in the device side.
+/// Retrieve the deviceHandle instance from host object.
 template <typename T>
 DeviceHandle<std::remove_reference_t<T>> deviceHandle(T&& t) {
   return t.deviceHandle();

@@ -968,7 +968,7 @@ void AllReduceTestEngine::setupConnections() {
   auto getChannelDeviceHandle = [](const std::vector<mscclpp::SmChannel>& in,
                                    std::vector<DeviceHandle<mscclpp::SmChannel>>& out) {
     return std::transform(in.begin(), in.end(), out.begin(),
-                          [](const mscclpp::SmChannel& smChannel) { return smChannel.deviceHandle(); });
+                          [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
   };
   if (isUsePacket()) {
     std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannels;
