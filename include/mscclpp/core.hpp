@@ -566,7 +566,7 @@ extern const TransportFlags AllIBTransports;
 /// A constant TransportFlags object representing all transports.
 extern const TransportFlags AllTransports;
 
-/// A type which could be safety used in device side.
+/// A type which could be safely used in device side.
 template <class T>
 using DeviceHandle = typename T::DeviceHandle;
 

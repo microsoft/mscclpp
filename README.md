@@ -27,9 +27,7 @@ MSCCL++ v0.2 supports the following features.
 MSCCL++ provides inter-GPU communication interfaces to be called by a GPU thread. For example, the `put()` method in the following example copies 1KB data from the local GPU to a remote GPU. `channel` is a peer-to-peer communication channel between two GPUs, which consists of information on send/receive buffers. `channel` is initialized from the host side before the kernel execution.
 
 ```cpp
-template <class T>
-using DeviceHandle = mscclpp::DeviceHandle<T>;
-__device__ DeviceHandle<mscclpp::SimpleProxyChannel> channel;
+__device__ mscclpp::DeviceHandle<mscclpp::SimpleProxyChannel> channel;
 __global__ void gpuKernel() {
   ...
   // Only one thread is needed for this method.
