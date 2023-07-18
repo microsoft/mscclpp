@@ -6,7 +6,9 @@
 
 #include "common.hpp"
 
-__constant__ mscclpp::SimpleProxyChannel constProxyChans[16];
+template <class T>
+using DeviceHandle = mscclpp::DeviceHandle<T>;
+__constant__ DeviceHandle<mscclpp::SimpleProxyChannel> constProxyChans[16];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 void* localRecvBuff;
 void* localSendBuff;
@@ -29,7 +31,7 @@ __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
 
 __global__ void alltoall0(int rank, int worldSize, size_t nElements) {
   int remoteRank = (blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
-  mscclpp::SimpleProxyChannel proxyChan = constProxyChans[blockIdx.x];
+  DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[blockIdx.x];
   if (threadIdx.x == 0) {
     proxyChan.putWithSignal(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
                             nElements * sizeof(int));
@@ -146,12 +148,12 @@ void AllToAllTestEngine::allocateBuffer() {
 }
 
 void AllToAllTestEngine::setupConnections() {
-  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannels;
   setupMeshConnections(proxyChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
 
-  assert(proxyChannels.size() < sizeof(constProxyChans) / sizeof(mscclpp::SimpleProxyChannel));
+  assert(proxyChannels.size() < sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>));
   CUDATHROW(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
-                               sizeof(mscclpp::SimpleProxyChannel) * proxyChannels.size()));
+                               sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * proxyChannels.size()));
 }
 
 std::vector<void*> AllToAllTestEngine::getSendBuff() { return {sendBuff_.get()}; }

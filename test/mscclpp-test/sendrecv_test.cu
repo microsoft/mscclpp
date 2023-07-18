@@ -22,7 +22,9 @@ constexpr size_t MAX_BLOCKS_NUM = 32;
 
 #define ALIGN 4
 
-__constant__ mscclpp::SmChannel::DeviceHandle constSmChans[2];
+template <class T>
+using DeviceHandle = mscclpp::DeviceHandle<T>;
+__constant__ DeviceHandle<mscclpp::SmChannel> constSmChans[2];
 
 inline int getBlockNum(size_t count) {
   return std::min((count + THRES_BYTES_PER_BLOCK - 1) / THRES_BYTES_PER_BLOCK, MAX_BLOCKS_NUM);
@@ -39,8 +41,8 @@ __global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock) {
   size_t blockDataSize = min(dataSize - startIndex, dataPerBlock);
   int globalIndex = blockIdx.x * blockDim.x + threadIdx.x;
 
-  mscclpp::SmChannel::DeviceHandle sendConn = constSmChans[0];
-  mscclpp::SmChannel::DeviceHandle recvConn = constSmChans[1];
+  DeviceHandle<mscclpp::SmChannel> sendConn = constSmChans[0];
+  DeviceHandle<mscclpp::SmChannel> recvConn = constSmChans[1];
 
   sendConn.put(startIndex, startIndex, blockDataSize, threadIdx.x, blockDim.x);
   deviceSyncer.sync(gridDim.x);
@@ -179,7 +181,7 @@ void SendRecvTestEngine::setupConnections() {
 
   // swap to make sure devicePtrs_[0] in local rank write to devicePtrs_[1] in remote rank
   std::swap(futureRemoteMemory[0], futureRemoteMemory[1]);
-  std::vector<mscclpp::SmChannel::DeviceHandle> smChannelHandles(2);
+  std::vector<DeviceHandle<mscclpp::SmChannel>> smChannelHandles(2);
   for (int i : {0, 1}) {
     // We assume ranks in the same node
     smChannels_.emplace_back(smSemaphores[i], futureRemoteMemory[i].get(), (void*)localMemories[i].data());
@@ -187,7 +189,7 @@ void SendRecvTestEngine::setupConnections() {
   std::transform(smChannels_.begin(), smChannels_.end(), smChannelHandles.begin(),
                  [](const mscclpp::SmChannel& smChannel) { return smChannel.deviceHandle(); });
   cudaMemcpyToSymbol(constSmChans, smChannelHandles.data(),
-                     sizeof(mscclpp::SmChannel::DeviceHandle) * smChannelHandles.size());
+                     sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelHandles.size());
 }
 
 std::vector<void*> SendRecvTestEngine::getSendBuff() { return {devicePtrs_[0].get()}; }

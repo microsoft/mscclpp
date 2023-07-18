@@ -132,6 +132,9 @@ union ChannelTrigger {
 
 /// Proxy channel.
 struct ProxyChannel {
+  /// Use DeviceHandle<SimpleProxyChannel> in device code.
+  typedef ProxyChannel DeviceHandle;
+
   ProxyChannel() = default;
 
   ProxyChannel(SemaphoreId SemaphoreId, Host2DeviceSemaphore::DeviceHandle semaphore, DeviceProxyFifo fifo);
@@ -231,6 +234,9 @@ struct ProxyChannel {
 
 /// Simple proxy channel with a single destination and source memory region.
 struct SimpleProxyChannel {
+  /// Use DeviceHandle<SimpleProxyChannel> in device code.
+  typedef SimpleProxyChannel DeviceHandle;
+
   /// Default constructor.
   SimpleProxyChannel() = default;
 
@@ -308,6 +314,11 @@ struct SimpleProxyChannel {
   MemoryId src_;
 };
 
+template <>
+DeviceHandle<ProxyChannel> deviceHandle(ProxyChannel&& proxyChannel);
+
+template <>
+DeviceHandle<SimpleProxyChannel> deviceHandle(SimpleProxyChannel&& simpleProxyChannel);
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_PROXY_CHANNEL_HPP_

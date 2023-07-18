@@ -5,6 +5,8 @@
 
 #include "mp_unit_tests.hpp"
 
+template <class T>
+using DeviceHandle = mscclpp::DeviceHandle<T>;
 void SmChannelOneToOneTest::SetUp() {
   // Need at least two ranks within a node
   if (gEnv->nRanksPerNode < 2) {
@@ -60,10 +62,10 @@ void SmChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SmChannel>
   }
 }
 
-__constant__ mscclpp::SmChannel::DeviceHandle gChannelOneToOneTestConstSmChans;
+__constant__ DeviceHandle<mscclpp::SmChannel> gChannelOneToOneTestConstSmChans;
 
 __global__ void kernelSmPutPingPong(int* buff, int rank, int nElem, int* ret) {
-  mscclpp::SmChannel::DeviceHandle& smChan = gChannelOneToOneTestConstSmChans;
+  DeviceHandle<mscclpp::SmChannel>& smChan = gChannelOneToOneTestConstSmChans;
   volatile int* sendBuff = (volatile int*)buff;
   int nTries = 1000;
   int rank1Offset = 10000000;
@@ -117,13 +119,13 @@ TEST_F(SmChannelOneToOneTest, PutPingPong) {
   std::vector<mscclpp::SmChannel> smChannels;
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
   setupMeshConnections(smChannels, buff.get(), nElem * sizeof(int));
-  std::vector<mscclpp::SmChannel::DeviceHandle> deviceHandles(smChannels.size());
+  std::vector<DeviceHandle<mscclpp::SmChannel>> deviceHandles(smChannels.size());
   std::transform(smChannels.begin(), smChannels.end(), deviceHandles.begin(),
                  [](const mscclpp::SmChannel& smChan) { return smChan.deviceHandle(); });
 
   ASSERT_EQ(smChannels.size(), 1);
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstSmChans, deviceHandles.data(),
-                                       sizeof(mscclpp::SmChannel::DeviceHandle)));
+                                       sizeof(DeviceHandle<mscclpp::SmChannel>)));
 
   std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
 
@@ -154,7 +156,7 @@ TEST_F(SmChannelOneToOneTest, PutPingPong) {
 __global__ void kernelSmGetPingPong(int* buff, int rank, int nElem, int* ret) {
   if (rank > 1) return;
 
-  mscclpp::SmChannel::DeviceHandle& smChan = gChannelOneToOneTestConstSmChans;
+  DeviceHandle<mscclpp::SmChannel>& smChan = gChannelOneToOneTestConstSmChans;
   volatile int* buffPtr = (volatile int*)buff;
   int offset0 = (rank == 0) ? 0 : 10000000;
   int offset1 = (rank == 0) ? 10000000 : 0;
@@ -196,13 +198,13 @@ TEST_F(SmChannelOneToOneTest, GetPingPong) {
   std::vector<mscclpp::SmChannel> smChannels;
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
   setupMeshConnections(smChannels, buff.get(), nElem * sizeof(int));
-  std::vector<mscclpp::SmChannel::DeviceHandle> deviceHandles(smChannels.size());
+  std::vector<DeviceHandle<mscclpp::SmChannel>> deviceHandles(smChannels.size());
   std::transform(smChannels.begin(), smChannels.end(), deviceHandles.begin(),
-                 [](const mscclpp::SmChannel& smChan) { return smChan.deviceHandle(); });
+                 [](const mscclpp::SmChannel& smChan) { return mscclpp::deviceHandle(smChan); });
 
   ASSERT_EQ(deviceHandles.size(), 1);
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstSmChans, deviceHandles.data(),
-                                       sizeof(mscclpp::SmChannel::DeviceHandle)));
+                                       sizeof(DeviceHandle<mscclpp::SmChannel>)));
 
   std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
 
@@ -233,7 +235,7 @@ TEST_F(SmChannelOneToOneTest, GetPingPong) {
 __global__ void kernelSmPacketPingPong(int* buff, int rank, int nElem, int* ret) {
   if (rank > 1) return;
 
-  mscclpp::SmChannel::DeviceHandle& smChan = gChannelOneToOneTestConstSmChans;
+  DeviceHandle<mscclpp::SmChannel>& smChan = gChannelOneToOneTestConstSmChans;
   volatile int* sendBuff = (volatile int*)buff;
   int nTries = 1000;
   int putOffset = (rank == 0) ? 0 : 10000000;
@@ -284,13 +286,13 @@ TEST_F(SmChannelOneToOneTest, PacketPingPong) {
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
   std::shared_ptr<int> intermBuff = mscclpp::allocSharedCuda<int>(nElem * 2);
   setupMeshConnections(smChannels, buff.get(), nElem * sizeof(int), intermBuff.get(), nElem * 2 * sizeof(int));
-  std::vector<mscclpp::SmChannel::DeviceHandle> deviceHandles(smChannels.size());
+  std::vector<DeviceHandle<mscclpp::SmChannel>> deviceHandles(smChannels.size());
   std::transform(smChannels.begin(), smChannels.end(), deviceHandles.begin(),
                  [](const mscclpp::SmChannel& smChan) { return smChan.deviceHandle(); });
 
   ASSERT_EQ(smChannels.size(), 1);
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstSmChans, deviceHandles.data(),
-                                       sizeof(mscclpp::SmChannel::DeviceHandle)));
+                                       sizeof(DeviceHandle<mscclpp::SmChannel>)));
 
   std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
 

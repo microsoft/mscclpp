@@ -78,4 +78,14 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
   return result;
 }
 
+template <>
+DeviceHandle<ProxyChannel> deviceHandle(ProxyChannel&& proxyChannel) {
+  return proxyChannel;
+}
+
+template <>
+DeviceHandle<SimpleProxyChannel> deviceHandle(SimpleProxyChannel&& simpleProxyChannel) {
+  return simpleProxyChannel;
+}
+
 }  // namespace mscclpp
