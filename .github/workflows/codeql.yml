@@ -44,10 +44,14 @@ jobs:
         tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
         sudo ln -s /tmp/cmake-3.26.4-linux-x86_64/bin/cmake /usr/bin/cmake
 
+    - name: Dubious ownership exception
+      run: |
+        git config --global --add safe.directory /__w/mscclpp/mscclpp
+
     - name: Autobuild
       uses: github/codeql-action/autobuild@v2
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v2
       with:
-        category: "/language:${{matrix.language}}"
+        category: "/language:${{matrix.language}}/cuda-version:${{matrix.cuda-version}}"

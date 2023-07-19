@@ -3,10 +3,11 @@
 
 #include <mpi.h>
 
-#include "config.hpp"
+#include <mscclpp/config.hpp>
+
 #include "mp_unit_tests.hpp"
 
-void BootstrapTest::bootstrapTestAllGather(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap) {
+void BootstrapTest::bootstrapTestAllGather(std::shared_ptr<mscclpp::Bootstrap> bootstrap) {
   std::vector<int> tmp(bootstrap->getNranks(), 0);
   tmp[bootstrap->getRank()] = bootstrap->getRank() + 1;
   bootstrap->allGather(tmp.data(), sizeof(int));
@@ -15,9 +16,9 @@ void BootstrapTest::bootstrapTestAllGather(std::shared_ptr<mscclpp::BaseBootstra
   }
 }
 
-void BootstrapTest::bootstrapTestBarrier(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap) { bootstrap->barrier(); }
+void BootstrapTest::bootstrapTestBarrier(std::shared_ptr<mscclpp::Bootstrap> bootstrap) { bootstrap->barrier(); }
 
-void BootstrapTest::bootstrapTestSendRecv(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap) {
+void BootstrapTest::bootstrapTestSendRecv(std::shared_ptr<mscclpp::Bootstrap> bootstrap) {
   for (int i = 0; i < bootstrap->getNranks(); i++) {
     if (bootstrap->getRank() == i) continue;
     int msg1 = (bootstrap->getRank() + 1) * 3;
@@ -43,14 +44,14 @@ void BootstrapTest::bootstrapTestSendRecv(std::shared_ptr<mscclpp::BaseBootstrap
   }
 }
 
-void BootstrapTest::bootstrapTestAll(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap) {
+void BootstrapTest::bootstrapTestAll(std::shared_ptr<mscclpp::Bootstrap> bootstrap) {
   bootstrapTestAllGather(bootstrap);
   bootstrapTestBarrier(bootstrap);
   bootstrapTestSendRecv(bootstrap);
 }
 
 TEST_F(BootstrapTest, WithId) {
-  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
   mscclpp::UniqueId id;
   if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
@@ -59,14 +60,14 @@ TEST_F(BootstrapTest, WithId) {
 }
 
 TEST_F(BootstrapTest, WithIpPortPair) {
-  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
   bootstrap->initialize(gEnv->args["ip_port"]);
   bootstrapTestAll(bootstrap);
 }
 
 TEST_F(BootstrapTest, ResumeWithId) {
   for (int i = 0; i < 5; ++i) {
-    auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
+    auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
     mscclpp::UniqueId id;
     if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
     MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
@@ -76,13 +77,13 @@ TEST_F(BootstrapTest, ResumeWithId) {
 
 TEST_F(BootstrapTest, ResumeWithIpPortPair) {
   for (int i = 0; i < 5; ++i) {
-    auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
+    auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
     bootstrap->initialize(gEnv->args["ip_port"]);
   }
 }
 
 TEST_F(BootstrapTest, ExitBeforeConnect) {
-  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
   bootstrap->createUniqueId();
 }
 
@@ -94,7 +95,7 @@ TEST_F(BootstrapTest, TimeoutWithId) {
   mscclpp::Timer timer;
 
   // All ranks initialize a bootstrap with their own id (will hang)
-  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, gEnv->worldSize);
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
   mscclpp::UniqueId id = bootstrap->createUniqueId();
 
   try {
@@ -108,9 +109,9 @@ TEST_F(BootstrapTest, TimeoutWithId) {
   ASSERT_LT(timer.elapsed(), 1100000);
 }
 
-class MPIBootstrap : public mscclpp::BaseBootstrap {
+class MPIBootstrap : public mscclpp::Bootstrap {
  public:
-  MPIBootstrap() : BaseBootstrap() {}
+  MPIBootstrap() : Bootstrap() {}
   int getRank() override {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);

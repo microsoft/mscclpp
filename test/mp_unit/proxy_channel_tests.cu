@@ -17,8 +17,8 @@ void ProxyChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
 void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels,
                                                     bool useIbOnly, void* sendBuff, size_t sendBuffBytes,
                                                     void* recvBuff, size_t recvBuffBytes) {
-  const int rank = communicator->bootstrapper()->getRank();
-  const int worldSize = communicator->bootstrapper()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  const int worldSize = communicator->bootstrap()->getNranks();
   const bool isInPlace = (recvBuff == nullptr);
   mscclpp::TransportFlags transport = (useIbOnly) ? ibTransport : (mscclpp::Transport::CudaIpc | ibTransport);
 
@@ -274,7 +274,7 @@ void ProxyChannelOneToOneTest::testPacketPingPong(bool useIbOnly) {
 
   EXPECT_EQ(*ret, 0);
 
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 
   channelService->stopProxy();
 }
@@ -312,7 +312,7 @@ void ProxyChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
       <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, 2, nTries, nullptr);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 
   // Measure latency
   mscclpp::Timer timer;
@@ -320,7 +320,7 @@ void ProxyChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
       <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, 2, nTries, nullptr);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 
   if (gEnv->rank == 0) {
     std::cout << testName << ": " << std::setprecision(4) << (float)timer.elapsed() / (float)nTries << " us/iter\n";

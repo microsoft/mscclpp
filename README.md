@@ -61,7 +61,7 @@ Some in-kernel communication interfaces of MSCCL++ send requests (called trigger
 
 ```cpp
 // Bootstrap: initialize control-plane connections between all ranks
-auto bootstrap = std::make_shared<mscclpp::Bootstrap>(rank, world_size);
+auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, world_size);
 // Create a communicator for connection setup
 mscclpp::Communicator comm(bootstrap);
 // Setup connections here using `comm`

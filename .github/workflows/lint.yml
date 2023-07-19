@@ -20,10 +20,8 @@ jobs:
 
     - name: Run cpplint
       run: |
-        CPPSOURCES=$(find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*" -not -path "./python/*")
-        PYTHONCPPSOURCES=$(find ./python/src/ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
+        CPPSOURCES=$(find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*")
         clang-format -style=file --verbose --Werror --dry-run ${CPPSOURCES}
-        clang-format --dry-run ${PYTHONCPPSOURCES}
 
   pylint:
     runs-on: ubuntu-20.04
@@ -45,7 +43,7 @@ jobs:
         with:
           black: true
           black_auto_fix: false
-          black_args: "--config .black --check"
+          black_args: "--config pyproject.toml --check"
 
   spelling:
     runs-on: ubuntu-20.04

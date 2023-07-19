@@ -391,9 +391,9 @@ int main(int argc, const char* argv[]) {
 
   try {
     if (rank == 0) printf("Initializing MSCCL++\n");
-    auto bootstrapper = std::make_shared<mscclpp::Bootstrap>(rank, world_size);
-    bootstrapper->initialize(ip_port);
-    mscclpp::Communicator comm(bootstrapper);
+    auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, world_size);
+    bootstrap->initialize(ip_port);
+    mscclpp::Communicator comm(bootstrap);
     mscclpp::ProxyService channelService(comm);
 
     if (rank == 0) printf("Initializing data for allgather test\n");
@@ -422,19 +422,19 @@ int main(int argc, const char* argv[]) {
     }
     int tmp[16];
     // A simple barrier
-    bootstrapper->allGather(tmp, sizeof(int));
+    bootstrap->allGather(tmp, sizeof(int));
     if (rank == 0) printf("Successfully checked the correctness\n");
 
     // Perf test
     int iterwithoutcudagraph = 10;
     if (rank == 0) printf("Running %d iterations of the kernel without CUDA graph\n", iterwithoutcudagraph);
     CUDACHECK(cudaStreamSynchronize(stream));
-    bootstrapper->allGather(tmp, sizeof(int));
+    bootstrap->allGather(tmp, sizeof(int));
     for (int i = 0; i < iterwithoutcudagraph; ++i) {
       kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
     }
     CUDACHECK(cudaStreamSynchronize(stream));
-    bootstrapper->allGather(tmp, sizeof(int));
+    bootstrap->allGather(tmp, sizeof(int));
 
     // cudaGraph Capture
     int cudagraphiter = 10;
@@ -462,7 +462,7 @@ int main(int argc, const char* argv[]) {
     if (rank == 0)
       printf("Running %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphlaunch,
              cudagraphiter);
-    bootstrapper->allGather(tmp, sizeof(int));
+    bootstrap->allGather(tmp, sizeof(int));
     double t0, t1, ms, time_in_us;
     t0 = getTime();
     for (int i = 0; i < cudagraphlaunch; ++i) {
@@ -475,7 +475,7 @@ int main(int argc, const char* argv[]) {
     time_in_us = ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter;
     printf("Rank %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us,
            (double)(dataSize) / 1e9 / (time_in_us / 1e6));
-    bootstrapper->allGather(tmp, sizeof(int));
+    bootstrap->allGather(tmp, sizeof(int));
 
     if (rank == 0) printf("Stopping MSCCL++ proxy threads\n");
     channelService.stopProxy();

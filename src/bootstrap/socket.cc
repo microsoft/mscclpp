@@ -13,11 +13,11 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <mscclpp/config.hpp>
 #include <mscclpp/errors.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
 
-#include "config.hpp"
 #include "debug.h"
 #include "utils_internal.hpp"
 
