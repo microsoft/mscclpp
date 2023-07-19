@@ -8,7 +8,7 @@ set(MSCCLPP_PATCH "0")
 set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})
 set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
 
-cmake_minimum_required(VERSION 3.26)
+cmake_minimum_required(VERSION 3.25)
 project(mscclpp LANGUAGES CUDA CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
@@ -23,6 +23,8 @@ include(${PROJECT_SOURCE_DIR}/cmake/AddClangFormatTargets.cmake)
 # Options
 option(ENABLE_TRACE "Enable tracing" OFF)
 option(USE_NPKIT "Use NPKIT" ON)
+option(BUILD_TESTS "Build tests" ON)
+option(BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(ALLOW_GDRCOPY "Use GDRCopy, if available" OFF)
 
 # Find CUDAToolkit. Set CUDA flags based on the detected CUDA version
@@ -51,25 +53,48 @@ if(ALLOW_GDRCOPY)
     find_package(GDRCopy)
 endif()
 
-# libmscclpp
-add_library(mscclpp SHARED)
-target_include_directories(mscclpp
+add_library(mscclpp_obj OBJECT)
+target_include_directories(mscclpp_obj
     PRIVATE
     ${CUDAToolkit_INCLUDE_DIRS}
     ${IBVERBS_INCLUDE_DIRS}
     ${NUMA_INCLUDE_DIRS}
     ${GDRCOPY_INCLUDE_DIRS})
-target_link_libraries(mscclpp PRIVATE ${CUDA_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} ${GDRCOPY_LIBRARIES})
-set_target_properties(mscclpp PROPERTIES LINKER_LANGUAGE CXX VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
+target_link_libraries(mscclpp_obj PRIVATE ${CUDA_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} ${GDRCOPY_LIBRARIES})
+set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 if(ENABLE_TRACE)
-    target_compile_definitions(mscclpp PRIVATE ENABLE_TRACE)
+    target_compile_definitions(mscclpp_obj PRIVATE ENABLE_TRACE)
 endif()
 if(USE_NPKIT)
-    target_compile_definitions(mscclpp PRIVATE ENABLE_NPKIT)
+    target_compile_definitions(mscclpp_obj PRIVATE ENABLE_NPKIT)
 endif()
+if(ALLOW_GDRCOPY AND GDRCOPY_FOUND)
+    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_GDRCOPY)
+    target_link_libraries(mscclpp_obj PRIVATE MSCCLPP::gdrcopy)
+endif()
+
+# libmscclpp
+add_library(mscclpp SHARED)
+target_link_libraries(mscclpp PUBLIC mscclpp_obj)
+set_target_properties(mscclpp PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
+add_library(mscclpp_static STATIC)
+target_link_libraries(mscclpp_static PUBLIC mscclpp_obj)
+set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
+
 add_subdirectory(include)
 add_subdirectory(src)
-install(TARGETS mscclpp LIBRARY DESTINATION lib)
+install(TARGETS mscclpp mscclpp_static
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib)
+
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/include/ DESTINATION include FILES_MATCHING PATTERN "*.hpp")
 
 # Tests
-add_subdirectory(test)
+if (BUILD_TESTS)
+    add_subdirectory(test)
+endif()
+
+# Python bindings
+if(BUILD_PYTHON_BINDINGS)
+    add_subdirectory(python)
+endif()

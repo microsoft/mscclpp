@@ -19,10 +19,10 @@ void CommunicatorTestBase::SetUp() {
   ibTransport = ibIdToTransport(rankToLocalRank(gEnv->rank));
   MSCCLPP_CUDATHROW(cudaSetDevice(rankToLocalRank(gEnv->rank)));
 
-  std::shared_ptr<mscclpp::Bootstrap> bootstrap;
+  std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   mscclpp::UniqueId id;
   if (gEnv->rank < numRanksToUse) {
-    bootstrap = std::make_shared<mscclpp::Bootstrap>(gEnv->rank, numRanksToUse);
+    bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, numRanksToUse);
     if (gEnv->rank == 0) id = bootstrap->createUniqueId();
   }
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
@@ -63,14 +63,14 @@ void CommunicatorTestBase::registerMemoryPairs(void* buff, size_t buffSize, mscc
   localMemory = communicator->registerMemory(buff, buffSize, transport);
   std::unordered_map<int, mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> futureRemoteMemories;
   for (int remoteRank : remoteRanks) {
-    if (remoteRank != communicator->bootstrapper()->getRank()) {
+    if (remoteRank != communicator->bootstrap()->getRank()) {
       communicator->sendMemoryOnSetup(localMemory, remoteRank, tag);
       futureRemoteMemories[remoteRank] = communicator->recvMemoryOnSetup(remoteRank, tag);
     }
   }
   communicator->setup();
   for (int remoteRank : remoteRanks) {
-    if (remoteRank != communicator->bootstrapper()->getRank()) {
+    if (remoteRank != communicator->bootstrap()->getRank()) {
       remoteMemories[remoteRank] = futureRemoteMemories[remoteRank].get();
     }
   }
@@ -166,10 +166,10 @@ TEST_F(CommunicatorTest, BasicWrite) {
   if (gEnv->rank >= numRanksToUse) return;
 
   deviceBufferInit();
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 
   writeToRemote(deviceBufferSize / sizeof(int) / gEnv->worldSize);
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 
   // polling until it becomes ready
   bool ready = false;
@@ -181,7 +181,7 @@ TEST_F(CommunicatorTest, BasicWrite) {
       FAIL() << "Polling is stuck.";
     }
   } while (!ready);
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 }
 
 __global__ void kernelWaitSemaphores(mscclpp::Host2DeviceSemaphore::DeviceHandle* deviceSemaphores, int rank,
@@ -201,10 +201,10 @@ TEST_F(CommunicatorTest, WriteWithDeviceSemaphores) {
     semaphores.insert({entry.first, std::make_shared<mscclpp::Host2DeviceSemaphore>(*communicator.get(), conn)});
   }
   communicator->setup();
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 
   deviceBufferInit();
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 
   auto deviceSemaphoreHandles = mscclpp::allocSharedCuda<mscclpp::Host2DeviceSemaphore::DeviceHandle>(gEnv->worldSize);
   for (int i = 0; i < gEnv->worldSize; i++) {
@@ -214,7 +214,7 @@ TEST_F(CommunicatorTest, WriteWithDeviceSemaphores) {
                                                                        1, cudaMemcpyHostToDevice);
     }
   }
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 
   writeToRemote(deviceBufferSize / sizeof(int) / gEnv->worldSize);
 
@@ -228,7 +228,7 @@ TEST_F(CommunicatorTest, WriteWithDeviceSemaphores) {
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   ASSERT_TRUE(testWriteCorrectness());
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 }
 
 TEST_F(CommunicatorTest, WriteWithHostSemaphores) {
@@ -242,10 +242,10 @@ TEST_F(CommunicatorTest, WriteWithHostSemaphores) {
     semaphores.insert({entry.first, std::make_shared<mscclpp::Host2HostSemaphore>(*communicator.get(), conn)});
   }
   communicator->setup();
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 
   deviceBufferInit();
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 
   writeToRemote(deviceBufferSize / sizeof(int) / gEnv->worldSize);
 
@@ -274,5 +274,5 @@ TEST_F(CommunicatorTest, WriteWithHostSemaphores) {
   }
 
   ASSERT_TRUE(testWriteCorrectness());
-  communicator->bootstrapper()->barrier();
+  communicator->bootstrap()->barrier();
 }

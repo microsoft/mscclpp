@@ -71,9 +71,9 @@ class IBConnection : public ConnectionBase {
 
   void flush() override;
 
-  void beginSetup(std::shared_ptr<BaseBootstrap> bootstrap) override;
+  void beginSetup(std::shared_ptr<Bootstrap> bootstrap) override;
 
-  void endSetup(std::shared_ptr<BaseBootstrap> bootstrap) override;
+  void endSetup(std::shared_ptr<Bootstrap> bootstrap) override;
 };
 
 }  // namespace mscclpp

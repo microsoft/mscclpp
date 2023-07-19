@@ -21,8 +21,8 @@ void SmChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
 void SmChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels, void* inputBuff,
                                                  size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes) {
-  const int rank = communicator->bootstrapper()->getRank();
-  const int worldSize = communicator->bootstrapper()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  const int worldSize = communicator->bootstrap()->getNranks();
   const bool isInPlace = (outputBuff == nullptr);
   mscclpp::TransportFlags transport = mscclpp::Transport::CudaIpc | ibTransport;
 

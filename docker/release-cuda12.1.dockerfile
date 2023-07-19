@@ -20,9 +20,13 @@ RUN rm -rf build && \
     mkdir build && \
     cd build && \
     ${CMAKE_HOME}/bin/cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${MSCCLPP_HOME} .. && \
-    make -j mscclpp && \
+    make -j mscclpp mscclpp_static && \
     make install/fast && \
     strip ${MSCCLPP_HOME}/lib/libmscclpp.so.[0-9]*.[0-9]*.[0-9]*
+
+# Install MSCCL++ Python bindings
+WORKDIR ${MSCCLPP_SRC_DIR}
+RUN python3.8 -m pip install .
 
 ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${MSCCLPP_HOME}/lib"
 RUN echo LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" >> /etc/environment

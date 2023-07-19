@@ -15,7 +15,7 @@
 
 namespace mscclpp {
 
-Communicator::Impl::Impl(std::shared_ptr<BaseBootstrap> bootstrap) : bootstrap_(bootstrap) {
+Communicator::Impl::Impl(std::shared_ptr<Bootstrap> bootstrap) : bootstrap_(bootstrap) {
   rankToHash_.resize(bootstrap->getNranks());
   auto hostHash = getHostHash();
   INFO(MSCCLPP_INIT, "Host hash: %lx", hostHash);
@@ -47,10 +47,10 @@ cudaStream_t Communicator::Impl::getIpcStream() { return ipcStream_; }
 
 MSCCLPP_API_CPP Communicator::~Communicator() = default;
 
-MSCCLPP_API_CPP Communicator::Communicator(std::shared_ptr<BaseBootstrap> bootstrap)
+MSCCLPP_API_CPP Communicator::Communicator(std::shared_ptr<Bootstrap> bootstrap)
     : pimpl(std::make_unique<Impl>(bootstrap)) {}
 
-MSCCLPP_API_CPP std::shared_ptr<BaseBootstrap> Communicator::bootstrapper() { return pimpl->bootstrap_; }
+MSCCLPP_API_CPP std::shared_ptr<Bootstrap> Communicator::bootstrap() { return pimpl->bootstrap_; }
 
 MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports) {
   return RegisteredMemory(
@@ -61,7 +61,7 @@ struct MemorySender : public Setuppable {
   MemorySender(RegisteredMemory memory, int remoteRank, int tag)
       : memory_(memory), remoteRank_(remoteRank), tag_(tag) {}
 
-  void beginSetup(std::shared_ptr<BaseBootstrap> bootstrap) override {
+  void beginSetup(std::shared_ptr<Bootstrap> bootstrap) override {
     bootstrap->send(memory_.serialize(), remoteRank_, tag_);
   }
 
@@ -77,7 +77,7 @@ MSCCLPP_API_CPP void Communicator::sendMemoryOnSetup(RegisteredMemory memory, in
 struct MemoryReceiver : public Setuppable {
   MemoryReceiver(int remoteRank, int tag) : remoteRank_(remoteRank), tag_(tag) {}
 
-  void endSetup(std::shared_ptr<BaseBootstrap> bootstrap) override {
+  void endSetup(std::shared_ptr<Bootstrap> bootstrap) override {
     std::vector<char> data;
     bootstrap->recv(data, remoteRank_, tag_);
     memoryPromise_.set_value(RegisteredMemory::deserialize(data));
