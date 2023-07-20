@@ -565,6 +565,16 @@ extern const TransportFlags AllIBTransports;
 /// A constant TransportFlags object representing all transports.
 extern const TransportFlags AllTransports;
 
+/// A type which could be safely used in device side.
+template <class T>
+using DeviceHandle = typename T::DeviceHandle;
+
+/// Retrieve the deviceHandle instance from host object.
+template <typename T>
+DeviceHandle<std::remove_reference_t<T>> deviceHandle(T&& t) {
+  return t.deviceHandle();
+}
+
 }  // namespace mscclpp
 
 namespace std {
