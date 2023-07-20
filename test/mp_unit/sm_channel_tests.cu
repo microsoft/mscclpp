@@ -121,7 +121,7 @@ TEST_F(SmChannelOneToOneTest, PutPingPong) {
   setupMeshConnections(smChannels, buff.get(), nElem * sizeof(int));
   std::vector<DeviceHandle<mscclpp::SmChannel>> deviceHandles(smChannels.size());
   std::transform(smChannels.begin(), smChannels.end(), deviceHandles.begin(),
-                 [](const mscclpp::SmChannel& smChan) { return smChan.deviceHandle(); });
+                 [](const mscclpp::SmChannel& smChan) { return mscclpp::deviceHandle(smChan); });
 
   ASSERT_EQ(smChannels.size(), 1);
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstSmChans, deviceHandles.data(),
@@ -288,7 +288,7 @@ TEST_F(SmChannelOneToOneTest, PacketPingPong) {
   setupMeshConnections(smChannels, buff.get(), nElem * sizeof(int), intermBuff.get(), nElem * 2 * sizeof(int));
   std::vector<DeviceHandle<mscclpp::SmChannel>> deviceHandles(smChannels.size());
   std::transform(smChannels.begin(), smChannels.end(), deviceHandles.begin(),
-                 [](const mscclpp::SmChannel& smChan) { return smChan.deviceHandle(); });
+                 [](const mscclpp::SmChannel& smChan) { return mscclpp::deviceHandle(smChan); });
 
   ASSERT_EQ(smChannels.size(), 1);
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstSmChans, deviceHandles.data(),
