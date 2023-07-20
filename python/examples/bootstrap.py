@@ -48,7 +48,7 @@ def setup_connections(comm, rank, world_size, element_size, proxy_service):
             proxy_service.add_memory(remote_memories[i].get()),
             proxy_service.add_memory(reg_mem),
         )
-        simple_proxy_channels.append(proxy_channel)
+        simple_proxy_channels.append(mscclpp.device_handle(proxy_channel))
     comm.setup()
     return simple_proxy_channels
 
