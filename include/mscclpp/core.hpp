@@ -355,6 +355,7 @@ class RegisteredMemory {
   static RegisteredMemory deserialize(const std::vector<char>& data);
 
   friend class Connection;
+  friend class Context;
   friend class IBConnection;
   friend class Communicator;
 
@@ -414,6 +415,66 @@ class Connection {
   /// @param memory The @ref RegisteredMemory object.
   /// @return A shared pointer to the implementation object.
   static std::shared_ptr<RegisteredMemory::Impl> getRegisteredMemoryImpl(RegisteredMemory& memory);
+};
+
+/// Represents one end of a connection.
+class Endpoint {
+ protected:
+  struct Impl;
+
+ public:
+  /// Get the transport used.
+  ///
+  /// @return The transport used.
+  Transport transport();
+
+  /// Serialize the Endpoint object to a vector of characters.
+  ///
+  /// @return A vector of characters representing the serialized Endpoint object.
+  std::vector<char> serialize();
+
+  /// Deserialize a Endpoint object from a vector of characters.
+  ///
+  /// @param data A vector of characters representing a serialized Endpoint object.
+  /// @return A deserialized Endpoint object.
+  static Endpoint deserialize(const std::vector<char>& data);
+
+ private:
+  // A shared_ptr is used since Endpoint is immutable.
+  std::shared_ptr<Impl> pimpl;
+};
+
+class Context {
+ protected:
+  struct Impl;
+
+ public:
+  /// Register a region of GPU memory for use in this context.
+  ///
+  /// @param ptr Base pointer to the memory.
+  /// @param size Size of the memory region in bytes.
+  /// @param transports Transport flags.
+  /// @return RegisteredMemory A handle to the buffer.
+  RegisteredMemory registerMemory(void* ptr, size_t size, TransportFlags transports);
+
+  /// Create an endpoint for establishing connections.
+  ///
+  /// @param transport The transport to be used.
+  /// @return The newly created endpoint.
+  Endpoint createEndpoint(Transport transport);
+
+  /// Establish a connection between two endpoints.
+  ///
+  /// @param localEndpoint The local endpoint.
+  /// @param remoteEndpoint The remote endpoint.
+  /// @return std::shared_ptr<Connection> A shared pointer to the connection.
+  std::shared_ptr<Connection> connect(Endpoint localEndpoint, Endpoint remoteEndpoint);
+
+  friend class RegisteredMemory::Impl;
+
+ private:
+  /// Unique pointer to the implementation of the Communicator class.
+  std::unique_ptr<Impl> pimpl;
 };
 
 /// A base class for objects that can be set up during @ref Communicator::setup().
@@ -478,7 +539,7 @@ class NonblockingFuture {
 ///      processes.
 ///   6. All done; use connections and registered memories to build channels.
 ///
-class Communicator {
+class Communicator : public Context {
  protected:
   struct Impl;
 
@@ -495,14 +556,6 @@ class Communicator {
   ///
   /// @return std::shared_ptr<Bootstrap> The bootstrap held by this communicator.
   std::shared_ptr<Bootstrap> bootstrap();
-
-  /// Register a region of GPU memory for use in this communicator.
-  ///
-  /// @param ptr Base pointer to the memory.
-  /// @param size Size of the memory region in bytes.
-  /// @param transports Transport flags.
-  /// @return RegisteredMemory A handle to the buffer.
-  RegisteredMemory registerMemory(void* ptr, size_t size, TransportFlags transports);
 
   /// Send information of a registered memory to the remote side on setup.
   ///
@@ -556,7 +609,6 @@ class Communicator {
   /// that have been registered after the (n-1)-th call.
   void setup();
 
-  friend class RegisteredMemory::Impl;
   friend class IBConnection;
 
  private:
