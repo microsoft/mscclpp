@@ -29,6 +29,9 @@ void register_proxy_channel(nb::module_& m) {
            nb::arg("semaphore"), nb::arg("fifo"));
 
   nb::class_<SimpleProxyChannel>(m, "SimpleProxyChannel")
-      .def(nb::init<ProxyChannel, MemoryId, MemoryId>(), nb::arg("proxy_chan"), nb::arg("dst"), nb::arg("src"))
-      .def(nb::init<SimpleProxyChannel>(), nb::arg("proxy_chan"));
+      .def(nb::init<ProxyChannel, MemoryId, MemoryId>(), nb::arg("proxyChan"), nb::arg("dst"), nb::arg("src"))
+      .def(nb::init<SimpleProxyChannel>(), nb::arg("proxyChan"));
+
+  m.def("device_handle", &deviceHandle<ProxyChannel>, nb::arg("proxyChannel"));
+  m.def("device_handle", &deviceHandle<SimpleProxyChannel>, nb::arg("simpleProxyChannel"));
 };
