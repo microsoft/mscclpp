@@ -14,10 +14,8 @@
 
 namespace mscclpp {
 
-RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports,
-                             Communicator::Impl& commImpl) {
-  Impl(data, size, size, rank, transports, commImpl);
-}
+RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl)
+    : Impl(data, size, size, rank, transports, commImpl) {}
 
 RegisteredMemory::Impl::Impl(void* data, size_t size, size_t pitch, int rank, TransportFlags transports,
                              Communicator::Impl& commImpl)
@@ -80,6 +78,7 @@ MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl->tr
 MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
   std::vector<char> result;
   std::copy_n(reinterpret_cast<char*>(&pimpl->size), sizeof(pimpl->size), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl->pitch), sizeof(pimpl->pitch), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->rank), sizeof(pimpl->rank), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->hostHash), sizeof(pimpl->hostHash), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->transports), sizeof(pimpl->transports), std::back_inserter(result));
