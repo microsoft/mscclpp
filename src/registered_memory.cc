@@ -14,8 +14,19 @@
 
 namespace mscclpp {
 
-RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl)
-    : data(data), size(size), rank(rank), hostHash(commImpl.rankToHash_.at(rank)), transports(transports) {
+RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports,
+                             Communicator::Impl& commImpl) {
+  Impl(data, size, size, rank, transports, commImpl);
+}
+
+RegisteredMemory::Impl::Impl(void* data, size_t size, size_t pitch, int rank, TransportFlags transports,
+                             Communicator::Impl& commImpl)
+    : data(data),
+      size(size),
+      pitch(pitch),
+      rank(rank),
+      hostHash(commImpl.rankToHash_.at(rank)),
+      transports(transports) {
   if (transports.has(Transport::CudaIpc)) {
     TransportInfo transportInfo;
     transportInfo.transport = Transport::CudaIpc;
@@ -60,6 +71,8 @@ MSCCLPP_API_CPP void* RegisteredMemory::data() { return pimpl->data; }
 
 MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl->size; }
 
+MSCCLPP_API_CPP size_t RegisteredMemory::pitch() { return pimpl->pitch; }
+
 MSCCLPP_API_CPP int RegisteredMemory::rank() { return pimpl->rank; }
 
 MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl->transports; }
@@ -99,6 +112,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
   auto it = serialization.begin();
   std::copy_n(it, sizeof(this->size), reinterpret_cast<char*>(&this->size));
   it += sizeof(this->size);
+  std::copy_n(it, sizeof(this->pitch), reinterpret_cast<char*>(&this->pitch));
+  it += sizeof(this->pitch);
   std::copy_n(it, sizeof(this->rank), reinterpret_cast<char*>(&this->rank));
   it += sizeof(this->rank);
   std::copy_n(it, sizeof(this->hostHash), reinterpret_cast<char*>(&this->hostHash));

@@ -44,6 +44,8 @@ class CudaIpcConnection : public ConnectionBase {
 
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
+  void write2D(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint32_t width,
+               uint32_t height) override;
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
 
   void flush() override;
@@ -67,6 +69,8 @@ class IBConnection : public ConnectionBase {
 
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
+  void write2D(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint32_t width,
+               uint32_t height) override;
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
 
   void flush() override;

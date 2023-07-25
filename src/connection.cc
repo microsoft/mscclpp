@@ -3,6 +3,7 @@
 
 #include "connection.hpp"
 
+#include <algorithm>
 #include <mscclpp/utils.hpp>
 
 #include "debug.h"
@@ -55,6 +56,20 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
   INFO(MSCCLPP_P2P, "CudaIpcConnection write: from %p to %p, size %lu", srcPtr + srcOffset, dstPtr + dstOffset, size);
 
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)size);
+}
+
+void CudaIpcConnection::write2D(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
+                                uint32_t width, uint32_t height) {
+  validateTransport(dst, remoteTransport());
+  validateTransport(src, transport());
+
+  char* dstPtr = (char*)dst.data();
+  char* srcPtr = (char*)src.data();
+
+  MSCCLPP_CUDATHROW(cudaMemcpy2DAsync(dstPtr + dstOffset, 8, srcPtr + srcOffset, 8, width, height,
+                                      cudaMemcpyDeviceToDevice, stream_));
+  INFO(MSCCLPP_P2P, "CudaIpcConnection write: from %p to %p, width %u height %u", srcPtr + srcOffset,
+       dstPtr + dstOffset, width, height);
 }
 
 void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
@@ -124,6 +139,10 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   INFO(MSCCLPP_NET, "IBConnection write: from %p to %p, size %lu", (uint8_t*)srcMr->getBuff() + srcOffset,
        (uint8_t*)dstMrInfo.addr + dstOffset, size);
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)size);
+}
+
+void IBConnection::write2D(RegisteredMemory, uint64_t, RegisteredMemory, uint64_t, uint32_t, uint32_t) {
+  throw Error("write2D is not supported", ErrorCode::InvalidUsage);
 }
 
 void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {

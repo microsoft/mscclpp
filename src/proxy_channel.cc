@@ -62,8 +62,13 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
   if (trigger->fields.type & TriggerData) {
     RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
     RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
-    semaphore->connection()->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
-                                   trigger->fields.size);
+    if (trigger->fields2D.multiDimensionFlag) {
+      semaphore->connection()->write2D(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
+                                       trigger->fields2D.width, trigger->fields2D.height);
+    } else {
+      semaphore->connection()->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
+                                     trigger->fields.size);
+    }
   }
 
   if (trigger->fields.type & TriggerFlag) {

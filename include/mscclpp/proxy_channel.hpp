@@ -84,6 +84,10 @@ const TriggerType TriggerSync = 0x4;  // Trigger a flush.
 #define MSCCLPP_BITS_TYPE 3
 #define MSCCLPP_BITS_CONNID 10
 
+#define MSCCLPP_BITS_WIDTH_SIZE 16
+#define MSCCLPP_BITS_HEIGHT_SIZE 16
+#define MSCCLPP_2D_FLAG 1
+
 /// Basic structure of each work element in the FIFO.
 union ChannelTrigger {
   ProxyTrigger value;
@@ -99,9 +103,27 @@ union ChannelTrigger {
     uint64_t dstMemoryId : MSCCLPP_BITS_REGMEM_HANDLE;
     uint64_t type : MSCCLPP_BITS_TYPE;
     uint64_t chanId : MSCCLPP_BITS_CONNID;
-    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_REGMEM_HANDLE - MSCCLPP_BITS_REGMEM_HANDLE -
-                MSCCLPP_BITS_TYPE);  // ensure 64-bit alignment
+    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_REGMEM_HANDLE - MSCCLPP_BITS_REGMEM_HANDLE - MSCCLPP_BITS_TYPE -
+                MSCCLPP_BITS_CONNID);  // ensure 64-bit alignment
   } fields;
+
+  struct {
+    // First 64 bits: value[0]
+    uint64_t width : MSCCLPP_BITS_WIDTH_SIZE;
+    uint64_t height : MSCCLPP_BITS_HEIGHT_SIZE;
+    uint64_t srcOffset : MSCCLPP_BITS_OFFSET;
+    uint64_t
+        : (64 - MSCCLPP_BITS_WIDTH_SIZE - MSCCLPP_BITS_HEIGHT_SIZE - MSCCLPP_BITS_OFFSET);  // ensure 64-bit alignment
+    // Second 64 bits: value[1]
+    uint64_t dstOffset : MSCCLPP_BITS_OFFSET;
+    uint64_t srcMemoryId : MSCCLPP_BITS_REGMEM_HANDLE;
+    uint64_t dstMemoryId : MSCCLPP_BITS_REGMEM_HANDLE;
+    uint64_t type : MSCCLPP_BITS_TYPE;
+    uint64_t chanId : MSCCLPP_BITS_CONNID;
+    uint64_t multiDimensionFlag : MSCCLPP_2D_FLAG;
+    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_REGMEM_HANDLE - MSCCLPP_BITS_REGMEM_HANDLE - MSCCLPP_BITS_TYPE -
+                MSCCLPP_BITS_CONNID - MSCCLPP_2D_FLAG);  // ensure 64-bit alignment
+  } fields2D;
 
 #ifdef __CUDACC__
   /// Default constructor.
@@ -122,6 +144,27 @@ union ChannelTrigger {
                             uint64_t bytes, int semaphoreId) {
     value.fst = ((srcOffset << MSCCLPP_BITS_SIZE) + bytes);
     value.snd = ((((((((semaphoreId << MSCCLPP_BITS_TYPE) + (uint64_t)type) << MSCCLPP_BITS_REGMEM_HANDLE) + dst)
+                    << MSCCLPP_BITS_REGMEM_HANDLE) +
+                   src)
+                  << MSCCLPP_BITS_OFFSET) +
+                 dstOffset);
+  }
+
+  /// Constructor.
+  /// @param type The type of the trigger.
+  /// @param dst The destination memory region.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param src The source memory region.
+  /// @param srcOffset The offset into the source memory region.
+  /// @param width The width of the 2D region.
+  /// @param height The height of the 2D region.
+  /// @param semaphoreId The ID of the semaphore.
+  __device__ ChannelTrigger(TriggerType type, MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
+                            uint64_t width, uint64_t height, int semaphoreId) {
+    value.fst = (((srcOffset << MSCCLPP_BITS_HEIGHT_SIZE) + height) << MSCCLPP_BITS_WIDTH_SIZE) + width;
+    value.snd = ((((((((((1ULL << MSCCLPP_BITS_CONNID) + semaphoreId) << MSCCLPP_BITS_TYPE) + type)
+                      << MSCCLPP_BITS_REGMEM_HANDLE) +
+                     dst)
                     << MSCCLPP_BITS_REGMEM_HANDLE) +
                    src)
                   << MSCCLPP_BITS_OFFSET) +
@@ -162,6 +205,15 @@ struct ProxyChannel {
   /// @param size The size of the transfer.
   __forceinline__ __device__ void put(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
     put(dst, offset, src, offset, size);
+  }
+
+  __forceinline__ __device__ void put2D(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
+                                        uint32_t width, uint32_t height) {
+    fifo_.push(ChannelTrigger(TriggerData, dst, dstOffset, src, srcOffset, width, height, semaphoreId_).value);
+  }
+
+  __forceinline__ __device__ void put2D(MemoryId dst, MemoryId src, uint64_t offset, uint32_t width, uint32_t height) {
+    put2D(dst, offset, src, offset, width, height);
   }
 
   /// Push a @ref TriggerFlag to the FIFO.
@@ -263,6 +315,10 @@ struct SimpleProxyChannel {
   /// @param size The size of the transfer.
   __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
     proxyChan_.put(dst_, dstOffset, src_, srcOffset, size);
+  }
+
+  __forceinline__ __device__ void put2D(uint64_t dstOffset, uint64_t srcOffset, uint32_t width, uint32_t height) {
+    proxyChan_.put2D(dst_, dstOffset, src_, srcOffset, width, height);
   }
 
   /// Push a @ref TriggerData to the FIFO.
