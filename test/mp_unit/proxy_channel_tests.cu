@@ -69,10 +69,10 @@ void ProxyChannelOneToOneTest::setupMeshConnections(
 
 __constant__ DeviceHandle<mscclpp::SimpleProxyChannel> gChannelOneToOneTestConstProxyChans;
 
-__device__ size_t getTileElementOffset(int elementId, int width, int rowIndex, int colIndex, int nElemInPitch) {
+__device__ size_t getTileElementOffset(int elementId, int width, int rowIndex, int colIndex, int nElemPerPitch) {
   int rowIndexInTile = elementId / width;
   int colIndexInTile = elementId % width;
-  return (rowIndex + rowIndexInTile) * nElemInPitch + (colIndex + colIndexInTile);
+  return (rowIndex + rowIndexInTile) * nElemPerPitch + (colIndex + colIndexInTile);
 }
 
 __global__ void kernelProxyTilePingPong(int* buff, int rank, int pitch, int rowIndex, int colIndex, int width,
@@ -83,14 +83,14 @@ __global__ void kernelProxyTilePingPong(int* buff, int rank, int pitch, int rowI
   int flusher = 0;
   size_t offset = rowIndex * pitch + colIndex * sizeof(int);
   size_t nElem = width * hight;
-  size_t nElemPerInPitch = pitch / sizeof(int);
+  size_t nElemPerPitch = pitch / sizeof(int);
   for (int i = 0; i < nTries; i++) {
     if (rank == 0) {
       if (i > 0) {
         if (threadIdx.x == 0) proxyChan.wait();
         __syncthreads();
         for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
-          size_t tileOffset = getTileElementOffset(j, width, rowIndex, colIndex, nElemPerInPitch);
+          size_t tileOffset = getTileElementOffset(j, width, rowIndex, colIndex, nElemPerPitch);
           if (sendBuff[tileOffset] != offset + i - 1 + j) {
             // printf("rank 0 ERROR: sendBuff[%d] = %d, expected %d\n", j, sendBuff[j], rank1Offset + i - 1 + j);
             *ret = 1;
@@ -99,7 +99,7 @@ __global__ void kernelProxyTilePingPong(int* buff, int rank, int pitch, int rowI
         }
       }
       for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
-        size_t tileOffset = getTileElementOffset(j, width, rowIndex, colIndex, nElemPerInPitch);
+        size_t tileOffset = getTileElementOffset(j, width, rowIndex, colIndex, nElemPerPitch);
         sendBuff[tileOffset] = i + j;
       }
       __syncthreads();
@@ -110,7 +110,7 @@ __global__ void kernelProxyTilePingPong(int* buff, int rank, int pitch, int rowI
       if (threadIdx.x == 0) proxyChan.wait();
       __syncthreads();
       for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
-        size_t tileOffset = getTileElementOffset(j, width, rowIndex, colIndex, nElemPerInPitch);
+        size_t tileOffset = getTileElementOffset(j, width, rowIndex, colIndex, nElemPerPitch);
         if (sendBuff[tileOffset] != i + j) {
           // printf("rank 1 ERROR: sendBuff[%d] = %d, expected %d\n", j, sendBuff[j], i + j);
           *ret = 1;
@@ -119,7 +119,7 @@ __global__ void kernelProxyTilePingPong(int* buff, int rank, int pitch, int rowI
       }
       if (i < nTries - 1) {
         for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
-          size_t tileOffset = getTileElementOffset(j, width, rowIndex, colIndex, nElemPerInPitch);
+          size_t tileOffset = getTileElementOffset(j, width, rowIndex, colIndex, nElemPerPitch);
           sendBuff[tileOffset] = offset + i + j;
         }
         __syncthreads();

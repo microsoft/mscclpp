@@ -66,12 +66,10 @@ void CudaIpcConnection::write2D(RegisteredMemory dst, uint64_t dstOffset, Regist
   char* dstPtr = (char*)dst.data();
   char* srcPtr = (char*)src.data();
 
-  INFO(MSCCLPP_P2P,
-       "CudaIpcConnection write: from %p to %p, width %lu height %lu dstPitch %lu srcPitch %lu dstOffset %lu srcOffset "
-       "%lu",
-       srcPtr + srcOffset, dstPtr + dstOffset, width, height, dst.pitch(), src.pitch(), dstOffset, srcOffset);
   MSCCLPP_CUDATHROW(cudaMemcpy2DAsync(dstPtr + dstOffset, dst.pitch(), srcPtr + srcOffset, src.pitch(), width, height,
                                       cudaMemcpyDeviceToDevice, stream_));
+  INFO(MSCCLPP_P2P, "CudaIpcConnection write: from %p to %p, width %lu height %lu dstPitch %lu srcPitch %lu",
+       srcPtr + srcOffset, dstPtr + dstOffset, width, height, dst.pitch(), src.pitch());
 }
 
 void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {

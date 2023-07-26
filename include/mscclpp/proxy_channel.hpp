@@ -207,11 +207,24 @@ struct ProxyChannel {
     put(dst, offset, src, offset, size);
   }
 
+  /// @brief Push a @ref TriggerData to the FIFO.
+  /// @param dst The destination memory region.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param src The source memory region.
+  /// @param srcOffset The offset into the source memory region.
+  /// @param width The width of the 2D region.
+  /// @param height The height of the 2D region.
   __forceinline__ __device__ void put2D(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
                                         uint32_t width, uint32_t height) {
     fifo_.push(ChannelTrigger(TriggerData, dst, dstOffset, src, srcOffset, width, height, semaphoreId_).value);
   }
 
+  /// @brief Push a @ref TriggerData to the FIFO.
+  /// @param dst The destination memory region.
+  /// @param src The source memory region.
+  /// @param offset The common offset into the destination and source memory regions.
+  /// @param width The width of the 2D region.
+  /// @param height The height of the 2D region.
   __forceinline__ __device__ void put2D(MemoryId dst, MemoryId src, uint64_t offset, uint32_t width, uint32_t height) {
     put2D(dst, offset, src, offset, width, height);
   }
@@ -232,6 +245,13 @@ struct ProxyChannel {
     fifo_.push(ChannelTrigger(TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, size, semaphoreId_).value);
   }
 
+  /// Push a @ref TriggerData and a @ref TriggerFlag at the same time to the FIFO.
+  /// @param dst The destination memory region.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param src The source memory region.
+  /// @param srcOffset The offset into the source memory region.
+  /// @param width The width of the 2D region.
+  /// @param height The height of the 2D region.
   __forceinline__ __device__ void put2DWithSignal(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
                                                   uint32_t width, uint32_t height) {
     fifo_.push(
@@ -247,6 +267,12 @@ struct ProxyChannel {
     putWithSignal(dst, offset, src, offset, size);
   }
 
+  /// Push a @ref TriggerData and a @ref TriggerFlag at the same time to the FIFO.
+  /// @param dst The destination memory region.
+  /// @param src The source memory region.
+  /// @param offset The common offset into the destination and source memory regions.
+  /// @param width The width of the 2D region.
+  /// @param height The height of the 2D region.
   __forceinline__ __device__ void put2DWithSignal(MemoryId dst, MemoryId src, uint64_t offset, uint32_t width,
                                                   uint32_t height) {
     put2DWithSignal(dst, offset, src, offset, width, height);
@@ -328,6 +354,11 @@ struct SimpleProxyChannel {
     proxyChan_.put(dst_, dstOffset, src_, srcOffset, size);
   }
 
+  /// Push a @ref TriggerData to the FIFO.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param srcOffset The offset into the source memory region.
+  /// @param width The width of the 2D region.
+  /// @param height The height of the 2D region.
   __forceinline__ __device__ void put2D(uint64_t dstOffset, uint64_t srcOffset, uint32_t width, uint32_t height) {
     proxyChan_.put2D(dst_, dstOffset, src_, srcOffset, width, height);
   }
@@ -348,6 +379,11 @@ struct SimpleProxyChannel {
     proxyChan_.putWithSignal(dst_, dstOffset, src_, srcOffset, size);
   }
 
+  /// Push a @ref TriggerData and a @ref TriggerFlag at the same time to the FIFO.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param srcOffset The offset into the source memory region.
+  /// @param width The width of the 2D region.
+  /// @param height The height of the 2D region.
   __forceinline__ __device__ void put2DWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint32_t width,
                                                   uint32_t height) {
     proxyChan_.put2DWithSignal(dst_, dstOffset, src_, srcOffset, width, height);
@@ -358,6 +394,10 @@ struct SimpleProxyChannel {
   /// @param size The size of the transfer.
   __forceinline__ __device__ void putWithSignal(uint64_t offset, uint64_t size) { putWithSignal(offset, offset, size); }
 
+  /// Push a @ref TriggerData, a @ref TriggerFlag, and a @ref TriggerSync at the same time to the FIFO.
+  /// @param offset The common offset into the destination and source memory regions.
+  /// @param width The width of the 2D region.
+  /// @param height The height of the 2D region.
   __forceinline__ __device__ void put2DWithSignal(uint64_t offset, uint32_t width, uint32_t height) {
     put2DWithSignal(offset, offset, width, height);
   }
