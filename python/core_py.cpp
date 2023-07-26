@@ -143,7 +143,7 @@ void register_core(nb::module_& m) {
       .def("setup", &Communicator::setup);
 }
 
-NB_MODULE(mscclpp, m) {
+NB_MODULE(_mscclpp, m) {
   register_error(m);
   register_proxy_channel(m);
   register_sm_channel(m);
