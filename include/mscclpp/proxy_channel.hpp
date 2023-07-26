@@ -232,6 +232,12 @@ struct ProxyChannel {
     fifo_.push(ChannelTrigger(TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, size, semaphoreId_).value);
   }
 
+  __forceinline__ __device__ void put2DWithSignal(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
+                                                  uint32_t width, uint32_t height) {
+    fifo_.push(
+        ChannelTrigger(TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, width, height, semaphoreId_).value);
+  }
+
   /// Push a @ref TriggerData and a @ref TriggerFlag at the same time to the FIFO.
   /// @param dst The destination memory region.
   /// @param src The source memory region.
@@ -239,6 +245,11 @@ struct ProxyChannel {
   /// @param size The size of the transfer.
   __forceinline__ __device__ void putWithSignal(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
     putWithSignal(dst, offset, src, offset, size);
+  }
+
+  __forceinline__ __device__ void put2DWithSignal(MemoryId dst, MemoryId src, uint64_t offset, uint32_t width,
+                                                  uint32_t height) {
+    put2DWithSignal(dst, offset, src, offset, width, height);
   }
 
   /// Push a @ref TriggerData, a @ref TriggerFlag, and a @ref TriggerSync at the same time to the FIFO.
@@ -337,10 +348,19 @@ struct SimpleProxyChannel {
     proxyChan_.putWithSignal(dst_, dstOffset, src_, srcOffset, size);
   }
 
+  __forceinline__ __device__ void put2DWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint32_t width,
+                                                  uint32_t height) {
+    proxyChan_.put2DWithSignal(dst_, dstOffset, src_, srcOffset, width, height);
+  }
+
   /// Push a @ref TriggerData and a @ref TriggerFlag at the same time to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
   __forceinline__ __device__ void putWithSignal(uint64_t offset, uint64_t size) { putWithSignal(offset, offset, size); }
+
+  __forceinline__ __device__ void put2DWithSignal(uint64_t offset, uint32_t width, uint32_t height) {
+    put2DWithSignal(offset, offset, width, height);
+  }
 
   /// Push a @ref TriggerData, a @ref TriggerFlag, and a @ref TriggerSync at the same time to the FIFO.
   /// @param dstOffset The offset into the destination memory region.

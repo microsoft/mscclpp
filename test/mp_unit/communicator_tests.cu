@@ -219,7 +219,7 @@ TEST_F(CommunicatorTest, BasicWrite) {
 
 TEST_F(CommunicatorTest, TileWrite) {
   if (gEnv->rank >= numRanksToUse) return;
-  if (numRanksToUse > gEnv->nRanksPerNode) {
+  if (gEnv->worldSize > gEnv->nRanksPerNode) {
     // tile write only support single node
     GTEST_SKIP();
   }
