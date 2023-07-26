@@ -389,7 +389,7 @@ class Connection {
   /// @param width The width of the 2D region to write in bytes.
   /// @param height The height of the 2D region.
   virtual void write2D(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
-                       uint32_t width, uint32_t height) = 0;
+                       uint64_t width, uint64_t height) = 0;
   /// Update a 8-byte value in a destination @ref RegisteredMemory and synchronize the change with the remote process.
   ///
   /// @param dst The destination @ref RegisteredMemory.
@@ -516,6 +516,15 @@ class Communicator {
   /// @param transports Transport flags.
   /// @return RegisteredMemory A handle to the buffer.
   RegisteredMemory registerMemory(void* ptr, size_t size, TransportFlags transports);
+
+  /// Register a region of GPU memory for use in this communicator.
+  ///
+  /// @param ptr Base pointer to the memory.
+  /// @param size Size of the memory region in bytes.
+  /// @param pitchSize pitch size of the memory region in bytes. (used for 2D communication)
+  /// @param transports Transport flags.
+  /// @return RegisteredMemory A handle to the buffer.
+  RegisteredMemory registerMemory(void* ptr, size_t size, size_t pitchSize, TransportFlags transports);
 
   /// Send information of a registered memory to the remote side on setup.
   ///

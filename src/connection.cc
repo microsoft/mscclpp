@@ -59,17 +59,17 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
 }
 
 void CudaIpcConnection::write2D(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
-                                uint32_t width, uint32_t height) {
+                                uint64_t width, uint64_t height) {
   validateTransport(dst, remoteTransport());
   validateTransport(src, transport());
 
   char* dstPtr = (char*)dst.data();
   char* srcPtr = (char*)src.data();
 
-  MSCCLPP_CUDATHROW(cudaMemcpy2DAsync(dstPtr + dstOffset, 8, srcPtr + srcOffset, 8, width, height,
+  MSCCLPP_CUDATHROW(cudaMemcpy2DAsync(dstPtr + dstOffset, dst.pitch(), srcPtr + srcOffset, src.pitch(), width, height,
                                       cudaMemcpyDeviceToDevice, stream_));
-  INFO(MSCCLPP_P2P, "CudaIpcConnection write: from %p to %p, width %u height %u", srcPtr + srcOffset,
-       dstPtr + dstOffset, width, height);
+  INFO(MSCCLPP_P2P, "CudaIpcConnection write: from %p to %p, width %lu height %lu dstPitch %lu srcPitch %lu",
+       srcPtr + srcOffset, dstPtr + dstOffset, width, height, dst.pitch(), src.pitch());
 }
 
 void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
@@ -141,7 +141,7 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_IB_SEND_DATA_ENTRY, (uint32_t)size);
 }
 
-void IBConnection::write2D(RegisteredMemory, uint64_t, RegisteredMemory, uint64_t, uint32_t, uint32_t) {
+void IBConnection::write2D(RegisteredMemory, uint64_t, RegisteredMemory, uint64_t, uint64_t, uint64_t) {
   throw Error("write2D is not supported", ErrorCode::InvalidUsage);
 }
 

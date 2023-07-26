@@ -57,6 +57,12 @@ MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t 
       std::make_shared<RegisteredMemory::Impl>(ptr, size, pimpl->bootstrap_->getRank(), transports, *pimpl));
 }
 
+MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, size_t pitchSize,
+                                                              TransportFlags transports) {
+  return RegisteredMemory(
+      std::make_shared<RegisteredMemory::Impl>(ptr, size, pitchSize, pimpl->bootstrap_->getRank(), transports, *pimpl));
+}
+
 struct MemorySender : public Setuppable {
   MemorySender(RegisteredMemory memory, int remoteRank, int tag)
       : memory_(memory), remoteRank_(remoteRank), tag_(tag) {}

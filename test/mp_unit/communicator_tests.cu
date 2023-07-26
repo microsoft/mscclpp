@@ -3,6 +3,7 @@
 
 #include <mpi.h>
 
+#include <array>
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/semaphore.hpp>
 
@@ -60,7 +61,16 @@ void CommunicatorTestBase::registerMemoryPairs(void* buff, size_t buffSize, mscc
                                                const std::vector<int>& remoteRanks,
                                                mscclpp::RegisteredMemory& localMemory,
                                                std::unordered_map<int, mscclpp::RegisteredMemory>& remoteMemories) {
-  localMemory = communicator->registerMemory(buff, buffSize, transport);
+  registerMemoryPairs(buff, buffSize, buffSize, transport, tag, remoteRanks, localMemory, remoteMemories);
+}
+
+// Register a local memory with pitch and receive corresponding remote memories
+void CommunicatorTestBase::registerMemoryPairs(void* buff, size_t buffSize, size_t pitchSize,
+                                               mscclpp::TransportFlags transport, int tag,
+                                               const std::vector<int>& remoteRanks,
+                                               mscclpp::RegisteredMemory& localMemory,
+                                               std::unordered_map<int, mscclpp::RegisteredMemory>& remoteMemories) {
+  localMemory = communicator->registerMemory(buff, buffSize, pitchSize, transport);
   std::unordered_map<int, mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> futureRemoteMemories;
   for (int remoteRank : remoteRanks) {
     if (remoteRank != communicator->bootstrap()->getRank()) {
@@ -95,7 +105,9 @@ void CommunicatorTest::SetUp() {
 
   devicePtr.resize(numBuffers);
   localMemory.resize(numBuffers);
+  local2DMemory.resize(numBuffers);
   remoteMemory.resize(numBuffers);
+  remote2DMemory.resize(numBuffers);
 
   std::vector<int> remoteRanks;
   for (int i = 0; i < gEnv->worldSize; i++) {
@@ -109,11 +121,18 @@ void CommunicatorTest::SetUp() {
     registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, mscclpp::Transport::CudaIpc | ibTransport, 0, remoteRanks,
                         localMemory[n], remoteMemory[n]);
   }
+
+  for (size_t n = 0; n < numBuffers; n++) {
+    registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, deviceBufferPitchSize, mscclpp::Transport::CudaIpc, 0,
+                        remoteRanks, local2DMemory[n], remote2DMemory[n]);
+  }
 }
 
 void CommunicatorTest::TearDown() {
   remoteMemory.clear();
+  remote2DMemory.clear();
   localMemory.clear();
+  local2DMemory.clear();
   devicePtr.clear();
   CommunicatorTestBase::TearDown();
 }
@@ -137,6 +156,20 @@ void CommunicatorTest::writeToRemote(int dataCountPerRank) {
         auto& peerMemory = remoteMemory[n].at(i);
         conn->write(peerMemory, gEnv->rank * dataCountPerRank * sizeof(int), localMemory[n],
                     gEnv->rank * dataCountPerRank * sizeof(int), dataCountPerRank * sizeof(int));
+        conn->flush();
+      }
+    }
+  }
+}
+
+void CommunicatorTest::writeTileToRemote(size_t rowIndex, size_t colIndex, size_t pitch, size_t width, size_t height) {
+  size_t offset = rowIndex * pitch + colIndex * sizeof(int);
+  for (size_t n = 0; n < numBuffers; n++) {
+    for (int i = 0; i < gEnv->worldSize; i++) {
+      if (i != gEnv->rank) {
+        auto& conn = connections.at(i);
+        auto& peerMemory = remote2DMemory[n].at(i);
+        conn->write2D(peerMemory, offset, local2DMemory[n], offset, width * sizeof(int), height);
         conn->flush();
       }
     }
@@ -169,6 +202,45 @@ TEST_F(CommunicatorTest, BasicWrite) {
   communicator->bootstrap()->barrier();
 
   writeToRemote(deviceBufferSize / sizeof(int) / gEnv->worldSize);
+  communicator->bootstrap()->barrier();
+
+  // polling until it becomes ready
+  bool ready = false;
+  int niter = 0;
+  do {
+    ready = testWriteCorrectness();
+    niter++;
+    if (niter == 10000) {
+      FAIL() << "Polling is stuck.";
+    }
+  } while (!ready);
+  communicator->bootstrap()->barrier();
+}
+
+TEST_F(CommunicatorTest, TileWrite) {
+  if (gEnv->rank >= numRanksToUse) return;
+  if (numRanksToUse > gEnv->nRanksPerNode) {
+    // tile write only support single node
+    GTEST_SKIP();
+  }
+  deviceBufferInit();
+  communicator->bootstrap()->barrier();
+
+  size_t dataSizePerRank = deviceBufferSize / gEnv->worldSize;
+  size_t rowCountPerRank = dataSizePerRank / deviceBufferPitchSize;
+  size_t colCount = deviceBufferPitchSize / sizeof(int);
+  // The size of the tile is <rowCount, colCount>. We split it into multi small tiles.
+  std::array<std::pair<int, int>, 3> nTileInDimension = {std::pair<int, int>{2, 2}, {4, 4}, {8, 8}};
+  for (auto& nTile : nTileInDimension) {
+    const int nRowPerTile = rowCountPerRank / nTile.first;
+    const int nColPerTile = colCount / nTile.second;
+    for (int xi = 0; xi < nTile.first; ++xi) {
+      for (int yi = 0; yi < nTile.second; ++yi) {
+        writeTileToRemote(rowCountPerRank * gEnv->rank + xi * nRowPerTile, yi * nColPerTile, deviceBufferPitchSize,
+                          colCount / nTile.second, rowCountPerRank / nTile.first);
+      }
+    }
+  }
   communicator->bootstrap()->barrier();
 
   // polling until it becomes ready

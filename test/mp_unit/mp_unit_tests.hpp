@@ -11,6 +11,7 @@
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <mscclpp/utils.hpp>
+#include <unordered_map>
 
 #include "ib.hpp"
 
@@ -98,6 +99,10 @@ class CommunicatorTestBase : public MultiProcessTest {
   void registerMemoryPairs(void* buff, size_t buffSize, mscclpp::TransportFlags transport, int tag,
                            const std::vector<int>& remoteRanks, mscclpp::RegisteredMemory& localMemory,
                            std::unordered_map<int, mscclpp::RegisteredMemory>& remoteMemories);
+  // Register a local memory with pitch and receive corresponding remote memories
+  void registerMemoryPairs(void* buff, size_t buffSize, size_t pitch, mscclpp::TransportFlags transport, int tag,
+                           const std::vector<int>& remoteRanks, mscclpp::RegisteredMemory& localMemory,
+                           std::unordered_map<int, mscclpp::RegisteredMemory>& remoteMemories);
   // Register a local memory an receive one corresponding remote memory
   void registerMemoryPair(void* buff, size_t buffSize, mscclpp::TransportFlags transport, int tag, int remoteRank,
                           mscclpp::RegisteredMemory& localMemory, mscclpp::RegisteredMemory& remoteMemory);
@@ -115,13 +120,17 @@ class CommunicatorTest : public CommunicatorTestBase {
 
   void deviceBufferInit();
   void writeToRemote(int dataCountPerRank);
+  void writeTileToRemote(size_t rowIndex, size_t colIndex, size_t pitch, size_t width, size_t height);
   bool testWriteCorrectness(bool skipLocal = false);
 
   const size_t numBuffers = 10;
   const int deviceBufferSize = 1024 * 1024;
+  const int deviceBufferPitchSize = 512;
   std::vector<std::shared_ptr<int>> devicePtr;
   std::vector<mscclpp::RegisteredMemory> localMemory;
+  std::vector<mscclpp::RegisteredMemory> local2DMemory;
   std::vector<std::unordered_map<int, mscclpp::RegisteredMemory>> remoteMemory;
+  std::vector<std::unordered_map<int, mscclpp::RegisteredMemory>> remote2DMemory;
 };
 
 class ProxyChannelOneToOneTest : public CommunicatorTestBase {
