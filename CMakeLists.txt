@@ -83,11 +83,13 @@ set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVER
 
 add_subdirectory(include)
 add_subdirectory(src)
-install(TARGETS mscclpp mscclpp_static
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib)
 
-install(DIRECTORY ${PROJECT_SOURCE_DIR}/include/ DESTINATION include FILES_MATCHING PATTERN "*.hpp")
+install(TARGETS mscclpp_obj
+    FILE_SET HEADERS DESTINATION include)
+install(TARGETS mscclpp
+    LIBRARY DESTINATION lib)
+install(TARGETS mscclpp_static
+    ARCHIVE DESTINATION lib)
 
 # Tests
 if (BUILD_TESTS)
