@@ -67,7 +67,7 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
     RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
     RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
     if (trigger->fields2D.multiDimensionFlag) {
-      std::pair<uint64_t, uint64_t>& pitch = pitches_[trigger->fields.chanId];
+      std::pair<uint64_t, uint64_t>& pitch = pitches_.at(trigger->fields.chanId);
       semaphore->connection()->write2D(dst, trigger->fields.dstOffset, pitch.first, src, trigger->fields.srcOffset,
                                        pitch.second, trigger->fields2D.width, trigger->fields2D.height);
     } else {

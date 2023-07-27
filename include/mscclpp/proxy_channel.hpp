@@ -41,6 +41,9 @@ class ProxyService : public BaseProxyService {
   /// @return The ID of the semaphore.
   SemaphoreId addSemaphore(std::shared_ptr<Connection> connection);
 
+  /// Add a pitch pair to the proxy service.
+  /// @param id The ID of the semaphore.
+  /// @param pitch The pitch pair.
   void addPitch(SemaphoreId id, std::pair<uint64_t, uint64_t> pitch);
 
   /// Register a memory region with the proxy service.
