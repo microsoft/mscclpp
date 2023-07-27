@@ -34,13 +34,11 @@ struct TransportInfo {
 struct RegisteredMemory::Impl {
   void* data;
   size_t size;
-  size_t pitch;  // for 2D
   int rank;
   uint64_t hostHash;
   TransportFlags transports;
   std::vector<TransportInfo> transportInfos;
 
-  Impl(void* data, size_t size, size_t pitch, int rank, TransportFlags transports, Communicator::Impl& commImpl);
   Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl);
   Impl(const std::vector<char>& data);
 

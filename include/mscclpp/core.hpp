@@ -331,11 +331,6 @@ class RegisteredMemory {
   /// @return The size of the memory block.
   size_t size();
 
-  /// Get the pitch of the memory block.
-  ///
-  /// @return The pitch of the memory block.
-  size_t pitch();
-
   /// Get the rank of the process that owns the memory block.
   ///
   /// @return The rank of the process that owns the memory block.
@@ -384,12 +379,14 @@ class Connection {
   ///
   /// @param dst The destination @ref RegisteredMemory.
   /// @param dstOffset The offset in bytes from the start of the destination @ref RegisteredMemory.
+  /// @param dstPitch The pitch of the destination @ref RegisteredMemory in bytes.
   /// @param src The source @ref RegisteredMemory.
   /// @param srcOffset The offset in bytes from the start of the source @ref RegisteredMemory.
+  /// @param srcPitch The pitch of the source @ref RegisteredMemory in bytes.
   /// @param width The width of the 2D region to write in bytes.
   /// @param height The height of the 2D region.
-  virtual void write2D(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
-                       uint64_t width, uint64_t height) = 0;
+  virtual void write2D(RegisteredMemory dst, uint64_t dstOffset, uint64_t dstPitch, RegisteredMemory src,
+                       uint64_t srcOffset, uint64_t srcPitch, uint64_t width, uint64_t height) = 0;
   /// Update a 8-byte value in a destination @ref RegisteredMemory and synchronize the change with the remote process.
   ///
   /// @param dst The destination @ref RegisteredMemory.

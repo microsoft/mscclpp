@@ -61,16 +61,7 @@ void CommunicatorTestBase::registerMemoryPairs(void* buff, size_t buffSize, mscc
                                                const std::vector<int>& remoteRanks,
                                                mscclpp::RegisteredMemory& localMemory,
                                                std::unordered_map<int, mscclpp::RegisteredMemory>& remoteMemories) {
-  registerMemoryPairs(buff, buffSize, buffSize, transport, tag, remoteRanks, localMemory, remoteMemories);
-}
-
-// Register a local memory with pitch and receive corresponding remote memories
-void CommunicatorTestBase::registerMemoryPairs(void* buff, size_t buffSize, size_t pitchSize,
-                                               mscclpp::TransportFlags transport, int tag,
-                                               const std::vector<int>& remoteRanks,
-                                               mscclpp::RegisteredMemory& localMemory,
-                                               std::unordered_map<int, mscclpp::RegisteredMemory>& remoteMemories) {
-  localMemory = communicator->registerMemory(buff, buffSize, pitchSize, transport);
+  localMemory = communicator->registerMemory(buff, buffSize, transport);
   std::unordered_map<int, mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> futureRemoteMemories;
   for (int remoteRank : remoteRanks) {
     if (remoteRank != communicator->bootstrap()->getRank()) {
@@ -105,9 +96,7 @@ void CommunicatorTest::SetUp() {
 
   devicePtr.resize(numBuffers);
   localMemory.resize(numBuffers);
-  local2DMemory.resize(numBuffers);
   remoteMemory.resize(numBuffers);
-  remote2DMemory.resize(numBuffers);
 
   std::vector<int> remoteRanks;
   for (int i = 0; i < gEnv->worldSize; i++) {
@@ -121,18 +110,11 @@ void CommunicatorTest::SetUp() {
     registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, mscclpp::Transport::CudaIpc | ibTransport, 0, remoteRanks,
                         localMemory[n], remoteMemory[n]);
   }
-
-  for (size_t n = 0; n < numBuffers; n++) {
-    registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, deviceBufferPitchSize, mscclpp::Transport::CudaIpc, 0,
-                        remoteRanks, local2DMemory[n], remote2DMemory[n]);
-  }
 }
 
 void CommunicatorTest::TearDown() {
   remoteMemory.clear();
-  remote2DMemory.clear();
   localMemory.clear();
-  local2DMemory.clear();
   devicePtr.clear();
   CommunicatorTestBase::TearDown();
 }
@@ -168,8 +150,9 @@ void CommunicatorTest::writeTileToRemote(size_t rowIndex, size_t colIndex, size_
     for (int i = 0; i < gEnv->worldSize; i++) {
       if (i != gEnv->rank) {
         auto& conn = connections.at(i);
-        auto& peerMemory = remote2DMemory[n].at(i);
-        conn->write2D(peerMemory, offset, local2DMemory[n], offset, width * sizeof(int), height);
+        auto& peerMemory = remoteMemory[n].at(i);
+        conn->write2D(peerMemory, offset, deviceBufferPitchSize, localMemory[n], offset, deviceBufferPitchSize,
+                      width * sizeof(int), height);
         conn->flush();
       }
     }

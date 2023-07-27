@@ -25,16 +25,16 @@ void ProxyChannelOneToOneTest::setupMeshConnections(
 
 void ProxyChannelOneToOneTest::setupMeshConnections(
     std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>>& proxyChannels, bool useIbOnly, void* sendBuff,
-    size_t sendBuffBytes, size_t pitchSize, void* recvBuff, size_t recvBuffBytes) {
+    size_t sendBuffBytes, size_t pitch, void* recvBuff, size_t recvBuffBytes) {
   const int rank = communicator->bootstrap()->getRank();
   const int worldSize = communicator->bootstrap()->getNranks();
   const bool isInPlace = (recvBuff == nullptr);
   mscclpp::TransportFlags transport = (useIbOnly) ? ibTransport : (mscclpp::Transport::CudaIpc | ibTransport);
 
-  mscclpp::RegisteredMemory sendBufRegMem = communicator->registerMemory(sendBuff, sendBuffBytes, pitchSize, transport);
+  mscclpp::RegisteredMemory sendBufRegMem = communicator->registerMemory(sendBuff, sendBuffBytes, transport);
   mscclpp::RegisteredMemory recvBufRegMem;
   if (!isInPlace) {
-    recvBufRegMem = communicator->registerMemory(recvBuff, recvBuffBytes, pitchSize, transport);
+    recvBufRegMem = communicator->registerMemory(recvBuff, recvBuffBytes, transport);
   }
 
   for (int r = 0; r < worldSize; r++) {
@@ -59,6 +59,7 @@ void ProxyChannelOneToOneTest::setupMeshConnections(
     communicator->setup();
 
     mscclpp::SemaphoreId cid = channelService->addSemaphore(conn);
+    channelService->addPitch(cid, std::pair<size_t, size_t>(pitch, pitch));
     communicator->setup();
 
     proxyChannels.emplace_back(mscclpp::deviceHandle(

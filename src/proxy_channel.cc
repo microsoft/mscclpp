@@ -29,6 +29,10 @@ MSCCLPP_API_CPP SemaphoreId ProxyService::addSemaphore(std::shared_ptr<Connectio
   return semaphores_.size() - 1;
 }
 
+MSCCLPP_API_CPP void ProxyService::addPitch(SemaphoreId id, std::pair<uint64_t, uint64_t> pitch) {
+  pitches_[id] = pitch;
+}
+
 MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {
   memories_.push_back(memory);
   return memories_.size() - 1;
@@ -63,8 +67,9 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
     RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
     RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
     if (trigger->fields2D.multiDimensionFlag) {
-      semaphore->connection()->write2D(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
-                                       trigger->fields2D.width, trigger->fields2D.height);
+      std::pair<uint64_t, uint64_t>& pitch = pitches_[trigger->fields.chanId];
+      semaphore->connection()->write2D(dst, trigger->fields.dstOffset, pitch.first, src, trigger->fields.srcOffset,
+                                       pitch.second, trigger->fields2D.width, trigger->fields2D.height);
     } else {
       semaphore->connection()->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
                                      trigger->fields.size);
