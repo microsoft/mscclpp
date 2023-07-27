@@ -20,7 +20,15 @@ void register_semaphore(nb::module_& m) {
   nb::class_<Host2DeviceSemaphore::DeviceHandle>(host2DeviceSemaphore, "DeviceHandle")
       .def(nb::init<>())
       .def_rw("inbound_semaphore_id", &Host2DeviceSemaphore::DeviceHandle::inboundSemaphoreId)
-      .def_rw("expected_inbound_semaphore_id", &Host2DeviceSemaphore::DeviceHandle::expectedInboundSemaphoreId);
+      .def_rw("expected_inbound_semaphore_id", &Host2DeviceSemaphore::DeviceHandle::expectedInboundSemaphoreId)
+      .def_prop_ro(
+        "raw",
+        [](const Host2DeviceSemaphore::DeviceHandle& self) -> nb::bytes {
+            return nb::bytes(
+                reinterpret_cast<const char*>(&self),
+                sizeof(self));
+        });
+
 
   nb::class_<Host2HostSemaphore>(m, "Host2HostSemaphore")
       .def(nb::init<Communicator&, std::shared_ptr<Connection>>(), nb::arg("communicator"), nb::arg("connection"))
