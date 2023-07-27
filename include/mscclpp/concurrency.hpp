@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include <mscclpp/core.hpp>
 #include <mscclpp/poll.hpp>
 
 namespace mscclpp {
@@ -19,11 +20,10 @@ struct DeviceSyncer {
   /// Destroy the DeviceSyncer object.
   ~DeviceSyncer() = default;
 
-#ifdef __CUDACC__
   /// Synchronize all threads inside a kernel. Guarantee that all previous work of all threads in cooperating blocks is
   /// finished.
   /// @param blockNum The number of blocks that will synchronize.
-  __forceinline__ __device__ void sync(int blockNum) {
+  MSCCLPP_DEVICE void sync(int blockNum) {
     int maxOldCnt = blockNum - 1;
     __syncthreads();
     if (blockNum == 1) return;
@@ -48,7 +48,6 @@ struct DeviceSyncer {
     // the flag is flipped.
     __syncthreads();
   }
-#endif
 
  private:
   /// The flag to indicate whether the barrier is reached by the latest thread.

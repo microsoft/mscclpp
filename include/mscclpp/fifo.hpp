@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mscclpp/core.hpp>
 #include <mscclpp/poll.hpp>
 
 #define MSCCLPP_PROXY_FIFO_SIZE 128
@@ -35,12 +36,11 @@ struct alignas(16) ProxyTrigger {
 /// tail as there is usually enough space for device threads to push their work into.
 ///
 struct DeviceProxyFifo {
-#ifdef __CUDACC__
   /// Push a trigger to the FIFO.
   ///
   /// @param trigger The trigger to push.
   /// @return The new head of the FIFO.
-  __forceinline__ __device__ uint64_t push(ProxyTrigger trigger) {
+  MSCCLPP_DEVICE uint64_t push(ProxyTrigger trigger) {
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->head, 1);
 
     // Only one of two conditions need to be met to proceed. Either the tail has advanced enough or where we need to
@@ -62,13 +62,12 @@ struct DeviceProxyFifo {
   /// Wait until there is a place in the FIFO to push a trigger.
   ///
   /// @param curFifoHead The current head of the FIFO.
-  __forceinline__ __device__ void sync(uint64_t curFifoHead) {
+  MSCCLPP_DEVICE void sync(uint64_t curFifoHead) {
     // Same as push but in this case checking the fist condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
     OR_POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]) != 0,
                             *(volatile uint64_t*)(this->tailReplica) <= curFifoHead, 1000000);
   }
-#endif  // __CUDACC__
 
   /// The FIFO buffer that is allocated on the host via `cudaHostAlloc()`.
   ProxyTrigger* triggers;

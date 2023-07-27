@@ -103,12 +103,11 @@ union ChannelTrigger {
                 MSCCLPP_BITS_TYPE);  // ensure 64-bit alignment
   } fields;
 
-#ifdef __CUDACC__
   /// Default constructor.
-  __device__ ChannelTrigger() {}
+  MSCCLPP_DEVICE ChannelTrigger() {}
 
   /// Copy constructor.
-  __device__ ChannelTrigger(ProxyTrigger value) : value(value) {}
+  MSCCLPP_DEVICE ChannelTrigger(ProxyTrigger value) : value(value) {}
 
   /// Constructor.
   /// @param type The type of the trigger.
@@ -118,8 +117,8 @@ union ChannelTrigger {
   /// @param srcOffset The offset into the source memory region.
   /// @param bytes The bytes of the transfer.
   /// @param semaphoreId The ID of the semaphore.
-  __device__ ChannelTrigger(TriggerType type, MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
-                            uint64_t bytes, int semaphoreId) {
+  MSCCLPP_DEVICE ChannelTrigger(TriggerType type, MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
+                                uint64_t bytes, int semaphoreId) {
     value.fst = ((srcOffset << MSCCLPP_BITS_SIZE) + bytes);
     value.snd = ((((((((semaphoreId << MSCCLPP_BITS_TYPE) + (uint64_t)type) << MSCCLPP_BITS_REGMEM_HANDLE) + dst)
                     << MSCCLPP_BITS_REGMEM_HANDLE) +
@@ -127,7 +126,6 @@ union ChannelTrigger {
                   << MSCCLPP_BITS_OFFSET) +
                  dstOffset);
   }
-#endif  // __CUDACC__
 };
 
 /// Proxy channel.
@@ -143,15 +141,13 @@ struct ProxyChannel {
 
   ProxyChannel& operator=(ProxyChannel& other) = default;
 
-#ifdef __CUDACC__
   /// Push a @ref TriggerData to the FIFO.
   /// @param dst The destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  __forceinline__ __device__ void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
-                                      uint64_t size) {
+  MSCCLPP_DEVICE void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset, uint64_t size) {
     fifo_.push(ChannelTrigger(TriggerData, dst, dstOffset, src, srcOffset, size, semaphoreId_).value);
   }
 
@@ -160,14 +156,12 @@ struct ProxyChannel {
   /// @param src The source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  __forceinline__ __device__ void put(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
+  MSCCLPP_DEVICE void put(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
     put(dst, offset, src, offset, size);
   }
 
   /// Push a @ref TriggerFlag to the FIFO.
-  __forceinline__ __device__ void signal() {
-    fifo_.push(ChannelTrigger(TriggerFlag, 0, 0, 0, 0, 1, semaphoreId_).value);
-  }
+  MSCCLPP_DEVICE void signal() { fifo_.push(ChannelTrigger(TriggerFlag, 0, 0, 0, 0, 1, semaphoreId_).value); }
 
   /// Push a @ref TriggerData and a @ref TriggerFlag at the same time to the FIFO.
   /// @param dst The destination memory region.
@@ -175,8 +169,7 @@ struct ProxyChannel {
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  __forceinline__ __device__ void putWithSignal(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
-                                                uint64_t size) {
+  MSCCLPP_DEVICE void putWithSignal(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset, uint64_t size) {
     fifo_.push(ChannelTrigger(TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, size, semaphoreId_).value);
   }
 
@@ -185,7 +178,7 @@ struct ProxyChannel {
   /// @param src The source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  __forceinline__ __device__ void putWithSignal(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
+  MSCCLPP_DEVICE void putWithSignal(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
     putWithSignal(dst, offset, src, offset, size);
   }
 
@@ -195,8 +188,8 @@ struct ProxyChannel {
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  __forceinline__ __device__ void putWithSignalAndFlush(MemoryId dst, uint64_t dstOffset, MemoryId src,
-                                                        uint64_t srcOffset, uint64_t size) {
+  MSCCLPP_DEVICE void putWithSignalAndFlush(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
+                                            uint64_t size) {
     uint64_t curFifoHead = fifo_.push(
         ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, semaphoreId_)
             .value);
@@ -208,20 +201,18 @@ struct ProxyChannel {
   /// @param src The source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  __forceinline__ __device__ void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
+  MSCCLPP_DEVICE void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
     putWithSignalAndFlush(dst, offset, src, offset, size);
   }
 
   /// Push a @ref TriggerSync to the FIFO.
-  __forceinline__ __device__ void flush() {
+  MSCCLPP_DEVICE void flush() {
     uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, semaphoreId_).value);
     fifo_.sync(curFifoHead);
   }
 
   /// Wait for the proxy channel to be signaled.
-  __forceinline__ __device__ void wait() { semaphore_.wait(); }
-
-#endif  // __CUDACC__
+  MSCCLPP_DEVICE void wait() { semaphore_.wait(); }
 
   SemaphoreId semaphoreId_;
 
@@ -256,58 +247,55 @@ struct SimpleProxyChannel {
   /// Assignment operator.
   SimpleProxyChannel& operator=(SimpleProxyChannel& other) = default;
 
-#ifdef __CUDACC__
   /// Push a @ref TriggerData to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+  MSCCLPP_DEVICE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
     proxyChan_.put(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a @ref TriggerData to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  __forceinline__ __device__ void put(uint64_t offset, uint64_t size) { put(offset, offset, size); }
+  MSCCLPP_DEVICE void put(uint64_t offset, uint64_t size) { put(offset, offset, size); }
 
   /// Push a @ref TriggerFlag to the FIFO.
-  __forceinline__ __device__ void signal() { proxyChan_.signal(); }
+  MSCCLPP_DEVICE void signal() { proxyChan_.signal(); }
 
   /// Push a @ref TriggerData and a @ref TriggerFlag at the same time to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  __forceinline__ __device__ void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+  MSCCLPP_DEVICE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
     proxyChan_.putWithSignal(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a @ref TriggerData and a @ref TriggerFlag at the same time to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  __forceinline__ __device__ void putWithSignal(uint64_t offset, uint64_t size) { putWithSignal(offset, offset, size); }
+  MSCCLPP_DEVICE void putWithSignal(uint64_t offset, uint64_t size) { putWithSignal(offset, offset, size); }
 
   /// Push a @ref TriggerData, a @ref TriggerFlag, and a @ref TriggerSync at the same time to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  __forceinline__ __device__ void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+  MSCCLPP_DEVICE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
     proxyChan_.putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a @ref TriggerData, a @ref TriggerFlag, and a @ref TriggerSync at the same time to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  __forceinline__ __device__ void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
+  MSCCLPP_DEVICE void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
     putWithSignalAndFlush(offset, offset, size);
   }
 
   /// Push a @ref TriggerSync to the FIFO.
-  __forceinline__ __device__ void flush() { proxyChan_.flush(); }
+  MSCCLPP_DEVICE void flush() { proxyChan_.flush(); }
 
   /// Wait for the proxy channel to be signaled.
-  __forceinline__ __device__ void wait() { proxyChan_.wait(); }
-
-#endif  // __CUDACC__
+  MSCCLPP_DEVICE void wait() { proxyChan_.wait(); }
 
   ProxyChannel proxyChan_;
   MemoryId dst_;

@@ -82,13 +82,11 @@ class Host2DeviceSemaphore : public BaseSemaphore<CudaDeleter, std::default_dele
 
   /// Device-side handle for @ref Host2DeviceSemaphore.
   struct DeviceHandle {
-#ifdef __CUDACC__
     /// Wait for the host to signal.
-    __forceinline__ __device__ void wait() {
+    MSCCLPP_DEVICE void wait() {
       (*expectedInboundSemaphoreId) += 1;
       POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)(inboundSemaphoreId) < (*expectedInboundSemaphoreId), 1000000);
     }
-#endif  // __CUDACC__
 
     uint64_t* inboundSemaphoreId;
     uint64_t* expectedInboundSemaphoreId;
@@ -134,9 +132,8 @@ class SmDevice2DeviceSemaphore : public BaseSemaphore<CudaDeleter, CudaDeleter> 
 
   /// Device-side handle for @ref SmDevice2DeviceSemaphore.
   struct DeviceHandle {
-#ifdef __CUDACC__
     /// Wait for the remote device to signal.
-    __forceinline__ __device__ void wait() {
+    MSCCLPP_DEVICE void wait() {
       (*expectedInboundSemaphoreId) += 1;
       POLL_MAYBE_JAILBREAK(*inboundSemaphoreId < (*expectedInboundSemaphoreId), 1000000);
     }
@@ -146,7 +143,7 @@ class SmDevice2DeviceSemaphore : public BaseSemaphore<CudaDeleter, CudaDeleter> 
     /// This function guarantees that all the memory operation before this function is completed before the remote
     /// semaphore is signaled.
     ///
-    __forceinline__ __device__ void signal() {
+    MSCCLPP_DEVICE void signal() {
       // This fence ensures that preceding writes are visible on the peer GPU before the incremented
       // `outboundSemaphoreId` is visible.
       __threadfence_system();
@@ -160,17 +157,16 @@ class SmDevice2DeviceSemaphore : public BaseSemaphore<CudaDeleter, CudaDeleter> 
     /// intended to be used with @ref putPackets() and @ref getPackets() that use flags inside packets to indicate the
     /// completion of copies.
     ///
-    __forceinline__ __device__ void signalPacket() {
+    MSCCLPP_DEVICE void signalPacket() {
       semaphoreIncrement();
       *remoteInboundSemaphoreId = semaphoreGetLocal();
     }
 
     /// Increase the counter of the local semaphore.
-    __forceinline__ __device__ void semaphoreIncrement() { *outboundSemaphoreId += 1; }
+    MSCCLPP_DEVICE void semaphoreIncrement() { *outboundSemaphoreId += 1; }
 
     /// Get the value of the local semaphore.
-    __forceinline__ __device__ uint64_t semaphoreGetLocal() const { return *outboundSemaphoreId; }
-#endif  // __CUDACC__
+    MSCCLPP_DEVICE uint64_t semaphoreGetLocal() const { return *outboundSemaphoreId; }
 
     volatile uint64_t* inboundSemaphoreId;
     uint64_t* outboundSemaphoreId;

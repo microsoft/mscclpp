@@ -4,8 +4,6 @@
 #ifndef MSCCLPP_POLL_HPP_
 #define MSCCLPP_POLL_HPP_
 
-#ifdef __CUDACC__
-
 #ifndef NDEBUG
 // TODO(chhwang): https://github.com/microsoft/mscclpp/issues/99
 #define POLL_PRINT_ON_STUCK(__cond)
@@ -56,7 +54,5 @@
       }                                                           \
     }                                                             \
   } while (0);
-
-#endif  // __CUDACC__
 
 #endif  // MSCCLPP_POLL_HPP_

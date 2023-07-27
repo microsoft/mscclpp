@@ -38,7 +38,6 @@ struct SmChannel {
     void* getPacketBuffer_;
 
    private:
-#ifdef __CUDACC__
     /// Helper for aligned data type access.
     /// @tparam T The data type.
     template <typename T>
@@ -62,7 +61,7 @@ struct SmChannel {
       /// @param v The value to be loaded.
       /// @param p The address of the value to be loaded.
       ///
-      static __forceinline__ __device__ void load(T& v, const T* p) {
+      static MSCCLPP_DEVICE void load(T& v, const T* p) {
         if constexpr (is4B) {
           asm volatile("ld.volatile.global.u32 %0, [%1];" : "=r"(v) : "l"(p) : "memory");
         } else if constexpr (is8B) {
@@ -88,7 +87,7 @@ struct SmChannel {
       /// @param p The address of the value to be written.
       /// @param v The value to be written.
       ///
-      static __forceinline__ __device__ void store(T* p, const T& v) {
+      static MSCCLPP_DEVICE void store(T* p, const T& v) {
         if constexpr (is4B) {
           asm volatile("st.volatile.global.u32 [%0], %1;" : : "l"(p), "r"(v) : "memory");
         } else if constexpr (is8B) {
@@ -118,8 +117,7 @@ struct SmChannel {
       /// from the `threadIdx` in CUDA.
       /// @param numThreads The total number of threads that run this function.
       ///
-      static __forceinline__ __device__ void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId,
-                                                  uint32_t numThreads) {
+      static MSCCLPP_DEVICE void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId, uint32_t numThreads) {
         T reg;
         for (size_t i = threadId; i < numElems; i += numThreads) {
           // Load to register first.
@@ -128,15 +126,14 @@ struct SmChannel {
         }
       }
     };
-#endif  // __CUDACC__
+
    public:
-#ifdef __CUDACC__
     /// Load a value from the remote memory.
     /// @tparam T The type of the value to be loaded.
     /// @param index The index of the value to be loaded. The offset in bytes is calculated as index * sizeof(T).
     /// @return The value loaded.
     template <typename T>
-    __forceinline__ __device__ T read(uint64_t index) {
+    MSCCLPP_DEVICE T read(uint64_t index) {
       T v;
       Element<T>::load(v, (T*)dst_ + index);
       return v;
@@ -147,7 +144,7 @@ struct SmChannel {
     /// @param index The index of the value to be written. The offset in bytes is calculated as index * sizeof(T).
     /// @param v The value to be written.
     template <typename T>
-    __forceinline__ __device__ void write(uint64_t index, const T& v) {
+    MSCCLPP_DEVICE void write(uint64_t index, const T& v) {
       Element<T>::store((T*)dst_ + index, v);
     }
 
@@ -167,7 +164,7 @@ struct SmChannel {
     /// @param numThreads The total number of threads that run this function.
     ///
     template <int Alignment = 4, bool CopyRemainder = true>
-    __forceinline__ __device__ void copy(void* dst, void* src, uint64_t bytes, uint32_t threadId, uint32_t numThreads) {
+    MSCCLPP_DEVICE void copy(void* dst, void* src, uint64_t bytes, uint32_t threadId, uint32_t numThreads) {
       static_assert(Alignment == 4 || Alignment == 8 || Alignment % 16 == 0, "Unsupported alignment");
       using Type =
           typename std::conditional<Alignment == 4, int,
@@ -211,8 +208,8 @@ struct SmChannel {
     /// @param numThreads The total number of threads that run this function.
     ///
     template <int Alignment = 16, bool CopyRemainder = true>
-    __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
-                                        uint32_t numThreads) {
+    MSCCLPP_DEVICE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
+                            uint32_t numThreads) {
       copy<Alignment, CopyRemainder>((char*)dst_ + dstOffset, (char*)src_ + srcOffset, bytes, threadId, numThreads);
     }
 
@@ -231,8 +228,8 @@ struct SmChannel {
     /// @param numThreads The total number of threads that run this function.
     ///
     template <int Alignment = 16, bool CopyRemainder = true>
-    __forceinline__ __device__ void get(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
-                                        uint32_t numThreads) {
+    MSCCLPP_DEVICE void get(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
+                            uint32_t numThreads) {
       // Note that `dst` and `src` are swapped for `get()`.
       copy<Alignment, CopyRemainder>((char*)src_ + srcOffset, (char*)dst_ + dstOffset, bytes, threadId, numThreads);
     }
@@ -251,7 +248,7 @@ struct SmChannel {
     /// @param numThreads The total number of threads that run this function.
     ///
     template <int Alignment = 16, bool CopyRemainder = true>
-    __forceinline__ __device__ void put(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
+    MSCCLPP_DEVICE void put(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
       put<Alignment, CopyRemainder>(offset, offset, size, threadId, numThreads);
     }
 
@@ -269,7 +266,7 @@ struct SmChannel {
     /// @param numThreads The total number of threads that run this function.
     ///
     template <int Alignment = 16, bool CopyRemainder = true>
-    __forceinline__ __device__ void get(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
+    MSCCLPP_DEVICE void get(uint64_t offset, uint64_t size, uint32_t threadId, uint32_t numThreads) {
       get<Alignment, CopyRemainder>(offset, offset, size, threadId, numThreads);
     }
 
@@ -284,8 +281,8 @@ struct SmChannel {
     /// the `threadIdx` in CUDA.
     /// @param numThreads The total number of threads that run this function.
     ///
-    __forceinline__ __device__ void putPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes,
-                                               uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+    MSCCLPP_DEVICE void putPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
+                                   uint32_t numThreads, uint32_t flag) {
       mscclpp::putPackets(dst_, dstOffset, src_, srcOffset, bytes, threadId, numThreads, flag);
     }
 
@@ -300,8 +297,8 @@ struct SmChannel {
     /// the `threadIdx` in CUDA.
     /// @param numThreads The total number of threads that run this function.
     ///
-    __forceinline__ __device__ void getPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes,
-                                               uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+    MSCCLPP_DEVICE void getPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
+                                   uint32_t numThreads, uint32_t flag) {
       mscclpp::getPackets(src_, dstOffset, getPacketBuffer_, srcOffset, bytes, threadId, numThreads, flag);
     }
 
@@ -310,7 +307,7 @@ struct SmChannel {
     /// This function guarantees that all the memory operation before this function is completed before the remote
     /// semaphore is signaled.
     ///
-    __forceinline__ __device__ void signal() { semaphore_.signal(); }
+    MSCCLPP_DEVICE void signal() { semaphore_.signal(); }
 
     /// Signal the remote semaphore for copied packets.
     ///
@@ -318,17 +315,16 @@ struct SmChannel {
     /// intended to be used with @ref putPackets() and @ref getPackets() that use flags inside packets to indicate the
     /// completion of copies.
     ///
-    __forceinline__ __device__ void signalPacket() { semaphore_.signalPacket(); }
+    MSCCLPP_DEVICE void signalPacket() { semaphore_.signalPacket(); }
 
     /// Increase the counter of the local semaphore.
-    __forceinline__ __device__ void semaphoreIncrement() { semaphore_.semaphoreIncrement(); }
+    MSCCLPP_DEVICE void semaphoreIncrement() { semaphore_.semaphoreIncrement(); }
 
     /// Read the counter of the local semaphore.
-    __forceinline__ __device__ uint64_t semaphoreGetLocal() const { return semaphore_.semaphoreGetLocal(); }
+    MSCCLPP_DEVICE uint64_t semaphoreGetLocal() const { return semaphore_.semaphoreGetLocal(); }
 
     /// Wait for the remote semaphore to send a signal.
-    __forceinline__ __device__ void wait() { semaphore_.wait(); }
-#endif  // __CUDACC__
+    MSCCLPP_DEVICE void wait() { semaphore_.wait(); }
   };
 
   /// Returns the device-side handle.

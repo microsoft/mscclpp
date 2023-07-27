@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_PACKET_HPP_
 #define MSCCLPP_PACKET_HPP_
 
+#include <mscclpp/core.hpp>
+
 namespace mscclpp {
 
 /// LL (low latency) protocol packet.
@@ -23,21 +25,20 @@ union LLPacket {
 
   uint64_t v[2];
 
-#ifdef __CUDACC__
-  __forceinline__ __device__ LLPacket() {}
+  MSCCLPP_DEVICE LLPacket() {}
 
   /// Write 8 bytes of data to the packet.
   /// @param val1 The first 4-byte data to write.
   /// @param val2 The second 4-byte data to write.
   /// @param flag The flag to write.
-  __forceinline__ __device__ void write(uint32_t val1, uint32_t val2, uint32_t flag) {
+  MSCCLPP_DEVICE void write(uint32_t val1, uint32_t val2, uint32_t flag) {
     asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"(val1), "r"(flag), "r"(val2), "r"(flag));
   }
 
   /// Write 8 bytes of data to the packet.
   /// @param val The 8-byte data to write.
   /// @param flag The flag to write.
-  __forceinline__ __device__ void write(uint64_t val, uint32_t flag) {
+  MSCCLPP_DEVICE void write(uint64_t val, uint32_t flag) {
     asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"((uint32_t)val), "r"(flag),
                  "r"((uint32_t)(val >> 32)), "r"(flag));
   }
@@ -45,7 +46,7 @@ union LLPacket {
   /// Read 8 bytes of data from the packet.
   /// @param flag The flag to read.
   /// @return The 8-byte data read.
-  __forceinline__ __device__ uint2 read(uint32_t flag) {
+  MSCCLPP_DEVICE uint2 read(uint32_t flag) {
     uint2 data;
     uint32_t flag1, flag2;
     do {
@@ -57,16 +58,14 @@ union LLPacket {
   }
 
   /// Clear the packet.
-  __forceinline__ __device__ void clear() {
+  MSCCLPP_DEVICE void clear() {
     vec.x = 0;
     vec.y = 0;
   }
-#endif  // __CUDACC__
 };
 
-#ifdef __CUDACC__
-__forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
-                                           uint64_t srcBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+MSCCLPP_DEVICE void putPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset, uint64_t srcBytes,
+                               uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
   uint32_t* srcBase = (uint32_t*)((char*)src + srcOffset);
   LLPacket* dstBase = (LLPacket*)((char*)dst + dstOffset);
@@ -77,8 +76,8 @@ __forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* 
   }
 }
 
-__forceinline__ __device__ void getPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
-                                           uint64_t dstBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+MSCCLPP_DEVICE void getPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset, uint64_t dstBytes,
+                               uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
   LLPacket* srcBase = (LLPacket*)((char*)src + srcOffset);
   uint2* dstBase = (uint2*)((char*)dst + dstOffset);
@@ -88,7 +87,6 @@ __forceinline__ __device__ void getPackets(void* dst, uint64_t dstOffset, void* 
     dstBase[i] = pkt->read(flag);
   }
 }
-#endif  // __CUDACC__
 
 };  // namespace mscclpp
 

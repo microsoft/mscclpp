@@ -9,6 +9,17 @@
 #define MSCCLPP_PATCH 0
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
+#if defined(__CUDA_ARCH__)
+#define MSCCLPP_DEVICE __forceinline__ __device__
+#else
+#define MSCCLPP_DEVICE inline
+#define atomicAdd(...) 0
+#define atomicSub(...) 0
+#define __syncthreads(...)
+#define __threadfence(...)
+#define __threadfence_system(...)
+#endif
+
 #include <array>
 #include <bitset>
 #include <future>
