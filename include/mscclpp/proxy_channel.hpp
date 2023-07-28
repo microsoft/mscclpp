@@ -8,7 +8,6 @@
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/proxy.hpp>
 #include <mscclpp/semaphore.hpp>
-#include <unordered_map>
 
 namespace mscclpp {
 
@@ -41,10 +40,10 @@ class ProxyService : public BaseProxyService {
   /// @return The ID of the semaphore.
   SemaphoreId addSemaphore(std::shared_ptr<Connection> connection);
 
-  /// Add a pitch pair to the proxy service.
-  /// @param id The ID of the semaphore.
+  /// Add a 2D channel to the proxy service.
+  /// @param connection The connection associated with the channel.
   /// @param pitch The pitch pair.
-  void addPitch(SemaphoreId id, std::pair<uint64_t, uint64_t> pitch);
+  SemaphoreId add2DChannel(std::shared_ptr<Connection> connection, std::pair<uint64_t, uint64_t> pitch);
 
   /// Register a memory region with the proxy service.
   /// @param memory The memory region to register.
@@ -71,7 +70,7 @@ class ProxyService : public BaseProxyService {
   Communicator& communicator_;
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> semaphores_;
   std::vector<RegisteredMemory> memories_;
-  std::unordered_map<SemaphoreId, std::pair<uint64_t, uint64_t>> pitches_;
+  std::vector<std::pair<uint64_t, uint64_t>> pitches_;
   Proxy proxy_;
   int deviceNumaNode;
 

@@ -58,8 +58,7 @@ void ProxyChannelOneToOneTest::setupMeshConnections(
 
     communicator->setup();
 
-    mscclpp::SemaphoreId cid = channelService->addSemaphore(conn);
-    channelService->addPitch(cid, std::pair<size_t, size_t>(pitch, pitch));
+    mscclpp::SemaphoreId cid = channelService->add2DChannel(conn, std::pair<size_t, size_t>(pitch, pitch));
     communicator->setup();
 
     proxyChannels.emplace_back(mscclpp::deviceHandle(
@@ -77,13 +76,13 @@ __device__ size_t getTileElementOffset(int elementId, int width, int rowIndex, i
 }
 
 __global__ void kernelProxyTilePingPong(int* buff, int rank, int pitch, int rowIndex, int colIndex, int width,
-                                        int hight, int* ret) {
+                                        int height, int* ret) {
   DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = gChannelOneToOneTestConstProxyChans;
   volatile int* sendBuff = (volatile int*)buff;
   int nTries = 1000;
   int flusher = 0;
   size_t offset = rowIndex * pitch + colIndex * sizeof(int);
-  size_t nElem = width * hight;
+  size_t nElem = width * height;
   size_t nElemPerPitch = pitch / sizeof(int);
   for (int i = 0; i < nTries; i++) {
     if (rank == 0) {
@@ -105,7 +104,7 @@ __global__ void kernelProxyTilePingPong(int* buff, int rank, int pitch, int rowI
       }
       __syncthreads();
       // __threadfence_system(); // not necessary if we make sendBuff volatile
-      if (threadIdx.x == 0) proxyChan.put2DWithSignal(offset, width * sizeof(int), hight);
+      if (threadIdx.x == 0) proxyChan.put2DWithSignal(offset, width * sizeof(int), height);
     }
     if (rank == 1) {
       if (threadIdx.x == 0) proxyChan.wait();
@@ -125,7 +124,7 @@ __global__ void kernelProxyTilePingPong(int* buff, int rank, int pitch, int rowI
         }
         __syncthreads();
         // __threadfence_system(); // not necessary if we make sendBuff volatile
-        if (threadIdx.x == 0) proxyChan.put2DWithSignal(offset, width * sizeof(int), hight);
+        if (threadIdx.x == 0) proxyChan.put2DWithSignal(offset, width * sizeof(int), height);
       }
     }
     flusher++;
