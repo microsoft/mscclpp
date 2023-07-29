@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_SEMAPHORE_DEVICE_HPP_
 #define MSCCLPP_SEMAPHORE_DEVICE_HPP_
 
+#include "poll.hpp"
+
 namespace mscclpp {
 
 /// Device-side handle for @ref Host2DeviceSemaphore.
