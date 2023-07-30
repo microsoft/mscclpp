@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_SM_CHANNEL_HPP_
-#define MSCCLPP_SM_CHANNEL_HPP_
+#ifndef MSCCLPP_SM_CHANNEL_DEVICE_HPP_
+#define MSCCLPP_SM_CHANNEL_DEVICE_HPP_
 
 #include "poll.hpp"
 
@@ -48,9 +48,9 @@ struct SmChannelDeviceHandle {
         asm volatile("ld.volatile.global.v2.u32 {%0,%1}, [%2];" : "=r"(v.x), "=r"(v.y) : "l"(p) : "memory");
       } else if constexpr (is4Bx4) {
         asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
-                      : "=r"(v.w), "=r"(v.x), "=r"(v.y), "=r"(v.z)
-                      : "l"(p)
-                      : "memory");
+                     : "=r"(v.w), "=r"(v.x), "=r"(v.y), "=r"(v.z)
+                     : "l"(p)
+                     : "memory");
       } else if constexpr (is8Bx2) {
         asm volatile("ld.volatile.global.v2.u64 {%0,%1}, [%2];" : "=l"(v.x), "=l"(v.y) : "l"(p) : "memory");
       }
@@ -74,9 +74,9 @@ struct SmChannelDeviceHandle {
         asm volatile("st.volatile.global.v2.u32 [%0], {%1,%2};" : : "l"(p), "r"(v.x), "r"(v.y) : "memory");
       } else if constexpr (is4Bx4) {
         asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};"
-                      :
-                      : "l"(p), "r"(v.w), "r"(v.x), "r"(v.y), "r"(v.z)
-                      : "memory");
+                     :
+                     : "l"(p), "r"(v.w), "r"(v.x), "r"(v.y), "r"(v.z)
+                     : "memory");
       } else if constexpr (is8Bx2) {
         asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" : : "l"(p), "l"(v.x), "l"(v.y) : "memory");
       }
@@ -105,7 +105,7 @@ struct SmChannelDeviceHandle {
       }
     }
   };
-  
+
   /// Load a value from the remote memory.
   /// @tparam T The type of the value to be loaded.
   /// @param index The index of the value to be loaded. The offset in bytes is calculated as index * sizeof(T).
@@ -144,9 +144,8 @@ struct SmChannelDeviceHandle {
   template <int Alignment = 4, bool CopyRemainder = true>
   __forceinline__ __device__ void copy(void* dst, void* src, uint64_t bytes, uint32_t threadId, uint32_t numThreads) {
     static_assert(Alignment == 4 || Alignment == 8 || Alignment % 16 == 0, "Unsupported alignment");
-    using Type =
-        typename std::conditional<Alignment == 4, int,
-                                  typename std::conditional<Alignment == 8, long long, longlong2>::type>::type;
+    using Type = typename std::conditional<Alignment == 4, int,
+                                           typename std::conditional<Alignment == 8, long long, longlong2>::type>::type;
     int* dstInt = reinterpret_cast<int*>(dst);
     int* srcInt = reinterpret_cast<int*>(src);
     const uintptr_t dstPtr = reinterpret_cast<uintptr_t>(dst);
@@ -167,7 +166,7 @@ struct SmChannelDeviceHandle {
       // Copy the remainder integers at the end.
       uint64_t nLastInt = (numInt - nFirstInt) % nIntPerElem;
       Element<int>::copy(dstInt + nFirstInt + nElem * nIntPerElem, srcInt + nFirstInt + nElem * nIntPerElem, nLastInt,
-                          threadId, numThreads);
+                         threadId, numThreads);
     }
   }
 
@@ -259,8 +258,8 @@ struct SmChannelDeviceHandle {
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
   ///
-  __forceinline__ __device__ void putPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes,
-                                              uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+  __forceinline__ __device__ void putPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
+                                             uint32_t numThreads, uint32_t flag) {
     mscclpp::putPackets(dst_, dstOffset, src_, srcOffset, bytes, threadId, numThreads, flag);
   }
 
@@ -275,8 +274,8 @@ struct SmChannelDeviceHandle {
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
   ///
-  __forceinline__ __device__ void getPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes,
-                                              uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+  __forceinline__ __device__ void getPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
+                                             uint32_t numThreads, uint32_t flag) {
     mscclpp::getPackets(src_, dstOffset, getPacketBuffer_, srcOffset, bytes, threadId, numThreads, flag);
   }
 
@@ -306,7 +305,6 @@ struct SmChannelDeviceHandle {
 #endif  // __CUDACC__
 };
 
-
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_SM_CHANNEL_HPP_
+#endif  // MSCCLPP_SM_CHANNEL_DEVICE_HPP_
