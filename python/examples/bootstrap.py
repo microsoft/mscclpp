@@ -22,6 +22,7 @@ IB_TRANSPORTS = [
 # Use to hold the sm channels so they don't get garbage collected
 sm_channels = []
 
+
 def setup_connections(comm, rank, world_size, element_size, proxy_service):
     simple_proxy_channels = []
     sm_semaphores = []
@@ -30,7 +31,7 @@ def setup_connections(comm, rank, world_size, element_size, proxy_service):
     memory = torch.zeros(element_size, dtype=torch.int32)
     memory = memory.to("cuda")
 
-    transport_flag = mscclpp.Transport.CudaIpc or IB_TRANSPORTS[rank]
+    transport_flag = mscclpp.TransportFlags(IB_TRANSPORTS[rank]) | mscclpp.Transport.CudaIpc
     ptr = memory.data_ptr()
     size = memory.numel() * memory.element_size()
     reg_mem = comm.register_memory(ptr, size, transport_flag)
