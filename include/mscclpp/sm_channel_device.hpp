@@ -65,8 +65,8 @@ struct Element {
 };
 
 template <>
-struct Element<unsigned long long> {
-  using T = unsigned long long;
+struct Element<long long> {
+  using T = long long;
   static __forceinline__ __device__ void load(T& v, const T* p) {
     asm volatile("ld.volatile.global.u64 %0, [%1];" : "=l"(v) : "l"(p) : "memory");
   }
@@ -74,11 +74,20 @@ struct Element<unsigned long long> {
   static __forceinline__ __device__ void store(T* p, const T& v) {
     asm volatile("st.volatile.global.u64 [%0], %1;" : : "l"(p), "l"(v) : "memory");
   }
+  static __forceinline__ __device__ void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId,
+                                              uint32_t numThreads) {
+    T reg;
+    for (size_t i = threadId; i < numElems; i += numThreads) {
+      // Load to register first.
+      load(reg, src + i);
+      store(dst + i, reg);
+    }
+  }
 };
 
 template <>
-struct Element<uint> {
-  using T = uint;
+struct Element<int> {
+  using T = int;
   static __forceinline__ __device__ void load(T& v, const T* p) {
     asm volatile("ld.volatile.global.u32 %0, [%1];" : "=r"(v) : "l"(p) : "memory");
   }
@@ -86,11 +95,20 @@ struct Element<uint> {
   static __forceinline__ __device__ void store(T* p, const T& v) {
     asm volatile("st.volatile.global.u32 [%0], %1;" : : "l"(p), "r"(v) : "memory");
   }
+  static __forceinline__ __device__ void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId,
+                                              uint32_t numThreads) {
+    T reg;
+    for (size_t i = threadId; i < numElems; i += numThreads) {
+      // Load to register first.
+      load(reg, src + i);
+      store(dst + i, reg);
+    }
+  }
 };
 
 template <>
-struct Element<ulonglong2> {
-  using T = ulonglong2;
+struct Element<longlong2> {
+  using T = longlong2;
   static __forceinline__ __device__ void load(T& v, const T* p) {
     asm volatile("ld.volatile.global.v2.u64 {%0,%1}, [%2];" : "=l"(v.x), "=l"(v.y) : "l"(p) : "memory");
   }
@@ -98,11 +116,20 @@ struct Element<ulonglong2> {
   static __forceinline__ __device__ void store(T* p, const T& v) {
     asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" : : "l"(p), "l"(v.x), "l"(v.y) : "memory");
   }
+  static __forceinline__ __device__ void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId,
+                                              uint32_t numThreads) {
+    T reg;
+    for (size_t i = threadId; i < numElems; i += numThreads) {
+      // Load to register first.
+      load(reg, src + i);
+      store(dst + i, reg);
+    }
+  }
 };
 
 template <>
-struct Element<uint4> {
-  using T = uint4;
+struct Element<int4> {
+  using T = int4;
   static __forceinline__ __device__ void load(T& v, const T* p) {
     asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
                  : "=r"(v.w), "=r"(v.x), "=r"(v.y), "=r"(v.z)
@@ -116,7 +143,17 @@ struct Element<uint4> {
                  : "l"(p), "r"(v.w), "r"(v.x), "r"(v.y), "r"(v.z)
                  : "memory");
   }
+  static __forceinline__ __device__ void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId,
+                                              uint32_t numThreads) {
+    T reg;
+    for (size_t i = threadId; i < numElems; i += numThreads) {
+      // Load to register first.
+      load(reg, src + i);
+      store(dst + i, reg);
+    }
+  }
 };
+
 #endif  // __CUDACC__
 
 /// Channel for accessing peer memory directly from SM.
