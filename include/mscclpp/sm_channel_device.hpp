@@ -142,12 +142,38 @@ struct SmChannelDeviceHandle {
     Element::store<T>((T*)dst_ + index, v);
   }
 
+  /// this is a helper for copy function
+  template <typename T, bool CopyRemainder = true>
+  __forceinline__ __device__ void copy_helper(void* dst, void* src, uint64_t bytes, uint32_t threadId,
+                                              uint32_t numThreads) {
+    int* dstInt = reinterpret_cast<int*>(dst);
+    int* srcInt = reinterpret_cast<int*>(src);
+    const uintptr_t dstPtr = reinterpret_cast<uintptr_t>(dst);
+    const uintptr_t srcPtr = reinterpret_cast<uintptr_t>(src);
+    const uint64_t numInt = bytes / sizeof(int);
+    T* dstElem = reinterpret_cast<T*>((dstPtr + sizeof(T) - 1) / sizeof(T) * sizeof(T));
+    T* srcElem = reinterpret_cast<T*>((srcPtr + sizeof(T) - 1) / sizeof(T) * sizeof(T));
+    uint64_t nFirstInt = (reinterpret_cast<uintptr_t>(dstElem) - dstPtr) / sizeof(int);
+    if (CopyRemainder) {
+      // Copy the remainder integers at the beginning.
+      Element::copy<int>(dstInt, srcInt, nFirstInt, threadId, numThreads);
+    }
+    // Copy elements.
+    constexpr uint64_t nIntPerElem = sizeof(T) / sizeof(int);
+    uint64_t nElem = (numInt - nFirstInt) / nIntPerElem;
+    Element::copy<T>(dstElem, srcElem, nElem, threadId, numThreads);
+    if (CopyRemainder && nIntPerElem > 1) {
+      // Copy the remainder integers at the end.
+      uint64_t nLastInt = (numInt - nFirstInt) % nIntPerElem;
+      Element::copy<int>(dstInt + nFirstInt + nElem * nIntPerElem, srcInt + nFirstInt + nElem * nIntPerElem, nLastInt,
+                         threadId, numThreads);
+    }
+  }
+
   /// Copy aligned data from the source memory to the destination memory.
   ///
   /// This function is a warpper of Element<T>::copy(). Unlike Element<T>::copy(), this function can copy remainder
-  /// bytes when @p CopyRemainder is true. Still, the copying bytes must be a multiple of 4.
-  ///
-  /// @tparam Alignment The alignment of the source and destination addresses. Should be 4, 8, or a multiple of 16.
+  /// bytes when @p CopyRemainder is true. Still, the  16.
   /// @tparam CopyRemainder Whether to copy remainder bytes when the number of bytes is not a multiple of @p
   /// Alignment.
   /// @param dst The destination address. Should be aligned to @p Alignment in the same way as @p src.
@@ -157,32 +183,16 @@ struct SmChannelDeviceHandle {
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
   ///
-  template <int Alignment = 4, bool CopyRemainder = true>
+  template <int Alignment = 16, bool CopyRemainder = true>
   __forceinline__ __device__ void copy(void* dst, void* src, uint64_t bytes, uint32_t threadId, uint32_t numThreads) {
-    static_assert(Alignment == 4 || Alignment == 8 || Alignment % 16 == 0, "Unsupported alignment");
-    using Type = typename std::conditional<Alignment == 4, int,
-                                           typename std::conditional<Alignment == 8, long long, longlong2>::type>::type;
-    int* dstInt = reinterpret_cast<int*>(dst);
-    int* srcInt = reinterpret_cast<int*>(src);
-    const uintptr_t dstPtr = reinterpret_cast<uintptr_t>(dst);
-    const uintptr_t srcPtr = reinterpret_cast<uintptr_t>(src);
-    const uint64_t numInt = bytes / sizeof(int);
-    Type* dstElem = reinterpret_cast<Type*>((dstPtr + sizeof(Type) - 1) / sizeof(Type) * sizeof(Type));
-    Type* srcElem = reinterpret_cast<Type*>((srcPtr + sizeof(Type) - 1) / sizeof(Type) * sizeof(Type));
-    uint64_t nFirstInt = (reinterpret_cast<uintptr_t>(dstElem) - dstPtr) / sizeof(int);
-    if (CopyRemainder) {
-      // Copy the remainder integers at the beginning.
-      Element::copy<int>(dstInt, srcInt, nFirstInt, threadId, numThreads);
-    }
-    // Copy elements.
-    constexpr uint64_t nIntPerElem = sizeof(Type) / sizeof(int);
-    uint64_t nElem = (numInt - nFirstInt) / nIntPerElem;
-    Element::copy<Type>(dstElem, srcElem, nElem, threadId, numThreads);
-    if (CopyRemainder && nIntPerElem > 1) {
-      // Copy the remainder integers at the end.
-      uint64_t nLastInt = (numInt - nFirstInt) % nIntPerElem;
-      Element::copy<int>(dstInt + nFirstInt + nElem * nIntPerElem, srcInt + nFirstInt + nElem * nIntPerElem, nLastInt,
-                         threadId, numThreads);
+    if (Alignment == 4) {
+      copy_helper<int, CopyRemainder>(dst, src, bytes, threadId, numThreads);
+    } else if (Alignment == 8) {
+      copy_helper<long long, CopyRemainder>(dst, src, bytes, threadId, numThreads);
+    } else if (Alignment == 16) {
+      copy_helper<longlong2, CopyRemainder>(dst, src, bytes, threadId, numThreads);
+    } else {
+      static_assert(Alignment == 4 || Alignment == 8 || Alignment == 16, "Unsupported alignment");
     }
   }
 
