@@ -29,5 +29,4 @@ void register_sm_channel(nb::module_& m) {
       .def_prop_ro("raw", [](const SmChannel::DeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
-
 };

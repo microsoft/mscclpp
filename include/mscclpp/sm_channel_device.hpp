@@ -4,9 +4,9 @@
 #ifndef MSCCLPP_SM_CHANNEL_DEVICE_HPP_
 #define MSCCLPP_SM_CHANNEL_DEVICE_HPP_
 
-#include "semaphore_device.hpp"
-#include "poll.hpp"
 #include "packet.hpp"
+#include "poll.hpp"
+#include "semaphore_device.hpp"
 
 namespace mscclpp {
 
@@ -105,19 +105,19 @@ struct Element<uint4> {
   using T = uint4;
   static __forceinline__ __device__ void load(T& v, const T* p) {
     asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
-                  : "=r"(v.w), "=r"(v.x), "=r"(v.y), "=r"(v.z)
-                  : "l"(p)
-                  : "memory");
+                 : "=r"(v.w), "=r"(v.x), "=r"(v.y), "=r"(v.z)
+                 : "l"(p)
+                 : "memory");
   }
 
   static __forceinline__ __device__ void store(T* p, const T& v) {
     asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};"
-                  :
-                  : "l"(p), "r"(v.w), "r"(v.x), "r"(v.y), "r"(v.z)
-                  : "memory");
+                 :
+                 : "l"(p), "r"(v.w), "r"(v.x), "r"(v.y), "r"(v.z)
+                 : "memory");
   }
 };
-#endif // __CUDACC__
+#endif  // __CUDACC__
 
 /// Channel for accessing peer memory directly from SM.
 struct SmChannelDeviceHandle {
