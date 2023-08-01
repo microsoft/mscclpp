@@ -58,7 +58,7 @@ def setup_connections(comm, rank, world_size, element_size, proxy_service):
 
     # Create sm channels
     for i, conn in enumerate(connections):
-        sm_chan = mscclpp.SmDevice2DeviceSemaphore.create(comm, conn)
+        sm_chan = mscclpp.SmDevice2DeviceSemaphore(comm, conn)
         sm_semaphores.append(sm_chan)
     comm.setup()
 
