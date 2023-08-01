@@ -33,12 +33,7 @@ void register_semaphore(nb::module_& m) {
 
   nb::class_<SmDevice2DeviceSemaphore> smDevice2DeviceSemaphore(m, "SmDevice2DeviceSemaphore");
   smDevice2DeviceSemaphore
-      .def_static(
-          "create",
-          [](Communicator& comm, std::shared_ptr<Connection> conn) {
-            return std::make_shared<SmDevice2DeviceSemaphore>(comm, conn);
-          },
-          nb::arg("communicator"), nb::arg("connection"))
+      .def(nb::init<Communicator&, std::shared_ptr<Connection>>(), nb::arg("communicator"), nb::arg("connection"))
       .def("device_handle", &SmDevice2DeviceSemaphore::deviceHandle);
 
   nb::class_<SmDevice2DeviceSemaphore::DeviceHandle>(smDevice2DeviceSemaphore, "DeviceHandle")

@@ -5,7 +5,6 @@
 #define MSCCLPP_SM_CHANNEL_HPP_
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/packet.hpp>
 #include <mscclpp/semaphore.hpp>
 #include <mscclpp/sm_channel_device.hpp>
 #include <type_traits>
