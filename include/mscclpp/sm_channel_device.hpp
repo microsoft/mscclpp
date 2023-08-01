@@ -11,148 +11,106 @@
 namespace mscclpp {
 
 #ifdef __CUDACC__
-/// Helper for aligned data type access.
-/// @tparam T The data type.
+
+namespace Element {
+
+/// Load an element from DRAM.
+///
+/// This is a warpper of ld.volatile.global.* PTX instruction. Address alignment is not this function's
+/// responsibility.
+///
+/// @param v The value to be loaded.
+/// @param p The address of the value to be loaded.
+///
 template <typename T>
-struct Element {
-  /// Load an element from DRAM.
-  ///
-  /// This is a warpper of ld.volatile.global.* PTX instruction. Address alignment is not this function's
-  /// responsibility.
-  ///
-  /// @param v The value to be loaded.
-  /// @param p The address of the value to be loaded.
-  ///
-  static __forceinline__ __device__ void load(T& v, const T* p) {
-    // We should only use the specialized functions.
-    __assert_fail("Unsupported type", __FILE__, __LINE__, __PRETTY_FUNCTION__);
-  }
+__forceinline__ __device__ void load(T& v, const T* p) {
+  // We should only use the specialized functions.
+  __assert_fail("Unsupported type", __FILE__, __LINE__, __PRETTY_FUNCTION__);
+}
 
-  /// Write an element on DRAM.
-  ///
-  /// This is a wrapper of st.volatile.global.* PTX instruction. Address alignment is not this function's
-  /// responsibility.
-  ///
-  /// @param p The address of the value to be written.
-  /// @param v The value to be written.
-  ///
-  static __forceinline__ __device__ void store(T* p, const T& v) {
-    // We should only use the specialized functions.
-    __assert_fail("Unsupported type", __FILE__, __LINE__, __PRETTY_FUNCTION__);
-  }
+/// Write an element on DRAM.
+///
+/// This is a wrapper of st.volatile.global.* PTX instruction. Address alignment is not this function's
+/// responsibility.
+///
+/// @param p The address of the value to be written.
+/// @param v The value to be written.
+///
+template <typename T>
+__forceinline__ __device__ void store(T* p, const T& v) {
+  // We should only use the specialized functions.
+  __assert_fail("Unsupported type", __FILE__, __LINE__, __PRETTY_FUNCTION__);
+}
 
-  /// Copy aligned elements from the source memory to the destination memory.
-  ///
-  /// This function is intended to be collectively called by multiple threads. Each thread copies a part of
-  /// elements.
-  ///
-  /// @param dst The destination address.
-  /// @param src The source address.
-  /// @param numElems The number of elements to be copied.
-  /// @param threadId The index of the current thread among all threads running this function. This is different
-  /// from the `threadIdx` in CUDA.
-  /// @param numThreads The total number of threads that run this function.
-  ///
-  static __forceinline__ __device__ void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId,
-                                              uint32_t numThreads) {
-    T reg;
-    for (size_t i = threadId; i < numElems; i += numThreads) {
-      // Load to register first.
-      load(reg, src + i);
-      store(dst + i, reg);
-    }
+/// Copy aligned elements from the source memory to the destination memory.
+///
+/// This function is intended to be collectively called by multiple threads. Each thread copies a part of
+/// elements.
+///
+/// @param dst The destination address.
+/// @param src The source address.
+/// @param numElems The number of elements to be copied.
+/// @param threadId The index of the current thread among all threads running this function. This is different
+/// from the `threadIdx` in CUDA.
+/// @param numThreads The total number of threads that run this function.
+///
+template <typename T>
+__forceinline__ __device__ void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId, uint32_t numThreads) {
+  T reg;
+  for (size_t i = threadId; i < numElems; i += numThreads) {
+    // Load to register first.
+    load(reg, src + i);
+    store(dst + i, reg);
   }
-};
+}
 
 template <>
-struct Element<long long> {
-  using T = long long;
-  static __forceinline__ __device__ void load(T& v, const T* p) {
-    asm volatile("ld.volatile.global.u64 %0, [%1];" : "=l"(v) : "l"(p) : "memory");
-  }
-
-  static __forceinline__ __device__ void store(T* p, const T& v) {
-    asm volatile("st.volatile.global.u64 [%0], %1;" : : "l"(p), "l"(v) : "memory");
-  }
-  static __forceinline__ __device__ void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId,
-                                              uint32_t numThreads) {
-    T reg;
-    for (size_t i = threadId; i < numElems; i += numThreads) {
-      // Load to register first.
-      load(reg, src + i);
-      store(dst + i, reg);
-    }
-  }
-};
+__forceinline__ __device__ void load<long long>(long long& v, const long long* p) {
+  asm volatile("ld.volatile.global.u64 %0, [%1];" : "=l"(v) : "l"(p) : "memory");
+}
 
 template <>
-struct Element<int> {
-  using T = int;
-  static __forceinline__ __device__ void load(T& v, const T* p) {
-    asm volatile("ld.volatile.global.u32 %0, [%1];" : "=r"(v) : "l"(p) : "memory");
-  }
-
-  static __forceinline__ __device__ void store(T* p, const T& v) {
-    asm volatile("st.volatile.global.u32 [%0], %1;" : : "l"(p), "r"(v) : "memory");
-  }
-  static __forceinline__ __device__ void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId,
-                                              uint32_t numThreads) {
-    T reg;
-    for (size_t i = threadId; i < numElems; i += numThreads) {
-      // Load to register first.
-      load(reg, src + i);
-      store(dst + i, reg);
-    }
-  }
-};
+__forceinline__ __device__ void store<long long>(long long* p, const long long& v) {
+  asm volatile("st.volatile.global.u64 [%0], %1;" : : "l"(p), "l"(v) : "memory");
+}
 
 template <>
-struct Element<longlong2> {
-  using T = longlong2;
-  static __forceinline__ __device__ void load(T& v, const T* p) {
-    asm volatile("ld.volatile.global.v2.u64 {%0,%1}, [%2];" : "=l"(v.x), "=l"(v.y) : "l"(p) : "memory");
-  }
-
-  static __forceinline__ __device__ void store(T* p, const T& v) {
-    asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" : : "l"(p), "l"(v.x), "l"(v.y) : "memory");
-  }
-  static __forceinline__ __device__ void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId,
-                                              uint32_t numThreads) {
-    T reg;
-    for (size_t i = threadId; i < numElems; i += numThreads) {
-      // Load to register first.
-      load(reg, src + i);
-      store(dst + i, reg);
-    }
-  }
-};
+__forceinline__ __device__ void load<int>(int& v, const int* p) {
+  asm volatile("ld.volatile.global.u32 %0, [%1];" : "=r"(v) : "l"(p) : "memory");
+}
 
 template <>
-struct Element<int4> {
-  using T = int4;
-  static __forceinline__ __device__ void load(T& v, const T* p) {
-    asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
-                 : "=r"(v.w), "=r"(v.x), "=r"(v.y), "=r"(v.z)
-                 : "l"(p)
-                 : "memory");
-  }
+__forceinline__ __device__ void store<int>(int* p, const int& v) {
+  asm volatile("st.volatile.global.u32 [%0], %1;" : : "l"(p), "r"(v) : "memory");
+}
 
-  static __forceinline__ __device__ void store(T* p, const T& v) {
-    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};"
-                 :
-                 : "l"(p), "r"(v.w), "r"(v.x), "r"(v.y), "r"(v.z)
-                 : "memory");
-  }
-  static __forceinline__ __device__ void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId,
-                                              uint32_t numThreads) {
-    T reg;
-    for (size_t i = threadId; i < numElems; i += numThreads) {
-      // Load to register first.
-      load(reg, src + i);
-      store(dst + i, reg);
-    }
-  }
-};
+template <>
+__forceinline__ __device__ void load<longlong2>(longlong2& v, const longlong2* p) {
+  asm volatile("ld.volatile.global.v2.u64 {%0,%1}, [%2];" : "=l"(v.x), "=l"(v.y) : "l"(p) : "memory");
+}
+
+template <>
+__forceinline__ __device__ void store<longlong2>(longlong2* p, const longlong2& v) {
+  asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" : : "l"(p), "l"(v.x), "l"(v.y) : "memory");
+}
+
+template <>
+__forceinline__ __device__ void load<int4>(int4& v, const int4* p) {
+  asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
+               : "=r"(v.w), "=r"(v.x), "=r"(v.y), "=r"(v.z)
+               : "l"(p)
+               : "memory");
+}
+
+template <>
+__forceinline__ __device__ void store<int4>(int4* p, const int4& v) {
+  asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};"
+               :
+               : "l"(p), "r"(v.w), "r"(v.x), "r"(v.y), "r"(v.z)
+               : "memory");
+}
+
+}  // namespace Element
 
 #endif  // __CUDACC__
 
@@ -171,7 +129,7 @@ struct SmChannelDeviceHandle {
   template <typename T>
   __forceinline__ __device__ T read(uint64_t index) {
     T v;
-    Element<T>::load(v, (T*)dst_ + index);
+    Element::load<T>(v, (T*)dst_ + index);
     return v;
   }
 
@@ -181,7 +139,7 @@ struct SmChannelDeviceHandle {
   /// @param v The value to be written.
   template <typename T>
   __forceinline__ __device__ void write(uint64_t index, const T& v) {
-    Element<T>::store((T*)dst_ + index, v);
+    Element::store<T>((T*)dst_ + index, v);
   }
 
   /// Copy aligned data from the source memory to the destination memory.
@@ -214,16 +172,16 @@ struct SmChannelDeviceHandle {
     uint64_t nFirstInt = (reinterpret_cast<uintptr_t>(dstElem) - dstPtr) / sizeof(int);
     if (CopyRemainder) {
       // Copy the remainder integers at the beginning.
-      Element<int>::copy(dstInt, srcInt, nFirstInt, threadId, numThreads);
+      Element::copy<int>(dstInt, srcInt, nFirstInt, threadId, numThreads);
     }
     // Copy elements.
     constexpr uint64_t nIntPerElem = sizeof(Type) / sizeof(int);
     uint64_t nElem = (numInt - nFirstInt) / nIntPerElem;
-    Element<Type>::copy(dstElem, srcElem, nElem, threadId, numThreads);
+    Element::copy<Type>(dstElem, srcElem, nElem, threadId, numThreads);
     if (CopyRemainder && nIntPerElem > 1) {
       // Copy the remainder integers at the end.
       uint64_t nLastInt = (numInt - nFirstInt) % nIntPerElem;
-      Element<int>::copy(dstInt + nFirstInt + nElem * nIntPerElem, srcInt + nFirstInt + nElem * nIntPerElem, nLastInt,
+      Element::copy<int>(dstInt + nFirstInt + nElem * nIntPerElem, srcInt + nFirstInt + nElem * nIntPerElem, nLastInt,
                          threadId, numThreads);
     }
   }
