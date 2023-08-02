@@ -109,7 +109,7 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
       int prePeerRecvId = (preRemoteRecvFromRank < rank) ? preRemoteRecvFromRank : preRemoteRecvFromRank - 1;
 
       // overlap communication and computation
-      mscclpp::SimpleProxyChannel& preDevFstRecvChan = constDevFstRoundChans[prePeerRecvId];
+      DeviceHandle<mscclpp::SimpleProxyChannel>& preDevFstRecvChan = constDevFstRoundChans[prePeerRecvId];
       if (isComm) {
         preDevFstRecvChan.wait();
         devFstSendChan.putWithSignal(dstOffset, srcOffset, nelems * sizeof(int));
@@ -686,7 +686,7 @@ __global__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
 
   // Channel to a remote peer that has the same local rank as me
   int localRank = rank % nRanksPerNode;
-  mscclpp::SimpleProxyChannel proxyChan = constDevFstRoundChans[localRank];
+  DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constDevFstRoundChans[localRank];
 
   // Flag for packets. Initially 1
   uint32_t flag = (uint32_t)globalFlag;
