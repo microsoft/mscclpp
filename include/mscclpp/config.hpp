@@ -9,10 +9,15 @@ namespace mscclpp {
 class Config {
  public:
   int bootstrapConnectionTimeout = 30;
+  int fifoSize = 128;
 
   static Config* getInstance();
+
   int getBootstrapConnectionTimeoutConfig();
   void setBootstrapConnectionTimeoutConfig(int timeout);
+
+  int getFifoSize();
+  void setFifoSize(int size);
 
  private:
   Config() = default;
