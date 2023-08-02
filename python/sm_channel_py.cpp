@@ -18,7 +18,9 @@ void register_sm_channel(nb::module_& m) {
               uintptr_t src) { new (smChannel) SmChannel(semaphore, dst, (void*)src); })
       .def("__init__",
            [](SmChannel* smChannel, std::shared_ptr<SmDevice2DeviceSemaphore> semaphore, RegisteredMemory dst,
-              uintptr_t src, uintptr_t get_packet_buffer) { new (smChannel) SmChannel(semaphore, dst, (void*)src, (void*) get_packet_buffer); })
+              uintptr_t src, uintptr_t get_packet_buffer) {
+             new (smChannel) SmChannel(semaphore, dst, (void*)src, (void*)get_packet_buffer);
+           })
       .def("device_handle", &SmChannel::deviceHandle);
 
   m.def("device_handle", &deviceHandle<SmChannel>, nb::arg("smChannel"));
