@@ -25,7 +25,7 @@ void register_proxy_channel(nb::module_& m) {
       .def("device_channel", &ProxyService::deviceChannel, nb::arg("id"));
 
   nb::class_<ProxyChannel>(m, "ProxyChannel")
-      .def(nb::init<SemaphoreId, Host2DeviceSemaphore::DeviceHandle, DeviceProxyFifo>(), nb::arg("semaphoreId"),
+      .def(nb::init<SemaphoreId, Host2DeviceSemaphore::DeviceHandle, FifoDeviceHandle>(), nb::arg("semaphoreId"),
            nb::arg("semaphore"), nb::arg("fifo"));
 
   nb::class_<SimpleProxyChannel>(m, "SimpleProxyChannel")

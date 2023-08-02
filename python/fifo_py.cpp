@@ -11,15 +11,15 @@ using namespace mscclpp;
 void register_fifo(nb::module_& m) {
   nb::class_<ProxyTrigger>(m, "ProxyTrigger").def_rw("fst", &ProxyTrigger::fst).def_rw("snd", &ProxyTrigger::snd);
 
-  nb::class_<DeviceProxyFifo>(m, "DeviceProxyFifo")
-      .def_rw("triggers", &DeviceProxyFifo::triggers)
-      .def_rw("tail_replica", &DeviceProxyFifo::tailReplica)
-      .def_rw("head", &DeviceProxyFifo::head);
+  nb::class_<FifoDeviceHandle>(m, "FifoDeviceHandle")
+      .def_rw("triggers", &FifoDeviceHandle::triggers)
+      .def_rw("tail_replica", &FifoDeviceHandle::tailReplica)
+      .def_rw("head", &FifoDeviceHandle::head);
 
-  nb::class_<HostProxyFifo>(m, "HostProxyFifo")
+  nb::class_<Fifo>(m, "Fifo")
       .def(nb::init<>())
-      .def("poll", &HostProxyFifo::poll, nb::arg("trigger"))
-      .def("pop", &HostProxyFifo::pop)
-      .def("flush_tail", &HostProxyFifo::flushTail, nb::arg("sync") = false)
-      .def("device_fifo", &HostProxyFifo::deviceFifo);
+      .def("poll", &Fifo::poll, nb::arg("trigger"))
+      .def("pop", &Fifo::pop)
+      .def("flush_tail", &Fifo::flushTail, nb::arg("sync") = false)
+      .def("device_fifo", &Fifo::deviceHandle);
 }

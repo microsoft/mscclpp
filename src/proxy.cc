@@ -22,7 +22,7 @@ static_assert(MSCCLPP_PROXY_FIFO_SIZE >= ProxyFlushPeriod, "MSCCLPP_PROXY_FIFO_S
 struct Proxy::Impl {
   ProxyHandler handler;
   std::function<void()> threadInit;
-  HostProxyFifo fifo;
+  Fifo fifo;
   std::thread service;
   std::atomic_bool running;
 
@@ -53,7 +53,7 @@ MSCCLPP_API_CPP void Proxy::start() {
     pimpl->threadInit();
 
     ProxyHandler handler = this->pimpl->handler;
-    HostProxyFifo& fifo = this->pimpl->fifo;
+    Fifo& fifo = this->pimpl->fifo;
     std::atomic_bool& running = this->pimpl->running;
     ProxyTrigger trigger;
 
@@ -107,6 +107,6 @@ MSCCLPP_API_CPP void Proxy::stop() {
   }
 }
 
-MSCCLPP_API_CPP HostProxyFifo& Proxy::fifo() { return pimpl->fifo; }
+MSCCLPP_API_CPP Fifo& Proxy::fifo() { return pimpl->fifo; }
 
 }  // namespace mscclpp

@@ -80,7 +80,7 @@ While the default implementation already enables any kinds of communication, MSC
 
 ```cpp
 // Proxy FIFO is obtained from mscclpp::Proxy on the host and copied to the device.
-__device__ mscclpp::DeviceProxyFifo fifo;
+__device__ mscclpp::FifoDeviceHandle fifo;
 __global__ void gpuKernel() {
   ...
   // Only one thread is needed for the followings

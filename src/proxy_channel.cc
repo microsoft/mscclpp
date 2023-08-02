@@ -10,7 +10,7 @@
 namespace mscclpp {
 
 MSCCLPP_API_CPP ProxyChannel::ProxyChannel(SemaphoreId semaphoreId, Host2DeviceSemaphore::DeviceHandle semaphore,
-                                           DeviceProxyFifo fifo)
+                                           FifoDeviceHandle fifo)
     : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo) {}
 
 MSCCLPP_API_CPP SimpleProxyChannel::SimpleProxyChannel(ProxyChannel proxyChan, MemoryId dst, MemoryId src)
@@ -39,7 +39,7 @@ MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(Se
 }
 
 MSCCLPP_API_CPP ProxyChannel ProxyService::deviceChannel(SemaphoreId id) {
-  return ProxyChannel(id, semaphores_[id]->deviceHandle(), proxy_.fifo().deviceFifo());
+  return ProxyChannel(id, semaphores_[id]->deviceHandle(), proxy_.fifo().deviceHandle());
 }
 
 MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_.start(); }

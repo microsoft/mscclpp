@@ -137,7 +137,7 @@ struct ProxyChannel {
 
   ProxyChannel() = default;
 
-  ProxyChannel(SemaphoreId semaphoreId, Host2DeviceSemaphore::DeviceHandle semaphore, DeviceProxyFifo fifo);
+  ProxyChannel(SemaphoreId semaphoreId, Host2DeviceSemaphore::DeviceHandle semaphore, FifoDeviceHandle fifo);
 
   ProxyChannel(const ProxyChannel& other) = default;
 
@@ -229,7 +229,7 @@ struct ProxyChannel {
 
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
-  DeviceProxyFifo fifo_;
+  FifoDeviceHandle fifo_;
 };
 
 /// Simple proxy channel with a single destination and source memory region.

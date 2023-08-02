@@ -12,11 +12,11 @@
 #define FLUSH_PERIOD (MSCCLPP_PROXY_FIFO_SIZE)  // should not exceed MSCCLPP_PROXY_FIFO_SIZE
 #define ITER 10000                              // should be larger than MSCCLPP_PROXY_FIFO_SIZE for proper testing
 
-__constant__ mscclpp::DeviceProxyFifo gFifoTestDeviceProxyFifo;
+__constant__ mscclpp::FifoDeviceHandle gFifoTestFifoDeviceHandle;
 __global__ void kernelFifoTest() {
   if (threadIdx.x + blockIdx.x * blockDim.x != 0) return;
 
-  mscclpp::DeviceProxyFifo& fifo = gFifoTestDeviceProxyFifo;
+  mscclpp::FifoDeviceHandle& fifo = gFifoTestFifoDeviceHandle;
   mscclpp::ProxyTrigger trigger;
   for (uint64_t i = 1; i < ITER + 1; ++i) {
     trigger.fst = i;
@@ -28,7 +28,7 @@ __global__ void kernelFifoTest() {
   }
 }
 
-TEST(FifoTest, HostProxyFifo) {
+TEST(FifoTest, Fifo) {
   ASSERT_LE(FLUSH_PERIOD, MSCCLPP_PROXY_FIFO_SIZE);
 
   int cudaNum;
@@ -36,9 +36,9 @@ TEST(FifoTest, HostProxyFifo) {
   int numaNode = mscclpp::getDeviceNumaNode(cudaNum);
   mscclpp::numaBind(numaNode);
 
-  mscclpp::HostProxyFifo hostFifo;
-  mscclpp::DeviceProxyFifo devFifo = hostFifo.deviceFifo();
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gFifoTestDeviceProxyFifo, &devFifo, sizeof(devFifo)));
+  mscclpp::Fifo hostFifo;
+  mscclpp::FifoDeviceHandle devFifo = hostFifo.deviceHandle();
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gFifoTestFifoDeviceHandle, &devFifo, sizeof(devFifo)));
 
   kernelFifoTest<<<1, 1>>>();
   MSCCLPP_CUDATHROW(cudaGetLastError());
@@ -70,7 +70,7 @@ TEST(FifoTest, HostProxyFifo) {
   hostFifo.flushTail(true);
 
   std::stringstream ss;
-  ss << "FifoTest.HostProxyFifo: " << (float)timer.elapsed() / ITER << " us/iter\n";
+  ss << "FifoTest.Fifo: " << (float)timer.elapsed() / ITER << " us/iter\n";
   std::cout << ss.str();
 
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());

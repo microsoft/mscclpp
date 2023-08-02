@@ -294,7 +294,7 @@ class AllGatherChannelService : public mscclpp::BaseProxyService {
     std::vector<DeviceHandle<mscclpp::ProxyChannel>> result;
     for (auto& semaphore : semaphores_) {
       result.push_back(
-          mscclpp::deviceHandle(mscclpp::ProxyChannel(0, semaphore->deviceHandle(), proxy_.fifo().deviceFifo())));
+          mscclpp::deviceHandle(mscclpp::ProxyChannel(0, semaphore->deviceHandle(), proxy_.fifo().deviceHandle())));
     }
     return result;
   }
