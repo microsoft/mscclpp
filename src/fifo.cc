@@ -3,6 +3,7 @@
 
 #include <emmintrin.h>
 
+#include <atomic>
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
 #include <stdexcept>
@@ -41,9 +42,11 @@ MSCCLPP_API_CPP Fifo::~Fifo() = default;
 
 MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
   ProxyTrigger trigger;
-  volatile ProxyTrigger* ptr = &pimpl->triggers.get()[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE];
+  volatile ProxyTrigger* ptr =
+      reinterpret_cast<volatile ProxyTrigger*>(&pimpl->triggers.get()[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]);
   trigger.fst = ptr->fst;
-  trigger.snd = ptr->snd;
+  if (trigger.fst != 0)  // only then we know that trigger is a valid value
+    trigger.snd = ptr->snd;
   return trigger;
 }
 
