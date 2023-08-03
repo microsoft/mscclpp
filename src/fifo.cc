@@ -41,8 +41,9 @@ MSCCLPP_API_CPP Fifo::~Fifo() = default;
 
 MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
   ProxyTrigger trigger;
-  __m128i xmm0 = _mm_load_si128((__m128i*)&pimpl->triggers.get()[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]);
-  _mm_store_si128((__m128i*)&trigger, xmm0);
+  volatile ProxyTrigger* ptr = &pimpl->triggers.get()[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE];
+  trigger.fst = ptr->fst;
+  trigger.snd = ptr->snd;
   return trigger;
 }
 
