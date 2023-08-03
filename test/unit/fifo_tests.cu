@@ -52,7 +52,7 @@ TEST(FifoTest, Fifo) {
   mscclpp::Timer timer(3);
   for (uint64_t i = 0; i < ITER; ++i) {
     while (trigger.fst == 0) {
-      hostFifo.poll(&trigger);
+      trigger = hostFifo.poll();
 
       if (spin++ > 1000000) {
         FAIL() << "Polling is stuck.";

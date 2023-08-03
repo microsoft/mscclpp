@@ -67,7 +67,7 @@ MSCCLPP_API_CPP void Proxy::start() {
         }
       }
       // Poll to see if we are ready to send anything
-      fifo.poll(&trigger);
+      trigger = fifo.poll();
       if (trigger.fst == 0) {  // TODO: this check is a potential pitfall for custom triggers
         continue;              // there is one in progress
       }

@@ -39,9 +39,11 @@ struct Fifo::Impl {
 MSCCLPP_API_CPP Fifo::Fifo() : pimpl(std::make_unique<Impl>()) {}
 MSCCLPP_API_CPP Fifo::~Fifo() = default;
 
-MSCCLPP_API_CPP void Fifo::poll(ProxyTrigger* trigger) {
+MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
+  ProxyTrigger trigger;
   __m128i xmm0 = _mm_load_si128((__m128i*)&pimpl->triggers.get()[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]);
-  _mm_store_si128((__m128i*)trigger, xmm0);
+  _mm_store_si128((__m128i*)&trigger, xmm0);
+  return trigger;
 }
 
 MSCCLPP_API_CPP void Fifo::pop() {

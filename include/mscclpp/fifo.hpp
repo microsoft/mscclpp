@@ -25,8 +25,8 @@ class Fifo {
 
   /// Polls the FIFO for a trigger.
   ///
-  /// @param trigger A pointer to the trigger to be filled.
-  void poll(ProxyTrigger* trigger);
+  /// Returns @ref ProxyTrigger which is the trigger at the head of fifo.
+  ProxyTrigger poll();
 
   /// Pops a trigger from the FIFO.
   void pop();
