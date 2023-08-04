@@ -5,9 +5,8 @@
 
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
+#include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
-
-#include "numa.hpp"
 
 #define FLUSH_PERIOD (MSCCLPP_PROXY_FIFO_SIZE)  // should not exceed MSCCLPP_PROXY_FIFO_SIZE
 #define ITER 10000                              // should be larger than MSCCLPP_PROXY_FIFO_SIZE for proper testing

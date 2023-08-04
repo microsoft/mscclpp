@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <mscclpp/numa.hpp>
 #include <mscclpp/proxy_channel.hpp>
 
 #include "api.h"
 #include "debug.h"
-#include "numa.hpp"
 
 namespace mscclpp {
 
