@@ -8,3 +8,7 @@ import os as _os
 def get_include():
     """Return the directory that contains the MSCCL++ headers."""
     return _os.path.join(_os.path.dirname(__file__), "include")
+
+def get_lib():
+    """Return the directory that contains the MSCCL++ headers."""
+    return _os.path.join(_os.path.dirname(__file__), "lib")
