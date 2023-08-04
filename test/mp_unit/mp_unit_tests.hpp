@@ -137,7 +137,7 @@ class ProxyChannelOneToOneTest : public CommunicatorTestBase {
   void testPacketPingPong(bool useIbOnly);
   void testPacketPingPongPerf(bool useIbOnly);
 
-  std::shared_ptr<mscclpp::ProxyService> channelService;
+  std::shared_ptr<mscclpp::ProxyService> proxyService;
 };
 
 class SmChannelOneToOneTest : public CommunicatorTestBase {

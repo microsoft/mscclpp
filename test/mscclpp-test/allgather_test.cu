@@ -278,9 +278,9 @@ __global__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
                    nBlocksForLocalAllGather);
 }
 
-class AllGatherChannelService : public mscclpp::BaseProxyService {
+class AllGatherproxyService : public mscclpp::BaseProxyService {
  public:
-  AllGatherChannelService(mscclpp::Communicator& communicator, int worldSize, int rank, int cudaDevice);
+  AllGatherproxyService(mscclpp::Communicator& communicator, int worldSize, int rank, int cudaDevice);
   void startProxy() override { proxy_.start(); }
   void stopProxy() override { proxy_.stop(); }
   void setSendBytes(size_t sendBytes) { this->sendBytes_ = sendBytes; }
@@ -314,8 +314,8 @@ class AllGatherChannelService : public mscclpp::BaseProxyService {
   mscclpp::ProxyHandlerResult handleTrigger(mscclpp::ProxyTrigger triggerRaw);
 };
 
-AllGatherChannelService::AllGatherChannelService(mscclpp::Communicator& communicator, int worldSize, int rank,
-                                                 int cudaDevice)
+AllGatherproxyService::AllGatherproxyService(mscclpp::Communicator& communicator, int worldSize, int rank,
+                                             int cudaDevice)
     : communicator_(communicator),
       worldSize_(worldSize),
       sendBytes_(0),
@@ -327,7 +327,7 @@ AllGatherChannelService::AllGatherChannelService(mscclpp::Communicator& communic
                numaBind(deviceNumaNode);
              }) {}
 
-mscclpp::ProxyHandlerResult AllGatherChannelService::handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
+mscclpp::ProxyHandlerResult AllGatherproxyService::handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
   size_t offset = rank_ * sendBytes_;
   if (triggerRaw.fst != MAGIC) {
     // this is not a valid trigger
@@ -432,7 +432,7 @@ void AllGatherTestColl::setupCollTest(size_t size) {
   paramCount_ = base;
   expectedCount_ = recvCount_;
   if (isUsingHostOffload(kernelNum_)) {
-    auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
+    auto service = std::dynamic_pointer_cast<AllGatherproxyService>(chanService_);
     service->setSendBytes(sendCount_ * typeSize_);
   }
   mscclpp::DeviceSyncer syncer = {};
@@ -459,7 +459,7 @@ class AllGatherTestEngine : public BaseTestEngine {
   std::vector<void*> getSendBuff() override;
   void* getRecvBuff() override;
   void* getScratchBuff() override;
-  std::shared_ptr<mscclpp::BaseProxyService> createChannelService() override;
+  std::shared_ptr<mscclpp::BaseProxyService> createproxyService() override;
 
  private:
   void* getExpectedBuff() override;
@@ -492,7 +492,7 @@ void AllGatherTestEngine::setupConnections() {
     CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannelHandles.data(),
                                  sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelHandles.size()));
   } else {
-    auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
+    auto service = std::dynamic_pointer_cast<AllGatherproxyService>(chanService_);
     setupMeshConnections(devProxyChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,
                          [&](std::vector<std::shared_ptr<mscclpp::Connection>> conns,
                              std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteMemories,
@@ -512,9 +512,9 @@ void AllGatherTestEngine::setupConnections() {
   }
 }
 
-std::shared_ptr<mscclpp::BaseProxyService> AllGatherTestEngine::createChannelService() {
+std::shared_ptr<mscclpp::BaseProxyService> AllGatherTestEngine::createproxyService() {
   if (isUsingHostOffload(args_.kernelNum)) {
-    return std::make_shared<AllGatherChannelService>(*comm_, args_.totalRanks, args_.rank, args_.gpuNum);
+    return std::make_shared<AllGatherproxyService>(*comm_, args_.totalRanks, args_.rank, args_.gpuNum);
   } else {
     return std::make_shared<mscclpp::ProxyService>(*comm_);
   }
