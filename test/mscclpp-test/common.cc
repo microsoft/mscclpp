@@ -416,7 +416,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::Simp
     auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
     for (size_t i = 0; i < connections.size(); ++i) {
       proxyChannels.push_back(mscclpp::deviceHandle(mscclpp::SimpleProxyChannel(
-          service->deviceChannel(service->addSemaphore(connections[i])), service->addMemory(remoteRegMemories[i].get()),
+          service->proxyChannel(service->addSemaphore(connections[i])), service->addMemory(remoteRegMemories[i].get()),
           service->addMemory(inputBufRegMem))));
     }
   }
@@ -513,7 +513,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
         throw std::runtime_error("IB transport requires putPacketBuff and getPacketBuff");
       }
       proxyChannels.emplace_back(mscclpp::deviceHandle(mscclpp::SimpleProxyChannel(
-          service->deviceChannel(connIdToSemId[cid]), service->addMemory(remoteRegMemories[cid].get()),
+          service->proxyChannel(connIdToSemId[cid]), service->addMemory(remoteRegMemories[cid].get()),
           service->addMemory(putPacketBufRegMem))));
     }
   }

@@ -47,7 +47,7 @@ class ProxyService : public BaseProxyService {
   /// Get a proxy channel by semaphore ID.
   /// @param id The ID of the semaphore.
   /// @return The proxy channel.
-  ProxyChannel deviceChannel(SemaphoreId id);
+  ProxyChannel proxyChannel(SemaphoreId id);
 
   /// Start the proxy service.
   void startProxy();

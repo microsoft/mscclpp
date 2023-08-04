@@ -38,7 +38,7 @@ MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(Se
   return semaphores_[id];
 }
 
-MSCCLPP_API_CPP ProxyChannel ProxyService::deviceChannel(SemaphoreId id) {
+MSCCLPP_API_CPP ProxyChannel ProxyService::proxyChannel(SemaphoreId id) {
   return ProxyChannel(id, semaphores_[id]->deviceHandle(), proxy_.fifo().deviceHandle());
 }
 

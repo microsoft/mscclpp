@@ -238,7 +238,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannels;
   for (size_t i = 0; i < semaphoreIds.size(); ++i) {
     proxyChannels.push_back(mscclpp::deviceHandle(mscclpp::SimpleProxyChannel(
-        channelService.deviceChannel(semaphoreIds[i]), channelService.addMemory(remoteMemories[i].get()),
+        channelService.proxyChannel(semaphoreIds[i]), channelService.addMemory(remoteMemories[i].get()),
         channelService.addMemory(localMemories[i]))));
   }
 

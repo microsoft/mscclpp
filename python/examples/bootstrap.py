@@ -49,7 +49,7 @@ def setup_connections(comm, rank, world_size, element_size, proxy_service):
     # Create simple proxy channels
     for i, conn in enumerate(connections):
         proxy_channel = mscclpp.SimpleProxyChannel(
-            proxy_service.device_channel(proxy_service.add_semaphore(conn)),
+            proxy_service.proxy_channel(proxy_service.add_semaphore(conn)),
             proxy_service.add_memory(remote_memories[i].get()),
             proxy_service.add_memory(reg_mem),
         )

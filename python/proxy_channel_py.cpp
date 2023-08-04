@@ -22,7 +22,7 @@ void register_proxy_channel(nb::module_& m) {
       .def("add_semaphore", &ProxyService::addSemaphore, nb::arg("connection"))
       .def("add_memory", &ProxyService::addMemory, nb::arg("memory"))
       .def("semaphore", &ProxyService::semaphore, nb::arg("id"))
-      .def("device_channel", &ProxyService::deviceChannel, nb::arg("id"));
+      .def("proxy_channel", &ProxyService::proxyChannel, nb::arg("id"));
 
   nb::class_<ProxyChannel>(m, "ProxyChannel")
       .def(nb::init<SemaphoreId, Host2DeviceSemaphore::DeviceHandle, FifoDeviceHandle>(), nb::arg("semaphoreId"),

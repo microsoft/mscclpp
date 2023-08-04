@@ -290,7 +290,7 @@ class AllGatherChannelService : public mscclpp::BaseProxyService {
     semaphores_.push_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(communicator_, connection));
     return semaphores_.size() - 1;
   }
-  std::vector<DeviceHandle<mscclpp::ProxyChannel>> deviceChannels() {
+  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannels() {
     std::vector<DeviceHandle<mscclpp::ProxyChannel>> result;
     for (auto& semaphore : semaphores_) {
       result.push_back(
@@ -505,7 +505,7 @@ void AllGatherTestEngine::setupConnections() {
                            service->setLocalMemory(localMemory);
                            comm_->setup();
                          });
-    auto proxyChannels = service->deviceChannels();
+    auto proxyChannels = service->proxyChannels();
     assert(proxyChannels.size() < sizeof(constRawProxyChan) / sizeof(DeviceHandle<mscclpp::ProxyChannel>));
     CUDATHROW(cudaMemcpyToSymbol(constRawProxyChan, proxyChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::ProxyChannel>) * proxyChannels.size()));
