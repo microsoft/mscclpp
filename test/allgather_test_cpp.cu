@@ -226,7 +226,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
       transport = ibTransport;
     }
     // Connect with all other ranks
-    semaphoreIds.push_back(proxyService.buildAndAddSemaphore(comm.connectOnSetup(r, 0, transport)));
+    semaphoreIds.push_back(proxyService.buildAndAddSemaphore(comm, comm.connectOnSetup(r, 0, transport)));
     auto memory = comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport);
     localMemories.push_back(memory);
     comm.sendMemoryOnSetup(memory, r, 0);
@@ -396,7 +396,7 @@ int main(int argc, const char* argv[]) {
     auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, world_size);
     bootstrap->initialize(ip_port);
     mscclpp::Communicator comm(bootstrap);
-    mscclpp::ProxyService proxyService(comm);
+    mscclpp::ProxyService proxyService;
 
     if (rank == 0) printf("Initializing data for allgather test\n");
     initializeAndAllocateAllGatherData(rank, world_size, dataSize, nelemsPerGPU, &data_h, &data_d);

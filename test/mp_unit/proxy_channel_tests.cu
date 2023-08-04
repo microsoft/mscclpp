@@ -9,7 +9,7 @@ void ProxyChannelOneToOneTest::SetUp() {
   // Use only two ranks
   setNumRanksToUse(2);
   CommunicatorTestBase::SetUp();
-  proxyService = std::make_shared<mscclpp::ProxyService>(*communicator.get());
+  proxyService = std::make_shared<mscclpp::ProxyService>();
 }
 
 void ProxyChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
@@ -49,7 +49,7 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
 
     communicator->setup();
 
-    mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(conn);
+    mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, conn);
     communicator->setup();
 
     proxyChannels.emplace_back(proxyService->proxyChannel(cid), proxyService->addMemory(remoteMemory.get()),

@@ -75,7 +75,7 @@ def run(rank, args):
     boot = mscclpp.TcpBootstrap.create(rank, world_size)
     boot.initialize(args.if_ip_port_trio)
     comm = mscclpp.Communicator(boot)
-    proxy_service = mscclpp.ProxyService(comm)
+    proxy_service = mscclpp.ProxyService()
 
     logging.info("Rank: %d, setting up connections", rank)
     setup_connections(comm, rank, world_size, args.num_elements, proxy_service)

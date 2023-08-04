@@ -16,16 +16,16 @@ MSCCLPP_API_CPP ProxyChannel::ProxyChannel(SemaphoreId semaphoreId, Host2DeviceS
 MSCCLPP_API_CPP SimpleProxyChannel::SimpleProxyChannel(ProxyChannel proxyChan, MemoryId dst, MemoryId src)
     : proxyChan_(proxyChan), dst_(dst), src_(src) {}
 
-MSCCLPP_API_CPP ProxyService::ProxyService(Communicator& communicator)
-    : communicator_(communicator),
-      proxy_([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
+MSCCLPP_API_CPP ProxyService::ProxyService()
+    : proxy_([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
   int cudaDevice;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
   deviceNumaNode = getDeviceNumaNode(cudaDevice);
 }
 
-MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(std::shared_ptr<Connection> connection) {
-  semaphores_.push_back(std::make_shared<Host2DeviceSemaphore>(communicator_, connection));
+MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
+                                                               std::shared_ptr<Connection> connection) {
+  semaphores_.push_back(std::make_shared<Host2DeviceSemaphore>(communicator, connection));
   return semaphores_.size() - 1;
 }
 
