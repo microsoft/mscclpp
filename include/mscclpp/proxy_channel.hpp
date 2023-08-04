@@ -29,10 +29,15 @@ class ProxyService : public BaseProxyService {
   /// @param communicator The communicator to use.
   ProxyService(Communicator& communicator);
 
-  /// Add a semaphore to the proxy service.
+  /// Build and add a semaphore to the proxy service.
   /// @param connection The connection associated with the semaphore.
   /// @return The ID of the semaphore.
-  SemaphoreId addSemaphore(std::shared_ptr<Connection> connection);
+  SemaphoreId buildAndAddSemaphore(std::shared_ptr<Connection> connection);
+
+  /// Add a semaphore to the proxy service.
+  /// @param semaphore The semaphore to be added
+  /// @return The ID of the semaphore.
+  SemaphoreId addSemaphore(std::shared_ptr<Host2DeviceSemaphore> semaphore);
 
   /// Register a memory region with the proxy service.
   /// @param memory The memory region to register.

@@ -286,7 +286,7 @@ class AllGatherChannelService : public mscclpp::BaseProxyService {
   void setSendBytes(size_t sendBytes) { this->sendBytes_ = sendBytes; }
   void addRemoteMemory(mscclpp::RegisteredMemory memory) { remoteMemories_.push_back(memory); }
   void setLocalMemory(mscclpp::RegisteredMemory memory) { localMemory_ = memory; }
-  mscclpp::SemaphoreId addSemaphore(std::shared_ptr<mscclpp::Connection> connection) {
+  mscclpp::SemaphoreId buildAndAddSemaphore(std::shared_ptr<mscclpp::Connection> connection) {
     semaphores_.push_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(communicator_, connection));
     return semaphores_.size() - 1;
   }
@@ -499,7 +499,7 @@ void AllGatherTestEngine::setupConnections() {
                              const mscclpp::RegisteredMemory& localMemory) {
                            std::vector<mscclpp::SemaphoreId> semaphoreIds;
                            for (size_t i = 0; i < conns.size(); ++i) {
-                             service->addSemaphore(conns[i]);
+                             service->buildAndAddSemaphore(conns[i]);
                              service->addRemoteMemory(remoteMemories[i].get());
                            }
                            service->setLocalMemory(localMemory);

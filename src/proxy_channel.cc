@@ -24,8 +24,13 @@ MSCCLPP_API_CPP ProxyService::ProxyService(Communicator& communicator)
   deviceNumaNode = getDeviceNumaNode(cudaDevice);
 }
 
-MSCCLPP_API_CPP SemaphoreId ProxyService::addSemaphore(std::shared_ptr<Connection> connection) {
+MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(std::shared_ptr<Connection> connection) {
   semaphores_.push_back(std::make_shared<Host2DeviceSemaphore>(communicator_, connection));
+  return semaphores_.size() - 1;
+}
+
+MSCCLPP_API_CPP SemaphoreId ProxyService::addSemaphore(std::shared_ptr<Host2DeviceSemaphore> semaphore) {
+  semaphores_.push_back(semaphore);
   return semaphores_.size() - 1;
 }
 

@@ -19,7 +19,8 @@ void register_proxy_channel(nb::module_& m) {
       .def(nb::init<Communicator&>(), nb::arg("comm"))
       .def("start_proxy", &ProxyService::startProxy)
       .def("stop_proxy", &ProxyService::stopProxy)
-      .def("add_semaphore", &ProxyService::addSemaphore, nb::arg("connection"))
+      .def("build_and_add_semaphore", &ProxyService::buildAndAddSemaphore, nb::arg("connection"))
+      .def("add_semaphore", &ProxyService::addSemaphore, nb::arg("semaphore"))
       .def("add_memory", &ProxyService::addMemory, nb::arg("memory"))
       .def("semaphore", &ProxyService::semaphore, nb::arg("id"))
       .def("proxy_channel", &ProxyService::proxyChannel, nb::arg("id"));

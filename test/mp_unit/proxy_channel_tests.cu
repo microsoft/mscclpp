@@ -49,7 +49,7 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
 
     communicator->setup();
 
-    mscclpp::SemaphoreId cid = channelService->addSemaphore(conn);
+    mscclpp::SemaphoreId cid = channelService->buildAndAddSemaphore(conn);
     communicator->setup();
 
     proxyChannels.emplace_back(channelService->proxyChannel(cid), channelService->addMemory(remoteMemory.get()),

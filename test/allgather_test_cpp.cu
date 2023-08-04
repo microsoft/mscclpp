@@ -226,7 +226,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
       transport = ibTransport;
     }
     // Connect with all other ranks
-    semaphoreIds.push_back(channelService.addSemaphore(comm.connectOnSetup(r, 0, transport)));
+    semaphoreIds.push_back(channelService.buildAndAddSemaphore(comm.connectOnSetup(r, 0, transport)));
     auto memory = comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport);
     localMemories.push_back(memory);
     comm.sendMemoryOnSetup(memory, r, 0);
