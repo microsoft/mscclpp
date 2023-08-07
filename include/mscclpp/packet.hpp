@@ -49,6 +49,7 @@ union LLPacket {
     uint2 data;
     uint32_t flag1, flag2;
     do {
+      // TODO(saemal): add a jail break here
       asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
                    : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2)
                    : "l"(v));
@@ -80,6 +81,7 @@ __forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* 
 __forceinline__ __device__ void getPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
                                            uint64_t dstBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+  // TODO(saemal): this is not matching sm_channel get method.
   LLPacket* srcBase = (LLPacket*)((char*)src + srcOffset);
   uint2* dstBase = (uint2*)((char*)dst + dstOffset);
   size_t nElem = dstBytes / sizeof(uint2);
