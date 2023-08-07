@@ -25,6 +25,7 @@ const TriggerType TriggerSync = 0x4;  // Trigger a flush.
 #define MSCCLPP_BITS_REGMEM_HANDLE 8
 #define MSCCLPP_BITS_TYPE 3
 #define MSCCLPP_BITS_CONNID 10
+#define MSCCLPP_BITS_FIFO_RESERVED 1
 
 /// Basic structure of each work element in the FIFO.
 union ChannelTrigger {
@@ -42,7 +43,8 @@ union ChannelTrigger {
     uint64_t type : MSCCLPP_BITS_TYPE;
     uint64_t chanId : MSCCLPP_BITS_CONNID;
     uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_REGMEM_HANDLE - MSCCLPP_BITS_REGMEM_HANDLE -
-                MSCCLPP_BITS_TYPE);  // ensure 64-bit alignment
+                MSCCLPP_BITS_TYPE - MSCCLPP_BITS_CONNID - MSCCLPP_BITS_FIFO_RESERVED);  // ensure 64-bit alignment
+    uint64_t reserved : MSCCLPP_BITS_FIFO_RESERVED;
   } fields;
 
 #ifdef __CUDACC__

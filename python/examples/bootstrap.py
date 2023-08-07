@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import mscclpp
 import argparse
-import multiprocessing as mp
 import logging
-import torch
+import multiprocessing as mp
 import sys
+
+import mscclpp
+import torch
 
 IB_TRANSPORTS = [
     mscclpp.Transport.IB0,

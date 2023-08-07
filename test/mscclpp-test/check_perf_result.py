@@ -10,19 +10,29 @@ def load_perf_file(perf_fine: str) -> dict:
     with open(perf_fine, "r") as f:
         for line in f:
             data = json.loads(line)
-            res[(data["name"], data["kernel"], data["ranks"], data["ranksPerNode"], data["size"])] = {
+            res[
+                (data["name"], data["kernel"], data["ranks"], data["ranksPerNode"], data["size"])
+            ] = {
                 "algBw": data["algBw"],
                 "busBw": data["busBw"],
                 "time": data["time"],
             }
             if "target" in data:
-                res[(data["name"], data["kernel"], data["ranks"], data["ranksPerNode"], data["size"])]["target"] = data[
-                    "target"
-                ]
+                res[
+                    (
+                        data["name"],
+                        data["kernel"],
+                        data["ranks"],
+                        data["ranksPerNode"],
+                        data["size"],
+                    )
+                ]["target"] = data["target"]
     return res
 
 
-def check_perf_result(perf_result: dict, baseline: dict, time_threshold: float, bandwidth_threshold: float) -> bool:
+def check_perf_result(
+    perf_result: dict, baseline: dict, time_threshold: float, bandwidth_threshold: float
+) -> bool:
     res = True
     threshold = None
     for key, value in perf_result.items():

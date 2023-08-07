@@ -1,6 +1,6 @@
-import mscclpp
-
 import time
+
+import mscclpp
 
 
 def main():
