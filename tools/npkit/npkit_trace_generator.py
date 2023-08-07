@@ -66,12 +66,8 @@ def parse_cpu_event(event_bytes):
     }
 
 
-def parse_gpu_event_file(
-    npkit_dump_dir, npkit_event_def, rank, buf_idx, gpu_clock_scale, cpu_clock_scale
-):
-    gpu_event_file_path = os.path.join(
-        npkit_dump_dir, "gpu_events_rank_%d_buf_%d" % (rank, buf_idx)
-    )
+def parse_gpu_event_file(npkit_dump_dir, npkit_event_def, rank, buf_idx, gpu_clock_scale, cpu_clock_scale):
+    gpu_event_file_path = os.path.join(npkit_dump_dir, "gpu_events_rank_%d_buf_%d" % (rank, buf_idx))
     raw_event_size = 16
     curr_cpu_base_time = None
     curr_gpu_base_time = None
@@ -82,15 +78,11 @@ def parse_gpu_event_file(
         raw_content_size = len(raw_content)
         raw_content_idx = 0
         while raw_content_idx < raw_content_size:
-            parsed_gpu_event = parse_gpu_event(
-                raw_content[raw_content_idx : raw_content_idx + raw_event_size]
-            )
+            parsed_gpu_event = parse_gpu_event(raw_content[raw_content_idx : raw_content_idx + raw_event_size])
             if npkit_event_def["id_to_type"][parsed_gpu_event["id"]] == "NPKIT_EVENT_TIME_SYNC_CPU":
                 curr_cpu_base_time = parsed_gpu_event["timestamp"] / cpu_clock_scale
                 curr_gpu_base_time = None
-            elif (
-                npkit_event_def["id_to_type"][parsed_gpu_event["id"]] == "NPKIT_EVENT_TIME_SYNC_GPU"
-            ):
+            elif npkit_event_def["id_to_type"][parsed_gpu_event["id"]] == "NPKIT_EVENT_TIME_SYNC_GPU":
                 if curr_gpu_base_time is None:
                     curr_gpu_base_time = parsed_gpu_event["timestamp"] / gpu_clock_scale
             else:
@@ -101,9 +93,7 @@ def parse_gpu_event_file(
                 gpu_events.append(
                     {
                         "ph": phase,
-                        "ts": curr_cpu_base_time
-                        + parsed_gpu_event["timestamp"] / gpu_clock_scale
-                        - curr_gpu_base_time,
+                        "ts": curr_cpu_base_time + parsed_gpu_event["timestamp"] / gpu_clock_scale - curr_gpu_base_time,
                         "pid": rank,
                         "tid": buf_idx + 1,
                     }
@@ -131,17 +121,13 @@ def parse_gpu_event_file(
                         "rsvd": parsed_gpu_event["rsvd"],
                     }
                     delta_time = gpu_events[-1]["ts"] - gpu_events[-2]["ts"]
-                    gpu_events[-1]["args"]["bw (GB/s)"] = (
-                        gpu_events[-1]["args"]["size"] / delta_time / 1e3
-                    )
+                    gpu_events[-1]["args"]["bw (GB/s)"] = gpu_events[-1]["args"]["size"] / delta_time / 1e3
             raw_content_idx += raw_event_size
     return gpu_events
 
 
 def parse_cpu_event_file(npkit_dump_dir, npkit_event_def, rank, channel, cpu_clock_scale):
-    cpu_event_file_path = os.path.join(
-        npkit_dump_dir, "cpu_events_rank_%d_channel_%d" % (rank, channel)
-    )
+    cpu_event_file_path = os.path.join(npkit_dump_dir, "cpu_events_rank_%d_channel_%d" % (rank, channel))
     raw_event_size = 16
     cpu_events = []
     event_type_to_seq = {}
@@ -156,14 +142,10 @@ def parse_cpu_event_file(npkit_dump_dir, npkit_event_def, rank, channel, cpu_clo
         raw_content_size = len(raw_content)
         raw_content_idx = 0
         while raw_content_idx < raw_content_size:
-            parsed_cpu_event = parse_cpu_event(
-                raw_content[raw_content_idx : raw_content_idx + raw_event_size]
-            )
+            parsed_cpu_event = parse_cpu_event(raw_content[raw_content_idx : raw_content_idx + raw_event_size])
             event_type = npkit_event_def["id_to_type"][parsed_cpu_event["id"]]
             phase = "B" if event_type.endswith("_ENTRY") else "E"
-            cpu_events.append(
-                {"ph": phase, "ts": parsed_cpu_event["timestamp"] / cpu_clock_scale, "pid": rank}
-            )
+            cpu_events.append({"ph": phase, "ts": parsed_cpu_event["timestamp"] / cpu_clock_scale, "pid": rank})
             slot = parsed_cpu_event["slot"]
             if phase == "B":
                 # Open fiber event
@@ -209,9 +191,7 @@ def parse_cpu_event_file(npkit_dump_dir, npkit_event_def, rank, channel, cpu_clo
                     "size_1": parsed_cpu_event["size"],
                     "size": max(last_size, parsed_cpu_event["size"]),
                 }
-                cpu_events[-1]["args"]["bw (GB/s)"] = (
-                    cpu_events[-1]["args"]["size"] / delta_time / 1e3
-                )
+                cpu_events[-1]["args"]["bw (GB/s)"] = cpu_events[-1]["args"]["size"] / delta_time / 1e3
 
             cpu_events[-1]["tid"] = fiber_id + (channel + 1) * channel_shift
 
@@ -231,12 +211,8 @@ def convert_npkit_dump_to_trace(npkit_dump_dir, output_dir, npkit_event_def):
     trace = {"traceEvents": []}
 
     for rank in ranks:
-        cpu_clock_den_file_path = os.path.join(
-            npkit_dump_dir, "cpu_clock_period_den_rank_%d" % rank
-        )
-        cpu_clock_num_file_path = os.path.join(
-            npkit_dump_dir, "cpu_clock_period_num_rank_%d" % rank
-        )
+        cpu_clock_den_file_path = os.path.join(npkit_dump_dir, "cpu_clock_period_den_rank_%d" % rank)
+        cpu_clock_num_file_path = os.path.join(npkit_dump_dir, "cpu_clock_period_num_rank_%d" % rank)
         cpu_clock_scale = parse_cpu_clock_scale(cpu_clock_den_file_path, cpu_clock_num_file_path)
 
         gpu_clock_file_path = os.path.join(npkit_dump_dir, "gpu_clock_rate_rank_%d" % rank)
@@ -249,9 +225,7 @@ def convert_npkit_dump_to_trace(npkit_dump_dir, output_dir, npkit_event_def):
             trace["traceEvents"].extend(gpu_events)
 
         for channel in channels:
-            cpu_events = parse_cpu_event_file(
-                npkit_dump_dir, npkit_event_def, rank, channel, cpu_clock_scale
-            )
+            cpu_events = parse_cpu_event_file(npkit_dump_dir, npkit_event_def, rank, channel, cpu_clock_scale)
             trace["traceEvents"].extend(cpu_events)
 
     trace["traceEvents"].sort(key=lambda x: x["ts"])
