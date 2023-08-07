@@ -39,7 +39,6 @@ void register_proxy_channel(nb::module_& m) {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
 
-
   nb::class_<SimpleProxyChannel>(m, "SimpleProxyChannel")
       .def(nb::init<ProxyChannel, MemoryId, MemoryId>(), nb::arg("proxyChan"), nb::arg("dst"), nb::arg("src"))
       .def(nb::init<SimpleProxyChannel>(), nb::arg("proxyChan"))
@@ -53,5 +52,4 @@ void register_proxy_channel(nb::module_& m) {
       .def_prop_ro("raw", [](const SimpleProxyChannel::DeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
-
 };

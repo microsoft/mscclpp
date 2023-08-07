@@ -40,8 +40,9 @@ struct FifoDeviceHandle {
   /// @return The new head of the FIFO.
   __forceinline__ __device__ uint64_t push(ProxyTrigger trigger) {
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->head, 1);
-    // make the last bit intentionally non-zero so that we can safely poll. Don't worry, we will change it back in host side
-    trigger.snd ^= (1<<63);
+    // make the last bit intentionally non-zero so that we can safely poll. Don't worry, we will change it back in host
+    // side
+    trigger.snd ^= ((uint64_t)1 << (uint64_t)63);
 
     // Only one of two conditions need to be met to proceed. Either the tail has advanced enough or where we need to
     // write to is 0. However, the first condition is faster to check since the tail is flushed periodically anyways but

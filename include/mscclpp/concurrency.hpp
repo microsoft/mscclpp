@@ -4,7 +4,9 @@
 #ifndef MSCCLPP_CONCURRENCY_HPP_
 #define MSCCLPP_CONCURRENCY_HPP_
 
-#include "poll.hpp"
+#include <stdint.h>
+
+#include <mscclpp/poll.hpp>
 
 namespace mscclpp {
 

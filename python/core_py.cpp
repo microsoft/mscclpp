@@ -49,9 +49,9 @@ void register_core(nb::module_& m) {
           nb::arg("data"), nb::arg("size"), nb::arg("peer"), nb::arg("tag"))
       .def("all_gather", &Bootstrap::allGather, nb::arg("allData"), nb::arg("size"))
       .def("barrier", &Bootstrap::barrier)
-      .def("send", (void(Bootstrap::*)(const std::vector<char>&, int, int)) & Bootstrap::send, nb::arg("data"),
+      .def("send", (void (Bootstrap::*)(const std::vector<char>&, int, int)) & Bootstrap::send, nb::arg("data"),
            nb::arg("peer"), nb::arg("tag"))
-      .def("recv", (void(Bootstrap::*)(std::vector<char>&, int, int)) & Bootstrap::recv, nb::arg("data"),
+      .def("recv", (void (Bootstrap::*)(std::vector<char>&, int, int)) & Bootstrap::recv, nb::arg("data"),
            nb::arg("peer"), nb::arg("tag"));
 
   nb::class_<UniqueId>(m, "UniqueId");
@@ -63,8 +63,8 @@ void register_core(nb::module_& m) {
           nb::arg("nRanks"))
       .def("create_unique_id", &TcpBootstrap::createUniqueId)
       .def("get_unique_id", &TcpBootstrap::getUniqueId)
-      .def("initialize", (void(TcpBootstrap::*)(UniqueId)) & TcpBootstrap::initialize, nb::arg("uniqueId"))
-      .def("initialize", (void(TcpBootstrap::*)(const std::string&)) & TcpBootstrap::initialize,
+      .def("initialize", (void (TcpBootstrap::*)(UniqueId)) & TcpBootstrap::initialize, nb::arg("uniqueId"))
+      .def("initialize", (void (TcpBootstrap::*)(const std::string&)) & TcpBootstrap::initialize,
            nb::arg("ifIpPortTrio"));
 
   nb::enum_<Transport>(m, "Transport")
