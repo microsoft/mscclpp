@@ -54,7 +54,6 @@ if(ALLOW_GDRCOPY)
 endif()
 
 add_library(mscclpp_obj OBJECT)
-add_dependencies(mscclpp_obj check-format-cpp)
 target_include_directories(mscclpp_obj
     PRIVATE
     ${CUDAToolkit_INCLUDE_DIRS}
