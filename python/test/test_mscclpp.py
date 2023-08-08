@@ -14,6 +14,7 @@ from mscclpp import (
     Transport,
 )
 from mscclpp_group import MscclppGroup
+from mpi4py import MPI
 
 from applied_models.tests import PipeLayout, parametrize_layouts
 
@@ -71,13 +72,13 @@ def test_group_with_ip(layout: PipeLayout, ifIpPortTrio: str):
     assert torch.equal(memory, memory_expected)
 
 
-def create_and_connect(layout: PipeLayout, transport: str):
+def create_and_connect(comm: MPI.Comm, transport: str):
     if transport == "NVLink" and all_ranks_on_the_same_node(layout) is False:
         pytest.skip("cannot use nvlink for cross node")
-    group = MscclppGroup(layout)
+    group = MscclppGroup(comm)
 
-    remote_nghrs = list(range(layout.comm.size))
-    remote_nghrs.remove(layout.comm.rank)
+    remote_nghrs = list(range(comm.size))
+    remote_nghrs.remove(comm.rank)
     if transport == "NVLink":
         tran = Transport.CudaIpc
     elif transport == "IB":

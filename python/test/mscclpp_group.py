@@ -25,12 +25,10 @@ logger = logging.getLogger(__name__)
 
 class MscclppGroup:
     def __init__(self, world_comm: MPI.Comm, interfaceIpPortTrio=""):
-        rank = world_comm.Get_rank()
-        size = world_comm.Get_size()
-        self.bootstrap = TcpBootstrap.create(rank, size)
+        self.bootstrap = TcpBootstrap.create(world_comm.rank, world_comm.size)
         if interfaceIpPortTrio == "":
             uniq_id = None
-            if rank == 0:
+            if world_comm.rank == 0:
                 # similar to NCCL's unique id
                 uniq_id = self.bootstrap.create_unique_id()
             uniq_id_global = world_comm.bcast(uniq_id, 0)
