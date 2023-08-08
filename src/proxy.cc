@@ -67,10 +67,11 @@ MSCCLPP_API_CPP void Proxy::start() {
         }
       }
       // Poll to see if we are ready to send anything
-      fifo.poll(&trigger);
-      if (trigger.fst == 0) {  // TODO: this check is a potential pitfall for custom triggers
-        continue;              // there is one in progress
+      trigger = fifo.poll();
+      if (trigger.fst == 0 || trigger.snd == 0) {  // TODO: this check is a potential pitfall for custom triggers
+        continue;                                  // there is one in progress
       }
+      trigger.snd ^= ((uint64_t)1 << (uint64_t)63);  // this is where the last bit of snd is reverted.
 
       ProxyHandlerResult result = handler(trigger);
 

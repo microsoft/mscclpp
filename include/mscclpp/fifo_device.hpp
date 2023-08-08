@@ -13,6 +13,7 @@ namespace mscclpp {
 /// This struct is used as a work element in the concurrent FIFO where multiple device threads can push
 /// ProxyTrigger elements and a single host proxy thread consumes these work elements.
 ///
+/// Do not use the most significant bit of @ref snd as it is reserved for memory consistency purposes
 struct alignas(16) ProxyTrigger {
   uint64_t fst, snd;
 };
@@ -37,6 +38,9 @@ struct FifoDeviceHandle {
   /// @return The new head of the FIFO.
   __forceinline__ __device__ uint64_t push(ProxyTrigger trigger) {
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->head, 1);
+    // make the last bit intentionally non-zero so that we can safely poll. Don't worry, we will change it back in host
+    // side
+    trigger.snd ^= ((uint64_t)1 << (uint64_t)63);
 
     // Only one of two conditions need to be met to proceed. Either the tail has advanced enough or where we need to
     // write to is 0. However, the first condition is faster to check since the tail is flushed periodically anyways but

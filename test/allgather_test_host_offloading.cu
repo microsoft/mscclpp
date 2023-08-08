@@ -4,9 +4,9 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
+#include <mscclpp/numa.hpp>
 #include <mscclpp/proxy.hpp>
 #include <mscclpp/semaphore.hpp>
-#include <numa.hpp>
 
 #ifdef MSCCLPP_USE_MPI_FOR_TESTS
 #include "mpi.h"

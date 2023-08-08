@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import mscclpp
 import argparse
-import multiprocessing as mp
 import logging
-import torch
+import multiprocessing as mp
 import sys
+
+import mscclpp
+import torch
 
 IB_TRANSPORTS = [
     mscclpp.Transport.IB0,
@@ -49,7 +50,7 @@ def setup_connections(comm, rank, world_size, element_size, proxy_service):
     # Create simple proxy channels
     for i, conn in enumerate(connections):
         proxy_channel = mscclpp.SimpleProxyChannel(
-            proxy_service.device_channel(proxy_service.add_semaphore(conn)),
+            proxy_service.proxy_channel(proxy_service.build_and_add_semaphore(conn)),
             proxy_service.add_memory(remote_memories[i].get()),
             proxy_service.add_memory(reg_mem),
         )
@@ -75,7 +76,7 @@ def run(rank, args):
     boot = mscclpp.TcpBootstrap.create(rank, world_size)
     boot.initialize(args.if_ip_port_trio)
     comm = mscclpp.Communicator(boot)
-    proxy_service = mscclpp.ProxyService(comm)
+    proxy_service = mscclpp.ProxyService()
 
     logging.info("Rank: %d, setting up connections", rank)
     setup_connections(comm, rank, world_size, args.num_elements, proxy_service)

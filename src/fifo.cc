@@ -1,11 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <emmintrin.h>
-
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
-#include <stdexcept>
 
 #include "api.h"
 
@@ -39,9 +36,14 @@ struct Fifo::Impl {
 MSCCLPP_API_CPP Fifo::Fifo() : pimpl(std::make_unique<Impl>()) {}
 MSCCLPP_API_CPP Fifo::~Fifo() = default;
 
-MSCCLPP_API_CPP void Fifo::poll(ProxyTrigger* trigger) {
-  __m128i xmm0 = _mm_load_si128((__m128i*)&pimpl->triggers.get()[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]);
-  _mm_store_si128((__m128i*)trigger, xmm0);
+MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
+  ProxyTrigger trigger;
+  volatile ProxyTrigger* ptr =
+      reinterpret_cast<volatile ProxyTrigger*>(&pimpl->triggers.get()[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]);
+  trigger.fst = ptr->fst;
+  if (trigger.fst != 0)  // only then we know that trigger is a valid value
+    trigger.snd = ptr->snd;
+  return trigger;
 }
 
 MSCCLPP_API_CPP void Fifo::pop() {

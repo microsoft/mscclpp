@@ -67,7 +67,7 @@ mscclpp::Communicator comm(bootstrap);
 // Setup connections here using `comm`
 ...
 // Construct the default proxy
-mscclpp::ProxyService proxyService(comm);
+mscclpp::ProxyService proxyService();
 // Start the proxy
 proxyService.startProxy();
 // Run the user application, i.e., launch GPU kernels here

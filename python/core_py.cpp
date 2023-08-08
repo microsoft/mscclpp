@@ -19,6 +19,7 @@ extern void register_fifo(nb::module_& m);
 extern void register_semaphore(nb::module_& m);
 extern void register_config(nb::module_& m);
 extern void register_utils(nb::module_& m);
+extern void register_numa(nb::module_& m);
 
 template <typename T>
 void def_nonblocking_future(nb::handle& m, const std::string& typestr) {
@@ -152,4 +153,5 @@ NB_MODULE(_mscclpp, m) {
   register_config(m);
   register_utils(m);
   register_core(m);
+  register_numa(m);
 }

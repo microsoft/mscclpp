@@ -16,22 +16,40 @@ void register_proxy_channel(nb::module_& m) {
       .def("stop_proxy", &BaseProxyService::stopProxy);
 
   nb::class_<ProxyService, BaseProxyService>(m, "ProxyService")
-      .def(nb::init<Communicator&>(), nb::arg("comm"))
+      .def(nb::init<>())
       .def("start_proxy", &ProxyService::startProxy)
       .def("stop_proxy", &ProxyService::stopProxy)
-      .def("add_semaphore", &ProxyService::addSemaphore, nb::arg("connection"))
+      .def("build_and_add_semaphore", &ProxyService::buildAndAddSemaphore, nb::arg("comm"), nb::arg("connection"))
+      .def("add_semaphore", &ProxyService::addSemaphore, nb::arg("semaphore"))
       .def("add_memory", &ProxyService::addMemory, nb::arg("memory"))
       .def("semaphore", &ProxyService::semaphore, nb::arg("id"))
-      .def("device_channel", &ProxyService::deviceChannel, nb::arg("id"));
+      .def("proxy_channel", &ProxyService::proxyChannel, nb::arg("id"));
 
   nb::class_<ProxyChannel>(m, "ProxyChannel")
       .def(nb::init<SemaphoreId, Host2DeviceSemaphore::DeviceHandle, FifoDeviceHandle>(), nb::arg("semaphoreId"),
-           nb::arg("semaphore"), nb::arg("fifo"));
+           nb::arg("semaphore"), nb::arg("fifo"))
+      .def("device_handle", &ProxyChannel::deviceHandle);
+
+  nb::class_<ProxyChannel::DeviceHandle>(m, "ProxyChannelDeviceHandle")
+      .def(nb::init<>())
+      .def_rw("semaphoreId_", &ProxyChannel::DeviceHandle::semaphoreId_)
+      .def_rw("semaphore_", &ProxyChannel::DeviceHandle::semaphore_)
+      .def_rw("fifo_", &ProxyChannel::DeviceHandle::fifo_)
+      .def_prop_ro("raw", [](const ProxyChannel::DeviceHandle& self) -> nb::bytes {
+        return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
+      });
 
   nb::class_<SimpleProxyChannel>(m, "SimpleProxyChannel")
       .def(nb::init<ProxyChannel, MemoryId, MemoryId>(), nb::arg("proxyChan"), nb::arg("dst"), nb::arg("src"))
-      .def(nb::init<SimpleProxyChannel>(), nb::arg("proxyChan"));
+      .def(nb::init<SimpleProxyChannel>(), nb::arg("proxyChan"))
+      .def("device_handle", &SimpleProxyChannel::deviceHandle);
 
-  m.def("device_handle", &deviceHandle<ProxyChannel>, nb::arg("proxyChannel"));
-  m.def("device_handle", &deviceHandle<SimpleProxyChannel>, nb::arg("simpleProxyChannel"));
+  nb::class_<SimpleProxyChannel::DeviceHandle>(m, "SimpleProxyChannelDeviceHandle")
+      .def(nb::init<>())
+      .def_rw("proxyChan_", &SimpleProxyChannel::DeviceHandle::proxyChan_)
+      .def_rw("src_", &SimpleProxyChannel::DeviceHandle::src_)
+      .def_rw("dst_", &SimpleProxyChannel::DeviceHandle::dst_)
+      .def_prop_ro("raw", [](const SimpleProxyChannel::DeviceHandle& self) -> nb::bytes {
+        return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
+      });
 };

@@ -16,7 +16,7 @@ void* localSendBuff;
 __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
   int remoteRank = (blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   for (int i = 1; i < nRanksPerNode; i++) {
-    mscclpp::SimpleProxyChannel proxyChan = constProxyChans[blockIdx.x];
+    DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[blockIdx.x];
     if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank + i) % nRanksPerNode) {
       proxyChan.putWithSignalAndFlush(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
                                       nElements * sizeof(int));

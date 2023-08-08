@@ -5,9 +5,8 @@
 
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
+#include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
-
-#include "numa.hpp"
 
 #define FLUSH_PERIOD (MSCCLPP_PROXY_FIFO_SIZE)  // should not exceed MSCCLPP_PROXY_FIFO_SIZE
 #define ITER 10000                              // should be larger than MSCCLPP_PROXY_FIFO_SIZE for proper testing
@@ -51,13 +50,15 @@ TEST(FifoTest, Fifo) {
   uint64_t flushCnt = 0;
   mscclpp::Timer timer(3);
   for (uint64_t i = 0; i < ITER; ++i) {
-    while (trigger.fst == 0) {
-      hostFifo.poll(&trigger);
+    while (trigger.fst == 0 || trigger.snd == 0) {
+      trigger = hostFifo.poll();
 
       if (spin++ > 1000000) {
         FAIL() << "Polling is stuck.";
       }
     }
+    // see `src/proxy.cc` for the reason of this line
+    trigger.snd ^= ((uint64_t)1 << (uint64_t)63);
     ASSERT_TRUE(trigger.fst == (i + 1));
     ASSERT_TRUE(trigger.snd == (i + 1));
     hostFifo.pop();

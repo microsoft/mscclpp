@@ -23,9 +23,7 @@ void register_sm_channel(nb::module_& m) {
            })
       .def("device_handle", &SmChannel::deviceHandle);
 
-  m.def("device_handle", &deviceHandle<SmChannel>, nb::arg("smChannel"));
-
-  nb::class_<SmChannel::DeviceHandle>(smChannel, "DeviceHandle")
+  nb::class_<SmChannel::DeviceHandle>(m, "SmChannelDeviceHandle")
       .def(nb::init<>())
       .def_rw("semaphore_", &SmChannel::DeviceHandle::semaphore_)
       .def_rw("src_", &SmChannel::DeviceHandle::src_)

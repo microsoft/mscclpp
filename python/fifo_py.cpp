@@ -21,7 +21,7 @@ void register_fifo(nb::module_& m) {
 
   nb::class_<Fifo>(m, "Fifo")
       .def(nb::init<>())
-      .def("poll", &Fifo::poll, nb::arg("trigger"))
+      .def("poll", &Fifo::poll)
       .def("pop", &Fifo::pop)
       .def("flush_tail", &Fifo::flushTail, nb::arg("sync") = false)
       .def("device_handle", &Fifo::deviceHandle);
