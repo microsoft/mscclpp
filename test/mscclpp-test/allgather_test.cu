@@ -210,6 +210,7 @@ __global__ void allgather3(int rank, int worldSize) {
   if (tid == 0) {
     mscclpp::ProxyTrigger trigger;
     trigger.fst = MAGIC;
+    trigger.snd = 0;
     // offload all the work to the proxy
     uint64_t currentFifoHead = proxyChan.fifo_.push(trigger);
     // wait for the work to be done in cpu side
