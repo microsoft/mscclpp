@@ -386,7 +386,7 @@ class Connection {
   virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
 
   /// Flush any pending writes to the remote process.
-  virtual void flush() = 0;
+  virtual void flush(int64_t timeoutUsec = 3e7) = 0;
 
   /// Get the rank of the remote process.
   ///

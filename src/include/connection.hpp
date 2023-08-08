@@ -4,9 +4,6 @@
 #ifndef MSCCLPP_CONNECTION_HPP_
 #define MSCCLPP_CONNECTION_HPP_
 
-// TODO(saemal): make this configurable
-#define MSCCLPP_POLLING_WAIT 3e7  // in microseconds
-
 #include <cuda_runtime.h>
 
 #include <mscclpp/core.hpp>
@@ -46,7 +43,7 @@ class CudaIpcConnection : public ConnectionBase {
              uint64_t size) override;
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
 
-  void flush() override;
+  void flush(int64_t timeoutUsec) override;
 };
 
 class IBConnection : public ConnectionBase {
@@ -69,7 +66,7 @@ class IBConnection : public ConnectionBase {
              uint64_t size) override;
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
 
-  void flush() override;
+  void flush(int64_t timeoutUsec) override;
 
   void beginSetup(std::shared_ptr<Bootstrap> bootstrap) override;
 

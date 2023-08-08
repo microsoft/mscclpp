@@ -70,7 +70,10 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
   // npkitCollectEntryEvent(conn, NPKIT_EVENT_DMA_SEND_DATA_ENTRY, (uint32_t)size);
 }
 
-void CudaIpcConnection::flush() {
+void CudaIpcConnection::flush(int64_t timeoutUsec) {
+  if (timeoutUsec >= 0) {
+    WARN("CudaIpcConnection flush: timeout is not supported, ignored");
+  }
   AvoidCudaGraphCaptureGuard guard;
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream_));
   // npkitCollectExitEvents(conn, NPKIT_EVENT_DMA_SEND_EXIT);
@@ -144,7 +147,7 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
        oldValue, newValue);
 }
 
-void IBConnection::flush() {
+void IBConnection::flush(int64_t timeoutUsec) {
   Timer timer;
   while (numSignaledSends) {
     int wcNum = qp->pollCq();
@@ -153,8 +156,8 @@ void IBConnection::flush() {
     }
 
     auto elapsed = timer.elapsed();
-    if (elapsed > MSCCLPP_POLLING_WAIT) {
-      throw Error("pollCq is stuck: waited for " + std::to_string(elapsed / 1e6) + " seconds. Expected " +
+    if ((timeoutUsec >= 0) && (elapsed * 1e3 > timeoutUsec)) {
+      throw Error("pollCq is stuck: waited for " + std::to_string(elapsed / 1e3) + " seconds. Expected " +
                       std::to_string(numSignaledSends) + " signals",
                   ErrorCode::InternalError);
     }
