@@ -16,8 +16,6 @@
 #include "api.h"
 #include "debug.h"
 
-#define MAXCONNECTIONS 64
-
 namespace mscclpp {
 
 IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
@@ -54,7 +52,7 @@ const void* IbMr::getBuff() const { return this->buff; }
 
 uint32_t IbMr::getLkey() const { return this->mr->lkey; }
 
-IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port) {
+IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxSendWr, int maxRecvWr) {
   this->cq = ibv_create_cq(ctx, MSCCLPP_IB_CQ_SIZE, nullptr, nullptr, 0);
   if (this->cq == nullptr) {
     std::stringstream err;
@@ -68,8 +66,8 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port) {
   qpInitAttr.send_cq = this->cq;
   qpInitAttr.recv_cq = this->cq;
   qpInitAttr.qp_type = IBV_QPT_RC;
-  qpInitAttr.cap.max_send_wr = MAXCONNECTIONS * 128;  // TODO: does it need to be reconfigurable?
-  qpInitAttr.cap.max_recv_wr = MAXCONNECTIONS * 128;
+  qpInitAttr.cap.max_send_wr = maxSendWr;
+  qpInitAttr.cap.max_recv_wr = maxRecvWr;
   qpInitAttr.cap.max_send_sge = 1;
   qpInitAttr.cap.max_recv_sge = 1;
   qpInitAttr.cap.max_inline_data = 0;
@@ -335,7 +333,7 @@ int IbCtx::getAnyActivePort() const {
   return -1;
 }
 
-IbQp* IbCtx::createQp(int port /*=-1*/) {
+IbQp* IbCtx::createQp(int maxSendWr, int maxRecvWr, int port /*=-1*/) {
   if (port == -1) {
     port = this->getAnyActivePort();
     if (port == -1) {
@@ -344,7 +342,7 @@ IbQp* IbCtx::createQp(int port /*=-1*/) {
   } else if (!this->isPortUsable(port)) {
     throw mscclpp::Error("invalid IB port: " + std::to_string(port), ErrorCode::InternalError);
   }
-  qps.emplace_back(new IbQp(this->ctx, this->pd, port));
+  qps.emplace_back(new IbQp(this->ctx, this->pd, port, maxSendWr, maxRecvWr));
   return qps.back().get();
 }
 

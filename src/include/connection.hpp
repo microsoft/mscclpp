@@ -56,7 +56,7 @@ class IBConnection : public ConnectionBase {
   mscclpp::TransportInfo dstTransportInfo_;
 
  public:
-  IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl);
+  IBConnection(int remoteRank, int tag, Transport transport, int maxSendWr, Communicator::Impl& commImpl);
 
   Transport transport() override;
 

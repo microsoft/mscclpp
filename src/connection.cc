@@ -81,13 +81,13 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 
 // IBConnection
 
-IBConnection::IBConnection(int remoteRank, int tag, Transport transport, Communicator::Impl& commImpl)
+IBConnection::IBConnection(int remoteRank, int tag, Transport transport, int maxSendWr, Communicator::Impl& commImpl)
     : ConnectionBase(remoteRank, tag),
       transport_(transport),
       remoteTransport_(Transport::Unknown),
       numSignaledSends(0),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
-  qp = commImpl.getIbContext(transport)->createQp();
+  qp = commImpl.getIbContext(transport)->createQp(maxSendWr, 0);
   dummyAtomicSourceMem_ = RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(
       dummyAtomicSource_.get(), sizeof(uint64_t), commImpl.bootstrap_->getRank(), transport, commImpl));
   validateTransport(dummyAtomicSourceMem_, transport);

@@ -141,7 +141,7 @@ void register_core(nb::module_& m) {
            nb::arg("tag"))
       .def("recv_memory_on_setup", &Communicator::recvMemoryOnSetup, nb::arg("remoteRank"), nb::arg("tag"))
       .def("connect_on_setup", &Communicator::connectOnSetup, nb::arg("remoteRank"), nb::arg("tag"),
-           nb::arg("transport"))
+           nb::arg("transport"), nb::arg("ibMaxSendWr") = 8192)
       .def("setup", &Communicator::setup);
 }
 

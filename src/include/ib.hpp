@@ -84,7 +84,7 @@ class IbQp {
     ibv_sge* sge;
   };
 
-  IbQp(ibv_context* ctx, ibv_pd* pd, int port);
+  IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxSendWr, int maxRecvWr);
   WrInfo getNewWrInfo();
 
   IbQpInfo info;
@@ -104,7 +104,7 @@ class IbCtx {
   IbCtx(const std::string& devName);
   ~IbCtx();
 
-  IbQp* createQp(int port = -1);
+  IbQp* createQp(int maxSendWr, int maxRecvWr, int port = -1);
   const IbMr* registerMr(void* buff, std::size_t size);
 
   const std::string& getDevName() const;
