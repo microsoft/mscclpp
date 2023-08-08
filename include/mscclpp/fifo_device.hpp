@@ -75,7 +75,7 @@ struct FifoDeviceHandle {
   /// The FIFO head. Allocated on the device and only accessed by the device.
   uint64_t* head;
   /// The FIFO size.
-  const int size;
+  int size;
 };
 
 }  // namespace mscclpp

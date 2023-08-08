@@ -15,9 +15,8 @@ namespace mscclpp {
 const int ProxyStopCheckPeriod = 1000;
 
 // Unless explicitly requested, a flush of the tail to device memory is triggered for every ProxyFlushPeriod.
-// As long as MSCCLPP_PROXY_FIFO_SIZE is large enough, having a stale tail is not a problem.
+// As long as the FIFO size is large enough, having a stale tail is not a problem.
 const int ProxyFlushPeriod = 4;
-static_assert(MSCCLPP_PROXY_FIFO_SIZE >= ProxyFlushPeriod, "MSCCLPP_PROXY_FIFO_SIZE is too small");
 
 struct Proxy::Impl {
   ProxyHandler handler;
@@ -57,6 +56,8 @@ MSCCLPP_API_CPP void Proxy::start() {
     std::atomic_bool& running = this->pimpl->running;
     ProxyTrigger trigger;
 
+    int flushPeriod = std::min(fifo.size(), ProxyFlushPeriod);
+
     int runCnt = ProxyStopCheckPeriod;
     uint64_t flushCnt = 0;
     for (;;) {
@@ -77,10 +78,9 @@ MSCCLPP_API_CPP void Proxy::start() {
 
       // Send completion: reset only the high 64 bits
       fifo.pop();
-      // Flush the tail to device memory. This is either triggered every ProxyFlushPeriod to make sure
-      // that the fifo can make progress even if there is no request mscclppSync. However, mscclppSync type is for flush
-      // request.
-      if ((++flushCnt % ProxyFlushPeriod) == 0 || result == ProxyHandlerResult::FlushFifoTailAndContinue) {
+      // Flush the tail to device memory. This is either triggered every flushPeriod to make sure that the fifo can make
+      // progress even if there is no request mscclppSync. However, mscclppSync type is for flush request.
+      if ((++flushCnt % flushPeriod) == 0 || result == ProxyHandlerResult::FlushFifoTailAndContinue) {
         // TODO: relocate this check: || (trigger.fields.type & mscclppSync)
         fifo.flushTail();
       }

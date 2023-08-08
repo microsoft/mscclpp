@@ -12,6 +12,7 @@ struct Fifo::Impl {
   UniqueCudaHostPtr<ProxyTrigger[]> triggers;
   UniqueCudaPtr<uint64_t> head;
   UniqueCudaPtr<uint64_t> tailReplica;
+  const int size;
 
   // allocated on the host. Only accessed by the host. This is a copy of the
   // value pointed to by fifoTailDev and the invariant is that
@@ -25,21 +26,22 @@ struct Fifo::Impl {
   // for transferring fifo tail
   CudaStreamWithFlags stream;
 
-  Impl()
-      : triggers(makeUniqueCudaHost<ProxyTrigger[]>(MSCCLPP_PROXY_FIFO_SIZE)),
+  Impl(int size)
+      : triggers(makeUniqueCudaHost<ProxyTrigger[]>(size)),
         head(allocUniqueCuda<uint64_t>()),
         tailReplica(allocUniqueCuda<uint64_t>()),
+        size(size),
         hostTail(0),
         stream(cudaStreamNonBlocking) {}
 };
 
-MSCCLPP_API_CPP Fifo::Fifo() : pimpl(std::make_unique<Impl>()) {}
+MSCCLPP_API_CPP Fifo::Fifo(int size) : pimpl(std::make_unique<Impl>(size)) {}
 MSCCLPP_API_CPP Fifo::~Fifo() = default;
 
 MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
   ProxyTrigger trigger;
   volatile ProxyTrigger* ptr =
-      reinterpret_cast<volatile ProxyTrigger*>(&pimpl->triggers.get()[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]);
+      reinterpret_cast<volatile ProxyTrigger*>(&pimpl->triggers.get()[pimpl->hostTail % pimpl->size]);
   trigger.fst = ptr->fst;
   if (trigger.fst != 0)  // only then we know that trigger is a valid value
     trigger.snd = ptr->snd;
@@ -47,7 +49,7 @@ MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
 }
 
 MSCCLPP_API_CPP void Fifo::pop() {
-  *(volatile uint64_t*)(&pimpl->triggers.get()[pimpl->hostTail % MSCCLPP_PROXY_FIFO_SIZE]) = 0;
+  *(volatile uint64_t*)(&pimpl->triggers.get()[pimpl->hostTail % pimpl->size]) = 0;
   (pimpl->hostTail)++;
 }
 
@@ -61,11 +63,14 @@ MSCCLPP_API_CPP void Fifo::flushTail(bool sync) {
   }
 }
 
+MSCCLPP_API_CPP int Fifo::size() const { return pimpl->size; }
+
 MSCCLPP_API_CPP FifoDeviceHandle Fifo::deviceHandle() {
   FifoDeviceHandle deviceHandle;
   deviceHandle.triggers = pimpl->triggers.get();
   deviceHandle.head = pimpl->head.get();
   deviceHandle.tailReplica = pimpl->tailReplica.get();
+  deviceHandle.size = pimpl->size;
   return deviceHandle;
 }
 

@@ -68,8 +68,8 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port) {
   qpInitAttr.send_cq = this->cq;
   qpInitAttr.recv_cq = this->cq;
   qpInitAttr.qp_type = IBV_QPT_RC;
-  qpInitAttr.cap.max_send_wr = MAXCONNECTIONS * MSCCLPP_PROXY_FIFO_SIZE;
-  qpInitAttr.cap.max_recv_wr = MAXCONNECTIONS * MSCCLPP_PROXY_FIFO_SIZE;
+  qpInitAttr.cap.max_send_wr = MAXCONNECTIONS * 128;  // TODO: does it need to be reconfigurable?
+  qpInitAttr.cap.max_recv_wr = MAXCONNECTIONS * 128;
   qpInitAttr.cap.max_send_sge = 1;
   qpInitAttr.cap.max_recv_sge = 1;
   qpInitAttr.cap.max_inline_data = 0;

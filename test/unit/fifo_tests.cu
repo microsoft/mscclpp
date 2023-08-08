@@ -8,8 +8,7 @@
 #include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 
-#define FLUSH_PERIOD (MSCCLPP_PROXY_FIFO_SIZE)  // should not exceed MSCCLPP_PROXY_FIFO_SIZE
-#define ITER 10000                              // should be larger than MSCCLPP_PROXY_FIFO_SIZE for proper testing
+#define ITER 10000  // should be larger than the FIFO size for proper testing
 
 __constant__ mscclpp::FifoDeviceHandle gFifoTestFifoDeviceHandle;
 __global__ void kernelFifoTest() {
@@ -21,21 +20,23 @@ __global__ void kernelFifoTest() {
     trigger.fst = i;
     trigger.snd = i;
     uint64_t curFifoHead = fifo.push(trigger);
-    if (i % FLUSH_PERIOD == 0) {
+    if (i % fifo.size == 0) {
       fifo.sync(curFifoHead);
     }
   }
 }
 
 TEST(FifoTest, Fifo) {
-  ASSERT_LE(FLUSH_PERIOD, MSCCLPP_PROXY_FIFO_SIZE);
-
   int cudaNum;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaNum));
   int numaNode = mscclpp::getDeviceNumaNode(cudaNum);
   mscclpp::numaBind(numaNode);
 
   mscclpp::Fifo hostFifo;
+  if (hostFifo.size() >= ITER) {
+    FAIL() << "ITER is too small for proper testing.";
+  }
+
   mscclpp::FifoDeviceHandle devFifo = hostFifo.deviceHandle();
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gFifoTestFifoDeviceHandle, &devFifo, sizeof(devFifo)));
 
@@ -62,7 +63,7 @@ TEST(FifoTest, Fifo) {
     ASSERT_TRUE(trigger.fst == (i + 1));
     ASSERT_TRUE(trigger.snd == (i + 1));
     hostFifo.pop();
-    if ((++flushCnt % FLUSH_PERIOD) == 0) {
+    if ((++flushCnt % hostFifo.size()) == 0) {
       hostFifo.flushTail();
     }
     trigger.fst = 0;
