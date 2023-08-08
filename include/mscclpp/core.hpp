@@ -535,9 +535,14 @@ class Communicator {
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag of the connection for identifying it.
   /// @param transport The type of transport to be used.
+  /// @param ibMaxCqSize The maximum number of completion queue entries for IB. Unused if transport is not IB.
+  /// @param ibMaxCqPollNum The maximum number of completion queue entries to poll for IB. Unused if transport is not
+  /// IB.
   /// @param ibMaxSendWr The maximum number of outstanding send work requests for IB. Unused if transport is not IB.
+  /// @param ibMaxWrPerSend The maximum number of work requests per send for IB. Unused if transport is not IB.
   /// @return std::shared_ptr<Connection> A shared pointer to the connection.
-  std::shared_ptr<Connection> connectOnSetup(int remoteRank, int tag, Transport transport, int ibMaxSendWr = 8192);
+  std::shared_ptr<Connection> connectOnSetup(int remoteRank, int tag, Transport transport, int ibMaxCqSize = 1024,
+                                             int ibMaxCqPollNum = 1, int ibMaxSendWr = 8192, int ibMaxWrPerSend = 64);
 
   /// Add a custom Setuppable object to a list of objects to be setup later, when @ref setup() is called.
   ///

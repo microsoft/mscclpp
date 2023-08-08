@@ -95,7 +95,10 @@ MSCCLPP_API_CPP NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSe
 }
 
 MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int remoteRank, int tag, Transport transport,
-                                                                         int ibMaxSendWr /*=8192*/) {
+                                                                         int ibMaxCqSize /*=1024*/,
+                                                                         int ibMaxCqPollNum /*=1*/,
+                                                                         int ibMaxSendWr /*=8192*/,
+                                                                         int ibMaxWrPerSend /*=64*/) {
   std::shared_ptr<ConnectionBase> conn;
   if (transport == Transport::CudaIpc) {
     // sanity check: make sure the IPC connection is being made within a node
@@ -112,7 +115,8 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int rem
          pimpl->bootstrap_->getRank(), pimpl->rankToHash_[pimpl->bootstrap_->getRank()], remoteRank,
          pimpl->rankToHash_[remoteRank]);
   } else if (AllIBTransports.has(transport)) {
-    auto ibConn = std::make_shared<IBConnection>(remoteRank, tag, transport, ibMaxSendWr, *pimpl);
+    auto ibConn = std::make_shared<IBConnection>(remoteRank, tag, transport, ibMaxCqSize, ibMaxCqPollNum, ibMaxSendWr,
+                                                 ibMaxWrPerSend, *pimpl);
     conn = ibConn;
     INFO(MSCCLPP_NET, "IB connection between rank %d(%lx) via %s and remoteRank %d(%lx) created",
          pimpl->bootstrap_->getRank(), pimpl->rankToHash_[pimpl->bootstrap_->getRank()],
