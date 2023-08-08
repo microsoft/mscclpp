@@ -26,11 +26,11 @@ find_program(BLACK black)
 if (BLACK)
     message(STATUS "Found black: ${BLACK}")
     add_custom_target(check-format-py
-        COMMAND ${BLACK} --check ${PROJECT_SOURCE_DIR}/python ${PROJECT_SOURCE_DIR}/test
+        COMMAND ${BLACK} --config ${PROJECT_SOURCE_DIR}/pyproject.toml --check ${PROJECT_SOURCE_DIR}/python ${PROJECT_SOURCE_DIR}/test
     )
     add_dependencies(check-format check-format-py)
     add_custom_target(format-py
-        COMMAND ${BLACK} -i ${PROJECT_SOURCE_DIR}/python ${PROJECT_SOURCE_DIR}/test
+        COMMAND ${BLACK} --config ${PROJECT_SOURCE_DIR}/pyproject.toml ${PROJECT_SOURCE_DIR}/python ${PROJECT_SOURCE_DIR}/test
     )
     add_dependencies(format format-py)
 else()
