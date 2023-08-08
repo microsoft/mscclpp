@@ -1,12 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <emmintrin.h>
-
-#include <atomic>
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
-#include <stdexcept>
 
 #include "api.h"
 

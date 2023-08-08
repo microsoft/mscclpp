@@ -458,7 +458,7 @@ class AllGatherTestEngine : public BaseTestEngine {
   std::vector<void*> getSendBuff() override;
   void* getRecvBuff() override;
   void* getScratchBuff() override;
-  std::shared_ptr<mscclpp::BaseProxyService> createproxyService() override;
+  std::shared_ptr<mscclpp::BaseProxyService> createProxyService() override;
 
  private:
   void* getExpectedBuff() override;
@@ -511,7 +511,7 @@ void AllGatherTestEngine::setupConnections() {
   }
 }
 
-std::shared_ptr<mscclpp::BaseProxyService> AllGatherTestEngine::createproxyService() {
+std::shared_ptr<mscclpp::BaseProxyService> AllGatherTestEngine::createProxyService() {
   if (isUsingHostOffload(args_.kernelNum)) {
     return std::make_shared<AllGatherProxyService>(args_.totalRanks, args_.rank, args_.gpuNum);
   } else {
