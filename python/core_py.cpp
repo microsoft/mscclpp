@@ -63,9 +63,10 @@ void register_core(nb::module_& m) {
           nb::arg("nRanks"))
       .def("create_unique_id", &TcpBootstrap::createUniqueId)
       .def("get_unique_id", &TcpBootstrap::getUniqueId)
-      .def("initialize", (void (TcpBootstrap::*)(UniqueId)) & TcpBootstrap::initialize, nb::arg("uniqueId"))
-      .def("initialize", (void (TcpBootstrap::*)(const std::string&)) & TcpBootstrap::initialize,
-           nb::arg("ifIpPortTrio"));
+      .def("initialize", (void (TcpBootstrap::*)(UniqueId, int64_t)) & TcpBootstrap::initialize, nb::arg("uniqueId"),
+           nb::arg("timeoutSec") = 30)
+      .def("initialize", (void (TcpBootstrap::*)(const std::string&, int64_t)) & TcpBootstrap::initialize,
+           nb::arg("ifIpPortTrio"), nb::arg("timeoutSec") = 30);
 
   nb::enum_<Transport>(m, "Transport")
       .value("Unknown", Transport::Unknown)

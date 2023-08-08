@@ -61,11 +61,13 @@ class TcpBootstrap : public Bootstrap {
 
   /// Initialize the @ref TcpBootstrap with a given unique ID.
   /// @param uniqueId The unique ID to initialize the @ref TcpBootstrap with.
-  void initialize(UniqueId uniqueId);
+  /// @param timeoutSec The connection timeout in seconds.
+  void initialize(UniqueId uniqueId, int64_t timeoutSec = 30);
 
   /// Initialize the @ref TcpBootstrap with a string formatted as "ip:port" or "interface:ip:port".
   /// @param ifIpPortTrio The string formatted as "ip:port" or "interface:ip:port".
-  void initialize(const std::string& ifIpPortTrio);
+  /// @param timeoutSec The connection timeout in seconds.
+  void initialize(const std::string& ifIpPortTrio, int64_t timeoutSec = 30);
 
   /// Return the rank of the process.
   int getRank() override;
