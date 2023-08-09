@@ -563,7 +563,7 @@ __global__ void allreduce0(int* buff, int* scratch, int rank, int worldSize, siz
   }
 }
 
-__global__ void __launch_bounds__(1024, 24)
+__global__ void __launch_bounds__(1024)
     allreduce1(int* buff, int* scratch, int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int remoteSendRank = (rank + 1) % worldSize;
@@ -780,7 +780,7 @@ __global__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
   }
 }
 
-__global__ void __launch_bounds__(1024, 24)
+__global__ void __launch_bounds__(1024)
     allreduce3(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
   reduceScatter(buff, scratch, rank, nRanksPerNode, worldSize, nelems);
   if (threadIdx.x == 0 && blockIdx.x == 0) {

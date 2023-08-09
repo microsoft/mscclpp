@@ -4,7 +4,7 @@ namespace nb = nanobind;
 namespace mscclpp {
 int getDeviceNumaNode(int cudaDev);
 void numaBind(int node);
-};
+};  // namespace mscclpp
 
 void register_numa(nb::module_ &m) {
   nb::module_ _sub_m = m.def_submodule("numa", "numa functions");
