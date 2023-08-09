@@ -69,12 +69,12 @@ MSCCLPP_API_CPP SmDevice2DeviceSemaphore::SmDevice2DeviceSemaphore(Communicator&
     remoteInboundSemaphoreIdsRegMem_ =
         setupInboundSemaphoreId(communicator, connection.get(), localInboundSemaphore_.get());
     INFO(MSCCLPP_INIT, "Creating a direct semaphore for CudaIPC transport from %d to %d",
-         communicator.bootstrapper()->getRank(), connection->remoteRank());
+         communicator.bootstrap()->getRank(), connection->remoteRank());
     isRemoteInboundSemaphoreIdSet_ = true;
   } else if (AllIBTransports.has(connection->transport())) {
     // We don't need to really with any of the IB transports, since the values will be local
     INFO(MSCCLPP_INIT, "Creating a direct semaphore for IB transport from %d to %d",
-         communicator.bootstrapper()->getRank(), connection->remoteRank());
+         communicator.bootstrap()->getRank(), connection->remoteRank());
     isRemoteInboundSemaphoreIdSet_ = false;
   }
 }

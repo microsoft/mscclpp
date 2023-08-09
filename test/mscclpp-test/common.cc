@@ -225,7 +225,7 @@ double BaseTestEngine::benchTime() {
   return deltaSec;
 }
 
-void BaseTestEngine::barrier() { this->comm_->bootstrapper()->barrier(); }
+void BaseTestEngine::barrier() { this->comm_->bootstrap()->barrier(); }
 
 void BaseTestEngine::runTest() {
   // warm-up for large size
@@ -326,7 +326,7 @@ void BaseTestEngine::runTest() {
 }
 
 void BaseTestEngine::bootstrap() {
-  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(args_.rank, args_.totalRanks);
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(args_.rank, args_.totalRanks);
   mscclpp::UniqueId id;
   if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
@@ -394,9 +394,9 @@ void BaseTestEngine::setupMeshConnectionsInternal(
 
 // Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
 // TODO(saemal): retrun the actual vector instead of void
-void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, void* inputBuff,
-                                          size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes,
-                                          SetupChannelFunc setupChannel) {
+void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>>& proxyChannels,
+                                          void* inputBuff, size_t inputBuffBytes, void* outputBuff,
+                                          size_t outputBuffBytes, SetupChannelFunc setupChannel) {
   const mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc | IBs[args_.gpuNum];
   mscclpp::RegisteredMemory inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, allTransports);
   mscclpp::RegisteredMemory outputBufRegMem;
@@ -415,9 +415,9 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SimpleProxyChanne
   } else {
     auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
     for (size_t i = 0; i < connections.size(); ++i) {
-      proxyChannels.push_back(mscclpp::SimpleProxyChannel(service->deviceChannel(service->addSemaphore(connections[i])),
-                                                          service->addMemory(remoteRegMemories[i].get()),
-                                                          service->addMemory(inputBufRegMem)));
+      proxyChannels.push_back(mscclpp::deviceHandle(mscclpp::SimpleProxyChannel(
+          service->deviceChannel(service->addSemaphore(connections[i])), service->addMemory(remoteRegMemories[i].get()),
+          service->addMemory(inputBufRegMem))));
     }
   }
 
@@ -451,7 +451,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-      smChannels.emplace_back(smSemaphores[cid]->deviceHandle(), remoteRegMemories[cid].get(),
+      smChannels.emplace_back(smSemaphores[cid], remoteRegMemories[cid].get(),
                               (outputBuff && semantic == ChannelSemantic::GET) ? outputBuff : inputBufRegMem.data(),
                               nullptr);
     }
@@ -459,10 +459,10 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
 }
 
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels,
-                                          std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, void* inputBuff,
-                                          size_t inputBuffBytes, void* putPacketBuff, size_t putPacketBuffBytes,
-                                          void* getPacketBuff, size_t getPacketBuffBytes, void* outputBuff,
-                                          size_t outputBuffBytes) {
+                                          std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>>& proxyChannels,
+                                          void* inputBuff, size_t inputBuffBytes, void* putPacketBuff,
+                                          size_t putPacketBuffBytes, void* getPacketBuff, size_t getPacketBuffBytes,
+                                          void* outputBuff, size_t outputBuffBytes) {
   const mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc | IBs[args_.gpuNum];
   mscclpp::RegisteredMemory inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, allTransports);
   mscclpp::RegisteredMemory putPacketBufRegMem;
@@ -505,16 +505,16 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-      smChannels.emplace_back(smSemaphores[cid]->deviceHandle(),
+      smChannels.emplace_back(smSemaphores[cid],
                               (outputBuff) ? remoteRegMemoriesOutput[cid].get() : remoteRegMemories[cid].get(),
                               inputBufRegMem.data(), (outputBuff) ? outputBufRegMem.data() : nullptr);
     } else {
       if (putPacketBuff == nullptr || getPacketBuff == nullptr) {
         throw std::runtime_error("IB transport requires putPacketBuff and getPacketBuff");
       }
-      proxyChannels.emplace_back(service->deviceChannel(connIdToSemId[cid]),
-                                 service->addMemory(remoteRegMemories[cid].get()),
-                                 service->addMemory(putPacketBufRegMem));
+      proxyChannels.emplace_back(mscclpp::deviceHandle(mscclpp::SimpleProxyChannel(
+          service->deviceChannel(connIdToSemId[cid]), service->addMemory(remoteRegMemories[cid].get()),
+          service->addMemory(putPacketBufRegMem))));
     }
   }
 }

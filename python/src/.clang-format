@@ -1,7 +1,0 @@
----
-Language : Cpp
-BasedOnStyle : google
-BinPackParameters: false
-BinPackArguments : false
-AlignAfterOpenBracket : AlwaysBreak
-...

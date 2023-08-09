@@ -9,6 +9,7 @@
 #define MSCCLPP_PATCH 0
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
+#include <array>
 #include <bitset>
 #include <future>
 #include <memory>
@@ -21,15 +22,13 @@ namespace mscclpp {
 #define MSCCLPP_UNIQUE_ID_BYTES 128
 
 /// Unique ID for a process. This is a MSCCLPP_UNIQUE_ID_BYTES byte array that uniquely identifies a process.
-struct UniqueId {
-  char internal[MSCCLPP_UNIQUE_ID_BYTES];
-};
+using UniqueId = std::array<uint8_t, MSCCLPP_UNIQUE_ID_BYTES>;
 
-/// Base class for bootstrappers.
-class BaseBootstrap {
+/// Base class for bootstraps.
+class Bootstrap {
  public:
-  BaseBootstrap(){};
-  virtual ~BaseBootstrap() = default;
+  Bootstrap(){};
+  virtual ~Bootstrap() = default;
   virtual int getRank() = 0;
   virtual int getNranks() = 0;
   virtual void send(void* data, int size, int peer, int tag) = 0;
@@ -41,32 +40,32 @@ class BaseBootstrap {
   void recv(std::vector<char>& data, int peer, int tag);
 };
 
-/// A native implementation of the bootstrapper.
-class Bootstrap : public BaseBootstrap {
+/// A native implementation of the bootstrap using TCP sockets.
+class TcpBootstrap : public Bootstrap {
  public:
-  /// Construct a Bootstrap.
+  /// Constructor.
   /// @param rank The rank of the process.
   /// @param nRanks The total number of ranks.
-  Bootstrap(int rank, int nRanks);
+  TcpBootstrap(int rank, int nRanks);
 
-  /// Destroy the Bootstrap.
-  ~Bootstrap();
+  /// Destructor.
+  ~TcpBootstrap();
 
-  /// Create a random unique ID and store it in the Bootstrap.
+  /// Create a random unique ID and store it in the @ref TcpBootstrap.
   /// @return The created unique ID.
   UniqueId createUniqueId();
 
-  /// Return the unique ID stored in the Bootstrap.
-  /// @return The unique ID stored in the Bootstrap.
+  /// Return the unique ID stored in the @ref TcpBootstrap.
+  /// @return The unique ID stored in the @ref TcpBootstrap.
   UniqueId getUniqueId() const;
 
-  /// Initialize the Bootstrap with a given unique ID.
-  /// @param uniqueId The unique ID to initialize the Bootstrap with.
+  /// Initialize the @ref TcpBootstrap with a given unique ID.
+  /// @param uniqueId The unique ID to initialize the @ref TcpBootstrap with.
   void initialize(UniqueId uniqueId);
 
-  /// Initialize the Bootstrap with a string formatted as "ip:port" or "interface:ip:port".
+  /// Initialize the @ref TcpBootstrap with a string formatted as "ip:port" or "interface:ip:port".
   /// @param ifIpPortTrio The string formatted as "ip:port" or "interface:ip:port".
-  void initialize(std::string ifIpPortTrio);
+  void initialize(const std::string& ifIpPortTrio);
 
   /// Return the rank of the process.
   int getRank() override;
@@ -109,9 +108,9 @@ class Bootstrap : public BaseBootstrap {
   void barrier() override;
 
  private:
-  /// Implementation class for Bootstrap.
+  /// Implementation class for @ref TcpBootstrap.
   class Impl;
-  /// Pointer to the implementation class for Bootstrap.
+  /// Pointer to the implementation class for @ref TcpBootstrap.
   std::unique_ptr<Impl> pimpl_;
 };
 
@@ -421,13 +420,13 @@ struct Setuppable {
   /// being set up within the same @ref Communicator::setup() call.
   ///
   /// @param bootstrap A shared pointer to the bootstrap implementation.
-  virtual void beginSetup(std::shared_ptr<BaseBootstrap> bootstrap);
+  virtual void beginSetup(std::shared_ptr<Bootstrap> bootstrap);
 
   /// Called inside @ref Communicator::setup() after all calls to @ref beginSetup() of all @ref Setuppable objects that
   /// are being set up within the same @ref Communicator::setup() call.
   ///
   /// @param bootstrap A shared pointer to the bootstrap implementation.
-  virtual void endSetup(std::shared_ptr<BaseBootstrap> bootstrap);
+  virtual void endSetup(std::shared_ptr<Bootstrap> bootstrap);
 };
 
 /// A non-blocking future that can be used to check if a value is ready and retrieve it.
@@ -484,16 +483,16 @@ class Communicator {
  public:
   /// Initializes the communicator with a given bootstrap implementation.
   ///
-  /// @param bootstrap An implementation of the BaseBootstrap that the communicator will use.
-  Communicator(std::shared_ptr<BaseBootstrap> bootstrap);
+  /// @param bootstrap An implementation of the Bootstrap that the communicator will use.
+  Communicator(std::shared_ptr<Bootstrap> bootstrap);
 
   /// Destroy the communicator.
   ~Communicator();
 
-  /// Returns the bootstrapper held by this communicator.
+  /// Returns the bootstrap held by this communicator.
   ///
-  /// @return std::shared_ptr<BaseBootstrap> The bootstrapper held by this communicator.
-  std::shared_ptr<BaseBootstrap> bootstrapper();
+  /// @return std::shared_ptr<Bootstrap> The bootstrap held by this communicator.
+  std::shared_ptr<Bootstrap> bootstrap();
 
   /// Register a region of GPU memory for use in this communicator.
   ///
@@ -565,6 +564,16 @@ extern const TransportFlags AllIBTransports;
 
 /// A constant TransportFlags object representing all transports.
 extern const TransportFlags AllTransports;
+
+/// A type which could be safely used in device side.
+template <class T>
+using DeviceHandle = typename T::DeviceHandle;
+
+/// Retrieve the deviceHandle instance from host object.
+template <typename T>
+DeviceHandle<std::remove_reference_t<T>> deviceHandle(T&& t) {
+  return t.deviceHandle();
+}
 
 }  // namespace mscclpp
 

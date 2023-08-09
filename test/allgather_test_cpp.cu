@@ -51,10 +51,12 @@ static double getTime(void) {
   return (tspec.tv_nsec / 1.0e9) + tspec.tv_sec;
 }
 
-__constant__ mscclpp::SimpleProxyChannel constProxyChans[16];
+template <class T>
+using DeviceHandle = mscclpp::DeviceHandle<T>;
+__constant__ DeviceHandle<mscclpp::SimpleProxyChannel> constProxyChans[16];
 
-__device__ void allgather0(mscclpp::SimpleProxyChannel proxyChan, int rank, int world_size, int remoteRank,
-                           size_t nelemsPerGPU) {
+__device__ void allgather0(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, int rank, int world_size,
+                           int remoteRank, size_t nelemsPerGPU) {
   // this allgather is really simple and implemented as an alltoall
 
   // this thread's role is a sender role
@@ -69,8 +71,8 @@ __device__ void allgather0(mscclpp::SimpleProxyChannel proxyChan, int rank, int 
   if ((threadIdx.x % 32) == 0) proxyChan.wait();
 }
 
-__device__ void localAllGather(mscclpp::SimpleProxyChannel proxyChan, int rank, int world_size, int nranksPerNode,
-                               int remoteRank, uint64_t offset, uint64_t size) {
+__device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, int rank, int world_size,
+                               int nranksPerNode, int remoteRank, uint64_t offset, uint64_t size) {
   // this allgather algorithm works as follows:
   // Step 1: GPU rank i sends data to GPU rank (i+1) % nranksPerNode
   // and waits for data from GPU rank (i-1) % nranksPerNode
@@ -90,16 +92,16 @@ __device__ void localAllGather(mscclpp::SimpleProxyChannel proxyChan, int rank, 
   }
 }
 
-__device__ void allgather1(mscclpp::SimpleProxyChannel proxyChan, int rank, int world_size, int nranksPerNode,
-                           int remoteRank, size_t nelemsPerGPU) {
+__device__ void allgather1(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, int rank, int world_size,
+                           int nranksPerNode, int remoteRank, size_t nelemsPerGPU) {
   localAllGather(proxyChan, rank, world_size, nranksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
   if (remoteRank / nranksPerNode == rank / nranksPerNode)
     if ((threadIdx.x % 32) == 0) proxyChan.flush();
 }
 
-__device__ void allgather2(mscclpp::SimpleProxyChannel proxyChan, int rank, int world_size, int nranksPerNode,
-                           int remoteRank, size_t nelemsPerGPU) {
+__device__ void allgather2(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, int rank, int world_size,
+                           int nranksPerNode, int remoteRank, size_t nelemsPerGPU) {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
   // Step 1: each node does a local allgather and concurrently,
@@ -166,7 +168,7 @@ __global__ void kernel(int rank, int world_size, int nranksPerNode, size_t nelem
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   // Each warp is responsible for one of the remote ranks
-  mscclpp::SimpleProxyChannel proxyChan = constProxyChans[warpId];
+  DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[warpId];
 
   if (kernel == 0)
     allgather0(proxyChan, rank, world_size, remoteRank, nelemsPerGPU);
@@ -233,16 +235,16 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
 
   comm.setup();
 
-  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannels;
   for (size_t i = 0; i < semaphoreIds.size(); ++i) {
-    proxyChannels.push_back(mscclpp::SimpleProxyChannel(channelService.deviceChannel(semaphoreIds[i]),
-                                                        channelService.addMemory(remoteMemories[i].get()),
-                                                        channelService.addMemory(localMemories[i])));
+    proxyChannels.push_back(mscclpp::deviceHandle(mscclpp::SimpleProxyChannel(
+        channelService.deviceChannel(semaphoreIds[i]), channelService.addMemory(remoteMemories[i].get()),
+        channelService.addMemory(localMemories[i]))));
   }
 
-  assert(proxyChannels.size() < sizeof(constProxyChans) / sizeof(mscclpp::SimpleProxyChannel));
+  assert(proxyChannels.size() < sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>));
   CUDACHECK(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
-                               sizeof(mscclpp::SimpleProxyChannel) * proxyChannels.size()));
+                               sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * proxyChannels.size()));
 }
 
 void printUsage(const char* prog, bool isMpi) {
@@ -391,9 +393,9 @@ int main(int argc, const char* argv[]) {
 
   try {
     if (rank == 0) printf("Initializing MSCCL++\n");
-    auto bootstrapper = std::make_shared<mscclpp::Bootstrap>(rank, world_size);
-    bootstrapper->initialize(ip_port);
-    mscclpp::Communicator comm(bootstrapper);
+    auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, world_size);
+    bootstrap->initialize(ip_port);
+    mscclpp::Communicator comm(bootstrap);
     mscclpp::ProxyService channelService(comm);
 
     if (rank == 0) printf("Initializing data for allgather test\n");
@@ -422,19 +424,19 @@ int main(int argc, const char* argv[]) {
     }
     int tmp[16];
     // A simple barrier
-    bootstrapper->allGather(tmp, sizeof(int));
+    bootstrap->allGather(tmp, sizeof(int));
     if (rank == 0) printf("Successfully checked the correctness\n");
 
     // Perf test
     int iterwithoutcudagraph = 10;
     if (rank == 0) printf("Running %d iterations of the kernel without CUDA graph\n", iterwithoutcudagraph);
     CUDACHECK(cudaStreamSynchronize(stream));
-    bootstrapper->allGather(tmp, sizeof(int));
+    bootstrap->allGather(tmp, sizeof(int));
     for (int i = 0; i < iterwithoutcudagraph; ++i) {
       kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
     }
     CUDACHECK(cudaStreamSynchronize(stream));
-    bootstrapper->allGather(tmp, sizeof(int));
+    bootstrap->allGather(tmp, sizeof(int));
 
     // cudaGraph Capture
     int cudagraphiter = 10;
@@ -462,7 +464,7 @@ int main(int argc, const char* argv[]) {
     if (rank == 0)
       printf("Running %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphlaunch,
              cudagraphiter);
-    bootstrapper->allGather(tmp, sizeof(int));
+    bootstrap->allGather(tmp, sizeof(int));
     double t0, t1, ms, time_in_us;
     t0 = getTime();
     for (int i = 0; i < cudagraphlaunch; ++i) {
@@ -475,7 +477,7 @@ int main(int argc, const char* argv[]) {
     time_in_us = ms * 1000. / (float)cudagraphlaunch / (float)cudagraphiter;
     printf("Rank %d report: size %lu time: %f us/iter algBW %f GBps\n", rank, dataSize, time_in_us,
            (double)(dataSize) / 1e9 / (time_in_us / 1e6));
-    bootstrapper->allGather(tmp, sizeof(int));
+    bootstrap->allGather(tmp, sizeof(int));
 
     if (rank == 0) printf("Stopping MSCCL++ proxy threads\n");
     channelService.stopProxy();

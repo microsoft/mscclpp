@@ -42,13 +42,13 @@ class MultiProcessTest : public ::testing::Test {
 
 class BootstrapTest : public MultiProcessTest {
  protected:
-  void bootstrapTestAllGather(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap);
+  void bootstrapTestAllGather(std::shared_ptr<mscclpp::Bootstrap> bootstrap);
 
-  void bootstrapTestBarrier(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap);
+  void bootstrapTestBarrier(std::shared_ptr<mscclpp::Bootstrap> bootstrap);
 
-  void bootstrapTestSendRecv(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap);
+  void bootstrapTestSendRecv(std::shared_ptr<mscclpp::Bootstrap> bootstrap);
 
-  void bootstrapTestAll(std::shared_ptr<mscclpp::BaseBootstrap> bootstrap);
+  void bootstrapTestAll(std::shared_ptr<mscclpp::Bootstrap> bootstrap);
 
   // Each test case should finish within 30 seconds.
   mscclpp::Timer bootstrapTestTimer{30};
@@ -76,7 +76,7 @@ class IbPeerToPeerTest : public IbTestBase {
   void stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
                         unsigned int immData);
 
-  std::shared_ptr<mscclpp::Bootstrap> bootstrap;
+  std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   std::shared_ptr<mscclpp::IbCtx> ibCtx;
   mscclpp::IbQp* qp;
   const mscclpp::IbMr* mr;

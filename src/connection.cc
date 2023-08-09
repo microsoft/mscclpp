@@ -171,7 +171,7 @@ void IBConnection::flush() {
   // npkitCollectExitEvents(conn, NPKIT_EVENT_IB_SEND_EXIT);
 }
 
-void IBConnection::beginSetup(std::shared_ptr<BaseBootstrap> bootstrap) {
+void IBConnection::beginSetup(std::shared_ptr<Bootstrap> bootstrap) {
   std::vector<char> ibQpTransport;
   std::copy_n(reinterpret_cast<char*>(&qp->getInfo()), sizeof(qp->getInfo()), std::back_inserter(ibQpTransport));
   std::copy_n(reinterpret_cast<char*>(&transport_), sizeof(transport_), std::back_inserter(ibQpTransport));
@@ -179,7 +179,7 @@ void IBConnection::beginSetup(std::shared_ptr<BaseBootstrap> bootstrap) {
   bootstrap->send(ibQpTransport.data(), ibQpTransport.size(), remoteRank(), tag());
 }
 
-void IBConnection::endSetup(std::shared_ptr<BaseBootstrap> bootstrap) {
+void IBConnection::endSetup(std::shared_ptr<Bootstrap> bootstrap) {
   std::vector<char> ibQpTransport(sizeof(IbQpInfo) + sizeof(Transport));
   bootstrap->recv(ibQpTransport.data(), ibQpTransport.size(), remoteRank(), tag());
 

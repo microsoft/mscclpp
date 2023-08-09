@@ -236,7 +236,7 @@ int main(int argc, char* argv[]) {
   CUCHECK(cudaSetDevice(cudaNum));
 
   if (rank == 0) printf("Initializing MSCCL++\n");
-  auto bootstrap = std::make_shared<mscclpp::Bootstrap>(rank, world_size);
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, world_size);
   mscclpp::UniqueId uniqueId;
   if (rank == 0) uniqueId = bootstrap->createUniqueId();
   MPI_Bcast(&uniqueId, sizeof(uniqueId), MPI_BYTE, 0, MPI_COMM_WORLD);

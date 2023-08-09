@@ -3,6 +3,7 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cassert>
 #include <mscclpp/concurrency.hpp>
 #include <string>
@@ -14,16 +15,18 @@ auto isUsingHostOffload = [](int kernelNum) { return kernelNum == 3; };
 constexpr uint64_t MAGIC = 0xdeadbeef;
 }  // namespace
 
-__constant__ mscclpp::SimpleProxyChannel constProxyChans[16];
-__constant__ mscclpp::ProxyChannel constRawProxyChan[16];
+template <class T>
+using DeviceHandle = mscclpp::DeviceHandle<T>;
+__constant__ DeviceHandle<mscclpp::SimpleProxyChannel> constProxyChans[16];
+__constant__ DeviceHandle<mscclpp::ProxyChannel> constRawProxyChan[16];
 
-__constant__ mscclpp::SmChannel constSmChans[8];
+__constant__ DeviceHandle<mscclpp::SmChannel> constSmChans[8];
 
 __global__ void allgather0(int rank, int worldSize, size_t nelemsPerGPU) {
   int warpId = threadIdx.x / 32;
 
   // Each warp is responsible for one of the remote ranks
-  mscclpp::SimpleProxyChannel proxyChan = constProxyChans[warpId];
+  DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[warpId];
 
   // this allgather is really simple and implemented as an alltoall
 
@@ -39,8 +42,9 @@ __global__ void allgather0(int rank, int worldSize, size_t nelemsPerGPU) {
   if (threadIdx.x % 32 == 0) proxyChan.wait();
 }
 
-__device__ void localAllGather(mscclpp::SimpleProxyChannel proxyChan, int rank, int worldSize, int nRanksPerNode,
-                               int remoteRank, uint64_t offset, uint64_t size, bool flushAfterSignal = true) {
+__device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, int rank, int worldSize,
+                               int nRanksPerNode, int remoteRank, uint64_t offset, uint64_t size,
+                               bool flushAfterSignal = true) {
   // this allgather algorithm works as follows:
   // Step 1: GPU rank i sends data to GPU rank (i+1) % nRanksPerNode
   // and waits for data from GPU rank (i-1) % nRanksPerNode
@@ -114,7 +118,7 @@ __global__ void allgather1(int rank, int worldSize, int nRanksPerNode, size_t ne
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
 
   // Each warp is responsible for one of the remote ranks
-  mscclpp::SimpleProxyChannel proxyChan = constProxyChans[warpId];
+  DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[warpId];
 
   localAllGather(proxyChan, rank, worldSize, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
@@ -125,7 +129,7 @@ __global__ void allgather2(int rank, int worldSize, int nRanksPerNode, size_t ne
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
 
   // Each warp is responsible for one of the remote ranks
-  mscclpp::SimpleProxyChannel proxyChan = constProxyChans[warpId];
+  DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[warpId];
 
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
@@ -199,7 +203,7 @@ __global__ void allgather3(int rank, int worldSize) {
   int warpId = threadIdx.x / 32;
 
   // Each warp is responsible for one of the remote ranks
-  mscclpp::ProxyChannel proxyChan = constRawProxyChan[warpId];
+  DeviceHandle<mscclpp::ProxyChannel> proxyChan = constRawProxyChan[warpId];
 
   int tid = threadIdx.x;
   __syncthreads();
@@ -231,7 +235,7 @@ __global__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  mscclpp::SimpleProxyChannel& proxyChan = constProxyChans[peer];
+  DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = constProxyChans[peer];
   const size_t nBlocksForLocalAllGather = gridDim.x;
   const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
   const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
@@ -286,10 +290,11 @@ class AllGatherChannelService : public mscclpp::BaseProxyService {
     semaphores_.push_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(communicator_, connection));
     return semaphores_.size() - 1;
   }
-  std::vector<mscclpp::ProxyChannel> deviceChannels() {
-    std::vector<mscclpp::ProxyChannel> result;
+  std::vector<DeviceHandle<mscclpp::ProxyChannel>> deviceChannels() {
+    std::vector<DeviceHandle<mscclpp::ProxyChannel>> result;
     for (auto& semaphore : semaphores_) {
-      result.push_back(mscclpp::ProxyChannel(0, semaphore->deviceHandle(), proxy_.fifo().deviceFifo()));
+      result.push_back(
+          mscclpp::deviceHandle(mscclpp::ProxyChannel(0, semaphore->deviceHandle(), proxy_.fifo().deviceFifo())));
     }
     return result;
   }
@@ -461,6 +466,7 @@ class AllGatherTestEngine : public BaseTestEngine {
 
   std::shared_ptr<int> sendBuff_;
   std::shared_ptr<int[]> expectedBuff_;
+  std::vector<mscclpp::SmChannel> smChannels_;
 };
 
 AllGatherTestEngine::AllGatherTestEngine(const TestArgs& args) : BaseTestEngine(args, "allgather") {}
@@ -471,20 +477,23 @@ void AllGatherTestEngine::allocateBuffer() {
 }
 
 void AllGatherTestEngine::setupConnections() {
-  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> devProxyChannels;
   if (!isUsingHostOffload(args_.kernelNum)) {
-    setupMeshConnections(proxyChannels, sendBuff_.get(), args_.maxBytes);
-    assert(proxyChannels.size() < sizeof(constProxyChans) / sizeof(mscclpp::SimpleProxyChannel));
-    CUDATHROW(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
-                                 sizeof(mscclpp::SimpleProxyChannel) * proxyChannels.size()));
+    setupMeshConnections(devProxyChannels, sendBuff_.get(), args_.maxBytes);
+    assert(devProxyChannels.size() < sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>));
+    CUDATHROW(cudaMemcpyToSymbol(constProxyChans, devProxyChannels.data(),
+                                 sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * devProxyChannels.size()));
 
-    std::vector<mscclpp::SmChannel> smChannels;
-    setupMeshConnections(smChannels, sendBuff_.get(), args_.maxBytes);
-    assert(smChannels.size() < sizeof(constSmChans) / sizeof(mscclpp::SmChannel));
-    CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannels.data(), sizeof(mscclpp::SmChannel) * smChannels.size()));
+    setupMeshConnections(smChannels_, sendBuff_.get(), args_.maxBytes);
+    std::vector<DeviceHandle<mscclpp::SmChannel>> smChannelHandles(smChannels_.size());
+    assert(smChannels_.size() < sizeof(constSmChans) / sizeof(DeviceHandle<mscclpp::SmChannel>));
+    std::transform(smChannels_.begin(), smChannels_.end(), smChannelHandles.begin(),
+                   [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
+    CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannelHandles.data(),
+                                 sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelHandles.size()));
   } else {
     auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
-    setupMeshConnections(proxyChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,
+    setupMeshConnections(devProxyChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,
                          [&](std::vector<std::shared_ptr<mscclpp::Connection>> conns,
                              std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteMemories,
                              const mscclpp::RegisteredMemory& localMemory) {
@@ -497,9 +506,9 @@ void AllGatherTestEngine::setupConnections() {
                            comm_->setup();
                          });
     auto proxyChannels = service->deviceChannels();
-    assert(proxyChannels.size() < sizeof(constRawProxyChan) / sizeof(mscclpp::ProxyChannel));
+    assert(proxyChannels.size() < sizeof(constRawProxyChan) / sizeof(DeviceHandle<mscclpp::ProxyChannel>));
     CUDATHROW(cudaMemcpyToSymbol(constRawProxyChan, proxyChannels.data(),
-                                 sizeof(mscclpp::ProxyChannel) * proxyChannels.size()));
+                                 sizeof(DeviceHandle<mscclpp::ProxyChannel>) * proxyChannels.size()));
   }
 }
 
