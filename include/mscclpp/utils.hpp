@@ -17,6 +17,7 @@ struct Timer {
 
   ~Timer();
 
+  /// Returns the elapsed time in milliseconds.
   int64_t elapsed() const;
 
   void set(int timeout);

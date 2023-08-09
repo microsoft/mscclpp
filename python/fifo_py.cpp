@@ -15,14 +15,16 @@ void register_fifo(nb::module_& m) {
       .def_rw("triggers", &FifoDeviceHandle::triggers)
       .def_rw("tail_replica", &FifoDeviceHandle::tailReplica)
       .def_rw("head", &FifoDeviceHandle::head)
+      .def_rw("size", &FifoDeviceHandle::size)
       .def_prop_ro("raw", [](const FifoDeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
 
   nb::class_<Fifo>(m, "Fifo")
-      .def(nb::init<>())
+      .def(nb::init<int>(), nb::arg("size") = 128)
       .def("poll", &Fifo::poll)
       .def("pop", &Fifo::pop)
       .def("flush_tail", &Fifo::flushTail, nb::arg("sync") = false)
+      .def("size", &Fifo::size)
       .def("device_handle", &Fifo::deviceHandle);
 }

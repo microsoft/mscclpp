@@ -9,7 +9,7 @@ from ._mscclpp import (
     Fifo,
     Host2DeviceSemaphore,
     Host2HostSemaphore,
-    Numa,
+    numa,
     ProxyService,
     RegisteredMemory,
     SimpleProxyChannel,

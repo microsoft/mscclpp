@@ -335,7 +335,7 @@ void BaseTestEngine::bootstrap() {
 }
 
 void BaseTestEngine::setupTest() {
-  this->chanService_ = this->createproxyService();
+  this->chanService_ = this->createProxyService();
   this->setupConnections();
   this->chanService_->startProxy();
   this->coll_->setChanService(this->chanService_);
@@ -357,7 +357,7 @@ size_t BaseTestEngine::checkData() {
   return nErrors;
 }
 
-std::shared_ptr<mscclpp::BaseProxyService> BaseTestEngine::createproxyService() {
+std::shared_ptr<mscclpp::BaseProxyService> BaseTestEngine::createProxyService() {
   return std::make_shared<mscclpp::ProxyService>();
 }
 

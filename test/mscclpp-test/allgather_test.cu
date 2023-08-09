@@ -210,6 +210,7 @@ __global__ void allgather3(int rank, int worldSize) {
   if (tid == 0) {
     mscclpp::ProxyTrigger trigger;
     trigger.fst = MAGIC;
+    trigger.snd = 0;
     // offload all the work to the proxy
     uint64_t currentFifoHead = proxyChan.fifo_.push(trigger);
     // wait for the work to be done in cpu side
@@ -457,7 +458,7 @@ class AllGatherTestEngine : public BaseTestEngine {
   std::vector<void*> getSendBuff() override;
   void* getRecvBuff() override;
   void* getScratchBuff() override;
-  std::shared_ptr<mscclpp::BaseProxyService> createproxyService() override;
+  std::shared_ptr<mscclpp::BaseProxyService> createProxyService() override;
 
  private:
   void* getExpectedBuff() override;
@@ -510,7 +511,7 @@ void AllGatherTestEngine::setupConnections() {
   }
 }
 
-std::shared_ptr<mscclpp::BaseProxyService> AllGatherTestEngine::createproxyService() {
+std::shared_ptr<mscclpp::BaseProxyService> AllGatherTestEngine::createProxyService() {
   if (isUsingHostOffload(args_.kernelNum)) {
     return std::make_shared<AllGatherProxyService>(args_.totalRanks, args_.rank, args_.gpuNum);
   } else {

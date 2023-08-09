@@ -10,15 +10,14 @@
 #include <mscclpp/fifo_device.hpp>
 #include <mscclpp/poll.hpp>
 
-#define MSCCLPP_PROXY_FIFO_SIZE 128
-
 namespace mscclpp {
 
 /// A class representing a host proxy FIFO that can consume work elements pushed by device threads.
 class Fifo {
  public:
   /// Constructs a new @ref Fifo object.
-  Fifo();
+  /// @param size The number of entires in the FIFO.
+  Fifo(int size = 128);
 
   /// Destroys the @ref Fifo object.
   ~Fifo();
@@ -35,6 +34,10 @@ class Fifo {
   ///
   /// @param sync If true, waits for the flush to complete before returning.
   void flushTail(bool sync = false);
+
+  /// Return the FIFO size.
+  /// @return The FIFO size.
+  int size() const;
 
   /// Returns a @ref FifoDeviceHandle object representing the device FIFO.
   ///
