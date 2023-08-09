@@ -1,0 +1,4 @@
+mpi4py==3.1.4
+torch==2.0.0a0+1767026
+netifaces==0.11.0
+pycuda=2022.2.2

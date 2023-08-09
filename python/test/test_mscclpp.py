@@ -16,8 +16,6 @@ from mscclpp import (
 from mscclpp_group import MscclppGroup
 from mpi4py import MPI
 
-from applied_models.tests import PipeLayout, parametrize_layouts
-
 ethernet_interface_name = "eth0"
 
 
