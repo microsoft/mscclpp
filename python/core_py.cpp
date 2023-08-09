@@ -119,7 +119,7 @@ void register_core(nb::module_& m) {
             self->updateAndSync(dst, dstOffset, (uint64_t*)src, newValue);
           },
           nb::arg("dst"), nb::arg("dstOffset"), nb::arg("src"), nb::arg("newValue"))
-      .def("flush", &Connection::flush, nb::arg("timeoutUsec") = 3e7)
+      .def("flush", &Connection::flush, nb::arg("timeoutUsec") = (int64_t)3e7)
       .def("remote_rank", &Connection::remoteRank)
       .def("tag", &Connection::tag)
       .def("transport", &Connection::transport)
