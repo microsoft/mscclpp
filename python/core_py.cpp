@@ -17,7 +17,6 @@ extern void register_proxy_channel(nb::module_& m);
 extern void register_sm_channel(nb::module_& m);
 extern void register_fifo(nb::module_& m);
 extern void register_semaphore(nb::module_& m);
-extern void register_config(nb::module_& m);
 extern void register_utils(nb::module_& m);
 extern void register_numa(nb::module_& m);
 
@@ -120,7 +119,7 @@ void register_core(nb::module_& m) {
             self->updateAndSync(dst, dstOffset, (uint64_t*)src, newValue);
           },
           nb::arg("dst"), nb::arg("dstOffset"), nb::arg("src"), nb::arg("newValue"))
-      .def("flush", &Connection::flush)
+      .def("flush", &Connection::flush, nb::arg("timeoutUsec") = 3e7)
       .def("remote_rank", &Connection::remoteRank)
       .def("tag", &Connection::tag)
       .def("transport", &Connection::transport)
@@ -152,7 +151,6 @@ NB_MODULE(_mscclpp, m) {
   register_sm_channel(m);
   register_fifo(m);
   register_semaphore(m);
-  register_config(m);
   register_utils(m);
   register_core(m);
   register_numa(m);
