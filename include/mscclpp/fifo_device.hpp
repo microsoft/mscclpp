@@ -6,8 +6,6 @@
 
 #include "poll.hpp"
 
-#define MSCCLPP_PROXY_FIFO_SIZE 128
-
 namespace mscclpp {
 
 /// A struct representing a pair of 64-bit unsigned integers used as a trigger for the proxy.
@@ -49,13 +47,12 @@ struct FifoDeviceHandle {
     // for the second condition we need to read CPU memory.
     // As volatile access is slow, we first check using the bare pointer and then use the volatile pointer if the
     // condition is not met.
-    if (curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *(this->tailReplica)) {
-      OR_POLL_MAYBE_JAILBREAK(curFifoHead >= MSCCLPP_PROXY_FIFO_SIZE + *((volatile uint64_t*)this->tailReplica),
-                              *(volatile uint64_t*)&this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE] != 0,
-                              1000000);
+    if (curFifoHead >= size + *(this->tailReplica)) {
+      OR_POLL_MAYBE_JAILBREAK(curFifoHead >= size + *((volatile uint64_t*)this->tailReplica),
+                              *(volatile uint64_t*)&this->triggers[curFifoHead % size] != 0, 1000000);
     }
 
-    ProxyTrigger* triggerPtr = (ProxyTrigger*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]);
+    ProxyTrigger* triggerPtr = (ProxyTrigger*)&(this->triggers[curFifoHead % size]);
     asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
     return curFifoHead;
   }
@@ -66,7 +63,7 @@ struct FifoDeviceHandle {
   __forceinline__ __device__ void sync(uint64_t curFifoHead) {
     // Same as push but in this case checking the fist condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
-    OR_POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)&(this->triggers[curFifoHead % MSCCLPP_PROXY_FIFO_SIZE]) != 0,
+    OR_POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)&(this->triggers[curFifoHead % size]) != 0,
                             *(volatile uint64_t*)(this->tailReplica) <= curFifoHead, 1000000);
   }
 #endif  // __CUDACC__
@@ -77,6 +74,8 @@ struct FifoDeviceHandle {
   uint64_t* tailReplica;
   /// The FIFO head. Allocated on the device and only accessed by the device.
   uint64_t* head;
+  /// The FIFO size.
+  int size;
 };
 
 }  // namespace mscclpp

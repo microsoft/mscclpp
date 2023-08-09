@@ -63,9 +63,10 @@ void register_core(nb::module_& m) {
           nb::arg("nRanks"))
       .def("create_unique_id", &TcpBootstrap::createUniqueId)
       .def("get_unique_id", &TcpBootstrap::getUniqueId)
-      .def("initialize", (void (TcpBootstrap::*)(UniqueId)) & TcpBootstrap::initialize, nb::arg("uniqueId"))
-      .def("initialize", (void (TcpBootstrap::*)(const std::string&)) & TcpBootstrap::initialize,
-           nb::arg("ifIpPortTrio"));
+      .def("initialize", (void (TcpBootstrap::*)(UniqueId, int64_t)) & TcpBootstrap::initialize, nb::arg("uniqueId"),
+           nb::arg("timeoutSec") = 30)
+      .def("initialize", (void (TcpBootstrap::*)(const std::string&, int64_t)) & TcpBootstrap::initialize,
+           nb::arg("ifIpPortTrio"), nb::arg("timeoutSec") = 30);
 
   nb::enum_<Transport>(m, "Transport")
       .value("Unknown", Transport::Unknown)
@@ -140,7 +141,8 @@ void register_core(nb::module_& m) {
            nb::arg("tag"))
       .def("recv_memory_on_setup", &Communicator::recvMemoryOnSetup, nb::arg("remoteRank"), nb::arg("tag"))
       .def("connect_on_setup", &Communicator::connectOnSetup, nb::arg("remoteRank"), nb::arg("tag"),
-           nb::arg("transport"))
+           nb::arg("transport"), nb::arg("ibMaxCqSize") = 1024, nb::arg("ibMaxCqPollNum") = 1,
+           nb::arg("ibMaxSendWr") = 8192, nb::arg("ibMaxWrPerSend") = 64)
       .def("setup", &Communicator::setup);
 }
 

@@ -17,8 +17,8 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall,-Wextra")
 
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
-# clang-format targets
-include(${PROJECT_SOURCE_DIR}/cmake/AddClangFormatTargets.cmake)
+# Format targets
+include(${PROJECT_SOURCE_DIR}/cmake/AddFormatTargets.cmake)
 
 # Options
 option(ENABLE_TRACE "Enable tracing" OFF)
