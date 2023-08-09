@@ -14,7 +14,7 @@ struct Host2DeviceSemaphoreDeviceHandle {
   /// Wait for the host to signal.
   __forceinline__ __device__ void wait() {
     (*expectedInboundSemaphoreId) += 1;
-    POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)(inboundSemaphoreId) < (*expectedInboundSemaphoreId), 1000000);
+    POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)(inboundSemaphoreId) < (*expectedInboundSemaphoreId), 100000000);
   }
 #endif  // __CUDACC__
 
@@ -28,7 +28,7 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
   /// Wait for the remote device to signal.
   __forceinline__ __device__ void wait() {
     (*expectedInboundSemaphoreId) += 1;
-    POLL_MAYBE_JAILBREAK(*inboundSemaphoreId < (*expectedInboundSemaphoreId), 1000000);
+    POLL_MAYBE_JAILBREAK(*inboundSemaphoreId < (*expectedInboundSemaphoreId), 100000000);
   }
 
   /// Signal the remote device.
