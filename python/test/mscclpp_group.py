@@ -18,20 +18,20 @@ from mscclpp import (
     TransportFlags,
 )
 
-from mpi4py import MPI
+from .mscclpp_layout import Layout
 
 logger = logging.getLogger(__name__)
 
 
 class MscclppGroup:
-    def __init__(self, world_comm: MPI.Comm, interfaceIpPortTrio=""):
-        self.bootstrap = TcpBootstrap.create(world_comm.rank, world_comm.size)
+    def __init__(self, layout: Layout, interfaceIpPortTrio=""):
+        self.bootstrap = TcpBootstrap.create(layout.comm.rank, layout.comm.size)
         if interfaceIpPortTrio == "":
             uniq_id = None
-            if world_comm.rank == 0:
+            if layout.comm.rank == 0:
                 # similar to NCCL's unique id
                 uniq_id = self.bootstrap.create_unique_id()
-            uniq_id_global = world_comm.bcast(uniq_id, 0)
+            uniq_id_global = layout.comm.bcast(uniq_id, 0)
             self.bootstrap.initialize(uniq_id_global)
         else:
             # use this instead

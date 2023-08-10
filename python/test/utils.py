@@ -2,6 +2,7 @@ import pycuda.autoinit
 import pycuda.driver as drv
 
 from pycuda.compiler import SourceModule
+import struct
 
 class Kernel:
     def __init__(self, args):
@@ -15,3 +16,13 @@ class KernelBase:
     def __init__(self, file, args):
         self._defines = args
 
+def pack(*args):
+    fmt = ""
+    for arg in list(args):
+        if isinstance(arg, int):
+            fmt += "i"
+        elif isinstance(arg, float):
+            fmt += "f"
+        elif isinstance(arg, bytes):
+            fmt += f"{len(arg)}s"
+    return struct.pack("fmt", *args)
