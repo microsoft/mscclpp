@@ -237,7 +237,7 @@ class MscclppKernel(KernelBase):
             self.nthreads = 1024
         elif test_name == "fifo":
             super().__init__(
-                file="fifo_test.ci",
+                file="fifo_test.cu",
                 args=dict(KERNEL="fifo"),
             )
             self.nblocks = 1
