@@ -4,8 +4,10 @@
 
 // BEGIN_DEFINES //
 
+#ifndef PARAMETRIZE
 #define KERNEL d2d_semaphore
 #define N_SHARDS 8
+#endif
 
 // END_DEFINES //
 

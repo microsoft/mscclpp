@@ -5,10 +5,12 @@
 
 // BEGIN_DEFINES //
 
+#ifndef PARAMETRIZE
 #define KERNEL simple_proxy_channel
 #define N_SHARDS 8
 #define TD int
 #define USE_PACKET false
+#endif
 
 // END_DEFINES //
 

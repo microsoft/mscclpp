@@ -5,7 +5,9 @@
 
 // BEGIN_DEFINES //
 
+#ifndef PARAMETRIZE
 #define KERNEL fifo
+#endif
 
 // END_DEFINES //
 

@@ -4,10 +4,12 @@
 
 // BEGIN_DEFINES //
 
+#ifndef PARAMETRIZE
 #define KERNEL sm_channel
 #define N_SHARDS 2
 #define TD int
 #define USE_PACKET false
+#endif
 
 // END_DEFINES //
 

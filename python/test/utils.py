@@ -9,12 +9,10 @@ import torch
 
 
 class Kernel:
-    def __init__(self, ptx: bytes, args: dict):
-        kernel_name = args["KERNEL"]
-        # Get the current device index
+    def __init__(self, ptx: bytes, kernel_name: str):
         device_index = torch.cuda.current_device()
-        print("Using device {}".format(device_index))
         err, cuDevice = cuda.cuDeviceGet(device_index)
+        self._check_error(err)
 
         # Create context
         err, self._context = cuda.cuCtxCreate(0, cuDevice)
@@ -56,15 +54,20 @@ class Kernel:
 
 class KernelBase:
     def __init__(self, file: str, args: dict):
-        self._defines = args
         self._tempdir = tempfile.TemporaryDirectory()
         self._current_file_dir = os.path.dirname(os.path.abspath(__file__))
-        ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{args['KERNEL']}.ptx")
-        self._kernel = Kernel(ptx, args)
+        kernel_name = args["KERNEL"]
+        ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{args['KERNEL']}.ptx", args)
+        self._kernel = Kernel(ptx, kernel_name)
 
-    def _compile_cuda(self, source_file, output_file, std_version="c++17"):
+    def _compile_cuda(self, source_file, output_file, defines, std_version="c++17"):
         header_dir = os.path.join(self._current_file_dir, "../../include")
-        command = f"nvcc -std={std_version} -ptx -Xcompiler -Wall,-Wextra -I{header_dir} {source_file} -o {self._tempdir.name}/{output_file}"
+        defines = " ".join([f"-D{k}={v}" for k, v in defines.items()])
+        command = (
+            f"nvcc -std={std_version} -ptx -Xcompiler -Wall,-Wextra -I{header_dir} -DPARAMETRIZE {source_file} {defines} "
+            f"-o {self._tempdir.name}/{output_file}"
+        )
+        print(command)
         try:
             subprocess.run(command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             with open(f"{self._tempdir.name}/{output_file}", "rb") as f:
