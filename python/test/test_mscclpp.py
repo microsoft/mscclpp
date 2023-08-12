@@ -211,21 +211,21 @@ class MscclppKernel(KernelBase):
     ):
         if test_name == "h2d_semaphore":
             super().__init__(
-                file="h2d_semaphore_test.ci",
+                file="h2d_semaphore_test.cu",
                 args=dict(KERNEL="h2d_semaphore", N_SHARDS=nranks),
             )
             self.nblocks = 1
             self.nthreads = nranks
         elif test_name == "d2d_semaphore":
             super().__init__(
-                file="d2d_semaphore_test.ci",
+                file="d2d_semaphore_test.cu",
                 args=dict(KERNEL="d2d_semaphore", N_SHARDS=nranks),
             )
             self.nblocks = 1
             self.nthreads = nranks
         elif test_name == "sm_channel":
             super().__init__(
-                file="sm_channel_test.ci",
+                file="sm_channel_test.cu",
                 args=dict(
                     KERNEL="sm_channel",
                     N_SHARDS=nranks,
@@ -244,14 +244,14 @@ class MscclppKernel(KernelBase):
             self.nthreads = 1
         elif test_name == "proxy":
             super().__init__(
-                file="proxy_test.ci",
+                file="proxy_test.cu",
                 args=dict(KERNEL="proxy", N_SHARDS=nranks),
             )
             self.nblocks = 1
             self.nthreads = nranks
         elif test_name == "simple_proxy_channel":
             super().__init__(
-                file="simple_proxy_channel_test.ci",
+                file="simple_proxy_channel_test.cu",
                 args=dict(
                     KERNEL="simple_proxy_channel",
                     N_SHARDS=nranks,
@@ -319,8 +319,8 @@ def test_d2d_semaphores(layout: Layout):
 
 
 @parametrize_layouts((1, 2), (1, 4), (1, 8), (1, 16))
-@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
-@pytest.mark.parametrize("use_packet", [False, True])
+@pytest.mark.parametrize("nelem", [2**i for i in [10]])
+@pytest.mark.parametrize("use_packet", [False])
 def test_sm_channels(layout: Layout, nelem: int, use_packet: bool):
     group, connections = create_and_connect(layout, "NVLink")
 

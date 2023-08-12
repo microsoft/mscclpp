@@ -6,14 +6,19 @@ import os
 import ctypes
 import numpy as np
 import torch
+import mpi4py
+mpi4py.rc.initialize = False
+mpi4py.rc.finalize = False
+from mpi4py import MPI
 
 
 class Kernel:
     def __init__(self, ptx: bytes, args: dict):
-        # We need to compile the source code and get kernel here
         kernel_name = args["KERNEL"]
         # Get the current device index
+        torch.cuda.set_device(MPI.COMM_WORLD.rank)
         device_index = torch.cuda.current_device()
+        print("Using device {}".format(device_index))
         err, cuDevice = cuda.cuDeviceGet(device_index)
 
         # Create context
@@ -32,8 +37,7 @@ class Kernel:
                            cuda.CU_LAUNCH_PARAM_BUFFER_SIZE, ctypes.addressof(buffer_size), cuda.CU_LAUNCH_PARAM_END], dtype=np.uint64)
         err, = cuda.cuLaunchKernel(self._kernel, nblocks, 1, 1, nthreads, 1,
                                    1, shared, stream, 0, config.ctypes.data)
-        if err != cuda.CUresult.CUDA_SUCCESS:
-            raise RuntimeError("cuLaunchKernel failed")
+        self._check_error(err)
 
     def _check_error(self, err):
         if isinstance(err, cuda.CUresult):
@@ -51,7 +55,7 @@ class Kernel:
 
 
 class KernelBase:
-    def __init__(self, file, args):
+    def __init__(self, file: str, args: dict):
         self._defines = args
         self._tempdir = tempfile.TemporaryDirectory()
         self._current_file_dir = os.path.dirname(os.path.abspath(__file__))

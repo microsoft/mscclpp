@@ -6,7 +6,6 @@ from mpi4py import MPI
 import pytest
 import atexit
 import logging
-import os
 
 N_GPUS_PER_NODE = 8
 
@@ -18,7 +17,8 @@ def init_mpi():
         shm_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
         N_GPUS_PER_NODE = shm_comm.size
         shm_comm.Free()
-        os.environ["CUDA_VISIBLE_DEVICES"]=f"{MPI.COMM_WORLD.rank % N_GPUS_PER_NODE}"
+        # os.environ["CUDA_VISIBLE_DEVICES"]=f"{MPI.COMM_WORLD.rank % N_GPUS_PER_NODE}"
+        # print(f"device {os.environ['CUDA_VISIBLE_DEVICES']}")
 
 # Define a function to finalize MPI
 def finalize_mpi():
