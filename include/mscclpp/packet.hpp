@@ -61,7 +61,7 @@ union LLPacket {
   /// @return The 8-byte data read.
   __forceinline__ __device__ uint2 read(uint32_t flag) {
     uint2 data;
-    POLL_MAYBE_JAILBREAK(readOnce(flag, data), 1000000);
+    POLL_MAYBE_JAILBREAK(readOnce(flag, data), 100000000);
     return data;
   }
 

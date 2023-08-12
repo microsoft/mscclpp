@@ -43,8 +43,7 @@ MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
   volatile ProxyTrigger* ptr =
       reinterpret_cast<volatile ProxyTrigger*>(&pimpl->triggers.get()[pimpl->hostTail % pimpl->size]);
   trigger.fst = ptr->fst;
-  if (trigger.fst != 0)  // only then we know that trigger is a valid value
-    trigger.snd = ptr->snd;
+  trigger.snd = ptr->snd;
   return trigger;
 }
 

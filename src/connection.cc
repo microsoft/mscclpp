@@ -72,11 +72,12 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
 
 void CudaIpcConnection::flush(int64_t timeoutUsec) {
   if (timeoutUsec >= 0) {
-    WARN("CudaIpcConnection flush: timeout is not supported, ignored");
+    INFO(MSCCLPP_P2P, "CudaIpcConnection flush: timeout is not supported, ignored");
   }
   AvoidCudaGraphCaptureGuard guard;
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream_));
   // npkitCollectExitEvents(conn, NPKIT_EVENT_DMA_SEND_EXIT);
+  INFO(MSCCLPP_P2P, "CudaIpcConnection flushing connection to remote rank %d", remoteRank());
 }
 
 // IBConnection
@@ -172,6 +173,7 @@ void IBConnection::flush(int64_t timeoutUsec) {
       }
     }
   }
+  INFO(MSCCLPP_NET, "IBConnection flushing connection to remote rank %d", remoteRank());
   // npkitCollectExitEvents(conn, NPKIT_EVENT_IB_SEND_EXIT);
 }
 

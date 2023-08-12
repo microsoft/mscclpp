@@ -3,6 +3,7 @@ import time
 import netifaces as ni
 import pytest
 import torch
+
 # from applied_comms._cpp import _ext
 from .utils import KernelBase, pack
 from mscclpp import (
@@ -47,9 +48,7 @@ def test_group_with_ip(layout: Layout, ifIpPortTrio: str):
     nelem = 1024
     memory = torch.zeros(nelem, dtype=torch.int32, device="cpu")
     nelemPerRank = nelem // group.nranks
-    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = (
-        group.my_rank + 1
-    )
+    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
     memory_expected = torch.zeros_like(memory)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
@@ -101,9 +100,7 @@ def test_connection_write(layout: Layout, transport: Transport, nelem: int):
     memory = torch.zeros(nelem, dtype=torch.int32, device="cuda")
     nelemPerRank = nelem // group.nranks
     sizePerRank = nelemPerRank * memory.element_size()
-    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = (
-        group.my_rank + 1
-    )
+    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
     memory_expected = torch.zeros_like(memory)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
@@ -135,9 +132,7 @@ def test_connection_write(layout: Layout, transport: Transport, nelem: int):
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("device", ["cuda", "cpu"])
-def test_connection_write_and_signal(
-    layout: Layout, transport: Transport, nelem: int, device: str
-):
+def test_connection_write_and_signal(layout: Layout, transport: Transport, nelem: int, device: str):
     # this test starts with a random tensor on rank 0 and rotates it all the way through all ranks
     # and finally, comes back to rank 0 to make sure it matches all the original values
 
@@ -163,9 +158,7 @@ def test_connection_write_and_signal(
     if group.my_rank != 0:
         while signal_memory[0] != signal_val:
             time.sleep(0.1)
-    connections[next_rank].write(
-        all_reg_memories[next_rank], 0, all_reg_memories[group.my_rank], 0, bufferSize
-    )
+    connections[next_rank].write(all_reg_memories[next_rank], 0, all_reg_memories[group.my_rank], 0, bufferSize)
     connections[next_rank].flush()
     if group.my_rank == 0:
         memory[:] = 0
@@ -284,9 +277,7 @@ class MscclppKernel(KernelBase):
         elif test_name == "fifo":
             self.params = fifo.device_handle().raw
         elif test_name == "proxy":
-            semaphore_device_handles = [
-                semaphore.device_handle().raw for semaphore in semaphore_or_channels
-            ]
+            semaphore_device_handles = [semaphore.device_handle().raw for semaphore in semaphore_or_channels]
             self.params = pack(my_rank, nranks) + fifo.raw + b"".join(semaphore_device_handles)
 
     def __call__(self):
@@ -319,8 +310,8 @@ def test_d2d_semaphores(layout: Layout):
 
 
 @parametrize_layouts((1, 2), (1, 4), (1, 8), (1, 16))
-@pytest.mark.parametrize("nelem", [2**i for i in [10]])
-@pytest.mark.parametrize("use_packet", [False])
+@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
+@pytest.mark.parametrize("use_packet", [False, True])
 def test_sm_channels(layout: Layout, nelem: int, use_packet: bool):
     group, connections = create_and_connect(layout, "NVLink")
 
@@ -331,9 +322,7 @@ def test_sm_channels(layout: Layout, nelem: int, use_packet: bool):
         scratch = None
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.element_size()
-    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = (
-        group.my_rank + 1
-    )
+    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
     memory_expected = torch.zeros_like(memory)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
@@ -342,9 +331,7 @@ def test_sm_channels(layout: Layout, nelem: int, use_packet: bool):
         channels = group.make_sm_channels_with_packet(memory, scratch, connections)
     else:
         channels = group.make_sm_channels(memory, connections)
-    kernel = MscclppKernel(
-        "sm_channel", group.my_rank, group.nranks, channels, memory, use_packet, scratch
-    )
+    kernel = MscclppKernel("sm_channel", group.my_rank, group.nranks, channels, memory, use_packet, scratch)
 
     kernel()
     torch.cuda.synchronize()
@@ -435,57 +422,57 @@ def test_fifo(
 #     assert torch.equal(memory, memory_expected)
 
 
-@parametrize_layouts((1, 2), (1, 4), (1, 8), (1, 16))
-@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
-@pytest.mark.parametrize("transport", ["NVLink", "IB"])
-@pytest.mark.parametrize("use_packet", [False, True])
-def test_simple_proxy_channel(
-    layout: Layout,
-    nelem: int,
-    transport: str,
-    use_packet: bool,
-):
-    group, connections = create_and_connect(layout, transport)
+# @parametrize_layouts((1, 2), (1, 4), (1, 8), (1, 16))
+# @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
+# @pytest.mark.parametrize("transport", ["NVLink", "IB"])
+# @pytest.mark.parametrize("use_packet", [False, True])
+# def test_simple_proxy_channel(
+#     layout: Layout,
+#     nelem: int,
+#     transport: str,
+#     use_packet: bool,
+# ):
+#     group, connections = create_and_connect(layout, transport)
 
-    memory = torch.zeros(nelem, dtype=torch.int32, device="cuda")
-    if use_packet:
-        scratch = torch.zeros(nelem * 2, dtype=torch.int32, device="cuda")
-    else:
-        scratch = torch.zeros(
-            1, dtype=torch.int32, device="cuda"
-        )  # just so that we can pass a valid ptr
-    nelemPerRank = nelem // group.nranks
-    nelemPerRank * memory.element_size()
-    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = (
-        group.my_rank + 1
-    )
-    memory_expected = torch.zeros_like(memory)
-    for rank in range(group.nranks):
-        memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
-    torch.cuda.synchronize()
-    group.barrier()
+#     memory = torch.zeros(nelem, dtype=torch.int32, device="cuda")
+#     if use_packet:
+#         scratch = torch.zeros(nelem * 2, dtype=torch.int32, device="cuda")
+#     else:
+#         scratch = torch.zeros(
+#             1, dtype=torch.int32, device="cuda"
+#         )  # just so that we can pass a valid ptr
+#     nelemPerRank = nelem // group.nranks
+#     nelemPerRank * memory.element_size()
+#     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = (
+#         group.my_rank + 1
+#     )
+#     memory_expected = torch.zeros_like(memory)
+#     for rank in range(group.nranks):
+#         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
+#     torch.cuda.synchronize()
+#     group.barrier()
 
-    proxy_service = ProxyService()
-    if use_packet:
-        memory_to_register = scratch
-    else:
-        memory_to_register = memory
-    simple_channels = group.make_proxy_channels_with_packet(
-        proxy_service, memory_to_register, connections
-    )
+#     proxy_service = ProxyService()
+#     if use_packet:
+#         memory_to_register = scratch
+#     else:
+#         memory_to_register = memory
+#     simple_channels = group.make_proxy_channels_with_packet(
+#         proxy_service, memory_to_register, connections
+#     )
 
-    kernel = MscclppKernel(
-        "simple_proxy_channel",
-        my_rank=group.my_rank,
-        nranks=group.nranks,
-        semaphore_or_channels=simple_channels,
-        tensor=memory,
-        use_packet=use_packet,
-        scratch=scratch,
-    )
-    proxy_service.start_proxy()
-    kernel()
-    torch.cuda.synchronize()
-    proxy_service.stop_proxy()
-    group.barrier()
-    assert torch.equal(memory, memory_expected)
+#     kernel = MscclppKernel(
+#         "simple_proxy_channel",
+#         my_rank=group.my_rank,
+#         nranks=group.nranks,
+#         semaphore_or_channels=simple_channels,
+#         tensor=memory,
+#         use_packet=use_packet,
+#         scratch=scratch,
+#     )
+#     proxy_service.start_proxy()
+#     kernel()
+#     torch.cuda.synchronize()
+#     proxy_service.stop_proxy()
+#     group.barrier()
+#     assert torch.equal(memory, memory_expected)

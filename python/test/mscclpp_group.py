@@ -69,9 +69,7 @@ class MscclppGroup:
         else:
             assert False  # only 8 IBs are supported
 
-    def make_connection(
-        self, remote_ranks: list[int], transport: Transport
-    ) -> dict[int, Connection]:
+    def make_connection(self, remote_ranks: list[int], transport: Transport) -> dict[int, Connection]:
         connections = {}
         for rank in remote_ranks:
             connections[rank] = self.communicator.connect_on_setup(rank, 0, transport)
@@ -101,9 +99,7 @@ class MscclppGroup:
     def make_semaphore(
         self,
         connections: dict[int, Connection],
-        semaphore_type: Type[Host2HostSemaphore]
-        or Type[Host2DeviceSemaphore]
-        or Type[SmDevice2DeviceSemaphore],
+        semaphore_type: Type[Host2HostSemaphore] or Type[Host2DeviceSemaphore] or Type[SmDevice2DeviceSemaphore],
     ) -> dict[int, Host2HostSemaphore]:
         semaphores = {}
         for rank in connections:
@@ -111,16 +107,12 @@ class MscclppGroup:
         self.communicator.setup()
         return semaphores
 
-    def make_sm_channels(
-        self, tensor: torch.Tensor, connections: dict[int, Connection]
-    ) -> dict[int, SmChannel]:
+    def make_sm_channels(self, tensor: torch.Tensor, connections: dict[int, Connection]) -> dict[int, SmChannel]:
         semaphores = self.make_semaphore(connections, SmDevice2DeviceSemaphore)
         registered_memories = self.register_tensor_with_connections(tensor, connections)
         channels = {}
         for rank in connections:
-            channels[rank] = SmChannel(
-                semaphores[rank], registered_memories[rank], tensor.data_ptr()
-            )
+            channels[rank] = SmChannel(semaphores[rank], registered_memories[rank], tensor.data_ptr())
         return channels
 
     def make_sm_channels_with_packet(
