@@ -1,9 +1,10 @@
-from cuda import cuda, nvrtc
-import struct
-import tempfile
-import subprocess
-import os
 import ctypes
+import os
+import struct
+import subprocess
+import tempfile
+
+from cuda import cuda, nvrtc
 import numpy as np
 import torch
 
@@ -67,7 +68,6 @@ class KernelBase:
             f"nvcc -std={std_version} -ptx -Xcompiler -Wall,-Wextra -I{header_dir} -DPARAMETRIZE {source_file} {defines} "
             f"-o {self._tempdir.name}/{output_file}"
         )
-        print(command)
         try:
             subprocess.run(command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             with open(f"{self._tempdir.name}/{output_file}", "rb") as f:
@@ -84,6 +84,8 @@ def pack(*args):
     for arg in list(args):
         if isinstance(arg, int):
             res += struct.pack("i", arg)
+        elif isinstance(arg, torch.Tensor):
+            res += struct.pack("P", arg.data_ptr())
         else:
-            raise RuntimeError("Unsupported type")
+            raise RuntimeError(f"Unsupported type: {type(arg)}")
     return res

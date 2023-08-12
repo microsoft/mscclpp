@@ -1,5 +1,7 @@
 #include <cuda.h>
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/shared_ptr.h>
+#include <nanobind/stl/vector.h>
 
 #include <iostream>
 #include <memory>
@@ -19,11 +21,11 @@ namespace nb = nanobind;
 class MyProxyService {
  private:
   int deviceNumaNode_;
-  mscclpp::Proxy proxy_;
+  int my_rank_, nranks_, dataSize_;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections_;
   std::vector<std::shared_ptr<mscclpp::RegisteredMemory>> allRegMem_;
   std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> semaphores_;
-  int my_rank_, nranks_, dataSize_;
+  mscclpp::Proxy proxy_;
 
  public:
   MyProxyService(int my_rank, int nranks, int dataSize, std::vector<std::shared_ptr<mscclpp::Connection>> conns,
@@ -47,7 +49,7 @@ class MyProxyService {
     }
   }
 
-  mscclpp::ProxyHandlerResult handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
+  mscclpp::ProxyHandlerResult handleTrigger(mscclpp::ProxyTrigger) {
     int dataSizePerRank = dataSize_ / nranks_;
     for (int r = 1; r < nranks_; ++r) {
       int nghr = (my_rank_ + r) % nranks_;
@@ -77,3 +79,5 @@ void init_mscclpp_proxy_test_module(nb::module_ &m) {
       .def("start", &MyProxyService::start)
       .def("stop", &MyProxyService::stop);
 }
+
+NB_MODULE(_ext, m) { init_mscclpp_proxy_test_module(m); }
