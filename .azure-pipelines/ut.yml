@@ -70,3 +70,15 @@ jobs:
         mpirun -tag-output -np 4 ./build/test/mp_unit_tests
         mpirun -tag-output -np 8 ./build/test/mp_unit_tests
       workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: PyTests
+    displayName: Run pytests
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        export PATH=/usr/local/mpi/bin:$PATH
+        sleep 1d
+        mpirun -tag-output -np 8 pytest python/test/test_mscclpp.py
+      workingDirectory: '$(System.DefaultWorkingDirectory)'

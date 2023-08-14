@@ -1,3 +1,5 @@
+import atexit
+import logging
 import mpi4py
 
 mpi4py.rc.initialize = False
@@ -5,8 +7,6 @@ mpi4py.rc.finalize = False
 
 from mpi4py import MPI
 import pytest
-import atexit
-import logging
 import torch
 
 N_GPUS_PER_NODE = 8
@@ -34,8 +34,10 @@ atexit.register(finalize_mpi)
 
 
 class Layout:
-    def __init__(self, comm: MPI.Comm):
-        self.comm = comm
+    def __init__(self, ranks: list):
+        world_group = MPI.COMM_WORLD.group
+        group = world_group.Incl(ranks)
+        self.comm = MPI.COMM_WORLD.Create(group)
 
 
 @pytest.fixture
@@ -55,13 +57,11 @@ def parametrize_layouts(*tuples: tuple):
             if MPI.COMM_WORLD.size < n_gpus:
                 logging.warning(f"MPI.COMM_WORLD.size < {n_gpus}, skip")
                 continue
-            world_group = MPI.COMM_WORLD.group
-            group = world_group.Incl(list(range(n_gpus)))
-            comm = MPI.COMM_WORLD.Create(group)
-            if comm == MPI.COMM_NULL:
+            layout = Layout(list(range(n_gpus)))
+            if layout.comm == MPI.COMM_NULL:
                 layouts.append(None)
             else:
-                layouts.append(Layout(comm))
+                layouts.append(layout)
         return pytest.mark.parametrize("layout", layouts, indirect=True)(func)
 
     return decorator
