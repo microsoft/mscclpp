@@ -53,8 +53,8 @@ class MyProxyService {
     int dataSizePerRank = dataSize_ / nranks_;
     for (int r = 1; r < nranks_; ++r) {
       int nghr = (my_rank_ + r) % nranks_;
-      connections_[nghr]->write(*allRegMem_[nghr], my_rank_ * dataSizePerRank, *allRegMem_[my_rank_],
-                                my_rank_ * dataSizePerRank, dataSizePerRank);
+      connections_[nghr]->write(*allRegMem_[nghr], my_rank_ * (uint64_t)dataSizePerRank, *allRegMem_[my_rank_],
+                                my_rank_ * (uint64_t)dataSizePerRank, dataSizePerRank);
       semaphores_[nghr]->signal();
       connections_[nghr]->flush();
     }
