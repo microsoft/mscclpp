@@ -369,9 +369,7 @@ def test_proxy(
     memory = torch.zeros(nelem, dtype=torch.int32, device="cuda")
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.element_size()
-    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = (
-        group.my_rank + 1
-    )
+    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
     memory_expected = torch.zeros_like(memory)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
@@ -438,14 +436,10 @@ def test_simple_proxy_channel(
     if use_packet:
         scratch = torch.zeros(nelem * 2, dtype=torch.int32, device="cuda")
     else:
-        scratch = torch.zeros(
-            1, dtype=torch.int32, device="cuda"
-        )  # just so that we can pass a valid ptr
+        scratch = torch.zeros(1, dtype=torch.int32, device="cuda")  # just so that we can pass a valid ptr
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.element_size()
-    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = (
-        group.my_rank + 1
-    )
+    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
     memory_expected = torch.zeros_like(memory)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
@@ -457,9 +451,7 @@ def test_simple_proxy_channel(
         memory_to_register = scratch
     else:
         memory_to_register = memory
-    simple_channels = group.make_proxy_channels_with_packet(
-        proxy_service, memory_to_register, connections
-    )
+    simple_channels = group.make_proxy_channels_with_packet(proxy_service, memory_to_register, connections)
 
     kernel = MscclppKernel(
         "simple_proxy_channel",
