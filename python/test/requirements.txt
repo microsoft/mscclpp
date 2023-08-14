@@ -1,3 +1,6 @@
+cuda-python==12.1.0
 mpi4py==3.1.4
-torch==2.0.0a0+1767026
 netifaces==0.11.0
+numpy==1.22.2
+pytest==7.2.2
+torch==2.0.0
