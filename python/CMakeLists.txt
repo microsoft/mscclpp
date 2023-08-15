@@ -4,8 +4,8 @@
 add_subdirectory(mscclpp)
 add_subdirectory(test)
 
-add_custom_target(copy-py)
-add_custom_command(TARGET copy-py POST_BUILD
+add_custom_target(pylib-copy)
+add_custom_command(TARGET pylib-copy POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_CURRENT_BINARY_DIR}/mscclpp/_mscclpp.cpython-38-x86_64-linux-gnu.so
         ${CMAKE_CURRENT_SOURCE_DIR}/mscclpp

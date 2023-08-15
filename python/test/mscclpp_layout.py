@@ -44,7 +44,7 @@ class Layout:
 def layout(request: pytest.FixtureRequest):
     if request.param is None:
         MPI.COMM_WORLD.barrier()
-        pytest.skip(f"Skip for None comm {MPI.COMM_WORLD.rank}")
+        pytest.skip(f"Skip for rank {MPI.COMM_WORLD.rank}")
     yield request.param
     MPI.COMM_WORLD.barrier()
 

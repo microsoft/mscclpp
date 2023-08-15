@@ -2,6 +2,8 @@ set -e
 
 KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
 SRC_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/build"
+SRC_INCLUDE_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/include"
+PYTHON_SRC_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/python"
 DST_DIR="/tmp/mscclpp"
 HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile"
 DEPLOY_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy"
@@ -25,6 +27,8 @@ set -e
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "rm -rf ${DST_DIR}"
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "mkdir -p ${DST_DIR}"
 parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${SRC_DIR} ${DST_DIR}
+parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${PYTHON_SRC_DIR} ${DST_DIR}
+parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${SRC_INCLUDE_DIR} ${DST_DIR}
 
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION sshkey ${DST_DIR}
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION sshkey.pub ${DST_DIR}

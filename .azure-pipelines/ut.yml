@@ -79,7 +79,7 @@ jobs:
       script: |
         set -e
         export PATH=/usr/local/mpi/bin:$PATH
-        cd build && make copy-py
+        cd build && make pylib-copy
         pip3 install -r ../python/test/requirements.txt
         mpirun -tag-output -np 8 ~/.local/bin/pytest ../python/test/test_mscclpp.py
       workingDirectory: '$(System.DefaultWorkingDirectory)'
