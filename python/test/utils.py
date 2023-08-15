@@ -12,15 +12,10 @@ import torch
 class Kernel:
     def __init__(self, ptx: bytes, kernel_name: str):
         device_index = torch.cuda.current_device()
-        err, cuDevice = cuda.cuDeviceGet(device_index)
-        self._check_error(err)
-
-        # Create context
-        err, self._context = cuda.cuCtxCreate(0, cuDevice)
-        self._check_error(err)
-        err, self._module = cuda.cuModuleLoadData(ptx)
-        self._check_error(err)
-        err, self._kernel = cuda.cuModuleGetFunction(self._module, kernel_name.encode())
+        cu_device = self._cucall_and_check(cuda.cuDeviceGet, device_index)
+        self._context = self._cucall_and_check(cuda.cuCtxCreate, 0, cu_device)
+        self._module = self._cucall_and_check(cuda.cuModuleLoadData, ptx)
+        self._kernel = self._cucall_and_check(cuda.cuModuleGetFunction, self._module, kernel_name.encode())
 
     def launch_kernel(self, params: bytes, nblocks: int, nthreads: int, shared: int, stream):
         buffer = (ctypes.c_byte * len(params)).from_buffer_copy(params)
@@ -35,10 +30,19 @@ class Kernel:
             ],
             dtype=np.uint64,
         )
-        (err,) = cuda.cuLaunchKernel(self._kernel, nblocks, 1, 1, nthreads, 1, 1, shared, stream, 0, config.ctypes.data)
-        self._check_error(err)
+        self._cucall_and_check(
+            cuda.cuLaunchKernel, self._kernel, nblocks, 1, 1, nthreads, 1, 1, shared, stream, 0, config.ctypes.data
+        )
 
-    def _check_error(self, err):
+    def _cucall_and_check(self, cuda_func, *args):
+        results = cuda_func(*args)
+        if len(results) == 1:
+            err, result = results[0], None
+        elif len(results) == 2:
+            err, result = results
+        else:
+            raise RuntimeError("Unknown result type: {}".format(results))
+
         if isinstance(err, cuda.CUresult):
             if err != cuda.CUresult.CUDA_SUCCESS:
                 raise RuntimeError("Cuda Error: {}".format(err))
@@ -47,6 +51,7 @@ class Kernel:
                 raise RuntimeError("Nvrtc Error: {}".format(err))
         else:
             raise RuntimeError("Unknown error type: {}".format(err))
+        return result
 
     def __del__(self):
         cuda.cuModuleUnload(self._module)
