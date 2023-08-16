@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 from typing import Type
 
-import torch
+import cupy as cp
 from mscclpp import (
     Communicator,
     Connection,
@@ -17,6 +17,7 @@ from mscclpp import (
     Transport,
     TransportFlags,
 )
+import numpy as np
 
 from .mscclpp_layout import Layout
 
@@ -43,11 +44,11 @@ class MscclppGroup:
     def barrier(self):
         self.bootstrap.barrier()
 
-    def send(self, tensor: torch.Tensor, peer: int, tag: int):
-        self.bootstrap.send(tensor.data_ptr(), tensor.numel() * tensor.element_size(), peer, tag)
+    def send(self, tensor: np.ndarray, peer: int, tag: int):
+        self.bootstrap.send(tensor.ctypes.data, tensor.size * tensor.itemsize, peer, tag)
 
-    def recv(self, tensor: torch.Tensor, peer: int, tag: int):
-        self.bootstrap.recv(tensor.data_ptr(), tensor.numel() * tensor.element_size(), peer, tag)
+    def recv(self, tensor: np.ndarray, peer: int, tag: int):
+        self.bootstrap.recv(tensor.ctypes.data, tensor.size * tensor.itemsize, peer, tag)
 
     def my_ib_device(self, local_rank: int) -> Transport:
         if local_rank == 0:
@@ -77,14 +78,13 @@ class MscclppGroup:
         return connections
 
     def register_tensor_with_connections(
-        self, tensor: torch.Tensor, connections: dict[int, Connection]
+        self, tensor: Type[cp.ndarray] or Type[np.ndarray], connections: dict[int, Connection]
     ) -> dict[int, RegisteredMemory]:
         transport_flags = TransportFlags()
         for rank in connections:
             transport_flags |= connections[rank].transport()
-        local_reg_memory = self.communicator.register_memory(
-            tensor.data_ptr(), tensor.numel() * tensor.element_size(), transport_flags
-        )
+        data_ptr = tensor.data.ptr if isinstance(tensor, cp.ndarray) else tensor.ctypes.data
+        local_reg_memory = self.communicator.register_memory(data_ptr, tensor.size * tensor.itemsize, transport_flags)
         all_registered_memories = {}
         all_registered_memories[self.my_rank] = local_reg_memory
         future_memories = {}
@@ -107,16 +107,16 @@ class MscclppGroup:
         self.communicator.setup()
         return semaphores
 
-    def make_sm_channels(self, tensor: torch.Tensor, connections: dict[int, Connection]) -> dict[int, SmChannel]:
+    def make_sm_channels(self, tensor: cp.ndarray, connections: dict[int, Connection]) -> dict[int, SmChannel]:
         semaphores = self.make_semaphore(connections, SmDevice2DeviceSemaphore)
         registered_memories = self.register_tensor_with_connections(tensor, connections)
         channels = {}
         for rank in connections:
-            channels[rank] = SmChannel(semaphores[rank], registered_memories[rank], tensor.data_ptr())
+            channels[rank] = SmChannel(semaphores[rank], registered_memories[rank], tensor.data.ptr)
         return channels
 
     def make_sm_channels_with_packet(
-        self, tensor: torch.Tensor, packetTensor: torch.Tensor, connections: dict[int, Connection]
+        self, tensor: cp.ndarray, packetTensor: cp.ndarray, connections: dict[int, Connection]
     ) -> dict[int, SmChannel]:
         semaphores = self.make_semaphore(connections, SmDevice2DeviceSemaphore)
         registered_memories = self.register_tensor_with_connections(packetTensor, connections)
@@ -125,13 +125,13 @@ class MscclppGroup:
             channels[rank] = SmChannel(
                 semaphores[rank],
                 registered_memories[rank],
-                tensor.data_ptr(),
-                packetTensor.data_ptr(),
+                tensor.data.ptr,
+                packetTensor.data.ptr,
             )
         return channels
 
     def make_proxy_channels_with_packet(
-        self, proxy_service: ProxyService, tensor: torch.Tensor, connections: dict[int, Connection]
+        self, proxy_service: ProxyService, tensor: cp.ndarray, connections: dict[int, Connection]
     ) -> dict[int, SmChannel]:
         semaphores = self.make_semaphore(connections, Host2DeviceSemaphore)
         registered_memories = self.register_tensor_with_connections(tensor, connections)

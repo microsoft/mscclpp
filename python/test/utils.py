@@ -6,8 +6,8 @@ import tempfile
 from typing import Type
 
 from cuda import cuda, nvrtc, cudart
+import cupy as cp
 import numpy as np
-import torch
 
 
 def _check_cuda_errors(result):
@@ -74,7 +74,7 @@ class KernelBase:
         self._tempdir = tempfile.TemporaryDirectory()
         self._current_file_dir = os.path.dirname(os.path.abspath(__file__))
         kernel_name = args["KERNEL"]
-        device_id = torch.cuda.current_device()
+        device_id = cp.cuda.Device().id
         ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{args['KERNEL']}.ptx", args, device_id)
         self._kernel = Kernel(ptx, kernel_name, device_id)
 
@@ -107,8 +107,10 @@ def pack(*args):
     for arg in list(args):
         if isinstance(arg, int):
             res += struct.pack("i", arg)
-        elif isinstance(arg, torch.Tensor):
-            res += struct.pack("P", arg.data_ptr())
+        elif isinstance(arg, np.ndarray):
+            res += struct.pack("P", arg.ctypes.data)
+        elif isinstance(arg, cp.ndarray):
+            res += struct.pack("P", arg.data.ptr)
         else:
             raise RuntimeError(f"Unsupported type: {type(arg)}")
     return res

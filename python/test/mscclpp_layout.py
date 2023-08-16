@@ -1,5 +1,7 @@
 import atexit
 import logging
+
+import cupy as cp
 import mpi4py
 
 mpi4py.rc.initialize = False
@@ -7,7 +9,6 @@ mpi4py.rc.finalize = False
 
 from mpi4py import MPI
 import pytest
-import torch
 
 N_GPUS_PER_NODE = 8
 
@@ -20,7 +21,7 @@ def init_mpi():
         shm_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
         N_GPUS_PER_NODE = shm_comm.size
         shm_comm.Free()
-        torch.cuda.set_device(MPI.COMM_WORLD.rank % N_GPUS_PER_NODE)
+        cp.cuda.Device(MPI.COMM_WORLD.rank % N_GPUS_PER_NODE).use()
 
 
 # Define a function to finalize MPI

@@ -80,6 +80,10 @@ jobs:
         set -e
         export PATH=/usr/local/mpi/bin:$PATH
         cd build && make pylib-copy
-        pip3 install -r ../python/test/requirements.txt
+        if [[ '$(containerImage)' == *'cuda11'* ]]; then
+          pip3 install -r ../python/test/requirements_cu11.txt
+        else
+          pip3 install -r ../python/test/requirements_cu12.txt
+        fi
         mpirun -tag-output -np 8 ~/.local/bin/pytest ../python/test/test_mscclpp.py
       workingDirectory: '$(System.DefaultWorkingDirectory)'
