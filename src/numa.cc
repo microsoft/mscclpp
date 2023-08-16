@@ -6,6 +6,8 @@
 #include <fstream>
 #include <mscclpp/cuda_utils.hpp>
 
+#include "api.h"
+
 // Convert a logical cudaDev index to the NVML device minor number
 static const std::string getBusId(int cudaDev) {
   // On most systems, the PCI bus ID comes back as in the 0000:00:00.0
@@ -22,7 +24,7 @@ static const std::string getBusId(int cudaDev) {
 
 namespace mscclpp {
 
-int getDeviceNumaNode(int cudaDev) {
+MSCCLPP_API_CPP int getDeviceNumaNode(int cudaDev) {
   std::string busId = getBusId(cudaDev);
   std::string file_str = "/sys/bus/pci/devices/" + busId + "/numa_node";
   std::ifstream file(file_str);
@@ -37,7 +39,7 @@ int getDeviceNumaNode(int cudaDev) {
   return numaNode;
 }
 
-void numaBind(int node) {
+MSCCLPP_API_CPP void numaBind(int node) {
   int totalNumNumaNodes = numa_num_configured_nodes();
   if (node < 0 || node >= totalNumNumaNodes) {
     throw Error(

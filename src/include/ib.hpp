@@ -8,11 +8,6 @@
 #include <memory>
 #include <string>
 
-#define MSCCLPP_IB_CQ_SIZE 1024
-#define MSCCLPP_IB_CQ_POLL_NUM 1
-#define MSCCLPP_IB_MAX_SENDS 64
-#define MSCCLPP_IB_MAX_DEVS 8
-
 // Forward declarations of IB structures
 struct ibv_context;
 struct ibv_pd;
@@ -84,7 +79,8 @@ class IbQp {
     ibv_sge* sge;
   };
 
-  IbQp(ibv_context* ctx, ibv_pd* pd, int port);
+  IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr,
+       int maxWrPerSend);
   WrInfo getNewWrInfo();
 
   IbQpInfo info;
@@ -96,6 +92,9 @@ class IbQp {
   std::unique_ptr<ibv_sge[]> sges;
   int wrn;
 
+  const int maxCqPollNum;
+  const int maxWrPerSend;
+
   friend class IbCtx;
 };
 
@@ -104,7 +103,7 @@ class IbCtx {
   IbCtx(const std::string& devName);
   ~IbCtx();
 
-  IbQp* createQp(int port = -1);
+  IbQp* createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend, int port = -1);
   const IbMr* registerMr(void* buff, std::size_t size);
 
   const std::string& getDevName() const;

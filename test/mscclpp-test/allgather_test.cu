@@ -210,6 +210,7 @@ __global__ void allgather3(int rank, int worldSize) {
   if (tid == 0) {
     mscclpp::ProxyTrigger trigger;
     trigger.fst = MAGIC;
+    trigger.snd = 0;
     // offload all the work to the proxy
     uint64_t currentFifoHead = proxyChan.fifo_.push(trigger);
     // wait for the work to be done in cpu side
@@ -278,23 +279,24 @@ __global__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
                    nBlocksForLocalAllGather);
 }
 
-class AllGatherChannelService : public mscclpp::BaseProxyService {
+class AllGatherProxyService : public mscclpp::BaseProxyService {
  public:
-  AllGatherChannelService(mscclpp::Communicator& communicator, int worldSize, int rank, int cudaDevice);
+  AllGatherProxyService(int worldSize, int rank, int cudaDevice);
   void startProxy() override { proxy_.start(); }
   void stopProxy() override { proxy_.stop(); }
   void setSendBytes(size_t sendBytes) { this->sendBytes_ = sendBytes; }
   void addRemoteMemory(mscclpp::RegisteredMemory memory) { remoteMemories_.push_back(memory); }
   void setLocalMemory(mscclpp::RegisteredMemory memory) { localMemory_ = memory; }
-  mscclpp::SemaphoreId addSemaphore(std::shared_ptr<mscclpp::Connection> connection) {
-    semaphores_.push_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(communicator_, connection));
+  mscclpp::SemaphoreId buildAndAddSemaphore(mscclpp::Communicator& communicator,
+                                            std::shared_ptr<mscclpp::Connection> connection) {
+    semaphores_.push_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(communicator, connection));
     return semaphores_.size() - 1;
   }
-  std::vector<DeviceHandle<mscclpp::ProxyChannel>> deviceChannels() {
+  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannels() {
     std::vector<DeviceHandle<mscclpp::ProxyChannel>> result;
     for (auto& semaphore : semaphores_) {
       result.push_back(
-          mscclpp::deviceHandle(mscclpp::ProxyChannel(0, semaphore->deviceHandle(), proxy_.fifo().deviceFifo())));
+          mscclpp::deviceHandle(mscclpp::ProxyChannel(0, semaphore->deviceHandle(), proxy_.fifo().deviceHandle())));
     }
     return result;
   }
@@ -306,7 +308,6 @@ class AllGatherChannelService : public mscclpp::BaseProxyService {
   size_t sendBytes_;
 
   mscclpp::Proxy proxy_;
-  mscclpp::Communicator& communicator_;
   std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> semaphores_;
   std::vector<mscclpp::RegisteredMemory> remoteMemories_;
   mscclpp::RegisteredMemory localMemory_;
@@ -314,10 +315,8 @@ class AllGatherChannelService : public mscclpp::BaseProxyService {
   mscclpp::ProxyHandlerResult handleTrigger(mscclpp::ProxyTrigger triggerRaw);
 };
 
-AllGatherChannelService::AllGatherChannelService(mscclpp::Communicator& communicator, int worldSize, int rank,
-                                                 int cudaDevice)
-    : communicator_(communicator),
-      worldSize_(worldSize),
+AllGatherProxyService::AllGatherProxyService(int worldSize, int rank, int cudaDevice)
+    : worldSize_(worldSize),
       sendBytes_(0),
       rank_(rank),
       cudaDevice_(cudaDevice),
@@ -327,7 +326,7 @@ AllGatherChannelService::AllGatherChannelService(mscclpp::Communicator& communic
                numaBind(deviceNumaNode);
              }) {}
 
-mscclpp::ProxyHandlerResult AllGatherChannelService::handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
+mscclpp::ProxyHandlerResult AllGatherProxyService::handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
   size_t offset = rank_ * sendBytes_;
   if (triggerRaw.fst != MAGIC) {
     // this is not a valid trigger
@@ -432,7 +431,7 @@ void AllGatherTestColl::setupCollTest(size_t size) {
   paramCount_ = base;
   expectedCount_ = recvCount_;
   if (isUsingHostOffload(kernelNum_)) {
-    auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
+    auto service = std::dynamic_pointer_cast<AllGatherProxyService>(chanService_);
     service->setSendBytes(sendCount_ * typeSize_);
   }
   mscclpp::DeviceSyncer syncer = {};
@@ -459,7 +458,7 @@ class AllGatherTestEngine : public BaseTestEngine {
   std::vector<void*> getSendBuff() override;
   void* getRecvBuff() override;
   void* getScratchBuff() override;
-  std::shared_ptr<mscclpp::BaseProxyService> createChannelService() override;
+  std::shared_ptr<mscclpp::BaseProxyService> createProxyService() override;
 
  private:
   void* getExpectedBuff() override;
@@ -492,31 +491,31 @@ void AllGatherTestEngine::setupConnections() {
     CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannelHandles.data(),
                                  sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelHandles.size()));
   } else {
-    auto service = std::dynamic_pointer_cast<AllGatherChannelService>(chanService_);
+    auto service = std::dynamic_pointer_cast<AllGatherProxyService>(chanService_);
     setupMeshConnections(devProxyChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,
                          [&](std::vector<std::shared_ptr<mscclpp::Connection>> conns,
                              std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteMemories,
                              const mscclpp::RegisteredMemory& localMemory) {
                            std::vector<mscclpp::SemaphoreId> semaphoreIds;
                            for (size_t i = 0; i < conns.size(); ++i) {
-                             service->addSemaphore(conns[i]);
+                             service->buildAndAddSemaphore(*comm_, conns[i]);
                              service->addRemoteMemory(remoteMemories[i].get());
                            }
                            service->setLocalMemory(localMemory);
                            comm_->setup();
                          });
-    auto proxyChannels = service->deviceChannels();
+    auto proxyChannels = service->proxyChannels();
     assert(proxyChannels.size() < sizeof(constRawProxyChan) / sizeof(DeviceHandle<mscclpp::ProxyChannel>));
     CUDATHROW(cudaMemcpyToSymbol(constRawProxyChan, proxyChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::ProxyChannel>) * proxyChannels.size()));
   }
 }
 
-std::shared_ptr<mscclpp::BaseProxyService> AllGatherTestEngine::createChannelService() {
+std::shared_ptr<mscclpp::BaseProxyService> AllGatherTestEngine::createProxyService() {
   if (isUsingHostOffload(args_.kernelNum)) {
-    return std::make_shared<AllGatherChannelService>(*comm_, args_.totalRanks, args_.rank, args_.gpuNum);
+    return std::make_shared<AllGatherProxyService>(args_.totalRanks, args_.rank, args_.gpuNum);
   } else {
-    return std::make_shared<mscclpp::ProxyService>(*comm_);
+    return std::make_shared<mscclpp::ProxyService>();
   }
 }
 

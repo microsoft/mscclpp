@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_PACKET_HPP_
 #define MSCCLPP_PACKET_HPP_
 
+#include "poll.hpp"
+
 namespace mscclpp {
 
 /// LL (low latency) protocol packet.
@@ -42,17 +44,24 @@ union LLPacket {
                  "r"((uint32_t)(val >> 32)), "r"(flag));
   }
 
+  /// Helper of @ref read().
+  /// @param flag The flag to read.
+  /// @param data The 8-byte data read.
+  /// @return True if the flag is not equal to the given flag.
+  __forceinline__ __device__ bool readOnce(uint32_t flag, uint2& data) {
+    uint32_t flag1, flag2;
+    asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
+                 : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2)
+                 : "l"(v));
+    return (flag1 != flag) || (flag2 != flag);
+  }
+
   /// Read 8 bytes of data from the packet.
   /// @param flag The flag to read.
   /// @return The 8-byte data read.
   __forceinline__ __device__ uint2 read(uint32_t flag) {
     uint2 data;
-    uint32_t flag1, flag2;
-    do {
-      asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
-                   : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2)
-                   : "l"(v));
-    } while ((flag1 != flag) || (flag2 != flag));
+    POLL_MAYBE_JAILBREAK(readOnce(flag, data), 100000000);
     return data;
   }
 
@@ -80,6 +89,7 @@ __forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* 
 __forceinline__ __device__ void getPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
                                            uint64_t dstBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
+  // TODO(saemal): this is not matching sm_channel get method.
   LLPacket* srcBase = (LLPacket*)((char*)src + srcOffset);
   uint2* dstBase = (uint2*)((char*)dst + dstOffset);
   size_t nElem = dstBytes / sizeof(uint2);

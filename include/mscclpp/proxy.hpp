@@ -28,7 +28,7 @@ class Proxy {
   void start();
   void stop();
 
-  HostProxyFifo& fifo();
+  Fifo& fifo();
 
  private:
   struct Impl;
