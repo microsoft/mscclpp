@@ -18,7 +18,7 @@ static NonblockingFuture<RegisteredMemory> setupInboundSemaphoreId(Communicator&
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communicator,
                                                            std::shared_ptr<Connection> connection)
-    : BaseSemaphore(allocUniqueCuda<uint64_t>(), allocUniqueCuda<uint64_t>(), makeUniqueCudaHost<uint64_t>()),
+    : BaseSemaphore(allocUniqueCuda<uint64_t>(), allocUniqueCuda<uint64_t>(), std::make_unique<uint64_t>()),
       connection_(connection) {
   remoteInboundSemaphoreIdsRegMem_ =
       setupInboundSemaphoreId(communicator, connection.get(), localInboundSemaphore_.get());
