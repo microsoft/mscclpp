@@ -35,7 +35,7 @@ $ sudo make install/fast
 
 ## Install from Source (Python Module)
 
-Python 3.7 or later is required.
+Python 3.8 or later is required.
 
 ```bash
 $ python -m pip install .
