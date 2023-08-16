@@ -64,7 +64,7 @@ class BaseSemaphore {
 };
 
 /// A semaphore for sending signals from the host to the device.
-class Host2DeviceSemaphore : public BaseSemaphore<CudaDeleter, std::default_delete> {
+class Host2DeviceSemaphore : public BaseSemaphore<CudaDeleter, CudaHostDeleter> {
  private:
   std::shared_ptr<Connection> connection_;
 

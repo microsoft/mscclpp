@@ -1,4 +1,5 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import netifaces as ni
 import pytest
@@ -284,17 +285,23 @@ class MscclppKernel(KernelBase):
         return self._kernel.launch_kernel(self.params, self.nblocks, self.nthreads, 0, None)
 
 
-# hack to removing NVLINK from the list of transports
 @parametrize_layouts((1, 2), (1, 4), (1, 8), (1, 16))
-@pytest.mark.parametrize("transport", ["IB"])
+@pytest.mark.parametrize("transport", ["NVLink", "IB"])
 def test_h2d_semaphores(layout: Layout, transport: str):
+    def signal(semaphores):
+        for rank in semaphores:
+            semaphores[rank].signal()
+
     group, connections = create_and_connect(layout, transport)
 
     semaphores = group.make_semaphore(connections, Host2DeviceSemaphore)
     kernel = MscclppKernel("h2d_semaphore", group.my_rank, group.nranks, semaphores)
     kernel()
-    for rank in semaphores:
-        semaphores[rank].signal()
+
+    # workaround: use a separate thread to to let cudaMemcpyAsync run concurrently with the kernel
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(signal, semaphores)
+
     torch.cuda.synchronize()
     group.barrier()
 

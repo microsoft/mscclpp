@@ -3,21 +3,51 @@ import os
 import struct
 import subprocess
 import tempfile
+from typing import Type
 
-from cuda import cuda, nvrtc
+from cuda import cuda, nvrtc, cudart
 import numpy as np
 import torch
 
 
-class Kernel:
-    def __init__(self, ptx: bytes, kernel_name: str):
-        device_index = torch.cuda.current_device()
-        cu_device = self._cucall_and_check(cuda.cuDeviceGet, device_index)
-        self._context = self._cucall_and_check(cuda.cuCtxCreate, 0, cu_device)
-        self._module = self._cucall_and_check(cuda.cuModuleLoadData, ptx)
-        self._kernel = self._cucall_and_check(cuda.cuModuleGetFunction, self._module, kernel_name.encode())
+def _check_cuda_errors(result):
+    if result[0].value:
+        raise RuntimeError(f"CUDA error code={result[0].value}({_cudaGetErrorEnum(result[0])})")
+    if len(result) == 1:
+        return None
+    elif len(result) == 2:
+        return result[1]
+    else:
+        return result[1:]
 
-    def launch_kernel(self, params: bytes, nblocks: int, nthreads: int, shared: int, stream):
+
+def _cuda_get_error(error):
+    if isinstance(error, cuda.CUresult):
+        err, name = cuda.cuGetErrorName(error)
+        return name if err == cuda.CUresult.CUDA_SUCCESS else "<unknown>"
+    elif isinstance(error, cudart.cudaError_t):
+        return cudart.cudaGetErrorName(error)[1]
+    elif isinstance(error, nvrtc.nvrtcResult):
+        return nvrtc.nvrtcGetErrorString(error)[1]
+    else:
+        raise RuntimeError("Unknown error type: {}".format(error))
+
+
+class Kernel:
+    def __init__(self, ptx: bytes, kernel_name: str, device_id: int):
+        cu_device = _check_cuda_errors(cuda.cuDeviceGet(device_id))
+        self._context = _check_cuda_errors(cuda.cuCtxCreate(0, cu_device))
+        self._module = _check_cuda_errors(cuda.cuModuleLoadData(ptx))
+        self._kernel = _check_cuda_errors(cuda.cuModuleGetFunction(self._module, kernel_name.encode()))
+
+    def launch_kernel(
+        self,
+        params: bytes,
+        nblocks: int,
+        nthreads: int,
+        shared: int,
+        stream: Type[cuda.CUstream] or Type[cudart.cudaStream_t],
+    ):
         buffer = (ctypes.c_byte * len(params)).from_buffer_copy(params)
         buffer_size = ctypes.c_size_t(len(params))
         config = np.array(
@@ -30,28 +60,9 @@ class Kernel:
             ],
             dtype=np.uint64,
         )
-        self._cucall_and_check(
-            cuda.cuLaunchKernel, self._kernel, nblocks, 1, 1, nthreads, 1, 1, shared, stream, 0, config.ctypes.data
+        _check_cuda_errors(
+            cuda.cuLaunchKernel(self._kernel, nblocks, 1, 1, nthreads, 1, 1, shared, stream, 0, config.ctypes.data)
         )
-
-    def _cucall_and_check(self, cuda_func, *args):
-        results = cuda_func(*args)
-        if len(results) == 1:
-            err, result = results[0], None
-        elif len(results) == 2:
-            err, result = results
-        else:
-            raise RuntimeError("Unknown result type: {}".format(results))
-
-        if isinstance(err, cuda.CUresult):
-            if err != cuda.CUresult.CUDA_SUCCESS:
-                raise RuntimeError("Cuda Error: {}".format(err))
-        elif isinstance(err, nvrtc.nvrtcResult):
-            if err != nvrtc.nvrtcResult.NVRTC_SUCCESS:
-                raise RuntimeError("Nvrtc Error: {}".format(err))
-        else:
-            raise RuntimeError("Unknown error type: {}".format(err))
-        return result
 
     def __del__(self):
         cuda.cuModuleUnload(self._module)
@@ -63,15 +74,22 @@ class KernelBase:
         self._tempdir = tempfile.TemporaryDirectory()
         self._current_file_dir = os.path.dirname(os.path.abspath(__file__))
         kernel_name = args["KERNEL"]
-        ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{args['KERNEL']}.ptx", args)
-        self._kernel = Kernel(ptx, kernel_name)
+        device_id = torch.cuda.current_device()
+        ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{args['KERNEL']}.ptx", args, device_id)
+        self._kernel = Kernel(ptx, kernel_name, device_id)
 
-    def _compile_cuda(self, source_file, output_file, defines, std_version="c++17"):
-        header_dir = os.path.join(self._current_file_dir, "../../include")
+    def _compile_cuda(self, source_file, output_file, defines, device_id, std_version="c++17"):
+        include_dir = os.path.join(self._current_file_dir, "../../include")
         defines = " ".join([f"-D{k}={v}" for k, v in defines.items()])
+        major = _check_cuda_errors(
+            cudart.cudaDeviceGetAttribute(cudart.cudaDeviceAttr.cudaDevAttrComputeCapabilityMajor, device_id)
+        )
+        minor = _check_cuda_errors(
+            cudart.cudaDeviceGetAttribute(cudart.cudaDeviceAttr.cudaDevAttrComputeCapabilityMinor, device_id)
+        )
         command = (
-            f"nvcc -std={std_version} -ptx -Xcompiler -Wall,-Wextra -I{header_dir} -DPARAMETRIZE {source_file} {defines} "
-            f"-o {self._tempdir.name}/{output_file}"
+            f"nvcc -std={std_version} -ptx -Xcompiler -Wall,-Wextra -I{include_dir} -DPARAMETRIZE {source_file} {defines} "
+            f"--gpu-architecture=compute_{major}{minor}  --gpu-code=sm_{major}{minor},compute_{major}{minor} -o {self._tempdir.name}/{output_file}"
         )
         try:
             subprocess.run(command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
