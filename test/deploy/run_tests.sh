@@ -57,7 +57,7 @@ function run_mp_ut()
   echo "============Run multi-process unit tests on 2 nodes (np=16, npernode=8)========================="
   /usr/local/mpi/bin/mpirun -allow-run-as-root -tag-output -np 16 --bind-to numa \
   -hostfile /root/mscclpp/hostfile_mpi -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH \
-  -npernode 8 pytest /root/mscclpp/python/test/test_mscclpp.py
+  -npernode 8 /root/mscclpp/build/test/mp_unit_tests -ip_port mscclpp-it-000000:20003
 }
 
 function run_pytests()
@@ -65,7 +65,7 @@ function run_pytests()
   echo "==================Run python tests================================"
   /usr/local/mpi/bin/mpirun -allow-run-as-root -tag-output -np 16 --bind-to numa \
   -hostfile /root/mscclpp/hostfile_mpi -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH \
-  -npernode 8 pytest /root/mscclpp/python/test/test_mscclpp.py
+  -npernode 8 pytest /root/mscclpp/python/test/test_mscclpp.py -x -v
 }
 
 if [ $# -lt 1 ]; then

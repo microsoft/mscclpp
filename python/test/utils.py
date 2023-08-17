@@ -12,7 +12,7 @@ import numpy as np
 
 def _check_cuda_errors(result):
     if result[0].value:
-        raise RuntimeError(f"CUDA error code={result[0].value}({_cudaGetErrorEnum(result[0])})")
+        raise RuntimeError(f"CUDA error code={result[0].value}({_cuda_get_error(result[0])})")
     if len(result) == 1:
         return None
     elif len(result) == 2:

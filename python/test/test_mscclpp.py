@@ -106,7 +106,6 @@ def test_connection_write(layout: Layout, transport: Transport, nelem: int):
     memory_expected = cp.zeros_like(memory)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
-    cp.cuda.Device().synchronize()
     group.barrier()
     all_reg_memories = group.register_tensor_with_connections(memory, connections)
     for rank in connections:
@@ -125,7 +124,7 @@ def test_connection_write(layout: Layout, transport: Transport, nelem: int):
         time.sleep(0.1)
     for conn in connections:
         connections[conn].flush()
-    cp.cuda.Device().synchronize()
+    cp.cuda.runtime.deviceSynchronize()
     group.barrier()
     assert all_correct
 
@@ -156,7 +155,6 @@ def test_connection_write_and_signal(layout: Layout, transport: Transport, nelem
     next_rank = (group.my_rank + 1) % group.nranks
     bufferSize = nelem * memory.itemsize
     dummy_memory_on_cpu = np.zeros(1, dtype=np.int64)
-    cp.cuda.Device().synchronize()
 
     signal_val = 123
     if group.my_rank != 0:
@@ -166,7 +164,6 @@ def test_connection_write_and_signal(layout: Layout, transport: Transport, nelem
     connections[next_rank].flush()
     if group.my_rank == 0:
         memory[:] = 0
-        cp.cuda.Device().synchronize()
     connections[next_rank].update_and_sync(
         all_signal_memories[next_rank], 0, dummy_memory_on_cpu.ctypes.data, signal_val
     )
@@ -175,7 +172,6 @@ def test_connection_write_and_signal(layout: Layout, transport: Transport, nelem
         while signal_memory[0] != signal_val:
             time.sleep(0.1)
         all_correct = cp.array_equal(memory, memory_expected)
-    cp.cuda.Device().synchronize()
     group.barrier()
     all_correct = layout.comm.bcast(all_correct, 0)
     assert all_correct
@@ -305,7 +301,7 @@ def test_h2d_semaphores(layout: Layout, transport: str):
     with ThreadPoolExecutor(max_workers=1) as executor:
         executor.submit(signal, semaphores)
 
-    cp.cuda.Device().synchronize()
+    cp.cuda.runtime.deviceSynchronize()
     group.barrier()
 
 
@@ -317,7 +313,7 @@ def test_d2d_semaphores(layout: Layout):
     group.barrier()
     kernel = MscclppKernel("d2d_semaphore", group.my_rank, group.nranks, semaphores)
     kernel()
-    cp.cuda.Device().synchronize()
+    cp.cuda.runtime.deviceSynchronize()
     group.barrier()
 
 
@@ -345,10 +341,11 @@ def test_sm_channels(layout: Layout, nelem: int, use_packet: bool):
         channels = group.make_sm_channels(memory, connections)
     kernel = MscclppKernel("sm_channel", group.my_rank, group.nranks, channels, memory, use_packet, scratch)
 
-    kernel()
-    cp.cuda.Device().synchronize()
     group.barrier()
-    assert cp.array_equal(memory, memory_expected)
+    kernel()
+    cp.cuda.runtime.deviceSynchronize()
+    group.barrier()
+    assert np.array_equal(cp.asnumpy(memory), cp.asnumpy(memory_expected))
 
 
 @parametrize_layouts((1, 2), (1, 4), (1, 8), (1, 16))
@@ -388,7 +385,6 @@ def test_proxy(
     memory_expected = cp.zeros_like(memory)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
-    cp.cuda.Device().synchronize()
     group.barrier()
     all_reg_memories = group.register_tensor_with_connections(memory, connections)
 
@@ -428,11 +424,12 @@ def test_proxy(
         fifo=fifo_device_handle,
     )
     proxy.start()
+    group.barrier()
     kernel()
-    cp.cuda.Device().synchronize()
+    cp.cuda.runtime.deviceSynchronize()
     proxy.stop()
     group.barrier()
-    assert cp.array_equal(memory, memory_expected)
+    assert np.array_equal(cp.asnumpy(memory), cp.asnumpy(memory_expected))
 
 
 @parametrize_layouts((1, 2), (1, 4), (1, 8), (1, 16))
@@ -458,7 +455,6 @@ def test_simple_proxy_channel(
     memory_expected = cp.zeros_like(memory)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
-    cp.cuda.Device().synchronize()
     group.barrier()
 
     proxy_service = ProxyService()
@@ -482,4 +478,5 @@ def test_simple_proxy_channel(
     cp.cuda.runtime.deviceSynchronize()
     proxy_service.stop_proxy()
     group.barrier()
+    # workaround: could not use cp.array_equal due to CUDADriverError
     assert np.array_equal(cp.asnumpy(memory), cp.asnumpy(memory_expected))
