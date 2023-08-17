@@ -65,7 +65,7 @@ function run_pytests()
   echo "==================Run python tests================================"
   /usr/local/mpi/bin/mpirun -allow-run-as-root -tag-output -np 16 --bind-to numa \
   -hostfile /root/mscclpp/hostfile_mpi -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH \
-  -npernode 8 pytest /root/mscclpp/python/test/test_mscclpp.py -x -v
+  -npernode 8 bash /root/mscclpp/pytest.sh
 }
 
 if [ $# -lt 1 ]; then
