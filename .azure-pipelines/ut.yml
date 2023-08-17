@@ -85,5 +85,5 @@ jobs:
         else
           pip3 install -r ../python/test/requirements_cu12.txt
         fi
-        mpirun -tag-output -np 8 ~/.local/bin/pytest ../python/test/test_mscclpp.py
+        mpirun -tag-output -np 8 ~/.local/bin/pytest ../python/test/test_mscclpp.py -x
       workingDirectory: '$(System.DefaultWorkingDirectory)'

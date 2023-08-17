@@ -38,7 +38,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
                           nthreads_per_rank, flag);
   } else {
     if (tid < nranks && tid != my_rank) {
-      channels[tid].putWithSignal(my_offset, my_offset, size_per_rank);
+      channels[tid].putWithSignalAndFlush(my_offset, my_offset, size_per_rank);
       channels[tid].wait();
     }
   }

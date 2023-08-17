@@ -3,4 +3,4 @@ mpi4py==3.1.4
 netifaces==0.11.0
 numpy==1.22.2
 pytest==7.2.2
-cupy-cuda111
+cupy-cuda11x

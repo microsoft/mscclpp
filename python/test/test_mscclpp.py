@@ -314,6 +314,7 @@ def test_d2d_semaphores(layout: Layout):
     group, connections = create_and_connect(layout, "NVLink")
 
     semaphores = group.make_semaphore(connections, SmDevice2DeviceSemaphore)
+    group.barrier()
     kernel = MscclppKernel("d2d_semaphore", group.my_rank, group.nranks, semaphores)
     kernel()
     cp.cuda.Device().synchronize()
@@ -478,7 +479,7 @@ def test_simple_proxy_channel(
     )
     proxy_service.start_proxy()
     kernel()
-    cp.cuda.Device().synchronize()
+    cp.cuda.runtime.deviceSynchronize()
     proxy_service.stop_proxy()
     group.barrier()
-    assert cp.array_equal(memory, memory_expected)
+    assert np.array_equal(cp.asnumpy(memory), cp.asnumpy(memory_expected))
