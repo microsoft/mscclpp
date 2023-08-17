@@ -4,7 +4,6 @@
 #include <sys/resource.h>
 
 #include <cstring>
-#include <mscclpp/config.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/errors.hpp>
 #include <sstream>
@@ -59,9 +58,9 @@ class TcpBootstrap::Impl {
  public:
   Impl(int rank, int nRanks);
   ~Impl();
-  void initialize(const UniqueId& uniqueId);
-  void initialize(const std::string& ifIpPortTrio);
-  void establishConnections();
+  void initialize(const UniqueId& uniqueId, int64_t timeoutSec);
+  void initialize(const std::string& ifIpPortTrio, int64_t timeoutSec);
+  void establishConnections(int64_t timeoutSec);
   UniqueId createUniqueId();
   UniqueId getUniqueId() const;
   int getRank();
@@ -133,15 +132,15 @@ int TcpBootstrap::Impl::getRank() { return rank_; }
 
 int TcpBootstrap::Impl::getNranks() { return nRanks_; }
 
-void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId) {
+void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId, int64_t timeoutSec) {
   netInit("", "");
 
   std::memcpy(&uniqueId_, &uniqueId, sizeof(uniqueId_));
 
-  establishConnections();
+  establishConnections(timeoutSec);
 }
 
-void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio) {
+void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int64_t timeoutSec) {
   // first check if it is a trio
   int nColons = 0;
   for (auto c : ifIpPortTrio) {
@@ -167,7 +166,7 @@ void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio) {
     bootstrapCreateRoot();
   }
 
-  establishConnections();
+  establishConnections(timeoutSec);
 }
 
 TcpBootstrap::Impl::~Impl() {
@@ -308,8 +307,8 @@ void TcpBootstrap::Impl::netInit(std::string ipPortPair, std::string interface) 
     }                                                                       \
   } while (0);
 
-void TcpBootstrap::Impl::establishConnections() {
-  const int64_t connectionTimeoutUs = (int64_t)Config::getInstance()->getBootstrapConnectionTimeoutConfig() * 1000000;
+void TcpBootstrap::Impl::establishConnections(int64_t timeoutSec) {
+  const int64_t connectionTimeoutUs = timeoutSec * 1000000;
   Timer timer;
   SocketAddress nextAddr;
   ExtInfo info;
@@ -317,6 +316,10 @@ void TcpBootstrap::Impl::establishConnections() {
   TRACE(MSCCLPP_INIT, "rank %d nranks %d", rank_, nRanks_);
 
   auto getLeftTime = [&]() {
+    if (connectionTimeoutUs < 0) {
+      // no timeout: always return a large number
+      return int64_t(1e9);
+    }
     int64_t timeout = connectionTimeoutUs - timer.elapsed();
     if (timeout <= 0) throw Error("TcpBootstrap connection timeout", ErrorCode::Timeout);
     return timeout;
@@ -489,9 +492,13 @@ MSCCLPP_API_CPP void TcpBootstrap::recv(void* data, int size, int peer, int tag)
 
 MSCCLPP_API_CPP void TcpBootstrap::allGather(void* allData, int size) { pimpl_->allGather(allData, size); }
 
-MSCCLPP_API_CPP void TcpBootstrap::initialize(UniqueId uniqueId) { pimpl_->initialize(uniqueId); }
+MSCCLPP_API_CPP void TcpBootstrap::initialize(UniqueId uniqueId, int64_t timeoutSec) {
+  pimpl_->initialize(uniqueId, timeoutSec);
+}
 
-MSCCLPP_API_CPP void TcpBootstrap::initialize(const std::string& ipPortPair) { pimpl_->initialize(ipPortPair); }
+MSCCLPP_API_CPP void TcpBootstrap::initialize(const std::string& ipPortPair, int64_t timeoutSec) {
+  pimpl_->initialize(ipPortPair, timeoutSec);
+}
 
 MSCCLPP_API_CPP void TcpBootstrap::barrier() { pimpl_->barrier(); }
 

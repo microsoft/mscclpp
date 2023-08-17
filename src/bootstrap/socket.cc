@@ -13,7 +13,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <mscclpp/config.hpp>
 #include <mscclpp/errors.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
