@@ -333,11 +333,6 @@ class RegisteredMemory {
   /// @return The size of the memory block.
   size_t size();
 
-  /// Get the rank of the process that owns the memory block.
-  ///
-  /// @return The rank of the process that owns the memory block.
-  int rank();
-
   /// Get the transport flags associated with the memory block.
   ///
   /// @return The transport flags associated with the memory block.
@@ -389,16 +384,6 @@ class Connection {
   /// Flush any pending writes to the remote process.
   virtual void flush(int64_t timeoutUsec = 3e7) = 0;
 
-  /// Get the rank of the remote process.
-  ///
-  /// @return The rank of the remote process.
-  virtual int remoteRank() = 0;
-
-  /// Get the tag associated with the connection.
-  ///
-  /// @return The tag associated with the connection.
-  virtual int tag() = 0;
-
   /// Get the transport used by the local process.
   ///
   /// @return The transport used by the local process.
@@ -449,6 +434,14 @@ class Context {
   struct Impl;
 
  public:
+  /// Create a context.
+  ///
+  /// @param rank The rank of the local process, optional.
+  Context();
+
+  /// Destroy the context.
+  ~Context();
+
   /// Register a region of GPU memory for use in this context.
   ///
   /// @param ptr Base pointer to the memory.
@@ -460,8 +453,14 @@ class Context {
   /// Create an endpoint for establishing connections.
   ///
   /// @param transport The transport to be used.
+  /// @param ibMaxCqSize The maximum number of completion queue entries for IB. Unused if transport is not IB.
+  /// @param ibMaxCqPollNum The maximum number of completion queue entries to poll for IB. Unused if transport is not
+  /// IB.
+  /// @param ibMaxSendWr The maximum number of outstanding send work requests for IB. Unused if transport is not IB.
+  /// @param ibMaxWrPerSend The maximum number of work requests per send for IB. Unused if transport is not IB.
   /// @return The newly created endpoint.
-  Endpoint createEndpoint(Transport transport);
+  Endpoint createEndpoint(Transport transport, int ibMaxCqSize = 1024,
+                                             int ibMaxCqPollNum = 1, int ibMaxSendWr = 8192, int ibMaxWrPerSend = 64);
 
   /// Establish a connection between two endpoints.
   ///
@@ -539,7 +538,7 @@ class NonblockingFuture {
 ///      processes.
 ///   6. All done; use connections and registered memories to build channels.
 ///
-class Communicator : public Context {
+class Communicator {
  protected:
   struct Impl;
 
@@ -547,7 +546,7 @@ class Communicator : public Context {
   /// Initializes the communicator with a given bootstrap implementation.
   ///
   /// @param bootstrap An implementation of the Bootstrap that the communicator will use.
-  Communicator(std::shared_ptr<Bootstrap> bootstrap);
+  Communicator(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<Context> context = nullptr);
 
   /// Destroy the communicator.
   ~Communicator();
@@ -556,6 +555,11 @@ class Communicator : public Context {
   ///
   /// @return std::shared_ptr<Bootstrap> The bootstrap held by this communicator.
   std::shared_ptr<Bootstrap> bootstrap();
+
+  /// Returns the context held by this communicator.
+  ///
+  /// @return std::shared_ptr<Context> The context held by this communicator.
+  std::shared_ptr<Context> context();
 
   /// Send information of a registered memory to the remote side on setup.
   ///
@@ -593,8 +597,8 @@ class Communicator : public Context {
   /// IB.
   /// @param ibMaxSendWr The maximum number of outstanding send work requests for IB. Unused if transport is not IB.
   /// @param ibMaxWrPerSend The maximum number of work requests per send for IB. Unused if transport is not IB.
-  /// @return std::shared_ptr<Connection> A shared pointer to the connection.
-  std::shared_ptr<Connection> connectOnSetup(int remoteRank, int tag, Transport transport, int ibMaxCqSize = 1024,
+  /// @return NonblockingFuture<NonblockingFuture<std::shared_ptr<Connection>>> A non-blocking future of shared pointer to the connection.
+  NonblockingFuture<std::shared_ptr<Connection>> connectOnSetup(int remoteRank, int tag, Transport transport, int ibMaxCqSize = 1024,
                                              int ibMaxCqPollNum = 1, int ibMaxSendWr = 8192, int ibMaxWrPerSend = 64);
 
   /// Add a custom Setuppable object to a list of objects to be setup later, when @ref setup() is called.

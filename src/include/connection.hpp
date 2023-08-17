@@ -14,26 +14,11 @@
 
 namespace mscclpp {
 
-// TODO: Add functionality to these classes for Communicator to do connectionSetup
-
-class ConnectionBase : public Connection, public Setuppable {
-  int remoteRank_;
-  int tag_;
-
- public:
-  ConnectionBase(int remoteRank, int tag);
-
-  int remoteRank() override;
-  int tag() override;
-};
-
-class CudaIpcConnection : public ConnectionBase {
+class CudaIpcConnection : public Connection {
   cudaStream_t stream_;
 
  public:
-  CudaIpcConnection(int remoteRank, int tag, cudaStream_t stream);
-
-  ~CudaIpcConnection();
+  CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context::Impl& contextImpl);
 
   Transport transport() override;
 
@@ -46,7 +31,7 @@ class CudaIpcConnection : public ConnectionBase {
   void flush(int64_t timeoutUsec) override;
 };
 
-class IBConnection : public ConnectionBase {
+class IBConnection : public Connection {
   Transport transport_;
   Transport remoteTransport_;
   IbQp* qp;
@@ -56,8 +41,7 @@ class IBConnection : public ConnectionBase {
   mscclpp::TransportInfo dstTransportInfo_;
 
  public:
-  IBConnection(int remoteRank, int tag, Transport transport, int maxCqSize, int maxCqPollNum, int maxSendWr,
-               int maxWrPerSend, Communicator::Impl& commImpl);
+  IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context::Impl& contextImpl);
 
   Transport transport() override;
 

@@ -14,12 +14,12 @@
 
 namespace mscclpp {
 
-RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl)
+RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports, Context::Impl& contextImpl)
     : data(data),
       size(size),
       rank(rank),
       isRemote(false),
-      hostHash(commImpl.rankToHash_.at(rank)),
+      hostHash(contextImpl.hostHash_),
       transports(transports) {
   if (transports.has(Transport::CudaIpc)) {
     TransportInfo transportInfo;
@@ -39,7 +39,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags t
     auto addIb = [&](Transport ibTransport) {
       TransportInfo transportInfo;
       transportInfo.transport = ibTransport;
-      const IbMr* mr = commImpl.getIbContext(ibTransport)->registerMr(data, size);
+      const IbMr* mr = contextImpl.getIbContext(ibTransport)->registerMr(data, size);
       transportInfo.ibMr = mr;
       transportInfo.ibLocal = true;
       transportInfo.ibMrInfo = mr->getInfo();
