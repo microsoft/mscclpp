@@ -335,7 +335,7 @@ void BaseTestEngine::bootstrap() {
 }
 
 void BaseTestEngine::setupTest() {
-  this->chanService_ = this->createChannelService();
+  this->chanService_ = this->createProxyService();
   this->setupConnections();
   this->chanService_->startProxy();
   this->coll_->setChanService(this->chanService_);
@@ -357,8 +357,8 @@ size_t BaseTestEngine::checkData() {
   return nErrors;
 }
 
-std::shared_ptr<mscclpp::BaseProxyService> BaseTestEngine::createChannelService() {
-  return std::make_shared<mscclpp::ProxyService>(*comm_);
+std::shared_ptr<mscclpp::BaseProxyService> BaseTestEngine::createProxyService() {
+  return std::make_shared<mscclpp::ProxyService>();
 }
 
 void BaseTestEngine::setupMeshConnectionsInternal(
@@ -416,8 +416,8 @@ void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::Simp
     auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
     for (size_t i = 0; i < connections.size(); ++i) {
       proxyChannels.push_back(mscclpp::deviceHandle(mscclpp::SimpleProxyChannel(
-          service->deviceChannel(service->addSemaphore(connections[i])), service->addMemory(remoteRegMemories[i].get()),
-          service->addMemory(inputBufRegMem))));
+          service->proxyChannel(service->buildAndAddSemaphore(*comm_, connections[i])),
+          service->addMemory(remoteRegMemories[i].get()), service->addMemory(inputBufRegMem))));
     }
   }
 
@@ -498,7 +498,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
       smSemaphores.emplace(cid, std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, connections[cid]));
     } else {
-      connIdToSemId[cid] = service->addSemaphore(connections[cid]);
+      connIdToSemId[cid] = service->buildAndAddSemaphore(*comm_, connections[cid]);
     }
   }
   comm_->setup();
@@ -513,7 +513,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
         throw std::runtime_error("IB transport requires putPacketBuff and getPacketBuff");
       }
       proxyChannels.emplace_back(mscclpp::deviceHandle(mscclpp::SimpleProxyChannel(
-          service->deviceChannel(connIdToSemId[cid]), service->addMemory(remoteRegMemories[cid].get()),
+          service->proxyChannel(connIdToSemId[cid]), service->addMemory(remoteRegMemories[cid].get()),
           service->addMemory(putPacketBufRegMem))));
     }
   }

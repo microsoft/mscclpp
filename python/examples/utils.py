@@ -1,6 +1,9 @@
-import mscclpp
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
 
 import time
+
+import mscclpp
 
 
 def main():

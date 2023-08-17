@@ -97,7 +97,7 @@ class BaseTestEngine {
 
  private:
   virtual void setupConnections() = 0;
-  virtual std::shared_ptr<mscclpp::BaseProxyService> createChannelService();
+  virtual std::shared_ptr<mscclpp::BaseProxyService> createProxyService();
   virtual void* getExpectedBuff() = 0;
 
   double benchTime();

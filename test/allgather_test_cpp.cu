@@ -207,8 +207,8 @@ void initializeAndAllocateAllGatherData(int rank, int world_size, size_t dataSiz
   CUDACHECK(cudaMemcpy(*data_d, *data_h, dataSize, cudaMemcpyHostToDevice));
 }
 
-void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& comm,
-                             mscclpp::ProxyService& channelService, int* data_d, size_t dataSize) {
+void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& comm, mscclpp::ProxyService& proxyService,
+                             int* data_d, size_t dataSize) {
   int thisNode = rankToNode(rank);
   int cudaNum = rankToLocalRank(rank);
   std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
@@ -226,7 +226,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
       transport = ibTransport;
     }
     // Connect with all other ranks
-    semaphoreIds.push_back(channelService.addSemaphore(comm.connectOnSetup(r, 0, transport)));
+    semaphoreIds.push_back(proxyService.buildAndAddSemaphore(comm, comm.connectOnSetup(r, 0, transport)));
     auto memory = comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport);
     localMemories.push_back(memory);
     comm.sendMemoryOnSetup(memory, r, 0);
@@ -238,8 +238,8 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannels;
   for (size_t i = 0; i < semaphoreIds.size(); ++i) {
     proxyChannels.push_back(mscclpp::deviceHandle(mscclpp::SimpleProxyChannel(
-        channelService.deviceChannel(semaphoreIds[i]), channelService.addMemory(remoteMemories[i].get()),
-        channelService.addMemory(localMemories[i]))));
+        proxyService.proxyChannel(semaphoreIds[i]), proxyService.addMemory(remoteMemories[i].get()),
+        proxyService.addMemory(localMemories[i]))));
   }
 
   assert(proxyChannels.size() < sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>));
@@ -396,16 +396,16 @@ int main(int argc, const char* argv[]) {
     auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, world_size);
     bootstrap->initialize(ip_port);
     mscclpp::Communicator comm(bootstrap);
-    mscclpp::ProxyService channelService(comm);
+    mscclpp::ProxyService proxyService;
 
     if (rank == 0) printf("Initializing data for allgather test\n");
     initializeAndAllocateAllGatherData(rank, world_size, dataSize, nelemsPerGPU, &data_h, &data_d);
 
     if (rank == 0) printf("Setting up the connection in MSCCL++\n");
-    setupMscclppConnections(rank, world_size, comm, channelService, data_d, dataSize);
+    setupMscclppConnections(rank, world_size, comm, proxyService, data_d, dataSize);
 
     if (rank == 0) printf("Launching MSCCL++ proxy threads\n");
-    channelService.startProxy();
+    proxyService.startProxy();
 
     if (rank == 0) printf("Testing the correctness of AllGather implementation\n");
     cudaStream_t stream;
@@ -480,7 +480,7 @@ int main(int argc, const char* argv[]) {
     bootstrap->allGather(tmp, sizeof(int));
 
     if (rank == 0) printf("Stopping MSCCL++ proxy threads\n");
-    channelService.stopProxy();
+    proxyService.stopProxy();
 
   } catch (std::exception& e) {
     // todo: throw exceptions in the implementation and process them here

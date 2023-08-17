@@ -61,11 +61,13 @@ class TcpBootstrap : public Bootstrap {
 
   /// Initialize the @ref TcpBootstrap with a given unique ID.
   /// @param uniqueId The unique ID to initialize the @ref TcpBootstrap with.
-  void initialize(UniqueId uniqueId);
+  /// @param timeoutSec The connection timeout in seconds.
+  void initialize(UniqueId uniqueId, int64_t timeoutSec = 30);
 
   /// Initialize the @ref TcpBootstrap with a string formatted as "ip:port" or "interface:ip:port".
   /// @param ifIpPortTrio The string formatted as "ip:port" or "interface:ip:port".
-  void initialize(const std::string& ifIpPortTrio);
+  /// @param timeoutSec The connection timeout in seconds.
+  void initialize(const std::string& ifIpPortTrio, int64_t timeoutSec = 30);
 
   /// Return the rank of the process.
   int getRank() override;
@@ -384,7 +386,7 @@ class Connection {
   virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
 
   /// Flush any pending writes to the remote process.
-  virtual void flush() = 0;
+  virtual void flush(int64_t timeoutUsec = 3e7) = 0;
 
   /// Get the rank of the remote process.
   ///
@@ -533,8 +535,14 @@ class Communicator {
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag of the connection for identifying it.
   /// @param transport The type of transport to be used.
+  /// @param ibMaxCqSize The maximum number of completion queue entries for IB. Unused if transport is not IB.
+  /// @param ibMaxCqPollNum The maximum number of completion queue entries to poll for IB. Unused if transport is not
+  /// IB.
+  /// @param ibMaxSendWr The maximum number of outstanding send work requests for IB. Unused if transport is not IB.
+  /// @param ibMaxWrPerSend The maximum number of work requests per send for IB. Unused if transport is not IB.
   /// @return std::shared_ptr<Connection> A shared pointer to the connection.
-  std::shared_ptr<Connection> connectOnSetup(int remoteRank, int tag, Transport transport);
+  std::shared_ptr<Connection> connectOnSetup(int remoteRank, int tag, Transport transport, int ibMaxCqSize = 1024,
+                                             int ibMaxCqPollNum = 1, int ibMaxSendWr = 8192, int ibMaxWrPerSend = 64);
 
   /// Add a custom Setuppable object to a list of objects to be setup later, when @ref setup() is called.
   ///

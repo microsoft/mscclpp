@@ -4,8 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <mscclpp/cuda_utils.hpp>
-
-#include "numa.hpp"
+#include <mscclpp/numa.hpp>
 
 TEST(NumaTest, Basic) {
   int num;

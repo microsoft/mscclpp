@@ -124,6 +124,9 @@ class CommunicatorTest : public CommunicatorTestBase {
   std::vector<std::unordered_map<int, mscclpp::RegisteredMemory>> remoteMemory;
 };
 
+template <class T>
+using DeviceHandle = mscclpp::DeviceHandle<T>;
+
 class ProxyChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   void SetUp() override;
@@ -134,7 +137,7 @@ class ProxyChannelOneToOneTest : public CommunicatorTestBase {
   void testPacketPingPong(bool useIbOnly);
   void testPacketPingPongPerf(bool useIbOnly);
 
-  std::shared_ptr<mscclpp::ProxyService> channelService;
+  std::shared_ptr<mscclpp::ProxyService> proxyService;
 };
 
 class SmChannelOneToOneTest : public CommunicatorTestBase {

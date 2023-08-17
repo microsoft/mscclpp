@@ -16,8 +16,6 @@
 #include "api.h"
 #include "debug.h"
 
-#define MAXCONNECTIONS 64
-
 namespace mscclpp {
 
 IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
@@ -54,8 +52,10 @@ const void* IbMr::getBuff() const { return this->buff; }
 
 uint32_t IbMr::getLkey() const { return this->mr->lkey; }
 
-IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port) {
-  this->cq = ibv_create_cq(ctx, MSCCLPP_IB_CQ_SIZE, nullptr, nullptr, 0);
+IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr,
+           int maxWrPerSend)
+    : maxCqPollNum(maxCqPollNum), maxWrPerSend(maxWrPerSend) {
+  this->cq = ibv_create_cq(ctx, maxCqSize, nullptr, nullptr, 0);
   if (this->cq == nullptr) {
     std::stringstream err;
     err << "ibv_create_cq failed (errno " << errno << ")";
@@ -68,8 +68,8 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port) {
   qpInitAttr.send_cq = this->cq;
   qpInitAttr.recv_cq = this->cq;
   qpInitAttr.qp_type = IBV_QPT_RC;
-  qpInitAttr.cap.max_send_wr = MAXCONNECTIONS * MSCCLPP_PROXY_FIFO_SIZE;
-  qpInitAttr.cap.max_recv_wr = MAXCONNECTIONS * MSCCLPP_PROXY_FIFO_SIZE;
+  qpInitAttr.cap.max_send_wr = maxSendWr;
+  qpInitAttr.cap.max_recv_wr = maxRecvWr;
   qpInitAttr.cap.max_send_sge = 1;
   qpInitAttr.cap.max_recv_sge = 1;
   qpInitAttr.cap.max_inline_data = 0;
@@ -118,9 +118,9 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port) {
   }
   this->qp = _qp;
   this->wrn = 0;
-  this->wrs = std::make_unique<ibv_send_wr[]>(MSCCLPP_IB_MAX_SENDS);
-  this->sges = std::make_unique<ibv_sge[]>(MSCCLPP_IB_MAX_SENDS);
-  this->wcs = std::make_unique<ibv_wc[]>(MSCCLPP_IB_CQ_POLL_NUM);
+  this->wrs = std::make_unique<ibv_send_wr[]>(maxWrPerSend);
+  this->sges = std::make_unique<ibv_sge[]>(maxWrPerSend);
+  this->wcs = std::make_unique<ibv_wc[]>(maxCqPollNum);
 }
 
 IbQp::~IbQp() {
@@ -182,9 +182,9 @@ void IbQp::rts() {
 }
 
 IbQp::WrInfo IbQp::getNewWrInfo() {
-  if (this->wrn >= MSCCLPP_IB_MAX_SENDS) {
+  if (this->wrn >= this->maxWrPerSend) {
     std::stringstream err;
-    err << "too many outstanding work requests. limit is " << MSCCLPP_IB_MAX_SENDS;
+    err << "too many outstanding work requests. limit is " << this->maxWrPerSend;
     throw mscclpp::Error(err.str(), ErrorCode::InvalidUsage);
   }
   int wrn = this->wrn;
@@ -269,7 +269,7 @@ void IbQp::postRecv(uint64_t wrId) {
   }
 }
 
-int IbQp::pollCq() { return ibv_poll_cq(this->cq, MSCCLPP_IB_CQ_POLL_NUM, this->wcs.get()); }
+int IbQp::pollCq() { return ibv_poll_cq(this->cq, this->maxCqPollNum, this->wcs.get()); }
 
 IbQpInfo& IbQp::getInfo() { return this->info; }
 
@@ -335,7 +335,8 @@ int IbCtx::getAnyActivePort() const {
   return -1;
 }
 
-IbQp* IbCtx::createQp(int port /*=-1*/) {
+IbQp* IbCtx::createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
+                      int port /*=-1*/) {
   if (port == -1) {
     port = this->getAnyActivePort();
     if (port == -1) {
@@ -344,7 +345,7 @@ IbQp* IbCtx::createQp(int port /*=-1*/) {
   } else if (!this->isPortUsable(port)) {
     throw mscclpp::Error("invalid IB port: " + std::to_string(port), ErrorCode::InternalError);
   }
-  qps.emplace_back(new IbQp(this->ctx, this->pd, port));
+  qps.emplace_back(new IbQp(this->ctx, this->pd, port, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
   return qps.back().get();
 }
 

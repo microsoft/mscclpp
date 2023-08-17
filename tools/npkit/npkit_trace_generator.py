@@ -2,10 +2,8 @@
 # Licensed under the MIT License.
 
 import argparse
-import os
 import json
-
-from queue import Queue
+import os
 
 
 def parse_npkit_event_header(npkit_event_header_path):
@@ -118,7 +116,10 @@ def parse_gpu_event_file(npkit_dump_dir, npkit_event_def, rank, buf_idx, gpu_clo
                     )
                     event_type_to_seq[event_type] += 1
                 else:
-                    gpu_events[-1]["args"] = {"size": parsed_gpu_event["size"], "rsvd": parsed_gpu_event["rsvd"]}
+                    gpu_events[-1]["args"] = {
+                        "size": parsed_gpu_event["size"],
+                        "rsvd": parsed_gpu_event["rsvd"],
+                    }
                     delta_time = gpu_events[-1]["ts"] - gpu_events[-2]["ts"]
                     gpu_events[-1]["args"]["bw (GB/s)"] = gpu_events[-1]["args"]["size"] / delta_time / 1e3
             raw_content_idx += raw_event_size
@@ -238,7 +239,12 @@ def convert_npkit_dump_to_trace(npkit_dump_dir, output_dir, npkit_event_def):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--npkit_dump_dir", type=str, required=True, help="NPKit dump directory.")
-    parser.add_argument("--npkit_event_header_path", type=str, required=True, help="Path to npkit_event.h.")
+    parser.add_argument(
+        "--npkit_event_header_path",
+        type=str,
+        required=True,
+        help="Path to npkit_event.h.",
+    )
     parser.add_argument("--output_dir", type=str, required=True, help="Path to output directory.")
     args = parser.parse_args()
 

@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import mscclpp
 import argparse
 import time
+
+import mscclpp
 
 
 def main(args):
