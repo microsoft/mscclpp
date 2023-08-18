@@ -3,8 +3,6 @@
 
 #include <mpi.h>
 
-#include <mscclpp/config.hpp>
-
 #include "mp_unit_tests.hpp"
 
 void BootstrapTest::bootstrapTestAllGather(std::shared_ptr<mscclpp::Bootstrap> bootstrap) {
@@ -88,10 +86,6 @@ TEST_F(BootstrapTest, ExitBeforeConnect) {
 }
 
 TEST_F(BootstrapTest, TimeoutWithId) {
-  // Set bootstrap timeout to 1 second
-  mscclpp::Config* cfg = mscclpp::Config::getInstance();
-  cfg->setBootstrapConnectionTimeoutConfig(1);
-
   mscclpp::Timer timer;
 
   // All ranks initialize a bootstrap with their own id (will hang)
@@ -99,7 +93,8 @@ TEST_F(BootstrapTest, TimeoutWithId) {
   mscclpp::UniqueId id = bootstrap->createUniqueId();
 
   try {
-    bootstrap->initialize(id);
+    // Set bootstrap timeout to 1 second
+    bootstrap->initialize(id, 1);
   } catch (const mscclpp::Error& e) {
     ASSERT_EQ(e.getErrorCode(), mscclpp::ErrorCode::Timeout);
   }

@@ -5,40 +5,40 @@
 
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
+#include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 
-#include "numa.hpp"
+#define ITER 10000  // should be larger than the FIFO size for proper testing
 
-#define FLUSH_PERIOD (MSCCLPP_PROXY_FIFO_SIZE)  // should not exceed MSCCLPP_PROXY_FIFO_SIZE
-#define ITER 10000                              // should be larger than MSCCLPP_PROXY_FIFO_SIZE for proper testing
-
-__constant__ mscclpp::DeviceProxyFifo gFifoTestDeviceProxyFifo;
+__constant__ mscclpp::FifoDeviceHandle gFifoTestFifoDeviceHandle;
 __global__ void kernelFifoTest() {
   if (threadIdx.x + blockIdx.x * blockDim.x != 0) return;
 
-  mscclpp::DeviceProxyFifo& fifo = gFifoTestDeviceProxyFifo;
+  mscclpp::FifoDeviceHandle& fifo = gFifoTestFifoDeviceHandle;
   mscclpp::ProxyTrigger trigger;
   for (uint64_t i = 1; i < ITER + 1; ++i) {
     trigger.fst = i;
     trigger.snd = i;
     uint64_t curFifoHead = fifo.push(trigger);
-    if (i % FLUSH_PERIOD == 0) {
+    if (i % fifo.size == 0) {
       fifo.sync(curFifoHead);
     }
   }
 }
 
-TEST(FifoTest, HostProxyFifo) {
-  ASSERT_LE(FLUSH_PERIOD, MSCCLPP_PROXY_FIFO_SIZE);
-
+TEST(FifoTest, Fifo) {
   int cudaNum;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaNum));
   int numaNode = mscclpp::getDeviceNumaNode(cudaNum);
   mscclpp::numaBind(numaNode);
 
-  mscclpp::HostProxyFifo hostFifo;
-  mscclpp::DeviceProxyFifo devFifo = hostFifo.deviceFifo();
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gFifoTestDeviceProxyFifo, &devFifo, sizeof(devFifo)));
+  mscclpp::Fifo hostFifo;
+  if (hostFifo.size() >= ITER) {
+    FAIL() << "ITER is too small for proper testing.";
+  }
+
+  mscclpp::FifoDeviceHandle devFifo = hostFifo.deviceHandle();
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gFifoTestFifoDeviceHandle, &devFifo, sizeof(devFifo)));
 
   kernelFifoTest<<<1, 1>>>();
   MSCCLPP_CUDATHROW(cudaGetLastError());
@@ -51,17 +51,19 @@ TEST(FifoTest, HostProxyFifo) {
   uint64_t flushCnt = 0;
   mscclpp::Timer timer(3);
   for (uint64_t i = 0; i < ITER; ++i) {
-    while (trigger.fst == 0) {
-      hostFifo.poll(&trigger);
+    while (trigger.fst == 0 || trigger.snd == 0) {
+      trigger = hostFifo.poll();
 
       if (spin++ > 1000000) {
         FAIL() << "Polling is stuck.";
       }
     }
+    // see `src/proxy.cc` for the reason of this line
+    trigger.snd ^= ((uint64_t)1 << (uint64_t)63);
     ASSERT_TRUE(trigger.fst == (i + 1));
     ASSERT_TRUE(trigger.snd == (i + 1));
     hostFifo.pop();
-    if ((++flushCnt % FLUSH_PERIOD) == 0) {
+    if ((++flushCnt % hostFifo.size()) == 0) {
       hostFifo.flushTail();
     }
     trigger.fst = 0;
@@ -70,7 +72,7 @@ TEST(FifoTest, HostProxyFifo) {
   hostFifo.flushTail(true);
 
   std::stringstream ss;
-  ss << "FifoTest.HostProxyFifo: " << (float)timer.elapsed() / ITER << " us/iter\n";
+  ss << "FifoTest.Fifo: " << (float)timer.elapsed() / ITER << " us/iter\n";
   std::cout << ss.str();
 
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());

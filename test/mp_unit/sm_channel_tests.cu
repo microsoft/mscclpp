@@ -5,8 +5,6 @@
 
 #include "mp_unit_tests.hpp"
 
-template <class T>
-using DeviceHandle = mscclpp::DeviceHandle<T>;
 void SmChannelOneToOneTest::SetUp() {
   // Need at least two ranks within a node
   if (gEnv->nRanksPerNode < 2) {
