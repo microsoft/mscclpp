@@ -516,15 +516,6 @@ class Communicator {
   /// @return RegisteredMemory A handle to the buffer.
   RegisteredMemory registerMemory(void* ptr, size_t size, TransportFlags transports);
 
-  /// Register a region of GPU memory for use in this communicator.
-  ///
-  /// @param ptr Base pointer to the memory.
-  /// @param size Size of the memory region in bytes.
-  /// @param pitchSize pitch size of the memory region in bytes. (used for 2D communication)
-  /// @param transports Transport flags.
-  /// @return RegisteredMemory A handle to the buffer.
-  RegisteredMemory registerMemory(void* ptr, size_t size, size_t pitchSize, TransportFlags transports);
-
   /// Send information of a registered memory to the remote side on setup.
   ///
   /// This function registers a send to a remote process that will happen by a following call of @ref setup(). The send
