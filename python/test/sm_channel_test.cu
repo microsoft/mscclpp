@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <mscclpp/sm_channel_device.hpp>
 
 #include "mscclpp_common.h"

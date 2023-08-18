@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 from concurrent.futures import ThreadPoolExecutor
 import time
 
