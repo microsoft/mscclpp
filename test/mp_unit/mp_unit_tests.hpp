@@ -11,6 +11,7 @@
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <mscclpp/utils.hpp>
+#include <unordered_map>
 
 #include "ib.hpp"
 
@@ -115,10 +116,12 @@ class CommunicatorTest : public CommunicatorTestBase {
 
   void deviceBufferInit();
   void writeToRemote(int dataCountPerRank);
+  void writeTileToRemote(size_t rowIndex, size_t colIndex, size_t pitch, size_t width, size_t height);
   bool testWriteCorrectness(bool skipLocal = false);
 
   const size_t numBuffers = 10;
   const int deviceBufferSize = 1024 * 1024;
+  const int deviceBufferPitchSize = 512;
   std::vector<std::shared_ptr<int>> devicePtr;
   std::vector<mscclpp::RegisteredMemory> localMemory;
   std::vector<std::unordered_map<int, mscclpp::RegisteredMemory>> remoteMemory;
@@ -134,6 +137,8 @@ class ProxyChannelOneToOneTest : public CommunicatorTestBase {
 
   void setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, bool useIbOnly, void* sendBuff,
                             size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
+  void setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, bool useIbOnly, void* sendBuff,
+                            size_t sendBuffBytes, size_t pitchSize, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
   void testPacketPingPong(bool useIbOnly);
   void testPacketPingPongPerf(bool useIbOnly);
 

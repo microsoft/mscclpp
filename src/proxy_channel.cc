@@ -29,6 +29,16 @@ MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& com
   return semaphores_.size() - 1;
 }
 
+MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
+                                                               std::shared_ptr<Connection> connection,
+                                                               std::pair<uint64_t, uint64_t> pitch) {
+  semaphores_.push_back(std::make_shared<Host2DeviceSemaphore>(communicator, connection));
+  SemaphoreId id = semaphores_.size() - 1;
+  if (id >= pitches_.size()) pitches_.resize(id + 1, std::pair<uint64_t, uint64_t>(0, 0));
+  pitches_[id] = pitch;
+  return id;
+}
+
 MSCCLPP_API_CPP SemaphoreId ProxyService::addSemaphore(std::shared_ptr<Host2DeviceSemaphore> semaphore) {
   semaphores_.push_back(semaphore);
   return semaphores_.size() - 1;
@@ -67,8 +77,14 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
   if (trigger->fields.type & TriggerData) {
     RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
     RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
-    semaphore->connection()->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
-                                   trigger->fields.size);
+    if (trigger->fields2D.multiDimensionFlag) {
+      std::pair<uint64_t, uint64_t>& pitch = pitches_.at(trigger->fields.chanId);
+      semaphore->connection()->write2D(dst, trigger->fields.dstOffset, pitch.first, src, trigger->fields.srcOffset,
+                                       pitch.second, trigger->fields2D.width, trigger->fields2D.height);
+    } else {
+      semaphore->connection()->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
+                                     trigger->fields.size);
+    }
   }
 
   if (trigger->fields.type & TriggerFlag) {

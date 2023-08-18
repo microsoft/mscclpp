@@ -17,6 +17,12 @@ void ProxyChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
 void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels,
                                                     bool useIbOnly, void* sendBuff, size_t sendBuffBytes,
                                                     void* recvBuff, size_t recvBuffBytes) {
+  setupMeshConnections(proxyChannels, useIbOnly, sendBuff, sendBuffBytes, sendBuffBytes, recvBuff, recvBuffBytes);
+}
+
+void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels,
+                                                    bool useIbOnly, void* sendBuff, size_t sendBuffBytes, size_t pitch,
+                                                    void* recvBuff, size_t recvBuffBytes) {
   const int rank = communicator->bootstrap()->getRank();
   const int worldSize = communicator->bootstrap()->getNranks();
   const bool isInPlace = (recvBuff == nullptr);
@@ -49,7 +55,12 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
 
     communicator->setup();
 
-    mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, conn);
+    mscclpp::SemaphoreId cid;
+    if (sendBuffBytes == pitch) {
+      cid = proxyService->buildAndAddSemaphore(*communicator, conn);
+    } else {
+      cid = proxyService->buildAndAddSemaphore(*communicator, conn, std::pair<size_t, size_t>(pitch, pitch));
+    }
     communicator->setup();
 
     proxyChannels.emplace_back(proxyService->proxyChannel(cid), proxyService->addMemory(remoteMemory.get()),
@@ -58,6 +69,72 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
 }
 
 __constant__ DeviceHandle<mscclpp::SimpleProxyChannel> gChannelOneToOneTestConstProxyChans;
+
+__device__ size_t getTileElementOffset(int elementId, int width, int rowIndex, int colIndex, int nElemPerPitch) {
+  int rowIndexInTile = elementId / width;
+  int colIndexInTile = elementId % width;
+  return (rowIndex + rowIndexInTile) * nElemPerPitch + (colIndex + colIndexInTile);
+}
+
+__global__ void kernelProxyTilePingPong(int* buff, int rank, int pitch, int rowIndex, int colIndex, int width,
+                                        int height, int* ret) {
+  DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = gChannelOneToOneTestConstProxyChans;
+  volatile int* sendBuff = (volatile int*)buff;
+  int nTries = 1000;
+  int flusher = 0;
+  size_t offset = rowIndex * pitch + colIndex * sizeof(int);
+  size_t nElem = width * height;
+  size_t nElemPerPitch = pitch / sizeof(int);
+  for (int i = 0; i < nTries; i++) {
+    if (rank == 0) {
+      if (i > 0) {
+        if (threadIdx.x == 0) proxyChan.wait();
+        __syncthreads();
+        for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+          size_t tileOffset = getTileElementOffset(j, width, rowIndex, colIndex, nElemPerPitch);
+          if (sendBuff[tileOffset] != offset + i - 1 + j) {
+            // printf("rank 0 ERROR: sendBuff[%d] = %d, expected %d\n", j, sendBuff[j], rank1Offset + i - 1 + j);
+            *ret = 1;
+            break;
+          }
+        }
+      }
+      for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+        size_t tileOffset = getTileElementOffset(j, width, rowIndex, colIndex, nElemPerPitch);
+        sendBuff[tileOffset] = i + j;
+      }
+      __syncthreads();
+      // __threadfence_system(); // not necessary if we make sendBuff volatile
+      if (threadIdx.x == 0) proxyChan.put2DWithSignal(offset, width * sizeof(int), height);
+    }
+    if (rank == 1) {
+      if (threadIdx.x == 0) proxyChan.wait();
+      __syncthreads();
+      for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+        size_t tileOffset = getTileElementOffset(j, width, rowIndex, colIndex, nElemPerPitch);
+        if (sendBuff[tileOffset] != i + j) {
+          // printf("rank 1 ERROR: sendBuff[%d] = %d, expected %d\n", j, sendBuff[j], i + j);
+          *ret = 1;
+          break;
+        }
+      }
+      if (i < nTries - 1) {
+        for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+          size_t tileOffset = getTileElementOffset(j, width, rowIndex, colIndex, nElemPerPitch);
+          sendBuff[tileOffset] = offset + i + j;
+        }
+        __syncthreads();
+        // __threadfence_system(); // not necessary if we make sendBuff volatile
+        if (threadIdx.x == 0) proxyChan.put2DWithSignal(offset, width * sizeof(int), height);
+      }
+    }
+    flusher++;
+    if (flusher == 100) {
+      if (threadIdx.x == 0) proxyChan.flush();
+      flusher = 0;
+    }
+  }
+}
 
 __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, int* ret) {
   DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = gChannelOneToOneTestConstProxyChans;
@@ -153,6 +230,54 @@ TEST_F(ProxyChannelOneToOneTest, PingPongIb) {
   EXPECT_EQ(*ret, 0);
 
   proxyService->stopProxy();
+}
+
+TEST_F(ProxyChannelOneToOneTest, PingPongTile) {
+  if (gEnv->rank >= numRanksToUse) return;
+  if (gEnv->worldSize > gEnv->nRanksPerNode) {
+    // tile write only support single node
+    GTEST_SKIP();
+  }
+
+  const int nElem = 4 * 1024 * 1024;
+
+  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
+  const int pitchSize = 512;  // the buff tile is 8192x128
+  setupMeshConnections(proxyChannels, false, buff.get(), nElem * sizeof(int), pitchSize);
+
+  ASSERT_EQ(proxyChannels.size(), 1);
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstProxyChans, proxyChannels.data(),
+                                       sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)));
+
+  proxyService->startProxy();
+
+  std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
+
+  kernelProxyTilePingPong<<<1, 1024>>>(buff.get(), gEnv->rank, pitchSize, 0, 0, 1, 1, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
+
+  kernelProxyTilePingPong<<<1, 1024>>>(buff.get(), gEnv->rank, pitchSize, 128, 32, 64, 64, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
+
+  kernelProxyTilePingPong<<<1, 1024>>>(buff.get(), gEnv->rank, pitchSize, 16, 16, 1, 8192, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
+
+  kernelProxyTilePingPong<<<1, 1024>>>(buff.get(), gEnv->rank, pitchSize, 5, 0, 128, 1, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
+
+  kernelProxyTilePingPong<<<1, 1024>>>(buff.get(), gEnv->rank, pitchSize, 0, 0, 128, 8192, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
 }
 
 __device__ mscclpp::DeviceSyncer gChannelOneToOneTestProxyChansSyncer;

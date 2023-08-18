@@ -3,6 +3,7 @@
 
 #include <mpi.h>
 
+#include <array>
 #include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/semaphore.hpp>
 
@@ -143,6 +144,21 @@ void CommunicatorTest::writeToRemote(int dataCountPerRank) {
   }
 }
 
+void CommunicatorTest::writeTileToRemote(size_t rowIndex, size_t colIndex, size_t pitch, size_t width, size_t height) {
+  size_t offset = rowIndex * pitch + colIndex * sizeof(int);
+  for (size_t n = 0; n < numBuffers; n++) {
+    for (int i = 0; i < gEnv->worldSize; i++) {
+      if (i != gEnv->rank) {
+        auto& conn = connections.at(i);
+        auto& peerMemory = remoteMemory[n].at(i);
+        conn->write2D(peerMemory, offset, deviceBufferPitchSize, localMemory[n], offset, deviceBufferPitchSize,
+                      width * sizeof(int), height);
+        conn->flush();
+      }
+    }
+  }
+}
+
 bool CommunicatorTest::testWriteCorrectness(bool skipLocal) {
   size_t dataCount = deviceBufferSize / sizeof(int);
   for (int n = 0; n < (int)devicePtr.size(); n++) {
@@ -169,6 +185,45 @@ TEST_F(CommunicatorTest, BasicWrite) {
   communicator->bootstrap()->barrier();
 
   writeToRemote(deviceBufferSize / sizeof(int) / gEnv->worldSize);
+  communicator->bootstrap()->barrier();
+
+  // polling until it becomes ready
+  bool ready = false;
+  int niter = 0;
+  do {
+    ready = testWriteCorrectness();
+    niter++;
+    if (niter == 10000) {
+      FAIL() << "Polling is stuck.";
+    }
+  } while (!ready);
+  communicator->bootstrap()->barrier();
+}
+
+TEST_F(CommunicatorTest, TileWrite) {
+  if (gEnv->rank >= numRanksToUse) return;
+  if (gEnv->worldSize > gEnv->nRanksPerNode) {
+    // tile write only support single node
+    GTEST_SKIP();
+  }
+  deviceBufferInit();
+  communicator->bootstrap()->barrier();
+
+  size_t dataSizePerRank = deviceBufferSize / gEnv->worldSize;
+  size_t rowCountPerRank = dataSizePerRank / deviceBufferPitchSize;
+  size_t colCount = deviceBufferPitchSize / sizeof(int);
+  // The size of the tile is <rowCount, colCount>. We split it into multi small tiles.
+  std::array<std::pair<int, int>, 3> nTileInDimension = {std::pair<int, int>{2, 2}, {4, 4}, {8, 8}};
+  for (auto& nTile : nTileInDimension) {
+    const int nRowPerTile = rowCountPerRank / nTile.first;
+    const int nColPerTile = colCount / nTile.second;
+    for (int xi = 0; xi < nTile.first; ++xi) {
+      for (int yi = 0; yi < nTile.second; ++yi) {
+        writeTileToRemote(rowCountPerRank * gEnv->rank + xi * nRowPerTile, yi * nColPerTile, deviceBufferPitchSize,
+                          colCount / nTile.second, rowCountPerRank / nTile.first);
+      }
+    }
+  }
   communicator->bootstrap()->barrier();
 
   // polling until it becomes ready

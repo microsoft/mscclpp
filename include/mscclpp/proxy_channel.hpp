@@ -29,9 +29,17 @@ class ProxyService : public BaseProxyService {
   ProxyService();
 
   /// Build and add a semaphore to the proxy service.
+  /// @param communicator The communicator for bootstrapping.
   /// @param connection The connection associated with the semaphore.
   /// @return The ID of the semaphore.
   SemaphoreId buildAndAddSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
+
+  /// Build and add a semaphore with pitch to the proxy service. This is used for 2D transfers.
+  /// @param communicator The communicator for bootstrapping.
+  /// @param connection The connection associated with the channel.
+  /// @param pitch The pitch pair.
+  SemaphoreId buildAndAddSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection,
+                                   std::pair<uint64_t, uint64_t> pitch);
 
   /// Add a semaphore to the proxy service.
   /// @param semaphore The semaphore to be added
@@ -62,6 +70,7 @@ class ProxyService : public BaseProxyService {
  private:
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> semaphores_;
   std::vector<RegisteredMemory> memories_;
+  std::vector<std::pair<uint64_t, uint64_t>> pitches_;
   Proxy proxy_;
   int deviceNumaNode;
 

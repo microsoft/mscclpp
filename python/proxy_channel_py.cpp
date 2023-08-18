@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
 
@@ -19,7 +20,13 @@ void register_proxy_channel(nb::module_& m) {
       .def(nb::init<>())
       .def("start_proxy", &ProxyService::startProxy)
       .def("stop_proxy", &ProxyService::stopProxy)
-      .def("build_and_add_semaphore", &ProxyService::buildAndAddSemaphore, nb::arg("comm"), nb::arg("connection"))
+      .def("build_and_add_semaphore",
+           nb::overload_cast<Communicator&, std::shared_ptr<Connection>>(&ProxyService::buildAndAddSemaphore),
+           nb::arg("comm"), nb::arg("connection"))
+      .def("build_and_add_semaphore",
+           nb::overload_cast<Communicator&, std::shared_ptr<Connection>, std::pair<uint64_t, uint64_t>>(
+               &ProxyService::buildAndAddSemaphore),
+           nb::arg("comm"), nb::arg("connection"), nb::arg("pitch"))
       .def("add_semaphore", &ProxyService::addSemaphore, nb::arg("semaphore"))
       .def("add_memory", &ProxyService::addMemory, nb::arg("memory"))
       .def("semaphore", &ProxyService::semaphore, nb::arg("id"))

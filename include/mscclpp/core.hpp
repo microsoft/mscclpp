@@ -377,6 +377,18 @@ class Connection {
   virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                      uint64_t size) = 0;
 
+  /// Write data from a source @ref RegisteredMemory to a destination @ref RegisteredMemory in a 2D fashion.
+  ///
+  /// @param dst The destination @ref RegisteredMemory.
+  /// @param dstOffset The offset in bytes from the start of the destination @ref RegisteredMemory.
+  /// @param dstPitch The pitch of the destination @ref RegisteredMemory in bytes.
+  /// @param src The source @ref RegisteredMemory.
+  /// @param srcOffset The offset in bytes from the start of the source @ref RegisteredMemory.
+  /// @param srcPitch The pitch of the source @ref RegisteredMemory in bytes.
+  /// @param width The width of the 2D region to write in bytes.
+  /// @param height The height of the 2D region.
+  virtual void write2D(RegisteredMemory dst, uint64_t dstOffset, uint64_t dstPitch, RegisteredMemory src,
+                       uint64_t srcOffset, uint64_t srcPitch, uint64_t width, uint64_t height) = 0;
   /// Update a 8-byte value in a destination @ref RegisteredMemory and synchronize the change with the remote process.
   ///
   /// @param dst The destination @ref RegisteredMemory.
