@@ -29,18 +29,19 @@ MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& com
   return semaphores_.size() - 1;
 }
 
-MSCCLPP_API_CPP SemaphoreId ProxyService::addSemaphore(std::shared_ptr<Host2DeviceSemaphore> semaphore) {
-  semaphores_.push_back(semaphore);
-  return semaphores_.size() - 1;
-}
-
-MSCCLPP_API_CPP SemaphoreId ProxyService::add2DChannel(std::shared_ptr<Connection> connection,
-                                                       std::pair<uint64_t, uint64_t> pitch) {
-  semaphores_.push_back(std::make_shared<Host2DeviceSemaphore>(communicator_, connection));
+MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
+                                                               std::shared_ptr<Connection> connection,
+                                                               std::pair<uint64_t, uint64_t> pitch) {
+  semaphores_.push_back(std::make_shared<Host2DeviceSemaphore>(communicator, connection));
   SemaphoreId id = semaphores_.size() - 1;
   if (id >= pitches_.size()) pitches_.resize(id + 1, std::pair<uint64_t, uint64_t>(0, 0));
   pitches_[id] = pitch;
   return id;
+}
+
+MSCCLPP_API_CPP SemaphoreId ProxyService::addSemaphore(std::shared_ptr<Host2DeviceSemaphore> semaphore) {
+  semaphores_.push_back(semaphore);
+  return semaphores_.size() - 1;
 }
 
 MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {

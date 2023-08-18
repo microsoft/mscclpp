@@ -29,19 +29,22 @@ class ProxyService : public BaseProxyService {
   ProxyService();
 
   /// Build and add a semaphore to the proxy service.
+  /// @param communicator The communicator for bootstrapping.
   /// @param connection The connection associated with the semaphore.
   /// @return The ID of the semaphore.
   SemaphoreId buildAndAddSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
+
+  /// Build and add a semaphore with pitch to the proxy service. This is used for 2D transfers.
+  /// @param communicator The communicator for bootstrapping.
+  /// @param connection The connection associated with the channel.
+  /// @param pitch The pitch pair.
+  SemaphoreId buildAndAddSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection,
+                                   std::pair<uint64_t, uint64_t> pitch);
 
   /// Add a semaphore to the proxy service.
   /// @param semaphore The semaphore to be added
   /// @return The ID of the semaphore.
   SemaphoreId addSemaphore(std::shared_ptr<Host2DeviceSemaphore> semaphore);
-
-  /// Add a 2D channel to the proxy service.
-  /// @param connection The connection associated with the channel.
-  /// @param pitch The pitch pair.
-  SemaphoreId add2DChannel(std::shared_ptr<Connection> connection, std::pair<uint64_t, uint64_t> pitch);
 
   /// Register a memory region with the proxy service.
   /// @param memory The memory region to register.

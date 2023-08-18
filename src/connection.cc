@@ -3,7 +3,6 @@
 
 #include "connection.hpp"
 
-#include <algorithm>
 #include <mscclpp/utils.hpp>
 
 #include "debug.h"

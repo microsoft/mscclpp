@@ -17,6 +17,12 @@ void ProxyChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
 void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels,
                                                     bool useIbOnly, void* sendBuff, size_t sendBuffBytes,
                                                     void* recvBuff, size_t recvBuffBytes) {
+  setupMeshConnections(proxyChannels, useIbOnly, sendBuff, sendBuffBytes, sendBuffBytes, recvBuff, recvBuffBytes);
+}
+
+void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels,
+                                                    bool useIbOnly, void* sendBuff, size_t sendBuffBytes, size_t pitch,
+                                                    void* recvBuff, size_t recvBuffBytes) {
   const int rank = communicator->bootstrap()->getRank();
   const int worldSize = communicator->bootstrap()->getNranks();
   const bool isInPlace = (recvBuff == nullptr);
@@ -49,7 +55,12 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
 
     communicator->setup();
 
-    mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, conn);
+    mscclpp::SemaphoreId cid;
+    if (sendBuffBytes == pitch) {
+      cid = proxyService->buildAndAddSemaphore(*communicator, conn);
+    } else {
+      cid = proxyService->buildAndAddSemaphore(*communicator, conn, std::pair<size_t, size_t>(pitch, pitch));
+    }
     communicator->setup();
 
     proxyChannels.emplace_back(proxyService->proxyChannel(cid), proxyService->addMemory(remoteMemory.get()),
@@ -230,7 +241,7 @@ TEST_F(ProxyChannelOneToOneTest, PingPongTile) {
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannels;
+  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
   const int pitchSize = 512;  // the buff tile is 8192x128
   setupMeshConnections(proxyChannels, false, buff.get(), nElem * sizeof(int), pitchSize);
@@ -239,7 +250,7 @@ TEST_F(ProxyChannelOneToOneTest, PingPongTile) {
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstProxyChans, proxyChannels.data(),
                                        sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)));
 
-  channelService->startProxy();
+  proxyService->startProxy();
 
   std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
 
