@@ -348,7 +348,7 @@ def test_sm_channels(layout: Layout, nelem: int, use_packet: bool):
     kernel()
     cp.cuda.runtime.deviceSynchronize()
     group.barrier()
-    assert np.array_equal(cp.asnumpy(memory), cp.asnumpy(memory_expected))
+    assert cp.array_equal(memory, memory_expected)
 
 
 @parametrize_layouts((1, 2), (1, 4), (1, 8), (1, 16))
@@ -432,7 +432,7 @@ def test_proxy(
     cp.cuda.runtime.deviceSynchronize()
     proxy.stop()
     group.barrier()
-    assert np.array_equal(cp.asnumpy(memory), cp.asnumpy(memory_expected))
+    assert cp.array_equal(memory, memory_expected)
 
 
 @parametrize_layouts((1, 2), (1, 4), (1, 8), (1, 16))
@@ -481,5 +481,4 @@ def test_simple_proxy_channel(
     cp.cuda.runtime.deviceSynchronize()
     proxy_service.stop_proxy()
     group.barrier()
-    # workaround: could not use cp.array_equal due to CUDADriverError
-    assert np.array_equal(cp.asnumpy(memory), cp.asnumpy(memory_expected))
+    assert cp.array_equal(memory, memory_expected)

@@ -38,8 +38,8 @@ def _cuda_get_error(error):
 
 class Kernel:
     def __init__(self, ptx: bytes, kernel_name: str, device_id: int):
-        cu_device = _check_cuda_errors(cuda.cuDeviceGet(device_id))
-        self._context = _check_cuda_errors(cuda.cuCtxCreate(0, cu_device))
+        self._context = _check_cuda_errors(cuda.cuCtxGetCurrent())
+        assert self._context is not None
         self._module = _check_cuda_errors(cuda.cuModuleLoadData(ptx))
         self._kernel = _check_cuda_errors(cuda.cuModuleGetFunction(self._module, kernel_name.encode()))
 
@@ -69,7 +69,6 @@ class Kernel:
 
     def __del__(self):
         cuda.cuModuleUnload(self._module)
-        cuda.cuCtxDestroy(self._context)
 
 
 class KernelBase:
