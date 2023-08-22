@@ -153,9 +153,9 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
 RegisteredMemory::Impl::~Impl() {
   if (this->isRemote && transports.has(Transport::CudaIpc)) {
     void* base = static_cast<char*>(data) - getTransportInfo(Transport::CudaIpc).cudaIpcOffsetFromBase;
-    cudaError_t err = cudaIpcCloseMemHandle(base);                                                                                           \
-    if (err != cudaSuccess) {                                                                                        \
-      WARN("Failed to close cuda IPC handle: %s", cudaGetErrorString(err));                                                                               \
+    cudaError_t err = cudaIpcCloseMemHandle(base);
+    if (err != cudaSuccess) {
+      WARN("Failed to close cuda IPC handle: %s", cudaGetErrorString(err));
     }
     INFO(MSCCLPP_P2P, "Closed CUDA IPC handle at pointer %p", base);
     data = nullptr;

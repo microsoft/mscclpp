@@ -17,8 +17,10 @@ MSCCLPP_API_CPP SmChannel::SmChannel(std::shared_ptr<SmDevice2DeviceSemaphore> s
 }
 
 MSCCLPP_API_CPP SmChannel::DeviceHandle SmChannel::deviceHandle() const {
-  return DeviceHandle{
-      .semaphore_ = semaphore_->deviceHandle(), .src_ = src_, .dst_ = dst_.data(), .getPacketBuffer_ = getPacketBuffer_};
+  return DeviceHandle{.semaphore_ = semaphore_->deviceHandle(),
+                      .src_ = src_,
+                      .dst_ = dst_.data(),
+                      .getPacketBuffer_ = getPacketBuffer_};
 }
 
 }  // namespace mscclpp
