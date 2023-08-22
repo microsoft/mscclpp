@@ -477,6 +477,7 @@ def test_simple_proxy_channel(
         scratch=scratch,
     )
     proxy_service.start_proxy()
+    group.barrier()
     kernel()
     cp.cuda.runtime.deviceSynchronize()
     proxy_service.stop_proxy()
