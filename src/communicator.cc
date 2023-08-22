@@ -35,6 +35,8 @@ MSCCLPP_API_CPP Communicator::Communicator(std::shared_ptr<Bootstrap> bootstrap,
 
 MSCCLPP_API_CPP std::shared_ptr<Bootstrap> Communicator::bootstrap() { return pimpl->bootstrap_; }
 
+MSCCLPP_API_CPP std::shared_ptr<Context> Communicator::context() { return pimpl->context_; }
+
 MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports) {
   return context()->registerMemory(ptr, size, transports);
 }

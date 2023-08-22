@@ -391,9 +391,6 @@ class Endpoint {
   /// Default constructor.
   Endpoint() = default;
 
-  /// Destructor.
-  ~Endpoint();
-
   /// Get the transport used.
   ///
   /// @return The transport used.

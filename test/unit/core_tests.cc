@@ -36,7 +36,6 @@ TEST_F(LocalCommunicatorTest, RegisterMemory) {
   auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
   EXPECT_EQ(memory.data(), &dummy);
   EXPECT_EQ(memory.size(), sizeof(dummy));
-  EXPECT_EQ(memory.rank(), 0);
   EXPECT_EQ(memory.transports(), mscclpp::NoTransports);
 }
 

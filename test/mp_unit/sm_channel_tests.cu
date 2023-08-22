@@ -24,6 +24,9 @@ void SmChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SmChannel>
   const bool isInPlace = (outputBuff == nullptr);
   mscclpp::TransportFlags transport = mscclpp::Transport::CudaIpc | ibTransport;
 
+  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures(worldSize);
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
+
   mscclpp::RegisteredMemory inputBufRegMem = communicator->registerMemory(inputBuff, inputBuffBytes, transport);
   mscclpp::RegisteredMemory outputBufRegMem;
   if (!isInPlace) {
@@ -34,30 +37,35 @@ void SmChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SmChannel>
     if (r == rank) {
       continue;
     }
-    std::shared_ptr<mscclpp::Connection> conn;
     if (rankToNode(r) == rankToNode(gEnv->rank)) {
-      conn = communicator->connectOnSetup(r, 0, mscclpp::Transport::CudaIpc);
+      connectionFutures[r] = communicator->connectOnSetup(r, 0, mscclpp::Transport::CudaIpc);
     } else {
-      conn = communicator->connectOnSetup(r, 0, ibTransport);
+      connectionFutures[r] = communicator->connectOnSetup(r, 0, ibTransport);
     }
-    connections[r] = conn;
 
     if (isInPlace) {
       communicator->sendMemoryOnSetup(inputBufRegMem, r, 0);
     } else {
       communicator->sendMemoryOnSetup(outputBufRegMem, r, 0);
     }
-    auto remoteMemory = communicator->recvMemoryOnSetup(r, 0);
+    remoteMemFutures[r] = communicator->recvMemoryOnSetup(r, 0);
+  }
 
-    communicator->setup();
+  communicator->setup();
 
-    smSemaphores[r] = std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*communicator, conn);
+  for (int r = 0; r < worldSize; r++) {
+    if (r == rank) {
+      continue;
+    }
+    connections[r] = connectionFutures[r].get();
 
-    communicator->setup();
+    smSemaphores[r] = std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*communicator, connections[r]);
 
-    smChannels.emplace_back(smSemaphores[r], remoteMemory.get(), inputBufRegMem.data(),
+    smChannels.emplace_back(smSemaphores[r], remoteMemFutures[r].get(), inputBufRegMem.data(),
                             (isInPlace ? nullptr : outputBufRegMem.data()));
   }
+
+  communicator->setup();
 }
 
 __constant__ DeviceHandle<mscclpp::SmChannel> gChannelOneToOneTestConstSmChans;

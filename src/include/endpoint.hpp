@@ -17,7 +17,6 @@ struct Endpoint::Impl {
   Impl(const std::vector<char>& serialization);
 
   Transport transport_;
-  int rank_;
   uint64_t hostHash_;
 
   // The following are only used for IB and are undefined for other transports.
