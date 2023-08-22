@@ -22,6 +22,7 @@ MSCCLPP_API_CPP Transport Endpoint::transport() { return pimpl->transport_; }
 MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() {
   std::vector<char> data;
   std::copy_n(reinterpret_cast<char*>(&pimpl->transport_), sizeof(pimpl->transport_), std::back_inserter(data));
+  std::copy_n(reinterpret_cast<char*>(&pimpl->hostHash_), sizeof(pimpl->hostHash_), std::back_inserter(data));
   if (AllIBTransports.has(pimpl->transport_)) {
     std::copy_n(reinterpret_cast<char*>(&pimpl->ibQpInfo_), sizeof(pimpl->ibQpInfo_), std::back_inserter(data));
   }
@@ -36,6 +37,8 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
   auto it = serialization.begin();
   std::copy_n(it, sizeof(transport_), reinterpret_cast<char*>(&transport_));
   it += sizeof(transport_);
+  std::copy_n(it, sizeof(hostHash_), reinterpret_cast<char*>(&hostHash_));
+  it += sizeof(hostHash_);
   if (AllIBTransports.has(transport_)) {
     ibLocal_ = false;
     std::copy_n(it, sizeof(ibQpInfo_), reinterpret_cast<char*>(&ibQpInfo_));

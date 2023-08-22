@@ -122,11 +122,31 @@ void register_core(nb::module_& m) {
       .def("transport", &Connection::transport)
       .def("remote_transport", &Connection::remoteTransport);
 
+  nb::class_<Endpoint>(m, "Endpoint")
+      .def("transport", &Endpoint::transport)
+      .def("serialize", &Endpoint::serialize)
+      .def_static("deserialize", &Endpoint::deserialize, nb::arg("data"));
+
+  nb::class_<Context>(m, "Context")
+      .def(nb::init<>())
+      .def(
+          "register_memory",
+          [](Communicator* self, uintptr_t ptr, size_t size, TransportFlags transports) {
+            return self->registerMemory((void*)ptr, size, transports);
+          },
+          nb::arg("ptr"), nb::arg("size"), nb::arg("transports"))
+      .def("create_endpoint", &Context::createEndpoint, nb::arg("transport"), nb::arg("ibMaxCqSize") = 1024,
+           nb::arg("ibMaxCqPollNum") = 1, nb::arg("ibMaxSendWr") = 8192, nb::arg("ibMaxWrPerSend") = 64)
+      .def("connect", &Context::connect, nb::arg("local_endpoint"), nb::arg("remote_endpoint"));
+
   def_nonblocking_future<RegisteredMemory>(m, "RegisteredMemory");
+  def_nonblocking_future<std::shared_ptr<Connection>>(m, "shared_ptr_Connection");
 
   nb::class_<Communicator>(m, "Communicator")
-      .def(nb::init<std::shared_ptr<Bootstrap>>(), nb::arg("bootstrap"))
+      .def(nb::init<std::shared_ptr<Bootstrap>, std::shared_ptr<Context>>(), nb::arg("bootstrap"),
+           nb::arg("context") = nullptr)
       .def("bootstrap", &Communicator::bootstrap)
+      .def("context", &Communicator::context)
       .def(
           "register_memory",
           [](Communicator* self, uintptr_t ptr, size_t size, TransportFlags transports) {

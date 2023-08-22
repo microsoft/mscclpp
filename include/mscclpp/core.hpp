@@ -422,8 +422,6 @@ class Endpoint {
 class Context {
  public:
   /// Create a context.
-  ///
-  /// @param rank The rank of the local process, optional.
   Context();
 
   /// Destroy the context.
