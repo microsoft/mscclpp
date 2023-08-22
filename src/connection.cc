@@ -4,8 +4,10 @@
 #include "connection.hpp"
 
 #include <mscclpp/utils.hpp>
+#include <sstream>
 
 #include "debug.h"
+#include "endpoint.hpp"
 #include "infiniband/verbs.h"
 #include "npkit/npkit.h"
 #include "registered_memory.hpp"
@@ -18,16 +20,10 @@ void validateTransport(RegisteredMemory mem, Transport transport) {
   }
 }
 
-// Connection
-
-std::shared_ptr<RegisteredMemory::Impl> Connection::getRegisteredMemoryImpl(RegisteredMemory& memory) {
-  return memory.pimpl;
-}
-
 // CudaIpcConnection
 
-CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context::Impl& contextImpl)
-    : stream_(contextImpl->getIpcStream()) {
+CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, cudaStream_t stream)
+    : stream_(stream) {
   if (localEndpoint.transport() != Transport::CudaIpc) {
     throw mscclpp::Error("Cuda IPC connection can only be made from a Cuda IPC endpoint", ErrorCode::InvalidUsage);
   }
@@ -38,7 +34,7 @@ CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndp
   if (remoteEndpoint.pimpl->hostHash_ != localEndpoint.pimpl->hostHash_) {
     std::stringstream ss;
     ss << "Cuda IPC connection can only be made within a node: " << std::hex << remoteEndpoint.pimpl->hostHash_
-        << " != " << std::hex << localEndpoint.pimpl->hostHash_;
+       << " != " << std::hex << localEndpoint.pimpl->hostHash_;
     throw mscclpp::Error(ss.str(), ErrorCode::InvalidUsage);
   }
   INFO(MSCCLPP_P2P, "Cuda IPC connection created");
@@ -82,12 +78,12 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
   AvoidCudaGraphCaptureGuard guard;
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream_));
   // npkitCollectExitEvents(conn, NPKIT_EVENT_DMA_SEND_EXIT);
-  INFO(MSCCLPP_P2P, "CudaIpcConnection flushing connection to remote rank %d", remoteRank());
+  INFO(MSCCLPP_P2P, "CudaIpcConnection flushing connection");
 }
 
 // IBConnection
 
-IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context::Impl& contextImpl)
+IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context)
     : transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
       numSignaledSends(0),
@@ -95,8 +91,7 @@ IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Cont
   qp = localEndpoint.pimpl->ibQp_;
   qp->rtr(remoteEndpoint.pimpl->ibQpInfo_);
   qp->rts();
-  dummyAtomicSourceMem_ = RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(
-      dummyAtomicSource_.get(), sizeof(uint64_t), transport_, contextImpl));
+  dummyAtomicSourceMem_ = context.registerMemory(dummyAtomicSource_.get(), sizeof(uint64_t), transport_);
   INFO(MSCCLPP_NET, "IB connection via %s created", getIBDeviceName(transport_).c_str());
 }
 
@@ -109,11 +104,11 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   validateTransport(dst, remoteTransport());
   validateTransport(src, transport());
 
-  auto dstTransportInfo = getRegisteredMemoryImpl(dst)->getTransportInfo(remoteTransport());
+  auto dstTransportInfo = dst.pimpl->getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
     throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
   }
-  auto srcTransportInfo = getRegisteredMemoryImpl(src)->getTransportInfo(transport());
+  auto srcTransportInfo = src.pimpl->getTransportInfo(transport());
   if (!srcTransportInfo.ibLocal) {
     throw Error("src is remote, which is not supported", ErrorCode::InvalidUsage);
   }
@@ -133,7 +128,7 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 
 void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
   validateTransport(dst, remoteTransport());
-  auto dstTransportInfo = getRegisteredMemoryImpl(dst)->getTransportInfo(remoteTransport());
+  auto dstTransportInfo = dst.pimpl->getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
     throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
   }
@@ -173,7 +168,7 @@ void IBConnection::flush(int64_t timeoutUsec) {
       }
     }
   }
-  INFO(MSCCLPP_NET, "IBConnection flushing connection to remote rank %d", remoteRank());
+  INFO(MSCCLPP_NET, "IBConnection flushing connection");
   // npkitCollectExitEvents(conn, NPKIT_EVENT_IB_SEND_EXIT);
 }
 

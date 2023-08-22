@@ -105,7 +105,6 @@ void register_core(nb::module_& m) {
       .def(nb::init<>())
       .def("data", &RegisteredMemory::data)
       .def("size", &RegisteredMemory::size)
-      .def("rank", &RegisteredMemory::rank)
       .def("transports", &RegisteredMemory::transports)
       .def("serialize", &RegisteredMemory::serialize)
       .def_static("deserialize", &RegisteredMemory::deserialize, nb::arg("data"));
@@ -120,8 +119,6 @@ void register_core(nb::module_& m) {
           },
           nb::arg("dst"), nb::arg("dstOffset"), nb::arg("src"), nb::arg("newValue"))
       .def("flush", &Connection::flush, nb::arg("timeoutUsec") = (int64_t)3e7)
-      .def("remote_rank", &Connection::remoteRank)
-      .def("tag", &Connection::tag)
       .def("transport", &Connection::transport)
       .def("remote_transport", &Connection::remoteTransport);
 
@@ -142,6 +139,8 @@ void register_core(nb::module_& m) {
       .def("connect_on_setup", &Communicator::connectOnSetup, nb::arg("remoteRank"), nb::arg("tag"),
            nb::arg("transport"), nb::arg("ibMaxCqSize") = 1024, nb::arg("ibMaxCqPollNum") = 1,
            nb::arg("ibMaxSendWr") = 8192, nb::arg("ibMaxWrPerSend") = 64)
+      .def("remote_rank_of", &Communicator::remoteRankOf)
+      .def("tag_of", &Communicator::tagOf)
       .def("setup", &Communicator::setup);
 }
 

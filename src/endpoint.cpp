@@ -4,7 +4,9 @@
 
 namespace mscclpp {
 
-Endpoint::Impl::Impl(Transport transport, int ibMaxCqSize, int ibMaxCqPollNum, int ibMaxSendWr, int ibMaxWrPerSend, Context::Impl& contextImpl) : transport_(transport), rank_(contextImpl.rank_), hostHash_(contextImpl.hostHash_) {
+Endpoint::Impl::Impl(Transport transport, int ibMaxCqSize, int ibMaxCqPollNum, int ibMaxSendWr, int ibMaxWrPerSend,
+                     Context::Impl& contextImpl)
+    : transport_(transport), rank_(contextImpl.rank_), hostHash_(contextImpl.hostHash_) {
   if (AllIBTransports.has(transport)) {
     ibLocal_ = true;
     ibQp_ = contextImpl.getIbContext(transport)->createQp(maxCqSize, maxCqPollNum, maxSendWr, 0, maxWrPerSend);
@@ -12,9 +14,7 @@ Endpoint::Impl::Impl(Transport transport, int ibMaxCqSize, int ibMaxCqPollNum, i
   }
 }
 
-Transport Endpoint::transport() {
-  return impl_->transport_;
-}
+Transport Endpoint::transport() { return impl_->transport_; }
 
 std::vector<char> Endpoint::serialize() {
   std::vector<char> data;
@@ -24,9 +24,7 @@ std::vector<char> Endpoint::serialize() {
   }
 }
 
-static Endpoint Endpoint::deserialize(const std::vector<char>& data) {
-  return Endpoint(std::make_shared<Impl>(data));
-}
+static Endpoint Endpoint::deserialize(const std::vector<char>& data) { return Endpoint(std::make_shared<Impl>(data)); }
 
 Endpoint::Impl::Impl(const std::vector<char>& serialization) {
   auto it = serialization.begin();
@@ -39,4 +37,4 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
   }
 }
 
-} // namespace mscclpp
+}  // namespace mscclpp

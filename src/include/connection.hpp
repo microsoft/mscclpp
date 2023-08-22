@@ -9,6 +9,7 @@
 #include <mscclpp/core.hpp>
 
 #include "communicator.hpp"
+#include "context.hpp"
 #include "ib.hpp"
 #include "registered_memory.hpp"
 
@@ -18,7 +19,7 @@ class CudaIpcConnection : public Connection {
   cudaStream_t stream_;
 
  public:
-  CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context::Impl& contextImpl);
+  CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, cudaStream_t stream);
 
   Transport transport() override;
 
@@ -41,7 +42,7 @@ class IBConnection : public Connection {
   mscclpp::TransportInfo dstTransportInfo_;
 
  public:
-  IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context::Impl& contextImpl);
+  IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context);
 
   Transport transport() override;
 
@@ -52,10 +53,6 @@ class IBConnection : public Connection {
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
 
   void flush(int64_t timeoutUsec) override;
-
-  void beginSetup(std::shared_ptr<Bootstrap> bootstrap) override;
-
-  void endSetup(std::shared_ptr<Bootstrap> bootstrap) override;
 };
 
 }  // namespace mscclpp

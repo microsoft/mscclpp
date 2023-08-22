@@ -12,8 +12,10 @@ static NonblockingFuture<RegisteredMemory> setupInboundSemaphoreId(Communicator&
                                                                    void* localInboundSemaphoreId) {
   auto localInboundSemaphoreIdsRegMem =
       communicator.registerMemory(localInboundSemaphoreId, sizeof(uint64_t), connection->transport());
-  communicator.sendMemoryOnSetup(localInboundSemaphoreIdsRegMem, connection->remoteRank(), connection->tag());
-  return communicator.recvMemoryOnSetup(connection->remoteRank(), connection->tag());
+  int remoteRank = communicator.remoteRankOf(*connection);
+  int tag = communicator.tagOf(*connection);
+  communicator.sendMemoryOnSetup(localInboundSemaphoreIdsRegMem, remoteRank, tag);
+  return communicator.recvMemoryOnSetup(remoteRank, tag);
 }
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communicator,
@@ -69,12 +71,12 @@ MSCCLPP_API_CPP SmDevice2DeviceSemaphore::SmDevice2DeviceSemaphore(Communicator&
     remoteInboundSemaphoreIdsRegMem_ =
         setupInboundSemaphoreId(communicator, connection.get(), localInboundSemaphore_.get());
     INFO(MSCCLPP_INIT, "Creating a direct semaphore for CudaIPC transport from %d to %d",
-         communicator.bootstrap()->getRank(), connection->remoteRank());
+         communicator.bootstrap()->getRank(), communicator.remoteRankOf(*connection));
     isRemoteInboundSemaphoreIdSet_ = true;
   } else if (AllIBTransports.has(connection->transport())) {
     // We don't need to really with any of the IB transports, since the values will be local
     INFO(MSCCLPP_INIT, "Creating a direct semaphore for IB transport from %d to %d",
-         communicator.bootstrap()->getRank(), connection->remoteRank());
+         communicator.bootstrap()->getRank(), communicator.remoteRankOf(*connection));
     isRemoteInboundSemaphoreIdSet_ = false;
   }
 }

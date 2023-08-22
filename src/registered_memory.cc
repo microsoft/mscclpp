@@ -9,6 +9,7 @@
 #include <mscclpp/cuda_utils.hpp>
 
 #include "api.h"
+#include "context.hpp"
 #include "debug.h"
 #include "utils_internal.hpp"
 
@@ -64,8 +65,6 @@ MSCCLPP_API_CPP RegisteredMemory::~RegisteredMemory() = default;
 MSCCLPP_API_CPP void* RegisteredMemory::data() const { return pimpl->data; }
 
 MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl->size; }
-
-MSCCLPP_API_CPP int RegisteredMemory::rank() { return pimpl->rank; }
 
 MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl->transports; }
 
