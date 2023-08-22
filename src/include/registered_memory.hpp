@@ -35,12 +35,14 @@ struct RegisteredMemory::Impl {
   void* data;
   size_t size;
   int rank;
+  bool isRemote;
   uint64_t hostHash;
   TransportFlags transports;
   std::vector<TransportInfo> transportInfos;
 
   Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl);
   Impl(const std::vector<char>& data);
+  ~Impl();
 
   const TransportInfo& getTransportInfo(Transport transport) const;
 };

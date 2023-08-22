@@ -46,11 +46,10 @@ class Layout:
 
 @pytest.fixture
 def layout(request: pytest.FixtureRequest):
+    MPI.COMM_WORLD.barrier()
     if request.param is None:
-        MPI.COMM_WORLD.barrier()
         pytest.skip(f"Skip for rank {MPI.COMM_WORLD.rank}")
     yield request.param
-    MPI.COMM_WORLD.barrier()
 
 
 def parametrize_layouts(*tuples: tuple):

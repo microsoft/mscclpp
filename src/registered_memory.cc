@@ -15,7 +15,12 @@
 namespace mscclpp {
 
 RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl)
-    : data(data), size(size), rank(rank), hostHash(commImpl.rankToHash_.at(rank)), transports(transports) {
+    : data(data),
+      size(size),
+      rank(rank),
+      isRemote(false),
+      hostHash(commImpl.rankToHash_.at(rank)),
+      transports(transports) {
   if (transports.has(Transport::CudaIpc)) {
     TransportInfo transportInfo;
     transportInfo.transport = Transport::CudaIpc;
@@ -56,7 +61,7 @@ MSCCLPP_API_CPP RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) 
 
 MSCCLPP_API_CPP RegisteredMemory::~RegisteredMemory() = default;
 
-MSCCLPP_API_CPP void* RegisteredMemory::data() { return pimpl->data; }
+MSCCLPP_API_CPP void* RegisteredMemory::data() const { return pimpl->data; }
 
 MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl->size; }
 
@@ -141,6 +146,19 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
       data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
       INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", data);
     }
+  }
+  this->isRemote = true;
+}
+
+RegisteredMemory::Impl::~Impl() {
+  if (this->isRemote && transports.has(Transport::CudaIpc)) {
+    void* base = static_cast<char*>(data) - getTransportInfo(Transport::CudaIpc).cudaIpcOffsetFromBase;
+    cudaError_t err = cudaIpcCloseMemHandle(base);                                                                                           \
+    if (err != cudaSuccess) {                                                                                        \
+      WARN("Failed to close cuda IPC handle: %s", cudaGetErrorString(err));                                                                               \
+    }
+    INFO(MSCCLPP_P2P, "Closed CUDA IPC handle at pointer %p", base);
+    data = nullptr;
   }
 }
 

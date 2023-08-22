@@ -326,7 +326,7 @@ class RegisteredMemory {
   /// Get a pointer to the memory block.
   ///
   /// @return A pointer to the memory block.
-  void* data();
+  void* data() const;
 
   /// Get the size of the memory block.
   ///
