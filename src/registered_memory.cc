@@ -151,7 +151,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
 }
 
 RegisteredMemory::Impl::~Impl() {
-  if (this->isRemote && transports.has(Transport::CudaIpc)) {
+  uint64_t localHostHash = getHostHash();
+  if (this->isRemote && localHostHash == this->hostHash && transports.has(Transport::CudaIpc)) {
     void* base = static_cast<char*>(data) - getTransportInfo(Transport::CudaIpc).cudaIpcOffsetFromBase;
     cudaError_t err = cudaIpcCloseMemHandle(base);
     if (err != cudaSuccess) {
