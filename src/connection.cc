@@ -92,6 +92,8 @@ IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Cont
   qp->rtr(remoteEndpoint.pimpl->ibQpInfo_);
   qp->rts();
   dummyAtomicSourceMem_ = context.registerMemory(dummyAtomicSource_.get(), sizeof(uint64_t), transport_);
+  validateTransport(dummyAtomicSourceMem_, transport_);
+  dstTransportInfo_ = dummyAtomicSourceMem_.pimpl->getTransportInfo(transport_);
   INFO(MSCCLPP_NET, "IB connection via %s created", getIBDeviceName(transport_).c_str());
 }
 
