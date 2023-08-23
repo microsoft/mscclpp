@@ -35,7 +35,7 @@ MSCCLPP_API_CPP Context::Context() : pimpl(std::make_unique<Impl>()) {}
 MSCCLPP_API_CPP Context::~Context() = default;
 
 MSCCLPP_API_CPP RegisteredMemory Context::registerMemory(void* ptr, size_t size, TransportFlags transports) {
-  return RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(ptr, size, -1, transports, *pimpl));
+  return RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(ptr, size, transports, *pimpl));
 }
 
 MSCCLPP_API_CPP Endpoint Context::createEndpoint(Transport transport, int ibMaxCqSize, int ibMaxCqPollNum,

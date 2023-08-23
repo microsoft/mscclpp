@@ -15,11 +15,10 @@
 
 namespace mscclpp {
 
-RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports, Context::Impl& contextImpl)
+RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports, Context::Impl& contextImpl)
     : data(data),
       size(size),
-      rank(rank),
-      isRemote(false),
+      maybeRemote(false),
       hostHash(contextImpl.hostHash_),
       transports(transports) {
   if (transports.has(Transport::CudaIpc)) {
@@ -71,7 +70,6 @@ MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl->tr
 MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
   std::vector<char> result;
   std::copy_n(reinterpret_cast<char*>(&pimpl->size), sizeof(pimpl->size), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl->rank), sizeof(pimpl->rank), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->hostHash), sizeof(pimpl->hostHash), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl->transports), sizeof(pimpl->transports), std::back_inserter(result));
   if (pimpl->transportInfos.size() > static_cast<size_t>(std::numeric_limits<int8_t>::max())) {
@@ -103,8 +101,6 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
   auto it = serialization.begin();
   std::copy_n(it, sizeof(this->size), reinterpret_cast<char*>(&this->size));
   it += sizeof(this->size);
-  std::copy_n(it, sizeof(this->rank), reinterpret_cast<char*>(&this->rank));
-  it += sizeof(this->rank);
   std::copy_n(it, sizeof(this->hostHash), reinterpret_cast<char*>(&this->hostHash));
   it += sizeof(this->hostHash);
   std::copy_n(it, sizeof(this->transports), reinterpret_cast<char*>(&this->transports));
@@ -146,18 +142,19 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
       INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", data);
     }
   }
-  this->isRemote = true;
+  this->maybeRemote = true;
 }
 
 RegisteredMemory::Impl::~Impl() {
   uint64_t localHostHash = getHostHash();
-  if (this->isRemote && localHostHash == this->hostHash && transports.has(Transport::CudaIpc)) {
+  if (this->maybeRemote && localHostHash == this->hostHash && transports.has(Transport::CudaIpc)) {
     void* base = static_cast<char*>(data) - getTransportInfo(Transport::CudaIpc).cudaIpcOffsetFromBase;
     cudaError_t err = cudaIpcCloseMemHandle(base);
     if (err != cudaSuccess) {
-      WARN("Failed to close cuda IPC handle: %s", cudaGetErrorString(err));
+      INFO(MSCCLPP_P2P, "Failed to close CUDA IPC handle at pointer %p: %s", base, cudaGetErrorString(err));
+    } else {
+      INFO(MSCCLPP_P2P, "Closed CUDA IPC handle at pointer %p", base);
     }
-    INFO(MSCCLPP_P2P, "Closed CUDA IPC handle at pointer %p", base);
     data = nullptr;
   }
 }
