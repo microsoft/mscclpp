@@ -105,7 +105,7 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunk
     sizeForThisBlock += lastChunkSize;
   }
   if (threadIdx.x == 0 && peerLocalBlockIdx == 0) {
-    constSmChans[peerIdx].signal();
+    constSmChans[peerIdx].signalWithoutFence();
     constSmChans[peerIdx].wait();
   }
   deviceSyncer.sync(nBlocks);

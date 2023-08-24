@@ -75,6 +75,7 @@ __device__ void vectorSumSingleBlock(int* dst, int* src, size_t nElem) {
 }
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
+__device__ mscclpp::DeviceSyncer allGatherDeviceSyncer;
 __device__ mscclpp::DeviceSyncer reduceScatterDeviceSyncer;
 __device__ mscclpp::DeviceSyncer ibDeviceSyncer;
 
@@ -291,7 +292,7 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
   int4* buff4 = (int4*)buff;
 
   for (int peerIdx = threadIdx.x + blockIdx.x * blockDim.x; peerIdx < nPeer; peerIdx += blockDim.x * nBlocks) {
-    smChans[peerIdx].signal();
+    smChans[peerIdx].signalWithoutFence();
   }
   for (int peerIdx = threadIdx.x + blockIdx.x * blockDim.x; peerIdx < nPeer; peerIdx += blockDim.x * nBlocks) {
     smChans[peerIdx].wait();
@@ -303,7 +304,7 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
     int4 sum = make_int4(0, 0, 0, 0);
 
     for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
-      int4 val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
+      int4 val = smChans[(localRankIndexInNode + peerIdx) % nPeer].read<int4>(indexOffset4 + idx);
       sum.w += val.w;
       sum.x += val.x;
       sum.y += val.y;
@@ -319,7 +320,7 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nLastInts; idx += blockDim.x * nBlocks) {
     int sum = 0;
     for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
-      int val = smChans[peerIdx].read<int>(indexOffset + nInt4 * 4 + idx);
+      int val = smChans[(localRankIndexInNode + peerIdx) % nPeer].read<int>(indexOffset + nInt4 * 4 + idx);
       sum += val;
     }
     buff[indexOffset + nInt4 * 4 + idx] += sum;
@@ -351,7 +352,7 @@ __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPer
   int nBlocksRemain = gridDim.x - nBlocksForReduceScatter;
   DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = constDevFstRoundChans[peer];
   if (peerNodeId == rank / nRanksPerNode) {
-    localReduceScatterSm(buff, scratch, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, nBlocksForReduceScatter);
+    localReduceScatterSm(buff, scratch, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, gridDim.x);
     return;
   }
 
@@ -445,10 +446,10 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunk
     sizeForThisBlock += lastChunkSize;
   }
   if (threadIdx.x == 0 && peerLocalBlockIdx == 0) {
-    constSmInPlaceChans[peerIdx].signal();
+    constSmInPlaceChans[peerIdx].signalWithoutFence();
     constSmInPlaceChans[peerIdx].wait();
   }
-  deviceSyncer.sync(nBlocks);
+  allGatherDeviceSyncer.sync(nBlocks);
   size_t offset = rankChunkSize * (startRankChunkIndex + remoteRankLocalIndex) + offsetInRankChunk;
   constSmInPlaceChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
@@ -470,7 +471,7 @@ __device__ void allGatherSm(int rank, int worldSize, int nRanksPerNode, size_t n
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = constDevSndRoundChans[peer];
-  const size_t nBlocksForLocalAllGather = gridDim.x;
+  const size_t nBlocksForLocalAllGather = gridDim.x / (nRanksPerNode - 1) * (nRanksPerNode - 1);
   const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
   const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
   const int startRankIndexInPeerNode = (peerRank / nRanksPerNode) * nRanksPerNode;
@@ -495,7 +496,7 @@ __device__ void allGatherSm(int rank, int worldSize, int nRanksPerNode, size_t n
     proxyChan.wait();
     proxyChan.flush();
   }
-  deviceSyncer.sync(nBlocksForLocalAllGather);
+  deviceSyncer.sync(gridDim.x);
   // Step 2
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
@@ -506,7 +507,7 @@ __device__ void allGatherSm(int rank, int worldSize, int nRanksPerNode, size_t n
     proxyChan.wait();
     proxyChan.flush();
   }
-  deviceSyncer.sync(nBlocksForLocalAllGather);
+  deviceSyncer.sync(gridDim.x);
   // Step 3
   localAllGatherSm(rank, nRanksPerNode, startRankIndexInPeerNode, step1Bytes, rankChunkSize, step2Bytes,
                    nBlocksForLocalAllGather);
@@ -882,6 +883,7 @@ void AllReduceTestColl::setupCollTest(size_t size) {
   mscclpp::DeviceSyncer syncer = {};
   uint64_t initFlag = 1;
   CUDATHROW(cudaMemcpyToSymbol(deviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
+  CUDATHROW(cudaMemcpyToSymbol(allGatherDeviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
   CUDATHROW(cudaMemcpyToSymbol(reduceScatterDeviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
   CUDATHROW(cudaMemcpyToSymbol(ibDeviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
   CUDATHROW(cudaMemcpyToSymbol(globalFlag, &initFlag, sizeof(uint64_t)));

@@ -312,6 +312,8 @@ struct SmChannelDeviceHandle {
   ///
   __forceinline__ __device__ void signal() { semaphore_.signal(); }
 
+  __forceinline__ __device__ void signalWithoutFence() { semaphore_.signalWithoutFence(); }
+
   /// Signal the remote semaphore for copied packets.
   ///
   /// Unlike @ref signal(), this function provides no guarantee on the completion of memory operations. This is

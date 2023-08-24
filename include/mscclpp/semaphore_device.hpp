@@ -44,6 +44,11 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
     *remoteInboundSemaphoreId = semaphoreGetLocal();
   }
 
+  __forceinline__ __device__ void signalWithoutFence() {
+    semaphoreIncrement();
+    *remoteInboundSemaphoreId = semaphoreGetLocal();
+  }
+
   /// Signal the remote device for copied packets.
   ///
   /// Unlike @ref signal(), this function provides no guarantee on the completion of memory operations. This is
