@@ -110,9 +110,10 @@ class TcpBootstrap : public Bootstrap {
   void barrier() override;
 
  private:
-  /// Implementation class for @ref TcpBootstrap.
-  class Impl;
-  /// Pointer to the implementation class for @ref TcpBootstrap.
+  // The interal implementation.
+  struct Impl;
+
+  // Pointer to the internal implementation.
   std::unique_ptr<Impl> pimpl_;
 };
 
@@ -303,18 +304,14 @@ std::string getIBDeviceName(Transport ibTransport);
 /// @return The InfiniBand transport associated with the specified device name.
 Transport getIBTransportByDeviceName(const std::string& ibDeviceName);
 
-/// Represents a block of memory that has been registered to a @ref Communicator.
+class Context;
+class Connection;
+
+/// Represents a block of memory that has been registered to a @ref Context.
 class RegisteredMemory {
  public:
-  struct Impl;
-
   /// Default constructor.
   RegisteredMemory() = default;
-
-  /// Constructor that takes a shared pointer to an implementation object.
-  ///
-  /// @param pimpl A shared pointer to an implementation object.
-  RegisteredMemory(std::shared_ptr<Impl> pimpl);
 
   /// Destructor.
   ~RegisteredMemory();
@@ -345,9 +342,54 @@ class RegisteredMemory {
   /// @return A deserialized RegisteredMemory object.
   static RegisteredMemory deserialize(const std::vector<char>& data);
 
-  /// Pointer to the internal implementation of the RegisteredMemory class. A shared_ptr is used since RegisteredMemory
-  /// is immutable.
-  std::shared_ptr<Impl> pimpl;
+ private:
+  // The interal implementation.
+  struct Impl;
+
+  // Internal constructor.
+  RegisteredMemory(std::shared_ptr<Impl> pimpl);
+
+  // Pointer to the internal implementation. A shared_ptr is used since RegisteredMemory is immutable.
+  std::shared_ptr<Impl> pimpl_;
+
+  friend class Context;
+  friend class Connection;
+};
+
+/// Represents one end of a connection.
+class Endpoint {
+ public:
+  /// Default constructor.
+  Endpoint() = default;
+
+  /// Get the transport used.
+  ///
+  /// @return The transport used.
+  Transport transport();
+
+  /// Serialize the Endpoint object to a vector of characters.
+  ///
+  /// @return A vector of characters representing the serialized Endpoint object.
+  std::vector<char> serialize();
+
+  /// Deserialize a Endpoint object from a vector of characters.
+  ///
+  /// @param data A vector of characters representing a serialized Endpoint object.
+  /// @return A deserialized Endpoint object.
+  static Endpoint deserialize(const std::vector<char>& data);
+
+ private:
+  // The interal implementation.
+  struct Impl;
+
+  // Internal constructor.
+  Endpoint(std::shared_ptr<Impl> pimpl);
+
+  // Pointer to the internal implementation. A shared_ptr is used since Endpoint is immutable.
+  std::shared_ptr<Impl> pimpl_;
+
+  friend class Context;
+  friend class Connection;
 };
 
 /// Represents a connection between two processes.
@@ -383,40 +425,11 @@ class Connection {
   ///
   /// @return The transport used by the remote process.
   virtual Transport remoteTransport() = 0;
-};
 
-/// Represents one end of a connection.
-class Endpoint {
- public:
-  /// Default constructor.
-  Endpoint() = default;
-
-  /// Get the transport used.
-  ///
-  /// @return The transport used.
-  Transport transport();
-
-  /// Serialize the Endpoint object to a vector of characters.
-  ///
-  /// @return A vector of characters representing the serialized Endpoint object.
-  std::vector<char> serialize();
-
-  /// Deserialize a Endpoint object from a vector of characters.
-  ///
-  /// @param data A vector of characters representing a serialized Endpoint object.
-  /// @return A deserialized Endpoint object.
-  static Endpoint deserialize(const std::vector<char>& data);
-
-  /// The interal implementation of the Endpoint class.
-  struct Impl;
-
-  /// Constructor that takes a shared pointer to an implementation object.
-  ///
-  /// @param pimpl A shared pointer to an implementation object.
-  Endpoint(std::shared_ptr<Impl> pimpl);
-
-  /// Pointer to the internal implementation of the Endpoint class. A shared_ptr is used since Endpoint is immutable.
-  std::shared_ptr<Impl> pimpl;
+ protected:
+  // Internal methods for getting implementation pointers.
+  static std::shared_ptr<RegisteredMemory::Impl> getImpl(RegisteredMemory& memory);
+  static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
 };
 
 class Context {
@@ -454,11 +467,15 @@ class Context {
   /// @return std::shared_ptr<Connection> A shared pointer to the connection.
   std::shared_ptr<Connection> connect(Endpoint localEndpoint, Endpoint remoteEndpoint);
 
-  /// The interal implementation of the Context class.
+ private:
+  // The interal implementation.
   struct Impl;
 
-  /// Pointer to the internal implementation of the Context class.
-  std::unique_ptr<Impl> pimpl;
+  // Pointer to the internal implementation.
+  std::unique_ptr<Impl> pimpl_;
+
+  friend class RegisteredMemory;
+  friend class Endpoint;
 };
 
 /// A base class for objects that can be set up during @ref Communicator::setup().
@@ -617,11 +634,12 @@ class Communicator {
   /// that have been registered after the (n-1)-th call.
   void setup();
 
-  /// The interal implementation of the Communicator class.
+ private:
+  // The interal implementation.
   struct Impl;
 
-  /// Pointer to the internal implementation of the Communicator class.
-  std::unique_ptr<Impl> pimpl;
+  // Pointer to the internal implementation.
+  std::unique_ptr<Impl> pimpl_;
 };
 
 /// A constant TransportFlags object representing no transports.

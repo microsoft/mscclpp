@@ -57,27 +57,27 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
   }
 }
 
-MSCCLPP_API_CPP RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) : pimpl(pimpl) {}
+MSCCLPP_API_CPP RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) : pimpl_(pimpl) {}
 
 MSCCLPP_API_CPP RegisteredMemory::~RegisteredMemory() = default;
 
 MSCCLPP_API_CPP void* RegisteredMemory::data() const { return pimpl->data; }
 
-MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl->size; }
+MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl_->size; }
 
-MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl->transports; }
+MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl_->transports; }
 
 MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
   std::vector<char> result;
-  std::copy_n(reinterpret_cast<char*>(&pimpl->size), sizeof(pimpl->size), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl->hostHash), sizeof(pimpl->hostHash), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl->transports), sizeof(pimpl->transports), std::back_inserter(result));
-  if (pimpl->transportInfos.size() > static_cast<size_t>(std::numeric_limits<int8_t>::max())) {
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->size), sizeof(pimpl_->size), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->hostHash), sizeof(pimpl_->hostHash), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->transports), sizeof(pimpl_->transports), std::back_inserter(result));
+  if (pimpl_->transportInfos.size() > static_cast<size_t>(std::numeric_limits<int8_t>::max())) {
     throw mscclpp::Error("Too many transport info entries", ErrorCode::InternalError);
   }
-  int8_t transportCount = pimpl->transportInfos.size();
+  int8_t transportCount = pimpl_->transportInfos.size();
   std::copy_n(reinterpret_cast<char*>(&transportCount), sizeof(transportCount), std::back_inserter(result));
-  for (auto& entry : pimpl->transportInfos) {
+  for (auto& entry : pimpl_->transportInfos) {
     std::copy_n(reinterpret_cast<char*>(&entry.transport), sizeof(entry.transport), std::back_inserter(result));
     if (entry.transport == Transport::CudaIpc) {
       std::copy_n(reinterpret_cast<char*>(&entry.cudaIpcBaseHandle), sizeof(entry.cudaIpcBaseHandle),

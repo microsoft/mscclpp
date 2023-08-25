@@ -4,11 +4,10 @@
 #ifndef MSCCL_CONTEXT_HPP_
 #define MSCCL_CONTEXT_HPP_
 
-#include <cuda_runtime.h>
-
 #include <mscclpp/core.hpp>
 #include <mscclpp/cuda_utils.hpp>
 #include <unordered_map>
+#include <vector>
 
 #include "ib.hpp"
 

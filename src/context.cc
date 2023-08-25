@@ -3,8 +3,6 @@
 
 #include "context.hpp"
 
-#include <sstream>
-
 #include "api.h"
 #include "connection.hpp"
 #include "debug.h"
@@ -30,30 +28,30 @@ IbCtx* Context::Impl::getIbContext(Transport ibTransport) {
   }
 }
 
-MSCCLPP_API_CPP Context::Context() : pimpl(std::make_unique<Impl>()) {}
+MSCCLPP_API_CPP Context::Context() : pimpl_(std::make_unique<Impl>()) {}
 
 MSCCLPP_API_CPP Context::~Context() = default;
 
 MSCCLPP_API_CPP RegisteredMemory Context::registerMemory(void* ptr, size_t size, TransportFlags transports) {
-  return RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(ptr, size, transports, *pimpl));
+  return RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(ptr, size, transports, *pimpl_));
 }
 
 MSCCLPP_API_CPP Endpoint Context::createEndpoint(Transport transport, int ibMaxCqSize, int ibMaxCqPollNum,
                                                  int ibMaxSendWr, int ibMaxWrPerSend) {
   return Endpoint(
-      std::make_shared<Endpoint::Impl>(transport, ibMaxCqSize, ibMaxCqPollNum, ibMaxSendWr, ibMaxWrPerSend, *pimpl));
+      std::make_shared<Endpoint::Impl>(transport, ibMaxCqSize, ibMaxCqPollNum, ibMaxSendWr, ibMaxWrPerSend, *pimpl_));
 }
 
 MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpoint, Endpoint remoteEndpoint) {
   std::shared_ptr<Connection> conn;
   if (localEndpoint.transport() == Transport::CudaIpc) {
-    conn = std::make_shared<CudaIpcConnection>(localEndpoint, remoteEndpoint, pimpl->ipcStream_);
+    conn = std::make_shared<CudaIpcConnection>(localEndpoint, remoteEndpoint, pimpl_->ipcStream_);
   } else if (AllIBTransports.has(localEndpoint.transport())) {
     conn = std::make_shared<IBConnection>(localEndpoint, remoteEndpoint, *this);
   } else {
     throw mscclpp::Error("Unsupported transport", ErrorCode::InternalError);
   }
-  pimpl->connections_.push_back(conn);
+  pimpl_->connections_.push_back(conn);
   return conn;
 }
 

@@ -20,6 +20,12 @@ void validateTransport(RegisteredMemory mem, Transport transport) {
   }
 }
 
+// Connection
+
+std::shared_ptr<RegisteredMemory::Impl> Connection::getImpl(RegisteredMemory& memory) { return memory.pimpl_; }
+
+std::shared_ptr<Endpoint::Impl> Connection::getImpl(Endpoint& memory) { return memory.pimpl_; }
+
 // CudaIpcConnection
 
 CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, cudaStream_t stream)
@@ -31,10 +37,10 @@ CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndp
     throw mscclpp::Error("Cuda IPC connection can only be made to a Cuda IPC endpoint", ErrorCode::InvalidUsage);
   }
   // sanity check: make sure the IPC connection is being made within a node
-  if (remoteEndpoint.pimpl->hostHash_ != localEndpoint.pimpl->hostHash_) {
+  if (getImpl(remoteEndpoint)->hostHash_ != getImpl(localEndpoint)->hostHash_) {
     std::stringstream ss;
-    ss << "Cuda IPC connection can only be made within a node: " << std::hex << remoteEndpoint.pimpl->hostHash_
-       << " != " << std::hex << localEndpoint.pimpl->hostHash_;
+    ss << "Cuda IPC connection can only be made within a node: " << std::hex << getImpl(remoteEndpoint)->hostHash_
+       << " != " << std::hex << getImpl(localEndpoint)->hostHash_;
     throw mscclpp::Error(ss.str(), ErrorCode::InvalidUsage);
   }
   INFO(MSCCLPP_P2P, "Cuda IPC connection created");
@@ -88,12 +94,12 @@ IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Cont
       remoteTransport_(remoteEndpoint.transport()),
       numSignaledSends(0),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
-  qp = localEndpoint.pimpl->ibQp_;
-  qp->rtr(remoteEndpoint.pimpl->ibQpInfo_);
+  qp = getImpl(localEndpoint)->ibQp_;
+  qp->rtr(getImpl(remoteEndpoint)->ibQpInfo_);
   qp->rts();
   dummyAtomicSourceMem_ = context.registerMemory(dummyAtomicSource_.get(), sizeof(uint64_t), transport_);
   validateTransport(dummyAtomicSourceMem_, transport_);
-  dstTransportInfo_ = dummyAtomicSourceMem_.pimpl->getTransportInfo(transport_);
+  dstTransportInfo_ = getImpl(dummyAtomicSourceMem_)->getTransportInfo(transport_);
   INFO(MSCCLPP_NET, "IB connection via %s created", getIBDeviceName(transport_).c_str());
 }
 
@@ -106,11 +112,11 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   validateTransport(dst, remoteTransport());
   validateTransport(src, transport());
 
-  auto dstTransportInfo = dst.pimpl->getTransportInfo(remoteTransport());
+  auto dstTransportInfo = getImpl(dst)->getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
     throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
   }
-  auto srcTransportInfo = src.pimpl->getTransportInfo(transport());
+  auto srcTransportInfo = getImpl(src)->getTransportInfo(transport());
   if (!srcTransportInfo.ibLocal) {
     throw Error("src is remote, which is not supported", ErrorCode::InvalidUsage);
   }
@@ -130,7 +136,7 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 
 void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
   validateTransport(dst, remoteTransport());
-  auto dstTransportInfo = dst.pimpl->getTransportInfo(remoteTransport());
+  auto dstTransportInfo = getImpl(dst)->getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
     throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
   }

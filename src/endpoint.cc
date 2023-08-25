@@ -17,14 +17,14 @@ Endpoint::Impl::Impl(Transport transport, int ibMaxCqSize, int ibMaxCqPollNum, i
   }
 }
 
-MSCCLPP_API_CPP Transport Endpoint::transport() { return pimpl->transport_; }
+MSCCLPP_API_CPP Transport Endpoint::transport() { return pimpl_->transport_; }
 
 MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() {
   std::vector<char> data;
-  std::copy_n(reinterpret_cast<char*>(&pimpl->transport_), sizeof(pimpl->transport_), std::back_inserter(data));
-  std::copy_n(reinterpret_cast<char*>(&pimpl->hostHash_), sizeof(pimpl->hostHash_), std::back_inserter(data));
-  if (AllIBTransports.has(pimpl->transport_)) {
-    std::copy_n(reinterpret_cast<char*>(&pimpl->ibQpInfo_), sizeof(pimpl->ibQpInfo_), std::back_inserter(data));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->transport_), sizeof(pimpl_->transport_), std::back_inserter(data));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->hostHash_), sizeof(pimpl_->hostHash_), std::back_inserter(data));
+  if (AllIBTransports.has(pimpl_->transport_)) {
+    std::copy_n(reinterpret_cast<char*>(&pimpl_->ibQpInfo_), sizeof(pimpl_->ibQpInfo_), std::back_inserter(data));
   }
   return data;
 }
@@ -46,6 +46,6 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
   }
 }
 
-MSCCLPP_API_CPP Endpoint::Endpoint(std::shared_ptr<mscclpp::Endpoint::Impl> pimpl) : pimpl(pimpl) {}
+MSCCLPP_API_CPP Endpoint::Endpoint(std::shared_ptr<mscclpp::Endpoint::Impl> pimpl) : pimpl_(pimpl) {}
 
 }  // namespace mscclpp
