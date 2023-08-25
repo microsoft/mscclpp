@@ -7,12 +7,12 @@
 
 namespace mscclpp {
 
-Endpoint::Impl::Impl(Transport transport, int ibMaxCqSize, int ibMaxCqPollNum, int ibMaxSendWr, int ibMaxWrPerSend,
-                     Context::Impl& contextImpl)
-    : transport_(transport), hostHash_(contextImpl.hostHash_) {
-  if (AllIBTransports.has(transport)) {
+Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
+    : transport_(config.transport), hostHash_(contextImpl.hostHash_) {
+  if (AllIBTransports.has(transport_)) {
     ibLocal_ = true;
-    ibQp_ = contextImpl.getIbContext(transport)->createQp(ibMaxCqSize, ibMaxCqPollNum, ibMaxSendWr, 0, ibMaxWrPerSend);
+    ibQp_ = contextImpl.getIbContext(transport_)
+                ->createQp(config.ibMaxCqSize, config.ibMaxCqPollNum, config.ibMaxSendWr, 0, config.ibMaxWrPerSend);
     ibQpInfo_ = ibQp_->getInfo();
   }
 }

@@ -36,10 +36,8 @@ MSCCLPP_API_CPP RegisteredMemory Context::registerMemory(void* ptr, size_t size,
   return RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(ptr, size, transports, *pimpl_));
 }
 
-MSCCLPP_API_CPP Endpoint Context::createEndpoint(Transport transport, int ibMaxCqSize, int ibMaxCqPollNum,
-                                                 int ibMaxSendWr, int ibMaxWrPerSend) {
-  return Endpoint(
-      std::make_shared<Endpoint::Impl>(transport, ibMaxCqSize, ibMaxCqPollNum, ibMaxSendWr, ibMaxWrPerSend, *pimpl_));
+MSCCLPP_API_CPP Endpoint Context::createEndpoint(EndpointConfig config) {
+  return Endpoint(std::make_shared<Endpoint::Impl>(config, *pimpl_));
 }
 
 MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpoint, Endpoint remoteEndpoint) {

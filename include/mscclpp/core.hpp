@@ -432,6 +432,28 @@ class Connection {
   static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
 };
 
+/// Used to configure an endpoint.
+struct EndpointConfig {
+  const int DefaultMaxCqSize = 1024;
+  const int DefaultMaxCqPollNum = 1;
+  const int DefaultMaxSendWr = 8192;
+  const int DefaultMaxWrPerSend = 64;
+
+  Transport transport;
+  int ibMaxCqSize = DefaultMaxCqSize;
+  int ibMaxCqPollNum = DefaultMaxCqPollNum;
+  int ibMaxSendWr = DefaultMaxSendWr;
+  int ibMaxWrPerSend = DefaultMaxWrPerSend;
+
+  /// Default constructor. Sets transport to Transport::Unknown.
+  EndpointConfig() : transport(Transport::Unknown) {}
+
+  /// Constructor that takes a transport and sets the other fields to their default values.
+  ///
+  /// @param transport The transport to use.
+  EndpointConfig(Transport transport) : transport(transport) {}
+};
+
 class Context {
  public:
   /// Create a context.
@@ -457,8 +479,7 @@ class Context {
   /// @param ibMaxSendWr The maximum number of outstanding send work requests for IB. Unused if transport is not IB.
   /// @param ibMaxWrPerSend The maximum number of work requests per send for IB. Unused if transport is not IB.
   /// @return The newly created endpoint.
-  Endpoint createEndpoint(Transport transport, int ibMaxCqSize = 1024, int ibMaxCqPollNum = 1, int ibMaxSendWr = 8192,
-                          int ibMaxWrPerSend = 64);
+  Endpoint createEndpoint(EndpointConfig config);
 
   /// Establish a connection between two endpoints.
   ///
@@ -545,6 +566,7 @@ class Communicator {
   /// Initializes the communicator with a given bootstrap implementation.
   ///
   /// @param bootstrap An implementation of the Bootstrap that the communicator will use.
+  /// @param context An optional context to use for the communicator. If not provided, a new context will be created.
   Communicator(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<Context> context = nullptr);
 
   /// Destroy the communicator.
@@ -606,9 +628,7 @@ class Communicator {
   /// @param ibMaxWrPerSend The maximum number of work requests per send for IB. Unused if transport is not IB.
   /// @return NonblockingFuture<NonblockingFuture<std::shared_ptr<Connection>>> A non-blocking future of shared pointer
   /// to the connection.
-  NonblockingFuture<std::shared_ptr<Connection>> connectOnSetup(int remoteRank, int tag, Transport transport,
-                                                                int ibMaxCqSize = 1024, int ibMaxCqPollNum = 1,
-                                                                int ibMaxSendWr = 8192, int ibMaxWrPerSend = 64);
+  NonblockingFuture<std::shared_ptr<Connection>> connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig);
 
   /// Get the remote rank a connection is connected to.
   ///

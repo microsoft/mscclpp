@@ -12,8 +12,7 @@
 namespace mscclpp {
 
 struct Endpoint::Impl {
-  Impl(Transport transport, int ibMaxCqSize, int ibMaxCqPollNum, int ibMaxSendWr, int ibMaxWrPerSend,
-       Context::Impl& contextImpl);
+  Impl(EndpointConfig config, Context::Impl& contextImpl);
   Impl(const std::vector<char>& serialization);
 
   Transport transport_;

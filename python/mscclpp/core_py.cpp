@@ -127,6 +127,15 @@ void register_core(nb::module_& m) {
       .def("serialize", &Endpoint::serialize)
       .def_static("deserialize", &Endpoint::deserialize, nb::arg("data"));
 
+  nb::class_<EndpointConfig>(m, "EndpointConfig")
+      .def(nb::init<>())
+      .def(nb::init_implicit<Transport>(), nb::arg("transport"))
+      .def_rw("transport", &EndpointConfig::transport)
+      .def_rw("ib_max_cq_size", &EndpointConfig::ibMaxCqSize)
+      .def_rw("ib_max_cq_poll_num", &EndpointConfig::ibMaxCqPollNum)
+      .def_rw("ib_max_send_wr", &EndpointConfig::ibMaxSendWr)
+      .def_rw("ib_max_wr_per_send", &EndpointConfig::ibMaxWrPerSend);
+
   nb::class_<Context>(m, "Context")
       .def(nb::init<>())
       .def(
@@ -135,8 +144,7 @@ void register_core(nb::module_& m) {
             return self->registerMemory((void*)ptr, size, transports);
           },
           nb::arg("ptr"), nb::arg("size"), nb::arg("transports"))
-      .def("create_endpoint", &Context::createEndpoint, nb::arg("transport"), nb::arg("ibMaxCqSize") = 1024,
-           nb::arg("ibMaxCqPollNum") = 1, nb::arg("ibMaxSendWr") = 8192, nb::arg("ibMaxWrPerSend") = 64)
+      .def("create_endpoint", &Context::createEndpoint, nb::arg("config"))
       .def("connect", &Context::connect, nb::arg("local_endpoint"), nb::arg("remote_endpoint"));
 
   def_nonblocking_future<RegisteredMemory>(m, "RegisteredMemory");
@@ -157,8 +165,7 @@ void register_core(nb::module_& m) {
            nb::arg("tag"))
       .def("recv_memory_on_setup", &Communicator::recvMemoryOnSetup, nb::arg("remoteRank"), nb::arg("tag"))
       .def("connect_on_setup", &Communicator::connectOnSetup, nb::arg("remoteRank"), nb::arg("tag"),
-           nb::arg("transport"), nb::arg("ibMaxCqSize") = 1024, nb::arg("ibMaxCqPollNum") = 1,
-           nb::arg("ibMaxSendWr") = 8192, nb::arg("ibMaxWrPerSend") = 64)
+           nb::arg("localConfig"))
       .def("remote_rank_of", &Communicator::remoteRankOf)
       .def("tag_of", &Communicator::tagOf)
       .def("setup", &Communicator::setup);

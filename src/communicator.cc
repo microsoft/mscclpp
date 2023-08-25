@@ -67,14 +67,12 @@ MSCCLPP_API_CPP NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSe
 }
 
 struct Communicator::Impl::Connector : public Setuppable {
-  Connector(Communicator& comm, Communicator::Impl& commImpl_, int remoteRank, int tag, Transport transport,
-            int ibMaxCqSize, int ibMaxCqPollNum, int ibMaxSendWr, int ibMaxWrPerSend)
+  Connector(Communicator& comm, Communicator::Impl& commImpl_, int remoteRank, int tag, EndpointConfig localConfig)
       : comm_(comm),
         commImpl_(commImpl_),
         remoteRank_(remoteRank),
         tag_(tag),
-        localEndpoint_(
-            comm.context()->createEndpoint(transport, ibMaxCqSize, ibMaxCqPollNum, ibMaxSendWr, ibMaxWrPerSend)) {}
+        localEndpoint_(comm.context()->createEndpoint(localConfig)) {}
 
   void beginSetup(std::shared_ptr<Bootstrap> bootstrap) override {
     bootstrap->send(localEndpoint_.serialize(), remoteRank_, tag_);
@@ -98,10 +96,8 @@ struct Communicator::Impl::Connector : public Setuppable {
 };
 
 MSCCLPP_API_CPP NonblockingFuture<std::shared_ptr<Connection>> Communicator::connectOnSetup(
-    int remoteRank, int tag, Transport transport, int ibMaxCqSize, int ibMaxCqPollNum, int ibMaxSendWr,
-    int ibMaxWrPerSend) {
-  auto connector = std::make_shared<Communicator::Impl::Connector>(
-      *this, *pimpl_, remoteRank, tag, transport, ibMaxCqSize, ibMaxCqPollNum, ibMaxSendWr, ibMaxWrPerSend);
+    int remoteRank, int tag, EndpointConfig localConfig) {
+  auto connector = std::make_shared<Communicator::Impl::Connector>(*this, *pimpl_, remoteRank, tag, localConfig);
   onSetup(connector);
   return NonblockingFuture<std::shared_ptr<Connection>>(connector->connectionPromise_.get_future());
 }
