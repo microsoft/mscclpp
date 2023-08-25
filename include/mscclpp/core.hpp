@@ -454,6 +454,22 @@ struct EndpointConfig {
   EndpointConfig(Transport transport) : transport(transport) {}
 };
 
+/// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
+/// where the process group abstraction offered by @ref Communicator is not suitable, e.g., ephemeral client-server
+/// connections. Correct use of this class requires external synchronization when finalizing connections with the
+/// @ref connect() method.
+///
+/// As an example, a client-server scenario where the server will write to the client might proceed as follows:
+///   1. The client creates an endpoint with @ref createEndpoint() and sends it to the server.
+///   2. The server receives the client endpoint, creates its own endpoint with @ref createEndpoint(), sends it to the
+///      client, and creates a connection with @ref connect().
+///   4. The client receives the server endpoint, creates a connection with @ref connect() and sends a
+///      @ref RegisteredMemory to the server.
+///   5. The server receives the @ref RegisteredMemory and writes to it using the previously created connection.
+/// The client waiting to create a connection before sending the @ref RegisteredMemory ensures that the server can not
+/// write to the @ref RegisteredMemory before the connection is established.
+///
+/// While some transports may have more relaxed implementation behavior, this should not be relied upon.
 class Context {
  public:
   /// Create a context.
@@ -472,16 +488,13 @@ class Context {
 
   /// Create an endpoint for establishing connections.
   ///
-  /// @param transport The transport to be used.
-  /// @param ibMaxCqSize The maximum number of completion queue entries for IB. Unused if transport is not IB.
-  /// @param ibMaxCqPollNum The maximum number of completion queue entries to poll for IB. Unused if transport is not
-  /// IB.
-  /// @param ibMaxSendWr The maximum number of outstanding send work requests for IB. Unused if transport is not IB.
-  /// @param ibMaxWrPerSend The maximum number of work requests per send for IB. Unused if transport is not IB.
+  /// @param config The configuration for the endpoint.
   /// @return The newly created endpoint.
   Endpoint createEndpoint(EndpointConfig config);
 
-  /// Establish a connection between two endpoints.
+  /// Establish a connection between two endpoints. While this method immediately returns a connection object, the
+  /// connection is only safe to use after the corresponding connection on the remote endpoint has been established.
+  /// This method must be called on both endpoints to establish a connection.
   ///
   /// @param localEndpoint The local endpoint.
   /// @param remoteEndpoint The remote endpoint.
@@ -620,12 +633,7 @@ class Communicator {
   ///
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag of the connection for identifying it.
-  /// @param transport The type of transport to be used.
-  /// @param ibMaxCqSize The maximum number of completion queue entries for IB. Unused if transport is not IB.
-  /// @param ibMaxCqPollNum The maximum number of completion queue entries to poll for IB. Unused if transport is not
-  /// IB.
-  /// @param ibMaxSendWr The maximum number of outstanding send work requests for IB. Unused if transport is not IB.
-  /// @param ibMaxWrPerSend The maximum number of work requests per send for IB. Unused if transport is not IB.
+  /// @param config The configuration for the local endpoint.
   /// @return NonblockingFuture<NonblockingFuture<std::shared_ptr<Connection>>> A non-blocking future of shared pointer
   /// to the connection.
   NonblockingFuture<std::shared_ptr<Connection>> connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig);
