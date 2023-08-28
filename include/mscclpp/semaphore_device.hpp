@@ -39,7 +39,7 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
   __forceinline__ __device__ void signal() {
     // This fence ensures that preceding writes are visible on the peer GPU before the incremented
     // `outboundSemaphoreId` is visible.
-    __threadfence_system();
+    asm volatile("fence.acq_rel.sys;" ::: "memory");
     semaphoreIncrement();
     *remoteInboundSemaphoreId = semaphoreGetLocal();
   }
