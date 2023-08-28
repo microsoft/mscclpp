@@ -48,32 +48,6 @@ struct DeviceSyncer {
     // the flag is flipped.
     __syncthreads();
   }
-
-  __forceinline__ __device__ void syncWithoutFence(int blockNum) {
-    int maxOldCnt = blockNum - 1;
-    if (blockNum == 1) {
-      __syncthreads();
-      return;
-    }
-    if (threadIdx.x == 0) {
-      int tmpIsAdd = isAdd_ ^ 1;
-      if (tmpIsAdd) {
-        if (atomicAdd(&count_, 1) == maxOldCnt) {
-          flag_ = 1;
-        }
-        POLL_MAYBE_JAILBREAK(!flag_, 1000000000);
-      } else {
-        if (atomicSub(&count_, 1) == 1) {
-          flag_ = 0;
-        }
-        POLL_MAYBE_JAILBREAK(flag_, 1000000000);
-      }
-      isAdd_ = tmpIsAdd;
-    }
-    // We need sync here because only a single thread is checking whether
-    // the flag is flipped.
-    __syncthreads();
-  }
 #endif
 
  private:

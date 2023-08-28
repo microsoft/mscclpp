@@ -292,24 +292,21 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
   int4* buff4 = (int4*)buff;
 
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid == 0) {
-    asm volatile("fence.acq_rel.sys;" ::: "memory");
-  }
-  __syncwarp();
   if (tid < nPeer) {
-    smChans[tid].signalWithoutFence();
+    smChans[tid].signal();
   }
   int waitStart = nBlocks * blockDim.x - nPeer;
   if (tid >= waitStart && tid < nBlocks * blockDim.x) {
     smChans[tid - waitStart].wait();
   }
-  reduceScatterDeviceSyncer.syncWithoutFence(nBlocks);
+  reduceScatterDeviceSyncer.sync(nBlocks);
 
   const size_t nInt4 = nelems / 4;
-  for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+  for (int index = 0; index < nPeer; ++index) {
     int4 val;
+    int peerIdx = (index + localRankIndexInNode) % nPeer;
     for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * nBlocks) {
-      val = smChans[(localRankIndexInNode + peerIdx) % nPeer].read<int4>(indexOffset4 + idx);
+      val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
       buff4[indexOffset4 + idx].w += val.w;
       buff4[indexOffset4 + idx].x += val.x;
       buff4[indexOffset4 + idx].y += val.y;
@@ -412,7 +409,6 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunk
                                  uint64_t rankChunkSize, uint64_t size, size_t nBlocks) {
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
-
   const size_t nPeer = nRanksPerNode - 1;
   const size_t peerIdx = blockIdx.x % nPeer;
   const size_t nBlockForThisPeer = nBlocks / nPeer + (nBlocks % nPeer > peerIdx ? 1 : 0);
@@ -461,13 +457,8 @@ __device__ void localRingAllGatherSm(int rank, int nRanksPerNode, uint64_t size,
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   const int nPeer = nRanksPerNode - 1;
 
-  // if (tid == 0) {
-  //   asm volatile("fence.acq_rel.sys;" ::: "memory");
-  // }
-  // __syncwarp();
   if (tid < nPeer) {
     constSmInPlaceChans[tid].signal();
-    // constSmInPlaceChans[tid].wait();
   }
   int waitStart = nBlocks * blockDim.x - nPeer;
   if (tid >= waitStart && tid < nBlocks * blockDim.x) {
@@ -476,8 +467,7 @@ __device__ void localRingAllGatherSm(int rank, int nRanksPerNode, uint64_t size,
   allGatherDeviceSyncer.sync(nBlocks);
   for (int i = 0; i < nPeer; ++i) {
     int peerIdx = (i + rank) % nPeer;
-    const size_t rankLocalIndex = rank % nRanksPerNode;
-    const int remoteRankLocalIndex = (peerIdx < rankLocalIndex ? peerIdx : peerIdx + 1);
+    const int remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     size_t offset = size * remoteRankLocalIndex;
     constSmInPlaceChans[peerIdx].get(offset, size, tid, blockDim.x * nBlocks);
   }
@@ -828,7 +818,7 @@ __global__ void allreduce4(int* buff, int* scratch, void* result, int rank, int 
 __global__ void allreduce5(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize,
                            size_t nelems) {
   localReduceScatterSm(buff, scratch, rank, nRanksPerNode, 0, 0, nelems / worldSize, nelems / worldSize, gridDim.x);
-  deviceSyncer.syncWithoutFence(gridDim.x);
+  deviceSyncer.sync(gridDim.x);
   localRingAllGatherSm(rank, nRanksPerNode, nelems / worldSize * sizeof(int), gridDim.x);
 }
 
@@ -868,9 +858,9 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     tmpBuff = scratchBuff;
     nThreadsPerBlock = 512;
   } else if (kernelNum == 5) {
-    nBlocks = 49;
+    nBlocks = 24;
     tmpBuff = scratchBuff;
-    nThreadsPerBlock = 512;
+    nThreadsPerBlock = 1024;
   } else {
     nBlocks = std::max(args.nRanksPerNode - 1, 1) * BLOCKS_PER_PEER;
     tmpBuff = scratchPacketBuff;
