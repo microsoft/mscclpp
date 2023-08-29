@@ -845,22 +845,10 @@ __global__ void allreduce6(int* buff, int* scratch, int rank, int nRanksPerNode,
       (flag & 1) ? 2 * nPkts * sizeof(mscclpp::LLPacket) : 3 * nPkts * sizeof(mscclpp::LLPacket);
   size_t srcOffset = rank * nelemsPerRank * sizeof(int);
   uint2* src = (uint2*)((char*)buff + srcOffset);
-  mscclpp::LLPacket* scratchResult = (mscclpp::LLPacket*)((char*)scratch + scratchResultOffset);
 
   // step 1: write to scratch buffer
   smChan.putPackets(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid, blockDim.x * nBlocksPerPeer, flag);
-  // deviceSyncer.sync(gridDim.x);
-  // if (threadIdx.x == 0) {
-  //   smChan.signal();
-  //   smChan.wait();
-  // }
-  // deviceSyncer.sync(gridDim.x);
-  // if (rank == 1 && threadIdx.x == 0 && blockIdx.x == 0) {
-  //   for (int i = 0; i < nelems; ++i) {
-  //     printf("scratch data index %d value %d flag %d\n", i, ((int*)scratchBuff)[2*i], ((int*)scratchBuff)[2*i+1]);
-  //   }
-  // }
-  // step 2: get data from scratch buffer and reduce
+  // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     uint2 data = make_uint2(0, 0);
     uint2 val;
@@ -871,16 +859,22 @@ __global__ void allreduce6(int* buff, int* scratch, int rank, int nRanksPerNode,
       data.x += val.x;
       data.y += val.y;
     }
-    src[idx].x += data.x;
-    src[idx].y += data.y;
-    scratchResult[idx].write(data.x, data.y, flag);
+    data.x += src[idx].x;
+    data.y += src[idx].y;
+    src[idx].x = data.x;
+    src[idx].y = data.y;
+    for (int index = 0; index < nPeers; index++) {
+      mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)constSmOutOfPlaceChans[index].dst_ + scratchResultOffset);
+      dstPkt[idx + rank * nPktsPerRank].write(data.x, data.y, flag);
+    }
   }
-  // step 3: write result to a temp buffer and get data result from peer
-  mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)smChan.dst_ + scratchResultOffset);
+  // step 3: get data result from scratch buffer
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
+  mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)scratch + scratchResultOffset);
+  const int dstOffset = remoteRank * nPktsPerRank;
   uint2* result = (uint2*)((char*)buff + remoteRank * nelemsPerRank * sizeof(int));
   for (int idx = threadIdx.x + localBlockIdx * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * nBlocksPerPeer) {
-    uint2 data = dstPkt[idx].read(flag);
+    uint2 data = dstPkt[idx + dstOffset].read(flag);
     result[idx].x = data.x;
     result[idx].y = data.y;
   }
@@ -929,7 +923,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     tmpBuff = scratchBuff;
     nThreadsPerBlock = 1024;
   } else if (kernelNum == 6) {
-    nBlocks = 21;
+    nBlocks = 28;
     tmpBuff = scratchPacketBuff;
     nThreadsPerBlock = 512;
   } else {
