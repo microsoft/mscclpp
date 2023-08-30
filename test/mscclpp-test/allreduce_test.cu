@@ -822,7 +822,8 @@ __global__ void allreduce5(int* buff, int* scratch, void* result, int rank, int 
   localRingAllGatherSm(rank, nRanksPerNode, nelems / worldSize * sizeof(int), gridDim.x);
 }
 
-__global__ void allreduce6(int* buff, int* scratch, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+__global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, int nRanksPerNode, int worldSize,
+                           size_t nelems) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
   const int nPeers = nRanksPerNode - 1;
@@ -845,24 +846,24 @@ __global__ void allreduce6(int* buff, int* scratch, int rank, int nRanksPerNode,
       (flag & 1) ? 2 * nPkts * sizeof(mscclpp::LLPacket) : 3 * nPkts * sizeof(mscclpp::LLPacket);
   size_t srcOffset = rank * nelemsPerRank * sizeof(int);
   uint2* src = (uint2*)((char*)buff + srcOffset);
+  uint2* dst = (uint2*)((char*)resultBuff + srcOffset);
 
   // step 1: write to scratch buffer
   smChan.putPackets(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid, blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     uint2 data = make_uint2(0, 0);
-    uint2 val;
     for (int index = 0; index < nPeers; index++) {
       const int remoteRank = index < rank ? index : index + 1;
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
-      val = dstPkt[idx].read(flag);
+      uint2 val = dstPkt[idx].read(flag);
       data.x += val.x;
       data.y += val.y;
     }
     data.x += src[idx].x;
     data.y += src[idx].y;
-    src[idx].x = data.x;
-    src[idx].y = data.y;
+    dst[idx].x = data.x;
+    dst[idx].y = data.y;
     for (int index = 0; index < nPeers; index++) {
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)constSmOutOfPlaceChans[index].dst_ + scratchResultOffset);
       dstPkt[idx + rank * nPktsPerRank].write(data.x, data.y, flag);
@@ -872,7 +873,7 @@ __global__ void allreduce6(int* buff, int* scratch, int rank, int nRanksPerNode,
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
   mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)scratch + scratchResultOffset);
   const int dstOffset = remoteRank * nPktsPerRank;
-  uint2* result = (uint2*)((char*)buff + remoteRank * nelemsPerRank * sizeof(int));
+  uint2* result = (uint2*)((char*)resultBuff + remoteRank * nelemsPerRank * sizeof(int));
   for (int idx = threadIdx.x + localBlockIdx * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * nBlocksPerPeer) {
     uint2 data = dstPkt[idx + dstOffset].read(flag);
     result[idx].x = data.x;
@@ -923,7 +924,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     tmpBuff = scratchBuff;
     nThreadsPerBlock = 1024;
   } else if (kernelNum == 6) {
-    nBlocks = 28;
+    nBlocks = 21;
     tmpBuff = scratchPacketBuff;
     nThreadsPerBlock = 512;
   } else {
@@ -950,8 +951,8 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     allreduce5<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, resultBuff, rank,
                                                          args.nRanksPerNode, worldSize, paramCount_);
   else if (kernelNum == 6) {
-    allreduce6<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, rank, args.nRanksPerNode,
-                                                         worldSize, paramCount_);
+    allreduce6<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, resultBuff, rank,
+                                                         args.nRanksPerNode, worldSize, paramCount_);
   }
 }
 
@@ -1047,7 +1048,7 @@ AllReduceTestEngine::AllReduceTestEngine(const TestArgs& args) : BaseTestEngine(
 
 bool AllReduceTestEngine::isUsePacket() const { return (args_.kernelNum == 2 || args_.kernelNum == 6); }
 
-bool AllReduceTestEngine::isInPlace() const { return (args_.kernelNum != 2); }
+bool AllReduceTestEngine::isInPlace() const { return (args_.kernelNum != 2 && args_.kernelNum != 6); }
 
 void AllReduceTestEngine::allocateBuffer() {
   inputBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
