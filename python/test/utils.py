@@ -71,18 +71,16 @@ class Kernel:
         cuda.cuModuleUnload(self._module)
 
 
-class KernelBase:
-    def __init__(self, file: str, args: dict):
+class KernelBuilder:
+    def __init__(self, file: str, kernel_name: str):
         self._tempdir = tempfile.TemporaryDirectory()
         self._current_file_dir = os.path.dirname(os.path.abspath(__file__))
-        kernel_name = args["KERNEL"]
         device_id = cp.cuda.Device().id
-        ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{args['KERNEL']}.ptx", args, device_id)
+        ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{kernel_name}.ptx", device_id)
         self._kernel = Kernel(ptx, kernel_name, device_id)
 
-    def _compile_cuda(self, source_file, output_file, defines, device_id, std_version="c++17"):
+    def _compile_cuda(self, source_file, output_file, device_id, std_version="c++17"):
         include_dir = os.path.join(self._current_file_dir, "../../include")
-        defines = " ".join([f"-D{k}={v}" for k, v in defines.items()])
         major = _check_cuda_errors(
             cudart.cudaDeviceGetAttribute(cudart.cudaDeviceAttr.cudaDevAttrComputeCapabilityMajor, device_id)
         )
@@ -90,7 +88,7 @@ class KernelBase:
             cudart.cudaDeviceGetAttribute(cudart.cudaDeviceAttr.cudaDevAttrComputeCapabilityMinor, device_id)
         )
         command = (
-            f"nvcc -std={std_version} -ptx -Xcompiler -Wall,-Wextra -I{include_dir} -DPARAMETRIZE {source_file} {defines} "
+            f"nvcc -std={std_version} -ptx -Xcompiler -Wall,-Wextra -I{include_dir} {source_file} "
             f"--gpu-architecture=compute_{major}{minor}  --gpu-code=sm_{major}{minor},compute_{major}{minor} -o {self._tempdir.name}/{output_file}"
         )
         try:
@@ -98,7 +96,11 @@ class KernelBase:
             with open(f"{self._tempdir.name}/{output_file}", "rb") as f:
                 return f.read()
         except subprocess.CalledProcessError as e:
-            raise RuntimeError("Compilation failed:", e.stderr.decode(), command)
+            raise RuntimeError("Compilation failed:",
+                               e.stderr.decode(), command)
+
+    def get_compiled_kernel(self):
+        return self._kernel
 
     def __del__(self):
         self._tempdir.cleanup()
@@ -113,6 +115,9 @@ def pack(*args):
             res += struct.pack("P", arg.ctypes.data)
         elif isinstance(arg, cp.ndarray):
             res += struct.pack("P", arg.data.ptr)
+        # use int to represent bool, which can avoid CUDA_ERROR_LAUNCH_OUT_OF_RESOURCES error
+        elif isinstance(arg, bool):
+            res += struct.pack("i", arg)
         else:
             raise RuntimeError(f"Unsupported type: {type(arg)}")
     return res

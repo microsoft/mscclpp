@@ -22,20 +22,20 @@ from mscclpp import (
 )
 import numpy as np
 
-from .mscclpp_layout import Layout
+from .mscclpp_mpi import MpiGroup
 
 logger = logging.getLogger(__name__)
 
 
 class MscclppGroup:
-    def __init__(self, layout: Layout, interfaceIpPortTrio=""):
-        self.bootstrap = TcpBootstrap.create(layout.comm.rank, layout.comm.size)
+    def __init__(self, mpi_group: MpiGroup, interfaceIpPortTrio=""):
+        self.bootstrap = TcpBootstrap.create(mpi_group.comm.rank, mpi_group.comm.size)
         if interfaceIpPortTrio == "":
             uniq_id = None
-            if layout.comm.rank == 0:
+            if mpi_group.comm.rank == 0:
                 # similar to NCCL's unique id
                 uniq_id = self.bootstrap.create_unique_id()
-            uniq_id_global = layout.comm.bcast(uniq_id, 0)
+            uniq_id_global = mpi_group.comm.bcast(uniq_id, 0)
             self.bootstrap.initialize(uniq_id_global)
         else:
             # use this instead

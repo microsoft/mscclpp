@@ -37,7 +37,7 @@ def finalize_mpi():
 atexit.register(finalize_mpi)
 
 
-class Layout:
+class MpiGroup:
     def __init__(self, ranks: list):
         world_group = MPI.COMM_WORLD.group
         group = world_group.Incl(ranks)
@@ -45,27 +45,26 @@ class Layout:
 
 
 @pytest.fixture
-def layout(request: pytest.FixtureRequest):
+def mpi_group(request: pytest.FixtureRequest):
     MPI.COMM_WORLD.barrier()
     if request.param is None:
         pytest.skip(f"Skip for rank {MPI.COMM_WORLD.rank}")
     yield request.param
 
 
-def parametrize_layouts(*tuples: tuple):
+def parametrize_mpi_groups(*tuples: tuple):
     def decorator(func):
-        layouts = []
-        for layout_tuple in list(tuples):
-            n_gpus = layout_tuple[0] * layout_tuple[1]
-            if MPI.COMM_WORLD.size < n_gpus:
-                logging.warning(f"MPI.COMM_WORLD.size < {n_gpus}, skip")
+        mpi_groups = []
+        for group_size in list(tuples):
+            if MPI.COMM_WORLD.size < group_size:
+                logging.warning(f"MPI.COMM_WORLD.size < {group_size}, skip")
                 continue
-            layout = Layout(list(range(n_gpus)))
-            if layout.comm == MPI.COMM_NULL:
-                layouts.append(None)
+            mpi_group = MpiGroup(list(range(group_size)))
+            if mpi_group.comm == MPI.COMM_NULL:
+                mpi_groups.append(None)
             else:
-                layouts.append(layout)
-        return pytest.mark.parametrize("layout", layouts, indirect=True)(func)
+                mpi_groups.append(mpi_group)
+        return pytest.mark.parametrize("mpi_group", mpi_groups, indirect=True)(func)
 
     return decorator
 
