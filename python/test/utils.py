@@ -96,8 +96,7 @@ class KernelBuilder:
             with open(f"{self._tempdir.name}/{output_file}", "rb") as f:
                 return f.read()
         except subprocess.CalledProcessError as e:
-            raise RuntimeError("Compilation failed:",
-                               e.stderr.decode(), command)
+            raise RuntimeError("Compilation failed:", e.stderr.decode(), command)
 
     def get_compiled_kernel(self):
         return self._kernel
