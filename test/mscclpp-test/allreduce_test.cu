@@ -291,6 +291,55 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
 
   int4* buff4 = (int4*)buff;
 
+  for (int peerIdx = threadIdx.x + blockIdx.x * blockDim.x; peerIdx < nPeer; peerIdx += blockDim.x * nBlocks) {
+    smChans[peerIdx].signal();
+  }
+  for (int peerIdx = threadIdx.x + blockIdx.x * blockDim.x; peerIdx < nPeer; peerIdx += blockDim.x * nBlocks) {
+    smChans[peerIdx].wait();
+  }
+  reduceScatterDeviceSyncer.sync(nBlocks);
+
+  const size_t nInt4 = nelems / 4;
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * nBlocks) {
+    int4 sum = make_int4(0, 0, 0, 0);
+
+    for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      int4 val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
+      sum.w += val.w;
+      sum.x += val.x;
+      sum.y += val.y;
+      sum.z += val.z;
+    }
+    buff4[indexOffset4 + idx].w += sum.w;
+    buff4[indexOffset4 + idx].x += sum.x;
+    buff4[indexOffset4 + idx].y += sum.y;
+    buff4[indexOffset4 + idx].z += sum.z;
+  }
+
+  const size_t nLastInts = nelems % 4;
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nLastInts; idx += blockDim.x * nBlocks) {
+    int sum = 0;
+    for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      int val = smChans[peerIdx].read<int>(indexOffset + nInt4 * 4 + idx);
+      sum += val;
+    }
+    buff[indexOffset + nInt4 * 4 + idx] += sum;
+  }
+}
+
+__device__ void localReduceScatterSm2(int* buff, int* scratch, int rank, int nRanksPerNode, size_t chunkSize,
+                                      size_t nelems, int nBlocks) {
+  if (nRanksPerNode == 1) return;
+  if (blockIdx.x >= nBlocks) return;
+  const int nPeer = nRanksPerNode - 1;
+  DeviceHandle<mscclpp::SmChannel>* smChans = constSmOutOfPlaceGetChans;
+
+  const size_t localRankIndexInNode = rank % nRanksPerNode;
+  const size_t indexOffset = localRankIndexInNode * chunkSize;
+  const size_t indexOffset4 = indexOffset / 4;
+
+  int4* buff4 = (int4*)buff;
+
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid < nPeer) {
     smChans[tid].signal();
@@ -817,7 +866,7 @@ __global__ void allreduce4(int* buff, int* scratch, void* result, int rank, int 
 
 __global__ void allreduce5(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize,
                            size_t nelems) {
-  localReduceScatterSm(buff, scratch, rank, nRanksPerNode, 0, 0, nelems / worldSize, nelems / worldSize, gridDim.x);
+  localReduceScatterSm2(buff, scratch, rank, nRanksPerNode, nelems / worldSize, nelems / worldSize, gridDim.x);
   deviceSyncer.sync(gridDim.x);
   localRingAllGatherSm(rank, nRanksPerNode, nelems / worldSize * sizeof(int), gridDim.x);
 }
@@ -916,7 +965,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     tmpBuff = scratchBuff;
     nThreadsPerBlock = 1024;
   } else if (kernelNum == 4) {
-    nBlocks = 49;
+    nBlocks = 45;
     tmpBuff = scratchBuff;
     nThreadsPerBlock = 512;
   } else if (kernelNum == 5) {
