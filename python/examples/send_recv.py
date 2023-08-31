@@ -35,15 +35,13 @@ def main(args):
         size = elements * memory.itemsize
     my_reg_mem = comm.register_memory(ptr, size, mscclpp.Transport.IB0)
 
-    conn = comm.connect_on_setup((rank + 1) % 2, 0, mscclpp.Transport.IB0)
+    conn = comm.connect((rank + 1) % 2, 0, mscclpp.Transport.IB0)
 
     other_reg_mem = None
     if rank == 0:
-        other_reg_mem = comm.recv_memory_on_setup((rank + 1) % 2, 0)
+        other_reg_mem = comm.recv_memory((rank + 1) % 2, 0)
     else:
-        comm.send_memory_on_setup(my_reg_mem, (rank + 1) % 2, 0)
-
-    comm.setup()
+        comm.send_memory(my_reg_mem, (rank + 1) % 2, 0)
 
     if rank == 0:
         other_reg_mem = other_reg_mem.get()

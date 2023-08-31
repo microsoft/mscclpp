@@ -18,9 +18,9 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
   }
 }
 
-MSCCLPP_API_CPP Transport Endpoint::transport() { return pimpl_->transport_; }
+MSCCLPP_API_CPP Transport Endpoint::transport() const { return pimpl_->transport_; }
 
-MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() {
+MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() const {
   std::vector<char> data;
   std::copy_n(reinterpret_cast<char*>(&pimpl_->transport_), sizeof(pimpl_->transport_), std::back_inserter(data));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->hostHash_), sizeof(pimpl_->hostHash_), std::back_inserter(data));

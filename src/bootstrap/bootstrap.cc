@@ -6,6 +6,7 @@
 #include <cstring>
 #include <mscclpp/core.hpp>
 #include <mscclpp/errors.hpp>
+#include <queue>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
@@ -41,11 +42,16 @@ MSCCLPP_API_CPP void Bootstrap::send(const std::vector<char>& data, int peer, in
   send((void*)data.data(), data.size(), peer, tag + 1);
 }
 
-MSCCLPP_API_CPP void Bootstrap::recv(std::vector<char>& data, int peer, int tag) {
-  size_t size;
-  recv((void*)&size, sizeof(size_t), peer, tag);
-  data.resize(size);
-  recv((void*)data.data(), data.size(), peer, tag + 1);
+MSCCLPP_API_CPP std::future<std::vector<char>> Bootstrap::recv(int peer, int tag) {
+  auto size = std::make_unique<size_t>();
+  auto recvTask = recv((void*)size.get(), sizeof(size_t), peer, tag);
+  return std::async(std::launch::deferred,
+                    [this, size = std::move(size), recvTask = std::move(recvTask), peer, tag]() mutable {
+                      recvTask.wait();
+                      std::vector<char> data(*size);
+                      recv((void*)data.data(), data.size(), peer, tag + 1).wait();
+                      return data;
+                    });
 }
 
 struct UniqueIdInternal {
@@ -53,6 +59,22 @@ struct UniqueIdInternal {
   union SocketAddress addr;
 };
 static_assert(sizeof(UniqueIdInternal) <= sizeof(UniqueId), "UniqueIdInternal is too large to fit into UniqueId");
+
+struct RecvTask {
+  std::promise<void> promise;
+  std::shared_ptr<Socket> sock;
+  void* data;
+  int size;
+  RecvTask() = default;
+  RecvTask(std::shared_ptr<Socket> sock, void* data, int size) : sock(sock), data(data), size(size) {}
+};
+
+struct RecvThreadData {
+  std::thread thread;
+  std::mutex mutex;
+  std::condition_variable cond;
+  std::queue<RecvTask> queue;
+};
 
 class TcpBootstrap::Impl {
  public:
@@ -63,11 +85,11 @@ class TcpBootstrap::Impl {
   void establishConnections(int64_t timeoutSec);
   UniqueId createUniqueId();
   UniqueId getUniqueId() const;
-  int getRank();
-  int getNranks();
+  int rank();
+  int size();
   void allGather(void* allData, int size);
   void send(void* data, int size, int peer, int tag);
-  void recv(void* data, int size, int peer, int tag);
+  std::future<void> recv(void* data, int size, int peer, int tag);
   void barrier();
   void close();
 
@@ -85,6 +107,7 @@ class TcpBootstrap::Impl {
   std::unique_ptr<uint32_t> abortFlagStorage_;
   volatile uint32_t* abortFlag_;
   std::thread rootThread_;
+  std::unordered_map<std::pair<int, int>, std::unique_ptr<RecvThreadData>, PairHash> recvThreads_;
   char netIfName_[MAX_IF_NAME_SIZE + 1];
   SocketAddress netIfAddr_;
   std::unordered_map<std::pair<int, int>, std::shared_ptr<Socket>, PairHash> peerSendSockets_;
@@ -93,6 +116,7 @@ class TcpBootstrap::Impl {
   void netSend(Socket* sock, const void* data, int size);
   void netRecv(Socket* sock, void* data, int size);
 
+  RecvThreadData* getRecvThreadData(int peer, int tag);
   std::shared_ptr<Socket> getPeerSendSocket(int peer, int tag);
   std::shared_ptr<Socket> getPeerRecvSocket(int peer, int tag);
 
@@ -128,9 +152,9 @@ UniqueId TcpBootstrap::Impl::createUniqueId() {
   return getUniqueId();
 }
 
-int TcpBootstrap::Impl::getRank() { return rank_; }
+int TcpBootstrap::Impl::rank() { return rank_; }
 
-int TcpBootstrap::Impl::getNranks() { return nRanks_; }
+int TcpBootstrap::Impl::size() { return nRanks_; }
 
 void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId, int64_t timeoutSec) {
   netInit("", "");
@@ -175,6 +199,16 @@ TcpBootstrap::Impl::~Impl() {
   }
   if (rootThread_.joinable()) {
     rootThread_.join();
+  }
+  for (auto& it : recvThreads_) {
+    {
+      std::lock_guard<std::mutex> lock(it.second->mutex);
+      it.second->queue.push(RecvTask());  // signal thread to exit
+      it.second->cond.notify_one();
+    }
+  }
+  for (auto& it : recvThreads_) {
+    it.second->thread.join();
   }
 }
 
@@ -404,6 +438,32 @@ void TcpBootstrap::Impl::allGather(void* allData, int size) {
   TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d - DONE", rank, nRanks, size);
 }
 
+RecvThreadData* TcpBootstrap::Impl::getRecvThreadData(int peer, int tag) {
+  auto it = recvThreads_.find(std::make_pair(peer, tag));
+  if (it != recvThreads_.end()) {
+    return it->second.get();
+  }
+  auto threadData = std::make_unique<RecvThreadData>();
+  threadData->thread = std::thread([this, threadData = threadData.get(), peer, tag]() {
+    for (;;) {
+      RecvTask task;
+      {
+        std::unique_lock<std::mutex> lock(threadData->mutex);
+        threadData->cond.wait(lock, [&]() { return !threadData->queue.empty(); });
+        task = std::move(threadData->queue.front());
+        threadData->queue.pop();
+      }
+      if (task.sock == nullptr) {
+        break;
+      }
+      netRecv(task.sock.get(), task.data, task.size);
+      task.promise.set_value();
+    }
+  });
+  recvThreads_[std::make_pair(peer, tag)] = std::move(threadData);
+  return recvThreads_[std::make_pair(peer, tag)].get();
+}
+
 std::shared_ptr<Socket> TcpBootstrap::Impl::getPeerSendSocket(int peer, int tag) {
   auto it = peerSendSockets_.find(std::make_pair(peer, tag));
   if (it != peerSendSockets_.end()) {
@@ -456,9 +516,17 @@ void TcpBootstrap::Impl::send(void* data, int size, int peer, int tag) {
   netSend(sock.get(), data, size);
 }
 
-void TcpBootstrap::Impl::recv(void* data, int size, int peer, int tag) {
+std::future<void> TcpBootstrap::Impl::recv(void* data, int size, int peer, int tag) {
   auto sock = getPeerRecvSocket(peer, tag);
-  netRecv(sock.get(), data, size);
+  RecvTask task(sock, data, size);
+  auto future = task.promise.get_future();
+  auto threadData = getRecvThreadData(peer, tag);
+  {
+    std::lock_guard<std::mutex> lock(threadData->mutex);
+    threadData->queue.push(std::move(task));
+    threadData->cond.notify_one();
+  }
+  return future;
 }
 
 void TcpBootstrap::Impl::barrier() { allGather(barrierArr_.data(), sizeof(int)); }
@@ -478,16 +546,16 @@ MSCCLPP_API_CPP UniqueId TcpBootstrap::createUniqueId() { return pimpl_->createU
 
 MSCCLPP_API_CPP UniqueId TcpBootstrap::getUniqueId() const { return pimpl_->getUniqueId(); }
 
-MSCCLPP_API_CPP int TcpBootstrap::getRank() { return pimpl_->getRank(); }
+MSCCLPP_API_CPP int TcpBootstrap::rank() { return pimpl_->rank(); }
 
-MSCCLPP_API_CPP int TcpBootstrap::getNranks() { return pimpl_->getNranks(); }
+MSCCLPP_API_CPP int TcpBootstrap::size() { return pimpl_->size(); }
 
 MSCCLPP_API_CPP void TcpBootstrap::send(void* data, int size, int peer, int tag) {
   pimpl_->send(data, size, peer, tag);
 }
 
-MSCCLPP_API_CPP void TcpBootstrap::recv(void* data, int size, int peer, int tag) {
-  pimpl_->recv(data, size, peer, tag);
+MSCCLPP_API_CPP std::future<void> TcpBootstrap::recv(void* data, int size, int peer, int tag) {
+  return pimpl_->recv(data, size, peer, tag);
 }
 
 MSCCLPP_API_CPP void TcpBootstrap::allGather(void* allData, int size) { pimpl_->allGather(allData, size); }

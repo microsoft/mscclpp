@@ -18,13 +18,13 @@ void ProxyChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
 void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels,
                                                     bool useIbOnly, void* sendBuff, size_t sendBuffBytes,
                                                     void* recvBuff, size_t recvBuffBytes) {
-  const int rank = communicator->bootstrap()->getRank();
-  const int worldSize = communicator->bootstrap()->getNranks();
+  const int rank = communicator->bootstrap()->rank();
+  const int worldSize = communicator->bootstrap()->size();
   const bool isInPlace = (recvBuff == nullptr);
   mscclpp::TransportFlags transport = (useIbOnly) ? ibTransport : (mscclpp::Transport::CudaIpc | ibTransport);
 
-  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures(worldSize);
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
+  std::vector<std::future<std::shared_ptr<mscclpp::Connection>>> connectionFutures(worldSize);
+  std::vector<std::future<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
 
   mscclpp::RegisteredMemory sendBufRegMem = communicator->registerMemory(sendBuff, sendBuffBytes, transport);
   mscclpp::RegisteredMemory recvBufRegMem;
@@ -37,20 +37,18 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
       continue;
     }
     if ((rankToNode(r) == rankToNode(gEnv->rank)) && !useIbOnly) {
-      connectionFutures[r] = communicator->connectOnSetup(r, 0, mscclpp::Transport::CudaIpc);
+      connectionFutures[r] = communicator->connect(r, 0, mscclpp::Transport::CudaIpc);
     } else {
-      connectionFutures[r] = communicator->connectOnSetup(r, 0, ibTransport);
+      connectionFutures[r] = communicator->connect(r, 0, ibTransport);
     }
 
     if (isInPlace) {
-      communicator->sendMemoryOnSetup(sendBufRegMem, r, 0);
+      communicator->sendMemory(sendBufRegMem, r, 0);
     } else {
-      communicator->sendMemoryOnSetup(recvBufRegMem, r, 0);
+      communicator->sendMemory(recvBufRegMem, r, 0);
     }
-    remoteMemFutures[r] = communicator->recvMemoryOnSetup(r, 0);
+    remoteMemFutures[r] = communicator->recvMemory(r, 0);
   }
-
-  communicator->setup();
 
   for (int r = 0; r < worldSize; r++) {
     if (r == rank) {
@@ -61,8 +59,6 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
     proxyChannels.emplace_back(proxyService->proxyChannel(cid), proxyService->addMemory(remoteMemFutures[r].get()),
                                proxyService->addMemory(sendBufRegMem));
   }
-
-  communicator->setup();
 }
 
 __constant__ DeviceHandle<mscclpp::SimpleProxyChannel> gChannelOneToOneTestConstProxyChans;

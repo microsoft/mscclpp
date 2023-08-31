@@ -43,17 +43,16 @@ void CommunicatorTestBase::TearDown() {
 void CommunicatorTestBase::setNumRanksToUse(int num) { numRanksToUse = num; }
 
 void CommunicatorTestBase::connectMesh(bool useIbOnly) {
-  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures(numRanksToUse);
+  std::vector<std::future<std::shared_ptr<mscclpp::Connection>>> connectionFutures(numRanksToUse);
   for (int i = 0; i < numRanksToUse; i++) {
     if (i != gEnv->rank) {
       if ((rankToNode(i) == rankToNode(gEnv->rank)) && !useIbOnly) {
-        connectionFutures[i] = communicator->connectOnSetup(i, 0, mscclpp::Transport::CudaIpc);
+        connectionFutures[i] = communicator->connect(i, 0, mscclpp::Transport::CudaIpc);
       } else {
-        connectionFutures[i] = communicator->connectOnSetup(i, 0, ibTransport);
+        connectionFutures[i] = communicator->connect(i, 0, ibTransport);
       }
     }
   }
-  communicator->setup();
   for (int i = 0; i < numRanksToUse; i++) {
     if (i != gEnv->rank) {
       connections[i] = connectionFutures[i].get();
@@ -67,16 +66,15 @@ void CommunicatorTestBase::registerMemoryPairs(void* buff, size_t buffSize, mscc
                                                mscclpp::RegisteredMemory& localMemory,
                                                std::unordered_map<int, mscclpp::RegisteredMemory>& remoteMemories) {
   localMemory = communicator->registerMemory(buff, buffSize, transport);
-  std::unordered_map<int, mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> futureRemoteMemories;
+  std::unordered_map<int, std::future<mscclpp::RegisteredMemory>> futureRemoteMemories;
   for (int remoteRank : remoteRanks) {
-    if (remoteRank != communicator->bootstrap()->getRank()) {
-      communicator->sendMemoryOnSetup(localMemory, remoteRank, tag);
-      futureRemoteMemories[remoteRank] = communicator->recvMemoryOnSetup(remoteRank, tag);
+    if (remoteRank != communicator->bootstrap()->rank()) {
+      communicator->sendMemory(localMemory, remoteRank, tag);
+      futureRemoteMemories[remoteRank] = communicator->recvMemory(remoteRank, tag);
     }
   }
-  communicator->setup();
   for (int remoteRank : remoteRanks) {
-    if (remoteRank != communicator->bootstrap()->getRank()) {
+    if (remoteRank != communicator->bootstrap()->rank()) {
       remoteMemories[remoteRank] = futureRemoteMemories[remoteRank].get();
     }
   }
@@ -206,7 +204,6 @@ TEST_F(CommunicatorTest, WriteWithDeviceSemaphores) {
     auto& conn = entry.second;
     semaphores.insert({entry.first, std::make_shared<mscclpp::Host2DeviceSemaphore>(*communicator.get(), conn)});
   }
-  communicator->setup();
   communicator->bootstrap()->barrier();
 
   deviceBufferInit();
@@ -247,7 +244,6 @@ TEST_F(CommunicatorTest, WriteWithHostSemaphores) {
     if (conn->transport() == mscclpp::Transport::CudaIpc) continue;
     semaphores.insert({entry.first, std::make_shared<mscclpp::Host2HostSemaphore>(*communicator.get(), conn)});
   }
-  communicator->setup();
   communicator->bootstrap()->barrier();
 
   deviceBufferInit();

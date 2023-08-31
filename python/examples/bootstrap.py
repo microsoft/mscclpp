@@ -40,12 +40,11 @@ def setup_connections(comm, rank, world_size, element_size, proxy_service):
     for r in range(world_size):
         if r == rank:
             continue
-        conn = comm.connect_on_setup(r, 0, mscclpp.Transport.CudaIpc)
+        conn = comm.connect(r, 0, mscclpp.Transport.CudaIpc)
         connections.append(conn)
-        comm.send_memory_on_setup(reg_mem, r, 0)
-        remote_mem = comm.recv_memory_on_setup(r, 0)
+        comm.send_memory(reg_mem, r, 0)
+        remote_mem = comm.recv_memory(r, 0)
         remote_memories.append(remote_mem)
-    comm.setup()
 
     connections = [conn.get() for conn in connections]
 
