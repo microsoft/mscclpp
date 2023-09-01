@@ -30,6 +30,7 @@ jobs:
         mkdir build && cd build
         MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
         make -j
+        make pylib-copy
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: DownloadSecureFile@1
@@ -102,6 +103,25 @@ jobs:
         CHILD_PID=$!
         parallel-ssh -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mp-ut'
+        kill $CHILD_PID
+
+  - task: Bash@3
+    name: RunMultiNodePythonTests
+    displayName: Run multi-nodes python tests
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        rm -rf output/*
+        mkdir -p output
+        touch output/mscclpp-it-000000
+        tail -f output/mscclpp-it-000000 &
+        CHILD_PID=$!
+        parallel-ssh -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh pytests'
         kill $CHILD_PID
 
   - task: AzureCLI@2

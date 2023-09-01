@@ -35,12 +35,16 @@ struct RegisteredMemory::Impl {
   void* data;
   size_t size;
   int rank;
+  bool isRemote;
   uint64_t hostHash;
   TransportFlags transports;
   std::vector<TransportInfo> transportInfos;
 
   Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl);
+  /// Constructs a RegisteredMemory::Impl from a vector of data. The constructor should only be used for the remote
+  /// memory.
   Impl(const std::vector<char>& data);
+  ~Impl();
 
   const TransportInfo& getTransportInfo(Transport transport) const;
 };
