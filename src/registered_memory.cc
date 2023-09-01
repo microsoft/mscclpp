@@ -16,11 +16,7 @@
 namespace mscclpp {
 
 RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports, Context::Impl& contextImpl)
-    : data(data),
-      size(size),
-      maybeRemote(false),
-      hostHash(contextImpl.hostHash_),
-      transports(transports) {
+    : data(data), size(size), maybeRemote(false), hostHash(contextImpl.hostHash_), transports(transports) {
   if (transports.has(Transport::CudaIpc)) {
     TransportInfo transportInfo;
     transportInfo.transport = Transport::CudaIpc;
@@ -61,7 +57,7 @@ MSCCLPP_API_CPP RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) 
 
 MSCCLPP_API_CPP RegisteredMemory::~RegisteredMemory() = default;
 
-MSCCLPP_API_CPP void* RegisteredMemory::data() const { return pimpl->data; }
+MSCCLPP_API_CPP void* RegisteredMemory::data() const { return pimpl_->data; }
 
 MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl_->size; }
 
