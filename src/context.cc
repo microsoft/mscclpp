@@ -8,13 +8,10 @@
 #include "debug.h"
 #include "endpoint.hpp"
 #include "registered_memory.hpp"
-#include "utils_internal.hpp"
 
 namespace mscclpp {
 
-Context::Impl::Impl() : ipcStream_(cudaStreamNonBlocking), hostHash_(getHostHash()) {
-  INFO(MSCCLPP_INIT, "Host hash: %lx", hostHash_);
-}
+Context::Impl::Impl() : ipcStream_(cudaStreamNonBlocking) {}
 
 IbCtx* Context::Impl::getIbContext(Transport ibTransport) {
   // Find IB context or create it

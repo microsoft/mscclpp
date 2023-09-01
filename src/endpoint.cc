@@ -4,11 +4,12 @@
 
 #include "api.h"
 #include "context.hpp"
+#include "utils_internal.hpp"
 
 namespace mscclpp {
 
 Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
-    : transport_(config.transport), hostHash_(contextImpl.hostHash_) {
+    : transport_(config.transport), hostHash_(getHostHash()) {
   if (AllIBTransports.has(transport_)) {
     ibLocal_ = true;
     ibQp_ = contextImpl.getIbContext(transport_)

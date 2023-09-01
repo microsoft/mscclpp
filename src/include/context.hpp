@@ -17,7 +17,6 @@ struct Context::Impl {
   std::vector<std::shared_ptr<Connection>> connections_;
   std::unordered_map<Transport, std::unique_ptr<IbCtx>> ibContexts_;
   CudaStreamWithFlags ipcStream_;
-  uint64_t hostHash_;
 
   Impl();
 

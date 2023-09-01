@@ -32,10 +32,14 @@ struct TransportInfo {
 };
 
 struct RegisteredMemory::Impl {
+  // This is the data pointer returned by RegisteredMemory::data(), which may be different from the original data
+  // pointer for deserialized remote memory.
   void* data;
+  // This is the original data pointer the RegisteredMemory was created with.
+  void* originalDataPtr;
   size_t size;
-  bool maybeRemote;
   uint64_t hostHash;
+  uint64_t pidHash;
   TransportFlags transports;
   std::vector<TransportInfo> transportInfos;
 
