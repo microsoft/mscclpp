@@ -141,7 +141,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
   }
 
   // Next decide how to set this->data
-  if (getPidHash() == this->pidHash) {
+  if (getHostHash() == this->hostHash && getPidHash() == this->pidHash) {
     // The memory is local to the process, so originalDataPtr is valid as is
     this->data = this->originalDataPtr;
   } else if (transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash) {
