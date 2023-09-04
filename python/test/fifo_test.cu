@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <stdio.h>
-
+#include "common.hpp"
+// other headers
 #include "mscclpp/fifo_device.hpp"
 
 extern "C" __global__ void __launch_bounds__(1024, 1) fifo(mscclpp::FifoDeviceHandle fifo) {
