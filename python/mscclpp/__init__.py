@@ -23,6 +23,7 @@ from ._mscclpp import (
 
 __version__ = version()
 
+
 def get_include():
     """Return the directory that contains the MSCCL++ headers."""
     return _os.path.join(_os.path.dirname(__file__), "include")
