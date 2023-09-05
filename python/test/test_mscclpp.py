@@ -88,7 +88,7 @@ def test_group_with_connections(mpi_group: MpiGroup, transport: str):
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
-@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 def test_connection_write(mpi_group: MpiGroup, transport: Transport, nelem: int):
     group, connections = create_and_connect(mpi_group, transport)
     memory = cp.zeros(nelem, dtype=cp.int32)
@@ -123,7 +123,7 @@ def test_connection_write(mpi_group: MpiGroup, transport: Transport, nelem: int)
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
-@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("device", ["cuda", "cpu"])
 def test_connection_write_and_signal(mpi_group: MpiGroup, transport: Transport, nelem: int, device: str):
     # this test starts with a random tensor on rank 0 and rotates it all the way through all ranks
@@ -291,7 +291,7 @@ def test_d2d_semaphores(mpi_group: MpiGroup):
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("use_packet", [False, True])
 def test_sm_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
     group, connections = create_and_connect(mpi_group, "NVLink")
@@ -322,7 +322,9 @@ def test_sm_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-def test_fifo(mpi_group: MpiGroup,):
+def test_fifo(
+    mpi_group: MpiGroup,
+):
     fifo = Fifo()
     kernel = MscclppKernel("fifo", fifo=fifo)
 
@@ -337,7 +339,7 @@ def test_fifo(mpi_group: MpiGroup,):
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
 def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
     group, connections = create_and_connect(mpi_group, transport)
@@ -386,7 +388,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["NVLink", "IB"])
 @pytest.mark.parametrize("use_packet", [False, True])
 def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
