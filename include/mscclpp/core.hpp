@@ -5,7 +5,7 @@
 #define MSCCLPP_CORE_HPP_
 
 #define MSCCLPP_MAJOR 0
-#define MSCCLPP_MINOR 2
+#define MSCCLPP_MINOR 3
 #define MSCCLPP_PATCH 0
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
@@ -23,6 +23,9 @@ namespace mscclpp {
 
 /// Unique ID for a process. This is a MSCCLPP_UNIQUE_ID_BYTES byte array that uniquely identifies a process.
 using UniqueId = std::array<uint8_t, MSCCLPP_UNIQUE_ID_BYTES>;
+
+/// Return a version string.
+std::string version();
 
 /// Base class for bootstraps.
 class Bootstrap {

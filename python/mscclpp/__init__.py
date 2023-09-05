@@ -18,8 +18,10 @@ from ._mscclpp import (
     TcpBootstrap,
     Transport,
     TransportFlags,
+    version,
 )
 
+__version__ = version()
 
 def get_include():
     """Return the directory that contains the MSCCL++ headers."""

@@ -18,9 +18,9 @@ MSCCL++ is a development kit for implementing highly optimized distributed GPU a
 
 * **Runtime Performance Optimization for Dynamic Workload.** As we can easily implement flexible communication logics, we can optimize communication performance even during runtime. For example, we can implement the system to automatically choose different communication paths or different collective communication algorithms depending on the dynamic workload at runtime.
 
-## Key Features (v0.2)
+## Key Features (v0.3)
 
-MSCCL++ v0.2 supports the following features.
+MSCCL++ v0.3 supports the following features.
 
 ### In-Kernel Communication Interfaces
 
@@ -124,31 +124,14 @@ Customized proxies can be used for conducting a series of pre-defined data trans
 
 Most of key components of MSCCL++ are designed to be easily customized. This enables MSCCL++ to easily adopt a new software / hardware technology and lets users implement algorithms optimized for their own use cases.
 
-## Status & Roadmap
+### New in MSCCL++ v0.3 (Latest Release)
+* Python bindings and interfaces
+* Add Python unit tests
+* Add more configurable parameters
+* Integrated with tile-based computation interfaces
+* Fix bugs
 
-MSCCL++ is under active development and a part of its features will be added in a future release. The following describes key features of each version.
-
-### MSCCL++ v0.4 (TBU)
-* Automatic task scheduler
-* Dynamic performance tuning
-
-### MSCCL++ v0.3 (TBU)
-* Tile-based communication: efficient transport of 2D data patches (tiles)
-* GPU computation interfaces
-
-### MSCCL++ v0.2 (Latest Release)
-* Basic communication functionalities and new interfaces
-    - GPU-side communication interfaces
-    - Host-side helpers: bootstrap, communicator, and proxy
-    - Supports both NVLink and InfiniBand
-    - Supports both in-SM copy and DMA/RDMA
-* Communication performance optimization
-    - Example code outperforms NCCL/MSCCL AllGather/AllReduce/AllToAll
-* Development pipeline
-* Documentation
-
-### MSCCL++ v0.1
-* Proof-of-concept, preliminary interfaces
+See details from https://github.com/microsoft/mscclpp/issues/89.
 
 ## Contributing
 
