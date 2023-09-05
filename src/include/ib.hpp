@@ -66,6 +66,8 @@ class IbQp {
   void stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal);
   void stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                         uint64_t dstOffset, bool signaled, unsigned int immData);
+  void stageSendGather(const std::vector<IbMr*>& srcMrs, const IbMrInfo& dstInfo, const std::vector<uint32_t>& srcSizes,
+                       uint64_t wrId, const std::vector<uint64_t>& srcOffsets, uint64_t dstOffset, bool signaled);
   void postSend();
   void postRecv(uint64_t wrId);
   int pollCq();
@@ -80,8 +82,8 @@ class IbQp {
   };
 
   IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr,
-       int maxWrPerSend);
-  WrInfo getNewWrInfo();
+       int maxWrPerSend, int maxNumSgesPerWr);
+  WrInfo getNewWrInfo(int numSges);
 
   IbQpInfo info;
 
@@ -90,10 +92,12 @@ class IbQp {
   std::unique_ptr<ibv_wc[]> wcs;
   std::unique_ptr<ibv_send_wr[]> wrs;
   std::unique_ptr<ibv_sge[]> sges;
-  int wrn;
+  int numStagedWrs_;
+  int numStagedSges_;
 
-  const int maxCqPollNum;
-  const int maxWrPerSend;
+  const int maxCqPollNum_;
+  const int maxWrPerSend_;
+  const int maxNumSgesPerWr_;
 
   friend class IbCtx;
 };
@@ -103,7 +107,7 @@ class IbCtx {
   IbCtx(const std::string& devName);
   ~IbCtx();
 
-  IbQp* createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend, int port = -1);
+  IbQp* createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend, int maxNumSgesPerWr, int port = -1);
   const IbMr* registerMr(void* buff, std::size_t size);
 
   const std::string& getDevName() const;
@@ -111,6 +115,7 @@ class IbCtx {
  private:
   bool isPortUsable(int port) const;
   int getAnyActivePort() const;
+  void validateConfig(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend, int maxNumSgesPerWr, int port) const;
 
   const std::string devName;
   ibv_context* ctx;

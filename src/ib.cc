@@ -16,6 +16,16 @@
 #include "api.h"
 #include "debug.h"
 
+static ibv_device_attr getDeviceAttr(ibv_context *ctx) {
+  ibv_device_attr devAttr;
+  if (ibv_query_device(ctx, &devAttr) != 0) {
+    std::stringstream err;
+    err << "ibv_query_device failed (errno " << errno << ")";
+    throw mscclpp::IbError(err.str(), errno);
+  }
+  return devAttr;
+}
+
 namespace mscclpp {
 
 IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
@@ -53,8 +63,8 @@ const void* IbMr::getBuff() const { return this->buff; }
 uint32_t IbMr::getLkey() const { return this->mr->lkey; }
 
 IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr,
-           int maxWrPerSend)
-    : maxCqPollNum(maxCqPollNum), maxWrPerSend(maxWrPerSend) {
+           int maxWrPerSend, int maxNumSgesPerWr)
+    : maxCqPollNum_(maxCqPollNum), maxWrPerSend_(maxWrPerSend), maxNumSgesPerWr_(maxNumSgesPerWr) {
   this->cq = ibv_create_cq(ctx, maxCqSize, nullptr, nullptr, 0);
   if (this->cq == nullptr) {
     std::stringstream err;
@@ -117,10 +127,11 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
     throw mscclpp::IbError(err.str(), errno);
   }
   this->qp = _qp;
-  this->wrn = 0;
-  this->wrs = std::make_unique<ibv_send_wr[]>(maxWrPerSend);
-  this->sges = std::make_unique<ibv_sge[]>(maxWrPerSend);
-  this->wcs = std::make_unique<ibv_wc[]>(maxCqPollNum);
+  this->wrs = std::make_unique<ibv_send_wr[]>(maxWrPerSend_);
+  this->sges = std::make_unique<ibv_sge[]>(maxWrPerSend_ * maxNumSgesPerWr_);
+  this->wcs = std::make_unique<ibv_wc[]>(maxCqPollNum_);
+  numStagedWrs_ = 0;
+  numStagedSges_ = 0;
 }
 
 IbQp::~IbQp() {
@@ -181,29 +192,34 @@ void IbQp::rts() {
   }
 }
 
-IbQp::WrInfo IbQp::getNewWrInfo() {
-  if (this->wrn >= this->maxWrPerSend) {
+IbQp::WrInfo IbQp::getNewWrInfo(int numSges) {
+  if (numStagedWrs_ >= maxWrPerSend_) {
     std::stringstream err;
-    err << "too many outstanding work requests. limit is " << this->maxWrPerSend;
+    err << "too many outstanding work requests. limit is " << maxWrPerSend_;
     throw mscclpp::Error(err.str(), ErrorCode::InvalidUsage);
   }
-  int wrn = this->wrn;
-
-  ibv_send_wr* wr_ = &this->wrs[wrn];
-  ibv_sge* sge_ = &this->sges[wrn];
-  wr_->sg_list = sge_;
-  wr_->num_sge = 1;
-  wr_->next = nullptr;
-  if (wrn > 0) {
-    this->wrs[wrn - 1].next = wr_;
+  if (numSges > maxNumSgesPerWr_) {
+    std::stringstream err;
+    err << "too many sges per work request. limit is " << maxNumSgesPerWr_;
+    throw mscclpp::Error(err.str(), ErrorCode::InvalidUsage);
   }
-  this->wrn++;
+
+  ibv_send_wr* wr_ = &this->wrs[numStagedWrs_];
+  ibv_sge* sge_ = &this->sges[numStagedSges_];
+  wr_->sg_list = sge_;
+  wr_->num_sge = numSges;
+  wr_->next = nullptr;
+  if (numStagedWrs_ > 0) {
+    this->wrs[numStagedWrs_ - 1].next = wr_;
+  }
+  numStagedWrs_++;
+  numStagedSges_ += numSges;
   return IbQp::WrInfo{wr_, sge_};
 }
 
 void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                      uint64_t dstOffset, bool signaled) {
-  auto wrInfo = this->getNewWrInfo();
+  auto wrInfo = this->getNewWrInfo(1);
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_RDMA_WRITE;
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
@@ -215,7 +231,7 @@ void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64
 }
 
 void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal) {
-  auto wrInfo = this->getNewWrInfo();
+  auto wrInfo = this->getNewWrInfo(1);
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
   wrInfo.wr->send_flags = 0;  // atomic op cannot be signaled
@@ -229,7 +245,7 @@ void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, u
 
 void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                             uint64_t dstOffset, bool signaled, unsigned int immData) {
-  auto wrInfo = this->getNewWrInfo();
+  auto wrInfo = this->getNewWrInfo(1);
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
@@ -241,8 +257,28 @@ void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size,
   wrInfo.sge->lkey = mr->getLkey();
 }
 
+void IbQp::stageSendGather(const std::vector<IbMr*>& srcMrs, const IbMrInfo& dstInfo, const std::vector<uint32_t>& srcSizes,
+                           uint64_t wrId, const std::vector<uint64_t>& srcOffsets, uint64_t dstOffset, bool signaled) {
+  size_t numSrcs = srcMrs.size();
+  if (numSrcs != srcSizes.size() || numSrcs != srcOffsets.size()) {
+    std::stringstream err;
+    err << "invalid srcs: srcMrs.size()=" << numSrcs << ", srcSizes.size()=" << srcSizes.size()
+        << ", srcOffsets.size()=" << srcOffsets.size();
+    throw mscclpp::Error(err.str(), ErrorCode::InvalidUsage);
+  }
+  auto wrInfo = this->getNewWrInfo(numSrcs);
+  wrInfo.wr->wr_id = wrId;
+  wrInfo.wr->opcode = IBV_WR_RDMA_READ;
+  wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
+  wrInfo.wr->wr.rdma.remote_addr = (uint64_t)(dstInfo.addr) + dstOffset;
+  wrInfo.wr->wr.rdma.rkey = dstInfo.rkey;
+  // wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
+  // wrInfo.sge->length = size;
+  // wrInfo.sge->lkey = mr->getLkey();
+}
+
 void IbQp::postSend() {
-  if (this->wrn == 0) {
+  if (numStagedWrs_ == 0) {
     return;
   }
   struct ibv_send_wr* bad_wr;
@@ -252,7 +288,8 @@ void IbQp::postSend() {
     err << "ibv_post_send failed (errno " << errno << ")";
     throw mscclpp::IbError(err.str(), errno);
   }
-  this->wrn = 0;
+  numStagedWrs_ = 0;
+  numStagedSges_ = 0;
 }
 
 void IbQp::postRecv(uint64_t wrId) {
@@ -269,7 +306,7 @@ void IbQp::postRecv(uint64_t wrId) {
   }
 }
 
-int IbQp::pollCq() { return ibv_poll_cq(this->cq, this->maxCqPollNum, this->wcs.get()); }
+int IbQp::pollCq() { return ibv_poll_cq(this->cq, maxCqPollNum_, this->wcs.get()); }
 
 IbQpInfo& IbQp::getInfo() { return this->info; }
 
@@ -321,12 +358,7 @@ bool IbCtx::isPortUsable(int port) const {
 }
 
 int IbCtx::getAnyActivePort() const {
-  struct ibv_device_attr devAttr;
-  if (ibv_query_device(this->ctx, &devAttr) != 0) {
-    std::stringstream err;
-    err << "ibv_query_device failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
-  }
+  ibv_device_attr devAttr = getDeviceAttr(this->ctx);
   for (uint8_t port = 1; port <= devAttr.phys_port_cnt; ++port) {
     if (this->isPortUsable(port)) {
       return port;
@@ -335,17 +367,42 @@ int IbCtx::getAnyActivePort() const {
   return -1;
 }
 
-IbQp* IbCtx::createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
+void IbCtx::validateConfig(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend, int maxNumSgesPerWr,
+                           int port) const {
+  if (!this->isPortUsable(port)) {
+    throw mscclpp::Error("invalid IB port: " + std::to_string(port), ErrorCode::InvalidUsage);
+  }
+  ibv_device_attr devAttr = getDeviceAttr(this->ctx);
+  if (maxCqSize > devAttr.max_cqe || maxCqSize < 1) {
+    throw mscclpp::Error("invalid maxCqSize: " + std::to_string(maxCqSize), ErrorCode::InvalidUsage);
+  }
+  if (maxCqPollNum > maxCqSize || maxCqPollNum < 1) {
+    throw mscclpp::Error("invalid maxCqPollNum: " + std::to_string(maxCqPollNum), ErrorCode::InvalidUsage);
+  }
+  if (maxSendWr > devAttr.max_qp_wr || maxSendWr < 1) {
+    throw mscclpp::Error("invalid maxSendWr: " + std::to_string(maxSendWr), ErrorCode::InvalidUsage);
+  }
+  if (maxRecvWr > devAttr.max_qp_wr || maxRecvWr < 1) {
+    throw mscclpp::Error("invalid maxRecvWr: " + std::to_string(maxRecvWr), ErrorCode::InvalidUsage);
+  }
+  if (maxWrPerSend > maxSendWr || maxWrPerSend < 1) {
+    throw mscclpp::Error("invalid maxWrPerSend: " + std::to_string(maxWrPerSend), ErrorCode::InvalidUsage);
+  }
+  if (maxNumSgesPerWr > devAttr.max_sge || maxNumSgesPerWr < 1) {
+    throw mscclpp::Error("invalid maxNumSgesPerWr: " + std::to_string(maxNumSgesPerWr), ErrorCode::InvalidUsage);
+  }
+}
+
+IbQp* IbCtx::createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend, int maxNumSgesPerWr,
                       int port /*=-1*/) {
   if (port == -1) {
     port = this->getAnyActivePort();
     if (port == -1) {
       throw mscclpp::Error("No active port found", ErrorCode::InternalError);
     }
-  } else if (!this->isPortUsable(port)) {
-    throw mscclpp::Error("invalid IB port: " + std::to_string(port), ErrorCode::InternalError);
   }
-  qps.emplace_back(new IbQp(this->ctx, this->pd, port, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
+  validateConfig(maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend, maxNumSgesPerWr, port);
+  qps.emplace_back(new IbQp(this->ctx, this->pd, port, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend, maxNumSgesPerWr));
   return qps.back().get();
 }
 

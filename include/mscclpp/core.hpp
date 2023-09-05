@@ -542,7 +542,8 @@ class Communicator {
   /// @param ibMaxWrPerSend The maximum number of work requests per send for IB. Unused if transport is not IB.
   /// @return std::shared_ptr<Connection> A shared pointer to the connection.
   std::shared_ptr<Connection> connectOnSetup(int remoteRank, int tag, Transport transport, int ibMaxCqSize = 1024,
-                                             int ibMaxCqPollNum = 1, int ibMaxSendWr = 8192, int ibMaxWrPerSend = 64);
+                                             int ibMaxCqPollNum = 1, int ibMaxSendWr = 8192, int ibMaxWrPerSend = 64,
+                                             int ibMaxNumSgesPerWr = 16);
 
   /// Add a custom Setuppable object to a list of objects to be setup later, when @ref setup() is called.
   ///
