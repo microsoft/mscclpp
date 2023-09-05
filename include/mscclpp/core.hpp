@@ -434,10 +434,10 @@ class Connection {
 
 /// Used to configure an endpoint.
 struct EndpointConfig {
-  const int DefaultMaxCqSize = 1024;
-  const int DefaultMaxCqPollNum = 1;
-  const int DefaultMaxSendWr = 8192;
-  const int DefaultMaxWrPerSend = 64;
+  static const int DefaultMaxCqSize = 1024;
+  static const int DefaultMaxCqPollNum = 1;
+  static const int DefaultMaxSendWr = 8192;
+  static const int DefaultMaxWrPerSend = 64;
 
   Transport transport;
   int ibMaxCqSize = DefaultMaxCqSize;
