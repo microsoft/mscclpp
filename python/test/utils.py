@@ -72,7 +72,6 @@ class Kernel:
 
 
 class KernelBuilder:
-
     kernel_map: dict = {}
 
     def __init__(self, file: str, kernel_name: str):
