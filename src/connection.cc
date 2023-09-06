@@ -4,8 +4,10 @@
 #include "connection.hpp"
 
 #include <mscclpp/utils.hpp>
+#include <sstream>
 
 #include "debug.h"
+#include "endpoint.hpp"
 #include "infiniband/verbs.h"
 #include "npkit/npkit.h"
 #include "registered_memory.hpp"
@@ -20,24 +22,29 @@ void validateTransport(RegisteredMemory mem, Transport transport) {
 
 // Connection
 
-std::shared_ptr<RegisteredMemory::Impl> Connection::getRegisteredMemoryImpl(RegisteredMemory& memory) {
-  return memory.pimpl;
-}
+std::shared_ptr<RegisteredMemory::Impl> Connection::getImpl(RegisteredMemory& memory) { return memory.pimpl_; }
 
-// ConnectionBase
-
-ConnectionBase::ConnectionBase(int remoteRank, int tag) : remoteRank_(remoteRank), tag_(tag) {}
-
-int ConnectionBase::remoteRank() { return remoteRank_; }
-
-int ConnectionBase::tag() { return tag_; }
+std::shared_ptr<Endpoint::Impl> Connection::getImpl(Endpoint& memory) { return memory.pimpl_; }
 
 // CudaIpcConnection
 
-CudaIpcConnection::CudaIpcConnection(int remoteRank, int tag, cudaStream_t stream)
-    : ConnectionBase(remoteRank, tag), stream_(stream) {}
-
-CudaIpcConnection::~CudaIpcConnection() {}
+CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, cudaStream_t stream)
+    : stream_(stream) {
+  if (localEndpoint.transport() != Transport::CudaIpc) {
+    throw mscclpp::Error("Cuda IPC connection can only be made from a Cuda IPC endpoint", ErrorCode::InvalidUsage);
+  }
+  if (remoteEndpoint.transport() != Transport::CudaIpc) {
+    throw mscclpp::Error("Cuda IPC connection can only be made to a Cuda IPC endpoint", ErrorCode::InvalidUsage);
+  }
+  // sanity check: make sure the IPC connection is being made within a node
+  if (getImpl(remoteEndpoint)->hostHash_ != getImpl(localEndpoint)->hostHash_) {
+    std::stringstream ss;
+    ss << "Cuda IPC connection can only be made within a node: " << std::hex << getImpl(remoteEndpoint)->hostHash_
+       << " != " << std::hex << getImpl(localEndpoint)->hostHash_;
+    throw mscclpp::Error(ss.str(), ErrorCode::InvalidUsage);
+  }
+  INFO(MSCCLPP_P2P, "Cuda IPC connection created");
+}
 
 Transport CudaIpcConnection::transport() { return Transport::CudaIpc; }
 
@@ -77,27 +84,23 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
   AvoidCudaGraphCaptureGuard guard;
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream_));
   // npkitCollectExitEvents(conn, NPKIT_EVENT_DMA_SEND_EXIT);
-  INFO(MSCCLPP_P2P, "CudaIpcConnection flushing connection to remote rank %d", remoteRank());
+  INFO(MSCCLPP_P2P, "CudaIpcConnection flushing connection");
 }
 
 // IBConnection
 
-IBConnection::IBConnection(int remoteRank, int tag, Transport transport, int maxCqSize, int maxCqPollNum, int maxSendWr,
-                           int maxWrPerSend, Communicator::Impl& commImpl)
-    : ConnectionBase(remoteRank, tag),
-      transport_(transport),
-      remoteTransport_(Transport::Unknown),
+IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context)
+    : transport_(localEndpoint.transport()),
+      remoteTransport_(remoteEndpoint.transport()),
       numSignaledSends(0),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
-  qp = commImpl.getIbContext(transport)->createQp(maxCqSize, maxCqPollNum, maxSendWr, 0, maxWrPerSend);
-  dummyAtomicSourceMem_ = RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(
-      dummyAtomicSource_.get(), sizeof(uint64_t), commImpl.bootstrap_->getRank(), transport, commImpl));
-  validateTransport(dummyAtomicSourceMem_, transport);
-  dstTransportInfo_ = getRegisteredMemoryImpl(dummyAtomicSourceMem_)->getTransportInfo(transport);
-
-  if (!dstTransportInfo_.ibLocal) {
-    throw Error("dummyAtomicSource_ is remote, which is not supported", ErrorCode::InternalError);
-  }
+  qp = getImpl(localEndpoint)->ibQp_;
+  qp->rtr(getImpl(remoteEndpoint)->ibQpInfo_);
+  qp->rts();
+  dummyAtomicSourceMem_ = context.registerMemory(dummyAtomicSource_.get(), sizeof(uint64_t), transport_);
+  validateTransport(dummyAtomicSourceMem_, transport_);
+  dstTransportInfo_ = getImpl(dummyAtomicSourceMem_)->getTransportInfo(transport_);
+  INFO(MSCCLPP_NET, "IB connection via %s created", getIBDeviceName(transport_).c_str());
 }
 
 Transport IBConnection::transport() { return transport_; }
@@ -109,11 +112,11 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   validateTransport(dst, remoteTransport());
   validateTransport(src, transport());
 
-  auto dstTransportInfo = getRegisteredMemoryImpl(dst)->getTransportInfo(remoteTransport());
+  auto dstTransportInfo = getImpl(dst)->getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
     throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
   }
-  auto srcTransportInfo = getRegisteredMemoryImpl(src)->getTransportInfo(transport());
+  auto srcTransportInfo = getImpl(src)->getTransportInfo(transport());
   if (!srcTransportInfo.ibLocal) {
     throw Error("src is remote, which is not supported", ErrorCode::InvalidUsage);
   }
@@ -133,7 +136,7 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 
 void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
   validateTransport(dst, remoteTransport());
-  auto dstTransportInfo = getRegisteredMemoryImpl(dst)->getTransportInfo(remoteTransport());
+  auto dstTransportInfo = getImpl(dst)->getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
     throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
   }
@@ -173,31 +176,8 @@ void IBConnection::flush(int64_t timeoutUsec) {
       }
     }
   }
-  INFO(MSCCLPP_NET, "IBConnection flushing connection to remote rank %d", remoteRank());
+  INFO(MSCCLPP_NET, "IBConnection flushing connection");
   // npkitCollectExitEvents(conn, NPKIT_EVENT_IB_SEND_EXIT);
-}
-
-void IBConnection::beginSetup(std::shared_ptr<Bootstrap> bootstrap) {
-  std::vector<char> ibQpTransport;
-  std::copy_n(reinterpret_cast<char*>(&qp->getInfo()), sizeof(qp->getInfo()), std::back_inserter(ibQpTransport));
-  std::copy_n(reinterpret_cast<char*>(&transport_), sizeof(transport_), std::back_inserter(ibQpTransport));
-
-  bootstrap->send(ibQpTransport.data(), ibQpTransport.size(), remoteRank(), tag());
-}
-
-void IBConnection::endSetup(std::shared_ptr<Bootstrap> bootstrap) {
-  std::vector<char> ibQpTransport(sizeof(IbQpInfo) + sizeof(Transport));
-  bootstrap->recv(ibQpTransport.data(), ibQpTransport.size(), remoteRank(), tag());
-
-  IbQpInfo qpInfo;
-  auto it = ibQpTransport.begin();
-  std::copy_n(it, sizeof(qpInfo), reinterpret_cast<char*>(&qpInfo));
-  it += sizeof(qpInfo);
-  std::copy_n(it, sizeof(remoteTransport_), reinterpret_cast<char*>(&remoteTransport_));
-  it += sizeof(qpInfo);
-
-  qp->rtr(qpInfo);
-  qp->rts();
 }
 
 }  // namespace mscclpp

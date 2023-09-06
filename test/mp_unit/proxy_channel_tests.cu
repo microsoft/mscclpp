@@ -23,6 +23,9 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
   const bool isInPlace = (recvBuff == nullptr);
   mscclpp::TransportFlags transport = (useIbOnly) ? ibTransport : (mscclpp::Transport::CudaIpc | ibTransport);
 
+  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures(worldSize);
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
+
   mscclpp::RegisteredMemory sendBufRegMem = communicator->registerMemory(sendBuff, sendBuffBytes, transport);
   mscclpp::RegisteredMemory recvBufRegMem;
   if (!isInPlace) {
@@ -33,29 +36,33 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
     if (r == rank) {
       continue;
     }
-    std::shared_ptr<mscclpp::Connection> conn;
     if ((rankToNode(r) == rankToNode(gEnv->rank)) && !useIbOnly) {
-      conn = communicator->connectOnSetup(r, 0, mscclpp::Transport::CudaIpc);
+      connectionFutures[r] = communicator->connectOnSetup(r, 0, mscclpp::Transport::CudaIpc);
     } else {
-      conn = communicator->connectOnSetup(r, 0, ibTransport);
+      connectionFutures[r] = communicator->connectOnSetup(r, 0, ibTransport);
     }
-    connections[r] = conn;
 
     if (isInPlace) {
       communicator->sendMemoryOnSetup(sendBufRegMem, r, 0);
     } else {
       communicator->sendMemoryOnSetup(recvBufRegMem, r, 0);
     }
-    auto remoteMemory = communicator->recvMemoryOnSetup(r, 0);
+    remoteMemFutures[r] = communicator->recvMemoryOnSetup(r, 0);
+  }
 
-    communicator->setup();
+  communicator->setup();
 
-    mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, conn);
-    communicator->setup();
+  for (int r = 0; r < worldSize; r++) {
+    if (r == rank) {
+      continue;
+    }
+    mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, connectionFutures[r].get());
 
-    proxyChannels.emplace_back(proxyService->proxyChannel(cid), proxyService->addMemory(remoteMemory.get()),
+    proxyChannels.emplace_back(proxyService->proxyChannel(cid), proxyService->addMemory(remoteMemFutures[r].get()),
                                proxyService->addMemory(sendBufRegMem));
   }
+
+  communicator->setup();
 }
 
 __constant__ DeviceHandle<mscclpp::SimpleProxyChannel> gChannelOneToOneTestConstProxyChans;

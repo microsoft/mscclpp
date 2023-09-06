@@ -78,6 +78,7 @@ class MscclppGroup:
         for rank in remote_ranks:
             connections[rank] = self.communicator.connect_on_setup(rank, 0, transport)
         self.communicator.setup()
+        connections = {rank: connections[rank].get() for rank in connections}
         return connections
 
     def register_tensor_with_connections(
