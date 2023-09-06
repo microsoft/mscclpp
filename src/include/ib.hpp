@@ -7,6 +7,7 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <vector>
 
 // Forward declarations of IB structures
 struct ibv_context;
@@ -107,7 +108,8 @@ class IbCtx {
   IbCtx(const std::string& devName);
   ~IbCtx();
 
-  IbQp* createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend, int maxNumSgesPerWr, int port = -1);
+  IbQp* createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend, int maxNumSgesPerWr,
+                 int port = -1);
   const IbMr* registerMr(void* buff, std::size_t size);
 
   const std::string& getDevName() const;
@@ -115,7 +117,8 @@ class IbCtx {
  private:
   bool isPortUsable(int port) const;
   int getAnyActivePort() const;
-  void validateConfig(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend, int maxNumSgesPerWr, int port) const;
+  void validateConfig(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
+                      int maxNumSgesPerWr, int port) const;
 
   const std::string devName;
   ibv_context* ctx;

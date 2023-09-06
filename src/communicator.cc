@@ -94,12 +94,9 @@ MSCCLPP_API_CPP NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSe
   return NonblockingFuture<RegisteredMemory>(memoryReceiver->memoryPromise_.get_future());
 }
 
-MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int remoteRank, int tag, Transport transport,
-                                                                         int ibMaxCqSize /*=1024*/,
-                                                                         int ibMaxCqPollNum /*=1*/,
-                                                                         int ibMaxSendWr /*=8192*/,
-                                                                         int ibMaxWrPerSend /*=64*/,
-                                                                         int ibMaxNumSgesPerWr /*=16*/) {
+MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(
+    int remoteRank, int tag, Transport transport, int ibMaxCqSize /*=1024*/, int ibMaxCqPollNum /*=1*/,
+    int ibMaxSendWr /*=8192*/, int ibMaxWrPerSend /*=64*/, int ibMaxNumSgesPerWr /*=16*/) {
   std::shared_ptr<ConnectionBase> conn;
   if (transport == Transport::CudaIpc) {
     // sanity check: make sure the IPC connection is being made within a node
