@@ -104,7 +104,7 @@ uint64_t getHostHash(void) {
  *
  * $$ $(readlink /proc/self/ns/pid)
  */
-uint64_t getPidHash(void) {
+uint64_t computePidHash(void) {
   char pname[1024];
   // Start off with our pid ($$)
   sprintf(pname, "%ld", (long)getpid());
@@ -116,6 +116,11 @@ uint64_t getPidHash(void) {
   TRACE(MSCCLPP_INIT, "unique PID '%s'", pname);
 
   return getHash(pname, strlen(pname));
+}
+
+uint64_t getPidHash(void) {
+  thread_local std::unique_ptr<uint64_t> pidHash = std::make_unique<uint64_t>(computePidHash());
+  return *pidHash;
 }
 
 int parseStringList(const char* string, netIf* ifList, int maxList) {

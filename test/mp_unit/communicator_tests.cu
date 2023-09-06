@@ -43,16 +43,22 @@ void CommunicatorTestBase::TearDown() {
 void CommunicatorTestBase::setNumRanksToUse(int num) { numRanksToUse = num; }
 
 void CommunicatorTestBase::connectMesh(bool useIbOnly) {
+  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures(numRanksToUse);
   for (int i = 0; i < numRanksToUse; i++) {
     if (i != gEnv->rank) {
       if ((rankToNode(i) == rankToNode(gEnv->rank)) && !useIbOnly) {
-        connections[i] = communicator->connectOnSetup(i, 0, mscclpp::Transport::CudaIpc);
+        connectionFutures[i] = communicator->connectOnSetup(i, 0, mscclpp::Transport::CudaIpc);
       } else {
-        connections[i] = communicator->connectOnSetup(i, 0, ibTransport);
+        connectionFutures[i] = communicator->connectOnSetup(i, 0, ibTransport);
       }
     }
   }
   communicator->setup();
+  for (int i = 0; i < numRanksToUse; i++) {
+    if (i != gEnv->rank) {
+      connections[i] = connectionFutures[i].get();
+    }
+  }
 }
 
 // Register a local memory and receive corresponding remote memories

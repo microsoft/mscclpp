@@ -47,14 +47,16 @@ def setup_connections(comm, rank, world_size, element_size, proxy_service):
         remote_memories.append(remote_mem)
     comm.setup()
 
+    connections = [conn.get() for conn in connections]
+
     # Create simple proxy channels
     for i, conn in enumerate(connections):
         proxy_channel = mscclpp.SimpleProxyChannel(
-            proxy_service.proxy_channel(proxy_service.build_and_add_semaphore(conn)),
+            proxy_service.proxy_channel(proxy_service.build_and_add_semaphore(comm, conn)),
             proxy_service.add_memory(remote_memories[i].get()),
             proxy_service.add_memory(reg_mem),
         )
-        simple_proxy_channels.append(mscclpp.device_handle(proxy_channel))
+        simple_proxy_channels.append(proxy_channel.device_handle())
     comm.setup()
 
     # Create sm channels
@@ -66,7 +68,7 @@ def setup_connections(comm, rank, world_size, element_size, proxy_service):
     for i, conn in enumerate(sm_semaphores):
         sm_chan = mscclpp.SmChannel(sm_semaphores[i], remote_memories[i].get(), ptr)
         sm_channels.append(sm_chan)
-    return simple_proxy_channels, [mscclpp.device_handle(sm_chan) for sm_chan in sm_channels]
+    return simple_proxy_channels, [sm_chan.device_handle() for sm_chan in sm_channels]
 
 
 def run(rank, args):
