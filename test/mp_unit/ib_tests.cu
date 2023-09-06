@@ -36,7 +36,7 @@ void IbPeerToPeerTest::SetUp() {
   bootstrap->initialize(id);
 
   ibCtx = std::make_shared<mscclpp::IbCtx>(ibDevName);
-  qp = ibCtx->createQp(1024, 1, 8192, 0, 64, 1);
+  qp = ibCtx->createQp(1024, 1, 8192, 0, 64, 4);
 
   int remoteRank = (gEnv->rank == 0) ? 1 : 0;
 
@@ -315,7 +315,7 @@ TEST_F(IbPeerToPeerTest, SendGather) {
 
   mscclpp::Timer timeout(3);
 
-  const int numDataSrcs = 1;
+  const int numDataSrcs = 4;
   const int nelemPerMr = 1024;
 
   // Gather send from rank 0 to 1

@@ -72,8 +72,8 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   qpInitAttr.qp_type = IBV_QPT_RC;
   qpInitAttr.cap.max_send_wr = maxSendWr;
   qpInitAttr.cap.max_recv_wr = maxRecvWr;
-  qpInitAttr.cap.max_send_sge = 1;
-  qpInitAttr.cap.max_recv_sge = 1;
+  qpInitAttr.cap.max_send_sge = maxNumSgesPerWr;
+  qpInitAttr.cap.max_recv_sge = maxNumSgesPerWr;
   qpInitAttr.cap.max_inline_data = 0;
 
   struct ibv_qp* _qp = ibv_create_qp(pd, &qpInitAttr);
