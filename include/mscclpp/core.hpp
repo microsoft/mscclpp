@@ -110,9 +110,10 @@ class TcpBootstrap : public Bootstrap {
   void barrier() override;
 
  private:
-  /// Implementation class for @ref TcpBootstrap.
-  class Impl;
-  /// Pointer to the implementation class for @ref TcpBootstrap.
+  // The interal implementation.
+  struct Impl;
+
+  // Pointer to the internal implementation.
   std::unique_ptr<Impl> pimpl_;
 };
 
@@ -303,22 +304,14 @@ std::string getIBDeviceName(Transport ibTransport);
 /// @return The InfiniBand transport associated with the specified device name.
 Transport getIBTransportByDeviceName(const std::string& ibDeviceName);
 
-class Communicator;
+class Context;
 class Connection;
 
-/// Represents a block of memory that has been registered to a @ref Communicator.
+/// Represents a block of memory that has been registered to a @ref Context.
 class RegisteredMemory {
- protected:
-  struct Impl;
-
  public:
   /// Default constructor.
   RegisteredMemory() = default;
-
-  /// Constructor that takes a shared pointer to an implementation object.
-  ///
-  /// @param pimpl A shared pointer to an implementation object.
-  RegisteredMemory(std::shared_ptr<Impl> pimpl);
 
   /// Destructor.
   ~RegisteredMemory();
@@ -326,17 +319,12 @@ class RegisteredMemory {
   /// Get a pointer to the memory block.
   ///
   /// @return A pointer to the memory block.
-  void* data();
+  void* data() const;
 
   /// Get the size of the memory block.
   ///
   /// @return The size of the memory block.
   size_t size();
-
-  /// Get the rank of the process that owns the memory block.
-  ///
-  /// @return The rank of the process that owns the memory block.
-  int rank();
 
   /// Get the transport flags associated with the memory block.
   ///
@@ -354,14 +342,54 @@ class RegisteredMemory {
   /// @return A deserialized RegisteredMemory object.
   static RegisteredMemory deserialize(const std::vector<char>& data);
 
+ private:
+  // The interal implementation.
+  struct Impl;
+
+  // Internal constructor.
+  RegisteredMemory(std::shared_ptr<Impl> pimpl);
+
+  // Pointer to the internal implementation. A shared_ptr is used since RegisteredMemory is immutable.
+  std::shared_ptr<Impl> pimpl_;
+
+  friend class Context;
   friend class Connection;
-  friend class IBConnection;
-  friend class Communicator;
+};
+
+/// Represents one end of a connection.
+class Endpoint {
+ public:
+  /// Default constructor.
+  Endpoint() = default;
+
+  /// Get the transport used.
+  ///
+  /// @return The transport used.
+  Transport transport();
+
+  /// Serialize the Endpoint object to a vector of characters.
+  ///
+  /// @return A vector of characters representing the serialized Endpoint object.
+  std::vector<char> serialize();
+
+  /// Deserialize a Endpoint object from a vector of characters.
+  ///
+  /// @param data A vector of characters representing a serialized Endpoint object.
+  /// @return A deserialized Endpoint object.
+  static Endpoint deserialize(const std::vector<char>& data);
 
  private:
-  // A shared_ptr is used since RegisteredMemory is functionally immutable, although internally some state is populated
-  // lazily.
-  std::shared_ptr<Impl> pimpl;
+  // The interal implementation.
+  struct Impl;
+
+  // Internal constructor.
+  Endpoint(std::shared_ptr<Impl> pimpl);
+
+  // Pointer to the internal implementation. A shared_ptr is used since Endpoint is immutable.
+  std::shared_ptr<Impl> pimpl_;
+
+  friend class Context;
+  friend class Connection;
 };
 
 /// Represents a connection between two processes.
@@ -388,16 +416,6 @@ class Connection {
   /// Flush any pending writes to the remote process.
   virtual void flush(int64_t timeoutUsec = 3e7) = 0;
 
-  /// Get the rank of the remote process.
-  ///
-  /// @return The rank of the remote process.
-  virtual int remoteRank() = 0;
-
-  /// Get the tag associated with the connection.
-  ///
-  /// @return The tag associated with the connection.
-  virtual int tag() = 0;
-
   /// Get the transport used by the local process.
   ///
   /// @return The transport used by the local process.
@@ -409,11 +427,89 @@ class Connection {
   virtual Transport remoteTransport() = 0;
 
  protected:
-  /// Get the implementation object associated with a @ref RegisteredMemory object.
+  // Internal methods for getting implementation pointers.
+  static std::shared_ptr<RegisteredMemory::Impl> getImpl(RegisteredMemory& memory);
+  static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
+};
+
+/// Used to configure an endpoint.
+struct EndpointConfig {
+  static const int DefaultMaxCqSize = 1024;
+  static const int DefaultMaxCqPollNum = 1;
+  static const int DefaultMaxSendWr = 8192;
+  static const int DefaultMaxWrPerSend = 64;
+
+  Transport transport;
+  int ibMaxCqSize = DefaultMaxCqSize;
+  int ibMaxCqPollNum = DefaultMaxCqPollNum;
+  int ibMaxSendWr = DefaultMaxSendWr;
+  int ibMaxWrPerSend = DefaultMaxWrPerSend;
+
+  /// Default constructor. Sets transport to Transport::Unknown.
+  EndpointConfig() : transport(Transport::Unknown) {}
+
+  /// Constructor that takes a transport and sets the other fields to their default values.
   ///
-  /// @param memory The @ref RegisteredMemory object.
-  /// @return A shared pointer to the implementation object.
-  static std::shared_ptr<RegisteredMemory::Impl> getRegisteredMemoryImpl(RegisteredMemory& memory);
+  /// @param transport The transport to use.
+  EndpointConfig(Transport transport) : transport(transport) {}
+};
+
+/// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
+/// where the process group abstraction offered by @ref Communicator is not suitable, e.g., ephemeral client-server
+/// connections. Correct use of this class requires external synchronization when finalizing connections with the
+/// @ref connect() method.
+///
+/// As an example, a client-server scenario where the server will write to the client might proceed as follows:
+///   1. The client creates an endpoint with @ref createEndpoint() and sends it to the server.
+///   2. The server receives the client endpoint, creates its own endpoint with @ref createEndpoint(), sends it to the
+///      client, and creates a connection with @ref connect().
+///   4. The client receives the server endpoint, creates a connection with @ref connect() and sends a
+///      @ref RegisteredMemory to the server.
+///   5. The server receives the @ref RegisteredMemory and writes to it using the previously created connection.
+/// The client waiting to create a connection before sending the @ref RegisteredMemory ensures that the server can not
+/// write to the @ref RegisteredMemory before the connection is established.
+///
+/// While some transports may have more relaxed implementation behavior, this should not be relied upon.
+class Context {
+ public:
+  /// Create a context.
+  Context();
+
+  /// Destroy the context.
+  ~Context();
+
+  /// Register a region of GPU memory for use in this context.
+  ///
+  /// @param ptr Base pointer to the memory.
+  /// @param size Size of the memory region in bytes.
+  /// @param transports Transport flags.
+  /// @return RegisteredMemory A handle to the buffer.
+  RegisteredMemory registerMemory(void* ptr, size_t size, TransportFlags transports);
+
+  /// Create an endpoint for establishing connections.
+  ///
+  /// @param config The configuration for the endpoint.
+  /// @return The newly created endpoint.
+  Endpoint createEndpoint(EndpointConfig config);
+
+  /// Establish a connection between two endpoints. While this method immediately returns a connection object, the
+  /// connection is only safe to use after the corresponding connection on the remote endpoint has been established.
+  /// This method must be called on both endpoints to establish a connection.
+  ///
+  /// @param localEndpoint The local endpoint.
+  /// @param remoteEndpoint The remote endpoint.
+  /// @return std::shared_ptr<Connection> A shared pointer to the connection.
+  std::shared_ptr<Connection> connect(Endpoint localEndpoint, Endpoint remoteEndpoint);
+
+ private:
+  // The interal implementation.
+  struct Impl;
+
+  // Pointer to the internal implementation.
+  std::unique_ptr<Impl> pimpl_;
+
+  friend class RegisteredMemory;
+  friend class Endpoint;
 };
 
 /// A base class for objects that can be set up during @ref Communicator::setup().
@@ -479,14 +575,12 @@ class NonblockingFuture {
 ///   6. All done; use connections and registered memories to build channels.
 ///
 class Communicator {
- protected:
-  struct Impl;
-
  public:
   /// Initializes the communicator with a given bootstrap implementation.
   ///
   /// @param bootstrap An implementation of the Bootstrap that the communicator will use.
-  Communicator(std::shared_ptr<Bootstrap> bootstrap);
+  /// @param context An optional context to use for the communicator. If not provided, a new context will be created.
+  Communicator(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<Context> context = nullptr);
 
   /// Destroy the communicator.
   ~Communicator();
@@ -496,7 +590,12 @@ class Communicator {
   /// @return std::shared_ptr<Bootstrap> The bootstrap held by this communicator.
   std::shared_ptr<Bootstrap> bootstrap();
 
-  /// Register a region of GPU memory for use in this communicator.
+  /// Returns the context held by this communicator.
+  ///
+  /// @return std::shared_ptr<Context> The context held by this communicator.
+  std::shared_ptr<Context> context();
+
+  /// Register a region of GPU memory for use in this communicator's context.
   ///
   /// @param ptr Base pointer to the memory.
   /// @param size Size of the memory region in bytes.
@@ -534,15 +633,22 @@ class Communicator {
   ///
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag of the connection for identifying it.
-  /// @param transport The type of transport to be used.
-  /// @param ibMaxCqSize The maximum number of completion queue entries for IB. Unused if transport is not IB.
-  /// @param ibMaxCqPollNum The maximum number of completion queue entries to poll for IB. Unused if transport is not
-  /// IB.
-  /// @param ibMaxSendWr The maximum number of outstanding send work requests for IB. Unused if transport is not IB.
-  /// @param ibMaxWrPerSend The maximum number of work requests per send for IB. Unused if transport is not IB.
-  /// @return std::shared_ptr<Connection> A shared pointer to the connection.
-  std::shared_ptr<Connection> connectOnSetup(int remoteRank, int tag, Transport transport, int ibMaxCqSize = 1024,
-                                             int ibMaxCqPollNum = 1, int ibMaxSendWr = 8192, int ibMaxWrPerSend = 64);
+  /// @param config The configuration for the local endpoint.
+  /// @return NonblockingFuture<NonblockingFuture<std::shared_ptr<Connection>>> A non-blocking future of shared pointer
+  /// to the connection.
+  NonblockingFuture<std::shared_ptr<Connection>> connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig);
+
+  /// Get the remote rank a connection is connected to.
+  ///
+  /// @param connection The connection to get the remote rank for.
+  /// @return The remote rank the connection is connected to.
+  int remoteRankOf(const Connection& connection);
+
+  /// Get the tag a connection was made with.
+  ///
+  /// @param connection The connection to get the tag for.
+  /// @return The tag the connection was made with.
+  int tagOf(const Connection& connection);
 
   /// Add a custom Setuppable object to a list of objects to be setup later, when @ref setup() is called.
   ///
@@ -556,12 +662,12 @@ class Communicator {
   /// that have been registered after the (n-1)-th call.
   void setup();
 
-  friend class RegisteredMemory::Impl;
-  friend class IBConnection;
-
  private:
-  /// Unique pointer to the implementation of the Communicator class.
-  std::unique_ptr<Impl> pimpl;
+  // The interal implementation.
+  struct Impl;
+
+  // Pointer to the internal implementation.
+  std::unique_ptr<Impl> pimpl_;
 };
 
 /// A constant TransportFlags object representing no transports.

@@ -15,8 +15,8 @@ namespace mscclpp {
 struct SmChannel {
  private:
   std::shared_ptr<SmDevice2DeviceSemaphore> semaphore_;
+  RegisteredMemory dst_;
   void* src_;
-  void* dst_;
   void* getPacketBuffer_;
 
  public:

@@ -60,6 +60,14 @@ function run_mp_ut()
   -npernode 8 /root/mscclpp/build/test/mp_unit_tests -ip_port mscclpp-it-000000:20003
 }
 
+function run_pytests()
+{
+  echo "==================Run python tests================================"
+  /usr/local/mpi/bin/mpirun -allow-run-as-root -tag-output -np 16 --bind-to numa \
+  -hostfile /root/mscclpp/hostfile_mpi -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH \
+  -npernode 8 bash /root/mscclpp/pytest.sh
+}
+
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <mscclpp-test/mp-ut>"
     exit 1
@@ -73,6 +81,10 @@ case $test_name in
   mp-ut)
     echo "==================Run mp-ut on 2 nodes================================"
     run_mp_ut
+    ;;
+  pytests)
+    echo "==================Run python tests================================"
+    run_pytests
     ;;
   *)
     echo "Unknown test name: $test_name"

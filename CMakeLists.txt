@@ -93,6 +93,7 @@ install(TARGETS mscclpp_static
 
 # Tests
 if (BUILD_TESTS)
+    enable_testing() # Called here to allow ctest from the build directory
     add_subdirectory(test)
 endif()
 

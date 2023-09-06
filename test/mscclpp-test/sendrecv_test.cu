@@ -155,16 +155,18 @@ void SendRecvTestEngine::setupConnections() {
 
   std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
 
-  auto sendConn =
+  auto sendConnFuture =
       comm_->connectOnSetup(sendToRank, 0, getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice));
-  smSemaphores.push_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, sendConn));
   if (recvFromRank != sendToRank) {
-    auto recvConn =
+    auto recvConnFuture =
         comm_->connectOnSetup(recvFromRank, 0, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice));
-    smSemaphores.push_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, recvConn));
+    comm_->setup();
+    smSemaphores.push_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, sendConnFuture.get()));
+    smSemaphores.push_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, recvConnFuture.get()));
   } else {
-    // reuse the send channel if worldSize is 2
-    smSemaphores.push_back(smSemaphores[0]);
+    comm_->setup();
+    smSemaphores.push_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, sendConnFuture.get()));
+    smSemaphores.push_back(smSemaphores[0]);  // reuse the send channel if worldSize is 2
   }
   comm_->setup();
 
