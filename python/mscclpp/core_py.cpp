@@ -141,7 +141,7 @@ void register_core(nb::module_& m) {
       .def("recv_memory_on_setup", &Communicator::recvMemoryOnSetup, nb::arg("remoteRank"), nb::arg("tag"))
       .def("connect_on_setup", &Communicator::connectOnSetup, nb::arg("remoteRank"), nb::arg("tag"),
            nb::arg("transport"), nb::arg("ibMaxCqSize") = 1024, nb::arg("ibMaxCqPollNum") = 1,
-           nb::arg("ibMaxSendWr") = 8192, nb::arg("ibMaxWrPerSend") = 64)
+           nb::arg("ibMaxSendWr") = 8192, nb::arg("ibMaxWrPerSend") = 64, nb::arg("ibMaxNumSgesPerWr") = 1)
       .def("setup", &Communicator::setup);
 }
 

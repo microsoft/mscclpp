@@ -543,7 +543,7 @@ class Communicator {
   /// @return std::shared_ptr<Connection> A shared pointer to the connection.
   std::shared_ptr<Connection> connectOnSetup(int remoteRank, int tag, Transport transport, int ibMaxCqSize = 1024,
                                              int ibMaxCqPollNum = 1, int ibMaxSendWr = 8192, int ibMaxWrPerSend = 64,
-                                             int ibMaxNumSgesPerWr = 16);
+                                             int ibMaxNumSgesPerWr = 1);
 
   /// Add a custom Setuppable object to a list of objects to be setup later, when @ref setup() is called.
   ///

@@ -67,7 +67,7 @@ class IbPeerToPeerTest : public IbTestBase {
  protected:
   void SetUp() override;
 
-  void registerBufferAndConnect(void* buf, size_t size);
+  void registerBuffersAndConnect(const std::vector<void*>& bufList, const std::vector<uint32_t>& sizeList);
 
   void stageSend(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled);
 
@@ -76,14 +76,16 @@ class IbPeerToPeerTest : public IbTestBase {
   void stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
                         unsigned int immData);
 
+  void stageSendGather(const std::vector<uint32_t>& sizeList, uint64_t wrId, const std::vector<uint32_t>& srcOffsetList,
+                       uint32_t dstOffset, bool signaled);
+
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   std::shared_ptr<mscclpp::IbCtx> ibCtx;
   mscclpp::IbQp* qp;
-  const mscclpp::IbMr* mr;
-  size_t bufSize;
+  std::vector<const mscclpp::IbMr*> localMrList;
 
-  std::array<mscclpp::IbQpInfo, 2> qpInfo;
-  std::array<mscclpp::IbMrInfo, 2> mrInfo;
+  mscclpp::IbQpInfo remoteQpInfo;
+  std::vector<mscclpp::IbMrInfo> remoteMrInfoList;
 };
 
 class CommunicatorTestBase : public MultiProcessTest {

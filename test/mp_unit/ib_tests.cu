@@ -38,39 +38,57 @@ void IbPeerToPeerTest::SetUp() {
   ibCtx = std::make_shared<mscclpp::IbCtx>(ibDevName);
   qp = ibCtx->createQp(1024, 1, 8192, 0, 64, 1);
 
-  qpInfo[gEnv->rank] = qp->getInfo();
-  bootstrap->allGather(qpInfo.data(), sizeof(mscclpp::IbQpInfo));
+  int remoteRank = (gEnv->rank == 0) ? 1 : 0;
+
+  mscclpp::IbQpInfo localQpInfo = qp->getInfo();
+  bootstrap->send(&localQpInfo, sizeof(mscclpp::IbQpInfo), remoteRank, /*tag=*/0);
+  bootstrap->recv(&remoteQpInfo, sizeof(mscclpp::IbQpInfo), remoteRank, /*tag=*/0);
 }
 
-void IbPeerToPeerTest::registerBufferAndConnect(void* buf, size_t size) {
-  bufSize = size;
-  mr = ibCtx->registerMr(buf, size);
-  mrInfo[gEnv->rank] = mr->getInfo();
-  bootstrap->allGather(mrInfo.data(), sizeof(mscclpp::IbMrInfo));
-
-  for (int i = 0; i < bootstrap->getNranks(); ++i) {
-    if (i == gEnv->rank) continue;
-    qp->rtr(qpInfo[i]);
-    qp->rts();
-    break;
+void IbPeerToPeerTest::registerBuffersAndConnect(const std::vector<void*>& bufList,
+                                                 const std::vector<uint32_t>& sizeList) {
+  size_t numMrs = bufList.size();
+  if (numMrs != sizeList.size()) {
+    throw std::runtime_error("bufList.size() != sizeList.size()");
   }
+
+  // Assume the remote side registers the same number of MRs
+  std::vector<mscclpp::IbMrInfo> localMrInfo;
+  for (size_t i = 0; i < numMrs; ++i) {
+    const mscclpp::IbMr* mr = ibCtx->registerMr(bufList[i], sizeList[i]);
+    localMrList.push_back(mr);
+    localMrInfo.emplace_back(mr->getInfo());
+  }
+
+  int remoteRank = (gEnv->rank == 0) ? 1 : 0;
+
+  // Send the number of MRs and the MR info to the remote side
+  bootstrap->send(&numMrs, sizeof(numMrs), remoteRank, /*tag=*/0);
+  bootstrap->send(localMrInfo.data(), sizeof(mscclpp::IbMrInfo) * numMrs, remoteRank, /*tag=*/1);
+
+  // Receive the number of MRs and the MR info from the remote side
+  size_t numRemoteMrs;
+  bootstrap->recv(&numRemoteMrs, sizeof(numRemoteMrs), remoteRank, /*tag=*/0);
+  remoteMrInfoList.resize(numRemoteMrs);
+  bootstrap->recv(remoteMrInfoList.data(), sizeof(mscclpp::IbMrInfo) * numRemoteMrs, remoteRank, /*tag=*/1);
+
+  qp->rtr(remoteQpInfo);
+  qp->rts();
+
   bootstrap->barrier();
 }
 
 void IbPeerToPeerTest::stageSend(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled) {
-  const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
-  qp->stageSend(mr, remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled);
+  qp->stageSend(localMrList[0], remoteMrInfoList[0], size, wrId, srcOffset, dstOffset, signaled);
 }
 
 void IbPeerToPeerTest::stageAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal) {
-  const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
-  qp->stageAtomicAdd(mr, remoteMrInfo, wrId, dstOffset, addVal);
+  qp->stageAtomicAdd(localMrList[0], remoteMrInfoList[0], wrId, dstOffset, addVal);
 }
 
 void IbPeerToPeerTest::stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset,
                                         bool signaled, unsigned int immData) {
-  const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
-  qp->stageSendWithImm(mr, remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled, immData);
+  qp->stageSendWithImm(localMrList[0], remoteMrInfoList[0], size, wrId, srcOffset, dstOffset, signaled, immData);
 }
 
 TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
@@ -85,7 +103,7 @@ TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
   const int nelem = 1;
   auto data = mscclpp::allocUniqueCuda<int>(nelem);
 
-  registerBufferAndConnect(data.get(), sizeof(int) * nelem);
+  registerBuffersAndConnect({data.get()}, {sizeof(int) * nelem});
 
   if (gEnv->rank == 1) {
     mscclpp::Timer timer;
@@ -194,7 +212,7 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
   const uint64_t nelem = 65536 + 1;
   auto data = mscclpp::allocUniqueCuda<uint64_t>(nelem);
 
-  registerBufferAndConnect(data.get(), sizeof(uint64_t) * nelem);
+  registerBuffersAndConnect({data.get()}, {sizeof(uint64_t) * nelem});
 
   uint64_t res = 0;
   uint64_t iter = 0;
@@ -287,4 +305,107 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
   }
 
   EXPECT_EQ(res, 0);
+}
+
+TEST_F(IbPeerToPeerTest, SendGather) {
+  if (gEnv->rank >= 2) {
+    // This test needs only two ranks
+    return;
+  }
+
+  mscclpp::Timer timeout(3);
+
+  const int numDataSrcs = 1;
+  const int nelemPerMr = 1024;
+
+  // Gather send from rank 0 to 1
+  if (gEnv->rank == 0) {
+    std::vector<mscclpp::UniqueCudaPtr<int>> dataList;
+    for (int i = 0; i < numDataSrcs; ++i) {
+      auto data = mscclpp::allocUniqueCuda<int>(nelemPerMr);
+      // Fill in data for correctness check
+      std::vector<int> hostData(nelemPerMr, i + 1);
+      mscclpp::memcpyCuda<int>(data.get(), hostData.data(), nelemPerMr);
+      dataList.emplace_back(std::move(data));
+    }
+
+    std::vector<void*> dataRefList;
+    for (int i = 0; i < numDataSrcs; ++i) {
+      dataRefList.emplace_back(dataList[i].get());
+    }
+
+    // For sending a completion signal to the remote side
+    uint64_t outboundSema = 1;
+
+    dataRefList.push_back(&outboundSema);
+
+    std::vector<uint32_t> sizeList(numDataSrcs, sizeof(int) * nelemPerMr);
+    sizeList.push_back(sizeof(outboundSema));
+
+    registerBuffersAndConnect(dataRefList, sizeList);
+
+    auto& remoteDataMrInfo = remoteMrInfoList[0];
+    auto& remoteSemaMrInfo = remoteMrInfoList[1];
+    auto& localSemaMr = localMrList[numDataSrcs];
+
+    std::vector<const mscclpp::IbMr*> gatherLocalMrList;
+    for (int i = 0; i < numDataSrcs; ++i) {
+      gatherLocalMrList.emplace_back(localMrList[i]);
+    }
+    std::vector<uint32_t> gatherSizeList(numDataSrcs, sizeof(int) * nelemPerMr);
+    std::vector<uint32_t> gatherOffsetList(numDataSrcs, 0);
+
+    qp->stageSendGather(gatherLocalMrList, remoteDataMrInfo, gatherSizeList, /*wrId=*/0, gatherOffsetList,
+                        /*dstOffset=*/0, /*signaled=*/true);
+    qp->postSend();
+
+    qp->stageAtomicAdd(localSemaMr, remoteSemaMrInfo, /*wrId=*/0, /*dstOffset=*/0, /*addVal=*/1);
+    qp->postSend();
+
+    // Wait for send completion
+    bool waiting = true;
+    int spin = 0;
+    while (waiting) {
+      int wcNum = qp->pollCq();
+      ASSERT_GE(wcNum, 0);
+      for (int i = 0; i < wcNum; ++i) {
+        const ibv_wc* wc = qp->getWc(i);
+        EXPECT_EQ(wc->status, IBV_WC_SUCCESS);
+        waiting = false;
+        break;
+      }
+      if (spin++ > 1000000) {
+        FAIL() << "Polling is stuck.";
+      }
+    }
+  } else {
+    // Data array to receive
+    auto data = mscclpp::allocUniqueCuda<int>(nelemPerMr * numDataSrcs);
+
+    // For receiving a completion signal from the remote side
+    uint64_t inboundSema = 0;
+
+    registerBuffersAndConnect({data.get(), &inboundSema},
+                              {sizeof(int) * nelemPerMr * numDataSrcs, sizeof(inboundSema)});
+
+    // Wait for a signal from the remote side
+    volatile uint64_t* ptrInboundSema = &inboundSema;
+    int spin = 0;
+    while (*ptrInboundSema == 0) {
+      if (spin++ > 1000000) {
+        FAIL() << "Polling is stuck.";
+      }
+    }
+
+    // Correctness check
+    std::vector<int> hostData(nelemPerMr * numDataSrcs);
+    mscclpp::memcpyCuda<int>(hostData.data(), data.get(), nelemPerMr * numDataSrcs);
+    for (int i = 0; i < numDataSrcs; ++i) {
+      for (int j = 0; j < nelemPerMr; ++j) {
+        EXPECT_EQ(hostData[i * nelemPerMr + j], i + 1);
+      }
+    }
+  }
+
+  bootstrap->barrier();
 }

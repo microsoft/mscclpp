@@ -16,16 +16,6 @@
 #include "api.h"
 #include "debug.h"
 
-static ibv_device_attr getDeviceAttr(ibv_context* ctx) {
-  ibv_device_attr devAttr;
-  if (ibv_query_device(ctx, &devAttr) != 0) {
-    std::stringstream err;
-    err << "ibv_query_device failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
-  }
-  return devAttr;
-}
-
 static ibv_qp_attr createQpAttr() {
   ibv_qp_attr qpAttr;
   std::memset(&qpAttr, 0, sizeof(qpAttr));
@@ -34,17 +24,13 @@ static ibv_qp_attr createQpAttr() {
 
 namespace mscclpp {
 
-IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
-  if (size == 0) {
-    throw std::invalid_argument("invalid size: " + std::to_string(size));
-  }
+IbMr::IbMr(ibv_pd* pd, void* buff, size_t alignedSize) : buff(buff) {
   static __thread uintptr_t pageSize = 0;
   if (pageSize == 0) {
     pageSize = sysconf(_SC_PAGESIZE);
   }
   uintptr_t addr = reinterpret_cast<uintptr_t>(buff) & -pageSize;
-  std::size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;
-  this->mr = ibv_reg_mr(pd, reinterpret_cast<void*>(addr), pages * pageSize,
+  this->mr = ibv_reg_mr(pd, reinterpret_cast<void*>(addr), alignedSize,
                         IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                             IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
   if (this->mr == nullptr) {
@@ -52,7 +38,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
     err << "ibv_reg_mr failed (errno " << errno << ")";
     throw mscclpp::IbError(err.str(), errno);
   }
-  this->size = pages * pageSize;
+  this->size = alignedSize;
 }
 
 IbMr::~IbMr() { ibv_dereg_mr(this->mr); }
@@ -220,8 +206,8 @@ IbQp::WrInfo IbQp::getNewWrInfo(int numSges) {
   return IbQp::WrInfo{wr_, sge_};
 }
 
-void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                     uint64_t dstOffset, bool signaled) {
+void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint32_t srcOffset,
+                     uint32_t dstOffset, bool signaled) {
   auto wrInfo = this->getNewWrInfo(1);
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_RDMA_WRITE;
@@ -233,7 +219,7 @@ void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64
   wrInfo.sge->lkey = mr->getLkey();
 }
 
-void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal) {
+void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint32_t dstOffset, uint64_t addVal) {
   auto wrInfo = this->getNewWrInfo(1);
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
@@ -246,8 +232,8 @@ void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, u
   wrInfo.sge->lkey = mr->getLkey();
 }
 
-void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                            uint64_t dstOffset, bool signaled, unsigned int immData) {
+void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint32_t srcOffset,
+                            uint32_t dstOffset, bool signaled, unsigned int immData) {
   auto wrInfo = this->getNewWrInfo(1);
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
@@ -260,26 +246,26 @@ void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size,
   wrInfo.sge->lkey = mr->getLkey();
 }
 
-void IbQp::stageSendGather(const std::vector<IbMr*>& srcMrs, const IbMrInfo& dstInfo,
-                           const std::vector<uint32_t>& srcSizes, uint64_t wrId,
-                           const std::vector<uint64_t>& srcOffsets, uint64_t dstOffset, bool signaled) {
-  size_t numSrcs = srcMrs.size();
-  if (numSrcs != srcSizes.size() || numSrcs != srcOffsets.size()) {
+void IbQp::stageSendGather(const std::vector<const IbMr*>& srcMrList, const IbMrInfo& dstMrInfo,
+                           const std::vector<uint32_t>& srcSizeList, uint64_t wrId,
+                           const std::vector<uint32_t>& srcOffsetList, uint32_t dstOffset, bool signaled) {
+  size_t numSrcs = srcMrList.size();
+  if (numSrcs != srcSizeList.size() || numSrcs != srcOffsetList.size()) {
     std::stringstream err;
-    err << "invalid srcs: srcMrs.size()=" << numSrcs << ", srcSizes.size()=" << srcSizes.size()
-        << ", srcOffsets.size()=" << srcOffsets.size();
+    err << "invalid srcs: srcMrList.size()=" << numSrcs << ", srcSizeList.size()=" << srcSizeList.size()
+        << ", srcOffsetList.size()=" << srcOffsetList.size();
     throw mscclpp::Error(err.str(), ErrorCode::InvalidUsage);
   }
   auto wrInfo = this->getNewWrInfo(numSrcs);
   wrInfo.wr->wr_id = wrId;
-  wrInfo.wr->opcode = IBV_WR_RDMA_READ;
+  wrInfo.wr->opcode = IBV_WR_RDMA_WRITE;
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
-  wrInfo.wr->wr.rdma.remote_addr = (uint64_t)(dstInfo.addr) + dstOffset;
-  wrInfo.wr->wr.rdma.rkey = dstInfo.rkey;
+  wrInfo.wr->wr.rdma.remote_addr = (uint64_t)(dstMrInfo.addr) + dstOffset;
+  wrInfo.wr->wr.rdma.rkey = dstMrInfo.rkey;
   for (size_t i = 0; i < numSrcs; ++i) {
-    wrInfo.sge[i].addr = (uint64_t)(srcMrs[i]->getBuff()) + srcOffsets[i];
-    wrInfo.sge[i].length = srcSizes[i];
-    wrInfo.sge[i].lkey = srcMrs[i]->getLkey();
+    wrInfo.sge[i].addr = (uint64_t)(srcMrList[i]->getBuff()) + srcOffsetList[i];
+    wrInfo.sge[i].length = srcSizeList[i];
+    wrInfo.sge[i].lkey = srcMrList[i]->getLkey();
   }
 }
 
@@ -339,6 +325,13 @@ IbCtx::IbCtx(const std::string& devName) : devName(devName) {
     err << "ibv_alloc_pd failed (errno " << errno << ")";
     throw mscclpp::IbError(err.str(), errno);
   }
+  // TODO: do not use new
+  this->devAttr = new ibv_device_attr;
+  if (ibv_query_device(this->ctx, this->devAttr) != 0) {
+    std::stringstream err;
+    err << "ibv_query_device failed (errno " << errno << ")";
+    throw mscclpp::IbError(err.str(), errno);
+  }
 }
 
 IbCtx::~IbCtx() {
@@ -350,6 +343,8 @@ IbCtx::~IbCtx() {
   if (this->ctx != nullptr) {
     ibv_close_device(this->ctx);
   }
+  // TODO: do not use delete
+  delete this->devAttr;
 }
 
 bool IbCtx::isPortUsable(int port) const {
@@ -364,8 +359,7 @@ bool IbCtx::isPortUsable(int port) const {
 }
 
 int IbCtx::getAnyActivePort() const {
-  ibv_device_attr devAttr = getDeviceAttr(this->ctx);
-  for (uint8_t port = 1; port <= devAttr.phys_port_cnt; ++port) {
+  for (uint8_t port = 1; port <= this->devAttr->phys_port_cnt; ++port) {
     if (this->isPortUsable(port)) {
       return port;
     }
@@ -373,28 +367,27 @@ int IbCtx::getAnyActivePort() const {
   return -1;
 }
 
-void IbCtx::validateConfig(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
-                           int maxNumSgesPerWr, int port) const {
+void IbCtx::validateQpConfig(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
+                             int maxNumSgesPerWr, int port) const {
   if (!this->isPortUsable(port)) {
     throw mscclpp::Error("invalid IB port: " + std::to_string(port), ErrorCode::InvalidUsage);
   }
-  ibv_device_attr devAttr = getDeviceAttr(this->ctx);
-  if (maxCqSize > devAttr.max_cqe || maxCqSize < 1) {
+  if (maxCqSize > this->devAttr->max_cqe || maxCqSize < 1) {
     throw mscclpp::Error("invalid maxCqSize: " + std::to_string(maxCqSize), ErrorCode::InvalidUsage);
   }
   if (maxCqPollNum > maxCqSize || maxCqPollNum < 1) {
     throw mscclpp::Error("invalid maxCqPollNum: " + std::to_string(maxCqPollNum), ErrorCode::InvalidUsage);
   }
-  if (maxSendWr > devAttr.max_qp_wr || maxSendWr < 1) {
+  if (maxSendWr > this->devAttr->max_qp_wr) {
     throw mscclpp::Error("invalid maxSendWr: " + std::to_string(maxSendWr), ErrorCode::InvalidUsage);
   }
-  if (maxRecvWr > devAttr.max_qp_wr || maxRecvWr < 1) {
+  if (maxRecvWr > this->devAttr->max_qp_wr) {
     throw mscclpp::Error("invalid maxRecvWr: " + std::to_string(maxRecvWr), ErrorCode::InvalidUsage);
   }
   if (maxWrPerSend > maxSendWr || maxWrPerSend < 1) {
     throw mscclpp::Error("invalid maxWrPerSend: " + std::to_string(maxWrPerSend), ErrorCode::InvalidUsage);
   }
-  if (maxNumSgesPerWr > devAttr.max_sge || maxNumSgesPerWr < 1) {
+  if (maxNumSgesPerWr > this->devAttr->max_sge || maxNumSgesPerWr < 1) {
     throw mscclpp::Error("invalid maxNumSgesPerWr: " + std::to_string(maxNumSgesPerWr), ErrorCode::InvalidUsage);
   }
 }
@@ -407,14 +400,31 @@ IbQp* IbCtx::createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRec
       throw mscclpp::Error("No active port found", ErrorCode::InternalError);
     }
   }
-  this->validateConfig(maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend, maxNumSgesPerWr, port);
+  this->validateQpConfig(maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend, maxNumSgesPerWr, port);
   qps.emplace_back(new IbQp(this->ctx, this->pd, port, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend,
                             maxNumSgesPerWr));
   return qps.back().get();
 }
 
-const IbMr* IbCtx::registerMr(void* buff, std::size_t size) {
-  mrs.emplace_back(new IbMr(this->pd, buff, size));
+const IbMr* IbCtx::registerMr(void* buff, uint32_t size) {
+  if (size == 0) {
+    throw mscclpp::Error("invalid size: " + std::to_string(size), ErrorCode::InvalidUsage);
+  }
+  static __thread uintptr_t pageSize = 0;
+  if (pageSize == 0) {
+    pageSize = sysconf(_SC_PAGESIZE);
+  }
+  uintptr_t addr = reinterpret_cast<uintptr_t>(buff) & -pageSize;
+  size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;
+
+  size_t alignedSize = pages * pageSize;
+  if (alignedSize > this->devAttr->max_mr_size) {
+    std::stringstream err;
+    err << "invalid MR size: " << alignedSize << " max " << this->devAttr->max_mr_size;
+    throw mscclpp::Error(err.str(), ErrorCode::InvalidUsage);
+  }
+
+  mrs.emplace_back(new IbMr(this->pd, buff, alignedSize));
   return mrs.back().get();
 }
 

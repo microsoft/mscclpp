@@ -11,6 +11,7 @@
 
 // Forward declarations of IB structures
 struct ibv_context;
+struct ibv_device_attr;
 struct ibv_pd;
 struct ibv_mr;
 struct ibv_qp;
@@ -35,11 +36,11 @@ class IbMr {
   uint32_t getLkey() const;
 
  private:
-  IbMr(ibv_pd* pd, void* buff, std::size_t size);
+  IbMr(ibv_pd* pd, void* buff, size_t alignedSize);
 
   ibv_mr* mr;
   void* buff;
-  std::size_t size;
+  size_t size;
 
   friend class IbCtx;
 };
@@ -62,13 +63,14 @@ class IbQp {
 
   void rtr(const IbQpInfo& info);
   void rts();
-  void stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                 uint64_t dstOffset, bool signaled);
-  void stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal);
-  void stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                        uint64_t dstOffset, bool signaled, unsigned int immData);
-  void stageSendGather(const std::vector<IbMr*>& srcMrs, const IbMrInfo& dstInfo, const std::vector<uint32_t>& srcSizes,
-                       uint64_t wrId, const std::vector<uint64_t>& srcOffsets, uint64_t dstOffset, bool signaled);
+  void stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint32_t srcOffset,
+                 uint32_t dstOffset, bool signaled);
+  void stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint32_t dstOffset, uint64_t addVal);
+  void stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint32_t srcOffset,
+                        uint32_t dstOffset, bool signaled, unsigned int immData);
+  void stageSendGather(const std::vector<const IbMr*>& srcMrList, const IbMrInfo& dstMrInfo,
+                       const std::vector<uint32_t>& srcSizeList, uint64_t wrId,
+                       const std::vector<uint32_t>& srcOffsetList, uint32_t dstOffset, bool signaled);
   void postSend();
   void postRecv(uint64_t wrId);
   int pollCq();
@@ -110,19 +112,20 @@ class IbCtx {
 
   IbQp* createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend, int maxNumSgesPerWr,
                  int port = -1);
-  const IbMr* registerMr(void* buff, std::size_t size);
+  const IbMr* registerMr(void* buff, uint32_t size);
 
   const std::string& getDevName() const;
 
  private:
   bool isPortUsable(int port) const;
   int getAnyActivePort() const;
-  void validateConfig(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
-                      int maxNumSgesPerWr, int port) const;
+  void validateQpConfig(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
+                        int maxNumSgesPerWr, int port) const;
 
   const std::string devName;
   ibv_context* ctx;
   ibv_pd* pd;
+  ibv_device_attr* devAttr;
   std::list<std::unique_ptr<IbQp>> qps;
   std::list<std::unique_ptr<IbMr>> mrs;
 };
