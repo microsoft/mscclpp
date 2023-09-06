@@ -57,7 +57,7 @@ class IBConnection : public ConnectionBase {
 
  public:
   IBConnection(int remoteRank, int tag, Transport transport, int maxCqSize, int maxCqPollNum, int maxSendWr,
-               int maxWrPerSend, Communicator::Impl& commImpl);
+               int maxWrPerSend, int maxNumSgesPerWr, Communicator::Impl& commImpl);
 
   Transport transport() override;
 
