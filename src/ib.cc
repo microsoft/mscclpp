@@ -119,7 +119,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   }
   this->qp = _qp;
   this->wrs = std::make_unique<ibv_send_wr[]>(maxWrPerSend_);
-  this->sges = std::make_unique<ibv_sge[]>(maxWrPerSend_ * maxNumSgesPerWr_);
+  this->sges = std::make_unique<ibv_sge[]>((size_t)maxWrPerSend_ * maxNumSgesPerWr_);
   this->wcs = std::make_unique<ibv_wc[]>(maxCqPollNum_);
   numStagedWrs_ = 0;
   numStagedSges_ = 0;
