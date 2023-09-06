@@ -93,8 +93,10 @@ class KernelBuilder:
         minor = _check_cuda_errors(
             cudart.cudaDeviceGetAttribute(cudart.cudaDeviceAttr.cudaDevAttrComputeCapabilityMinor, device_id)
         )
+        cuda_home = os.environ.get("CUDA_HOME")
+        nvcc = os.path.join(cuda_home, "bin/nvcc") if cuda_home else "nvcc"
         command = [
-            "nvcc",
+            nvcc,
             f"-std={std_version}",
             "-ptx",
             "-Xcompiler",
