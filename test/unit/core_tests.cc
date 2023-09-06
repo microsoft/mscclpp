@@ -10,6 +10,7 @@ class LocalCommunicatorTest : public ::testing::Test {
  protected:
   void SetUp() override {
     bootstrap = std::make_shared<mscclpp::TcpBootstrap>(0, 1);
+    bootstrap->initialize(bootstrap->createUniqueId());
     comm = std::make_shared<mscclpp::Communicator>(bootstrap);
   }
 
@@ -36,18 +37,17 @@ TEST_F(LocalCommunicatorTest, RegisterMemory) {
   auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
   EXPECT_EQ(memory.data(), &dummy);
   EXPECT_EQ(memory.size(), sizeof(dummy));
-  EXPECT_EQ(memory.rank(), 0);
   EXPECT_EQ(memory.transports(), mscclpp::NoTransports);
 }
 
-// TEST_F(LocalCommunicatorTest, SendMemoryToSelf) {
-//   int dummy[42];
-//   auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
-//   comm->sendMemoryOnSetup(memory, 0, 0);
-//   auto memoryFuture = comm->recvMemoryOnSetup(0, 0);
-//   comm->setup();
-//   auto sameMemory = memoryFuture.get();
-//   EXPECT_EQ(sameMemory.size(), memory.size());
-//   EXPECT_EQ(sameMemory.rank(), memory.rank());
-//   EXPECT_EQ(sameMemory.transports(), memory.transports());
-// }
+TEST_F(LocalCommunicatorTest, SendMemoryToSelf) {
+  int dummy[42];
+  auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
+  comm->sendMemoryOnSetup(memory, 0, 0);
+  auto memoryFuture = comm->recvMemoryOnSetup(0, 0);
+  comm->setup();
+  auto sameMemory = memoryFuture.get();
+  EXPECT_EQ(sameMemory.data(), memory.data());
+  EXPECT_EQ(sameMemory.size(), memory.size());
+  EXPECT_EQ(sameMemory.transports(), memory.transports());
+}

@@ -1,14 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-find_package(Python 3.8 COMPONENTS Interpreter Development.Module REQUIRED)
-include(FetchContent)
-FetchContent_Declare(nanobind GIT_REPOSITORY https://github.com/wjakob/nanobind.git GIT_TAG v1.4.0)
-FetchContent_MakeAvailable(nanobind)
+add_subdirectory(mscclpp)
+add_subdirectory(test)
 
-file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cpp)
-nanobind_add_module(mscclpp_py ${SOURCES})
-set_target_properties(mscclpp_py PROPERTIES OUTPUT_NAME _mscclpp)
-target_link_libraries(mscclpp_py PRIVATE mscclpp_static)
-target_include_directories(mscclpp_py PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-install(TARGETS mscclpp_py LIBRARY DESTINATION .)
+add_custom_target(pylib-copy)
+add_custom_command(TARGET pylib-copy POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_BINARY_DIR}/mscclpp/_mscclpp.cpython-38-x86_64-linux-gnu.so
+        ${CMAKE_CURRENT_SOURCE_DIR}/mscclpp
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_BINARY_DIR}/test/_ext.cpython-38-x86_64-linux-gnu.so
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/_cpp
+    COMMAND ${CMAKE_COMMAND} -E echo "Copy python libraries"
+)
+

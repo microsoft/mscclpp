@@ -15,7 +15,7 @@
 
 ## Build from Source
 
-CMake 3.26 or later is required.
+CMake 3.25 or later is required.
 
 ```bash
 $ git clone https://github.com/microsoft/mscclpp.git
@@ -24,13 +24,21 @@ $ cmake -DCMAKE_BUILD_TYPE=Release ..
 $ make -j
 ```
 
-## Install from Source
+## Install from Source (Libraries and Headers)
 
 ```bash
 # Install the generated headers and binaries to /usr/local/mscclpp
-$ cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local/mscclpp ..
-$ make -j mscclpp
+$ cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local/mscclpp -DBUILD_PYTHON_BINDINGS=OFF ..
+$ make -j mscclpp mscclpp_static
 $ sudo make install/fast
+```
+
+## Install from Source (Python Module)
+
+Python 3.8 or later is required.
+
+```bash
+$ python -m pip install .
 ```
 
 ## Docker Images
@@ -65,9 +73,10 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.
 
 ## mscclpp-test
 
-mscclpp-test is a set of performance benchmarks for MSCCL++. It requires MPI to be installed on the system.
+mscclpp-test is a set of performance benchmarks for MSCCL++. It requires MPI to be installed on the system, and the path should be provided via `MPI_HOME` environment variable to the CMake build system.
 
 ```bash
+$ MPI_HOME=/path/to/mpi cmake -DCMAKE_BUILD_TYPE=Release ..
 $ make -j sendrecv_test_perf allgather_test_perf allreduce_test_perf alltoall_test_perf
 ```
 
