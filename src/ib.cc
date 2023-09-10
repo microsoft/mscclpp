@@ -214,11 +214,12 @@ void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64
   wrInfo.sge->lkey = mr->getLkey();
 }
 
-void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal) {
+void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal,
+                          bool signaled) {
   auto wrInfo = this->getNewWrInfo();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
-  wrInfo.wr->send_flags = 0;  // atomic op cannot be signaled
+  wrInfo.wr->send_flags = IBV_SEND_SIGNALED;  // atomic op cannot be signaled
   wrInfo.wr->wr.atomic.remote_addr = (uint64_t)(info.addr) + dstOffset;
   wrInfo.wr->wr.atomic.rkey = info.rkey;
   wrInfo.wr->wr.atomic.compare_add = addVal;

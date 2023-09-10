@@ -146,7 +146,9 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   uint64_t oldValue = *src;
   *src = newValue;
 
-  qp->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue);
+  qp->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue, /*signaled=*/true);
+  numSignaledSends++;
+
   qp->postSend();
   INFO(MSCCLPP_NET, "IBConnection atomic Write: from %p to %p, %lu -> %lu", src, (uint8_t*)dstMrInfo.addr + dstOffset,
        oldValue, newValue);
