@@ -326,6 +326,10 @@ struct SmChannelDeviceHandle {
   /// Read the counter of the local semaphore.
   __forceinline__ __device__ uint64_t semaphoreGetLocal() const { return semaphore_.semaphoreGetLocal(); }
 
+  /// Check if the remote semaphore has signaled.
+  /// @return true if the remote semaphore has signaled.
+  __forceinline__ __device__ bool poll() { return semaphore_.poll(); }
+
   /// Wait for the remote semaphore to send a signal.
   __forceinline__ __device__ void wait() { semaphore_.wait(); }
 #endif  // __CUDACC__

@@ -104,11 +104,16 @@ class Host2HostSemaphore : public BaseSemaphore<std::default_delete, std::defaul
   /// Signal the remote host.
   void signal();
 
+  /// Check if the remote host has signaled.
+  /// @return true if the remote host has signaled.
+  bool poll();
+
   /// Wait for the remote host to signal.
   void wait();
 
  private:
   std::shared_ptr<Connection> connection_;
+  bool polling;
 };
 
 /// A semaphore for sending signals from the local device to a peer device via SM.

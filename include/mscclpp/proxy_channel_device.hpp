@@ -158,6 +158,10 @@ struct ProxyChannelDeviceHandle {
     fifo_.sync(curFifoHead);
   }
 
+  /// Check if the proxy channel has been signaled.
+  /// @return true if the proxy channel has been signaled.
+  __forceinline__ __device__ bool poll() { return semaphore_.poll(); }
+
   /// Wait for the proxy channel to be signaled.
   __forceinline__ __device__ void wait() { semaphore_.wait(); }
 
@@ -216,6 +220,10 @@ struct SimpleProxyChannelDeviceHandle {
 
   /// Push a @ref TriggerSync to the FIFO.
   __forceinline__ __device__ void flush() { proxyChan_.flush(); }
+
+  /// Check if the proxy channel has been signaled.
+  /// @return true if the proxy channel has been signaled.
+  __forceinline__ __device__ bool poll() { return proxyChan_.poll(); }
 
   /// Wait for the proxy channel to be signaled.
   __forceinline__ __device__ void wait() { proxyChan_.wait(); }
