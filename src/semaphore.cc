@@ -64,9 +64,13 @@ MSCCLPP_API_CPP bool Host2HostSemaphore::poll() {
   return signaled;
 }
 
-MSCCLPP_API_CPP void Host2HostSemaphore::wait() {
+MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
   (*expectedInboundSemaphore_) += 1;
+  int64_t spinCount = 0;
   while (*(volatile uint64_t*)localInboundSemaphore_.get() < (*expectedInboundSemaphore_)) {
+    if (spinCount++ == maxSpinCount) {
+      throw Error("Host2HostSemaphore::wait timed out", ErrorCode::Timeout);
+    }
   }
 }
 

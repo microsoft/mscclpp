@@ -331,7 +331,8 @@ struct SmChannelDeviceHandle {
   __forceinline__ __device__ bool poll() { return semaphore_.poll(); }
 
   /// Wait for the remote semaphore to send a signal.
-  __forceinline__ __device__ void wait() { semaphore_.wait(); }
+  /// @param maxSpinCount The maximum number of spins before asserting. Never assert if negative.
+  __forceinline__ __device__ void wait(int64_t maxSpinCount = 10000000) { semaphore_.wait(maxSpinCount); }
 #endif  // __CUDACC__
 };
 
