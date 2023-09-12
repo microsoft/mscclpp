@@ -523,21 +523,6 @@ class Context {
   friend class Endpoint;
 };
 
-/// A base class for objects that can be set up during @ref Communicator::setup().
-struct Setuppable {
-  /// Called inside @ref Communicator::setup() before any call to @ref endSetup() of any @ref Setuppable object that is
-  /// being set up within the same @ref Communicator::setup() call.
-  ///
-  /// @param bootstrap A shared pointer to the bootstrap implementation.
-  virtual void beginSetup(std::shared_ptr<Bootstrap> bootstrap);
-
-  /// Called inside @ref Communicator::setup() after all calls to @ref beginSetup() of all @ref Setuppable objects that
-  /// are being set up within the same @ref Communicator::setup() call.
-  ///
-  /// @param bootstrap A shared pointer to the bootstrap implementation.
-  virtual void endSetup(std::shared_ptr<Bootstrap> bootstrap);
-};
-
 /// A class that sets up all registered memories and connections between processes.
 ///
 /// A typical way to use this class:
