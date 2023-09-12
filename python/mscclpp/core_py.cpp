@@ -153,8 +153,8 @@ void register_core(nb::module_& m) {
   nb::class_<Communicator>(m, "Communicator")
       .def(nb::init<std::shared_ptr<Bootstrap>, std::shared_ptr<Context>>(), nb::arg("bootstrap"),
            nb::arg("context") = nullptr)
-      .def("bootstrap", &Communicator::bootstrap)
-      .def("context", &Communicator::context)
+      .def_prop_ro("bootstrap", &Communicator::bootstrap)
+      .def_prop_ro("context", &Communicator::context)
       .def(
           "register_memory",
           [](Communicator* self, uintptr_t ptr, size_t size, TransportFlags transports) {
