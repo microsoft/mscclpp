@@ -35,8 +35,9 @@ struct FifoDeviceHandle {
   /// Push a trigger to the FIFO.
   ///
   /// @param trigger The trigger to push.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   /// @return The new head of the FIFO.
-  __forceinline__ __device__ uint64_t push(ProxyTrigger trigger) {
+  __forceinline__ __device__ uint64_t push(ProxyTrigger trigger, int64_t maxSpinCount = 1000000) {
     uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->head, 1);
     // make the last bit intentionally non-zero so that we can safely poll. Don't worry, we will change it back in host
     // side
@@ -49,7 +50,7 @@ struct FifoDeviceHandle {
     // condition is not met.
     if (curFifoHead >= size + *(this->tailReplica)) {
       OR_POLL_MAYBE_JAILBREAK(curFifoHead >= size + *((volatile uint64_t*)this->tailReplica),
-                              *(volatile uint64_t*)&this->triggers[curFifoHead % size] != 0, 1000000);
+                              *(volatile uint64_t*)&this->triggers[curFifoHead % size] != 0, maxSpinCount);
     }
 
     ProxyTrigger* triggerPtr = (ProxyTrigger*)&(this->triggers[curFifoHead % size]);
@@ -60,11 +61,12 @@ struct FifoDeviceHandle {
   /// Wait until there is a place in the FIFO to push a trigger.
   ///
   /// @param curFifoHead The current head of the FIFO.
-  __forceinline__ __device__ void sync(uint64_t curFifoHead) {
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  __forceinline__ __device__ void sync(uint64_t curFifoHead, int64_t maxSpinCount = 1000000) {
     // Same as push but in this case checking the fist condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
     OR_POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)&(this->triggers[curFifoHead % size]) != 0,
-                            *(volatile uint64_t*)(this->tailReplica) <= curFifoHead, 1000000);
+                            *(volatile uint64_t*)(this->tailReplica) <= curFifoHead, maxSpinCount);
   }
 #endif  // __CUDACC__
 
