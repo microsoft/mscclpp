@@ -14,23 +14,20 @@ struct Host2DeviceSemaphoreDeviceHandle {
   /// Poll if the host has signaled.
   /// @return true if the host has signaled.
   __forceinline__ __device__ bool poll() {
-    if (!polling) (*expectedInboundSemaphoreId) += 1;
-    bool signaled = (*(volatile uint64_t*)(inboundSemaphoreId) >= (*expectedInboundSemaphoreId));
-    polling = !signaled;
+    bool signaled = (*(volatile uint64_t*)(inboundSemaphoreId) > (*expectedInboundSemaphoreId));
+    if (signaled) (*expectedInboundSemaphoreId) += 1;
     return signaled;
   }
 
   /// Wait for the host to signal.
   __forceinline__ __device__ void wait() {
-    if (!polling) (*expectedInboundSemaphoreId) += 1;
+    (*expectedInboundSemaphoreId) += 1;
     POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)(inboundSemaphoreId) < (*expectedInboundSemaphoreId), 100000000);
-    polling = false;
   }
 #endif  // __CUDACC__
 
   uint64_t* inboundSemaphoreId;
   uint64_t* expectedInboundSemaphoreId;
-  bool polling;
 };
 
 /// Device-side handle for @ref SmDevice2DeviceSemaphore.
@@ -39,17 +36,15 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
   /// Poll if the remote device has signaled.
   /// @return true if the remote device has signaled.
   __forceinline__ __device__ bool poll() {
-    if (!polling) (*expectedInboundSemaphoreId) += 1;
-    bool signaled = ((*inboundSemaphoreId) >= (*expectedInboundSemaphoreId));
-    polling = !signaled;
+    bool signaled = ((*inboundSemaphoreId) > (*expectedInboundSemaphoreId));
+    if (signaled) (*expectedInboundSemaphoreId) += 1;
     return signaled;
   }
 
   /// Wait for the remote device to signal.
   __forceinline__ __device__ void wait() {
-    if (!polling) (*expectedInboundSemaphoreId) += 1;
+    (*expectedInboundSemaphoreId) += 1;
     POLL_MAYBE_JAILBREAK((*inboundSemaphoreId) < (*expectedInboundSemaphoreId), 100000000);
-    polling = false;
   }
 
   /// Signal the remote device.
@@ -87,7 +82,6 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
   uint64_t* outboundSemaphoreId;
   volatile uint64_t* remoteInboundSemaphoreId;
   uint64_t* expectedInboundSemaphoreId;
-  bool polling;
 };
 
 }  // namespace mscclpp

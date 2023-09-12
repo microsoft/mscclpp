@@ -113,7 +113,6 @@ class Host2HostSemaphore : public BaseSemaphore<std::default_delete, std::defaul
 
  private:
   std::shared_ptr<Connection> connection_;
-  bool polling;
 };
 
 /// A semaphore for sending signals from the local device to a peer device via SM.

@@ -107,17 +107,19 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWit
       if (threadIdx.x == 0) proxyChan.putWithSignal(0, nElem * sizeof(int));
     }
     if (rank == 1) {
-      if (waitWithPoll) {
-        int spin = 1000000;
-        while (!proxyChan.poll() && spin > 0) {
-          spin--;
+      if (threadIdx.x == 0) {
+        if (waitWithPoll) {
+          int spin = 1000000;
+          while (!proxyChan.poll() && spin > 0) {
+            spin--;
+          }
+          if (spin == 0) {
+            // printf("rank 0 ERROR: poll timeout\n");
+            *ret = 1;
+          }
+        } else {
+          proxyChan.wait();
         }
-        if (spin == 0) {
-          // printf("rank 0 ERROR: poll timeout\n");
-          *ret = 1;
-        }
-      } else {
-        proxyChan.wait();
       }
       __syncthreads();
       for (int j = threadIdx.x; j < nElem; j += blockDim.x) {

@@ -37,15 +37,13 @@ MSCCLPP_API_CPP Host2DeviceSemaphore::DeviceHandle Host2DeviceSemaphore::deviceH
   Host2DeviceSemaphore::DeviceHandle device;
   device.inboundSemaphoreId = localInboundSemaphore_.get();
   device.expectedInboundSemaphoreId = expectedInboundSemaphore_.get();
-  device.polling = false;
   return device;
 }
 
 MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(Communicator& communicator,
                                                        std::shared_ptr<Connection> connection)
     : BaseSemaphore(std::make_unique<uint64_t>(), std::make_unique<uint64_t>(), std::make_unique<uint64_t>()),
-      connection_(connection),
-      polling(false) {
+      connection_(connection) {
   if (connection->transport() == Transport::CudaIpc) {
     throw Error("Host2HostSemaphore cannot be used with CudaIpc transport", ErrorCode::InvalidUsage);
   }
@@ -61,17 +59,15 @@ MSCCLPP_API_CPP void Host2HostSemaphore::signal() {
 }
 
 MSCCLPP_API_CPP bool Host2HostSemaphore::poll() {
-  if (!polling) (*expectedInboundSemaphore_) += 1;
-  bool signaled = (*(volatile uint64_t*)localInboundSemaphore_.get() >= (*expectedInboundSemaphore_));
-  polling = !signaled;
+  bool signaled = (*(volatile uint64_t*)localInboundSemaphore_.get() > (*expectedInboundSemaphore_));
+  if (signaled) (*expectedInboundSemaphore_) += 1;
   return signaled;
 }
 
 MSCCLPP_API_CPP void Host2HostSemaphore::wait() {
-  if (!polling) (*expectedInboundSemaphore_) += 1;
+  (*expectedInboundSemaphore_) += 1;
   while (*(volatile uint64_t*)localInboundSemaphore_.get() < (*expectedInboundSemaphore_)) {
   }
-  polling = false;
 }
 
 MSCCLPP_API_CPP SmDevice2DeviceSemaphore::SmDevice2DeviceSemaphore(Communicator& communicator,
@@ -99,7 +95,6 @@ MSCCLPP_API_CPP SmDevice2DeviceSemaphore::DeviceHandle SmDevice2DeviceSemaphore:
   device.inboundSemaphoreId = localInboundSemaphore_.get();
   device.expectedInboundSemaphoreId = expectedInboundSemaphore_.get();
   device.outboundSemaphoreId = outboundSemaphore_.get();
-  device.polling = false;
   return device;
 };
 
