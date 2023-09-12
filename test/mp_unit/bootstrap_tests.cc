@@ -64,12 +64,15 @@ TEST_F(BootstrapTest, WithIpPortPair) {
 }
 
 TEST_F(BootstrapTest, ResumeWithId) {
-  for (int i = 0; i < 5; ++i) {
+  // This test may take a few minutes.
+  bootstrapTestTimer.set(300);
+
+  for (int i = 0; i < 2000; ++i) {
     auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
     mscclpp::UniqueId id;
     if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
     MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
-    bootstrap->initialize(id);
+    bootstrap->initialize(id, 100);
   }
 }
 
