@@ -4,7 +4,6 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
-#include <cassert>
 #include <mscclpp/concurrency.hpp>
 #include <string>
 
@@ -396,7 +395,7 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
 }
 
 void AllGatherTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
-  assert(sendBuff.size() == 1);
+  if (sendBuff.size() != 1) std::unexpected();
   int rank = args.rank;
   std::vector<int> dataHost(std::max(sendCount_, recvCount_), 0);
   for (size_t i = 0; i < recvCount_; i++) {
@@ -479,13 +478,17 @@ void AllGatherTestEngine::setupConnections() {
   std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> devProxyChannels;
   if (!isUsingHostOffload(args_.kernelNum)) {
     setupMeshConnections(devProxyChannels, sendBuff_.get(), args_.maxBytes);
-    assert(devProxyChannels.size() < sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>));
+    if (devProxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
+      std::unexpected();
+    }
     CUDATHROW(cudaMemcpyToSymbol(constProxyChans, devProxyChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * devProxyChannels.size()));
 
     setupMeshConnections(smChannels_, sendBuff_.get(), args_.maxBytes);
     std::vector<DeviceHandle<mscclpp::SmChannel>> smChannelHandles(smChannels_.size());
-    assert(smChannels_.size() < sizeof(constSmChans) / sizeof(DeviceHandle<mscclpp::SmChannel>));
+    if (smChannels_.size() > sizeof(constSmChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
+      std::unexpected();
+    }
     std::transform(smChannels_.begin(), smChannels_.end(), smChannelHandles.begin(),
                    [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
     CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannelHandles.data(),
@@ -505,7 +508,9 @@ void AllGatherTestEngine::setupConnections() {
                            comm_->setup();
                          });
     auto proxyChannels = service->proxyChannels();
-    assert(proxyChannels.size() < sizeof(constRawProxyChan) / sizeof(DeviceHandle<mscclpp::ProxyChannel>));
+    if (proxyChannels.size() > sizeof(constRawProxyChan) / sizeof(DeviceHandle<mscclpp::ProxyChannel>)) {
+      std::unexpected();
+    }
     CUDATHROW(cudaMemcpyToSymbol(constRawProxyChan, proxyChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::ProxyChannel>) * proxyChannels.size()));
   }
