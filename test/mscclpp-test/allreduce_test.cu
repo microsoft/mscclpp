@@ -1015,9 +1015,6 @@ void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBu
   for (size_t i = 0; i < recvCount_; i++) {
     dataHost[i] = worldSize * (worldSize - 1) / 2;
   }
-  // if (args.rank == 1) {
-  //   printf("data is %d\n", dataHost[0]);
-  // }
   std::memcpy(expectedBuff, dataHost.data(), recvCount_ * typeSize_);
 }
 
