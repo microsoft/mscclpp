@@ -72,7 +72,7 @@ TEST_F(BootstrapTest, ResumeWithId) {
     mscclpp::UniqueId id;
     if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
     MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
-    bootstrap->initialize(id, 100);
+    bootstrap->initialize(id, 300);
   }
 }
 
