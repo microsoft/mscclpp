@@ -282,8 +282,8 @@ __global__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
 class AllGatherProxyService : public mscclpp::BaseProxyService {
  public:
   AllGatherProxyService(int worldSize, int rank, int cudaDevice);
-  void startProxy() override { proxy_.start(); }
-  void stopProxy() override { proxy_.stop(); }
+  void startProxy() override { proxy_->start(); }
+  void stopProxy() override { proxy_->stop(); }
   void setSendBytes(size_t sendBytes) { this->sendBytes_ = sendBytes; }
   void addRemoteMemory(mscclpp::RegisteredMemory memory) { remoteMemories_.push_back(memory); }
   void setLocalMemory(mscclpp::RegisteredMemory memory) { localMemory_ = memory; }
@@ -295,8 +295,7 @@ class AllGatherProxyService : public mscclpp::BaseProxyService {
   std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannels() {
     std::vector<DeviceHandle<mscclpp::ProxyChannel>> result;
     for (auto& semaphore : semaphores_) {
-      result.push_back(
-          mscclpp::deviceHandle(mscclpp::ProxyChannel(0, semaphore->deviceHandle(), proxy_.fifo().deviceHandle())));
+      result.push_back(mscclpp::deviceHandle(mscclpp::ProxyChannel(0, semaphore, proxy_)));
     }
     return result;
   }
@@ -307,7 +306,7 @@ class AllGatherProxyService : public mscclpp::BaseProxyService {
   int cudaDevice_;
   size_t sendBytes_;
 
-  mscclpp::Proxy proxy_;
+  std::shared_ptr<mscclpp::Proxy> proxy_;
   std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> semaphores_;
   std::vector<mscclpp::RegisteredMemory> remoteMemories_;
   mscclpp::RegisteredMemory localMemory_;
@@ -320,11 +319,12 @@ AllGatherProxyService::AllGatherProxyService(int worldSize, int rank, int cudaDe
       sendBytes_(0),
       rank_(rank),
       cudaDevice_(cudaDevice),
-      proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); },
-             [&]() {
-               int deviceNumaNode = getDeviceNumaNode(cudaDevice_);
-               numaBind(deviceNumaNode);
-             }) {}
+      proxy_(
+          std::make_shared<mscclpp::Proxy>([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); },
+                                           [&]() {
+                                             int deviceNumaNode = getDeviceNumaNode(cudaDevice_);
+                                             numaBind(deviceNumaNode);
+                                           })) {}
 
 mscclpp::ProxyHandlerResult AllGatherProxyService::handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
   size_t offset = rank_ * sendBytes_;

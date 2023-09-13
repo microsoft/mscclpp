@@ -9,15 +9,16 @@
 
 namespace mscclpp {
 
-MSCCLPP_API_CPP ProxyChannel::ProxyChannel(SemaphoreId semaphoreId, Host2DeviceSemaphore::DeviceHandle semaphore,
-                                           FifoDeviceHandle fifo)
-    : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo) {}
+MSCCLPP_API_CPP ProxyChannel::ProxyChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
+                                           std::shared_ptr<Proxy> proxy)
+    : semaphoreId_(semaphoreId), semaphore_(semaphore), proxy_(proxy) {}
 
 MSCCLPP_API_CPP SimpleProxyChannel::SimpleProxyChannel(ProxyChannel proxyChan, MemoryId dst, MemoryId src)
     : proxyChan_(proxyChan), dst_(dst), src_(src) {}
 
 MSCCLPP_API_CPP ProxyService::ProxyService()
-    : proxy_([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
+    : proxy_(std::make_shared<Proxy>([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); },
+                                     [&]() { bindThread(); })) {
   int cudaDevice;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
   deviceNumaNode = getDeviceNumaNode(cudaDevice);
@@ -44,12 +45,12 @@ MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(Se
 }
 
 MSCCLPP_API_CPP ProxyChannel ProxyService::proxyChannel(SemaphoreId id) {
-  return ProxyChannel(id, semaphores_[id]->deviceHandle(), proxy_.fifo().deviceHandle());
+  return ProxyChannel(id, semaphores_[id], proxy_);
 }
 
-MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_.start(); }
+MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_->start(); }
 
-MSCCLPP_API_CPP void ProxyService::stopProxy() { proxy_.stop(); }
+MSCCLPP_API_CPP void ProxyService::stopProxy() { proxy_->stop(); }
 
 MSCCLPP_API_CPP void ProxyService::bindThread() {
   if (deviceNumaNode >= 0) {
@@ -84,7 +85,8 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
 }
 
 MSCCLPP_API_CPP ProxyChannel::DeviceHandle ProxyChannel::deviceHandle() const {
-  return ProxyChannel::DeviceHandle{.semaphoreId_ = semaphoreId_, .semaphore_ = semaphore_, .fifo_ = fifo_};
+  return ProxyChannel::DeviceHandle{
+      .semaphoreId_ = semaphoreId_, .semaphore_ = semaphore_->deviceHandle(), .fifo_ = proxy_->fifo().deviceHandle()};
 }
 
 MSCCLPP_API_CPP SimpleProxyChannel::DeviceHandle SimpleProxyChannel::deviceHandle() const {
