@@ -203,17 +203,17 @@ struct SmChannelDeviceHandle {
   /// @tparam Alignment The alignment of the source and destination addresses. Should be 4, 8, or a multiple of 16.
   /// @tparam CopyRemainder Whether to copy remainder bytes when the number of bytes is not a multiple of @p
   /// Alignment.
-  /// @param dstOffset The offset in bytes of the remote address. Should be a multiple of @p Alignment.
-  /// @param srcOffset The offset in bytes of the local address. Should be a multiple of @p Alignment.
-  /// @param bytes Bytes of the data to be copied. Should be a multiple of @p Alignment.
+  /// @param bufOffset The offset in bytes of the remote address. Should be a multiple of @p Alignment.
+  /// @param dataOffset The offset in bytes of the local address. Should be a multiple of @p Alignment.
+  /// @param dataBytes Bytes of the data to be copied. Should be a multiple of @p Alignment.
   /// @param threadId The index of the current thread among all threads running this function. This is different from
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
   ///
   template <int Alignment = 16, bool CopyRemainder = true>
-  __forceinline__ __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
+  __forceinline__ __device__ void put(uint64_t bufOffset, uint64_t dataOffset, uint64_t dataBytes, uint32_t threadId,
                                       uint32_t numThreads) {
-    copy<Alignment, CopyRemainder>((char*)dst_ + dstOffset, (char*)src_ + srcOffset, bytes, threadId, numThreads);
+    copy<Alignment, CopyRemainder>((char*)dst_ + bufOffset, (char*)src_ + dataOffset, dataBytes, threadId, numThreads);
   }
 
   /// Copy data from the remote memory to the local memory.
@@ -223,18 +223,18 @@ struct SmChannelDeviceHandle {
   /// @tparam Alignment The alignment of the source and destination addresses. Should be 4, 8, or a multiple of 16.
   /// @tparam CopyRemainder Whether to copy remainder bytes when the number of bytes is not a multiple of @p
   /// Alignment.
-  /// @param dstOffset The offset in bytes of the remote address. Should be a multiple of @p Alignment.
-  /// @param srcOffset The offset in bytes of the local address. Should be a multiple of @p Alignment.
-  /// @param bytes Bytes of the data to be copied. Should be a multiple of @p Alignment.
+  /// @param bufOffset The offset in bytes of the remote address. Should be a multiple of @p Alignment.
+  /// @param dataOffset The offset in bytes of the local address. Should be a multiple of @p Alignment.
+  /// @param dataBytes Bytes of the data to be copied. Should be a multiple of @p Alignment.
   /// @param threadId The index of the current thread among all threads running this function. This is different from
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
   ///
   template <int Alignment = 16, bool CopyRemainder = true>
-  __forceinline__ __device__ void get(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
+  __forceinline__ __device__ void get(uint64_t bufOffset, uint64_t dataOffset, uint64_t dataBytes, uint32_t threadId,
                                       uint32_t numThreads) {
     // Note that `dst` and `src` are swapped for `get()`.
-    copy<Alignment, CopyRemainder>((char*)src_ + srcOffset, (char*)dst_ + dstOffset, bytes, threadId, numThreads);
+    copy<Alignment, CopyRemainder>((char*)src_ + dataOffset, (char*)dst_ + bufOffset, dataBytes, threadId, numThreads);
   }
 
   /// Copy data from the local memory to the remote memory.
@@ -273,36 +273,36 @@ struct SmChannelDeviceHandle {
     get<Alignment, CopyRemainder>(offset, offset, size, threadId, numThreads);
   }
 
-  /// Construct @ref LLPacket from the data in the local memory and write it on the remote memory.
+  /// Construct @ref LLPacket from the data in the local memory and write it on the remote packet buffer.
   ///
   /// This function is intended to be collectively called by multiple threads. Each thread copies a part of packets.
   ///
-  /// @param dstOffset The offset in bytes of the remote address.
-  /// @param srcOffset The offset in bytes of the local address.
-  /// @param bytes Bytes of the data to be copied.
+  /// @param bufOffset The offset in bytes of the remote packet buffer.
+  /// @param dataOffset The offset in bytes of the local data.
+  /// @param dataBytes Bytes of the data to be copied.
   /// @param threadId The index of the current thread among all threads running this function. This is different from
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
   ///
-  __forceinline__ __device__ void putPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
-                                             uint32_t numThreads, uint32_t flag) {
-    mscclpp::putPackets(dst_, dstOffset, src_, srcOffset, bytes, threadId, numThreads, flag);
+  __forceinline__ __device__ void putPackets(uint64_t bufOffset, uint64_t dataOffset, uint64_t dataBytes,
+                                             uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+    mscclpp::putPackets(dst_, bufOffset, src_, dataOffset, dataBytes, threadId, numThreads, flag);
   }
 
-  /// Retrieve data from @ref LLPacket in the local packet buffer and write it on the local memory.
+  /// Retrieve data from @ref LLPacket in the local packet buffer and write it on the local data.
   ///
   /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
   ///
-  /// @param dstOffset The offset in bytes of the local memory.
-  /// @param srcOffset The offset in bytes of the local packet buffer.
-  /// @param bytes Bytes of the data to be copied.
+  /// @param bufOffset The offset in bytes of the local packet buffer.
+  /// @param dataOffset The offset in bytes of the local data.
+  /// @param dataBytes Bytes of the data to be copied.
   /// @param threadId The index of the current thread among all threads running this function. This is different from
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
   ///
-  __forceinline__ __device__ void getPackets(uint64_t dstOffset, uint64_t srcOffset, uint64_t bytes, uint32_t threadId,
-                                             uint32_t numThreads, uint32_t flag) {
-    mscclpp::getPackets(src_, dstOffset, getPacketBuffer_, srcOffset, bytes, threadId, numThreads, flag);
+  __forceinline__ __device__ void getPackets(uint64_t bufOffset, uint64_t dataOffset, uint64_t dataBytes,
+                                             uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+    mscclpp::getPackets(getPacketBuffer_, bufOffset, src_, dataOffset, dataBytes, threadId, numThreads, flag);
   }
 
   /// Signal the remote semaphore.

@@ -48,7 +48,7 @@ union LLPacket {
   /// @param flag The flag to read.
   /// @param data The 8-byte data read.
   /// @return True if the flag is not equal to the given flag.
-  __forceinline__ __device__ bool readOnce(uint32_t flag, uint2& data) {
+  __forceinline__ __device__ bool readOnce(uint32_t flag, uint2& data) const {
     uint32_t flag1, flag2;
     asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
                  : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2)
@@ -59,7 +59,7 @@ union LLPacket {
   /// Read 8 bytes of data from the packet.
   /// @param flag The flag to read.
   /// @return The 8-byte data read.
-  __forceinline__ __device__ uint2 read(uint32_t flag) {
+  __forceinline__ __device__ uint2 read(uint32_t flag) const {
     uint2 data;
     POLL_MAYBE_JAILBREAK(readOnce(flag, data), 100000000);
     return data;
@@ -74,28 +74,29 @@ union LLPacket {
 };
 
 #ifdef __CUDACC__
-__forceinline__ __device__ void putPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
-                                           uint64_t srcBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+/// Read from the data and write to the packet buffer.
+__forceinline__ __device__ void putPackets(void* bufPtr, uint64_t bufOffset, const void* dataPtr, uint64_t dataOffset,
+                                           uint64_t dataBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-  uint32_t* srcBase = (uint32_t*)((char*)src + srcOffset);
-  LLPacket* dstBase = (LLPacket*)((char*)dst + dstOffset);
-  size_t nElem = srcBytes / sizeof(uint64_t);
+  const uint32_t* dataBase = (const uint32_t*)((const char*)dataPtr + dataOffset);
+  LLPacket* bufBase = (LLPacket*)((char*)bufPtr + bufOffset);
+  size_t nElem = dataBytes / sizeof(uint64_t);
   for (size_t i = threadId; i < nElem; i += numThreads) {
-    LLPacket* pkt = &dstBase[i];
-    pkt->write(srcBase[2 * i], srcBase[2 * i + 1], flag);
+    LLPacket* pkt = &bufBase[i];
+    pkt->write(dataBase[2 * i], dataBase[2 * i + 1], flag);
   }
 }
 
-__forceinline__ __device__ void getPackets(void* dst, uint64_t dstOffset, void* src, uint64_t srcOffset,
-                                           uint64_t dstBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+/// Read from the packet buffer and write to the data.
+__forceinline__ __device__ void getPackets(const void* bufPtr, uint64_t bufOffset, void* dataPtr, uint64_t dataOffset,
+                                           uint64_t dataBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-  // TODO(saemal): this is not matching sm_channel get method.
-  LLPacket* srcBase = (LLPacket*)((char*)src + srcOffset);
-  uint2* dstBase = (uint2*)((char*)dst + dstOffset);
-  size_t nElem = dstBytes / sizeof(uint2);
+  const LLPacket* bufBase = (const LLPacket*)((const char*)bufPtr + bufOffset);
+  uint2* dataBase = (uint2*)((char*)dataPtr + dataOffset);
+  size_t nElem = dataBytes / sizeof(uint2);
   for (size_t i = threadId; i < nElem; i += numThreads) {
-    LLPacket* pkt = &srcBase[i];
-    dstBase[i] = pkt->read(flag);
+    const LLPacket* pkt = &bufBase[i];
+    dataBase[i] = pkt->read(flag);
   }
 }
 #endif  // __CUDACC__
