@@ -62,9 +62,9 @@ void IbPeerToPeerTest::stageSend(uint32_t size, uint64_t wrId, uint64_t srcOffse
   qp->stageSend(mr, remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled);
 }
 
-void IbPeerToPeerTest::stageAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal) {
+void IbPeerToPeerTest::stageAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal, bool signaled) {
   const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
-  qp->stageAtomicAdd(mr, remoteMrInfo, wrId, dstOffset, addVal, false);
+  qp->stageAtomicAdd(mr, remoteMrInfo, wrId, dstOffset, addVal, signaled);
 }
 
 void IbPeerToPeerTest::stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset,
@@ -257,7 +257,7 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
       qp->postSend();
 #else
       // For reference: send the first element using AtomicAdd. This should see the correct result.
-      stageAtomicAdd(0, 0, 1);
+      stageAtomicAdd(0, 0, 1, false);
       qp->postSend();
 #endif
 
@@ -287,4 +287,45 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
   }
 
   EXPECT_EQ(res, 0);
+}
+
+TEST_F(IbPeerToPeerTest, SimpleAtomicAdd) {
+  if (gEnv->rank >= 2) {
+    // This test needs only two ranks
+    return;
+  }
+
+  mscclpp::Timer timeout(3);
+
+  const int maxIter = 100000;
+  const int nelem = 1;
+  auto data = mscclpp::allocUniqueCuda<int>(nelem);
+
+  registerBufferAndConnect(data.get(), sizeof(int) * nelem);
+
+  if (gEnv->rank == 1) {
+    mscclpp::Timer timer;
+    for (int iter = 0; iter < maxIter; ++iter) {
+      stageAtomicAdd(0, 0, 1, true);
+      qp->postSend();
+      bool waiting = true;
+      int spin = 0;
+      while (waiting) {
+        int wcNum = qp->pollCq();
+        ASSERT_GE(wcNum, 0);
+        for (int i = 0; i < wcNum; ++i) {
+          const ibv_wc* wc = qp->getWc(i);
+          EXPECT_EQ(wc->status, IBV_WC_SUCCESS);
+          waiting = false;
+          break;
+        }
+        if (spin++ > 1000000) {
+          FAIL() << "Polling is stuck.";
+        }
+      }
+    }
+    float us = (float)timer.elapsed();
+    std::cout << "IbPeerToPeerTest.SimpleAtomicAdd: " << us / maxIter << " us/iter" << std::endl;
+  }
+  bootstrap->barrier();
 }
