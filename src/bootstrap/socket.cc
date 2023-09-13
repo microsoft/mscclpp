@@ -410,14 +410,22 @@ void Socket::listen() {
   }
 
   int finTimeout = getTcpFinTimeout();
+  int retrySecs = finTimeout + 1;
+  int remainSecs = retrySecs;
 
   // addr port should be 0 (Any port)
   while (::bind(fd_, &addr_.sa, salen_) != 0) {
+    // upon EADDRINUSE, retry up to for (finTimeout + 1) seconds
     if (errno != EADDRINUSE) {
       throw SysError("bind failed", errno);
     }
-    INFO(MSCCLPP_INIT, "No available ephemeral ports found, will retry after %d seconds", finTimeout);
-    sleep(finTimeout);
+    if (remainSecs > 0) {
+      INFO(MSCCLPP_INIT, "No available ephemeral ports found, will retry after 1 second");
+      sleep(1);
+      remainSecs--;
+    } else {
+      throw SysError("No available ephemeral ports found for " + std::to_string(retrySecs) + " seconds", errno);
+    }
   }
 
   /* Get the assigned Port */
