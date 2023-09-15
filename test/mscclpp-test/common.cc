@@ -10,7 +10,6 @@
 #include <numa.h>
 #include <unistd.h>
 
-#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>

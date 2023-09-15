@@ -6,8 +6,8 @@
 
 #ifdef __CUDACC__
 
-extern __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
-                                     const char *__function) __THROW;
+extern "C" __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
+                                         const char *__function) __THROW;
 
 // If a spin is stuck, escape from it and set status to 1.
 #define POLL_MAYBE_JAILBREAK_ESCAPE(__cond, __max_spin_cnt, __status) \
