@@ -13,6 +13,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <fstream>
 #include <mscclpp/errors.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
@@ -44,6 +45,17 @@ const char* SocketToString(union SocketAddress* addr, char* buf, const int numer
   (void)getnameinfo(saddr, sizeof(union SocketAddress), host, NI_MAXHOST, service, NI_MAXSERV, flag);
   sprintf(buf, "%s<%s>", host, service);
   return buf;
+}
+
+// Equivalent with ($ cat /proc/sys/net/ipv4/tcp_fin_timeout)
+static int getTcpFinTimeout() {
+  std::ifstream ifs("/proc/sys/net/ipv4/tcp_fin_timeout");
+  if (!ifs.is_open()) {
+    throw mscclpp::SysError("open /proc/sys/net/ipv4/tcp_fin_timeout failed", errno);
+  }
+  int timeout;
+  ifs >> timeout;
+  return timeout;
 }
 
 static uint16_t socketToPort(union SocketAddress* addr) {
@@ -397,9 +409,23 @@ void Socket::listen() {
 #endif
   }
 
+  int finTimeout = getTcpFinTimeout();
+  int retrySecs = finTimeout + 1;
+  int remainSecs = retrySecs;
+
   // addr port should be 0 (Any port)
-  if (::bind(fd_, &addr_.sa, salen_) != 0) {
-    throw SysError("bind failed", errno);
+  while (::bind(fd_, &addr_.sa, salen_) != 0) {
+    // upon EADDRINUSE, retry up to for (finTimeout + 1) seconds
+    if (errno != EADDRINUSE) {
+      throw SysError("bind failed", errno);
+    }
+    if (remainSecs > 0) {
+      INFO(MSCCLPP_INIT, "No available ephemeral ports found, will retry after 1 second");
+      sleep(1);
+      remainSecs--;
+    } else {
+      throw SysError("No available ephemeral ports found for " + std::to_string(retrySecs) + " seconds", errno);
+    }
   }
 
   /* Get the assigned Port */
