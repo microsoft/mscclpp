@@ -12,7 +12,6 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <cassert>
 #include <iostream>
 #include <string>
 #include <unordered_map>
@@ -250,7 +249,9 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
         proxyService.addMemory(localMemories[i]))));
   }
 
-  assert(proxyChannels.size() < sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>));
+  if (proxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
+    std::unexpected();
+  }
   CUDACHECK(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
                                sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * proxyChannels.size()));
 }
