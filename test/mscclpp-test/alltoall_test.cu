@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <cassert>
+#include <cstdint>
 #include <mscclpp/concurrency.hpp>
 
 #include "common.hpp"
@@ -75,7 +75,7 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
 }
 
 void AllToAllTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
-  assert(sendBuff.size() == 1);
+  if (sendBuff.size() != 1) std::unexpected();
   const int rank = args.rank;
   std::vector<int> dataHost(recvCount_, 0);
   // For rank 0, the data is 0, 1, 2 ... recvCount_ - 1, for rank 1, the data is recvCount_, recvCount_ + 1, ...
@@ -151,7 +151,9 @@ void AllToAllTestEngine::setupConnections() {
   std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannels;
   setupMeshConnections(proxyChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
 
-  assert(proxyChannels.size() < sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>));
+  if (proxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
+    std::unexpected();
+  }
   CUDATHROW(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
                                sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * proxyChannels.size()));
 }

@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include "common.hpp"
+// other headers
 #include <mscclpp/semaphore_device.hpp>
 
 // be careful about using semaphore[my_rank] as it is an invalid semaphore and it is there just for simplicity of

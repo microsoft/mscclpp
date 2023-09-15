@@ -29,7 +29,8 @@ void register_semaphore(nb::module_& m) {
       .def(nb::init<Communicator&, std::shared_ptr<Connection>>(), nb::arg("communicator"), nb::arg("connection"))
       .def("connection", &Host2HostSemaphore::connection)
       .def("signal", &Host2HostSemaphore::signal)
-      .def("wait", &Host2HostSemaphore::wait);
+      .def("poll", &Host2HostSemaphore::poll)
+      .def("wait", &Host2HostSemaphore::wait, nb::arg("max_spin_count") = 10000000);
 
   nb::class_<SmDevice2DeviceSemaphore> smDevice2DeviceSemaphore(m, "SmDevice2DeviceSemaphore");
   smDevice2DeviceSemaphore

@@ -4,8 +4,6 @@
 #ifndef MSCCLPP_CONCURRENCY_HPP_
 #define MSCCLPP_CONCURRENCY_HPP_
 
-#include <stdint.h>
-
 #include <mscclpp/poll.hpp>
 
 namespace mscclpp {
@@ -23,7 +21,8 @@ struct DeviceSyncer {
   /// Synchronize all threads inside a kernel. Guarantee that all previous work of all threads in cooperating blocks is
   /// finished.
   /// @param blockNum The number of blocks that will synchronize.
-  __forceinline__ __device__ void sync(int blockNum) {
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  __forceinline__ __device__ void sync(int blockNum, int64_t maxSpinCount = 100000000) {
     int maxOldCnt = blockNum - 1;
     __syncthreads();
     if (blockNum == 1) return;
@@ -35,12 +34,12 @@ struct DeviceSyncer {
         if (atomicAdd(&count_, 1) == maxOldCnt) {
           flag_ = 1;
         }
-        POLL_MAYBE_JAILBREAK(!flag_, 1000000000);
+        POLL_MAYBE_JAILBREAK(!flag_, maxSpinCount);
       } else {
         if (atomicSub(&count_, 1) == 1) {
           flag_ = 0;
         }
-        POLL_MAYBE_JAILBREAK(flag_, 1000000000);
+        POLL_MAYBE_JAILBREAK(flag_, maxSpinCount);
       }
       isAdd_ = tmpIsAdd;
     }
