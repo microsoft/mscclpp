@@ -58,10 +58,11 @@ union LLPacket {
 
   /// Read 8 bytes of data from the packet.
   /// @param flag The flag to read.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   /// @return The 8-byte data read.
-  __forceinline__ __device__ uint2 read(uint32_t flag) {
+  __forceinline__ __device__ uint2 read(uint32_t flag, int64_t maxSpinCount = 100000000) {
     uint2 data;
-    POLL_MAYBE_JAILBREAK(readOnce(flag, data), 100000000);
+    POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
     return data;
   }
 
