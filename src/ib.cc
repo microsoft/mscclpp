@@ -214,11 +214,12 @@ void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64
   wrInfo.sge->lkey = mr->getLkey();
 }
 
-void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal) {
+void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal,
+                          bool signaled) {
   auto wrInfo = this->getNewWrInfo();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
-  wrInfo.wr->send_flags = 0;  // atomic op cannot be signaled
+  wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
   wrInfo.wr->wr.atomic.remote_addr = (uint64_t)(info.addr) + dstOffset;
   wrInfo.wr->wr.atomic.rkey = info.rkey;
   wrInfo.wr->wr.atomic.compare_add = addVal;
@@ -362,9 +363,26 @@ MSCCLPP_API_CPP int getIBDeviceCount() {
   return num;
 }
 
+std::string getHcaDevices(int deviceIndex) {
+  const char* envValue = std::getenv("MSCCLPP_HCA_DEVICES");
+  if (envValue) {
+    std::vector<std::string> devices;
+    std::string envStr(envValue);
+    std::stringstream ss(envStr);
+    std::string device;
+    while (std::getline(ss, device, ',')) {
+      devices.push_back(device);
+    }
+    if (deviceIndex >= (int)devices.size()) {
+      throw std::invalid_argument("Not enough HCA devices are defined with MSCCLPP_HCA_DEVICES: " +
+                                  std::string(envValue));
+    }
+    return devices[deviceIndex];
+  }
+  return "";
+}
+
 MSCCLPP_API_CPP std::string getIBDeviceName(Transport ibTransport) {
-  int num;
-  struct ibv_device** devices = ibv_get_device_list(&num);
   int ibTransportIndex;
   switch (ibTransport) {  // TODO: get rid of this ugly switch
     case Transport::IB0:
@@ -394,6 +412,13 @@ MSCCLPP_API_CPP std::string getIBDeviceName(Transport ibTransport) {
     default:
       throw std::invalid_argument("Not an IB transport");
   }
+  std::string userHcaDevice = getHcaDevices(ibTransportIndex);
+  if (!userHcaDevice.empty()) {
+    return userHcaDevice;
+  }
+
+  int num;
+  struct ibv_device** devices = ibv_get_device_list(&num);
   if (ibTransportIndex >= num) {
     std::stringstream ss;
     ss << "IB transport out of range: " << ibTransportIndex << " >= " << num;
