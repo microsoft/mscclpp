@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <cstdint>
 #include <mscclpp/concurrency.hpp>
 
 #include "mp_unit_tests.hpp"

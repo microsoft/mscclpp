@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include "common.hpp"
+// other headers
 #include <mscclpp/sm_channel_device.hpp>
 
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing

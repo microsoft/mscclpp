@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <cassert>
+#include <cstdint>
 #include <mscclpp/concurrency.hpp>
 
 #include "common.hpp"
