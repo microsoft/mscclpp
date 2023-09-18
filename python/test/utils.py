@@ -110,7 +110,7 @@ class KernelBuilder:
         ]
         try:
             subprocess.run(command, capture_output=True, text=True, check=True, bufsize=1)
-            with open(f"{self._tempdir.name}/{output_file}", "rb") as f:
+            with open(os.path.join(self._tempdir.name, output_file), "rb") as f:
                 return f.read()
         except subprocess.CalledProcessError as e:
             raise RuntimeError("Compilation failed:", e.stderr, " ".join(command))

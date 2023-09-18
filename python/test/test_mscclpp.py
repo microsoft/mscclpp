@@ -19,7 +19,7 @@ from mscclpp import (
 )
 from ._cpp import _ext
 from .mscclpp_group import MscclppGroup
-from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
+from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group, abort_mpi
 from .utils import KernelBuilder, pack
 
 ethernet_interface_name = "eth0"
@@ -205,50 +205,54 @@ class MscclppKernel:
         scratch=None,
         fifo=None,
     ):
-        if test_name == "h2d_semaphore":
-            self._kernel = KernelBuilder(
-                file="h2d_semaphore_test.cu",
-                kernel_name="h2d_semaphore",
-            ).get_compiled_kernel()
-            self.nblocks = 1
-            self.nthreads = nranks
-        elif test_name == "d2d_semaphore":
-            self._kernel = KernelBuilder(
-                file="d2d_semaphore_test.cu",
-                kernel_name="d2d_semaphore",
-            ).get_compiled_kernel()
-            self.nblocks = 1
-            self.nthreads = nranks
-        elif test_name == "sm_channel":
-            self._kernel = KernelBuilder(
-                file="sm_channel_test.cu",
-                kernel_name="sm_channel",
-            ).get_compiled_kernel()
-            self.nblocks = nranks
-            self.nthreads = 1024
-        elif test_name == "fifo":
-            self._kernel = KernelBuilder(
-                file="fifo_test.cu",
-                kernel_name="fifo",
-            ).get_compiled_kernel()
-            self.nblocks = 1
-            self.nthreads = 1
-        elif test_name == "proxy":
-            self._kernel = KernelBuilder(
-                file="proxy_test.cu",
-                kernel_name="proxy",
-            ).get_compiled_kernel()
-            self.nblocks = 1
-            self.nthreads = nranks
-        elif test_name == "simple_proxy_channel":
-            self._kernel = KernelBuilder(
-                file="simple_proxy_channel_test.cu",
-                kernel_name="simple_proxy_channel",
-            ).get_compiled_kernel()
-            self.nblocks = 1
-            self.nthreads = 1024
-        else:
-            assert False
+        try:
+            if test_name == "h2d_semaphore":
+                self._kernel = KernelBuilder(
+                    file="h2d_semaphore_test.cu",
+                    kernel_name="h2d_semaphore",
+                ).get_compiled_kernel()
+                self.nblocks = 1
+                self.nthreads = nranks
+            elif test_name == "d2d_semaphore":
+                self._kernel = KernelBuilder(
+                    file="d2d_semaphore_test.cu",
+                    kernel_name="d2d_semaphore",
+                ).get_compiled_kernel()
+                self.nblocks = 1
+                self.nthreads = nranks
+            elif test_name == "sm_channel":
+                self._kernel = KernelBuilder(
+                    file="sm_channel_test.cu",
+                    kernel_name="sm_channel",
+                ).get_compiled_kernel()
+                self.nblocks = nranks
+                self.nthreads = 1024
+            elif test_name == "fifo":
+                self._kernel = KernelBuilder(
+                    file="fifo_test.cu",
+                    kernel_name="fifo",
+                ).get_compiled_kernel()
+                self.nblocks = 1
+                self.nthreads = 1
+            elif test_name == "proxy":
+                self._kernel = KernelBuilder(
+                    file="proxy_test.cu",
+                    kernel_name="proxy",
+                ).get_compiled_kernel()
+                self.nblocks = 1
+                self.nthreads = nranks
+            elif test_name == "simple_proxy_channel":
+                self._kernel = KernelBuilder(
+                    file="simple_proxy_channel_test.cu",
+                    kernel_name="simple_proxy_channel",
+                ).get_compiled_kernel()
+                self.nblocks = 1
+                self.nthreads = 1024
+            else:
+                assert False
+        except Exception:
+            abort_mpi()
+            raise
 
         self.params = b""
         if test_name in ["h2d_semaphore", "d2d_semaphore", "sm_channel", "simple_proxy_channel"]:

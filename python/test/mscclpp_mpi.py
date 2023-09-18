@@ -32,6 +32,9 @@ def finalize_mpi():
     if MPI.Is_initialized():
         MPI.Finalize()
 
+def abort_mpi():
+    if MPI.Is_initialized():
+        MPI.COMM_WORLD.Abort()
 
 # Register the function to be called on exit
 atexit.register(finalize_mpi)
