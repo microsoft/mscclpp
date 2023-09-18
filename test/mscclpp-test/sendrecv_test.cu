@@ -2,7 +2,6 @@
 // Licensed under the MIT license.
 
 #include <algorithm>
-#include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -87,7 +86,7 @@ std::vector<KernelRestriction> SendRecvTestColl::getKernelRestrictions() {
 
 void SendRecvTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
   int rank = args.rank;
-  assert(sendBuff.size() == 1);
+  if (sendBuff.size() != 1) std::unexpected();
   CUDATHROW(cudaMemset(sendBuff[0], 0, sendCount_ * typeSize_));
 
   // TODO: The type should not limited to int.

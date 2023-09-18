@@ -11,10 +11,18 @@ namespace mscclpp {
 /// Device-side handle for @ref Host2DeviceSemaphore.
 struct Host2DeviceSemaphoreDeviceHandle {
 #ifdef __CUDACC__
+  /// Poll if the host has signaled.
+  /// @return true if the host has signaled.
+  __forceinline__ __device__ bool poll() {
+    bool signaled = (*(volatile uint64_t*)(inboundSemaphoreId) > (*expectedInboundSemaphoreId));
+    if (signaled) (*expectedInboundSemaphoreId) += 1;
+    return signaled;
+  }
+
   /// Wait for the host to signal.
-  __forceinline__ __device__ void wait() {
+  __forceinline__ __device__ void wait(int64_t maxSpinCount = 10000000) {
     (*expectedInboundSemaphoreId) += 1;
-    POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)(inboundSemaphoreId) < (*expectedInboundSemaphoreId), 100000000);
+    POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)(inboundSemaphoreId) < (*expectedInboundSemaphoreId), maxSpinCount);
   }
 #endif  // __CUDACC__
 
@@ -25,10 +33,18 @@ struct Host2DeviceSemaphoreDeviceHandle {
 /// Device-side handle for @ref SmDevice2DeviceSemaphore.
 struct SmDevice2DeviceSemaphoreDeviceHandle {
 #ifdef __CUDACC__
+  /// Poll if the remote device has signaled.
+  /// @return true if the remote device has signaled.
+  __forceinline__ __device__ bool poll() {
+    bool signaled = ((*inboundSemaphoreId) > (*expectedInboundSemaphoreId));
+    if (signaled) (*expectedInboundSemaphoreId) += 1;
+    return signaled;
+  }
+
   /// Wait for the remote device to signal.
-  __forceinline__ __device__ void wait() {
+  __forceinline__ __device__ void wait(int64_t maxSpinCount = 10000000) {
     (*expectedInboundSemaphoreId) += 1;
-    POLL_MAYBE_JAILBREAK(*inboundSemaphoreId < (*expectedInboundSemaphoreId), 100000000);
+    POLL_MAYBE_JAILBREAK((*inboundSemaphoreId) < (*expectedInboundSemaphoreId), maxSpinCount);
   }
 
   /// Signal the remote device.

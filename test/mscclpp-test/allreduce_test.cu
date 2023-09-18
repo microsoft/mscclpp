@@ -2,7 +2,6 @@
 // Licensed under the MIT license.
 
 #include <algorithm>
-#include <cassert>
 #include <mscclpp/concurrency.hpp>
 #include <mscclpp/packet.hpp>
 #include <vector>
@@ -1006,7 +1005,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
 }
 
 void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
-  assert(sendBuff.size() == 1);
+  if (sendBuff.size() != 1) std::unexpected();
   const int rank = args.rank;
   const int worldSize = args.totalRanks;
   std::vector<int> dataHost(std::max(sendCount_, recvCount_), rank);
@@ -1154,8 +1153,12 @@ void AllReduceTestEngine::setupConnections() {
                            packetBuffBytes, getPacketBuff_.get(), packetBuffBytes, scratchPacketBuff_.get(),
                            scratchPacketBuffBytes);
 
-      assert(smOutOfPlaceChannels_.size() < sizeof(constSmOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>));
-      assert(proxyChannels.size() < sizeof(constDevFstRoundChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>));
+      if (smOutOfPlaceChannels_.size() > sizeof(constSmOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
+        std::unexpected();
+      }
+      if (proxyChannels.size() > sizeof(constDevFstRoundChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
+        std::unexpected();
+      }
 
       std::vector<DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles(smOutOfPlaceChannels_.size());
       getChannelDeviceHandle(smOutOfPlaceChannels_, smChannelDeviceHandles);
@@ -1170,25 +1173,33 @@ void AllReduceTestEngine::setupConnections() {
 
     // Send data from local inputBuff to remote scratchBuff (out-of-place)
     setupMeshConnections(fstRoundChannels, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
-    assert(fstRoundChannels.size() < sizeof(constDevFstRoundChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>));
+    if (fstRoundChannels.size() > sizeof(constDevFstRoundChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
+      std::unexpected();
+    }
     CUDATHROW(cudaMemcpyToSymbol(constDevFstRoundChans, fstRoundChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * fstRoundChannels.size()));
 
     // Send data from local inputBuff to remote inputBuff (in-place)
     setupMeshConnections(sndRoundChannels, inputBuff_.get(), args_.maxBytes);
-    assert(sndRoundChannels.size() < sizeof(constDevSndRoundChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>));
+    if (sndRoundChannels.size() > sizeof(constDevSndRoundChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
+      std::unexpected();
+    }
     CUDATHROW(cudaMemcpyToSymbol(constDevSndRoundChans, sndRoundChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * sndRoundChannels.size()));
 
     setupMeshConnections(smOutOfPlaceChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
-    assert(smOutOfPlaceChannels_.size() < sizeof(constSmOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>));
+    if (smOutOfPlaceChannels_.size() > sizeof(constSmOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
+      std::unexpected();
+    }
     std::vector<DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles(smOutOfPlaceChannels_.size());
     getChannelDeviceHandle(smOutOfPlaceChannels_, smChannelDeviceHandles);
     CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceChans, smChannelDeviceHandles.data(),
                                  sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
 
     setupMeshConnections(smInPlaceChannels_, inputBuff_.get(), args_.maxBytes);
-    assert(smInPlaceChannels_.size() < sizeof(constSmInPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>));
+    if (smInPlaceChannels_.size() > sizeof(constSmInPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
+      std::unexpected();
+    }
     smChannelDeviceHandles.resize(smInPlaceChannels_.size());
     getChannelDeviceHandle(smInPlaceChannels_, smChannelDeviceHandles);
     CUDATHROW(cudaMemcpyToSymbol(constSmInPlaceChans, smChannelDeviceHandles.data(),
@@ -1196,8 +1207,10 @@ void AllReduceTestEngine::setupConnections() {
 
     setupMeshConnections(smOutputPlaceGetChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(),
                          args_.maxBytes, ChannelSemantic::GET);
-    assert(smOutputPlaceGetChannels_.size() <
-           sizeof(constSmOutOfPlaceGetChans) / sizeof(DeviceHandle<mscclpp::SmChannel>));
+    if (smOutputPlaceGetChannels_.size() >
+        sizeof(constSmOutOfPlaceGetChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
+      std::unexpected();
+    }
     smChannelDeviceHandles.resize(smOutputPlaceGetChannels_.size());
     getChannelDeviceHandle(smOutputPlaceGetChannels_, smChannelDeviceHandles);
     CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceGetChans, smChannelDeviceHandles.data(),

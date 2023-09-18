@@ -158,8 +158,13 @@ struct ProxyChannelDeviceHandle {
     fifo_.sync(curFifoHead);
   }
 
+  /// Check if the proxy channel has been signaled.
+  /// @return true if the proxy channel has been signaled.
+  __forceinline__ __device__ bool poll() { return semaphore_.poll(); }
+
   /// Wait for the proxy channel to be signaled.
-  __forceinline__ __device__ void wait() { semaphore_.wait(); }
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  __forceinline__ __device__ void wait(int64_t maxSpinCount = 10000000) { semaphore_.wait(maxSpinCount); }
 
 #endif  // __CUDACC__
 };
@@ -217,8 +222,13 @@ struct SimpleProxyChannelDeviceHandle {
   /// Push a @ref TriggerSync to the FIFO.
   __forceinline__ __device__ void flush() { proxyChan_.flush(); }
 
+  /// Check if the proxy channel has been signaled.
+  /// @return true if the proxy channel has been signaled.
+  __forceinline__ __device__ bool poll() { return proxyChan_.poll(); }
+
   /// Wait for the proxy channel to be signaled.
-  __forceinline__ __device__ void wait() { proxyChan_.wait(); }
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  __forceinline__ __device__ void wait(int64_t maxSpinCount = 10000000) { proxyChan_.wait(maxSpinCount); }
 #endif  // __CUDACC__
 };
 
