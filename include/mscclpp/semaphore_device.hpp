@@ -16,7 +16,8 @@ struct Host2DeviceSemaphoreDeviceHandle {
   /// Poll if the host has signaled.
   /// @return true if the host has signaled.
   __forceinline__ __device__ bool poll() {
-    bool signaled = (*(volatile uint64_t*)(inboundSemaphoreId) > (*expectedInboundSemaphoreId));
+    bool signaled = (cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*inboundSemaphoreId}.load(
+                         cuda::memory_order_acquire) > (*expectedInboundSemaphoreId));
     if (signaled) (*expectedInboundSemaphoreId) += 1;
     return signaled;
   }
@@ -24,7 +25,9 @@ struct Host2DeviceSemaphoreDeviceHandle {
   /// Wait for the host to signal.
   __forceinline__ __device__ void wait(int64_t maxSpinCount = 10000000) {
     (*expectedInboundSemaphoreId) += 1;
-    POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)(inboundSemaphoreId) < (*expectedInboundSemaphoreId), maxSpinCount);
+    POLL_MAYBE_JAILBREAK((cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*inboundSemaphoreId}.load(
+                              cuda::memory_order_acquire) < (*expectedInboundSemaphoreId)),
+                         maxSpinCount);
   }
 #endif  // __CUDACC__
 
