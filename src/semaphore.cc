@@ -60,7 +60,8 @@ MSCCLPP_API_CPP void Host2HostSemaphore::signal() {
 }
 
 MSCCLPP_API_CPP bool Host2HostSemaphore::poll() {
-  bool signaled = (*(volatile uint64_t*)localInboundSemaphore_.get() > (*expectedInboundSemaphore_));
+  bool signaled = (cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*(uint64_t*)localInboundSemaphore_.get()}.load(
+                       cuda::memory_order_acquire) > (*expectedInboundSemaphore_));
   if (signaled) (*expectedInboundSemaphore_) += 1;
   return signaled;
 }
@@ -68,7 +69,8 @@ MSCCLPP_API_CPP bool Host2HostSemaphore::poll() {
 MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
   (*expectedInboundSemaphore_) += 1;
   int64_t spinCount = 0;
-  while (*(volatile uint64_t*)localInboundSemaphore_.get() < (*expectedInboundSemaphore_)) {
+  while (cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*(uint64_t*)localInboundSemaphore_.get()}.load(
+             cuda::memory_order_acquire) < (*expectedInboundSemaphore_)) {
     if (spinCount++ == maxSpinCount) {
       throw Error("Host2HostSemaphore::wait timed out", ErrorCode::Timeout);
     }
