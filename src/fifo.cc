@@ -49,7 +49,9 @@ MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
 }
 
 MSCCLPP_API_CPP void Fifo::pop() {
-  *(volatile uint64_t*)(&pimpl->triggers.get()[pimpl->hostTail % pimpl->size]) = 0;
+  cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{pimpl->triggers.get()[pimpl->hostTail % pimpl->size].fst}.store(
+      0, cuda::memory_order_release);
+
   (pimpl->hostTail)++;
 }
 

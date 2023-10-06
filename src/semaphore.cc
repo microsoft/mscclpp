@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <cuda/atomic>
 #include <mscclpp/semaphore.hpp>
 
 #include "api.h"
