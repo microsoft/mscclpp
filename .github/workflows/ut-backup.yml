@@ -58,9 +58,9 @@ jobs:
           export PATH=/usr/local/mpi/bin:$PATH
           cd build && make pylib-copy
           if [[ '${{ matrix.container-image }}' == *'cuda11'* ]]; then
-            pip3 install -r ../python/test/requirements_cu11.txt
+            python3 -m pip install -r ../python/test/requirements_cu11.txt
           else
-            pip3 install -r ../python/test/requirements_cu12.txt
+            python3 -m pip install -r ../python/test/requirements_cu12.txt
           fi
-          mpirun --allow-run-as-root -tag-output -np 8 ~/.local/bin/pytest ../python/test/test_mscclpp.py -x
+          mpirun --allow-run-as-root -tag-output -np 8 $(which pytest) ../python/test/test_mscclpp.py -x
         working-directory: ${{ github.workspace }}
