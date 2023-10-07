@@ -63,13 +63,9 @@ struct FifoDeviceHandle {
 
     ProxyTrigger* triggerPtr = (ProxyTrigger*)&(this->triggers[curFifoHead % size]);
 
-    // only the fst needs to atomically stored thanks to memory_order_release. On the host side we only need to
-    // atomically load the fst. If fst is non-zero, snd is guaranteed to be the right value
-    triggerPtr->snd = trigger.snd;
-    cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{triggerPtr->fst}.store(trigger.fst,
-                                                                                 cuda::memory_order_release);
+    // store with memory order release so that the while loop does not go pass this.
+    asm volatile("st.global.release.cta.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
 
-    // asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
     return curFifoHead;
   }
 
