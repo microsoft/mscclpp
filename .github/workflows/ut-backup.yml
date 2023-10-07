@@ -44,6 +44,7 @@ jobs:
         run: |
           set -e
           export PATH=/usr/local/mpi/bin:$PATH
+          echo $USER
           mpirun -tag-output -np 2 ./build/test/mp_unit_tests
           mpirun -tag-output -np 4 ./build/test/mp_unit_tests
           mpirun -tag-output -np 8 ./build/test/mp_unit_tests
