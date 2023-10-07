@@ -1,0 +1,63 @@
+name: UnitTest
+
+on: workflow_dispatch
+
+jobs:
+  UnitTest:
+    runs-on: self-hosted
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        container-image: [ghcr.io/microsoft/mscclpp/mscclpp:base-cuda11.8, ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1]
+
+    container:
+      image: ${{ matrix.container-image }}
+      options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Build
+        run: |
+          curl -L -C- https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
+          tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
+          mkdir build && cd build
+          MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
+          make -j
+        working-directory: ${{ github.workspace }}
+
+      - name: LockGPUClock
+        run: |
+          sudo nvidia-smi -pm 1
+          for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+            sudo nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
+          done
+        working-directory: ${{ github.workspace }}
+
+      - name: UnitTests
+        run: |
+          ./build/test/unit_tests
+        working-directory: ${{ github.workspace }}
+
+      - name: MpUnitTests
+        run: |
+          set -e
+          export PATH=/usr/local/mpi/bin:$PATH
+          mpirun -tag-output -np 2 ./build/test/mp_unit_tests
+          mpirun -tag-output -np 4 ./build/test/mp_unit_tests
+          mpirun -tag-output -np 8 ./build/test/mp_unit_tests
+        working-directory: ${{ github.workspace }}
+
+      - name: PyTests
+        run: |
+          set -e
+          export PATH=/usr/local/mpi/bin:$PATH
+          cd build && make pylib-copy
+          if [[ '${{ matrix.container-image }}' == *'cuda11'* ]]; then
+            pip3 install -r ../python/test/requirements_cu11.txt
+          else
+            pip3 install -r ../python/test/requirements_cu12.txt
+          fi
+          mpirun -tag-output -np 8 ~/.local/bin/pytest ../python/test/test_mscclpp.py -x
+        working-directory: ${{ github.workspace }}
