@@ -104,8 +104,13 @@ class Host2HostSemaphore : public BaseSemaphore<std::default_delete, std::defaul
   /// Signal the remote host.
   void signal();
 
+  /// Check if the remote host has signaled.
+  /// @return true if the remote host has signaled.
+  bool poll();
+
   /// Wait for the remote host to signal.
-  void wait();
+  /// @param maxSpinCount The maximum number of spin counts before throwing an exception. Never throws if negative.
+  void wait(int64_t maxSpinCount = 10000000);
 
  private:
   std::shared_ptr<Connection> connection_;

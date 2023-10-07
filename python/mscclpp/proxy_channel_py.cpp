@@ -26,8 +26,8 @@ void register_proxy_channel(nb::module_& m) {
       .def("proxy_channel", &ProxyService::proxyChannel, nb::arg("id"));
 
   nb::class_<ProxyChannel>(m, "ProxyChannel")
-      .def(nb::init<SemaphoreId, Host2DeviceSemaphore::DeviceHandle, FifoDeviceHandle>(), nb::arg("semaphoreId"),
-           nb::arg("semaphore"), nb::arg("fifo"))
+      .def(nb::init<SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>>(),
+           nb::arg("semaphoreId"), nb::arg("semaphore"), nb::arg("proxy"))
       .def("device_handle", &ProxyChannel::deviceHandle);
 
   nb::class_<ProxyChannel::DeviceHandle>(m, "ProxyChannelDeviceHandle")

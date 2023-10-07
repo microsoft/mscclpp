@@ -28,6 +28,9 @@ class Proxy {
   void start();
   void stop();
 
+  /// This is a concurrent fifo which is multiple threads from the device
+  /// can produce for and the sole proxy thread consumes it.
+  /// @return the fifo
   Fifo& fifo();
 
  private:
