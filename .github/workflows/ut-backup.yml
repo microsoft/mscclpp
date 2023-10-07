@@ -1,4 +1,4 @@
-name: UnitTest
+name: mscclpp-ut
 
 on: workflow_dispatch
 
@@ -11,15 +11,15 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        container-image: [ "ghcr.io/microsoft/mscclpp/mscclpp:base-cuda11.8", "ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1" ]
+        cuda: [ cuda11.8, cuda12.1 ]
 
     container:
-      image: ${{ matrix.container-image }}
+      image: "ghcr.io/microsoft/mscclpp/mscclpp:base-${{ matrix.cuda }}"
       options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Build
         run: |
@@ -57,7 +57,7 @@ jobs:
           set -e
           export PATH=/usr/local/mpi/bin:$PATH
           cd build && make pylib-copy
-          if [[ '${{ matrix.container-image }}' == *'cuda11'* ]]; then
+          if [[ '${{ matrix.cuda }}' == 'cuda11'* ]]; then
             python3 -m pip install -r ../python/test/requirements_cu11.txt
           else
             python3 -m pip install -r ../python/test/requirements_cu12.txt
