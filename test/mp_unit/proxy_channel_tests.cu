@@ -238,7 +238,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
         flusher = 0;
       }
     } else {
-      mscclpp::getPackets(buff, 0, getPktBuf, 0, nElem * sizeof(int), threadId, numThreads, flag);
+      mscclpp::getPackets(getPktBuf, 0, buff, 0, nElem * sizeof(int), threadId, numThreads, flag);
       if (CheckCorrectness) {
         // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
         // __syncthreads();
