@@ -75,29 +75,29 @@ union LLPacket {
 };
 
 #ifdef __CUDACC__
-/// Read from the data and write to the packet buffer.
-__forceinline__ __device__ void putPackets(void* bufPtr, uint64_t bufOffset, const void* dataPtr, uint64_t dataOffset,
-                                           uint64_t dataBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+/// Read from the origin and write to the target buffer.
+__forceinline__ __device__ void putPackets(void* targetPtr, uint64_t targetOffset, const void* originPtr, uint64_t originOffset,
+                                           uint64_t originBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-  const uint32_t* dataBase = (const uint32_t*)((const char*)dataPtr + dataOffset);
-  LLPacket* bufBase = (LLPacket*)((char*)bufPtr + bufOffset);
-  size_t nElem = dataBytes / sizeof(uint64_t);
+  const uint32_t* originBase = (const uint32_t*)((const char*)originPtr + originOffset);
+  LLPacket* targetBase = (LLPacket*)((char*)targetPtr + targetOffset);
+  size_t nElem = originBytes / sizeof(uint64_t);
   for (size_t i = threadId; i < nElem; i += numThreads) {
-    LLPacket* pkt = &bufBase[i];
-    pkt->write(dataBase[2 * i], dataBase[2 * i + 1], flag);
+    LLPacket* pkt = &targetBase[i];
+    pkt->write(originBase[2 * i], originBase[2 * i + 1], flag);
   }
 }
 
-/// Read from the packet buffer and write to the data.
-__forceinline__ __device__ void getPackets(const void* bufPtr, uint64_t bufOffset, void* dataPtr, uint64_t dataOffset,
-                                           uint64_t dataBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+/// Read from the target buffer and write to the origin.
+__forceinline__ __device__ void getPackets(const void* targetPtr, uint64_t targetOffset, void* originPtr, uint64_t originOffset,
+                                           uint64_t originBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-  const LLPacket* bufBase = (const LLPacket*)((const char*)bufPtr + bufOffset);
-  uint2* dataBase = (uint2*)((char*)dataPtr + dataOffset);
-  size_t nElem = dataBytes / sizeof(uint2);
+  const LLPacket* targetBase = (const LLPacket*)((const char*)targetPtr + targetOffset);
+  uint2* originBase = (uint2*)((char*)originPtr + originOffset);
+  size_t nElem = originBytes / sizeof(uint2);
   for (size_t i = threadId; i < nElem; i += numThreads) {
-    const LLPacket* pkt = &bufBase[i];
-    dataBase[i] = pkt->read(flag);
+    const LLPacket* pkt = &targetBase[i];
+    originBase[i] = pkt->read(flag);
   }
 }
 #endif  // __CUDACC__
