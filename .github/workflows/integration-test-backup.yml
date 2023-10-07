@@ -1,4 +1,4 @@
-name: mscclpp-test
+name: IntegrationTest
 
 on: workflow_dispatch
 

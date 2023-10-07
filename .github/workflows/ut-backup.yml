@@ -1,4 +1,4 @@
-name: mscclpp-ut
+name: UnitTest
 
 on: workflow_dispatch
 
