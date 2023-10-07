@@ -5,6 +5,9 @@ on: workflow_dispatch
 jobs:
   UnitTest:
     runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 30
     strategy:
       matrix:
