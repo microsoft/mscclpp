@@ -7,7 +7,7 @@ jobs:
     runs-on: self-hosted
     strategy:
       matrix:
-        container-image: [ghcr.io/microsoft/mscclpp/mscclpp:base-cuda11.8, ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1]
+        container-image: [ "ghcr.io/microsoft/mscclpp/mscclpp:base-cuda11.8", "ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1" ]
 
     container:
       image: ${{ matrix.container-image }}
