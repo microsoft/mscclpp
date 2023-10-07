@@ -76,8 +76,9 @@ union LLPacket {
 
 #ifdef __CUDACC__
 /// Read from the origin and write to the target buffer.
-__forceinline__ __device__ void putPackets(void* targetPtr, uint64_t targetOffset, const void* originPtr, uint64_t originOffset,
-                                           uint64_t originBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+__forceinline__ __device__ void putPackets(void* targetPtr, uint64_t targetOffset, const void* originPtr,
+                                           uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
+                                           uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
   const uint32_t* originBase = (const uint32_t*)((const char*)originPtr + originOffset);
   LLPacket* targetBase = (LLPacket*)((char*)targetPtr + targetOffset);
@@ -89,8 +90,9 @@ __forceinline__ __device__ void putPackets(void* targetPtr, uint64_t targetOffse
 }
 
 /// Read from the target buffer and write to the origin.
-__forceinline__ __device__ void getPackets(const void* targetPtr, uint64_t targetOffset, void* originPtr, uint64_t originOffset,
-                                           uint64_t originBytes, uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+__forceinline__ __device__ void getPackets(const void* targetPtr, uint64_t targetOffset, void* originPtr,
+                                           uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
+                                           uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
   const LLPacket* targetBase = (const LLPacket*)((const char*)targetPtr + targetOffset);
   uint2* originBase = (uint2*)((char*)originPtr + originOffset);

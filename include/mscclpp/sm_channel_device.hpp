@@ -211,9 +211,10 @@ struct SmChannelDeviceHandle {
   /// @param numThreads The total number of threads that run this function.
   ///
   template <int Alignment = 16, bool CopyRemainder = true>
-  __forceinline__ __device__ void put(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
-                                      uint32_t numThreads) {
-    copy<Alignment, CopyRemainder>((char*)dst_ + targetOffset, (char*)src_ + originOffset, originBytes, threadId, numThreads);
+  __forceinline__ __device__ void put(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
+                                      uint32_t threadId, uint32_t numThreads) {
+    copy<Alignment, CopyRemainder>((char*)dst_ + targetOffset, (char*)src_ + originOffset, originBytes, threadId,
+                                   numThreads);
   }
 
   /// Copy data from the remote memory (target) to the local memory (origin).
@@ -231,10 +232,11 @@ struct SmChannelDeviceHandle {
   /// @param numThreads The total number of threads that run this function.
   ///
   template <int Alignment = 16, bool CopyRemainder = true>
-  __forceinline__ __device__ void get(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
-                                      uint32_t numThreads) {
+  __forceinline__ __device__ void get(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
+                                      uint32_t threadId, uint32_t numThreads) {
     // Note that `dst` and `src` are swapped for `get()`.
-    copy<Alignment, CopyRemainder>((char*)src_ + originOffset, (char*)dst_ + targetOffset, originBytes, threadId, numThreads);
+    copy<Alignment, CopyRemainder>((char*)src_ + originOffset, (char*)dst_ + targetOffset, originBytes, threadId,
+                                   numThreads);
   }
 
   /// Copy data from the local memory (origin) to the remote memory (target).
@@ -273,7 +275,8 @@ struct SmChannelDeviceHandle {
     get<Alignment, CopyRemainder>(offset, offset, bytes, threadId, numThreads);
   }
 
-  /// Construct @ref LLPacket from the data in the local memory (origin) and write it on the remote packet buffer (target).
+  /// Construct @ref LLPacket from the data in the local memory (origin) and write it on the remote packet buffer
+  /// (target).
   ///
   /// This function is intended to be collectively called by multiple threads. Each thread copies a part of packets.
   ///
