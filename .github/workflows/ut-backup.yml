@@ -12,7 +12,7 @@ jobs:
 
     container:
       image: ${{ matrix.container-image }}
-      options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
+      options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1 --user 1000
 
     steps:
       - name: Checkout
@@ -44,7 +44,6 @@ jobs:
         run: |
           set -e
           export PATH=/usr/local/mpi/bin:$PATH
-          echo $USER
           mpirun -tag-output -np 2 ./build/test/mp_unit_tests
           mpirun -tag-output -np 4 ./build/test/mp_unit_tests
           mpirun -tag-output -np 8 ./build/test/mp_unit_tests
