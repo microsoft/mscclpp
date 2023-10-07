@@ -5,17 +5,20 @@ on: workflow_dispatch
 jobs:
   IntegrationTest:
     runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash
     strategy:
       matrix:
-        container-image: [ghcr.io/microsoft/mscclpp/mscclpp:base-cuda11.8, ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1]
+        cuda: [ cuda11.8, cuda12.1 ]
 
     container:
-      image: ${{ matrix.container-image }}
+      image: "ghcr.io/microsoft/mscclpp/mscclpp:base-${{ matrix.cuda }}"
       options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install CMake
         run: |
@@ -39,35 +42,35 @@ jobs:
         run: |
           set -e
           export PATH=/usr/local/mpi/bin:$PATH
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -o output.jsonl
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl
 
       - name: Run mscclpp SendRecv test
         run: |
           set -e
           export PATH=/usr/local/mpi/bin:$PATH
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2 -o output.jsonl
 
       - name: Run mscclpp AllReduce test
         run: |
           set -e
           export PATH=/usr/local/mpi/bin:$PATH
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -o output.jsonl
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 4 -o output.jsonl
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 12M -e 48M -i 3145728 2 -k 5 -o output.jsonl
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 24K -e 768K -i 24576 -k 6 -w 100 -n 100 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 4 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 12M -e 48M -i 3145728 2 -k 5 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 24K -e 768K -i 24576 -k 6 -w 100 -n 100 -o output.jsonl
 
       - name: Run mscclpp AllToAll test
         run: |
           set -e
           export PATH=/usr/local/mpi/bin:$PATH
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -o output.jsonl
-          mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -o output.jsonl
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
 
       - name: Check collective primitives performance
         run: |
