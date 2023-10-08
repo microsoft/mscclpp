@@ -41,8 +41,8 @@ class MscclppGroup:
             # use this instead
             self.bootstrap.initialize(interfaceIpPortTrio)
         self.communicator = Communicator(self.bootstrap)
-        self.my_rank = self.bootstrap.get_rank()
-        self.nranks = self.bootstrap.get_n_ranks()
+        self.my_rank = self.bootstrap.rank
+        self.nranks = self.bootstrap.size
 
     def barrier(self):
         self.bootstrap.barrier()
@@ -51,7 +51,7 @@ class MscclppGroup:
         self.bootstrap.send(tensor.ctypes.data, tensor.size * tensor.itemsize, peer, tag)
 
     def recv(self, tensor: np.ndarray, peer: int, tag: int):
-        self.bootstrap.recv(tensor.ctypes.data, tensor.size * tensor.itemsize, peer, tag)
+        self.bootstrap.recv(tensor.ctypes.data, tensor.size * tensor.itemsize, peer, tag).get()
 
     def my_ib_device(self, local_rank: int) -> Transport:
         if local_rank == 0:
@@ -74,11 +74,8 @@ class MscclppGroup:
             assert False  # only 8 IBs are supported
 
     def make_connection(self, remote_ranks: list[int], transport: Transport) -> dict[int, Connection]:
-        connections = {}
-        for rank in remote_ranks:
-            connections[rank] = self.communicator.connect(rank, 0, transport)
-        connections = {rank: connections[rank].get() for rank in connections}
-        return connections
+        connections = {rank: self.communicator.connect(rank, 0, transport) for rank in remote_ranks}
+        return {k: v.get() for k, v in connections.items()}
 
     def register_tensor_with_connections(
         self, tensor: Type[cp.ndarray] or Type[np.ndarray], connections: dict[int, Connection]
