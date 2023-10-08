@@ -11,7 +11,7 @@ jobs:
 
     steps:
     - name: Check out Git repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Install ClangFormat
       run: |
@@ -28,25 +28,25 @@ jobs:
 
     steps:
       - name: Check out Git repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
   
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: 3.8
+          python-version: 3
 
       - name: Install Python dependencies
-        run: python3.8 -m pip install black
+        run: python3 -m pip install black
 
       - name: Run black
-        run: python3.8 -m black --check --config pyproject.toml .
+        run: python3 -m black --check --config pyproject.toml .
 
   spelling:
     runs-on: ubuntu-20.04
 
     steps:
     - name: Check out Git repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Download misspell
       run: |
