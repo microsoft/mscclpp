@@ -9,6 +9,8 @@
 
 #include <mscclpp/core.hpp>
 
+#include "gil_release.hpp"
+
 namespace nb = nanobind;
 using namespace mscclpp;
 
@@ -118,7 +120,7 @@ void register_core(nb::module_& m) {
             self->updateAndSync(dst, dstOffset, (uint64_t*)src, newValue);
           },
           nb::arg("dst"), nb::arg("dstOffset"), nb::arg("src"), nb::arg("newValue"))
-      .def("flush", &Connection::flush, nb::arg("timeoutUsec") = (int64_t)3e7)
+      .def("flush", gil_release_wrapper(&Connection::flush), nb::arg("timeoutUsec") = (int64_t)3e7)
       .def("transport", &Connection::transport)
       .def("remote_transport", &Connection::remoteTransport);
 
