@@ -6,6 +6,8 @@
 
 #include <mscclpp/semaphore.hpp>
 
+#include "gil_release.hpp"
+
 namespace nb = nanobind;
 using namespace mscclpp;
 
@@ -30,7 +32,7 @@ void register_semaphore(nb::module_& m) {
       .def("connection", &Host2HostSemaphore::connection)
       .def("signal", &Host2HostSemaphore::signal)
       .def("poll", &Host2HostSemaphore::poll)
-      .def("wait", &Host2HostSemaphore::wait, nb::arg("max_spin_count") = 10000000);
+      .def("wait", gil_release_wrapper(&Host2HostSemaphore::wait), nb::arg("max_spin_count") = 10000000);
 
   nb::class_<SmDevice2DeviceSemaphore> smDevice2DeviceSemaphore(m, "SmDevice2DeviceSemaphore");
   smDevice2DeviceSemaphore
