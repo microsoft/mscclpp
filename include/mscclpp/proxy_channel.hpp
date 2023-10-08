@@ -62,7 +62,7 @@ class ProxyService : public BaseProxyService {
  private:
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> semaphores_;
   std::vector<RegisteredMemory> memories_;
-  Proxy proxy_;
+  std::shared_ptr<Proxy> proxy_;
   int deviceNumaNode;
 
   void bindThread();
@@ -75,16 +75,14 @@ struct ProxyChannel {
  private:
   SemaphoreId semaphoreId_;
 
-  Host2DeviceSemaphore::DeviceHandle semaphore_;
+  std::shared_ptr<Host2DeviceSemaphore> semaphore_;
 
-  // this is a concurrent fifo which is multiple threads from the device
-  // can produce for and the sole proxy thread consumes it.
-  FifoDeviceHandle fifo_;
+  std::shared_ptr<Proxy> proxy_;
 
  public:
   ProxyChannel() = default;
 
-  ProxyChannel(SemaphoreId semaphoreId, Host2DeviceSemaphore::DeviceHandle semaphore, FifoDeviceHandle fifo);
+  ProxyChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy);
 
   ProxyChannel(const ProxyChannel& other) = default;
 
