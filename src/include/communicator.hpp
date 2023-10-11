@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCL_COMMUNICATOR_HPP_
-#define MSCCL_COMMUNICATOR_HPP_
+#ifndef MSCCLPP_COMMUNICATOR_HPP_
+#define MSCCLPP_COMMUNICATOR_HPP_
 
 #include <memory>
 #include <mscclpp/core.hpp>
@@ -31,4 +31,4 @@ struct Communicator::Impl {
 
 }  // namespace mscclpp
 
-#endif  // MSCCL_COMMUNICATOR_HPP_
+#endif  // MSCCLPP_COMMUNICATOR_HPP_

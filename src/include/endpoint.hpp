@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCL_ENDPOINT_HPP_
-#define MSCCL_ENDPOINT_HPP_
+#ifndef MSCCLPP_ENDPOINT_HPP_
+#define MSCCLPP_ENDPOINT_HPP_
 
 #include <mscclpp/core.hpp>
 #include <vector>
@@ -26,4 +26,4 @@ struct Endpoint::Impl {
 
 }  // namespace mscclpp
 
-#endif  // MSCCL_ENDPOINT_HPP_
+#endif  // MSCCLPP_ENDPOINT_HPP_
