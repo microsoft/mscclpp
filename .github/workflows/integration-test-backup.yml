@@ -4,7 +4,7 @@ on: workflow_dispatch
 
 jobs:
   IntegrationTest:
-    runs-on: self-hosted
+    runs-on: [ self-hosted, A100 ]
     defaults:
       run:
         shell: bash
