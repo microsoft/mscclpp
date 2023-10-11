@@ -4,7 +4,7 @@ on: workflow_dispatch
 
 jobs:
   UnitTest:
-    runs-on: self-hosted
+    runs-on: [ self-hosted, A100 ]
     defaults:
       run:
         shell: bash
@@ -14,7 +14,7 @@ jobs:
         cuda: [ cuda11.8, cuda12.1 ]
 
     container:
-      image: "ghcr.io/microsoft/mscclpp/mscclpp:base-${{ matrix.cuda }}"
+      image: "ghcr.io/microsoft/mscclpp/mscclpp:dev-${{ matrix.cuda }}"
       options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
 
     steps:
@@ -23,10 +23,8 @@ jobs:
 
       - name: Build
         run: |
-          curl -L -C- https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
-          tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
           mkdir build && cd build
-          MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
+          MPI_HOME=/usr/local/mpi cmake -DCMAKE_BUILD_TYPE=Release ..
           make -j
         working-directory: ${{ github.workspace }}
 
@@ -36,31 +34,20 @@ jobs:
           for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
             sudo nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
           done
-        working-directory: ${{ github.workspace }}
 
       - name: UnitTests
         run: |
           ./build/test/unit_tests
-        working-directory: ${{ github.workspace }}
 
       - name: MpUnitTests
         run: |
           set -e
-          export PATH=/usr/local/mpi/bin:$PATH
           mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests
           mpirun --allow-run-as-root -tag-output -np 4 ./build/test/mp_unit_tests
           mpirun --allow-run-as-root -tag-output -np 8 ./build/test/mp_unit_tests
-        working-directory: ${{ github.workspace }}
 
       - name: PyTests
         run: |
           set -e
-          export PATH=/usr/local/mpi/bin:$PATH
           cd build && make pylib-copy
-          if [[ '${{ matrix.cuda }}' == 'cuda11'* ]]; then
-            python3 -m pip install -r ../python/test/requirements_cu11.txt
-          else
-            python3 -m pip install -r ../python/test/requirements_cu12.txt
-          fi
           mpirun --allow-run-as-root -tag-output -np 8 $(which pytest) ../python/test/test_mscclpp.py -x
-        working-directory: ${{ github.workspace }}

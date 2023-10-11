@@ -127,10 +127,7 @@ class MscclppGroup:
         channels = {}
         for rank in connections:
             channels[rank] = SmChannel(
-                semaphores[rank],
-                registered_memories[rank],
-                tensor.data.ptr,
-                packetTensor.data.ptr,
+                semaphores[rank], registered_memories[rank], tensor.data.ptr, packetTensor.data.ptr
             )
         return channels
 
@@ -148,8 +145,6 @@ class MscclppGroup:
         channels = {}
         for rank in semaphores:
             channels[rank] = SimpleProxyChannel(
-                proxy_service.proxy_channel(semaphore_ids[rank]),
-                memory_ids[rank],
-                memory_ids[self.my_rank],
+                proxy_service.proxy_channel(semaphore_ids[rank]), memory_ids[rank], memory_ids[self.my_rank]
             )
         return channels
