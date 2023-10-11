@@ -125,10 +125,11 @@ Customized proxies can be used for conducting a series of pre-defined data trans
 Most of key components of MSCCL++ are designed to be easily customized. This enables MSCCL++ to easily adopt a new software / hardware technology and lets users implement algorithms optimized for their own use cases.
 
 ### New in MSCCL++ v0.3 (Latest Release)
-* Python bindings and interfaces
+* Updated interfaces
+* Add Python bindings and interfaces
 * Add Python unit tests
 * Add more configurable parameters
-* Integrated with tile-based computation interfaces
+* Add a new single-node AllReduce kernel
 * Fix bugs
 
 See details from https://github.com/microsoft/mscclpp/issues/89.
