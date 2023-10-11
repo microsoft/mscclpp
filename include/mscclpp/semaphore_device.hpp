@@ -65,7 +65,7 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
     // `outboundSemaphoreId` is visible.
     semaphoreIncrement();
     cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*remoteInboundSemaphoreId}.store(semaphoreGetLocal(),
-                                                                                           cuda::memory_order_release);
+                                                                                           cuda::memory_order_seq_cst);
   }
 
   /// Signal the remote device for copied packets.
