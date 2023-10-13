@@ -4,6 +4,7 @@
 #include "communicator.hpp"
 
 #include "api.h"
+#include "debug.h"
 
 namespace mscclpp {
 
@@ -85,6 +86,8 @@ struct Communicator::Impl::Connector : public Setuppable {
     auto connection = comm_.context()->connect(localEndpoint_, remoteEndpoint);
     commImpl_.connectionInfos_[connection.get()] = {remoteRank_, tag_};
     connectionPromise_.set_value(connection);
+    INFO(MSCCLPP_INIT, "Connection %d -> %d created (%s)", comm_.bootstrap()->getRank(), remoteRank_,
+         connection->getTransportName().c_str());
   }
 
   std::promise<std::shared_ptr<Connection>> connectionPromise_;

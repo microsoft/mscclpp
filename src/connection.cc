@@ -26,6 +26,11 @@ std::shared_ptr<RegisteredMemory::Impl> Connection::getImpl(RegisteredMemory& me
 
 std::shared_ptr<Endpoint::Impl> Connection::getImpl(Endpoint& memory) { return memory.pimpl_; }
 
+std::string Connection::getTransportName() {
+  return TransportNames[static_cast<int>(this->transport())] + " -> " +
+         TransportNames[static_cast<int>(this->remoteTransport())];
+}
+
 // CudaIpcConnection
 
 CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, cudaStream_t stream)

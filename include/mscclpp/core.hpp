@@ -135,6 +135,8 @@ enum class Transport {
   NumTransports  // The number of transports.
 };
 
+const std::string TransportNames[] = {"UNK", "IPC", "IB0", "IB1", "IB2", "IB3", "IB4", "IB5", "IB6", "IB7", "NUM"};
+
 namespace detail {
 const size_t TransportFlagsSize = 10;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
@@ -428,6 +430,11 @@ class Connection {
   ///
   /// @return The transport used by the remote process.
   virtual Transport remoteTransport() = 0;
+
+  /// Get the name of the transport used for this connection
+  ///
+  /// @return name of @ref transport() -> @ref remoteTransport()
+  std::string getTransportName();
 
  protected:
   // Internal methods for getting implementation pointers.
