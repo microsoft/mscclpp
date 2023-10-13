@@ -6,6 +6,8 @@
 
 #ifdef __CUDACC__
 
+#include <cstdint>
+
 extern "C" __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
                                          const char *__function) __THROW;
 

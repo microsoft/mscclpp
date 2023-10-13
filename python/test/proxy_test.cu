@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "common.hpp"
-// other headers
 #include <mscclpp/fifo_device.hpp>
 #include <mscclpp/semaphore_device.hpp>
 
