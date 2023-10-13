@@ -168,8 +168,8 @@ void IBConnection::flush(int64_t timeoutUsec) {
     }
 
     auto elapsed = timer.elapsed();
-    if ((timeoutUsec >= 0) && (elapsed * 1e3 > timeoutUsec)) {
-      throw Error("pollCq is stuck: waited for " + std::to_string(elapsed / 1e3) + " seconds. Expected " +
+    if ((timeoutUsec >= 0) && (elapsed > timeoutUsec)) {
+      throw Error("pollCq is stuck: waited for " + std::to_string(elapsed / 1e6) + " seconds. Expected " +
                       std::to_string(numSignaledSends) + " signals",
                   ErrorCode::InternalError);
     }
