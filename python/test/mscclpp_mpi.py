@@ -38,10 +38,13 @@ atexit.register(finalize_mpi)
 
 
 class MpiGroup:
-    def __init__(self, ranks: list):
+    def __init__(self, ranks: list = []):
         world_group = MPI.COMM_WORLD.group
-        group = world_group.Incl(ranks)
-        self.comm = MPI.COMM_WORLD.Create(group)
+        if len(ranks) == 0:
+            self.comm = MPI.COMM_WORLD
+        else:
+            group = world_group.Incl(ranks)
+            self.comm = MPI.COMM_WORLD.Create(group)
 
 
 @pytest.fixture

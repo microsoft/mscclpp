@@ -22,7 +22,7 @@ from mscclpp import (
 )
 import numpy as np
 
-from .mscclpp_mpi import MpiGroup
+from mscclpp_mpi import MpiGroup
 
 logger = logging.getLogger(__name__)
 
