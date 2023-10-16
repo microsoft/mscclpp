@@ -1,16 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <mscclpp/sm_channel_device.hpp>
 #include <mscclpp/concurrency.hpp>
+#include <mscclpp/sm_channel_device.hpp>
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 __device__ mscclpp::DeviceSyncer allGatherDeviceSyncer;
 __device__ mscclpp::DeviceSyncer reduceScatterDeviceSyncer;
 
-
-__device__ void localReduceScatterSm2(mscclpp::SmChannelDeviceHandle* smChans, int* buff, int* scratch, int rank, int nRanksPerNode, size_t chunkSize,
-                                      size_t nelems, int nBlocks) {
+__device__ void localReduceScatterSm2(mscclpp::SmChannelDeviceHandle* smChans, int* buff, int* scratch, int rank,
+                                      int nRanksPerNode, size_t chunkSize, size_t nelems, int nBlocks) {
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
   const int nPeer = nRanksPerNode - 1;
@@ -53,7 +52,8 @@ __device__ void localReduceScatterSm2(mscclpp::SmChannelDeviceHandle* smChans, i
   }
 }
 
-__device__ void localRingAllGatherSm(mscclpp::SmChannelDeviceHandle* smChans, int rank, int nRanksPerNode, uint64_t size, size_t nBlocks) {
+__device__ void localRingAllGatherSm(mscclpp::SmChannelDeviceHandle* smChans, int rank, int nRanksPerNode,
+                                     uint64_t size, size_t nBlocks) {
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
 
@@ -75,7 +75,6 @@ __device__ void localRingAllGatherSm(mscclpp::SmChannelDeviceHandle* smChans, in
     smChans[peerIdx].get(offset, size, tid, blockDim.x * nBlocks);
   }
 }
-
 
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
 extern "C" __global__ void __launch_bounds__(1024, 1)

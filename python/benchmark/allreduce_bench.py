@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from mscclpp_group import MscclppGroup
+import os
+from test.mscclpp_group import MscclppGroup
 import cupy as cp
-from mscclpp_mpi import MpiGroup
-from utils import KernelBuilder, pack
+from test.mscclpp_mpi import MpiGroup
+from test.utils import KernelBuilder, pack
 from mscclpp import Transport
 from mpi4py import MPI
 from prettytable import PrettyTable
@@ -33,7 +34,8 @@ def benchmark(table: PrettyTable, niter: int, nelem: int):
 
     # create a sm_channel for each remote neighbor
     sm_channels = group.make_sm_channels(memory, connections)
-    kernel = KernelBuilder(file="allreduce1.cu", kernel_name="allreduce1").get_compiled_kernel()
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+    kernel = KernelBuilder(file="allreduce1.cu", kernel_name="allreduce1", file_dir=file_dir).get_compiled_kernel()
     params = b""
     device_handles = []
     for rank in range(group.nranks):
@@ -76,7 +78,7 @@ def benchmark(table: PrettyTable, niter: int, nelem: int):
 
 
 if __name__ == "__main__":
-    
+
     # Create a table
     table = PrettyTable()
 
@@ -86,6 +88,6 @@ if __name__ == "__main__":
 
     for i in range(10,28):
         benchmark(table, 1000, 2**i)
-    
+
     if MPI.COMM_WORLD.rank == 0:
         print(table)

@@ -74,12 +74,12 @@ class Kernel:
 class KernelBuilder:
     kernel_map: dict = {}
 
-    def __init__(self, file: str, kernel_name: str):
+    def __init__(self, file: str, kernel_name: str, file_dir: str = None):
         if kernel_name in self.kernel_map:
             self._kernel = self.kernel_map[kernel_name]
             return
         self._tempdir = tempfile.TemporaryDirectory(suffix=f"{os.getpid()}")
-        self._current_file_dir = os.path.dirname(os.path.abspath(__file__))
+        self._current_file_dir = file_dir if file_dir else os.path.dirname(os.path.abspath(__file__))
         device_id = cp.cuda.Device().id
         ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{kernel_name}.ptx", device_id)
         self._kernel = Kernel(ptx, kernel_name, device_id)
