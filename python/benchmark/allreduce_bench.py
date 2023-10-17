@@ -28,14 +28,23 @@ def benchmark(table: PrettyTable, niter: int, nelem: int):
 
     # create a connection for each remote neighbor
     connections = group.make_connection(remote_nghrs, Transport.CudaIpc)
-    memory = cp.zeros(2*nelem, dtype=cp.int32)
+    memory = cp.zeros(2*nelem, dtype=cp.float32)
+    type_str = ""
+    if memory.dtype == cp.float16:
+        type_str = "__half"
+    elif memory.dtype == cp.float32:
+        type_str = "float"
+    elif memory.dtype == cp.int32:
+        type_str = "int"
+    else:
+        raise RuntimeError("Unknown data type")
     memory[:] = group.my_rank+1
     cp.cuda.runtime.deviceSynchronize()
 
     # create a sm_channel for each remote neighbor
     sm_channels = group.make_sm_channels(memory, connections)
     file_dir = os.path.dirname(os.path.abspath(__file__))
-    kernel = KernelBuilder(file="allreduce1.cu", kernel_name="allreduce1", file_dir=file_dir).get_compiled_kernel()
+    kernel = KernelBuilder(file="allreduce1.cu", kernel_name="allreduce1", file_dir=file_dir, macro_dict={"TYPE": type_str}).get_compiled_kernel()
     params = b""
     device_handles = []
     for rank in range(group.nranks):
@@ -71,10 +80,15 @@ def benchmark(table: PrettyTable, niter: int, nelem: int):
     algBw = memory_nbytes / time_per_iter / 1e3
     if group.my_rank == 0:
         table.add_row([human_readable_size(memory_nbytes), "{:.2f}".format(time_per_iter), "{:.2f}".format(algBw)])
-    # memory[:] = group.my_rank+1
-    # for i in range(1):
-    #     kernel.launch_kernel(params, 24, 1024, 0, None)
-    # print(cp.nonzero(memory[0:nelem]-36))
+    memory[:] = group.my_rank+1
+    kernel.launch_kernel(params, 24, 1024, 0, None)
+    expected = 0
+    for i in range(group.nranks):
+        expected += (i+1)
+    assert(cp.allclose(memory[0:nelem], expected))
+    if group.my_rank == 0:
+        print(".", end="", flush=True)
+    # print(cp.nonzero(memory[0:nelem]-expected), memory[0:8])
 
 
 if __name__ == "__main__":
@@ -90,4 +104,5 @@ if __name__ == "__main__":
         benchmark(table, 1000, 2**i)
 
     if MPI.COMM_WORLD.rank == 0:
+        print()
         print(table)

@@ -74,16 +74,20 @@ class Kernel:
 class KernelBuilder:
     kernel_map: dict = {}
 
-    def __init__(self, file: str, kernel_name: str, file_dir: str = None):
+    def __init__(self, file: str, kernel_name: str, file_dir: str = None, macro_dict: dict = None):
         if kernel_name in self.kernel_map:
             self._kernel = self.kernel_map[kernel_name]
             return
         self._tempdir = tempfile.TemporaryDirectory(suffix=f"{os.getpid()}")
         self._current_file_dir = file_dir if file_dir else os.path.dirname(os.path.abspath(__file__))
+        self.macros = None
+        if file_dir:
+            self.macros = ["-D{}={}".format(macro, value) for macro, value in macro_dict.items()]
         device_id = cp.cuda.Device().id
         ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{kernel_name}.ptx", device_id)
         self._kernel = Kernel(ptx, kernel_name, device_id)
         self.kernel_map[kernel_name] = self._kernel
+
 
     def _compile_cuda(self, source_file, output_file, device_id, std_version="c++17"):
         include_dir = os.path.join(self._current_file_dir, "../../include")
@@ -108,12 +112,15 @@ class KernelBuilder:
             "-o",
             f"{self._tempdir.name}/{output_file}",
         ]
+        if self.macros:
+            command += self.macros
         try:
             subprocess.run(command, capture_output=True, text=True, check=True, bufsize=1)
             with open(f"{self._tempdir.name}/{output_file}", "rb") as f:
                 return f.read()
         except subprocess.CalledProcessError as e:
-            raise RuntimeError("Compilation failed:", e.stderr, " ".join(command))
+            print(e.stderr, end="")
+            raise RuntimeError("Compilation failed: ", " ".join(command))
 
     def get_compiled_kernel(self):
         return self._kernel
