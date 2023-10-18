@@ -92,6 +92,8 @@ class IbQp {
   std::unique_ptr<ibv_send_wr[]> wrs;
   std::unique_ptr<ibv_sge[]> sges;
   int wrn;
+  int numSignaledPostedItems;
+  int numSignaledStagedItems;
 
   const int maxCqPollNum;
   const int maxWrPerSend;

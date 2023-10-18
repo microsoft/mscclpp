@@ -54,7 +54,7 @@ uint32_t IbMr::getLkey() const { return this->mr->lkey; }
 
 IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr,
            int maxWrPerSend)
-    : maxCqPollNum(maxCqPollNum), maxWrPerSend(maxWrPerSend) {
+    : numSignaledPostedItems(0), numSignaledStagedItems(0), maxCqPollNum(maxCqPollNum), maxWrPerSend(maxWrPerSend) {
   this->cq = ibv_create_cq(ctx, maxCqSize, nullptr, nullptr, 0);
   if (this->cq == nullptr) {
     std::stringstream err;
@@ -212,6 +212,7 @@ void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64
   wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
   wrInfo.sge->length = size;
   wrInfo.sge->lkey = mr->getLkey();
+  if (signaled) (this->numSignaledStagedItems)++;
 }
 
 void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal,
@@ -226,6 +227,7 @@ void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, u
   wrInfo.sge->addr = (uint64_t)(mr->getBuff());
   wrInfo.sge->length = sizeof(uint64_t);  // atomic op is always on uint64_t
   wrInfo.sge->lkey = mr->getLkey();
+  if (signaled) (this->numSignaledStagedItems)++;
 }
 
 void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
@@ -240,6 +242,7 @@ void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size,
   wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
   wrInfo.sge->length = size;
   wrInfo.sge->lkey = mr->getLkey();
+  if (signaled) (this->numSignaledStagedItems)++;
 }
 
 void IbQp::postSend() {
@@ -254,6 +257,12 @@ void IbQp::postSend() {
     throw mscclpp::IbError(err.str(), errno);
   }
   this->wrn = 0;
+  this->numSignaledPostedItems += this->numSignaledStagedItems;
+  this->numSignaledStagedItems = 0;
+  if (this->numSignaledPostedItems + 4 > this->cq->cqe) {
+    WARN("IB: CQ is almost full ( %d / %d ). The connection needs to be flushed to prevent runtime errors.",
+         this->numSignaledPostedItems, this->cq->cqe);
+  }
 }
 
 void IbQp::postRecv(uint64_t wrId) {
@@ -268,9 +277,16 @@ void IbQp::postRecv(uint64_t wrId) {
     err << "ibv_post_recv failed (errno " << errno << ")";
     throw mscclpp::IbError(err.str(), errno);
   }
+  this->numSignaledPostedItems += 1;
 }
 
-int IbQp::pollCq() { return ibv_poll_cq(this->cq, this->maxCqPollNum, this->wcs.get()); }
+int IbQp::pollCq() {
+  int wcNum = ibv_poll_cq(this->cq, this->maxCqPollNum, this->wcs.get());
+  if (wcNum > 0) {
+    this->numSignaledPostedItems -= wcNum;
+  }
+  return wcNum;
+}
 
 IbQpInfo& IbQp::getInfo() { return this->info; }
 
