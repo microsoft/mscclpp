@@ -26,9 +26,6 @@ jobs:
         language: [ 'cpp', 'python' ]
         cuda-version: [ 'cuda11.8', 'cuda12.1' ]
 
-    env:
-      CODEQL_EXTRA_BUILD_FLAGS: "-DBYPASS_PEERMEM_CHECK=ON"
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -46,8 +43,10 @@ jobs:
       run: |
         git config --global --add safe.directory /__w/mscclpp/mscclpp
 
-    - name: Autobuild
-      uses: github/codeql-action/autobuild@v2
+    - name: Build
+      run: |
+        MPI_HOME=/usr/local/mpi cmake .
+        make -j
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v2
