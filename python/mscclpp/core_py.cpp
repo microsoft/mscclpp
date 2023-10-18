@@ -166,6 +166,10 @@ void register_core(nb::module_& m) {
       .def("connect", &Communicator::connect, nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
       .def("remote_rank_of", &Communicator::remoteRankOf)
       .def("tag_of", &Communicator::tagOf);
+
+  m.def("get_ib_device_count", &getIBDeviceCount);
+  m.def("get_ib_device_name", &getIBDeviceName, nb::arg("ib_transport"));
+  m.def("get_ib_transport_by_device_name", &getIBTransportByDeviceName, nb::arg("ib_device_name"));
 }
 
 NB_MODULE(_mscclpp, m) {
