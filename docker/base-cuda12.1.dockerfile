@@ -5,7 +5,10 @@ LABEL org.opencontainers.image.source https://github.com/microsoft/mscclpp
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && \
+RUN rm -rf /opt/nvidia
+
+RUN apt-get clean && \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
@@ -47,8 +50,10 @@ RUN cd /tmp && \
     cd .. && \
     rm -rf /tmp/openmpi-${OPENMPI_VERSION}*
 
-ENV PATH="${PATH}:/usr/local/mpi/bin" \
-    LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/mpi/lib:/usr/local/cuda-12.1/compat:/usr/local/cuda-12.1/lib64"
+ENV PATH="/usr/local/mpi/bin:${PATH}" \
+    LD_LIBRARY_PATH="/usr/local/mpi/lib:/usr/local/cuda-12.1/compat:/usr/local/cuda-12.1/lib64:${LD_LIBRARY_PATH}"
 
 RUN echo PATH="${PATH}" > /etc/environment && \
     echo LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" >> /etc/environment
+
+ENTRYPOINT []

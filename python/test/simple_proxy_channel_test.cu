@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "common.hpp"
-// other headers
 #include <mscclpp/packet.hpp>
 #include <mscclpp/proxy_channel_device.hpp>
 

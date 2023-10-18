@@ -18,7 +18,10 @@ from ._mscclpp import (
     TcpBootstrap,
     Transport,
     TransportFlags,
+    version,
 )
+
+__version__ = version()
 
 
 def get_include():

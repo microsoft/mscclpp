@@ -5,7 +5,7 @@
 #define MSCCLPP_CORE_HPP_
 
 #define MSCCLPP_MAJOR 0
-#define MSCCLPP_MINOR 2
+#define MSCCLPP_MINOR 3
 #define MSCCLPP_PATCH 0
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
@@ -23,6 +23,9 @@ namespace mscclpp {
 
 /// Unique ID for a process. This is a MSCCLPP_UNIQUE_ID_BYTES byte array that uniquely identifies a process.
 using UniqueId = std::array<uint8_t, MSCCLPP_UNIQUE_ID_BYTES>;
+
+/// Return a version string.
+std::string version();
 
 /// Base class for bootstraps.
 class Bootstrap {
@@ -131,6 +134,8 @@ enum class Transport {
   IB7,           // InfiniBand device 7 transport type.
   NumTransports  // The number of transports.
 };
+
+const std::string TransportNames[] = {"UNK", "IPC", "IB0", "IB1", "IB2", "IB3", "IB4", "IB5", "IB6", "IB7", "NUM"};
 
 namespace detail {
 const size_t TransportFlagsSize = 10;
@@ -425,6 +430,11 @@ class Connection {
   ///
   /// @return The transport used by the remote process.
   virtual Transport remoteTransport() = 0;
+
+  /// Get the name of the transport used for this connection
+  ///
+  /// @return name of @ref transport() -> @ref remoteTransport()
+  std::string getTransportName();
 
  protected:
   // Internal methods for getting implementation pointers.

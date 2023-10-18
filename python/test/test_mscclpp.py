@@ -9,14 +9,7 @@ import numpy as np
 import netifaces as ni
 import pytest
 
-from mscclpp import (
-    Fifo,
-    Host2DeviceSemaphore,
-    Host2HostSemaphore,
-    ProxyService,
-    SmDevice2DeviceSemaphore,
-    Transport,
-)
+from mscclpp import Fifo, Host2DeviceSemaphore, Host2HostSemaphore, ProxyService, SmDevice2DeviceSemaphore, Transport
 from ._cpp import _ext
 from .mscclpp_group import MscclppGroup
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
@@ -61,11 +54,7 @@ def test_group_with_ip(mpi_group: MpiGroup, ifIpPortTrio: str):
     for rank in range(group.nranks):
         if rank == group.my_rank:
             continue
-        group.send(
-            memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))],
-            rank,
-            0,
-        )
+        group.send(memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))], rank, 0)
     for rank in range(group.nranks):
         if rank == group.my_rank:
             continue
@@ -134,7 +123,7 @@ def test_connection_write(mpi_group: MpiGroup, transport: Transport, nelem: int)
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
-@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20, 27]])
 @pytest.mark.parametrize("device", ["cuda", "cpu"])
 def test_connection_write_and_signal(mpi_group: MpiGroup, transport: Transport, nelem: int, device: str):
     # this test starts with a random tensor on rank 0 and rotates it all the way through all ranks
@@ -150,6 +139,8 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, transport: Transport, 
         memory_expected = memory.copy()
     else:
         memory = xp.zeros(nelem, dtype=xp.float32)
+    if device == "cuda":
+        cp.cuda.runtime.deviceSynchronize()
 
     signal_memory = xp.zeros(1, dtype=xp.int64)
     all_reg_memories = group.register_tensor_with_connections(memory, connections)
@@ -167,6 +158,8 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, transport: Transport, 
     connections[next_rank].flush()
     if group.my_rank == 0:
         memory[:] = 0
+        if device == "cuda":
+            cp.cuda.runtime.deviceSynchronize()
     connections[next_rank].update_and_sync(
         all_signal_memories[next_rank], 0, dummy_memory_on_cpu.ctypes.data, signal_val
     )
@@ -207,43 +200,31 @@ class MscclppKernel:
     ):
         if test_name == "h2d_semaphore":
             self._kernel = KernelBuilder(
-                file="h2d_semaphore_test.cu",
-                kernel_name="h2d_semaphore",
+                file="h2d_semaphore_test.cu", kernel_name="h2d_semaphore"
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
         elif test_name == "d2d_semaphore":
             self._kernel = KernelBuilder(
-                file="d2d_semaphore_test.cu",
-                kernel_name="d2d_semaphore",
+                file="d2d_semaphore_test.cu", kernel_name="d2d_semaphore"
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
         elif test_name == "sm_channel":
-            self._kernel = KernelBuilder(
-                file="sm_channel_test.cu",
-                kernel_name="sm_channel",
-            ).get_compiled_kernel()
+            self._kernel = KernelBuilder(file="sm_channel_test.cu", kernel_name="sm_channel").get_compiled_kernel()
             self.nblocks = nranks
             self.nthreads = 1024
         elif test_name == "fifo":
-            self._kernel = KernelBuilder(
-                file="fifo_test.cu",
-                kernel_name="fifo",
-            ).get_compiled_kernel()
+            self._kernel = KernelBuilder(file="fifo_test.cu", kernel_name="fifo").get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = 1
         elif test_name == "proxy":
-            self._kernel = KernelBuilder(
-                file="proxy_test.cu",
-                kernel_name="proxy",
-            ).get_compiled_kernel()
+            self._kernel = KernelBuilder(file="proxy_test.cu", kernel_name="proxy").get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
         elif test_name == "simple_proxy_channel":
             self._kernel = KernelBuilder(
-                file="simple_proxy_channel_test.cu",
-                kernel_name="simple_proxy_channel",
+                file="simple_proxy_channel_test.cu", kernel_name="simple_proxy_channel"
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = 1024
@@ -364,17 +345,10 @@ def test_fifo(
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
-def test_proxy(
-    mpi_group: MpiGroup,
-    nelem: int,
-    transport: str,
-):
+def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
     group, connections = create_and_connect(mpi_group, transport)
 
-    memory = cp.zeros(
-        nelem,
-        dtype=cp.int32,
-    )
+    memory = cp.zeros(nelem, dtype=cp.int32)
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
@@ -401,23 +375,12 @@ def test_proxy(
 
         list_reg_mem.append(all_reg_memories[rank])
 
-    proxy = _ext.MyProxyService(
-        group.my_rank,
-        group.nranks,
-        nelem * memory.itemsize,
-        list_conn,
-        list_reg_mem,
-        list_sem,
-    )
+    proxy = _ext.MyProxyService(group.my_rank, group.nranks, nelem * memory.itemsize, list_conn, list_reg_mem, list_sem)
 
     fifo_device_handle = proxy.fifo_device_handle()
 
     kernel = MscclppKernel(
-        "proxy",
-        my_rank=group.my_rank,
-        nranks=group.nranks,
-        semaphore_or_channels=list_sem,
-        fifo=fifo_device_handle,
+        "proxy", my_rank=group.my_rank, nranks=group.nranks, semaphore_or_channels=list_sem, fifo=fifo_device_handle
     )
     proxy.start()
     group.barrier()
@@ -432,12 +395,7 @@ def test_proxy(
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["NVLink", "IB"])
 @pytest.mark.parametrize("use_packet", [False, True])
-def test_simple_proxy_channel(
-    mpi_group: MpiGroup,
-    nelem: int,
-    transport: str,
-    use_packet: bool,
-):
+def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
     group, connections = create_and_connect(mpi_group, transport)
 
     memory = cp.zeros(nelem, dtype=cp.int32)

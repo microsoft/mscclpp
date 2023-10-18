@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_FIFO_DEVICE_HPP_
 #define MSCCLPP_FIFO_DEVICE_HPP_
 
+#include <cuda/atomic>
+
 #include "poll.hpp"
 
 namespace mscclpp {
@@ -38,7 +40,9 @@ struct FifoDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   /// @return The new head of the FIFO.
   __forceinline__ __device__ uint64_t push(ProxyTrigger trigger, int64_t maxSpinCount = 1000000) {
-    uint64_t curFifoHead = atomicAdd((unsigned long long int*)this->head, 1);
+    uint64_t curFifoHead =
+        cuda::atomic_ref<uint64_t, cuda::thread_scope_device>{*this->head}.fetch_add(1, cuda::memory_order_relaxed);
+
     // make the last bit intentionally non-zero so that we can safely poll. Don't worry, we will change it back in host
     // side
     trigger.snd ^= ((uint64_t)1 << (uint64_t)63);
@@ -46,15 +50,22 @@ struct FifoDeviceHandle {
     // Only one of two conditions need to be met to proceed. Either the tail has advanced enough or where we need to
     // write to is 0. However, the first condition is faster to check since the tail is flushed periodically anyways but
     // for the second condition we need to read CPU memory.
-    // As volatile access is slow, we first check using the bare pointer and then use the volatile pointer if the
+    // As atomic access is slow, we first check using the bare pointer and then use the atomic load if the
     // condition is not met.
     if (curFifoHead >= size + *(this->tailReplica)) {
-      OR_POLL_MAYBE_JAILBREAK(curFifoHead >= size + *((volatile uint64_t*)this->tailReplica),
-                              *(volatile uint64_t*)&this->triggers[curFifoHead % size] != 0, maxSpinCount);
+      OR_POLL_MAYBE_JAILBREAK(
+          (curFifoHead >= size + cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*this->tailReplica}.load(
+                                     cuda::memory_order_relaxed)),
+          (cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{this->triggers[curFifoHead % size].fst}.load(
+               cuda::memory_order_relaxed) != 0),
+          maxSpinCount);
     }
 
     ProxyTrigger* triggerPtr = (ProxyTrigger*)&(this->triggers[curFifoHead % size]);
-    asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
+
+    // store with memory order release so that the while loop does not go pass this.
+    asm volatile("st.global.release.cta.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
+
     return curFifoHead;
   }
 
@@ -65,8 +76,12 @@ struct FifoDeviceHandle {
   __forceinline__ __device__ void sync(uint64_t curFifoHead, int64_t maxSpinCount = 1000000) {
     // Same as push but in this case checking the fist condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
-    OR_POLL_MAYBE_JAILBREAK(*(volatile uint64_t*)&(this->triggers[curFifoHead % size]) != 0,
-                            *(volatile uint64_t*)(this->tailReplica) <= curFifoHead, maxSpinCount);
+    OR_POLL_MAYBE_JAILBREAK(
+        (curFifoHead >=
+         cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*this->tailReplica}.load(cuda::memory_order_relaxed)),
+        (cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{this->triggers[curFifoHead % size].fst}.load(
+             cuda::memory_order_relaxed) != 0),
+        maxSpinCount);
   }
 #endif  // __CUDACC__
 

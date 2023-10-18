@@ -4,7 +4,7 @@ on: workflow_dispatch
 
 jobs:
   IntegrationTest:
-    runs-on: self-hosted
+    runs-on: [ self-hosted, A100 ]
     defaults:
       run:
         shell: bash
@@ -13,22 +13,17 @@ jobs:
         cuda: [ cuda11.8, cuda12.1 ]
 
     container:
-      image: "ghcr.io/microsoft/mscclpp/mscclpp:base-${{ matrix.cuda }}"
+      image: "ghcr.io/microsoft/mscclpp/mscclpp:dev-${{ matrix.cuda }}"
       options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install CMake
-        run: |
-          curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
-          tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
-
       - name: Build
         run: |
           mkdir build && cd build
-          MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
+          MPI_HOME=/usr/local/mpi cmake -DCMAKE_BUILD_TYPE=Release ..
           make -j
 
       - name: Lock GPU clock frequency
@@ -41,7 +36,6 @@ jobs:
       - name: Run mscclpp AllGather test
         run: |
           set -e
-          export PATH=/usr/local/mpi/bin:$PATH
           mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -o output.jsonl
           mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
           mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
@@ -50,13 +44,11 @@ jobs:
       - name: Run mscclpp SendRecv test
         run: |
           set -e
-          export PATH=/usr/local/mpi/bin:$PATH
           mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2 -o output.jsonl
 
       - name: Run mscclpp AllReduce test
         run: |
           set -e
-          export PATH=/usr/local/mpi/bin:$PATH
           mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -o output.jsonl
           mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
           mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
@@ -68,7 +60,6 @@ jobs:
       - name: Run mscclpp AllToAll test
         run: |
           set -e
-          export PATH=/usr/local/mpi/bin:$PATH
           mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -o output.jsonl
           mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
 

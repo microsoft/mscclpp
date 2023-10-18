@@ -26,6 +26,11 @@ std::shared_ptr<RegisteredMemory::Impl> Connection::getImpl(RegisteredMemory& me
 
 std::shared_ptr<Endpoint::Impl> Connection::getImpl(Endpoint& memory) { return memory.pimpl_; }
 
+std::string Connection::getTransportName() {
+  return TransportNames[static_cast<int>(this->transport())] + " -> " +
+         TransportNames[static_cast<int>(this->remoteTransport())];
+}
+
 // CudaIpcConnection
 
 CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, cudaStream_t stream)
@@ -163,8 +168,8 @@ void IBConnection::flush(int64_t timeoutUsec) {
     }
 
     auto elapsed = timer.elapsed();
-    if ((timeoutUsec >= 0) && (elapsed * 1e3 > timeoutUsec)) {
-      throw Error("pollCq is stuck: waited for " + std::to_string(elapsed / 1e3) + " seconds. Expected " +
+    if ((timeoutUsec >= 0) && (elapsed > timeoutUsec)) {
+      throw Error("pollCq is stuck: waited for " + std::to_string(elapsed / 1e6) + " seconds. Expected " +
                       std::to_string(numSignaledSends) + " signals",
                   ErrorCode::InternalError);
     }

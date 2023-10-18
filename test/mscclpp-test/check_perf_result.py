@@ -16,17 +16,9 @@ def load_perf_file(perf_fine: str) -> dict:
                 "time": data["time"],
             }
             if "target" in data:
-                res[
-                    (
-                        data["name"],
-                        data["kernel"],
-                        data["ranks"],
-                        data["ranksPerNode"],
-                        data["size"],
-                    )
-                ][
+                res[(data["name"], data["kernel"], data["ranks"], data["ranksPerNode"], data["size"])]["target"] = data[
                     "target"
-                ] = data["target"]
+                ]
     return res
 
 

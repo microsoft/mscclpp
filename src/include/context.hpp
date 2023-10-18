@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCL_CONTEXT_HPP_
-#define MSCCL_CONTEXT_HPP_
+#ifndef MSCCLPP_CONTEXT_HPP_
+#define MSCCLPP_CONTEXT_HPP_
 
 #include <mscclpp/core.hpp>
 #include <mscclpp/cuda_utils.hpp>
@@ -25,4 +25,4 @@ struct Context::Impl {
 
 }  // namespace mscclpp
 
-#endif  // MSCCL_CONTEXT_HPP_
+#endif  // MSCCLPP_CONTEXT_HPP_
