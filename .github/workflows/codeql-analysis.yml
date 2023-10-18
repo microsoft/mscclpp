@@ -2,8 +2,9 @@ name: "CodeQL"
 
 on:
   push:
-    branches:
-      - '**'
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   schedule:
     - cron: "30 1 * * 1"
 
@@ -24,6 +25,9 @@ jobs:
       matrix:
         language: [ 'cpp', 'python' ]
         cuda-version: [ 'cuda11.8', 'cuda12.1' ]
+
+    env:
+      CODEQL_EXTRA_BUILD_FLAGS: "-DBYPASS_PEERMEM_CHECK=ON"
 
     steps:
     - name: Checkout repository
