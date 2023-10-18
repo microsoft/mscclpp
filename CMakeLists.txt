@@ -44,6 +44,14 @@ if(CUDAToolkit_FOUND)
 endif()
 set(CUDA_LIBRARIES CUDA::cudart CUDA::cuda_driver)
 
+# Find if nvidia_peermem is installed and loaded
+execute_process(COMMAND sh -c "lsmod | grep nvidia_peermem"
+                RESULT_VARIABLE lsmod_result
+                OUTPUT_VARIABLE lsmod_output)
+if(NOT lsmod_result EQUAL 0)
+    message(FATAL_ERROR "nvidia_peermem is not installed or not loaded.")
+endif()
+
 # Find ibverbs and libnuma
 find_package(IBVerbs REQUIRED)
 find_package(NUMA REQUIRED)
