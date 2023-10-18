@@ -1,0 +1,15 @@
+{
+  "build": {
+    "dockerfile": "docker/dev-cuda12.1.dockerfile",
+    "context": "."
+  },
+  "runArgs": ["--gpus", "all"],
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-vscode.cmake-tools"]
+    }
+  }
+}

@@ -13,7 +13,8 @@ WORKDIR ${MSCCLPP_SRC_DIR}
 ENV CMAKE_HOME="/tmp/cmake-${CMAKE_VERSION}-linux-x86_64" \
     CMAKE_URL="https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz"
 RUN curl -L ${CMAKE_URL} -o ${CMAKE_HOME}.tar.gz && \
-    tar xzf ${CMAKE_HOME}.tar.gz -C /usr/local
+    tar xzf ${CMAKE_HOME}.tar.gz -C /usr/local && \
+    rm -rf ${CMAKE_HOME}.tar.gz
 ENV PATH="/usr/local/cmake-${CMAKE_VERSION}-linux-x86_64/bin:${PATH}"
 
 # Install pytest & dependencies
