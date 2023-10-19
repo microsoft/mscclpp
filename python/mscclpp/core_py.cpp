@@ -52,7 +52,7 @@ void register_core(nb::module_& m) {
            nb::arg("peer"), nb::arg("tag"))
       .def("recv", (std::future<std::vector<char>>(Bootstrap::*)(int, int)) & Bootstrap::recv, nb::arg("peer"),
            nb::arg("tag"));
-  
+
   def_future<void>(m, "void");
   def_future<std::vector<char>>(m, "vector_char");
 
