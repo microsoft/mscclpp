@@ -29,9 +29,8 @@ logger = logging.getLogger(__name__)
 
 class MscclppGroup:
     def __init__(self, mpi_group: MpiGroup = None, interfaceIpPortTrio : str = "", rank : int = None, size : int = None):
-        print("QQQQQQ", interfaceIpPortTrio)
         if interfaceIpPortTrio == "":
-            self.bootstrap = TcpBootstrap.create(rank, size)
+            self.bootstrap = TcpBootstrap.create(mpi_group.comm.rank, mpi_group.comm.size)
             uniq_id = None
             if mpi_group.comm.rank == 0:
                 # similar to NCCL's unique id
@@ -43,6 +42,7 @@ class MscclppGroup:
             self.bootstrap = TcpBootstrap.create(mpi_group.comm.rank, mpi_group.comm.size)
             self.bootstrap.initialize(interfaceIpPortTrio)
         elif not interfaceIpPortTrio == "":
+            assert rank >= 0 and size >= 1
             self.bootstrap = TcpBootstrap.create(rank, size)
             self.bootstrap.initialize(interfaceIpPortTrio)
         else:

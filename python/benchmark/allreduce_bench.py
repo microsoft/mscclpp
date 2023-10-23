@@ -16,19 +16,15 @@ def human_readable_size(size, decimal_places=1):
     return f"{size:.{decimal_places}f} {unit}"
 
 def check_correctness(memory, func):
-    print("here0", flush=True)
     rand_gen = cp.random.default_rng(seed=MPI.COMM_WORLD.rank)
     memory[:] = rand_gen.random(memory.shape)
-    print("here1", flush=True)
     cp.cuda.runtime.deviceSynchronize()
     func(0)
     cp.cuda.runtime.deviceSynchronize()
-    print("here2", flush=True)
     expected = cp.zeros_like(memory)
     for i in range(MPI.COMM_WORLD.size):
         rand_gen = cp.random.default_rng(seed=i)
         expected += rand_gen.random(memory.shape)
-    print("here3", flush=True)
     return cp.allclose(memory, expected)
 
 def bench_time(niter: int, func):
@@ -99,7 +95,7 @@ if __name__ == "__main__":
     if MPI.COMM_WORLD.rank == 0:
         # Set table headers
         table = PrettyTable()
-        table.field_names = ["Size", "Time (us)", "AlgBW (GB/s)", "NCCL Time (us)", "Correctness", "NCCL AlgBW (GB/s)", "Correctness", "Speed Up"]
+        table.field_names = ["Size", "Time (us)", "AlgBW (GB/s)", "Correctness", "NCCL Time (us)", "NCCL AlgBW (GB/s)", "NCCL Correctness", "Speed Up"]
 
     for i in range(10,28):
         run_benchmark(mscclpp_op, nccl_op, table, 100, 2**i)
