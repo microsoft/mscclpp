@@ -9,7 +9,15 @@ import numpy as np
 import netifaces as ni
 import pytest
 
-from mscclpp import Fifo, Host2DeviceSemaphore, Host2HostSemaphore, ProxyService, SmDevice2DeviceSemaphore, Transport, get_ib_device_count
+from mscclpp import (
+    Fifo,
+    Host2DeviceSemaphore,
+    Host2HostSemaphore,
+    ProxyService,
+    SmDevice2DeviceSemaphore,
+    Transport,
+    get_ib_device_count,
+)
 from ._cpp import _ext
 from .mscclpp_group import MscclppGroup
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
@@ -18,6 +26,7 @@ from .utils import KernelBuilder, pack
 ethernet_interface_name = "eth0"
 
 skipif_ib = pytest.mark.skipif(get_ib_device_count() == 0, reason="no IB device")
+
 
 def parametrize_transport(*transports: list):
     def decorator(func):
@@ -28,6 +37,7 @@ def parametrize_transport(*transports: list):
             else:
                 params.append(transport)
         return pytest.mark.parametrize("transport", params)(func)
+
     return decorator
 
 
