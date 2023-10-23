@@ -78,7 +78,7 @@ MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
   int64_t spinCount = 0;
   while (cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*(uint64_t*)localInboundSemaphore_.get()}.load(
              cuda::memory_order_acquire) < (*expectedInboundSemaphore_)) {
-    if (spinCount++ == maxSpinCount) {
+    if (maxSpinCount >= 0 && spinCount++ == maxSpinCount) {
       throw Error("Host2HostSemaphore::wait timed out", ErrorCode::Timeout);
     }
   }

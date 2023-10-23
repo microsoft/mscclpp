@@ -17,7 +17,7 @@ extern "C" __device__ void __assert_fail(const char *__assertion, const char *__
     int64_t __spin_cnt = 0;                                           \
     __status = 0;                                                     \
     while (__cond) {                                                  \
-      if (__spin_cnt++ == __max_spin_cnt) {                           \
+      if (__max_spin_cnt >= 0 && __spin_cnt++ == __max_spin_cnt) {    \
         __status = 1;                                                 \
         break;                                                        \
       }                                                               \
@@ -29,7 +29,7 @@ extern "C" __device__ void __assert_fail(const char *__assertion, const char *__
   do {                                                                   \
     int64_t __spin_cnt = 0;                                              \
     while (__cond) {                                                     \
-      if (__spin_cnt++ == __max_spin_cnt) {                              \
+      if (__max_spin_cnt >= 0 && __spin_cnt++ == __max_spin_cnt) {       \
         __assert_fail(#__cond, __FILE__, __LINE__, __PRETTY_FUNCTION__); \
       }                                                                  \
     }                                                                    \
@@ -46,7 +46,7 @@ extern "C" __device__ void __assert_fail(const char *__assertion, const char *__
       } else if (!(__cond2)) {                                                     \
         break;                                                                     \
       }                                                                            \
-      if (__spin_cnt++ == __max_spin_cnt) {                                        \
+      if (__max_spin_cnt >= 0 && __spin_cnt++ == __max_spin_cnt) {                 \
         __assert_fail(#__cond1 #__cond2, __FILE__, __LINE__, __PRETTY_FUNCTION__); \
       }                                                                            \
     }                                                                              \
