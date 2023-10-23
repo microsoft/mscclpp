@@ -79,7 +79,8 @@ __device__ void localReduceScatterSm2(mscclpp::SmChannelDeviceHandle* smChans, T
   const size_t nInt4 = nelems / VECTOR_SIZE;
   for (int index = 0; index < nPeer; ++index) {
     int4 val;
-    int peerIdx = (index + localRankIndexInNode) % nPeer;
+    int peerIdx = (index + localRankIndexInNode);
+    if (peerIdx >= nPeer) peerIdx -= nPeer;
     for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * nBlocks) {
       val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
       buff4[indexOffset4 + idx] = add_vectors<TYPE>(buff4[indexOffset4 + idx], val);
@@ -112,7 +113,8 @@ __device__ void localRingAllGatherSm(mscclpp::SmChannelDeviceHandle* smChans, in
   }
   allGatherDeviceSyncer.sync(nBlocks);
   for (int i = 0; i < nPeer; ++i) {
-    int peerIdx = (i + rank) % nPeer;
+    int peerIdx = (i + rank);
+    if (peerIdx >= nPeer) peerIdx -= nPeer;
     const int remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     size_t offset = size * remoteRankLocalIndex;
     smChans[peerIdx].get(offset, size, tid, blockDim.x * nBlocks);
