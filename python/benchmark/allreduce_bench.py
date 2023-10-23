@@ -25,7 +25,6 @@ def check_correctness(memory, func):
     for i in range(MPI.COMM_WORLD.size):
         rand_gen = cp.random.default_rng(seed=i)
         expected += rand_gen.random(memory.shape)
-    print(memory, expected)
     return cp.allclose(memory, expected)
 
 def bench_time(niter: int, func):
@@ -91,7 +90,7 @@ if __name__ == "__main__":
         table = PrettyTable()
         table.field_names = ["Size", "Time (us)", "AlgBW (GB/s)", "Correctness", "NCCL Time (us)", "NCCL AlgBW (GB/s)", "NCCL Correctness", "Speed Up"]
 
-    for i in range(10,11):
+    for i in range(10,25):
         run_benchmark(mscclpp_op, nccl_op, table, 100, 2**i)
 
     if MPI.COMM_WORLD.rank == 0:
