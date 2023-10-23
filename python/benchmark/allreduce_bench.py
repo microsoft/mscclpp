@@ -25,6 +25,7 @@ def check_correctness(memory, func):
     for i in range(MPI.COMM_WORLD.size):
         rand_gen = cp.random.default_rng(seed=i)
         expected += rand_gen.random(memory.shape)
+    print(memory, expected)
     return cp.allclose(memory, expected)
 
 def bench_time(niter: int, func):
@@ -71,15 +72,8 @@ def run_benchmark(mscclpp_op: MscclppOp, nccl_op: NcclOp, table: PrettyTable, ni
 
     if MPI.COMM_WORLD.rank == 0:
         table.add_row([human_readable_size(memory_nbytes), "{:.2f}".format(mscclpp_time), "{:.2f}".format(mscclpp_algBw), mscclpp_check, "{:.2f}".format(nccl_time), "{:.2f}".format(nccl_algBw), nccl_check, "{:.2f}".format(nccl_time / mscclpp_time)])
-    # memory[:] = group.my_rank+1
-    # kernel.launch_kernel(params, 24, 1024, 0, None)
-    # expected = 0
-    # for i in range(group.nranks):
-    #     expected += (i+1)
-    # assert(cp.allclose(memory[0:nelem], expected))
     if MPI.COMM_WORLD.rank == 0:
         print(".", end="", flush=True)
-    # print(cp.nonzero(memory[0:nelem]-expected), memory[0:8])
 
 if __name__ == "__main__":
     shm_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
@@ -97,7 +91,7 @@ if __name__ == "__main__":
         table = PrettyTable()
         table.field_names = ["Size", "Time (us)", "AlgBW (GB/s)", "Correctness", "NCCL Time (us)", "NCCL AlgBW (GB/s)", "NCCL Correctness", "Speed Up"]
 
-    for i in range(10,28):
+    for i in range(10,11):
         run_benchmark(mscclpp_op, nccl_op, table, 100, 2**i)
 
     if MPI.COMM_WORLD.rank == 0:
