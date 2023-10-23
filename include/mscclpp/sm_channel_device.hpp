@@ -97,7 +97,7 @@ __forceinline__ __device__ void store<longlong2>(longlong2* p, const longlong2& 
 template <>
 __forceinline__ __device__ void load<int4>(int4& v, const int4* p) {
   asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
-               : "=r"(v.w), "=r"(v.x), "=r"(v.y), "=r"(v.z)
+               : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w)
                : "l"(p)
                : "memory");
 }
@@ -106,7 +106,7 @@ template <>
 __forceinline__ __device__ void store<int4>(int4* p, const int4& v) {
   asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};"
                :
-               : "l"(p), "r"(v.w), "r"(v.x), "r"(v.y), "r"(v.z)
+               : "l"(p), "r"(v.x), "r"(v.y), "r"(v.z), "r"(v.w)
                : "memory");
 }
 
