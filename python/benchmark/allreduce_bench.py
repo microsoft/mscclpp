@@ -15,6 +15,22 @@ def human_readable_size(size, decimal_places=1):
         size /= 1024.0
     return f"{size:.{decimal_places}f} {unit}"
 
+def check_correctness(memory, func):
+    print("here0", flush=True)
+    rand_gen = cp.random.default_rng(seed=MPI.COMM_WORLD.rank)
+    memory[:] = rand_gen.random(memory.shape)
+    print("here1", flush=True)
+    cp.cuda.runtime.deviceSynchronize()
+    func(0)
+    cp.cuda.runtime.deviceSynchronize()
+    print("here2", flush=True)
+    expected = cp.zeros_like(memory)
+    for i in range(MPI.COMM_WORLD.size):
+        rand_gen = cp.random.default_rng(seed=i)
+        expected += rand_gen.random(memory.shape)
+    print("here3", flush=True)
+    return cp.allclose(memory, expected)
+
 def bench_time(niter: int, func):
     # capture cuda graph for nites of the kernel launch
     stream = cp.cuda.Stream(non_blocking=True)
@@ -51,10 +67,14 @@ def run_benchmark(mscclpp_op: MscclppOp, nccl_op: NcclOp, table: PrettyTable, ni
     memory_nbytes = memory.nbytes
     mscclpp_time = bench_time(niter, mscclpp_call)
     mscclpp_algBw = memory_nbytes / mscclpp_time / 1e3
+    mscclpp_check = "PASS" if check_correctness(memory, mscclpp_call) else "FAIL"
+
     nccl_time = bench_time(niter, nccl_call)
     nccl_algBw = memory_nbytes / nccl_time / 1e3
+    nccl_check = "PASS" if check_correctness(memory, nccl_call) else "FAIL"
+
     if MPI.COMM_WORLD.rank == 0:
-        table.add_row([human_readable_size(memory_nbytes), "{:.2f}".format(mscclpp_time), "{:.2f}".format(mscclpp_algBw), "{:.2f}".format(nccl_time), "{:.2f}".format(nccl_algBw), "{:.2f}".format(nccl_time / mscclpp_time)])
+        table.add_row([human_readable_size(memory_nbytes), "{:.2f}".format(mscclpp_time), "{:.2f}".format(mscclpp_algBw), mscclpp_check, "{:.2f}".format(nccl_time), "{:.2f}".format(nccl_algBw), nccl_check, "{:.2f}".format(nccl_time / mscclpp_time)])
     # memory[:] = group.my_rank+1
     # kernel.launch_kernel(params, 24, 1024, 0, None)
     # expected = 0
@@ -79,7 +99,7 @@ if __name__ == "__main__":
     if MPI.COMM_WORLD.rank == 0:
         # Set table headers
         table = PrettyTable()
-        table.field_names = ["Size", "Time (us)", "AlgBW (GB/s)", "NCCL Time (us)", "NCCL AlgBW (GB/s)", "Speed Up"]
+        table.field_names = ["Size", "Time (us)", "AlgBW (GB/s)", "NCCL Time (us)", "Correctness", "NCCL AlgBW (GB/s)", "Correctness", "Speed Up"]
 
     for i in range(10,28):
         run_benchmark(mscclpp_op, nccl_op, table, 100, 2**i)

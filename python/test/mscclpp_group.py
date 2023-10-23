@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 class MscclppGroup:
     def __init__(self, mpi_group: MpiGroup = None, interfaceIpPortTrio : str = "", rank : int = None, size : int = None):
+        print("QQQQQQ", interfaceIpPortTrio)
         if interfaceIpPortTrio == "":
             self.bootstrap = TcpBootstrap.create(rank, size)
             uniq_id = None
