@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class MscclppGroup:
-    def __init__(self, mpi_group: MpiGroup, interfaceIpPortTrio=""):
+    def __init__(self, mpi_group: MpiGroup = None, interfaceIpPortTrio : str = ""):
         self.bootstrap = TcpBootstrap.create(mpi_group.comm.rank, mpi_group.comm.size)
         if interfaceIpPortTrio == "":
             uniq_id = None
@@ -37,9 +37,11 @@ class MscclppGroup:
                 uniq_id = self.bootstrap.create_unique_id()
             uniq_id_global = mpi_group.comm.bcast(uniq_id, 0)
             self.bootstrap.initialize(uniq_id_global)
-        else:
+        elif mpi_group:
             # use this instead
             self.bootstrap.initialize(interfaceIpPortTrio)
+        else:
+            raise RuntimeError("Either the interface or mpi_group need to be specified")
         self.communicator = Communicator(self.bootstrap)
         self.my_rank = self.bootstrap.get_rank()
         self.nranks = self.bootstrap.get_n_ranks()

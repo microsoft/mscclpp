@@ -2,13 +2,14 @@
 # Licensed under the MIT license.
 
 import os
-from test.mscclpp_group import MscclppGroup
 import cupy as cp
+from test.mscclpp_group import MscclppGroup
 from test.mscclpp_mpi import MpiGroup
 from test.utils import KernelBuilder, pack
 from mscclpp import Transport
 from mpi4py import MPI
 from prettytable import PrettyTable
+import cupy.cuda.nccl as nccl
 
 
 def human_readable_size(size, decimal_places=1):
@@ -17,6 +18,32 @@ def human_readable_size(size, decimal_places=1):
             break
         size /= 1024.0
     return f"{size:.{decimal_places}f} {unit}"
+
+def bench_time(niter: int, func):
+    # capture cuda graph for nites of the kernel launch
+    stream = cp.cuda.Stream(non_blocking=True)
+    with stream:
+        stream.begin_capture()
+        for i in range(niter):
+            func(stream.ptr)
+        graph = stream.end_capture()
+
+
+    # now run a warm up round
+    graph.launch(stream)
+
+    # now run the benchmark and measure time
+    start = cp.cuda.Event()
+    end = cp.cuda.Event()
+
+    start.record(stream)
+    graph.launch(stream)
+    end.record(stream)
+    end.synchronize()
+
+    return cp.cuda.get_elapsed_time(start, end) / niter * 1000.0
+
+
 
 def benchmark(table: PrettyTable, niter: int, nelem: int):
     mpi_group = MpiGroup()
@@ -28,7 +55,7 @@ def benchmark(table: PrettyTable, niter: int, nelem: int):
 
     # create a connection for each remote neighbor
     connections = group.make_connection(remote_nghrs, Transport.CudaIpc)
-    memory = cp.zeros(2*nelem, dtype=cp.float32)
+    memory = cp.zeros(nelem, dtype=cp.float32)
     type_str = ""
     if memory.dtype == cp.float16:
         type_str = "__half"
@@ -76,7 +103,7 @@ def benchmark(table: PrettyTable, niter: int, nelem: int):
     end.synchronize()
 
     time_per_iter = cp.cuda.get_elapsed_time(start, end) / niter * 1000.0
-    memory_nbytes = memory.nbytes // 2
+    memory_nbytes = memory.nbytes
     algBw = memory_nbytes / time_per_iter / 1e3
     if group.my_rank == 0:
         table.add_row([human_readable_size(memory_nbytes), "{:.2f}".format(time_per_iter), "{:.2f}".format(algBw)])
@@ -91,6 +118,51 @@ def benchmark(table: PrettyTable, niter: int, nelem: int):
     # print(cp.nonzero(memory[0:nelem]-expected), memory[0:8])
 
 
+# Initialize MPI
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+size = comm.Get_size()
+# Create a NCCL unique ID and communicator
+if rank == 0:
+    uid = nccl.get_unique_id()
+else:
+    uid = None
+uid = comm.bcast(uid, root=0)
+nccl_comm = nccl.NcclCommunicator(size, uid, rank)
+def nccl_benchmark(table: PrettyTable, niter: int, nelem: int):
+
+    memory = cp.zeros(nelem, dtype=cp.float32)
+
+    stream = cp.cuda.Stream(non_blocking=True)
+    with stream:
+        stream.begin_capture()
+        for i in range(niter):
+            nccl_comm.allReduce(memory.data.ptr, memory.data.ptr, memory.size, nccl.NCCL_FLOAT32, nccl.NCCL_SUM, stream.ptr)
+        graph = stream.end_capture()
+
+
+    # now run a warm up round
+    graph.launch(stream)
+
+    # now run the benchmark and measure time
+    MPI.COMM_WORLD.barrier()
+    start = cp.cuda.Event()
+    end = cp.cuda.Event()
+
+    start.record(stream)
+    graph.launch(stream)
+    end.record(stream)
+    end.synchronize()
+
+    time_per_iter = cp.cuda.get_elapsed_time(start, end) / niter * 1000.0
+    memory_nbytes = memory.nbytes
+    algBw = memory_nbytes / time_per_iter / 1e3
+    if rank == 0:
+        table.add_row([human_readable_size(memory_nbytes), "{:.2f}".format(time_per_iter), "{:.2f}".format(algBw)])
+        print(".", end="", flush=True)
+
+
+
 if __name__ == "__main__":
 
     # Create a table
@@ -101,6 +173,7 @@ if __name__ == "__main__":
         table.field_names = ["Size", "Time (us)", "AlgBW (GB/s)"]
 
     for i in range(10,28):
+        # nccl_benchmark(table, 1000, 2**i)
         benchmark(table, 1000, 2**i)
 
     if MPI.COMM_WORLD.rank == 0:

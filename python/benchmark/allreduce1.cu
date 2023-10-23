@@ -54,7 +54,7 @@ __forceinline__ __device__ int4 add_vectors<__half>(int4 a, int4 b) {
 }
 
 
-__device__ void localReduceScatterSm2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, int rank,
+__device__ void localReduceScatterSm2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank,
                                       int nRanksPerNode, size_t chunkSize, size_t nelems, int nBlocks) {
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
@@ -122,8 +122,7 @@ __device__ void localRingAllGatherSm(mscclpp::SmChannelDeviceHandle* smChans, in
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
 extern "C" __global__ void __launch_bounds__(1024, 1)
     allreduce1(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nranks, int nelems) {
-  TYPE* scratch = buff + nelems;
-  localReduceScatterSm2(smChans, buff, scratch, rank, nranks, nelems / nranks, nelems / nranks, gridDim.x);
+  localReduceScatterSm2(smChans, buff, rank, nranks, nelems / nranks, nelems / nranks, gridDim.x);
   deviceSyncer.sync(gridDim.x);
   localRingAllGatherSm(smChans, rank, nranks, nelems / nranks * sizeof(TYPE), gridDim.x);
 }
