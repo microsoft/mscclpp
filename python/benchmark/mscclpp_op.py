@@ -78,7 +78,7 @@ class MscclppOp():
         # create a sm_channel for each remote neighbor
         self.sm_channels = self.group.make_sm_channels_with_packet(self.memory, self.scratch, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
-        self.kernel = KernelBuilder(file="allreduce2.cu", kernel_name="allreduce2", file_dir=file_dir, macro_dict={"TYPE": type_str}).get_compiled_kernel()
+        self.kernel = KernelBuilder(file="allreduce1.cu", kernel_name="allreduce2", file_dir=file_dir, macro_dict={"TYPE": type_str}).get_compiled_kernel()
         self.params = b""
         self.device_handles = []
         for rank in range(self.group.nranks):
