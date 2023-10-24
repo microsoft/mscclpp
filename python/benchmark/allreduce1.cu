@@ -156,6 +156,7 @@ __device__ uint64_t globalFlag = 1;
 
 extern "C" __global__ void __launch_bounds__(512, 1)
 allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, void* resultBuff, int rank, int worldSize, size_t nelems) {
+  nelems = nelems / (sizeof(int) / sizeof(TYPE));
   // This version of allreduce only works for single nodes
   const int nPeers = worldSize - 1;
   const int nPkts = nelems / 2;
