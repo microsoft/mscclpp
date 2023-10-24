@@ -95,7 +95,7 @@ if __name__ == "__main__":
         table.field_names = ["Size", "Time (us)", "AlgBW (GB/s)", "Correctness", "NCCL Time (us)", "NCCL AlgBW (GB/s)", "NCCL Correctness", "Speed Up"]
 
     for i in range(10,30):
-        run_benchmark(mscclpp_op, nccl_op, table, 10, 3*2**i)
+        run_benchmark(mscclpp_op, nccl_op, table, 100, 3*2**i)
 
     if MPI.COMM_WORLD.rank == 0:
         print()
