@@ -7,6 +7,7 @@ from .nccl_op import NcclOp
 from mpi4py import MPI
 from prettytable import PrettyTable
 
+data_type = cp.float32
 
 def human_readable_size(size, decimal_places=1):
     for unit in ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']:
@@ -54,7 +55,7 @@ def bench_time(niter: int, func):
 
 
 def run_benchmark(mscclpp_op: MscclppOp, nccl_op: NcclOp, table: PrettyTable, niter: int, nelem: int):
-    memory = cp.zeros(nelem, dtype=cp.float32)
+    memory = cp.zeros(nelem, dtype=data_type)
     cp.cuda.runtime.deviceSynchronize()
 
     if memory.nbytes < 2**21:
@@ -93,8 +94,8 @@ if __name__ == "__main__":
         table = PrettyTable()
         table.field_names = ["Size", "Time (us)", "AlgBW (GB/s)", "Correctness", "NCCL Time (us)", "NCCL AlgBW (GB/s)", "NCCL Correctness", "Speed Up"]
 
-    for i in range(10,28):
-        run_benchmark(mscclpp_op, nccl_op, table, 100, 3*2**i)
+    for i in range(10,30):
+        run_benchmark(mscclpp_op, nccl_op, table, 10, 3*2**i)
 
     if MPI.COMM_WORLD.rank == 0:
         print()
