@@ -96,8 +96,7 @@ __device__ void localReduceScatterSm2(mscclpp::SmChannelDeviceHandle* smChans, T
   }
 }
 
-__device__ void localRingAllGatherSm(mscclpp::SmChannelDeviceHandle* smChans, int rank, int nRanksPerNode,
-                                     uint64_t size, size_t nBlocks) {
+__device__ void localRingAllGatherSm(mscclpp::SmChannelDeviceHandle* smChans, int rank, int nRanksPerNode, uint64_t size, size_t nBlocks) {
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
 
