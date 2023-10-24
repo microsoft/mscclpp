@@ -4,11 +4,8 @@
 #include <mscclpp/sm_channel_device.hpp>
 #include <cuda_fp16.h>
 
-__device__ mscclpp::DeviceSyncer deviceSyncer;
-__device__ mscclpp::DeviceSyncer allGatherDeviceSyncer;
-__device__ mscclpp::DeviceSyncer reduceScatterDeviceSyncer;
+__device__ uint64_t globalFlag = 1;
 
-#define VECTOR_SIZE (sizeof(int4) / sizeof(TYPE))
 
 template<typename To, typename From>
 __forceinline__ __device__ To bit_cast(const From& src) {
@@ -33,30 +30,27 @@ __forceinline__ __device__ __half2 add_elements(__half2 a, __half2 b){
 }
 
 template<typename T>
-__forceinline__ __device__ int4 add_vectors_helper(int4 a, int4 b) {
-  int4 ret;
-  ret.w = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.w), bit_cast<T, int>(b.w)));
+__forceinline__ __device__ uint2 add_vectors_helper(uint2 a, uint2 b) {
+  uint2 ret;
   ret.x = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
   ret.y = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.y), bit_cast<T, int>(b.y)));
-  ret.z = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.z), bit_cast<T, int>(b.z)));
   return ret;
 }
 
 template<typename T>
-__forceinline__ __device__ int4 add_vectors(int4 a, int4 b) {
+__forceinline__ __device__ uint2 add_vectors(uint2 a, uint2 b) {
   return add_vectors_helper<T>(a,b);
 }
 
 template<>
-__forceinline__ __device__ int4 add_vectors<__half>(int4 a, int4 b) {
+__forceinline__ __device__ uint2 add_vectors<__half>(uint2 a, uint2 b) {
   return add_vectors_helper<__half2>(a, b);
 }
 
-extern "C" __global__ void __launch_bounds__(1024, 1)
-allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, void* resultBuff, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+extern "C" __global__ void __launch_bounds__(512, 1)
+allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, void* resultBuff, int rank, int worldSize, size_t nelems) {
   // This version of allreduce only works for single nodes
-  if (worldSize != nRanksPerNode) return;
-  const int nPeers = nRanksPerNode - 1;
+  const int nPeers = worldSize - 1;
   const int nPkts = nelems / 2;
   const int nelemsPerRank = nelems / worldSize;
   const int nPktsPerRank = nelemsPerRank / 2;
@@ -67,7 +61,7 @@ allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, v
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
   const int peerIdx = blockIdx.x / nBlocksPerPeer;
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
-  DeviceHandle<mscclpp::SmChannel> smChan = constSmOutOfPlaceChans[peerIdx];
+  mscclpp::SmChannelDeviceHandle smChan = smChans[peerIdx];
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   // double buffering
   size_t scratchBaseOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LLPacket);
@@ -76,7 +70,7 @@ allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, v
   size_t scratchResultOffset =
       (flag & 1) ? 2 * nPkts * sizeof(mscclpp::LLPacket) : 3 * nPkts * sizeof(mscclpp::LLPacket);
   size_t srcOffset = remoteRank * nelemsPerRank * sizeof(int);
-  uint2* src = (uint2*)((char*)buff + srcOffset);
+  uint2* src = (uint2*)((char*)buff + rank * nelemsPerRank * sizeof(int));
   uint2* dst = (uint2*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
 
   // step 1: write to scratch buffer
@@ -88,15 +82,18 @@ allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, v
       const int remoteRank = index < rank ? index : index + 1;
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
       uint2 val = dstPkt[idx].read(flag);
-      data.x += val.x;
-      data.y += val.y;
+      data = add_vectors<TYPE>(val, data);
+      // data.x = bit_cast<int,TYPE>(bit_cast<TYPE,int>(val.x) + bit_cast<TYPE,int>(data.x));
+      // data.y = bit_cast<int,TYPE>(bit_cast<TYPE,int>(val.y) + bit_cast<TYPE,int>(data.y));
     }
-    data.x += src[idx].x;
-    data.y += src[idx].y;
-    dst[idx].x = data.x;
-    dst[idx].y = data.y;
+    data = add_vectors<TYPE>(data, src[idx]);
+    // data.x = bit_cast<int,TYPE>(bit_cast<TYPE,int>(src[idx].x) + bit_cast<TYPE,int>(data.x));
+    // data.y = bit_cast<int,TYPE>(bit_cast<TYPE,int>(src[idx].y) + bit_cast<TYPE,int>(data.y));
+    // dst[idx].x = data.x;
+    // dst[idx].y = data.y;
+    dst[idx] = data;
     for (int index = 0; index < nPeers; index++) {
-      mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)constSmOutOfPlaceChans[index].dst_ + scratchResultOffset);
+      mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)smChans[index].dst_ + scratchResultOffset);
       dstPkt[idx + rank * nPktsPerRank].write(data.x, data.y, flag);
     }
   }

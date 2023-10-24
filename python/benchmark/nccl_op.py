@@ -18,4 +18,5 @@ class NcclOp:
     def make_callback(self, memory):
         def _make_callback(stream_ptr):
             self.nccl_comm.allReduce(memory.data.ptr, memory.data.ptr, memory.size, nccl.NCCL_FLOAT32, nccl.NCCL_SUM, stream_ptr)
+            return memory
         return _make_callback

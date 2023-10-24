@@ -19,13 +19,13 @@ def check_correctness(memory, func):
     rand_gen = cp.random.default_rng(seed=MPI.COMM_WORLD.rank)
     memory[:] = rand_gen.random(memory.shape)
     cp.cuda.runtime.deviceSynchronize()
-    func(0)
+    output_memory = func(0)
     cp.cuda.runtime.deviceSynchronize()
     expected = cp.zeros_like(memory)
     for i in range(MPI.COMM_WORLD.size):
         rand_gen = cp.random.default_rng(seed=i)
         expected += rand_gen.random(memory.shape)
-    return cp.allclose(memory, expected)
+    return cp.allclose(output_memory, expected)
 
 def bench_time(niter: int, func):
     # capture cuda graph for nites of the kernel launch
@@ -57,7 +57,7 @@ def run_benchmark(mscclpp_op: MscclppOp, nccl_op: NcclOp, table: PrettyTable, ni
     memory = cp.zeros(nelem, dtype=cp.float32)
     cp.cuda.runtime.deviceSynchronize()
 
-    mscclpp_call = mscclpp_op.make_callback1(memory)
+    mscclpp_call = mscclpp_op.make_callback2(memory)
     nccl_call = nccl_op.make_callback(memory)
 
     memory_nbytes = memory.nbytes
@@ -90,7 +90,7 @@ if __name__ == "__main__":
         table = PrettyTable()
         table.field_names = ["Size", "Time (us)", "AlgBW (GB/s)", "Correctness", "NCCL Time (us)", "NCCL AlgBW (GB/s)", "NCCL Correctness", "Speed Up"]
 
-    for i in range(10,25):
+    for i in range(10,19):
         run_benchmark(mscclpp_op, nccl_op, table, 100, 2**i)
 
     if MPI.COMM_WORLD.rank == 0:
