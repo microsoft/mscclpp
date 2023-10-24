@@ -191,14 +191,8 @@ allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, v
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
       uint2 val = dstPkt[idx].read(flag);
       data = add_vectors<TYPE>(val, data);
-      // data.x = bit_cast<int,TYPE>(bit_cast<TYPE,int>(val.x) + bit_cast<TYPE,int>(data.x));
-      // data.y = bit_cast<int,TYPE>(bit_cast<TYPE,int>(val.y) + bit_cast<TYPE,int>(data.y));
     }
     data = add_vectors<TYPE>(data, src[idx]);
-    // data.x = bit_cast<int,TYPE>(bit_cast<TYPE,int>(src[idx].x) + bit_cast<TYPE,int>(data.x));
-    // data.y = bit_cast<int,TYPE>(bit_cast<TYPE,int>(src[idx].y) + bit_cast<TYPE,int>(data.y));
-    // dst[idx].x = data.x;
-    // dst[idx].y = data.y;
     dst[idx] = data;
     for (int index = 0; index < nPeers; index++) {
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)smChans[index].dst_ + scratchResultOffset);

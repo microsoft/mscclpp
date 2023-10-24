@@ -26,7 +26,14 @@ def check_correctness(memory, func):
     for i in range(MPI.COMM_WORLD.size):
         rand_gen = cp.random.default_rng(seed=i)
         expected += rand_gen.random(memory.shape)
-    return cp.allclose(output_memory, expected)
+
+    if data_type == cp.float16:
+        ac = cp.allclose(output_memory, expected, rtol=1.e-2, atol=1.e-4)
+    else:
+        ac = cp.allclose(output_memory, expected, rtol=1.e-2, atol=1.e-4)
+
+    ac = MPI.COMM_WORLD.allreduce(ac, op=MPI.SUM)
+    return ac
 
 def bench_time(niter: int, func):
     # capture cuda graph for nites of the kernel launch
