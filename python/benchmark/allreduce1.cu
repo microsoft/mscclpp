@@ -238,9 +238,15 @@ allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, v
     }
     data = add_vectors<TYPE>(data, src[idx]);
     dst[idx] = data;
+
+    mscclpp::LLPacket packet;
+    packet.data1 = data.x;
+    packet.flag1 = flag;
+    packet.data2 = data.y;
+    packet.flag2 = flag;
+    size_t offset = scratchResultOffset / sizeof(mscclpp::LLPacket) + (idx + rank * nPktsPerRank);
     for (int index = 0; index < nPeers; index++) {
-      mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)smChans[index].dst_ + scratchResultOffset);
-      dstPkt[idx + rank * nPktsPerRank].write(data.x, data.y, flag);
+      smChans[index].write(offset, packet);
     }
   }
   // step 3: get data result from scratch buffer
