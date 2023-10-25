@@ -126,19 +126,19 @@ class MscclppGroup:
             channels[rank] = SmChannel(semaphores[rank], registered_memories[rank], tensor.data.ptr)
         return channels
 
-    def make_sm_channels_with_packet(
-        self, tensor: cp.ndarray, packetTensor: cp.ndarray, connections: dict[int, Connection]
+    def make_sm_channels_with_scratch(
+        self, tensor: cp.ndarray, scratchTensor: cp.ndarray, connections: dict[int, Connection]
     ) -> dict[int, SmChannel]:
         semaphores = self.make_semaphore(connections, SmDevice2DeviceSemaphore)
-        registered_memories = self.register_tensor_with_connections(packetTensor, connections)
+        registered_memories = self.register_tensor_with_connections(scratchTensor, connections)
         channels = {}
         for rank in connections:
             channels[rank] = SmChannel(
-                semaphores[rank], registered_memories[rank], tensor.data.ptr, packetTensor.data.ptr
+                semaphores[rank], registered_memories[rank], tensor.data.ptr, scratchTensor.data.ptr
             )
         return channels
 
-    def make_proxy_channels_with_packet(
+    def make_proxy_channels(
         self, proxy_service: ProxyService, tensor: cp.ndarray, connections: dict[int, Connection]
     ) -> dict[int, SmChannel]:
         semaphores = self.make_semaphore(connections, Host2DeviceSemaphore)
@@ -147,6 +147,34 @@ class MscclppGroup:
         semaphore_ids = {}
         for rank in registered_memories:
             memory_ids[rank] = proxy_service.add_memory(registered_memories[rank])
+        for rank in semaphores:
+            semaphore_ids[rank] = proxy_service.add_semaphore(semaphores[rank])
+        channels = {}
+        for rank in semaphores:
+            channels[rank] = SimpleProxyChannel(
+                proxy_service.proxy_channel(semaphore_ids[rank]), memory_ids[rank], memory_ids[self.my_rank]
+            )
+        return channels
+
+    def make_proxy_channels_with_scratch(
+        self, proxy_service: ProxyService, tensor: cp.ndarray, scratchTensor: cp.ndarray, connections: dict[int, Connection]
+    ) -> dict[int, SmChannel]:
+        transport_flags = TransportFlags()
+        for rank in connections:
+            transport_flags |= connections[rank].transport()
+        data_ptr = tensor.data.ptr if isinstance(tensor, cp.ndarray) else tensor.ctypes.data
+        local_reg_memory = self.communicator.register_memory(data_ptr, tensor.size * tensor.itemsize, transport_flags)
+
+
+        semaphores = self.make_semaphore(connections, Host2DeviceSemaphore)
+        registered_memories = self.register_tensor_with_connections(scratchTensor, connections)
+        memory_ids = {}
+        semaphore_ids = {}
+        for rank in registered_memories:
+            if rank == self.my_rank:
+                memory_ids[self.my_rank] = proxy_service.add_memory(local_reg_memory)
+            else:
+                memory_ids[rank] = proxy_service.add_memory(registered_memories[rank])
         for rank in semaphores:
             semaphore_ids[rank] = proxy_service.add_semaphore(semaphores[rank])
         channels = {}

@@ -313,7 +313,7 @@ def test_sm_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
 
     if use_packet:
-        channels = group.make_sm_channels_with_packet(memory, scratch, connections)
+        channels = group.make_sm_channels_with_scratch(memory, scratch, connections)
     else:
         channels = group.make_sm_channels(memory, connections)
     kernel = MscclppKernel("sm_channel", group.my_rank, group.nranks, channels, memory, use_packet, scratch)
@@ -416,7 +416,7 @@ def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, u
         memory_to_register = scratch
     else:
         memory_to_register = memory
-    simple_channels = group.make_proxy_channels_with_packet(proxy_service, memory_to_register, connections)
+    simple_channels = group.make_proxy_channels(proxy_service, memory_to_register, connections)
 
     kernel = MscclppKernel(
         "simple_proxy_channel",

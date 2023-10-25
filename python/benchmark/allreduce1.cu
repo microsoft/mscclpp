@@ -3,7 +3,9 @@
 
 #include <mscclpp/concurrency.hpp>
 #include <mscclpp/sm_channel_device.hpp>
+#include <mscclpp/proxy_channel_device.hpp>
 #include <cuda_fp16.h>
+
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 __device__ mscclpp::DeviceSyncer allGatherDeviceSyncer;
@@ -69,6 +71,48 @@ __forceinline__ __device__ uint2 add_vectors(uint2 a, uint2 b) {
 template<>
 __forceinline__ __device__ uint2 add_vectors<__half>(uint2 a, uint2 b) {
   return add_vectors_helper<__half2>(a, b);
+}
+
+
+template<typename T>
+__forceinline__ __device__ int add_vectors_helper(int a, int b) {
+  return bit_cast<int, T>(add_elements(bit_cast<T, int>(a), bit_cast<T, int>(b)));
+}
+
+template<typename T>
+__forceinline__ __device__ int add_vectors(int a, int b) {
+  return add_vectors_helper<T>(a,b);
+}
+
+template<>
+__forceinline__ __device__ int add_vectors<__half>(int a, int b) {
+  return add_vectors_helper<__half2>(a, b);
+}
+
+
+__forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem, int blockId, int nBlocks) {
+  size_t nInt4 = nElem / 4;
+  size_t nLastInts = nElem % 4;
+  int4* dst4 = (int4*)dst;
+  int4* src4 = (int4*)src;
+  for (int i = threadIdx.x + blockId * blockDim.x; i < nInt4; i += blockDim.x * nBlocks) {
+    dst4[i] = add_vectors<TYPE>(dst4[i], src4[i]);
+    // dst4[i].w += src4[i].w;
+    // dst4[i].x += src4[i].x;
+    // dst4[i].y += src4[i].y;
+    // dst4[i].z += src4[i].z;
+  }
+  if (nLastInts > 0) {
+    int* dstLast = ((int*) dst) + nInt4 * 4;
+    int* srcLast = ((int*) src) + nInt4 * 4;
+    for (int i = threadIdx.x + blockId * blockDim.x; i < nLastInts; i += blockDim.x * nBlocks) {
+      dstLast[i] = add_vectors<TYPE>(dstLast[i], srcLast[i]);
+    }
+  }
+}
+
+__forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem) {
+  vectorSum(dst, src, nElem, blockIdx.x, gridDim.x);
 }
 
 
@@ -210,5 +254,120 @@ allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, v
   }
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     globalFlag += 1;
+  }
+}
+
+// AllReduce3
+// -------------------------------------------
+
+extern "C" __global__ void __launch_bounds__(1024, 1)
+allreduce3(mscclpp::SimpleProxyChannelDeviceHandle* fstRoundChans, mscclpp::SimpleProxyChannelDeviceHandle* sndRoundChans, TYPE* buff, TYPE* scratch, int rank, int worldSize, size_t nelems) {
+  int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
+  int remoteSendRank = (rank + 1) % worldSize;
+  int remoteRecvRank = (rank + worldSize - 1) % worldSize;
+  int peerSendId = (remoteSendRank < rank) ? remoteSendRank : remoteSendRank - 1;
+  int peerRecvId = (remoteRecvRank < rank) ? remoteRecvRank : remoteRecvRank - 1;
+
+  mscclpp::SimpleProxyChannelDeviceHandle& devFstSendChan = fstRoundChans[peerSendId];
+  mscclpp::SimpleProxyChannelDeviceHandle& devFstRecvChan = fstRoundChans[peerRecvId];
+  mscclpp::SimpleProxyChannelDeviceHandle& devSndSendChan = sndRoundChans[peerSendId];
+  mscclpp::SimpleProxyChannelDeviceHandle& devSndRecvChan = sndRoundChans[peerRecvId];
+
+  // Step 1
+  size_t chunkIndex = (rank + worldSize - 1) % worldSize;
+  size_t chunkNelem = nelems / worldSize;
+  size_t offset = chunkIndex * chunkNelem * sizeof(int);
+  if (isComm) {
+    if (chunkNelem > 1) {
+      devFstSendChan.putWithSignal(offset, chunkNelem / 2 * sizeof(int));
+    }
+  }
+
+  // Step 2 ~ Step n-1
+  for (int step = 2; step < worldSize; ++step) {
+    if (isComm) {
+      if (chunkNelem > 1) {
+        devFstRecvChan.wait();
+        devFstSendChan.flush();
+      }
+      devFstSendChan.putWithSignal(offset + chunkNelem / 2 * sizeof(int), (chunkNelem - chunkNelem / 2) * sizeof(int));
+    }
+    deviceSyncer.sync(gridDim.x);
+
+    // Reduce
+    chunkIndex = (rank + worldSize - step) % worldSize;
+    offset = chunkIndex * chunkNelem * sizeof(int);
+    int* dst = (int*)((char*)buff + offset);
+    int* src = (int*)((char*)scratch + offset);
+    vectorSum((TYPE*)dst, (TYPE*)src, chunkNelem / 2);
+
+    if (isComm) {
+      devFstRecvChan.wait();
+      devFstSendChan.flush();
+      if (chunkNelem > 1) {
+        devFstSendChan.putWithSignal(offset, chunkNelem / 2 * sizeof(int));
+      }
+    }
+    deviceSyncer.sync(gridDim.x);
+
+    dst += chunkNelem / 2;
+    src += chunkNelem / 2;
+    vectorSum((TYPE*)dst, (TYPE*)src, chunkNelem - chunkNelem / 2);
+  }
+
+  // Step n
+  if (isComm) {
+    if (chunkNelem > 1) {
+      devFstRecvChan.wait();
+      devFstSendChan.flush();
+    }
+    devFstSendChan.putWithSignal(offset + chunkNelem / 2 * sizeof(int), (chunkNelem - chunkNelem / 2) * sizeof(int));
+  }
+  deviceSyncer.sync(gridDim.x);
+
+  offset = rank * chunkNelem * sizeof(int);
+  int* dst = (int*)((char*)buff + offset);
+  int* src = (int*)((char*)scratch + offset);
+  vectorSum((TYPE*)dst, (TYPE*)src, chunkNelem / 2);
+
+  if (isComm) {
+    devFstRecvChan.wait();
+    devFstSendChan.flush();
+    if (chunkNelem > 1) {
+      devSndSendChan.putWithSignal(offset, chunkNelem / 2 * sizeof(int));
+    }
+  }
+  deviceSyncer.sync(gridDim.x);
+
+  dst += chunkNelem / 2;
+  src += chunkNelem / 2;
+  vectorSum((TYPE*)dst, (TYPE*)src, chunkNelem - chunkNelem / 2);
+
+  if (isComm) {
+    if (chunkNelem > 1) {
+      devSndRecvChan.wait();
+      devSndSendChan.flush();
+    }
+    devSndSendChan.putWithSignalAndFlush(offset + chunkNelem / 2 * sizeof(int),
+                                         (chunkNelem - chunkNelem / 2) * sizeof(int));
+  }
+
+  // Step n+1 ~ Step 2n-2
+  for (int i = 1; i < worldSize - 1; ++i) {
+    if (isComm) {
+      devSndRecvChan.wait();
+    }
+    deviceSyncer.sync(gridDim.x);
+
+    // Copy
+    chunkIndex = (rank + worldSize - i) % worldSize;
+    if (isComm) {
+      devSndSendChan.putWithSignalAndFlush(chunkIndex * chunkNelem * sizeof(int), chunkNelem * sizeof(int));
+    }
+  }
+
+  // Final receive
+  if (isComm) {
+    devSndRecvChan.wait();
   }
 }

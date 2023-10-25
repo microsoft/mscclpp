@@ -65,10 +65,11 @@ def run_benchmark(mscclpp_op: MscclppOp, nccl_op: NcclOp, table: PrettyTable, ni
     memory = cp.zeros(nelem, dtype=data_type)
     cp.cuda.runtime.deviceSynchronize()
 
-    if memory.nbytes < 2**21:
-        mscclpp_call = mscclpp_op.make_callback2(memory)
-    else:
-        mscclpp_call = mscclpp_op.make_callback1(memory)
+    # if memory.nbytes < 2**21:
+    #     mscclpp_call = mscclpp_op.make_callback2(memory)
+    # else:
+    #     mscclpp_call = mscclpp_op.make_callback1(memory)
+    mscclpp_call = mscclpp_op.make_callback3(memory)
     nccl_call = nccl_op.make_callback(memory)
 
     memory_nbytes = memory.nbytes
@@ -102,7 +103,7 @@ if __name__ == "__main__":
         table.field_names = ["Size", "Time (us)", "AlgBW (GB/s)", "Correctness", "NCCL Time (us)", "NCCL AlgBW (GB/s)", "NCCL Correctness", "Speed Up"]
 
     for i in range(10,30):
-        run_benchmark(mscclpp_op, nccl_op, table, 100, 3*2**i)
+        run_benchmark(mscclpp_op, nccl_op, table, 100, 2**i)
 
     if MPI.COMM_WORLD.rank == 0:
         print()
