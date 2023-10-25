@@ -7,7 +7,7 @@ from .nccl_op import NcclOp
 from mpi4py import MPI
 from prettytable import PrettyTable
 
-data_type = cp.float32
+data_type = cp.float16
 
 def human_readable_size(size, decimal_places=1):
     for unit in ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']:

@@ -112,6 +112,7 @@ __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem, in
 }
 
 __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem) {
+  nElem = nElem * sizeof(int) / sizeof(TYPE);
   vectorSum(dst, src, nElem, blockIdx.x, gridDim.x);
 }
 
@@ -262,6 +263,8 @@ allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, v
 
 extern "C" __global__ void __launch_bounds__(1024, 1)
 allreduce3(mscclpp::SimpleProxyChannelDeviceHandle* fstRoundChans, mscclpp::SimpleProxyChannelDeviceHandle* sndRoundChans, TYPE* buff, TYPE* scratch, int rank, int worldSize, size_t nelems) {
+  nelems = nelems / (sizeof(int) / sizeof(TYPE));
+
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int remoteSendRank = (rank + 1) % worldSize;
   int remoteRecvRank = (rank + worldSize - 1) % worldSize;
