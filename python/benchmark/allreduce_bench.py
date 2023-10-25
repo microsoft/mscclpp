@@ -7,7 +7,7 @@ from .nccl_op import NcclOp
 from mpi4py import MPI
 from prettytable import PrettyTable
 
-data_type = cp.float16
+data_type = cp.float32
 
 def human_readable_size(size, decimal_places=1):
     for unit in ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']:
@@ -102,7 +102,7 @@ if __name__ == "__main__":
         table = PrettyTable()
         table.field_names = ["Size", "Time (us)", "AlgBW (GB/s)", "Correctness", "NCCL Time (us)", "NCCL AlgBW (GB/s)", "NCCL Correctness", "Speed Up"]
 
-    for i in range(10,30):
+    for i in range(10,31):
         run_benchmark(mscclpp_op, nccl_op, table, 100, 2**i)
 
     if MPI.COMM_WORLD.rank == 0:

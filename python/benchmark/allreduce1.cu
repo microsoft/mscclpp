@@ -112,7 +112,6 @@ __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem, in
 }
 
 __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem) {
-  nElem = nElem * sizeof(int) / sizeof(TYPE);
   vectorSum(dst, src, nElem, blockIdx.x, gridDim.x);
 }
 
