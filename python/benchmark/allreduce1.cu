@@ -155,7 +155,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
       val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
       tmp = add_vectors<TYPE>(tmp, val);
     }
-    if (READ_ONLY == 0){
+    if (READ_ONLY == 0) {
       for (int index = 0; index < nPeer; ++index) {
         int peerIdx = (index + rank);
         if (peerIdx >= nPeer) peerIdx -= nPeer;
@@ -199,7 +199,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
     smChans[tid - nPeer].wait();
   }
 
-  if (READ_ONLY){
+  if (READ_ONLY) {
     for (int i = 0; i < nPeer; ++i) {
       int peerIdx = (i + rank);
       if (peerIdx >= nPeer) peerIdx -= nPeer;
