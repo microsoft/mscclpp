@@ -46,6 +46,8 @@ def check_correctness(memory, func):
         ac = cp.allclose(output_memory, expected, rtol=1.e-2, atol=1.e-4)
 
     ac = MPI.COMM_WORLD.allreduce(ac, op=MPI.SUM)
+    if not ac:
+        print(output_memory, expected)
     return ac
 
 def bench_time(niter: int, func):
@@ -80,15 +82,15 @@ def run_benchmark(mscclpp_group: MscclppGroup, nccl_op: nccl.NcclCommunicator, t
     cp.cuda.runtime.deviceSynchronize()
 
     
-    # if memory.nbytes < 2**21:
-    #     mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
-    # elif memory.nbytes < 2**29:
-    #     mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
-    # else:
-    #     proxy_service = ProxyService()
-    #     mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
-    #     proxy_service.start_proxy()
-    mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
+    if memory.nbytes < 2**21:
+        mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
+    elif memory.nbytes < 2**29:
+        mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
+    else:
+        proxy_service = ProxyService()
+        mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
+        proxy_service.start_proxy()
+    # mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
 
     nccl_call = NcclAllReduce(nccl_op, memory)
 
@@ -137,7 +139,7 @@ if __name__ == "__main__":
         table = PrettyTable()
         table.field_names = [f"Size ({dtype_str})", "Time (us)", "AlgBW (GB/s)", "Correctness", "NCCL Time (us)", "NCCL AlgBW (GB/s)", "NCCL Correctness", "Speed Up"]
 
-    for i in range(10,15):
+    for i in range(10,28):
         run_benchmark(mscclpp_group, nccl_comm, table, 100, 2**i)
 
     if MPI.COMM_WORLD.rank == 0:

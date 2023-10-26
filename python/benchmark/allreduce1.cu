@@ -113,105 +113,81 @@ __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem) {
 // AllReduce1
 // -------------------------------------------
 
-__device__ void localReduceScatterAllPairsSm(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nRanksPerNode,
-                                      size_t chunkSize, size_t nelems, int nBlocks) {
-  if (nRanksPerNode == 1) return;
-  if (blockIdx.x >= nBlocks) return;
-  const int nPeer = nRanksPerNode - 1;
-
-  const size_t localRankIndexInNode = rank % nRanksPerNode;
-  const size_t indexOffset = localRankIndexInNode * chunkSize;
+extern "C" __global__ void __launch_bounds__(1024, 1)
+    allreduce1(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nranks, int nelems) {
+  const size_t chunkSize = nelems / nranks;
+  if (nranks == 1) return;
+  const int nPeer = nranks - 1;
+  const size_t indexOffset = rank * chunkSize;
   const size_t indexOffset4 = indexOffset / VECTOR_SIZE;
-
   int4* buff4 = (int4*)buff;
-
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid == 0){
+
+  // synchronize everyone
+  if (tid == 0) {
     __threadfence_system();
   }
   __syncthreads();
   if (tid < nPeer) {
     smChans[tid].relaxedSignal();
   }
-  if (tid >= nPeer && tid < nPeer*2) {
+  if (tid >= nPeer && tid < nPeer * 2) {
     smChans[tid - nPeer].wait();
   }
+  deviceSyncer.sync(gridDim.x);
 
-  reduceScatterDeviceSyncer.sync(nBlocks);
-
-
-
-  const size_t nInt4 = nelems / VECTOR_SIZE;
-  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * nBlocks) {
+  // use int4 as much as possible
+  const size_t nInt4 = chunkSize / VECTOR_SIZE;
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * gridDim.x) {
     int4 tmp = buff4[indexOffset4 + idx];
     for (int index = 0; index < nPeer; ++index) {
       int4 val;
-      int peerIdx = (index + localRankIndexInNode);
+      int peerIdx = (index + rank);
       if (peerIdx >= nPeer) peerIdx -= nPeer;
       val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
       tmp = add_vectors<TYPE>(tmp, val);
     }
     for (int index = 0; index < nPeer; ++index) {
-      int peerIdx = (index + localRankIndexInNode);
+      int peerIdx = (index + rank);
       if (peerIdx >= nPeer) peerIdx -= nPeer;
       smChans[peerIdx].write<int4>(indexOffset4 + idx, tmp);
     }
     buff4[indexOffset4 + idx] = tmp;
   }
 
-  // const size_t nLastInts = nelems % VECTOR_SIZE;
-  // for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nLastInts; idx += blockDim.x * nBlocks) {
-  //   for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
-  //     int peerIdx = (index + localRankIndexInNode);
-  //     if (peerIdx >= nPeer) peerIdx -= nPeer;
-  //     int val = smChans[(localRankIndexInNode + peerIdx) % nPeer].read<int>(indexOffset + nInt4 * VECTOR_SIZE + idx);
-  //     buff[indexOffset + nInt4 * VECTOR_SIZE + idx] += val;
-  //   }
-  // }
+  // use the give TYPE for the rest
+  size_t processed = nInt4 * VECTOR_SIZE * nranks;
+  const size_t nRemElems = nelems - processed;
+  const size_t startIdx = processed + (nRemElems * rank) / nranks;
+  const size_t endIdx = processed + (nRemElems * (rank + 1)) / nranks;
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x + startIdx; idx < endIdx; idx += blockDim.x * gridDim.x) {
+    TYPE tmp = buff[idx];
+    for (int index = 0; index < nPeer; ++index) {
+      int peerIdx = (index + rank);
+      if (peerIdx >= nPeer) peerIdx -= nPeer;
+      TYPE val = smChans[peerIdx].read<TYPE>(idx);
+      tmp += val;
+    }
+    for (int index = 0; index < nPeer; ++index) {
+      int peerIdx = (index + rank);
+      if (peerIdx >= nPeer) peerIdx -= nPeer;
+      smChans[peerIdx].write<TYPE>(idx, tmp);
+    }
+    buff[idx] = tmp;
+  }
 
-  if (tid == 0){
+  // synchronize everyone again
+  deviceSyncer.sync(gridDim.x);
+  if (tid == 0) {
     __threadfence_system();
   }
   __syncthreads();
   if (tid < nPeer) {
     smChans[tid].relaxedSignal();
   }
-  if (tid >= nPeer && tid < nPeer*2) {
+  if (tid >= nPeer && tid < nPeer * 2) {
     smChans[tid - nPeer].wait();
   }
-}
-
-__device__ void localAllGatherAllPairsSm(mscclpp::SmChannelDeviceHandle* smChans, int rank, int nRanksPerNode,
-                                     uint64_t size, size_t nBlocks) {
-  if (nRanksPerNode == 1) return;
-  if (blockIdx.x >= nBlocks) return;
-
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  const int nPeer = nRanksPerNode - 1;
-
-  if (tid < nPeer) {
-    smChans[tid].signal();
-  }
-  int waitStart = nBlocks * blockDim.x - nPeer;
-  if (tid >= waitStart && tid < nBlocks * blockDim.x) {
-    smChans[tid - waitStart].wait();
-  }
-  allGatherDeviceSyncer.sync(nBlocks);
-  for (int i = 0; i < nPeer; ++i) {
-    int peerIdx = (i + rank);
-    if (peerIdx >= nPeer) peerIdx -= nPeer;
-    const int remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
-    size_t offset = size * remoteRankLocalIndex;
-    smChans[peerIdx].get(offset, size, tid, blockDim.x * nBlocks);
-  }
-}
-
-// be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
-extern "C" __global__ void __launch_bounds__(1024, 1)
-    allreduce1(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nranks, int nelems) {
-  localReduceScatterAllPairsSm(smChans, buff, rank, nranks, nelems / nranks, nelems / nranks, gridDim.x);
-  // deviceSyncer.sync(gridDim.x);
-  // localAllGatherAllPairsSm(smChans, rank, nranks, nelems / nranks * sizeof(TYPE), gridDim.x);
 }
 
 // -------------------------------------------

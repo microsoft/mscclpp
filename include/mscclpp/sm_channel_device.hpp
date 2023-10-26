@@ -25,7 +25,8 @@ namespace Element {
 template <typename T>
 __forceinline__ __device__ void load(T& v, const T* p) {
   // We should only use the specialized functions.
-  __assert_fail("Unsupported type", __FILE__, __LINE__, __PRETTY_FUNCTION__);
+  v = *(volatile T*)p;
+  // __assert_fail("Unsupported type", __FILE__, __LINE__, __PRETTY_FUNCTION__);
 }
 
 /// Write an element on DRAM.
@@ -39,7 +40,8 @@ __forceinline__ __device__ void load(T& v, const T* p) {
 template <typename T>
 __forceinline__ __device__ void store(T* p, const T& v) {
   // We should only use the specialized functions.
-  __assert_fail("Unsupported type", __FILE__, __LINE__, __PRETTY_FUNCTION__);
+  *(volatile T*)p = v;
+  // __assert_fail("Unsupported type", __FILE__, __LINE__, __PRETTY_FUNCTION__);
 }
 
 /// Copy aligned elements from the source memory to the destination memory.
@@ -331,7 +333,6 @@ struct SmChannelDeviceHandle {
   /// User requires to call proper fencing before using this function.
   ///
   __forceinline__ __device__ void relaxedSignal() { semaphore_.relaxedSignal(); }
-
 
   /// Signal the remote semaphore for copied packets.
   ///
