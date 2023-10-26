@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from concurrent.futures import ThreadPoolExecutor
+import os
 import time
 
 import cupy as cp
@@ -11,9 +12,9 @@ import pytest
 
 from mscclpp import Fifo, Host2DeviceSemaphore, Host2HostSemaphore, ProxyService, SmDevice2DeviceSemaphore, Transport
 import mscclpp.comm as mscclpp_comm
+from mscclpp.utils import KernelBuilder, pack
 from ._cpp import _ext
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
-from .utils import KernelBuilder, pack
 
 ethernet_interface_name = "eth0"
 
@@ -198,33 +199,40 @@ class MscclppKernel:
         scratch=None,
         fifo=None,
     ):
+        file_dir = os.path.dirname(os.path.abspath(__file__))
         if test_name == "h2d_semaphore":
             self._kernel = KernelBuilder(
-                file="h2d_semaphore_test.cu", kernel_name="h2d_semaphore"
+                file="h2d_semaphore_test.cu", kernel_name="h2d_semaphore", file_dir=file_dir
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
         elif test_name == "d2d_semaphore":
             self._kernel = KernelBuilder(
-                file="d2d_semaphore_test.cu", kernel_name="d2d_semaphore"
+                file="d2d_semaphore_test.cu", kernel_name="d2d_semaphore", file_dir=file_dir
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
         elif test_name == "sm_channel":
-            self._kernel = KernelBuilder(file="sm_channel_test.cu", kernel_name="sm_channel").get_compiled_kernel()
+            self._kernel = KernelBuilder(
+                file="sm_channel_test.cu", kernel_name="sm_channel", file_dir=file_dir
+            ).get_compiled_kernel()
             self.nblocks = nranks
             self.nthreads = 1024
         elif test_name == "fifo":
-            self._kernel = KernelBuilder(file="fifo_test.cu", kernel_name="fifo").get_compiled_kernel()
+            self._kernel = KernelBuilder(
+                file="fifo_test.cu", kernel_name="fifo", file_dir=file_dir
+            ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = 1
         elif test_name == "proxy":
-            self._kernel = KernelBuilder(file="proxy_test.cu", kernel_name="proxy").get_compiled_kernel()
+            self._kernel = KernelBuilder(
+                file="proxy_test.cu", kernel_name="proxy", file_dir=file_dir
+            ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
         elif test_name == "simple_proxy_channel":
             self._kernel = KernelBuilder(
-                file="simple_proxy_channel_test.cu", kernel_name="simple_proxy_channel"
+                file="simple_proxy_channel_test.cu", kernel_name="simple_proxy_channel", file_dir=file_dir
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = 1024

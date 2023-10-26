@@ -2,8 +2,8 @@
 # Licensed under the MIT license.
 
 import cupy as cp
-from .mscclpp_op import MscclppAllReduce1, MscclppAllReduce2, MscclppAllReduce3
-from .nccl_op import NcclAllReduce
+from mscclpp_op import MscclppAllReduce1, MscclppAllReduce2, MscclppAllReduce3
+from nccl_op import NcclAllReduce
 from mpi4py import MPI
 import cupy.cuda.nccl as nccl
 import mscclpp.comm as mscclpp_comm

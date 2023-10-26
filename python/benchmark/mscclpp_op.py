@@ -1,9 +1,8 @@
 import os
 import cupy as cp
-from test.utils import KernelBuilder, pack
 from mscclpp import Transport, ProxyService
 import mscclpp.comm as mscclpp_comm
-from mpi4py import MPI
+from mscclpp.utils import KernelBuilder, pack
 
 
 def type_to_str(dtype):
