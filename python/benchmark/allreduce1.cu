@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <mscclpp/concurrency.hpp>
-#include <mscclpp/sm_channel_device.hpp>
-#include <mscclpp/proxy_channel_device.hpp>
 #include <cuda_fp16.h>
 
+#include <mscclpp/concurrency.hpp>
+#include <mscclpp/proxy_channel_device.hpp>
+#include <mscclpp/sm_channel_device.hpp>
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 __device__ mscclpp::DeviceSyncer allGatherDeviceSyncer;
@@ -13,29 +13,29 @@ __device__ mscclpp::DeviceSyncer reduceScatterDeviceSyncer;
 
 #define VECTOR_SIZE (sizeof(int4) / sizeof(TYPE))
 
-template<typename To, typename From>
+template <typename To, typename From>
 __forceinline__ __device__ To bit_cast(const From& src) {
-    static_assert(sizeof(To) == sizeof(From), "Size mismatch for bit_cast");
+  static_assert(sizeof(To) == sizeof(From), "Size mismatch for bit_cast");
 
-    union {
-        From f;
-        To   t;
-    } u;
-    u.f = src;
-    return u.t;
+  union {
+    From f;
+    To t;
+  } u;
+  u.f = src;
+  return u.t;
 }
 
-template<typename T>
-__forceinline__ __device__ T add_elements(T a, T b){
+template <typename T>
+__forceinline__ __device__ T add_elements(T a, T b) {
   return a + b;
 }
 
-template<>
-__forceinline__ __device__ __half2 add_elements(__half2 a, __half2 b){
+template <>
+__forceinline__ __device__ __half2 add_elements(__half2 a, __half2 b) {
   return __hadd2(a, b);
 }
 
-template<typename T>
+template <typename T>
 __forceinline__ __device__ int4 add_vectors_helper(int4 a, int4 b) {
   int4 ret;
   ret.w = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.w), bit_cast<T, int>(b.w)));
@@ -45,17 +45,17 @@ __forceinline__ __device__ int4 add_vectors_helper(int4 a, int4 b) {
   return ret;
 }
 
-template<typename T>
+template <typename T>
 __forceinline__ __device__ int4 add_vectors(int4 a, int4 b) {
-  return add_vectors_helper<T>(a,b);
+  return add_vectors_helper<T>(a, b);
 }
 
-template<>
+template <>
 __forceinline__ __device__ int4 add_vectors<__half>(int4 a, int4 b) {
   return add_vectors_helper<__half2>(a, b);
 }
 
-template<typename T>
+template <typename T>
 __forceinline__ __device__ uint2 add_vectors_helper(uint2 a, uint2 b) {
   uint2 ret;
   ret.x = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
@@ -63,32 +63,30 @@ __forceinline__ __device__ uint2 add_vectors_helper(uint2 a, uint2 b) {
   return ret;
 }
 
-template<typename T>
+template <typename T>
 __forceinline__ __device__ uint2 add_vectors(uint2 a, uint2 b) {
-  return add_vectors_helper<T>(a,b);
+  return add_vectors_helper<T>(a, b);
 }
 
-template<>
+template <>
 __forceinline__ __device__ uint2 add_vectors<__half>(uint2 a, uint2 b) {
   return add_vectors_helper<__half2>(a, b);
 }
 
-
-template<typename T>
+template <typename T>
 __forceinline__ __device__ int add_vectors_helper(int a, int b) {
   return bit_cast<int, T>(add_elements(bit_cast<T, int>(a), bit_cast<T, int>(b)));
 }
 
-template<typename T>
+template <typename T>
 __forceinline__ __device__ int add_vectors(int a, int b) {
-  return add_vectors_helper<T>(a,b);
+  return add_vectors_helper<T>(a, b);
 }
 
-template<>
+template <>
 __forceinline__ __device__ int add_vectors<__half>(int a, int b) {
   return add_vectors_helper<__half2>(a, b);
 }
-
 
 __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem, int blockId, int nBlocks) {
   size_t nInt4 = nElem / 4;
@@ -97,14 +95,10 @@ __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem, in
   int4* src4 = (int4*)src;
   for (int i = threadIdx.x + blockId * blockDim.x; i < nInt4; i += blockDim.x * nBlocks) {
     dst4[i] = add_vectors<TYPE>(dst4[i], src4[i]);
-    // dst4[i].w += src4[i].w;
-    // dst4[i].x += src4[i].x;
-    // dst4[i].y += src4[i].y;
-    // dst4[i].z += src4[i].z;
   }
   if (nLastInts > 0) {
-    int* dstLast = ((int*) dst) + nInt4 * 4;
-    int* srcLast = ((int*) src) + nInt4 * 4;
+    int* dstLast = ((int*)dst) + nInt4 * 4;
+    int* srcLast = ((int*)src) + nInt4 * 4;
     for (int i = threadIdx.x + blockId * blockDim.x; i < nLastInts; i += blockDim.x * nBlocks) {
       dstLast[i] = add_vectors<TYPE>(dstLast[i], srcLast[i]);
     }
@@ -115,12 +109,12 @@ __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem) {
   vectorSum(dst, src, nElem, blockIdx.x, gridDim.x);
 }
 
-
+// -------------------------------------------
 // AllReduce1
 // -------------------------------------------
 
-__device__ void localReduceScatterSm2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank,
-                                      int nRanksPerNode, size_t chunkSize, size_t nelems, int nBlocks) {
+__device__ void localReduceScatterAllPairsSm(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nRanksPerNode,
+                                      size_t chunkSize, size_t nelems, int nBlocks) {
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
   const int nPeer = nRanksPerNode - 1;
@@ -132,36 +126,63 @@ __device__ void localReduceScatterSm2(mscclpp::SmChannelDeviceHandle* smChans, T
   int4* buff4 = (int4*)buff;
 
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid == 0){
+    __threadfence_system();
+  }
+  __syncthreads();
   if (tid < nPeer) {
-    smChans[tid].signal();
+    smChans[tid].relaxedSignal();
   }
-  const int waitStart = nBlocks * blockDim.x - nPeer;
-  if (tid >= waitStart && tid < nBlocks * blockDim.x) {
-    smChans[tid - waitStart].wait();
+  if (tid >= nPeer && tid < nPeer*2) {
+    smChans[tid - nPeer].wait();
   }
+
   reduceScatterDeviceSyncer.sync(nBlocks);
 
+
+
   const size_t nInt4 = nelems / VECTOR_SIZE;
-  for (int index = 0; index < nPeer; ++index) {
-    int4 val;
-    int peerIdx = (index + localRankIndexInNode);
-    if (peerIdx >= nPeer) peerIdx -= nPeer;
-    for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * nBlocks) {
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * nBlocks) {
+    int4 tmp = buff4[indexOffset4 + idx];
+    for (int index = 0; index < nPeer; ++index) {
+      int4 val;
+      int peerIdx = (index + localRankIndexInNode);
+      if (peerIdx >= nPeer) peerIdx -= nPeer;
       val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
-      buff4[indexOffset4 + idx] = add_vectors<TYPE>(buff4[indexOffset4 + idx], val);
+      tmp = add_vectors<TYPE>(tmp, val);
     }
+    for (int index = 0; index < nPeer; ++index) {
+      int peerIdx = (index + localRankIndexInNode);
+      if (peerIdx >= nPeer) peerIdx -= nPeer;
+      smChans[peerIdx].write<int4>(indexOffset4 + idx, tmp);
+    }
+    buff4[indexOffset4 + idx] = tmp;
   }
 
-  const size_t nLastInts = nelems % VECTOR_SIZE;
-  for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
-    for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nLastInts; idx += blockDim.x * nBlocks) {
-      int val = smChans[(localRankIndexInNode + peerIdx) % nPeer].read<int>(indexOffset + nInt4 * VECTOR_SIZE + idx);
-      buff[indexOffset + nInt4 * VECTOR_SIZE + idx] += val;
-    }
+  // const size_t nLastInts = nelems % VECTOR_SIZE;
+  // for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nLastInts; idx += blockDim.x * nBlocks) {
+  //   for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+  //     int peerIdx = (index + localRankIndexInNode);
+  //     if (peerIdx >= nPeer) peerIdx -= nPeer;
+  //     int val = smChans[(localRankIndexInNode + peerIdx) % nPeer].read<int>(indexOffset + nInt4 * VECTOR_SIZE + idx);
+  //     buff[indexOffset + nInt4 * VECTOR_SIZE + idx] += val;
+  //   }
+  // }
+
+  if (tid == 0){
+    __threadfence_system();
+  }
+  __syncthreads();
+  if (tid < nPeer) {
+    smChans[tid].relaxedSignal();
+  }
+  if (tid >= nPeer && tid < nPeer*2) {
+    smChans[tid - nPeer].wait();
   }
 }
 
-__device__ void localRingAllGatherSm(mscclpp::SmChannelDeviceHandle* smChans, int rank, int nRanksPerNode, uint64_t size, size_t nBlocks) {
+__device__ void localAllGatherAllPairsSm(mscclpp::SmChannelDeviceHandle* smChans, int rank, int nRanksPerNode,
+                                     uint64_t size, size_t nBlocks) {
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
 
@@ -188,18 +209,20 @@ __device__ void localRingAllGatherSm(mscclpp::SmChannelDeviceHandle* smChans, in
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
 extern "C" __global__ void __launch_bounds__(1024, 1)
     allreduce1(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nranks, int nelems) {
-  localReduceScatterSm2(smChans, buff, rank, nranks, nelems / nranks, nelems / nranks, gridDim.x);
-  deviceSyncer.sync(gridDim.x);
-  localRingAllGatherSm(smChans, rank, nranks, nelems / nranks * sizeof(TYPE), gridDim.x);
+  localReduceScatterAllPairsSm(smChans, buff, rank, nranks, nelems / nranks, nelems / nranks, gridDim.x);
+  // deviceSyncer.sync(gridDim.x);
+  // localAllGatherAllPairsSm(smChans, rank, nranks, nelems / nranks * sizeof(TYPE), gridDim.x);
 }
 
+// -------------------------------------------
 // AllReduce2
 // -------------------------------------------
 
 __device__ uint64_t globalFlag = 1;
 
 extern "C" __global__ void __launch_bounds__(512, 1)
-allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, void* resultBuff, int rank, int worldSize, size_t nelems) {
+    allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, void* resultBuff, int rank,
+               int worldSize, size_t nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
   // This version of allreduce only works for single nodes
   const int nPeers = worldSize - 1;
@@ -263,11 +286,14 @@ allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, v
   }
 }
 
+// -------------------------------------------
 // AllReduce3
 // -------------------------------------------
 
 extern "C" __global__ void __launch_bounds__(1024, 1)
-allreduce3(mscclpp::SimpleProxyChannelDeviceHandle* fstRoundChans, mscclpp::SimpleProxyChannelDeviceHandle* sndRoundChans, TYPE* buff, TYPE* scratch, int rank, int worldSize, size_t nelems) {
+    allreduce3(mscclpp::SimpleProxyChannelDeviceHandle* fstRoundChans,
+               mscclpp::SimpleProxyChannelDeviceHandle* sndRoundChans, TYPE* buff, TYPE* scratch, int rank,
+               int worldSize, size_t nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
 
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
@@ -379,3 +405,274 @@ allreduce3(mscclpp::SimpleProxyChannelDeviceHandle* fstRoundChans, mscclpp::Simp
     devSndRecvChan.wait();
   }
 }
+
+// -------------------------------------------
+// AllReduce4
+// 2-node
+// -------------------------------------------
+#if 0
+__device__ void localReduceScatterSm(TYPE* buff, TYPE* scratch, int rank, int nRanksPerNode, int startChunkIndex,
+                                     size_t offsetInChunk, size_t chunkSize, size_t nelems, int nBlocks) {
+  if (nRanksPerNode == 1) return;
+  if (blockIdx.x >= nBlocks) return;
+  const int nPeer = nRanksPerNode - 1;
+  DeviceHandle<mscclpp::SmChannel>* smChans = constSmOutOfPlaceGetChans;
+
+  const size_t localRankIndexInNode = rank % nRanksPerNode;
+  const size_t indexOffset = ((localRankIndexInNode + startChunkIndex) * chunkSize + offsetInChunk);
+  const size_t indexOffset4 = indexOffset / 4;
+
+  int4* buff4 = (int4*)buff;
+
+  for (int peerIdx = threadIdx.x + blockIdx.x * blockDim.x; peerIdx < nPeer; peerIdx += blockDim.x * nBlocks) {
+    smChans[peerIdx].signal();
+  }
+  for (int peerIdx = threadIdx.x + blockIdx.x * blockDim.x; peerIdx < nPeer; peerIdx += blockDim.x * nBlocks) {
+    smChans[peerIdx].wait();
+  }
+  reduceScatterDeviceSyncer.sync(nBlocks);
+
+  const size_t nInt4 = nelems / 4;
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * nBlocks) {
+    int4 sum = make_int4(0, 0, 0, 0);
+
+    for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      int4 val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
+      sum.w += val.w;
+      sum.x += val.x;
+      sum.y += val.y;
+      sum.z += val.z;
+    }
+    buff4[indexOffset4 + idx].w += sum.w;
+    buff4[indexOffset4 + idx].x += sum.x;
+    buff4[indexOffset4 + idx].y += sum.y;
+    buff4[indexOffset4 + idx].z += sum.z;
+  }
+
+  const size_t nLastInts = nelems % 4;
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nLastInts; idx += blockDim.x * nBlocks) {
+    int sum = 0;
+    for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      int val = smChans[peerIdx].read<int>(indexOffset + nInt4 * 4 + idx);
+      sum += val;
+    }
+    buff[indexOffset + nInt4 * 4 + idx] += sum;
+  }
+}
+
+// This kernel is the most performant when the number of blocks is a multiple of (nRanksPerNode - 1).
+__device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunkIndex, uint64_t offsetInRankChunk,
+                                 uint64_t rankChunkSize, uint64_t size, size_t nBlocks) {
+  if (nRanksPerNode == 1) return;
+  if (blockIdx.x >= nBlocks) return;
+  const size_t nPeer = nRanksPerNode - 1;
+  const size_t peerIdx = blockIdx.x % nPeer;
+  const size_t nBlockForThisPeer = nBlocks / nPeer + (nBlocks % nPeer > peerIdx ? 1 : 0);
+  const size_t peerLocalBlockIdx = blockIdx.x / nPeer;
+  const size_t rankLocalIndex = rank % nRanksPerNode;
+  const int remoteRankLocalIndex = (peerIdx < rankLocalIndex ? peerIdx : peerIdx + 1);
+
+  // Split the data into chunks for aligned data access. Ignore the remainder here and let the last block handle it.
+  constexpr size_t chunkBytes = 128;  // heuristic value
+  const size_t nChunk = size / chunkBytes;
+  const size_t nMinChunkPerBlock = nChunk / nBlockForThisPeer;
+  const size_t nRemainderChunk = nChunk % nBlockForThisPeer;
+
+  // Distribute chunks to blocks
+  size_t nChunkForThisBlock;
+  size_t offsetForThisBlock;
+  if (peerLocalBlockIdx < nRemainderChunk) {
+    nChunkForThisBlock = nMinChunkPerBlock + 1;
+    offsetForThisBlock = (nMinChunkPerBlock + 1) * peerLocalBlockIdx;
+  } else {
+    nChunkForThisBlock = nMinChunkPerBlock;
+    offsetForThisBlock =
+        (nMinChunkPerBlock + 1) * nRemainderChunk + (peerLocalBlockIdx - nRemainderChunk) * nMinChunkPerBlock;
+  }
+  offsetForThisBlock *= chunkBytes;
+
+  // Calculate the size of the data for this block
+  size_t sizeForThisBlock = nChunkForThisBlock * chunkBytes;
+  const size_t lastChunkSize = size - nChunk * chunkBytes;
+  if (lastChunkSize > 0 && peerLocalBlockIdx == nBlockForThisPeer - 1) {
+    sizeForThisBlock += lastChunkSize;
+  }
+  if (threadIdx.x == 0 && peerLocalBlockIdx == 0) {
+    constSmInPlaceChans[peerIdx].signal();
+    constSmInPlaceChans[peerIdx].wait();
+  }
+  allGatherDeviceSyncer.sync(nBlocks);
+  size_t offset = rankChunkSize * (startRankChunkIndex + remoteRankLocalIndex) + offsetInRankChunk;
+  constSmInPlaceChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
+}
+
+__device__ void localAllGatherAllPairsSm(int rank, int nRanksPerNode, uint64_t size, size_t nBlocks) {
+  if (nRanksPerNode == 1) return;
+  if (blockIdx.x >= nBlocks) return;
+
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  const int nPeer = nRanksPerNode - 1;
+
+  if (tid < nPeer) {
+    constSmInPlaceChans[tid].signal();
+  }
+  int waitStart = nBlocks * blockDim.x - nPeer;
+  if (tid >= waitStart && tid < nBlocks * blockDim.x) {
+    constSmInPlaceChans[tid - waitStart].wait();
+  }
+  allGatherDeviceSyncer.sync(nBlocks);
+  for (int i = 0; i < nPeer; ++i) {
+    int peerIdx = (i + rank) % nPeer;
+    const int remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
+    size_t offset = size * remoteRankLocalIndex;
+    constSmInPlaceChans[peerIdx].get(offset, size, tid, blockDim.x * nBlocks);
+  }
+}
+
+// This is an allgather4 equivalent
+__device__ void allGatherSm(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
+  // this allgather is a pipelined and hierarchical one and only works for two nodes
+  // it is implemented as follows:
+  // Step 1: each node does a local allgather and concurrently,
+  // local GPU i exchange (piplineSize-1)/pipelineSize portion of their data with
+  // its cross-node neighbor (local GPU i on the other node) via IB
+  // Step 2: each node does a local allgather again with the data just received from its
+  // cross-node neighbor in step 1, and concurrently, exchange the rest of the data with
+  // its cross-node neighbor
+  // Step 3: each node does a local allgather for the last time with the rest of the data
+
+  int pipelineSize = 3;
+  int peerRank = (rank + nRanksPerNode) % worldSize;
+  int peerNodeId = peerRank / nRanksPerNode;
+  int peer = (peerRank < rank) ? peerRank : peerRank - 1;
+  DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = constDevSndRoundChans[peer];
+  const size_t nBlocksForLocalAllGather = gridDim.x / (nRanksPerNode - 1) * (nRanksPerNode - 1);
+  const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
+  const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
+  const int startRankIndexInPeerNode = (peerRank / nRanksPerNode) * nRanksPerNode;
+
+  if (peerNodeId == rank / nRanksPerNode) {
+    localAllGatherSm(rank, nRanksPerNode, 0, 0, rankChunkSize, rankChunkSize, gridDim.x);
+    return;
+  }
+
+  constexpr size_t alignment = 128;
+  size_t step1Bytes = (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int);
+  step1Bytes = step1Bytes / alignment * alignment;
+  const size_t step2Bytes = nelemsPerGPU * sizeof(int) - step1Bytes;
+
+  // Step 1
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
+  }
+  localAllGatherSm(rank, nRanksPerNode, startRankIndexInLocalNode, 0, rankChunkSize, rankChunkSize,
+                   nBlocksForLocalAllGather);
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    proxyChan.wait();
+    proxyChan.flush();
+  }
+  deviceSyncer.sync(gridDim.x);
+  // Step 2
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
+  }
+  localAllGatherSm(rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
+                   nBlocksForLocalAllGather);
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    proxyChan.wait();
+    proxyChan.flush();
+  }
+  deviceSyncer.sync(gridDim.x);
+  // Step 3
+  localAllGatherSm(rank, nRanksPerNode, startRankIndexInPeerNode, step1Bytes, rankChunkSize, step2Bytes,
+                   nBlocksForLocalAllGather);
+}
+
+__device__ void reduceScatterSm(TYPE* buff, TYPE* scratch, int rank, int nRanksPerNode, int worldSize,
+                                size_t nelems  // must be divisible by 3
+) {
+  // this reduce-scatter algorithm works as follows:
+  // Step 1: each node does a local reduce-scatter on peer node data chunks with 1/pipeline portion of chunk data. For
+  // example, 2 nodes and each node has 2 ranks. rank 0 and rank 1 perform reduce-scatter on chunk 2 and chunk 3, with
+  // 1/pipeline portion of the data.
+  // Step 2: each node does a local reduce-scatter on peers data chunks with (pipeline-1)/pipeline portion of chunk
+  // data. Meanwhile, exchange the reduced data of the previous step with its cross-node neighbor (same local rank
+  // number on the other node) via IB. Then performs a reduce operation.
+  // Step 3:  each node does a local reduce-scatter on local ranks, meanwhile exchange the reduced data of the previous
+  // step with its cross-node neighbor (same local rank number on the other node) via IB. Then performs a reduce
+  // operation.
+  int pipelineSize = 3;
+  float nBlocksForReduceScatterRatio = 0.8;
+  const size_t chunkSize = nelems / worldSize;
+  const int peerRank = (rank + nRanksPerNode) % worldSize;
+  int peerNodeId = peerRank / nRanksPerNode;
+  int nBlocksForReduceScatter =
+      (int)(nBlocksForReduceScatterRatio * gridDim.x) / (nRanksPerNode - 1) * (nRanksPerNode - 1);
+  int isComm = (threadIdx.x == 0) && (blockIdx.x == nBlocksForReduceScatter);
+  int peer = (peerRank < rank) ? peerRank : peerRank - 1;
+  int nBlocksRemain = gridDim.x - nBlocksForReduceScatter;
+  DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = constDevFstRoundChans[peer];
+  if (peerNodeId == rank / nRanksPerNode) {
+    localReduceScatterSm(buff, scratch, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, gridDim.x);
+    return;
+  }
+
+  // step 1: local reduce
+  int startChunkIndex = peerNodeId * nRanksPerNode;
+  localReduceScatterSm(buff, scratch, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize / pipelineSize,
+                       nBlocksForReduceScatter);
+  deviceSyncer.sync(gridDim.x);
+
+  // step 2: local reduce and exchange data with neighbor
+  if (isComm) {
+    size_t offset = (peerRank * chunkSize) * sizeof(int);
+    // opposite side
+    proxyChan.putWithSignal(offset, (chunkSize / pipelineSize * sizeof(int)));
+  }
+  localReduceScatterSm(buff, scratch, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize, chunkSize,
+                       2 * chunkSize / pipelineSize, nBlocksForReduceScatter);
+  if (isComm) {
+    proxyChan.wait();
+  }
+  if (blockIdx.x >= nBlocksForReduceScatter) {
+    ibDeviceSyncer.sync(nBlocksRemain);
+    // reduce data received from peer to related rank
+    size_t offset = rank * chunkSize * sizeof(int);
+    int* dst = (int*)((char*)buff + offset);
+    int* src = (int*)((char*)scratch + offset);
+    vectorSum(dst, src, chunkSize / pipelineSize, blockIdx.x - nBlocksForReduceScatter, nBlocksRemain);
+  }
+  if (isComm) {
+    proxyChan.flush();
+  }
+  deviceSyncer.sync(gridDim.x);
+
+  // step 3: local reduce and exchange data with neighbor
+  startChunkIndex = (rank / nRanksPerNode) * nRanksPerNode;
+  if (isComm) {
+    size_t offset = (peerRank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
+    proxyChan.putWithSignal(offset, (pipelineSize - 1) * chunkSize / pipelineSize * sizeof(int));
+  }
+  localReduceScatterSm(buff, scratch, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize,
+                       nBlocksForReduceScatter);
+  if (isComm) {
+    proxyChan.wait();
+  }
+  deviceSyncer.sync(gridDim.x);
+  // reduce to related rank, can not overlap since localReduceScatter also calculate the sum
+  size_t offset = (rank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
+  int* dst = (int*)((char*)buff + offset);
+  int* src = (int*)((char*)scratch + offset);
+  vectorSum(dst, src, 2 * chunkSize / pipelineSize);
+  if (isComm) {
+    proxyChan.flush();
+  }
+}
+
+extern "C" __global__ void __launch_bounds__(1024, 1) __global__
+    void allreduce4(TYPE* buff, TYPE* scratch, TYPE* result, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+  reduceScatterSm(buff, scratch, rank, nRanksPerNode, worldSize, nelems);
+  deviceSyncer.sync(gridDim.x);
+  allGatherSm(rank, worldSize, nRanksPerNode, nelems / worldSize);
+}
+#endif

@@ -68,6 +68,19 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
                                                                                            cuda::memory_order_seq_cst);
   }
 
+  /// Signal the remote device.
+  ///
+  /// This function is a relaxed version of signal() and provides no guarantee on the completion of memory operations.
+  /// User requires to call proper fencing before using this function.
+  ///
+  __forceinline__ __device__ void relaxedSignal() {
+    // This fence ensures that preceding writes are visible on the peer GPU before the incremented
+    // `outboundSemaphoreId` is visible.
+    semaphoreIncrement();
+    cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*remoteInboundSemaphoreId}.store(semaphoreGetLocal(),
+                                                                                           cuda::memory_order_relaxed);
+  }
+
   /// Signal the remote device for copied packets.
   ///
   /// Unlike @ref signal(), this function provides no guarantee on the completion of memory operations. This is

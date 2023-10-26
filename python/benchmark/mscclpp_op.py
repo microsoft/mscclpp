@@ -40,7 +40,7 @@ class MscclppAllReduce1():
         self.params += pack(cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8), self.memory, self.group.my_rank, self.group.nranks, self.memory.size)
 
     def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, 24, 1024, 0, stream_ptr)
+        self.kernel.launch_kernel(self.params, 1, 1024, 0, stream_ptr)
         return self.memory
 
 class MscclppAllReduce2:
