@@ -10,8 +10,8 @@ import netifaces as ni
 import pytest
 
 from mscclpp import Fifo, Host2DeviceSemaphore, Host2HostSemaphore, ProxyService, SmDevice2DeviceSemaphore, Transport
+import mscclpp.comm as mscclpp_comm
 from ._cpp import _ext
-from .mscclpp_group import MscclppGroup
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 from .utils import KernelBuilder, pack
 
@@ -41,7 +41,7 @@ def test_group_with_ip(mpi_group: MpiGroup, ifIpPortTrio: str):
         # ranks are on different nodes
         pytest.skip("this case is not supported as localhost will be different for different nodes")
 
-    group = MscclppGroup(mpi_group, ifIpPortTrio)
+    group = mscclpp_comm.CommGroup(mpi_group.comm, ifIpPortTrio)
 
     nelem = 1024
     memory = np.zeros(nelem, dtype=np.int32)
@@ -66,7 +66,7 @@ def test_group_with_ip(mpi_group: MpiGroup, ifIpPortTrio: str):
 def create_and_connect(mpi_group: MpiGroup, transport: str):
     if transport == "NVLink" and all_ranks_on_the_same_node(mpi_group) is False:
         pytest.skip("cannot use nvlink for cross node")
-    group = MscclppGroup(mpi_group)
+    group = mscclpp_comm.CommGroup(mpi_group.comm)
 
     remote_nghrs = list(range(mpi_group.comm.size))
     remote_nghrs.remove(mpi_group.comm.rank)

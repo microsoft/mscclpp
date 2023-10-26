@@ -2,11 +2,10 @@
 # Licensed under the MIT license.
 
 from __future__ import annotations
-import logging
 from typing import Type
 
 import cupy as cp
-from mscclpp import (
+from ._mscclpp import (
     Communicator,
     Connection,
     Host2DeviceSemaphore,
@@ -20,26 +19,25 @@ from mscclpp import (
     Transport,
     TransportFlags,
 )
+import mpi4py
 import numpy as np
 
-from .mscclpp_mpi import MpiGroup
 
-logger = logging.getLogger(__name__)
-
-
-class MscclppGroup:
-    def __init__(self, mpi_group: MpiGroup = None, interfaceIpPortTrio : str = "", rank : int = None, size : int = None):
+class CommGroup:
+    def __init__(
+        self, mpi_comm: mpi4py.MPI.Comm = None, interfaceIpPortTrio: str = "", rank: int = None, size: int = None
+    ):
         if interfaceIpPortTrio == "":
-            self.bootstrap = TcpBootstrap.create(mpi_group.comm.rank, mpi_group.comm.size)
+            self.bootstrap = TcpBootstrap.create(mpi_comm.rank, mpi_comm.size)
             uniq_id = None
-            if mpi_group.comm.rank == 0:
+            if mpi_comm.rank == 0:
                 # similar to NCCL's unique id
                 uniq_id = self.bootstrap.create_unique_id()
-            uniq_id_global = mpi_group.comm.bcast(uniq_id, 0)
+            uniq_id_global = mpi_comm.bcast(uniq_id, 0)
             self.bootstrap.initialize(uniq_id_global)
-        elif mpi_group:
+        elif mpi_comm:
             # use this instead
-            self.bootstrap = TcpBootstrap.create(mpi_group.comm.rank, mpi_group.comm.size)
+            self.bootstrap = TcpBootstrap.create(mpi_comm.rank, mpi_comm.size)
             self.bootstrap.initialize(interfaceIpPortTrio)
         elif not interfaceIpPortTrio == "":
             assert rank >= 0 and size >= 1
@@ -157,14 +155,17 @@ class MscclppGroup:
         return channels
 
     def make_proxy_channels_with_scratch(
-        self, proxy_service: ProxyService, tensor: cp.ndarray, scratchTensor: cp.ndarray, connections: dict[int, Connection]
+        self,
+        proxy_service: ProxyService,
+        tensor: cp.ndarray,
+        scratchTensor: cp.ndarray,
+        connections: dict[int, Connection],
     ) -> dict[int, SmChannel]:
         transport_flags = TransportFlags()
         for rank in connections:
             transport_flags |= connections[rank].transport()
         data_ptr = tensor.data.ptr if isinstance(tensor, cp.ndarray) else tensor.ctypes.data
         local_reg_memory = self.communicator.register_memory(data_ptr, tensor.size * tensor.itemsize, transport_flags)
-
 
         semaphores = self.make_semaphore(connections, Host2DeviceSemaphore)
         registered_memories = self.register_tensor_with_connections(scratchTensor, connections)

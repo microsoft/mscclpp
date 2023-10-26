@@ -6,7 +6,7 @@ from .mscclpp_op import MscclppAllReduce1, MscclppAllReduce2, MscclppAllReduce3
 from .nccl_op import NcclAllReduce
 from mpi4py import MPI
 import cupy.cuda.nccl as nccl
-from test.mscclpp_group import MscclppGroup
+import mscclpp.comm as mscclpp_comm
 from mscclpp import ProxyService
 from prettytable import PrettyTable
 import netifaces as ni
@@ -22,12 +22,14 @@ elif data_type == cp.int32:
 else:
     raise RuntimeError("Unknown data type")
 
+
 def human_readable_size(size, decimal_places=1):
-    for unit in ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']:
-        if size < 1024.0 or unit == 'PiB':
+    for unit in ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]:
+        if size < 1024.0 or unit == "PiB":
             break
         size /= 1024.0
     return f"{size:.{decimal_places}f} {unit}"
+
 
 def check_correctness(memory, func):
     rand_gen = cp.random.default_rng(seed=MPI.COMM_WORLD.rank)
@@ -41,14 +43,15 @@ def check_correctness(memory, func):
         expected += rand_gen.random(memory.shape).astype(data_type)
 
     if data_type == cp.float16:
-        ac = cp.allclose(output_memory, expected, rtol=1.e-2, atol=1.e-4)
+        ac = cp.allclose(output_memory, expected, rtol=1.0e-2, atol=1.0e-4)
     else:
-        ac = cp.allclose(output_memory, expected, rtol=1.e-2, atol=1.e-4)
+        ac = cp.allclose(output_memory, expected, rtol=1.0e-2, atol=1.0e-4)
 
     ac = MPI.COMM_WORLD.allreduce(ac, op=MPI.SUM)
     # if not ac:
     #     print(output_memory, expected)
     return ac
+
 
 def bench_time(niter: int, func):
     # capture cuda graph for nites of the kernel launch
@@ -58,7 +61,6 @@ def bench_time(niter: int, func):
         for i in range(niter):
             func(stream.ptr)
         graph = stream.end_capture()
-
 
     # now run a warm up round
     graph.launch(stream)
@@ -75,13 +77,13 @@ def bench_time(niter: int, func):
     return cp.cuda.get_elapsed_time(start, end) / niter * 1000.0
 
 
-
-def run_benchmark(mscclpp_group: MscclppGroup, nccl_op: nccl.NcclCommunicator, table: PrettyTable, niter: int, nelem: int):
+def run_benchmark(
+    mscclpp_group: mscclpp_comm.CommGroup, nccl_op: nccl.NcclCommunicator, table: PrettyTable, niter: int, nelem: int
+):
     memory = cp.zeros(nelem, dtype=data_type)
     memory_out = cp.zeros(nelem, dtype=data_type)
     cp.cuda.runtime.deviceSynchronize()
 
-    
     if memory.nbytes < 2**20:
         mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
     elif memory.nbytes < 2**29:
@@ -112,9 +114,21 @@ def run_benchmark(mscclpp_group: MscclppGroup, nccl_op: nccl.NcclCommunicator, t
         proxy_service.stop_proxy()
 
     if MPI.COMM_WORLD.rank == 0:
-        table.add_row([human_readable_size(memory_nbytes), "{:.2f}".format(mscclpp_time), "{:.2f}".format(mscclpp_algBw), mscclpp_check, "{:.2f}".format(nccl_time), "{:.2f}".format(nccl_algBw), nccl_check, "{:.2f}".format(nccl_time / mscclpp_time)])
+        table.add_row(
+            [
+                human_readable_size(memory_nbytes),
+                "{:.2f}".format(mscclpp_time),
+                "{:.2f}".format(mscclpp_algBw),
+                mscclpp_check,
+                "{:.2f}".format(nccl_time),
+                "{:.2f}".format(nccl_algBw),
+                nccl_check,
+                "{:.2f}".format(nccl_time / mscclpp_time),
+            ]
+        )
     if MPI.COMM_WORLD.rank == 0:
         print(".", end="", flush=True)
+
 
 if __name__ == "__main__":
     shm_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
@@ -127,7 +141,9 @@ if __name__ == "__main__":
     my_ip = ni.ifaddresses(network_interface)[ni.AF_INET][0]["addr"]
     root_ip = MPI.COMM_WORLD.bcast(my_ip, root=0)
     ifIpPortTrio = network_interface + ":" + root_ip + ":50000"  # some random port
-    mscclpp_group = MscclppGroup(interfaceIpPortTrio=ifIpPortTrio, rank=MPI.COMM_WORLD.rank, size=MPI.COMM_WORLD.size)
+    mscclpp_group = mscclpp_comm.CommGroup(
+        interfaceIpPortTrio=ifIpPortTrio, rank=MPI.COMM_WORLD.rank, size=MPI.COMM_WORLD.size
+    )
 
     # create a NcclComm
     if MPI.COMM_WORLD.rank == 0:
@@ -141,9 +157,18 @@ if __name__ == "__main__":
     if MPI.COMM_WORLD.rank == 0:
         # Set table headers
         table = PrettyTable()
-        table.field_names = [f"Size ({dtype_str})", "Time (us)", "AlgBW (GB/s)", "Correctness", "NCCL Time (us)", "NCCL AlgBW (GB/s)", "NCCL Correctness", "Speed Up"]
+        table.field_names = [
+            f"Size ({dtype_str})",
+            "Time (us)",
+            "AlgBW (GB/s)",
+            "Correctness",
+            "NCCL Time (us)",
+            "NCCL AlgBW (GB/s)",
+            "NCCL Correctness",
+            "Speed Up",
+        ]
 
-    for i in range(10,30):
+    for i in range(10, 30):
         run_benchmark(mscclpp_group, nccl_comm, table, 100, 2**i)
 
     if MPI.COMM_WORLD.rank == 0:

@@ -2,6 +2,7 @@ import cupy.cuda.nccl as nccl
 from mpi4py import MPI
 import cupy as cp
 
+
 class NcclAllReduce:
     def __init__(self, nccl_comm: nccl.NcclCommunicator, memory: cp.ndarray):
         self.nccl_comm = nccl_comm
@@ -16,5 +17,7 @@ class NcclAllReduce:
             raise RuntimeError("Make sure that the data type is mapped to the correct NCCL data type")
 
     def __call__(self, stream_ptr):
-        self.nccl_comm.allReduce(self.memory.data.ptr, self.memory.data.ptr, self.memory.size, self.nccl_dtype, nccl.NCCL_SUM, stream_ptr)
+        self.nccl_comm.allReduce(
+            self.memory.data.ptr, self.memory.data.ptr, self.memory.size, self.nccl_dtype, nccl.NCCL_SUM, stream_ptr
+        )
         return self.memory

@@ -75,9 +75,9 @@ class KernelBuilder:
     kernel_map: dict = {}
 
     def get_key(self, kernel_name, macro_dict):
-        return kernel_name+'-'.join(f"{key}={macro_dict[key]}" for key in sorted(macro_dict))
-    
-    def __init__(self, file: str, kernel_name: str, file_dir: str = None, macro_dict: dict = None):
+        return kernel_name + "-".join(f"{key}={macro_dict[key]}" for key in sorted(macro_dict))
+
+    def __init__(self, file: str, kernel_name: str, file_dir: str = None, macro_dict: dict = {}):
         kernel_key = self.get_key(kernel_name, macro_dict)
         if kernel_key in self.kernel_map:
             self._kernel = self.kernel_map[kernel_key]
@@ -91,7 +91,6 @@ class KernelBuilder:
         ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{kernel_name}.ptx", device_id)
         self._kernel = Kernel(ptx, kernel_name, device_id)
         self.kernel_map[kernel_key] = self._kernel
-
 
     def _compile_cuda(self, source_file, output_file, device_id, std_version="c++17"):
         include_dir = os.path.join(self._current_file_dir, "../../include")
