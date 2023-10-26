@@ -17,7 +17,7 @@ def type_to_str(dtype):
 
 
 class MscclppAllReduce1():
-    def __init__(self, group: MscclppGroup, memory: cp.ndarray):
+    def __init__(self, group: MscclppGroup, memory: cp.ndarray, read_only: int = 1, nthreads: int = 1024, nblocks: int = 24):
         self.group = group
         self.memory = memory
         remote_nghrs = list(range(self.group.nranks))
@@ -31,16 +31,18 @@ class MscclppAllReduce1():
         # create a sm_channel for each remote neighbor
         self.sm_channels = self.group.make_sm_channels(self.memory, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
-        self.kernel = KernelBuilder(file="allreduce1.cu", kernel_name="allreduce1", file_dir=file_dir, macro_dict={"TYPE": type_str}).get_compiled_kernel()
+        self.kernel = KernelBuilder(file="allreduce1.cu", kernel_name="allreduce1", file_dir=file_dir, macro_dict={"TYPE": type_str, "READ_ONLY": str(read_only)}).get_compiled_kernel()
         self.params = b""
         self.device_handles = []
         for rank in range(self.group.nranks):
             if rank != self.group.my_rank:
                 self.device_handles.append(self.sm_channels[rank].device_handle().raw)
         self.params += pack(cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8), self.memory, self.group.my_rank, self.group.nranks, self.memory.size)
+        self.nthreads = nthreads
+        self.nblocks = nblocks
 
     def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, 24, 1024, 0, stream_ptr)
+        self.kernel.launch_kernel(self.params, self.nblocks, self.nthreads, 0, stream_ptr)
         return self.memory
 
 class MscclppAllReduce2:

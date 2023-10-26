@@ -11,6 +11,10 @@ __device__ mscclpp::DeviceSyncer deviceSyncer;
 __device__ mscclpp::DeviceSyncer allGatherDeviceSyncer;
 __device__ mscclpp::DeviceSyncer reduceScatterDeviceSyncer;
 
+#ifndef TYPE
+#define TYPE float
+#endif
+
 #define VECTOR_SIZE (sizeof(int4) / sizeof(TYPE))
 
 template <typename To, typename From>
@@ -113,6 +117,10 @@ __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem) {
 // AllReduce1
 // -------------------------------------------
 
+#ifndef READ_ONLY
+#define READ_ONLY 0
+#endif
+
 extern "C" __global__ void __launch_bounds__(1024, 1)
     allreduce1(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nranks, int nelems) {
   const size_t chunkSize = nelems / nranks;
@@ -147,15 +155,17 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
       val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
       tmp = add_vectors<TYPE>(tmp, val);
     }
-    for (int index = 0; index < nPeer; ++index) {
-      int peerIdx = (index + rank);
-      if (peerIdx >= nPeer) peerIdx -= nPeer;
-      smChans[peerIdx].write<int4>(indexOffset4 + idx, tmp);
+    if (READ_ONLY == 0){
+      for (int index = 0; index < nPeer; ++index) {
+        int peerIdx = (index + rank);
+        if (peerIdx >= nPeer) peerIdx -= nPeer;
+        smChans[peerIdx].write<int4>(indexOffset4 + idx, tmp);
+      }
     }
     buff4[indexOffset4 + idx] = tmp;
   }
 
-  // use the give TYPE for the rest
+  // use the given TYPE for the rest
   size_t processed = nInt4 * VECTOR_SIZE * nranks;
   const size_t nRemElems = nelems - processed;
   const size_t startIdx = processed + (nRemElems * rank) / nranks;
@@ -187,6 +197,16 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   }
   if (tid >= nPeer && tid < nPeer * 2) {
     smChans[tid - nPeer].wait();
+  }
+
+  if (READ_ONLY){
+    for (int i = 0; i < nPeer; ++i) {
+      int peerIdx = (i + rank);
+      if (peerIdx >= nPeer) peerIdx -= nPeer;
+      const int remoteRank = (peerIdx < rank ? peerIdx : peerIdx + 1);
+      size_t offset = chunkSize * remoteRank * sizeof(TYPE);
+      smChans[peerIdx].get(offset, chunkSize * sizeof(TYPE), tid, blockDim.x * gridDim.x);
+    }
   }
 }
 
