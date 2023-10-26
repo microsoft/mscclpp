@@ -84,6 +84,7 @@ target_include_directories(mscclpp_obj
     ${NUMA_INCLUDE_DIRS}
     ${GDRCOPY_INCLUDE_DIRS})
 target_link_libraries(mscclpp_obj PRIVATE ${CUDA_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} ${GDRCOPY_LIBRARIES})
+target_link_libraries(mscclpp_obj PUBLIC coverage_config)
 set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 if(ENABLE_TRACE)
     target_compile_definitions(mscclpp_obj PRIVATE ENABLE_TRACE)
