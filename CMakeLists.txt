@@ -15,6 +15,18 @@ set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall,-Wextra")
 
+# Code coverage from https://github.com/codecov/example-cpp11-cmake
+add_library(coverage_config INTERFACE)
+if(CMAKE_BUILD_TYPE MATCHES "Debug" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # Add required flags (GCC & LLVM/Clang)
+    target_compile_options(coverage_config INTERFACE
+        -O0        # no optimization
+        -g         # generate debug info
+        --coverage # sets all required flags
+    )
+    target_link_options(coverage_config INTERFACE --coverage)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
 # Format targets

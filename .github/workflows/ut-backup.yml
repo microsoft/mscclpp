@@ -21,6 +21,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: InstallLcov
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lcov
+
       - name: Build
         run: |
           mkdir build && cd build
@@ -51,3 +56,16 @@ jobs:
           set -e
           cd build && make pylib-copy
           mpirun --allow-run-as-root -tag-output -np 8 $(which pytest) ../python/test/test_mscclpp.py -x
+
+      - name: ReportCoverage
+        run: |
+          cd build
+          lcov --capture --directory . --output-file coverage.info
+          lcov --remove coverage.info \
+              '/usr/*' \
+              '/tmp/*' \
+              '*/python/*' \
+              '*/test/*' \
+              '*/tools/*' \
+              --output-file coverage.info
+          lcov --list coverage.info
