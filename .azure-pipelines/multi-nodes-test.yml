@@ -28,7 +28,7 @@ jobs:
         curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
         tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
         mkdir build && cd build
-        MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
+        MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release -DBYPASS_PEERMEM_CHECK=ON ..
         make -j
         make pylib-copy
       workingDirectory: '$(System.DefaultWorkingDirectory)'
@@ -53,11 +53,11 @@ jobs:
     name: StartVMSS
     displayName: Start VMSS
     inputs:
-      azureSubscription: mscclpp
+      azureSubscription: mscclpp-it
       scriptType: bash
       scriptLocation: inlineScript
       inlineScript: |
-        az vmss start --name mscclpp-it-vmss --resource-group msccl-dev
+        az vmss start --name mscclit-vmss --resource-group msccl-IT
 
   - task: Bash@3
     name: DeployTestEnv
@@ -79,10 +79,10 @@ jobs:
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         rm -rf output/*
         mkdir -p output
-        touch output/mscclpp-it-000000
-        tail -f output/mscclpp-it-000000 &
+        touch output/mscclit-000000
+        tail -f output/mscclit-000000 &
         CHILD_PID=$!
-        parallel-ssh -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mscclpp-test'
         kill $CHILD_PID
 
@@ -98,10 +98,10 @@ jobs:
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         rm -rf output/*
         mkdir -p output
-        touch output/mscclpp-it-000000
-        tail -f output/mscclpp-it-000000 &
+        touch output/mscclit-000000
+        tail -f output/mscclit-000000 &
         CHILD_PID=$!
-        parallel-ssh -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mp-ut'
         kill $CHILD_PID
 
@@ -117,10 +117,10 @@ jobs:
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         rm -rf output/*
         mkdir -p output
-        touch output/mscclpp-it-000000
-        tail -f output/mscclpp-it-000000 &
+        touch output/mscclit-000000
+        tail -f output/mscclit-000000 &
         CHILD_PID=$!
-        parallel-ssh -t 0 -H mscclpp-it-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh pytests'
         kill $CHILD_PID
 
@@ -129,8 +129,8 @@ jobs:
     displayName: Deallocate VMSS
     condition: always()
     inputs:
-      azureSubscription: mscclpp
+      azureSubscription: mscclpp-it
       scriptType: bash
       scriptLocation: inlineScript
       inlineScript: |
-        az vmss deallocate  --name mscclpp-it-vmss --resource-group msccl-dev
+        az vmss deallocate  --name mscclit-vmss --resource-group msccl-IT
