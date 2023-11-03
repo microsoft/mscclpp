@@ -129,7 +129,7 @@ jobs:
     displayName: Deallocate VMSS
     condition: always()
     inputs:
-      azureSubscription: mscclpp-it
+      azureSubscription: msccl-it
       scriptType: bash
       scriptLocation: inlineScript
       inlineScript: |
