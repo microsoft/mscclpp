@@ -52,12 +52,12 @@ function run_mp_ut()
   echo "============Run multi-process unit tests on 2 nodes (np=2, npernode=1)========================="
   /usr/local/mpi/bin/mpirun -allow-run-as-root -tag-output -np 2 --bind-to numa \
   -hostfile /root/mscclpp/hostfile_mpi -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH \
-  -npernode 1 /root/mscclpp/build/test/mp_unit_tests -ip_port mscclpp-it-000000:20003
+  -npernode 1 /root/mscclpp/build/test/mp_unit_tests -ip_port mscclit-000000:20003
 
   echo "============Run multi-process unit tests on 2 nodes (np=16, npernode=8)========================="
   /usr/local/mpi/bin/mpirun -allow-run-as-root -tag-output -np 16 --bind-to numa \
   -hostfile /root/mscclpp/hostfile_mpi -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH \
-  -npernode 8 /root/mscclpp/build/test/mp_unit_tests -ip_port mscclpp-it-000000:20003
+  -npernode 8 /root/mscclpp/build/test/mp_unit_tests -ip_port mscclit-000000:20003
 }
 
 function run_pytests()
