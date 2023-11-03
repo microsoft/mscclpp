@@ -894,7 +894,7 @@ __global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, 
   size_t scratchResultOffset =
       (flag & 1) ? 2 * nPkts * sizeof(mscclpp::LLPacket) : 3 * nPkts * sizeof(mscclpp::LLPacket);
   size_t srcOffset = remoteRank * nelemsPerRank * sizeof(int);
-  uint2* src = (uint2*)((char*)buff + srcOffset);
+  uint2* src = (uint2*)((char*)buff + rank * nelemsPerRank * sizeof(int));
   uint2* dst = (uint2*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
 
   // step 1: write to scratch buffer

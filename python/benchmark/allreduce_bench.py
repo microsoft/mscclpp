@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import cupy as cp
-from mscclpp_op import MscclppAllReduce1, MscclppAllReduce2, MscclppAllReduce3
+from mscclpp_op import MscclppAllReduce1, MscclppAllReduce2, MscclppAllReduce3, MscclppAllReduce5
 from nccl_op import NcclAllReduce
 from mpi4py import MPI
 import cupy.cuda.nccl as nccl
@@ -84,18 +84,21 @@ def run_benchmark(
     memory_out = cp.zeros(nelem, dtype=data_type)
     cp.cuda.runtime.deviceSynchronize()
 
-    if memory.nbytes < 2**20:
-        mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
-    elif memory.nbytes < 2**29:
-        if memory.nbytes >= 2**20 and memory.nbytes <= 2**22:
-            read_only = 0
-        else:
-            read_only = 1
-        mscclpp_call = MscclppAllReduce1(mscclpp_group, memory, read_only=read_only)
-    else:
-        proxy_service = ProxyService()
-        mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
-        proxy_service.start_proxy()
+    # if memory.nbytes < 2**20:
+    #     mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
+    # elif memory.nbytes < 2**29:
+    #     if memory.nbytes >= 2**20 and memory.nbytes <= 2**22:
+    #         read_only = 0
+    #     else:
+    #         read_only = 1
+    #     mscclpp_call = MscclppAllReduce1(mscclpp_group, memory, read_only=read_only)
+    # else:
+    #     proxy_service = ProxyService()
+    #     mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
+    #     proxy_service.start_proxy()
+    proxy_service = ProxyService()
+    mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
+    proxy_service.start_proxy()
     # mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
 
     nccl_call = NcclAllReduce(nccl_op, memory)
@@ -139,6 +142,7 @@ if __name__ == "__main__":
     # create a MscclppGroup
     network_interface = "eth0"
     my_ip = ni.ifaddresses(network_interface)[ni.AF_INET][0]["addr"]
+    print(my_ip)
     root_ip = MPI.COMM_WORLD.bcast(my_ip, root=0)
     ifIpPortTrio = network_interface + ":" + root_ip + ":50000"  # some random port
     mscclpp_group = mscclpp_comm.CommGroup(
@@ -168,7 +172,7 @@ if __name__ == "__main__":
             "Speed Up",
         ]
 
-    for i in range(10, 30):
+    for i in range(10, 15):
         run_benchmark(mscclpp_group, nccl_comm, table, 100, 2**i)
 
     if MPI.COMM_WORLD.rank == 0:

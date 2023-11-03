@@ -78,9 +78,13 @@ class CommGroup:
         else:
             assert False  # only 8 IBs are supported
 
-    def make_connection(self, remote_ranks: list[int], transport: Transport) -> dict[int, Connection]:
+    def make_connection(self, remote_ranks: list[int], transports: Transport | dict[int, Transport]) -> dict[int, Connection]:
         connections = {}
         for rank in remote_ranks:
+            if type(transports) is dict:
+                transport = transports[rank]
+            else:
+                transport = transports
             connections[rank] = self.communicator.connect_on_setup(rank, 0, transport)
         self.communicator.setup()
         connections = {rank: connections[rank].get() for rank in connections}
