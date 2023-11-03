@@ -53,7 +53,7 @@ jobs:
     name: StartVMSS
     displayName: Start VMSS
     inputs:
-      azureSubscription: mscclpp-it
+      azureSubscription: msccl-it
       scriptType: bash
       scriptLocation: inlineScript
       inlineScript: |
