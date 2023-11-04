@@ -192,12 +192,14 @@ class MscclppAllReduce5:
 
         self.proxy_service = proxy_service
         self.scratch = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
+        self.put_buff = cp.zeros((self.memory.size // self.group.nranks) * 8, dtype=self.memory.dtype)
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         across_node_connections = {rank: conn for rank, conn in self.connections.items() if not in_same_node(rank)}
         # create a sm_channel for each remote neighbor
         self.sm_channels = self.group.make_sm_channels_with_scratch(self.memory, self.scratch, same_node_connections)
+        self.sm_out_channels = self.group.make_sm_channels_with_scratch(self.memory_out, self.scratch, same_node_connections)
         self.proxy_channels = self.group.make_proxy_channels_with_scratch(
-            self.proxy_service, self.memory, self.scratch, across_node_connections
+            self.proxy_service, self.put_buff, self.scratch, across_node_connections
         )
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
@@ -205,20 +207,22 @@ class MscclppAllReduce5:
         ).get_compiled_kernel()
         self.params = b""
         self.sm_device_handles = []
+        self.sm_out_device_handles = []
         self.proxy_device_handles = []
         for rank in range(self.group.nranks):
             if rank != self.group.my_rank and in_same_node(rank):
                 self.sm_device_handles.append(self.sm_channels[rank].device_handle().raw)
+                self.sm_out_device_handles.append(self.sm_out_channels[rank].device_handle().raw)
             if rank != self.group.my_rank and not in_same_node(rank):
                 self.proxy_device_handles.append(self.proxy_channels[rank].device_handle().raw)
 
-        print(f"size of sm_device_handles: ", len(self.sm_device_handles))
-        print(f"size of proxy_device_handles: ", len(self.proxy_device_handles))
         self.params += pack(
             cp.asarray(memoryview(b"".join(self.sm_device_handles)), dtype=cp.uint8),
+            cp.asarray(memoryview(b"".join(self.sm_out_device_handles)), dtype=cp.uint8),
             cp.asarray(memoryview(b"".join(self.proxy_device_handles)), dtype=cp.uint8),
             self.memory,
             self.scratch,
+            self.put_buff,
             self.memory_out,
             self.group.my_rank,
             nranks_per_node,

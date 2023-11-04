@@ -101,16 +101,16 @@ def run_benchmark(
     proxy_service.start_proxy()
     # mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
 
-    nccl_call = NcclAllReduce(nccl_op, memory)
+    # nccl_call = NcclAllReduce(nccl_op, memory)
 
     memory_nbytes = memory.nbytes
     mscclpp_time = bench_time(niter, mscclpp_call)
     mscclpp_algBw = memory_nbytes / mscclpp_time / 1e3
     mscclpp_check = "PASS" if check_correctness(memory, mscclpp_call) else "FAIL"
 
-    nccl_time = bench_time(niter, nccl_call)
-    nccl_algBw = memory_nbytes / nccl_time / 1e3
-    nccl_check = "PASS" if check_correctness(memory, nccl_call) else "FAIL"
+    # nccl_time = bench_time(niter, nccl_call)
+    # nccl_algBw = memory_nbytes / nccl_time / 1e3
+    # nccl_check = "PASS" if check_correctness(memory, nccl_call) else "FAIL"
 
     if isinstance(mscclpp_call, MscclppAllReduce3):
         MPI.COMM_WORLD.barrier()
@@ -123,10 +123,10 @@ def run_benchmark(
                 "{:.2f}".format(mscclpp_time),
                 "{:.2f}".format(mscclpp_algBw),
                 mscclpp_check,
-                "{:.2f}".format(nccl_time),
-                "{:.2f}".format(nccl_algBw),
-                nccl_check,
-                "{:.2f}".format(nccl_time / mscclpp_time),
+                # "{:.2f}".format(nccl_time),
+                # "{:.2f}".format(nccl_algBw),
+                # nccl_check,
+                # "{:.2f}".format(nccl_time / mscclpp_time),
             ]
         )
     if MPI.COMM_WORLD.rank == 0:
@@ -155,7 +155,7 @@ if __name__ == "__main__":
     else:
         uid = None
     uid = MPI.COMM_WORLD.bcast(uid, root=0)
-    nccl_comm = nccl.NcclCommunicator(MPI.COMM_WORLD.size, uid, MPI.COMM_WORLD.rank)
+    # nccl_comm = nccl.NcclCommunicator(MPI.COMM_WORLD.size, uid, MPI.COMM_WORLD.rank)
 
     table = None
     if MPI.COMM_WORLD.rank == 0:
@@ -166,14 +166,14 @@ if __name__ == "__main__":
             "Time (us)",
             "AlgBW (GB/s)",
             "Correctness",
-            "NCCL Time (us)",
-            "NCCL AlgBW (GB/s)",
-            "NCCL Correctness",
-            "Speed Up",
+            # "NCCL Time (us)",
+            # "NCCL AlgBW (GB/s)",
+            # "NCCL Correctness",
+            # "Speed Up",
         ]
 
     for i in range(10, 15):
-        run_benchmark(mscclpp_group, nccl_comm, table, 100, 2**i)
+        run_benchmark(mscclpp_group, None, table, 100, 3*2**i)
 
     if MPI.COMM_WORLD.rank == 0:
         print()
