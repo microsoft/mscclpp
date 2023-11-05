@@ -48,8 +48,8 @@ def check_correctness(memory, func):
         ac = cp.allclose(output_memory, expected, rtol=1.0e-2, atol=1.0e-4)
 
     ac = MPI.COMM_WORLD.allreduce(ac, op=MPI.SUM)
-    # if not ac:
-    #     print(output_memory, expected)
+    if not ac:
+        print(output_memory, expected, memory)
     return ac
 
 
@@ -172,7 +172,7 @@ if __name__ == "__main__":
             # "Speed Up",
         ]
 
-    for i in range(10, 15):
+    for i in range(11, 12):
         run_benchmark(mscclpp_group, None, table, 100, 3*2**i)
 
     if MPI.COMM_WORLD.rank == 0:

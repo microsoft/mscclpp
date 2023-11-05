@@ -1,5 +1,6 @@
 import os
 import cupy as cp
+import ctypes
 from mscclpp import Transport, ProxyService
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, pack
@@ -192,7 +193,7 @@ class MscclppAllReduce5:
 
         self.proxy_service = proxy_service
         self.scratch = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
-        self.put_buff = cp.zeros((self.memory.size // self.group.nranks) * 8, dtype=self.memory.dtype)
+        self.put_buff = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         across_node_connections = {rank: conn for rank, conn in self.connections.items() if not in_same_node(rank)}
         # create a sm_channel for each remote neighbor
@@ -216,6 +217,7 @@ class MscclppAllReduce5:
             if rank != self.group.my_rank and not in_same_node(rank):
                 self.proxy_device_handles.append(self.proxy_channels[rank].device_handle().raw)
 
+        # print(f"memory size is {self.memory.size}")
         self.params += pack(
             cp.asarray(memoryview(b"".join(self.sm_device_handles)), dtype=cp.uint8),
             cp.asarray(memoryview(b"".join(self.sm_out_device_handles)), dtype=cp.uint8),
@@ -231,5 +233,5 @@ class MscclppAllReduce5:
         )
 
     def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, 1, 512, 0, stream_ptr)
+        self.kernel.launch_kernel(self.params, 15, 512, 0, stream_ptr)
         return self.memory_out

@@ -678,7 +678,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1) __global__
 extern "C" __global__ void __launch_bounds__(1024, 1)
     allreduce5(mscclpp::SmChannelDeviceHandle* smInChans, mscclpp::SmChannelDeviceHandle* smOutChans,
                mscclpp::SimpleProxyChannelDeviceHandle* proxyChans, TYPE* buff, TYPE* scratch, TYPE* putBuff,
-               TYPE* resultBuff, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+               TYPE* resultBuff, int rank, int nRanksPerNode, int worldSize, int nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
   // This version of allreduce only works for single nodes
   const int nPeers = worldSize - 1;
@@ -691,6 +691,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   const int nBlocksPerPeer = gridDim.x / nPeers;
   const int nBlocksForRemote = nRanksPerNode * nBlocksPerPeer;
   const int startBlockIdxForRemote = rank < nRanksPerNode ? (nRanksPerNode - 1) * nBlocksPerPeer : 0;
+  const int indexOffset = rank < nRanksPerNode ? 0 : nRanksPerNode;
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
   const int peerIdx = blockIdx.x / nBlocksPerPeer;
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
@@ -707,9 +708,9 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   size_t scratchBaseOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LLPacket);
   void* scratchBuff = (void*)((char*)scratch + scratchBaseOffset);
   size_t scratchOffset = scratchBaseOffset + rank * nPktsPerRank * sizeof(mscclpp::LLPacket);
-  size_t putBuffOffset = (flag & 1) ? 0 : nPktsPerRank * sizeof(mscclpp::LLPacket);
+  size_t putBuffOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LLPacket);
   size_t putBuffResultOffset =
-      (flag & 1) ? 2 * nPktsPerRank * sizeof(mscclpp::LLPacket) : 3 * nPktsPerRank * sizeof(mscclpp::LLPacket);
+      (flag & 1) ? 2 * nPktsPerRank * sizeof(mscclpp::LLPacket) : 3 * nPkts * sizeof(mscclpp::LLPacket);
   size_t scratchResultOffset =
       (flag & 1) ? 2 * nPkts * sizeof(mscclpp::LLPacket) : 3 * nPkts * sizeof(mscclpp::LLPacket);
   size_t srcOffset = remoteRank * nelemsPerRank * sizeof(int);
@@ -720,15 +721,20 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   if (inSameNode) {
     smChan.putPackets(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid, blockDim.x * nBlocksPerPeer, flag);
   } else {
-    mscclpp::LLPacket* putPktPtr = (mscclpp::LLPacket*)((char*)putBuff + putBuffOffset);
-    for (int idx = threadIdx.x + (blockIdx.x - startBlockIdxForRemote) * blockDim.x; idx < nPktsPerRank;
-         idx += blockDim.x * nBlocksForRemote) {
-      putPktPtr[idx].write(src[idx].x, src[idx].y, flag);
+    size_t putPktOffset = putBuffOffset + remoteRank * nPktsPerRank * sizeof(mscclpp::LLPacket);
+    mscclpp::LLPacket* putPktPtr = (mscclpp::LLPacket*)((char*)putBuff + putPktOffset);
+    uint2* srcBuff = (uint2*)((char*)buff + remoteRank * nelemsPerRank * sizeof(int));
+    for (int idx = threadIdx.x; idx < nPktsPerRank; idx += blockDim.x) {
+      putPktPtr[idx].write(srcBuff[idx].x, srcBuff[idx].y, flag);
     }
-    twoNodesAllReduceDeviceSyncer.sync(nBlocksForRemote);
+    __syncthreads();
     if (localBlockIdx == 0 && threadIdx.x == 0) {
       // put to remote rank
-      proxyChan.put(scratchOffset, putBuffOffset, nPktsPerRank * sizeof(mscclpp::LLPacket));
+      mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)putBuff + putPktOffset);
+      proxyChan.put(scratchOffset, putPktOffset, nPktsPerRank * sizeof(mscclpp::LLPacket));
+      // if (flag & 64) {
+      //   proxyChan.flush();
+      // }
     }
   }
   // step 2: get data from scratch buffer, reduce data
@@ -736,6 +742,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     uint2 data = make_uint2(0, 0);
     for (int index = 0; index < nPeers; index++) {
+      const int shifted_index = (index + indexOffset) % nPeers;
       const int remoteRank = index < rank ? index : index + 1;
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
       uint2 val = dstPkt[idx].read(flag);
@@ -743,7 +750,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
     }
     data = add_vectors<TYPE>(data, src[idx]);
     dst[idx] = data;
-    // putResultPktPtr[idx].write(data.x, data.y, flag);
+    putResultPktPtr[idx].write(data.x, data.y, flag);
   }
   deviceSyncer.sync(gridDim.x);
   // step 3: write result to remote scratch buffer & get data result from scratch buffer
@@ -755,7 +762,8 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   // } else {
   //   if (localBlockIdx == 0 && threadIdx.x == 0) {
   //     // put to remote rank
-  //     proxyChan.put(scratchResultOffset, putBuffResultOffset, nPktsPerRank * sizeof(mscclpp::LLPacket));
+  //     proxyChan.put(scratchResultOffset + rank * nPktsPerRank * sizeof(mscclpp::LLPacket), putBuffResultOffset,
+  //                   nPktsPerRank * sizeof(mscclpp::LLPacket));
   //     if (flag & 64) {
   //       proxyChan.flush();
   //     }
