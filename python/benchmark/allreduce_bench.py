@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import cupy as cp
-from mscclpp_op import MscclppAllReduce1, MscclppAllReduce2, MscclppAllReduce3, MscclppAllReduce5
+from mscclpp_op import MscclppAllReduce1, MscclppAllReduce2, MscclppAllReduce3, MscclppAllReduce4, MscclppAllReduce5
 from nccl_op import NcclAllReduce
 from mpi4py import MPI
 import cupy.cuda.nccl as nccl
@@ -48,8 +48,8 @@ def check_correctness(memory, func):
         ac = cp.allclose(output_memory, expected, rtol=1.0e-2, atol=1.0e-4)
 
     ac = MPI.COMM_WORLD.allreduce(ac, op=MPI.SUM)
-    # if not ac:
-    #     print(output_memory, expected, memory)
+    # if not ac and MPI.COMM_WORLD.rank == 0:
+    #     print(output_memory, expected)
     return ac
 
 
@@ -102,7 +102,11 @@ def run_benchmark(
             proxy_service = ProxyService()
             mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
             proxy_service.start_proxy()
-    # mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
+        else:
+            # TODO: fix correctness issue
+            proxy_service = ProxyService()
+            mscclpp_call = MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)
+            proxy_service.start_proxy()
 
     nccl_call = NcclAllReduce(nccl_op, memory)
 
@@ -115,7 +119,11 @@ def run_benchmark(
     nccl_algBw = memory_nbytes / nccl_time / 1e3
     nccl_check = "PASS" if check_correctness(memory, nccl_call) else "FAIL"
 
-    if isinstance(mscclpp_call, MscclppAllReduce3):
+    if (
+        isinstance(mscclpp_call, MscclppAllReduce3)
+        or isinstance(mscclpp_call, MscclppAllReduce5)
+        or isinstance(mscclpp_call, MscclppAllReduce4)
+    ):
         MPI.COMM_WORLD.barrier()
         proxy_service.stop_proxy()
 
@@ -175,8 +183,8 @@ if __name__ == "__main__":
             "Speed Up",
         ]
 
-    for i in range(9, 19):
-        run_benchmark(mscclpp_group, nccl_comm, table, 100, 2**i)
+    for i in range(9, 26):
+        run_benchmark(mscclpp_group, nccl_comm, table, 100, 3*2**i)
 
     if MPI.COMM_WORLD.rank == 0:
         print()
