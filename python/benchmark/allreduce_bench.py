@@ -84,21 +84,24 @@ def run_benchmark(
     memory_out = cp.zeros(nelem, dtype=data_type)
     cp.cuda.runtime.deviceSynchronize()
 
-    # if memory.nbytes < 2**20:
-    #     mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
-    # elif memory.nbytes < 2**29:
-    #     if memory.nbytes >= 2**20 and memory.nbytes <= 2**22:
-    #         read_only = 0
-    #     else:
-    #         read_only = 1
-    #     mscclpp_call = MscclppAllReduce1(mscclpp_group, memory, read_only=read_only)
-    # else:
-    #     proxy_service = ProxyService()
-    #     mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
-    #     proxy_service.start_proxy()
-    proxy_service = ProxyService()
-    mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
-    proxy_service.start_proxy()
+    if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
+        if memory.nbytes < 2**20:
+            mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
+        elif memory.nbytes < 2**29:
+            if memory.nbytes >= 2**20 and memory.nbytes <= 2**22:
+                read_only = 0
+            else:
+                read_only = 1
+            mscclpp_call = MscclppAllReduce1(mscclpp_group, memory, read_only=read_only)
+        else:
+            proxy_service = ProxyService()
+            mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
+            proxy_service.start_proxy()
+    else:
+        if memory.nbytes < 2**20:
+            proxy_service = ProxyService()
+            mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
+            proxy_service.start_proxy()
     # mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
 
     nccl_call = NcclAllReduce(nccl_op, memory)
@@ -172,8 +175,8 @@ if __name__ == "__main__":
             "Speed Up",
         ]
 
-    for i in range(11, 20):
-        run_benchmark(mscclpp_group, nccl_comm, table, 100, 3 * 2**i)
+    for i in range(9, 19):
+        run_benchmark(mscclpp_group, nccl_comm, table, 100, 2**i)
 
     if MPI.COMM_WORLD.rank == 0:
         print()

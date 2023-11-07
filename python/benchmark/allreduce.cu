@@ -10,7 +10,6 @@
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 __device__ mscclpp::DeviceSyncer allGatherDeviceSyncer;
 __device__ mscclpp::DeviceSyncer reduceScatterDeviceSyncer;
-__device__ mscclpp::DeviceSyncer twoNodesAllReduceDeviceSyncer;
 
 #ifndef TYPE
 #define TYPE float
