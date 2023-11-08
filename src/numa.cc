@@ -4,7 +4,7 @@
 #include <numa.h>
 
 #include <fstream>
-#include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/gpu_utils.hpp>
 
 #include "api.h"
 

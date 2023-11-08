@@ -220,9 +220,9 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
     if ((rank ^ (i & 1)) == 0) {
       if (CheckCorrectness) {
         // If each thread writes 8 bytes at once, we don't need a barrier before putPackets().
-        for (int j = threadId; j < nPkt; j += numThreads) {
-          buffPtr[2 * j] = putOffset + i + 2 * j;
-          buffPtr[2 * j + 1] = putOffset + i + 2 * j + 1;
+        for (size_t j = threadId; j < nPkt; j += numThreads) {
+          buffPtr[2 * j] = putOffset + i + 2 * (int)j;
+          buffPtr[2 * j + 1] = putOffset + i + 2 * (int)j + 1;
         }
         // __syncthreads();
       }
@@ -242,14 +242,14 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
       if (CheckCorrectness) {
         // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
         // __syncthreads();
-        for (int j = threadId; j < nPkt; j += numThreads) {
-          if (buffPtr[2 * j] != getOffset + i + 2 * j) {
+        for (size_t j = threadId; j < nPkt; j += numThreads) {
+          if (buffPtr[2 * j] != getOffset + i + 2 * (int)j) {
             // printf("ERROR: rank = %d, buffPtr[%d] = %d, expected %d. Skipping following errors\n", rank, 2 * j,
             //        buffPtr[2 * j], getOffset + i + 2 * j);
             *ret = 1;
             break;
           }
-          if (buffPtr[2 * j + 1] != getOffset + i + 2 * j + 1) {
+          if (buffPtr[2 * j + 1] != getOffset + i + 2 * (int)j + 1) {
             // printf("ERROR: rank = %d, buffPtr[%d] = %d, expected %d. Skipping following errors\n", rank, 2 * j + 1,
             //        buffPtr[2 * j + 1], getOffset + i + 2 * j + 1);
             *ret = 1;

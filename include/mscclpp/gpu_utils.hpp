@@ -1,14 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_CUDA_UTILS_HPP_
-#define MSCCLPP_CUDA_UTILS_HPP_
-
-#include <cuda_runtime.h>
+#ifndef MSCCLPP_GPU_UTILS_HPP_
+#define MSCCLPP_GPU_UTILS_HPP_
 
 #include <cstring>
 #include <memory>
 #include <mscclpp/errors.hpp>
+#include <mscclpp/gpu.hpp>
 
 /// Throw @ref mscclpp::CudaError if @p cmd does not return cudaSuccess.
 /// @param cmd The command to execute.
@@ -238,4 +237,4 @@ void memcpyCuda(T* dst, const T* src, size_t count, cudaMemcpyKind kind = cudaMe
 
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_CUDA_UTILS_HPP_
+#endif  // MSCCLPP_GPU_UTILS_HPP_

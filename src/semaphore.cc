@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <cuda/atomic>
+#include <mscclpp/atomic.hpp>
 #include <mscclpp/semaphore.hpp>
 
 #include "api.h"
@@ -67,8 +67,8 @@ MSCCLPP_API_CPP void Host2HostSemaphore::signal() {
 }
 
 MSCCLPP_API_CPP bool Host2HostSemaphore::poll() {
-  bool signaled = (cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*(uint64_t*)localInboundSemaphore_.get()}.load(
-                       cuda::memory_order_acquire) > (*expectedInboundSemaphore_));
+  
+  bool signaled = (atomicLoad((uint64_t*)localInboundSemaphore_.get(), memoryOrderAcquire) > (*expectedInboundSemaphore_));
   if (signaled) (*expectedInboundSemaphore_) += 1;
   return signaled;
 }
@@ -76,8 +76,7 @@ MSCCLPP_API_CPP bool Host2HostSemaphore::poll() {
 MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
   (*expectedInboundSemaphore_) += 1;
   int64_t spinCount = 0;
-  while (cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*(uint64_t*)localInboundSemaphore_.get()}.load(
-             cuda::memory_order_acquire) < (*expectedInboundSemaphore_)) {
+  while (atomicLoad((uint64_t*)localInboundSemaphore_.get(), memoryOrderAcquire) < (*expectedInboundSemaphore_)) {
     if (spinCount++ == maxSpinCount) {
       throw Error("Host2HostSemaphore::wait timed out", ErrorCode::Timeout);
     }

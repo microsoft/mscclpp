@@ -8,7 +8,6 @@
 #include <functional>
 #include <memory>
 #include <mscclpp/fifo_device.hpp>
-#include <mscclpp/poll.hpp>
 
 namespace mscclpp {
 

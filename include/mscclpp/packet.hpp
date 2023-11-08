@@ -4,12 +4,12 @@
 #ifndef MSCCLPP_PACKET_HPP_
 #define MSCCLPP_PACKET_HPP_
 
-#include "poll.hpp"
+#include "poll_device.hpp"
 
 namespace mscclpp {
 
 /// LL (low latency) protocol packet.
-union LLPacket {
+union alignas(16) LLPacket {
   // Assume data is written with an atomicity of 8 bytes (IB/RDMA).
   struct {
     uint32_t data1;
@@ -18,65 +18,64 @@ union LLPacket {
     uint32_t flag2;
   };
 
-  struct {
-    uint64_t x;
-    uint64_t y;
-  } vec;
+#if defined(MSCCLPP_ON_HOST_DEVICE)
+  ulonglong2 raw_;
 
-  uint64_t v[2];
-
-#ifdef __CUDACC__
-  __forceinline__ __device__ LLPacket() {}
+  MSCCLPP_DEVICE_INLINE LLPacket() {}
 
   /// Write 8 bytes of data to the packet.
   /// @param val1 The first 4-byte data to write.
   /// @param val2 The second 4-byte data to write.
   /// @param flag The flag to write.
-  __forceinline__ __device__ void write(uint32_t val1, uint32_t val2, uint32_t flag) {
-    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"(val1), "r"(flag), "r"(val2), "r"(flag));
+  MSCCLPP_DEVICE_INLINE void write(uint32_t val1, uint32_t val2, uint32_t flag) {
+    // Do not directly write on `raw_` to make sure that this is interpreted as two 8-byte writes,
+    // not four 4-byte writes.
+    uint4 reg = make_uint4(val1, flag, val2, flag);
+    raw_ = *reinterpret_cast<ulonglong2*>(&reg);
   }
 
   /// Write 8 bytes of data to the packet.
   /// @param val The 8-byte data to write.
   /// @param flag The flag to write.
-  __forceinline__ __device__ void write(uint64_t val, uint32_t flag) {
-    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(v), "r"((uint32_t)val), "r"(flag),
-                 "r"((uint32_t)(val >> 32)), "r"(flag));
+  MSCCLPP_DEVICE_INLINE void write(uint64_t val, uint32_t flag) {
+    // Do not directly write on `raw_` to make sure that this is interpreted as two 8-byte writes,
+    // not four 4-byte writes.
+    uint4 reg = make_uint4((uint32_t)val, flag, (uint32_t)(val >> 32), flag);
+    raw_ = *reinterpret_cast<ulonglong2*>(&reg);
   }
 
   /// Helper of @ref read().
   /// @param flag The flag to read.
   /// @param data The 8-byte data read.
   /// @return True if the flag is not equal to the given flag.
-  __forceinline__ __device__ bool readOnce(uint32_t flag, uint2& data) const {
-    uint32_t flag1, flag2;
-    asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
-                 : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2)
-                 : "l"(v));
-    return (flag1 != flag) || (flag2 != flag);
+  MSCCLPP_DEVICE_INLINE bool readOnce(uint32_t flag, uint2& data) const {
+    ulonglong2 reg = raw_;
+    uint4 *ptr = reinterpret_cast<uint4*>(&reg);
+    data.x = ptr->w;
+    data.y = ptr->y;
+    return (ptr->x != flag) || (ptr->z != flag);
   }
 
   /// Read 8 bytes of data from the packet.
   /// @param flag The flag to read.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   /// @return The 8-byte data read.
-  __forceinline__ __device__ uint2 read(uint32_t flag, int64_t maxSpinCount = 100000000) const {
+  MSCCLPP_DEVICE_INLINE uint2 read(uint32_t flag, int64_t maxSpinCount = 100000000) const {
     uint2 data;
     POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
     return data;
   }
 
   /// Clear the packet.
-  __forceinline__ __device__ void clear() {
-    vec.x = 0;
-    vec.y = 0;
+  MSCCLPP_DEVICE_INLINE void clear() {
+    raw_ = make_ulonglong2(0, 0);
   }
-#endif  // __CUDACC__
+#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
 };
 
-#ifdef __CUDACC__
+#if defined(MSCCLPP_ON_HOST_DEVICE)
 /// Read from the origin and write to the target buffer.
-__forceinline__ __device__ void putPackets(void* targetPtr, uint64_t targetOffset, const void* originPtr,
+MSCCLPP_DEVICE_INLINE void putPackets(void* targetPtr, uint64_t targetOffset, const void* originPtr,
                                            uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
                                            uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
@@ -90,7 +89,7 @@ __forceinline__ __device__ void putPackets(void* targetPtr, uint64_t targetOffse
 }
 
 /// Read from the target buffer and write to the origin.
-__forceinline__ __device__ void getPackets(const void* targetPtr, uint64_t targetOffset, void* originPtr,
+MSCCLPP_DEVICE_INLINE void getPackets(const void* targetPtr, uint64_t targetOffset, void* originPtr,
                                            uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
                                            uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
@@ -102,7 +101,7 @@ __forceinline__ __device__ void getPackets(const void* targetPtr, uint64_t targe
     originBase[i] = pkt->read(flag);
   }
 }
-#endif  // __CUDACC__
+#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
 
 };  // namespace mscclpp
 

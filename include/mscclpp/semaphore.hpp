@@ -6,8 +6,7 @@
 
 #include <memory>
 #include <mscclpp/core.hpp>
-#include <mscclpp/cuda_utils.hpp>
-#include <mscclpp/poll.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/semaphore_device.hpp>
 
 namespace mscclpp {
@@ -125,7 +124,7 @@ class SmDevice2DeviceSemaphore : public BaseSemaphore<CudaDeleter, CudaDeleter> 
   SmDevice2DeviceSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
 
   /// Constructor.
-  SmDevice2DeviceSemaphore() = default;
+  SmDevice2DeviceSemaphore() = delete;
 
   /// Device-side handle for @ref SmDevice2DeviceSemaphore.
   using DeviceHandle = SmDevice2DeviceSemaphoreDeviceHandle;

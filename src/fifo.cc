@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <cuda/atomic>
-#include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/atomic.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/fifo.hpp>
 
 #include "api.h"
@@ -43,15 +43,13 @@ MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
   ProxyTrigger trigger;
   ProxyTrigger* ptr = &pimpl->triggers.get()[pimpl->hostTail % pimpl->size];
   // we are loading fst first. if fst is non-zero then snd is also valid
-  trigger.fst = cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{ptr->fst}.load(cuda::memory_order_acquire);
+  trigger.fst = atomicLoad(&(ptr->fst), memoryOrderAcquire);
   trigger.snd = ptr->snd;
   return trigger;
 }
 
 MSCCLPP_API_CPP void Fifo::pop() {
-  cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{pimpl->triggers.get()[pimpl->hostTail % pimpl->size].fst}.store(
-      0, cuda::memory_order_release);
-
+  atomicStore(&(pimpl->triggers.get()[pimpl->hostTail % pimpl->size].fst), uint64_t{0}, memoryOrderRelease);
   (pimpl->hostTail)++;
 }
 

@@ -4,9 +4,10 @@
 #ifndef MSCCLPP_FIFO_DEVICE_HPP_
 #define MSCCLPP_FIFO_DEVICE_HPP_
 
-#include <cuda/atomic>
+#include "atomic.hpp"
+#include "poll_device.hpp"
 
-#include "poll.hpp"
+#include <cstdint>
 
 namespace mscclpp {
 
@@ -16,8 +17,14 @@ namespace mscclpp {
 /// ProxyTrigger elements and a single host proxy thread consumes these work elements.
 ///
 /// Do not use the most significant bit of @ref snd as it is reserved for memory consistency purposes
-struct alignas(16) ProxyTrigger {
-  uint64_t fst, snd;
+union alignas(16) ProxyTrigger {
+  struct {
+    uint64_t fst;
+    uint64_t snd;
+  };
+#if defined(MSCCLPP_ON_HOST_DEVICE)
+  longlong2 raw_;
+#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
 };
 
 /// A concurrent FIFO where multiple device threads can push work elements and a single host proxy thread consumes them.
@@ -33,15 +40,14 @@ struct alignas(16) ProxyTrigger {
 /// tail as there is usually enough space for device threads to push their work into.
 ///
 struct FifoDeviceHandle {
-#ifdef __CUDACC__
+#if defined(MSCCLPP_ON_HOST_DEVICE)
   /// Push a trigger to the FIFO.
   ///
   /// @param trigger The trigger to push.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   /// @return The new head of the FIFO.
-  __forceinline__ __device__ uint64_t push(ProxyTrigger trigger, int64_t maxSpinCount = 1000000) {
-    uint64_t curFifoHead =
-        cuda::atomic_ref<uint64_t, cuda::thread_scope_device>{*this->head}.fetch_add(1, cuda::memory_order_relaxed);
+  MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, int64_t maxSpinCount = 1000000) {
+    uint64_t curFifoHead = atomicFetchAdd(this->head, (uint64_t)1, memoryOrderRelaxed);
 
     // make the last bit intentionally non-zero so that we can safely poll. Don't worry, we will change it back in host
     // side
@@ -54,17 +60,16 @@ struct FifoDeviceHandle {
     // condition is not met.
     if (curFifoHead >= size + *(this->tailReplica)) {
       OR_POLL_MAYBE_JAILBREAK(
-          (curFifoHead >= size + cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*this->tailReplica}.load(
-                                     cuda::memory_order_relaxed)),
-          (cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{this->triggers[curFifoHead % size].fst}.load(
-               cuda::memory_order_relaxed) != 0),
+          (curFifoHead >= size + atomicLoad(this->tailReplica, memoryOrderRelaxed)),
+          (atomicLoad(&(this->triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0),
           maxSpinCount);
     }
 
-    ProxyTrigger* triggerPtr = (ProxyTrigger*)&(this->triggers[curFifoHead % size]);
+    longlong2* triggerPtr = (longlong2*)&(this->triggers[curFifoHead % size]);
 
     // store with memory order release so that the while loop does not go pass this.
-    asm volatile("st.global.release.cta.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
+    // asm volatile("st.global.release.cta.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
+    *triggerPtr = trigger.raw_;
 
     return curFifoHead;
   }
@@ -73,17 +78,15 @@ struct FifoDeviceHandle {
   ///
   /// @param curFifoHead The current head of the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  __forceinline__ __device__ void sync(uint64_t curFifoHead, int64_t maxSpinCount = 1000000) {
+  MSCCLPP_DEVICE_INLINE void sync(uint64_t curFifoHead, int64_t maxSpinCount = 1000000) {
     // Same as push but in this case checking the fist condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
     OR_POLL_MAYBE_JAILBREAK(
-        (curFifoHead >=
-         cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*this->tailReplica}.load(cuda::memory_order_relaxed)),
-        (cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{this->triggers[curFifoHead % size].fst}.load(
-             cuda::memory_order_relaxed) != 0),
+        (curFifoHead >= atomicLoad(this->tailReplica, memoryOrderRelaxed)),
+        (atomicLoad(&(this->triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0),
         maxSpinCount);
   }
-#endif  // __CUDACC__
+#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
 
   /// The FIFO buffer that is allocated on the host via `cudaHostAlloc()`.
   ProxyTrigger* triggers;

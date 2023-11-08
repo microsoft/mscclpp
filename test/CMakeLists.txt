@@ -3,10 +3,15 @@
 
 find_package(MPI)
 
-set(TEST_LIBS_COMMON mscclpp ${CUDA_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} ${GDRCOPY_LIBRARIES})
+set(TEST_LIBS_COMMON mscclpp ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES})
 set(TEST_LIBS_GTEST GTest::gtest_main GTest::gmock_main)
-set(TEST_INC_COMMON PRIVATE ${PROJECT_SOURCE_DIR}/include ${CUDAToolkit_INCLUDE_DIRS})
+set(TEST_INC_COMMON PRIVATE ${PROJECT_SOURCE_DIR}/include ${GPU_INCLUDE_DIRS})
 set(TEST_INC_INTERNAL PRIVATE ${PROJECT_SOURCE_DIR}/src/include)
+
+if(USE_ROCM)
+    file(GLOB_RECURSE CU_SOURCES CONFIGURE_DEPENDS *.cu)
+    set_source_files_properties(${CU_SOURCES} PROPERTIES LANGUAGE HIP)
+endif()
 
 function(add_test_executable name sources)
     add_executable(${name} ${sources})

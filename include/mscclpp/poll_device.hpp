@@ -1,15 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_POLL_HPP_
-#define MSCCLPP_POLL_HPP_
+#ifndef MSCCLPP_POLL_DEVICE_HPP_
+#define MSCCLPP_POLL_DEVICE_HPP_
 
-#ifdef __CUDACC__
+#include "device.hpp"
+
+#if defined(MSCCLPP_ON_HOST_DEVICE)
 
 #include <cstdint>
 
 extern "C" __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
-                                         const char *__function) __THROW;
+                                         const char *__function);
 
 // If a spin is stuck, escape from it and set status to 1.
 #define POLL_MAYBE_JAILBREAK_ESCAPE(__cond, __max_spin_cnt, __status) \
@@ -52,6 +54,6 @@ extern "C" __device__ void __assert_fail(const char *__assertion, const char *__
     }                                                                              \
   } while (0);
 
-#endif  // __CUDACC__
+#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
 
-#endif  // MSCCLPP_POLL_HPP_
+#endif  // MSCCLPP_POLL_DEVICE_HPP_

@@ -3,6 +3,7 @@
 
 #include <cstring>
 #include <mscclpp/errors.hpp>
+#include <mscclpp/gpu.hpp>
 
 #include "api.h"
 
@@ -42,13 +43,15 @@ MSCCLPP_API_CPP SysError::SysError(const std::string& message, int errorCode) : 
   message_ = message + " (System failure: " + std::strerror(errorCode) + ")";
 }
 
-MSCCLPP_API_CPP CudaError::CudaError(const std::string& message, cudaError_t errorCode) : BaseError(errorCode) {
-  message_ = message + " (Cuda failure: " + cudaGetErrorString(errorCode) + ")";
+MSCCLPP_API_CPP CudaError::CudaError(const std::string& message, int errorCode) : BaseError(errorCode) {
+  message_ = message + " (Cuda failure: " + cudaGetErrorString(static_cast<cudaError_t>(errorCode)) + ")";
 }
 
-MSCCLPP_API_CPP CuError::CuError(const std::string& message, CUresult errorCode) : BaseError(errorCode) {
+MSCCLPP_API_CPP CuError::CuError(const std::string& message, int errorCode) : BaseError(errorCode) {
   const char* errStr;
-  cuGetErrorString(errorCode, &errStr);
+  if (cuGetErrorString(static_cast<CUresult>(errorCode), &errStr) != CUDA_SUCCESS) {
+    errStr = "failed to get error string";
+  }
   message_ = message + " (Cu failure: " + errStr + ")";
 }
 

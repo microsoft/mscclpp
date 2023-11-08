@@ -4,7 +4,7 @@
 #ifndef MSCCLPP_CONCURRENCY_HPP_
 #define MSCCLPP_CONCURRENCY_HPP_
 
-#include <mscclpp/poll.hpp>
+#include "poll_device.hpp"
 
 namespace mscclpp {
 
@@ -17,12 +17,11 @@ struct DeviceSyncer {
   /// Destroy the DeviceSyncer object.
   ~DeviceSyncer() = default;
 
-#ifdef __CUDACC__
   /// Synchronize all threads inside a kernel. Guarantee that all previous work of all threads in cooperating blocks is
   /// finished.
   /// @param blockNum The number of blocks that will synchronize.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  __forceinline__ __device__ void sync(int blockNum, int64_t maxSpinCount = 100000000) {
+  MSCCLPP_DEVICE_INLINE void sync(int blockNum, int64_t maxSpinCount = 100000000) {
     int maxOldCnt = blockNum - 1;
     __syncthreads();
     if (blockNum == 1) return;
@@ -47,7 +46,6 @@ struct DeviceSyncer {
     // the flag is flipped.
     __syncthreads();
   }
-#endif
 
  private:
   /// The flag to indicate whether the barrier is reached by the latest thread.

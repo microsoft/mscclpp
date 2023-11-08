@@ -554,7 +554,10 @@ class NonblockingFuture {
   /// Copy constructor.
   ///
   /// @param other The @ref NonblockingFuture to copy.
-  NonblockingFuture(const NonblockingFuture& other) = default;
+  NonblockingFuture& operator=(const NonblockingFuture& other) {
+    future = other.future;
+    return *this;
+  }
 
   /// Check if the value is ready to be retrieved.
   ///

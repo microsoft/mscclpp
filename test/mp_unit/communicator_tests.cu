@@ -3,7 +3,7 @@
 
 #include <mpi.h>
 
-#include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/semaphore.hpp>
 
 #include "mp_unit_tests.hpp"
