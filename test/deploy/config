@@ -1,8 +1,8 @@
-Host mscclpp-it-000000
+Host mscclit-000000
   Port 22345
   IdentityFile /root/mscclpp/sshkey
   StrictHostKeyChecking no
-Host mscclpp-it-000001
+Host mscclit-000001
   Port 22345
   IdentityFile /root/mscclpp/sshkey
   StrictHostKeyChecking no
