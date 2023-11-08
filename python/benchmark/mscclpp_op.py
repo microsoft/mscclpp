@@ -194,23 +194,33 @@ class MscclppAllReduce4:
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         # create a sm_channel for each remote neighbor
         self.sm_channels = self.group.make_sm_channels(self.memory, same_node_connections)
-        self.proxy_channels = self.group.make_proxy_channels(self.proxy_service, self.memory, self.connections)
+        self.reduce_scatter_proxy_channels = self.group.make_proxy_channels_with_scratch(
+            self.proxy_service, self.memory, self.scratch, self.connections
+        )
+        self.all_gather_proxy_channels = self.group.make_proxy_channels(
+            self.proxy_service, self.memory, self.connections
+        )
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
             file="allreduce.cu", kernel_name="allreduce4", file_dir=file_dir, macro_dict={"TYPE": type_str}
         ).get_compiled_kernel()
         self.params = b""
         self.sm_device_handles = []
-        self.proxy_device_handles = []
+        self.reduce_sactter_proxy_device_handles = []
+        self.all_gather_proxy_device_handles = []
         for rank in range(self.group.nranks):
             if rank != self.group.my_rank and in_same_node(rank):
                 self.sm_device_handles.append(self.sm_channels[rank].device_handle().raw)
             if rank != self.group.my_rank:
-                self.proxy_device_handles.append(self.proxy_channels[rank].device_handle().raw)
+                self.reduce_sactter_proxy_device_handles.append(
+                    self.reduce_scatter_proxy_channels[rank].device_handle().raw
+                )
+                self.all_gather_proxy_device_handles.append(self.all_gather_proxy_channels[rank].device_handle().raw)
 
         self.params += pack(
             cp.asarray(memoryview(b"".join(self.sm_device_handles)), dtype=cp.uint8),
-            cp.asarray(memoryview(b"".join(self.proxy_device_handles)), dtype=cp.uint8),
+            cp.asarray(memoryview(b"".join(self.reduce_sactter_proxy_device_handles)), dtype=cp.uint8),
+            cp.asarray(memoryview(b"".join(self.all_gather_proxy_device_handles)), dtype=cp.uint8),
             self.memory,
             self.scratch,
             self.group.my_rank,

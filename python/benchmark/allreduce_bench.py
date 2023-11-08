@@ -48,8 +48,8 @@ def check_correctness(memory, func):
         ac = cp.allclose(output_memory, expected, rtol=1.0e-2, atol=1.0e-4)
 
     ac = MPI.COMM_WORLD.allreduce(ac, op=MPI.SUM)
-    # if not ac and MPI.COMM_WORLD.rank == 0:
-    #     print(output_memory, expected)
+    if not ac:
+        print(output_memory, expected)
     return ac
 
 
@@ -103,7 +103,6 @@ def run_benchmark(
             mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
             proxy_service.start_proxy()
         else:
-            # TODO: fix correctness issue
             proxy_service = ProxyService()
             mscclpp_call = MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)
             proxy_service.start_proxy()
@@ -153,7 +152,6 @@ if __name__ == "__main__":
     # create a MscclppGroup
     network_interface = "eth0"
     my_ip = ni.ifaddresses(network_interface)[ni.AF_INET][0]["addr"]
-    print(my_ip)
     root_ip = MPI.COMM_WORLD.bcast(my_ip, root=0)
     ifIpPortTrio = network_interface + ":" + root_ip + ":50000"  # some random port
     mscclpp_group = mscclpp_comm.CommGroup(
@@ -184,7 +182,7 @@ if __name__ == "__main__":
         ]
 
     for i in range(9, 26):
-        run_benchmark(mscclpp_group, nccl_comm, table, 100, 3*2**i)
+        run_benchmark(mscclpp_group, nccl_comm, table, 100, 3 * 2**i)
 
     if MPI.COMM_WORLD.rank == 0:
         print()
