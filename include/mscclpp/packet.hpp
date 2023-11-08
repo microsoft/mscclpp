@@ -50,7 +50,7 @@ union alignas(16) LLPacket {
   /// @return True if the flag is not equal to the given flag.
   MSCCLPP_DEVICE_INLINE bool readOnce(uint32_t flag, uint2& data) const {
     ulonglong2 reg = raw_;
-    uint4 *ptr = reinterpret_cast<uint4*>(&reg);
+    uint4* ptr = reinterpret_cast<uint4*>(&reg);
     data.x = ptr->w;
     data.y = ptr->y;
     return (ptr->x != flag) || (ptr->z != flag);
@@ -67,17 +67,15 @@ union alignas(16) LLPacket {
   }
 
   /// Clear the packet.
-  MSCCLPP_DEVICE_INLINE void clear() {
-    raw_ = make_ulonglong2(0, 0);
-  }
+  MSCCLPP_DEVICE_INLINE void clear() { raw_ = make_ulonglong2(0, 0); }
 #endif  // defined(MSCCLPP_ON_HOST_DEVICE)
 };
 
 #if defined(MSCCLPP_ON_HOST_DEVICE)
 /// Read from the origin and write to the target buffer.
 MSCCLPP_DEVICE_INLINE void putPackets(void* targetPtr, uint64_t targetOffset, const void* originPtr,
-                                           uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
-                                           uint32_t numThreads, uint32_t flag) {
+                                      uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
+                                      uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
   const uint32_t* originBase = (const uint32_t*)((const char*)originPtr + originOffset);
   LLPacket* targetBase = (LLPacket*)((char*)targetPtr + targetOffset);
@@ -90,8 +88,8 @@ MSCCLPP_DEVICE_INLINE void putPackets(void* targetPtr, uint64_t targetOffset, co
 
 /// Read from the target buffer and write to the origin.
 MSCCLPP_DEVICE_INLINE void getPackets(const void* targetPtr, uint64_t targetOffset, void* originPtr,
-                                           uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
-                                           uint32_t numThreads, uint32_t flag) {
+                                      uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
+                                      uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
   const LLPacket* targetBase = (const LLPacket*)((const char*)targetPtr + targetOffset);
   uint2* originBase = (uint2*)((char*)originPtr + originOffset);

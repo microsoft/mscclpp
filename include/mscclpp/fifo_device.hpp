@@ -4,10 +4,10 @@
 #ifndef MSCCLPP_FIFO_DEVICE_HPP_
 #define MSCCLPP_FIFO_DEVICE_HPP_
 
+#include <cstdint>
+
 #include "atomic.hpp"
 #include "poll_device.hpp"
-
-#include <cstdint>
 
 namespace mscclpp {
 
@@ -59,16 +59,14 @@ struct FifoDeviceHandle {
     // As atomic access is slow, we first check using the bare pointer and then use the atomic load if the
     // condition is not met.
     if (curFifoHead >= size + *(this->tailReplica)) {
-      OR_POLL_MAYBE_JAILBREAK(
-          (curFifoHead >= size + atomicLoad(this->tailReplica, memoryOrderRelaxed)),
-          (atomicLoad(&(this->triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0),
-          maxSpinCount);
+      OR_POLL_MAYBE_JAILBREAK((curFifoHead >= size + atomicLoad(this->tailReplica, memoryOrderRelaxed)),
+                              (atomicLoad(&(this->triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0),
+                              maxSpinCount);
     }
 
     longlong2* triggerPtr = (longlong2*)&(this->triggers[curFifoHead % size]);
 
     // store with memory order release so that the while loop does not go pass this.
-    // asm volatile("st.global.release.cta.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
     *triggerPtr = trigger.raw_;
 
     return curFifoHead;
@@ -81,10 +79,9 @@ struct FifoDeviceHandle {
   MSCCLPP_DEVICE_INLINE void sync(uint64_t curFifoHead, int64_t maxSpinCount = 1000000) {
     // Same as push but in this case checking the fist condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
-    OR_POLL_MAYBE_JAILBREAK(
-        (curFifoHead >= atomicLoad(this->tailReplica, memoryOrderRelaxed)),
-        (atomicLoad(&(this->triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0),
-        maxSpinCount);
+    OR_POLL_MAYBE_JAILBREAK((curFifoHead >= atomicLoad(this->tailReplica, memoryOrderRelaxed)),
+                            (atomicLoad(&(this->triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0),
+                            maxSpinCount);
   }
 #endif  // defined(MSCCLPP_ON_HOST_DEVICE)
 

@@ -90,8 +90,7 @@ struct ProxyChannelDeviceHandle {
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  MSCCLPP_DEVICE_INLINE void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
-                                      uint64_t size) {
+  MSCCLPP_DEVICE_INLINE void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset, uint64_t size) {
     fifo_.push(ChannelTrigger(TriggerData, dst, dstOffset, src, srcOffset, size, semaphoreId_).value);
   }
 
@@ -105,9 +104,7 @@ struct ProxyChannelDeviceHandle {
   }
 
   /// Push a @ref TriggerFlag to the FIFO.
-  MSCCLPP_DEVICE_INLINE void signal() {
-    fifo_.push(ChannelTrigger(TriggerFlag, 0, 0, 0, 0, 1, semaphoreId_).value);
-  }
+  MSCCLPP_DEVICE_INLINE void signal() { fifo_.push(ChannelTrigger(TriggerFlag, 0, 0, 0, 0, 1, semaphoreId_).value); }
 
   /// Push a @ref TriggerData and a @ref TriggerFlag at the same time to the FIFO.
   /// @param dst The destination memory region.
@@ -116,7 +113,7 @@ struct ProxyChannelDeviceHandle {
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
-                                                uint64_t size) {
+                                           uint64_t size) {
     fifo_.push(ChannelTrigger(TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, size, semaphoreId_).value);
   }
 
@@ -135,8 +132,8 @@ struct ProxyChannelDeviceHandle {
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, uint64_t dstOffset, MemoryId src,
-                                                        uint64_t srcOffset, uint64_t size) {
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
+                                                   uint64_t size) {
     uint64_t curFifoHead = fifo_.push(
         ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, semaphoreId_)
             .value);

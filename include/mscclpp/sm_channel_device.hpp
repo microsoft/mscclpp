@@ -69,8 +69,7 @@ struct SmChannelDeviceHandle {
 
   /// this is a helper for copy function
   template <typename T, bool CopyRemainder = true>
-  MSCCLPP_DEVICE_INLINE void copy_helper(void* dst, void* src, uint64_t bytes, uint32_t threadId,
-                                              uint32_t numThreads) {
+  MSCCLPP_DEVICE_INLINE void copy_helper(void* dst, void* src, uint64_t bytes, uint32_t threadId, uint32_t numThreads) {
     int* dstInt = reinterpret_cast<int*>(dst);
     int* srcInt = reinterpret_cast<int*>(src);
     const uintptr_t dstPtr = reinterpret_cast<uintptr_t>(dst);
@@ -136,8 +135,8 @@ struct SmChannelDeviceHandle {
   /// @param numThreads The total number of threads that run this function.
   ///
   template <int Alignment = 16, bool CopyRemainder = true>
-  MSCCLPP_DEVICE_INLINE void put(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
-                                      uint32_t threadId, uint32_t numThreads) {
+  MSCCLPP_DEVICE_INLINE void put(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
+                                 uint32_t numThreads) {
     copy<Alignment, CopyRemainder>((char*)dst_ + targetOffset, (char*)src_ + originOffset, originBytes, threadId,
                                    numThreads);
   }
@@ -157,8 +156,8 @@ struct SmChannelDeviceHandle {
   /// @param numThreads The total number of threads that run this function.
   ///
   template <int Alignment = 16, bool CopyRemainder = true>
-  MSCCLPP_DEVICE_INLINE void get(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
-                                      uint32_t threadId, uint32_t numThreads) {
+  MSCCLPP_DEVICE_INLINE void get(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
+                                 uint32_t numThreads) {
     // Note that `dst` and `src` are swapped for `get()`.
     copy<Alignment, CopyRemainder>((char*)src_ + originOffset, (char*)dst_ + targetOffset, originBytes, threadId,
                                    numThreads);
@@ -213,7 +212,7 @@ struct SmChannelDeviceHandle {
   /// @param numThreads The total number of threads that run this function.
   ///
   MSCCLPP_DEVICE_INLINE void putPackets(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
-                                             uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+                                        uint32_t threadId, uint32_t numThreads, uint32_t flag) {
     mscclpp::putPackets(dst_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
   }
 
@@ -229,7 +228,7 @@ struct SmChannelDeviceHandle {
   /// @param numThreads The total number of threads that run this function.
   ///
   MSCCLPP_DEVICE_INLINE void getPackets(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
-                                             uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+                                        uint32_t threadId, uint32_t numThreads, uint32_t flag) {
     mscclpp::getPackets(getPacketBuffer_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
   }
 

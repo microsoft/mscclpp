@@ -2,8 +2,8 @@
 // Licensed under the MIT license.
 
 #include <mscclpp/atomic.hpp>
-#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/fifo.hpp>
+#include <mscclpp/gpu_utils.hpp>
 
 #include "api.h"
 

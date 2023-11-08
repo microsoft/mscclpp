@@ -67,8 +67,8 @@ MSCCLPP_API_CPP void Host2HostSemaphore::signal() {
 }
 
 MSCCLPP_API_CPP bool Host2HostSemaphore::poll() {
-  
-  bool signaled = (atomicLoad((uint64_t*)localInboundSemaphore_.get(), memoryOrderAcquire) > (*expectedInboundSemaphore_));
+  bool signaled =
+      (atomicLoad((uint64_t*)localInboundSemaphore_.get(), memoryOrderAcquire) > (*expectedInboundSemaphore_));
   if (signaled) (*expectedInboundSemaphore_) += 1;
   return signaled;
 }
