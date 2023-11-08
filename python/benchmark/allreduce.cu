@@ -407,9 +407,9 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 // AllReduce4
 // 2-node
 // -------------------------------------------
-__device__ void localReduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank,
-                                     int nRanksPerNode, int startChunkIndex, size_t offsetInChunk, size_t chunkSize,
-                                     size_t nelems, int nBlocks) {
+__device__ void localReduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nRanksPerNode,
+                                     int startChunkIndex, size_t offsetInChunk, size_t chunkSize, size_t nelems,
+                                     int nBlocks) {
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
   const int nPeer = nRanksPerNode - 1;
@@ -609,8 +609,8 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
 
   // step 1: local reduce
   int startChunkIndex = peerNodeId * nRanksPerNode;
-  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, 0, chunkSize,
-                       chunkSize / pipelineSize, nBlocksForReduceScatter);
+  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize / pipelineSize,
+                       nBlocksForReduceScatter);
   deviceSyncer.sync(gridDim.x);
 
   // step 2: local reduce and exchange data with neighbor
@@ -619,8 +619,8 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
     // opposite side
     proxyChan.putWithSignal(offset, (chunkSize / pipelineSize * sizeof(int)));
   }
-  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize,
-                       chunkSize, 2 * chunkSize / pipelineSize, nBlocksForReduceScatter);
+  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize, chunkSize,
+                       2 * chunkSize / pipelineSize, nBlocksForReduceScatter);
   if (isComm) {
     proxyChan.wait();
   }
