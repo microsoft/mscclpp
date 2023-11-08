@@ -181,8 +181,13 @@ if __name__ == "__main__":
             "Speed Up",
         ]
 
-    for i in range(9, 26):
-        run_benchmark(mscclpp_group, nccl_comm, table, 100, 3 * 2**i)
+    for i in range(10, 30):
+        if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
+            run_benchmark(mscclpp_group, nccl_comm, table, 100, 2**i)
+        elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:
+            run_benchmark(mscclpp_group, nccl_comm, table, 100, 3 * 2**i)
+        else:
+            raise RuntimeError("Only support one node/two nodes communication")
 
     if MPI.COMM_WORLD.rank == 0:
         print()
