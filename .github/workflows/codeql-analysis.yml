@@ -45,7 +45,7 @@ jobs:
 
     - name: Build
       run: |
-        MPI_HOME=/usr/local/mpi cmake -DBYPASS_PEERMEM_CHECK=ON -DBYPASS_GPU_CHECK=ON .
+        MPI_HOME=/usr/local/mpi cmake -DBYPASS_PEERMEM_CHECK=ON -DBYPASS_GPU_CHECK=ON -DUSE_CUDA=ON .
         make -j
 
     - name: Perform CodeQL Analysis
