@@ -21,6 +21,7 @@ option(BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(USE_ROCM "Use AMD/ROCm." OFF)
 option(BYPASS_GPU_CHECK "Bypass GPU check." OFF)
+option(BYPASS_PEERMEM_CHECK "Bypass checking nvidia_peermem" OFF)
 
 if(BYPASS_GPU_CHECK)
     if(USE_CUDA)
@@ -90,6 +91,16 @@ endif()
 
 # Format targets
 include(${PROJECT_SOURCE_DIR}/cmake/AddFormatTargets.cmake)
+
+# Find if nvidia_peermem is installed and loaded
+if(NOT BYPASS_PEERMEM_CHECK)
+    execute_process(COMMAND sh -c "lsmod | grep nvidia_peermem"
+                    RESULT_VARIABLE lsmod_result
+                    OUTPUT_VARIABLE lsmod_output)
+    if(NOT lsmod_result EQUAL 0)
+        message(FATAL_ERROR "nvidia_peermem is not installed or not loaded.")
+    endif()
+endif()
 
 # Find ibverbs and libnuma
 find_package(IBVerbs REQUIRED)
