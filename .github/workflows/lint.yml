@@ -20,7 +20,7 @@ jobs:
 
     - name: Run cpplint
       run: |
-        CPPSOURCES=$(find ./ -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)' -not -path "./build/*")
+        CPPSOURCES=$(find ./src ./include ./python ./test -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
         clang-format -style=file --verbose --Werror --dry-run ${CPPSOURCES}
 
   pylint:
