@@ -1,0 +1,4 @@
+mpi4py
+cupy-cuda12x
+prettytable
+cuda-python
