@@ -123,7 +123,7 @@ TEST_F(SmChannelOneToOneTest, PutPingPong) {
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::SmChannel> smChannels;
-  std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
+  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
   setupMeshConnections(smChannels, buff.get(), nElem * sizeof(int));
   std::vector<DeviceHandle<mscclpp::SmChannel>> deviceHandles(smChannels.size());
   std::transform(smChannels.begin(), smChannels.end(), deviceHandles.begin(),

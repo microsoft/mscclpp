@@ -66,6 +66,21 @@ T* cudaCalloc(size_t nelem) {
   return ptr;
 }
 
+template <class T>
+T* cudaExtCalloc(size_t nelem) {
+  AvoidCudaGraphCaptureGuard cgcGuard;
+  T* ptr;
+  CudaStreamWithFlags stream(cudaStreamNonBlocking);
+#if defined(__HIP_PLATFORM_AMD__)
+  MSCCLPP_CUDATHROW(hipExtMallocWithFlags((void**)&ptr, nelem * sizeof(T), hipDeviceMallocUncached));
+#else
+  MSCCLPP_CUDATHROW(cudaMalloc(&ptr, nelem * sizeof(T)));
+#endif
+  MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, nelem * sizeof(T), stream));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+  return ptr;
+}
+
 /// A wrapper of cudaHostAlloc that sets the allocated memory to zero.
 /// @tparam T Type of each element in the allocated memory.
 /// @param nelem Number of elements to allocate.
@@ -133,6 +148,15 @@ struct CudaHostDeleter {
 template <class T>
 std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, std::shared_ptr<T>>(count);
+}
+
+/// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
+/// @tparam T Type of each element in the allocated memory.
+/// @param count Number of elements to allocate.
+/// @return A std::shared_ptr to the allocated memory.
+template <class T>
+std::shared_ptr<T> allocExtSharedCuda(size_t count = 1) {
+  return detail::safeAlloc<T, detail::cudaExtCalloc<T>, CudaDeleter<T>, std::shared_ptr<T>>(count);
 }
 
 /// Unique device pointer that will call cudaFree on destruction.
