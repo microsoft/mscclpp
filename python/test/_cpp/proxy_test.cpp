@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <cuda.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/vector.h>
@@ -39,7 +38,7 @@ class MyProxyService {
         semaphores_(semaphores),
         proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
     int cudaDevice;
-    cudaGetDevice(&cudaDevice);
+    MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
     deviceNumaNode_ = mscclpp::getDeviceNumaNode(cudaDevice);
   }
 

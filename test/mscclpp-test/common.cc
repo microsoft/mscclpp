@@ -3,7 +3,6 @@
 
 #include "common.hpp"
 
-#include <cuda.h>
 #include <getopt.h>
 #include <libgen.h>
 #include <mpi.h>
@@ -16,6 +15,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <mscclpp/gpu.hpp>
 #include <mscclpp/utils.hpp>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -188,7 +188,7 @@ BaseTestEngine::BaseTestEngine(const TestArgs& args, const std::string& name)
   CUDATHROW(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
 }
 
-BaseTestEngine::~BaseTestEngine() { cudaStreamDestroy(stream_); }
+BaseTestEngine::~BaseTestEngine() { (void)cudaStreamDestroy(stream_); }
 
 void BaseTestColl::setupCollTest(const TestArgs& args, size_t size) {
   this->worldSize_ = args.totalRanks;

@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iostream>
 #include <mscclpp/concurrency.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/semaphore.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <string>
@@ -35,7 +36,7 @@ inline mscclpp::Transport getTransport(int rank, int peerRank, int nRanksPerNode
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
-__global__ void kernel(int rank, size_t dataSize, size_t dataPerBlock) {
+__global__ void kernel(size_t dataSize, size_t dataPerBlock) {
   size_t startIndex = blockIdx.x * dataPerBlock;
   size_t blockDataSize = min(dataSize - startIndex, dataPerBlock);
   int globalIndex = blockIdx.x * blockDim.x + threadIdx.x;
@@ -63,12 +64,12 @@ class SendRecvTestColl : public BaseTestColl {
   std::vector<KernelRestriction> getKernelRestrictions() override;
 };
 
-void SendRecvTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
+void SendRecvTestColl::runColl(const TestArgs&, cudaStream_t stream) {
   size_t sendBytes = sendCount_ * typeSize_;
   int blockNum = getBlockNum(sendBytes);
   size_t bytesPerBlock = (sendBytes + blockNum - 1) / blockNum;
   if (kernelNum_ == 0) {
-    kernel<<<blockNum, BLOCK_THREADS_NUM, 0, stream>>>(args.rank, sendBytes, bytesPerBlock);
+    kernel<<<blockNum, BLOCK_THREADS_NUM, 0, stream>>>(sendBytes, bytesPerBlock);
   }
 }
 
@@ -87,11 +88,11 @@ std::vector<KernelRestriction> SendRecvTestColl::getKernelRestrictions() {
 void SendRecvTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
   int rank = args.rank;
   if (sendBuff.size() != 1) std::unexpected();
-  CUDATHROW(cudaMemset(sendBuff[0], 0, sendCount_ * typeSize_));
+  MSCCLPP_CUDATHROW(cudaMemset(sendBuff[0], 0, sendCount_ * typeSize_));
 
   // TODO: The type should not limited to int.
   std::vector<int> dataHost(std::max(sendCount_, recvCount_), rank);
-  CUDATHROW(cudaMemcpy(sendBuff[0], dataHost.data(), sendCount_ * typeSize_, cudaMemcpyHostToDevice));
+  MSCCLPP_CUDATHROW(cudaMemcpy(sendBuff[0], dataHost.data(), sendCount_ * typeSize_, cudaMemcpyHostToDevice));
 
   int peerRank = (rank - 1 + args.totalRanks) % args.totalRanks;
   for (size_t i = 0; i < recvCount_; i++) {
@@ -110,7 +111,7 @@ void SendRecvTestColl::setupCollTest(size_t size) {
   expectedCount_ = base;
 
   mscclpp::DeviceSyncer syncer = {};
-  CUDATHROW(cudaMemcpyToSymbol(deviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(deviceSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
 }
 
 class SendRecvTestEngine : public BaseTestEngine {
@@ -189,8 +190,8 @@ void SendRecvTestEngine::setupConnections() {
   }
   std::transform(smChannels_.begin(), smChannels_.end(), smChannelHandles.begin(),
                  [](const mscclpp::SmChannel& smChannel) { return smChannel.deviceHandle(); });
-  cudaMemcpyToSymbol(constSmChans, smChannelHandles.data(),
-                     sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelHandles.size());
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelHandles.size()));
 }
 
 std::vector<void*> SendRecvTestEngine::getSendBuff() { return {devicePtrs_[0].get()}; }

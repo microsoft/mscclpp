@@ -1,10 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <cuda_runtime.h>
-
 #include <algorithm>
 #include <mscclpp/concurrency.hpp>
+#include <mscclpp/gpu.hpp>
 #include <string>
 
 #include "common.hpp"
@@ -21,7 +20,7 @@ __constant__ DeviceHandle<mscclpp::ProxyChannel> constRawProxyChan[16];
 
 __constant__ DeviceHandle<mscclpp::SmChannel> constSmChans[8];
 
-__global__ void allgather0(int rank, int worldSize, size_t nelemsPerGPU) {
+__global__ void allgather0(int rank, size_t nelemsPerGPU) {
   int warpId = threadIdx.x / 32;
 
   // Each warp is responsible for one of the remote ranks
@@ -41,9 +40,8 @@ __global__ void allgather0(int rank, int worldSize, size_t nelemsPerGPU) {
   if (threadIdx.x % 32 == 0) proxyChan.wait();
 }
 
-__device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, int rank, int worldSize,
-                               int nRanksPerNode, int remoteRank, uint64_t offset, uint64_t size,
-                               bool flushAfterSignal = true) {
+__device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, int rank, int nRanksPerNode,
+                               int remoteRank, uint64_t offset, uint64_t size, bool flushAfterSignal = true) {
   // this allgather algorithm works as follows:
   // Step 1: GPU rank i sends data to GPU rank (i+1) % nRanksPerNode
   // and waits for data from GPU rank (i-1) % nRanksPerNode
@@ -112,14 +110,14 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunk
   constSmChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
 
-__global__ void allgather1(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
+__global__ void allgather1(int rank, int nRanksPerNode, size_t nelemsPerGPU) {
   int warpId = threadIdx.x / 32;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
 
   // Each warp is responsible for one of the remote ranks
   DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[warpId];
 
-  localAllGather(proxyChan, rank, worldSize, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
+  localAllGather(proxyChan, rank, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
 }
 
@@ -145,7 +143,7 @@ __global__ void allgather2(int rank, int worldSize, int nRanksPerNode, size_t ne
   // Step 1
   // local allgather
   if (remoteRank / nRanksPerNode == rank / nRanksPerNode) {
-    localAllGather(proxyChan, rank, worldSize, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
+    localAllGather(proxyChan, rank, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                    nelemsPerGPU * sizeof(int), false);
   }
   // cross-node exchange
@@ -170,7 +168,7 @@ __global__ void allgather2(int rank, int worldSize, int nRanksPerNode, size_t ne
   // local allgather
   int otherNghr = (rank + nRanksPerNode) % worldSize;
   if (remoteRank / nRanksPerNode == rank / nRanksPerNode) {
-    localAllGather(proxyChan, rank, worldSize, nRanksPerNode, remoteRank, otherNghr * nelemsPerGPU * sizeof(int),
+    localAllGather(proxyChan, rank, nRanksPerNode, remoteRank, otherNghr * nelemsPerGPU * sizeof(int),
                    (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int), false);
   }
 
@@ -192,13 +190,13 @@ __global__ void allgather2(int rank, int worldSize, int nRanksPerNode, size_t ne
   // Step 3
   // local allgather
   if (remoteRank / nRanksPerNode == rank / nRanksPerNode) {
-    localAllGather(proxyChan, rank, worldSize, nRanksPerNode, remoteRank,
+    localAllGather(proxyChan, rank, nRanksPerNode, remoteRank,
                    (otherNghr * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
                    nelemsPerGPU / pipelineSize * sizeof(int));
   }
 }
 
-__global__ void allgather3(int rank, int worldSize) {
+__global__ void allgather3() {
   int warpId = threadIdx.x / 32;
 
   // Each warp is responsible for one of the remote ranks
@@ -315,9 +313,9 @@ class AllGatherProxyService : public mscclpp::BaseProxyService {
 
 AllGatherProxyService::AllGatherProxyService(int worldSize, int rank, int cudaDevice)
     : worldSize_(worldSize),
-      sendBytes_(0),
       rank_(rank),
       cudaDevice_(cudaDevice),
+      sendBytes_(0),
       proxy_(
           std::make_shared<mscclpp::Proxy>([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); },
                                            [&]() {
@@ -382,13 +380,13 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     nThreads = 32 * (worldSize - 1);
   }
   if (kernelNum == 0) {
-    allgather0<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, paramCount_);
+    allgather0<<<nBlocks, nThreads, 0, stream>>>(rank, paramCount_);
   } else if (kernelNum == 1) {
-    allgather1<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
+    allgather1<<<nBlocks, nThreads, 0, stream>>>(rank, nRanksPerNode, paramCount_);
   } else if (kernelNum == 2) {
     allgather2<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
   } else if (kernelNum == 3) {
-    allgather3<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize);
+    allgather3<<<nBlocks, nThreads, 0, stream>>>();
   } else if (kernelNum == 4) {
     allgather4<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
   }
