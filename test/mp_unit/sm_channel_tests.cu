@@ -202,7 +202,7 @@ TEST_F(SmChannelOneToOneTest, GetPingPong) {
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::SmChannel> smChannels;
-  std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
+  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
   setupMeshConnections(smChannels, buff.get(), nElem * sizeof(int));
   std::vector<DeviceHandle<mscclpp::SmChannel>> deviceHandles(smChannels.size());
   std::transform(smChannels.begin(), smChannels.end(), deviceHandles.begin(),
@@ -289,8 +289,8 @@ TEST_F(SmChannelOneToOneTest, PacketPingPong) {
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::SmChannel> smChannels;
-  std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
-  std::shared_ptr<int> intermBuff = mscclpp::allocSharedCuda<int>(nElem * 2);
+  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
+  std::shared_ptr<int> intermBuff = mscclpp::allocExtSharedCuda<int>(nElem * 2);
   setupMeshConnections(smChannels, buff.get(), nElem * sizeof(int), intermBuff.get(), nElem * 2 * sizeof(int));
   std::vector<DeviceHandle<mscclpp::SmChannel>> deviceHandles(smChannels.size());
   std::transform(smChannels.begin(), smChannels.end(), deviceHandles.begin(),
