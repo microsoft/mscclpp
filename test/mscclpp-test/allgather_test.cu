@@ -1,9 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <cuda_runtime.h>
+
 #include <algorithm>
 #include <mscclpp/concurrency.hpp>
-#include <mscclpp/gpu.hpp>
 #include <string>
 
 #include "common.hpp"

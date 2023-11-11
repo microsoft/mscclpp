@@ -3,6 +3,7 @@
 
 #include "common.hpp"
 
+#include <cuda.h>
 #include <getopt.h>
 #include <libgen.h>
 #include <mpi.h>
@@ -15,7 +16,6 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <mscclpp/gpu.hpp>
 #include <mscclpp/utils.hpp>
 #include <nlohmann/json.hpp>
 #include <sstream>
