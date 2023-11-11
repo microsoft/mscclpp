@@ -87,7 +87,12 @@ __device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyCh
     if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode)) {
       if ((threadIdx.x % 32) == 0) proxyChan.wait();
     }
+#if defined(__HIP_PLATFORM_AMD__)
+    // TODO: group barrier
+    __syncthreads();
+#else
     asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nranksPerNode - 1) * 32) : "memory");
+#endif
   }
 }
 

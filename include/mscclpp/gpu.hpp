@@ -9,6 +9,8 @@
 #include <hip/hip_runtime.h>
 
 using cudaError_t = hipError_t;
+using cudaGraph_t = hipGraph_t;
+using cudaGraphExec_t = hipGraphExec_t;
 using cudaDeviceProp = hipDeviceProp_t;
 using cudaStream_t = hipStream_t;
 using cudaStreamCaptureMode = hipStreamCaptureMode;
@@ -20,6 +22,7 @@ using CUdeviceptr = hipDeviceptr_t;
 
 constexpr auto cudaSuccess = hipSuccess;
 constexpr auto cudaStreamNonBlocking = hipStreamNonBlocking;
+constexpr auto cudaStreamCaptureModeGlobal = hipStreamCaptureModeGlobal;
 constexpr auto cudaStreamCaptureModeRelaxed = hipStreamCaptureModeRelaxed;
 constexpr auto cudaHostAllocMapped = hipHostMallocMapped;
 constexpr auto cudaHostAllocWriteCombined = hipHostMallocWriteCombined;
@@ -45,12 +48,20 @@ constexpr auto cudaIpcMemLazyEnablePeerAccess = hipIpcMemLazyEnablePeerAccess;
 #define cudaMalloc(...) hipMalloc(__VA_ARGS__)
 #define cudaFree(...) hipFree(__VA_ARGS__)
 #define cudaFreeHost(...) hipHostFree(__VA_ARGS__)
+#define cudaMemset(...) hipMemset(__VA_ARGS__)
 #define cudaMemsetAsync(...) hipMemsetAsync(__VA_ARGS__)
+#define cudaMemcpy(...) hipMemcpy(__VA_ARGS__)
 #define cudaMemcpyAsync(...) hipMemcpyAsync(__VA_ARGS__)
 #define cudaMemcpyToSymbol(...) hipMemcpyToSymbol(__VA_ARGS__)
 #define cudaStreamCreateWithFlags(...) hipStreamCreateWithFlags(__VA_ARGS__)
 #define cudaStreamSynchronize(...) hipStreamSynchronize(__VA_ARGS__)
+#define cudaStreamBeginCapture(...) hipStreamBeginCapture(__VA_ARGS__)
+#define cudaStreamEndCapture(...) hipStreamEndCapture(__VA_ARGS__)
 #define cudaStreamDestroy(...) hipStreamDestroy(__VA_ARGS__)
+#define cudaGraphInstantiate(...) hipGraphInstantiate(__VA_ARGS__)
+#define cudaGraphLaunch(...) hipGraphLaunch(__VA_ARGS__)
+#define cudaGraphDestroy(...) hipGraphDestroy(__VA_ARGS__)
+#define cudaGraphExecDestroy(...) hipGraphExecDestroy(__VA_ARGS__)
 #define cudaThreadExchangeStreamCaptureMode(...) hipThreadExchangeStreamCaptureMode(__VA_ARGS__)
 #define cudaIpcGetMemHandle(...) hipIpcGetMemHandle(__VA_ARGS__)
 #define cudaIpcOpenMemHandle(...) hipIpcOpenMemHandle(__VA_ARGS__)

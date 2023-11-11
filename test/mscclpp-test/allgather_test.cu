@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <cuda_runtime.h>
-
 #include <algorithm>
 #include <mscclpp/concurrency.hpp>
 #include <string>
@@ -60,7 +58,12 @@ __device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyCh
     if ((remoteRank % nRanksPerNode) == ((rank - i + nRanksPerNode) % nRanksPerNode)) {
       if ((threadIdx.x % 32) == 0) proxyChan.wait();
     }
+#if defined(__HIP_PLATFORM_AMD__)
+    // TODO: group barrier
+    __syncthreads();
+#else
     asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nRanksPerNode - 1) * 32) : "memory");
+#endif
   }
 }
 

@@ -3,7 +3,6 @@
 
 #include "common.hpp"
 
-#include <cuda.h>
 #include <getopt.h>
 #include <libgen.h>
 #include <mpi.h>

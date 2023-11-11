@@ -18,6 +18,10 @@ namespace mscclpp {
 ///
 /// Do not use the most significant bit of @ref snd as it is reserved for memory consistency purposes
 union alignas(16) ProxyTrigger {
+  struct Data {
+    uint64_t fst;
+    uint64_t snd;
+  };
   struct {
     uint64_t fst;
     uint64_t snd;
