@@ -230,7 +230,7 @@ class MscclppAllReduce4:
         )
 
     def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, 24, 512, 0, stream_ptr)
+        self.kernel.launch_kernel(self.params, 45, 512, 0, stream_ptr)
         return self.memory
 
 

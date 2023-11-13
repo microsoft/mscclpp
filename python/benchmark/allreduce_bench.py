@@ -98,7 +98,7 @@ def run_benchmark(
             mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
             proxy_service.start_proxy()
     else:
-        if memory.nbytes < 2**20:
+        if memory.nbytes < 2**22:
             proxy_service = ProxyService()
             mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
             proxy_service.start_proxy()
