@@ -620,7 +620,7 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
     proxyChan.putWithSignal(offset, (chunkSize / pipelineSize * sizeof(int)));
   }
   localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize, chunkSize,
-                       2 * chunkSize / pipelineSize, nBlocksForReduceScatter);
+                       (pipelineSize - 1) * chunkSize / pipelineSize, nBlocksForReduceScatter);
   if (isComm) {
     proxyChan.wait();
   }
@@ -653,7 +653,7 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
   size_t offset = (rank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
   int* dst = (int*)((char*)buff + offset);
   int* src = (int*)((char*)scratch + offset);
-  vectorSum((TYPE*)dst, (TYPE*)src, 2 * chunkSize / pipelineSize);
+  vectorSum((TYPE*)dst, (TYPE*)src, (pipelineSize - 1) * chunkSize / pipelineSize);
   if (isComm) {
     proxyChan.flush();
   }
