@@ -139,6 +139,8 @@ def pack(*args):
     for arg in list(args):
         if isinstance(arg, int):
             res += struct.pack("i", arg)
+        elif isinstance(arg, ctypes.c_size_t):
+            res += struct.pack("N", arg.value)
         elif isinstance(arg, np.ndarray):
             res += struct.pack("P", arg.ctypes.data)
         elif isinstance(arg, cp.ndarray):
@@ -146,6 +148,8 @@ def pack(*args):
         # use int to represent bool, which can avoid CUDA_ERROR_LAUNCH_OUT_OF_RESOURCES error
         elif isinstance(arg, bool):
             res += struct.pack("i", arg)
+        elif isinstance(arg, bytes):
+            res += struct.pack(f"{len(arg)}s", arg)
         else:
             raise RuntimeError(f"Unsupported type: {type(arg)}")
     return res
