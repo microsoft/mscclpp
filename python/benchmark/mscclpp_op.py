@@ -67,7 +67,7 @@ class MscclppAllReduce1:
             self.memory,
             self.group.my_rank,
             self.group.nranks,
-            self.memory.size,
+            ctypes.c_size_t(self.memory.size),
         )
         self.nthreads = nthreads
         self.nblocks = nblocks
@@ -109,7 +109,7 @@ class MscclppAllReduce2:
             self.memory_out,
             self.group.my_rank,
             self.group.nranks,
-            self.memory.size,
+            ctypes.c_size_t(self.memory.size),
         )
 
     def __call__(self, stream_ptr):
@@ -155,7 +155,7 @@ class MscclppAllReduce3:
             self.scratch,
             self.group.my_rank,
             self.group.nranks,
-            self.memory.size,
+            ctypes.c_size_t(self.memory.size),
         )
 
     def __call__(self, stream_ptr):
@@ -223,10 +223,10 @@ class MscclppAllReduce4:
             cp.asarray(memoryview(b"".join(self.all_gather_proxy_device_handles)), dtype=cp.uint8),
             self.memory,
             self.scratch,
+            ctypes.c_size_t(self.memory.size), # move memory.size here to avoid bytes alignment issue
             self.group.my_rank,
             nranks_per_node,
-            self.group.nranks,
-            self.memory.size,
+            self.group.nranks
         )
 
     def __call__(self, stream_ptr):
@@ -293,10 +293,10 @@ class MscclppAllReduce5:
             self.scratch,
             self.put_buff,
             self.memory_out,
+            ctypes.c_size_t(self.memory.size),
             self.group.my_rank,
             nranks_per_node,
             self.group.nranks,
-            self.memory.size,
         )
 
     def __call__(self, stream_ptr):

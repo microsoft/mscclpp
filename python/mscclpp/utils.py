@@ -139,6 +139,8 @@ def pack(*args):
     for arg in list(args):
         if isinstance(arg, int):
             res += struct.pack("i", arg)
+        elif isinstance(arg, ctypes.c_size_t):
+            res += struct.pack("N", arg.value)
         elif isinstance(arg, np.ndarray):
             res += struct.pack("P", arg.ctypes.data)
         elif isinstance(arg, cp.ndarray):
