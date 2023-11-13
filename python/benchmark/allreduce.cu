@@ -518,7 +518,7 @@ __device__ void localAllGatherAllPairsSm(mscclpp::SmChannelDeviceHandle* smChans
 // This is an allgather4 equivalent
 __device__ void allGatherSm(mscclpp::SmChannelDeviceHandle* smChans,
                             mscclpp::SimpleProxyChannelDeviceHandle* proxyChans, int rank, int worldSize,
-                            int nRanksPerNode, size_t nelemsPerGPU) {
+                            int nRanksPerNode, size_t nelemsPerGPU, int pipelineDepth) {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
   // Step 1: each node does a local allgather and concurrently,
@@ -529,7 +529,7 @@ __device__ void allGatherSm(mscclpp::SmChannelDeviceHandle* smChans,
   // its cross-node neighbor
   // Step 3: each node does a local allgather for the last time with the rest of the data
 
-  int pipelineSize = 3;
+  int pipelineSize = pipelineDepth;
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
@@ -579,7 +579,8 @@ __device__ void allGatherSm(mscclpp::SmChannelDeviceHandle* smChans,
 __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
                                 mscclpp::SimpleProxyChannelDeviceHandle* proxyChans, TYPE* buff, TYPE* scratch,
                                 int rank, int nRanksPerNode, int worldSize,
-                                size_t nelems  // must be divisible by 3
+                                size_t nelems,  // must be divisible by 3
+                                int pipelineDepth
 ) {
   // this reduce-scatter algorithm works as follows:
   // Step 1: each node does a local reduce-scatter on peer node data chunks with 1/pipeline portion of chunk data. For
@@ -591,7 +592,7 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
   // Step 3:  each node does a local reduce-scatter on local ranks, meanwhile exchange the reduced data of the previous
   // step with its cross-node neighbor (same local rank number on the other node) via IB. Then performs a reduce
   // operation.
-  int pipelineSize = 3;
+  int pipelineSize = pipelineDepth;
   float nBlocksForReduceScatterRatio = 0.8;
   const size_t chunkSize = nelems / worldSize;
   const int peerRank = (rank + nRanksPerNode) % worldSize;
@@ -663,11 +664,11 @@ extern "C" __global__ void __launch_bounds__(1024, 1) __global__
     allreduce4(mscclpp::SmChannelDeviceHandle* smChans,
                mscclpp::SimpleProxyChannelDeviceHandle* reduceScatterProxyChans,
                mscclpp::SimpleProxyChannelDeviceHandle* allGatherProxyChans, TYPE* buff, TYPE* scratch, int rank,
-               int nRanksPerNode, int worldSize, int nelems) {
+               int nRanksPerNode, int worldSize, int nelems, int pipelineDepth) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
-  reduceScatterSm(smChans, reduceScatterProxyChans, buff, scratch, rank, nRanksPerNode, worldSize, nelems);
+  reduceScatterSm(smChans, reduceScatterProxyChans, buff, scratch, rank, nRanksPerNode, worldSize, nelems, pipelineDepth);
   deviceSyncer.sync(gridDim.x);
-  allGatherSm(smChans, allGatherProxyChans, rank, worldSize, nRanksPerNode, nelems / worldSize);
+  allGatherSm(smChans, allGatherProxyChans, rank, worldSize, nRanksPerNode, nelems / worldSize, pipelineDepth);
 }
 
 // allreduce 5 for 2-nodes

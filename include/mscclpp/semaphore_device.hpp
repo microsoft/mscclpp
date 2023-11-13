@@ -23,7 +23,7 @@ struct Host2DeviceSemaphoreDeviceHandle {
   }
 
   /// Wait for the host to signal.
-  __forceinline__ __device__ void wait(int64_t maxSpinCount = 10000000) {
+  __forceinline__ __device__ void wait(int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
     POLL_MAYBE_JAILBREAK((cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*inboundSemaphoreId}.load(
                               cuda::memory_order_acquire) < (*expectedInboundSemaphoreId)),
@@ -48,7 +48,7 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
   }
 
   /// Wait for the remote device to signal.
-  __forceinline__ __device__ void wait(int64_t maxSpinCount = 10000000) {
+  __forceinline__ __device__ void wait(int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
     POLL_MAYBE_JAILBREAK((cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*inboundSemaphoreId}.load(
                               cuda::memory_order_acquire) < (*expectedInboundSemaphoreId)),

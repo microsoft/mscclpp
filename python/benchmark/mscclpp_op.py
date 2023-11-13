@@ -170,10 +170,14 @@ class MscclppAllReduce4:
         memory: cp.ndarray,
         nranks_per_node: int,
         proxy_service: ProxyService,
+        nblocks: int = 45,
+        block_size: int = 512,
+        pipeline_depth: int = 3
     ):
         self.group = group
         self.memory = memory
 
+        self.nranks_per_node = nranks_per_node
         in_same_node = lambda rank: rank // nranks_per_node == self.group.my_rank // nranks_per_node
         remote_nghrs = list(range(self.group.nranks))
         remote_nghrs.remove(self.group.my_rank)
@@ -204,7 +208,6 @@ class MscclppAllReduce4:
         self.kernel = KernelBuilder(
             file="allreduce.cu", kernel_name="allreduce4", file_dir=file_dir, macro_dict={"TYPE": type_str}
         ).get_compiled_kernel()
-        self.params = b""
         self.sm_device_handles = []
         self.reduce_sactter_proxy_device_handles = []
         self.all_gather_proxy_device_handles = []
@@ -216,7 +219,19 @@ class MscclppAllReduce4:
                     self.reduce_scatter_proxy_channels[rank].device_handle().raw
                 )
                 self.all_gather_proxy_device_handles.append(self.all_gather_proxy_channels[rank].device_handle().raw)
+        self.pipeline_depth = pipeline_depth
 
+        self.nblocks = nblocks
+        self.block_size = block_size
+
+        self.set_params(self.nblocks, self.block_size, self.pipeline_depth)
+
+    def __call__(self, stream_ptr):
+        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
+        return self.memory
+
+    def set_params(self, nblocks, block_size, pipeline_depth):
+        self.params = b""
         self.params += pack(
             cp.asarray(memoryview(b"".join(self.sm_device_handles)), dtype=cp.uint8),
             cp.asarray(memoryview(b"".join(self.reduce_sactter_proxy_device_handles)), dtype=cp.uint8),
@@ -224,14 +239,25 @@ class MscclppAllReduce4:
             self.memory,
             self.scratch,
             self.group.my_rank,
-            nranks_per_node,
+            self.nranks_per_node,
             self.group.nranks,
             self.memory.size,
+            self.pipeline_depth,
         )
 
-    def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, 45, 512, 0, stream_ptr)
-        return self.memory
+        self.nblocks = nblocks
+        self.block_size = block_size
+
+
+    def auto_tune(self):
+        nblocks_to_try = [24, 45, 90]
+        block_size_to_try = [256, 512, 1024]
+        pipeline_depth_to_try = [2, 3, 4]
+        for nblocks in nblocks_to_try:
+            for block_size in block_size_to_try:
+                for pipeline_depth in pipeline_depth_to_try:
+                    self.set_params(nblocks, block_size, pipeline_depth)
+                    yield nblocks, block_size, pipeline_depth
 
 
 class MscclppAllReduce5:

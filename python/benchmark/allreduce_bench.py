@@ -76,6 +76,21 @@ def bench_time(niter: int, func):
 
     return cp.cuda.get_elapsed_time(start, end) / niter * 1000.0
 
+def find_best_config(mscclpp_call, niter):
+    best_time = 10000000.
+    for config in mscclpp_call.auto_tune():
+        cur_time = bench_time(niter, mscclpp_call)
+        if cur_time < best_time:
+            best_time = cur_time
+            best_config = config
+        if MPI.COMM_WORLD.rank == 0:
+            print("t", end="", flush=True)
+    best_config = MPI.COMM_WORLD.bcast(best_config, root=0)
+    if MPI.COMM_WORLD.rank == 0:
+        print(best_config)
+    return best_config
+
+    
 
 def run_benchmark(
     mscclpp_group: mscclpp_comm.CommGroup, nccl_op: nccl.NcclCommunicator, table: PrettyTable, niter: int, nelem: int
@@ -98,14 +113,17 @@ def run_benchmark(
             mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
             proxy_service.start_proxy()
     else:
-        if memory.nbytes < 2**22:
-            proxy_service = ProxyService()
-            mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
-            proxy_service.start_proxy()
-        else:
+        # if memory.nbytes < 2**22:
+        #     proxy_service = ProxyService()
+        #     mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
+        #     proxy_service.start_proxy()
+        # else:
             proxy_service = ProxyService()
             mscclpp_call = MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)
             proxy_service.start_proxy()
+            best_config = find_best_config(mscclpp_call, niter)
+            mscclpp_call.set_params(*best_config)
+    
 
     nccl_call = NcclAllReduce(nccl_op, memory)
 
@@ -181,7 +199,7 @@ if __name__ == "__main__":
             "Speed Up",
         ]
 
-    for i in range(10, 30):
+    for i in range(10, 25):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
             run_benchmark(mscclpp_group, nccl_comm, table, 100, 2**i)
         elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:
