@@ -662,8 +662,8 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
 extern "C" __global__ void __launch_bounds__(1024, 1) __global__
     allreduce4(mscclpp::SmChannelDeviceHandle* smChans,
                mscclpp::SimpleProxyChannelDeviceHandle* reduceScatterProxyChans,
-               mscclpp::SimpleProxyChannelDeviceHandle* allGatherProxyChans, TYPE* buff, TYPE* scratch, size_t nelems,
-               int rank, int nRanksPerNode, int worldSize) {
+               mscclpp::SimpleProxyChannelDeviceHandle* allGatherProxyChans, TYPE* buff, TYPE* scratch, int rank,
+               int nRanksPerNode, int worldSize, size_t nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
   reduceScatterSm(smChans, reduceScatterProxyChans, buff, scratch, rank, nRanksPerNode, worldSize, nelems);
   deviceSyncer.sync(gridDim.x);
@@ -673,8 +673,8 @@ extern "C" __global__ void __launch_bounds__(1024, 1) __global__
 // allreduce 5 for 2-nodes
 extern "C" __global__ void __launch_bounds__(1024, 1)
     allreduce5(mscclpp::SmChannelDeviceHandle* smChans, mscclpp::SimpleProxyChannelDeviceHandle* proxyChans, TYPE* buff,
-               TYPE* scratch, TYPE* putBuff, TYPE* resultBuff, size_t nelems, int rank, int nRanksPerNode,
-               int worldSize) {
+               TYPE* scratch, TYPE* putBuff, TYPE* resultBuff, int rank, int nRanksPerNode, int worldSize,
+               size_t nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
   // This version of allreduce only works for single nodes
   const int nPeersInNode = nRanksPerNode - 1;

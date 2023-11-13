@@ -223,10 +223,11 @@ class MscclppAllReduce4:
             cp.asarray(memoryview(b"".join(self.all_gather_proxy_device_handles)), dtype=cp.uint8),
             self.memory,
             self.scratch,
-            ctypes.c_size_t(self.memory.size), # move memory.size here to avoid bytes alignment issue
             self.group.my_rank,
             nranks_per_node,
-            self.group.nranks
+            self.group.nranks,
+            bytes(4),  # padding for memory alignment
+            ctypes.c_size_t(self.memory.size),
         )
 
     def __call__(self, stream_ptr):
@@ -293,10 +294,11 @@ class MscclppAllReduce5:
             self.scratch,
             self.put_buff,
             self.memory_out,
-            ctypes.c_size_t(self.memory.size),
             self.group.my_rank,
             nranks_per_node,
             self.group.nranks,
+            bytes(4),  # padding for memory alignment
+            ctypes.c_size_t(self.memory.size),
         )
 
     def __call__(self, stream_ptr):
