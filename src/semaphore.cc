@@ -21,7 +21,8 @@ static NonblockingFuture<RegisteredMemory> setupInboundSemaphoreId(Communicator&
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communicator,
                                                            std::shared_ptr<Connection> connection)
-    : BaseSemaphore(allocUniqueCuda<uint64_t>(), allocUniqueCuda<uint64_t>(), std::make_unique<uint64_t>()),
+    : BaseSemaphore(allocExtUniqueCuda<uint64_t>(1024), allocExtUniqueCuda<uint64_t>(1024),
+                    std::make_unique<uint64_t>()),
       connection_(connection) {
   INFO(MSCCLPP_INIT, "Creating a Host2Device semaphore for %s transport from %d to %d",
        connection->getTransportName().c_str(), communicator.bootstrap()->getRank(),
@@ -85,7 +86,8 @@ MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
 
 MSCCLPP_API_CPP SmDevice2DeviceSemaphore::SmDevice2DeviceSemaphore(Communicator& communicator,
                                                                    std::shared_ptr<Connection> connection)
-    : BaseSemaphore(allocUniqueCuda<uint64_t>(), allocUniqueCuda<uint64_t>(), allocUniqueCuda<uint64_t>()) {
+    : BaseSemaphore(allocExtUniqueCuda<uint64_t>(1024), allocExtUniqueCuda<uint64_t>(1024),
+                    allocExtUniqueCuda<uint64_t>(1024)) {
   INFO(MSCCLPP_INIT, "Creating a Device2Device semaphore for %s transport from %d to %d",
        connection->getTransportName().c_str(), communicator.bootstrap()->getRank(),
        communicator.remoteRankOf(*connection));

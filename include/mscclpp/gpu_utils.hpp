@@ -173,6 +173,15 @@ UniqueCudaPtr<T> allocUniqueCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, UniqueCudaPtr<T>>(count);
 }
 
+/// Allocates memory on the device and returns a std::unique_ptr to it. The memory is zeroed out.
+/// @tparam T Type of each element in the allocated memory.
+/// @param count Number of elements to allocate.
+/// @return A std::unique_ptr to the allocated memory.
+template <class T>
+UniqueCudaPtr<T> allocExtUniqueCuda(size_t count = 1) {
+  return detail::safeAlloc<T, detail::cudaExtCalloc<T>, CudaDeleter<T>, UniqueCudaPtr<T>>(count);
+}
+
 /// Allocates memory with cudaHostAlloc, constructs an object of type T in it and returns a std::shared_ptr to it.
 /// @tparam T Type of the object to construct.
 /// @tparam Args Types of the arguments to pass to the constructor.
