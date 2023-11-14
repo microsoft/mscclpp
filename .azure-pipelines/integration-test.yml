@@ -112,3 +112,20 @@ jobs:
         set -e
         python3 test/mscclpp-test/check_perf_result.py --perf-file output.jsonl --baseline-file test/deploy/perf_ndmv4.jsonl
       workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: PythonAllReduceBenchmark
+    displayName: Python Allreduce Benchmark
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        export PATH=/usr/local/mpi/bin:$PATH
+        python3 -m pip install .
+        if [[ '$(containerImage)' == *'cuda11'* ]]; then
+          pip3 install -r ./python/requirements_cu11.txt
+        else
+          pip3 install -r ./python/requirements_cu12.txt
+        fi
+        mpirun -tag-output -np 8 python3 ./python/benchmark/allreduce_bench.py
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
