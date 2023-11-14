@@ -219,18 +219,18 @@ class MscclppAllReduce4:
                     self.reduce_scatter_proxy_channels[rank].device_handle().raw
                 )
                 self.all_gather_proxy_device_handles.append(self.all_gather_proxy_channels[rank].device_handle().raw)
-        self.pipeline_depth = pipeline_depth
 
-        self.nblocks = nblocks
-        self.block_size = block_size
-
-        self.set_params(self.nblocks, self.block_size, self.pipeline_depth)
+        self.set_params(nblocks, block_size, pipeline_depth)
 
     def __call__(self, stream_ptr):
         self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
         return self.memory
 
     def set_params(self, nblocks, block_size, pipeline_depth):
+        self.nblocks = nblocks
+        self.block_size = block_size
+        self.pipeline_depth = pipeline_depth
+
         self.params = b""
         self.params += pack(
             cp.asarray(memoryview(b"".join(self.sm_device_handles)), dtype=cp.uint8),
@@ -245,10 +245,6 @@ class MscclppAllReduce4:
             ctypes.c_size_t(self.memory.size),
             self.pipeline_depth,
         )
-
-        self.nblocks = nblocks
-        self.block_size = block_size
-
 
     def auto_tune(self):
         nblocks_to_try = [24, 40, 45, 48, 72, 90, 96]
@@ -269,11 +265,14 @@ class MscclppAllReduce5:
         memory_out: cp.ndarray,
         nranks_per_node: int,
         proxy_service: ProxyService,
+        nblocks: int = 21,
+        block_size: int = 512,
     ):
         self.group = group
         self.memory = memory
         self.memory_out = memory_out
 
+        self.nranks_per_node = nranks_per_node
         in_same_node = lambda rank: rank // nranks_per_node == self.group.my_rank // nranks_per_node
         remote_nghrs = list(range(self.group.nranks))
         remote_nghrs.remove(self.group.my_rank)
@@ -303,7 +302,6 @@ class MscclppAllReduce5:
         self.kernel = KernelBuilder(
             file="allreduce.cu", kernel_name="allreduce5", file_dir=file_dir, macro_dict={"TYPE": type_str}
         ).get_compiled_kernel()
-        self.params = b""
         self.sm_device_handles = []
         self.proxy_device_handles = []
         for rank in range(self.group.nranks):
@@ -312,7 +310,18 @@ class MscclppAllReduce5:
             if rank != self.group.my_rank and not in_same_node(rank):
                 self.proxy_device_handles.append(self.proxy_channels[rank].device_handle().raw)
 
-        # print(f"memory size is {self.memory.size}")
+        self.set_params(nblocks, block_size)
+
+    def __call__(self, stream_ptr):
+        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
+        return self.memory_out
+
+
+    def set_params(self, nblocks, block_size):
+        self.nblocks = nblocks
+        self.block_size = block_size
+
+        self.params = b""
         self.params += pack(
             cp.asarray(memoryview(b"".join(self.sm_device_handles)), dtype=cp.uint8),
             cp.asarray(memoryview(b"".join(self.proxy_device_handles)), dtype=cp.uint8),
@@ -321,12 +330,17 @@ class MscclppAllReduce5:
             self.put_buff,
             self.memory_out,
             self.group.my_rank,
-            nranks_per_node,
+            self.nranks_per_node,
             self.group.nranks,
             bytes(4),  # padding for memory alignment
             ctypes.c_size_t(self.memory.size),
         )
 
-    def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, 21, 512, 0, stream_ptr)
-        return self.memory_out
+
+    def auto_tune(self):
+        nblocks_to_try = [21, 42, 84]
+        block_size_to_try = [256, 512, 1024]
+        for nblocks in nblocks_to_try:
+            for block_size in block_size_to_try:
+                self.set_params(nblocks, block_size)
+                yield nblocks, block_size
