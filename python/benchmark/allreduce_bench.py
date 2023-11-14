@@ -79,7 +79,7 @@ def bench_time(niter: int, func):
 def find_best_config(mscclpp_call, niter):
     best_time = 10000000.
     for config in mscclpp_call.auto_tune():
-        cur_time = bench_time(niter, mscclpp_call)
+        cur_time = bench_time(20, mscclpp_call)
         if cur_time < best_time:
             best_time = cur_time
             best_config = config
@@ -87,7 +87,7 @@ def find_best_config(mscclpp_call, niter):
             print("t", end="", flush=True)
     best_config = MPI.COMM_WORLD.bcast(best_config, root=0)
     if MPI.COMM_WORLD.rank == 0:
-        print(best_config)
+        print(best_config, end="", flush=True)
     return best_config
 
     
@@ -199,7 +199,7 @@ if __name__ == "__main__":
             "Speed Up",
         ]
 
-    for i in range(10, 25):
+    for i in range(10, 30):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
             run_benchmark(mscclpp_group, nccl_comm, table, 100, 2**i)
         elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:
