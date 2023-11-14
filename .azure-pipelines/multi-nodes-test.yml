@@ -83,7 +83,7 @@ jobs:
         tail -f output/mscclit-000000 &
         CHILD_PID=$!
         parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mscclpp-test'
+        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test'
         kill $CHILD_PID
 
   - task: Bash@3
@@ -102,7 +102,7 @@ jobs:
         tail -f output/mscclit-000000 &
         CHILD_PID=$!
         parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mp-ut'
+        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh mp-ut'
         kill $CHILD_PID
 
   - task: Bash@3
@@ -121,7 +121,26 @@ jobs:
         tail -f output/mscclit-000000 &
         CHILD_PID=$!
         parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh pytests'
+        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh pytests'
+        kill $CHILD_PID
+
+  - task: Bash@3
+    name: RunMultiNodePythonBenchmark
+    displayName: Run multi-nodes python benchmark
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        rm -rf output/*
+        mkdir -p output
+        touch output/mscclit-000000
+        tail -f output/mscclit-000000 &
+        CHILD_PID=$!
+        parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark'
         kill $CHILD_PID
 
   - task: AzureCLI@2
