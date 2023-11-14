@@ -76,8 +76,9 @@ def bench_time(niter: int, func):
 
     return cp.cuda.get_elapsed_time(start, end) / niter * 1000.0
 
+
 def find_best_config(mscclpp_call, niter):
-    best_time = 10000000.
+    best_time = 10000000.0
     for config in mscclpp_call.auto_tune():
         cur_time = bench_time(niter, mscclpp_call)
         if cur_time < best_time:
@@ -90,7 +91,6 @@ def find_best_config(mscclpp_call, niter):
         print(best_config, end="", flush=True)
     return best_config
 
-    
 
 def run_benchmark(
     mscclpp_group: mscclpp_comm.CommGroup, nccl_op: nccl.NcclCommunicator, table: PrettyTable, niter: int, nelem: int
@@ -125,7 +125,6 @@ def run_benchmark(
             proxy_service.start_proxy()
             best_config = find_best_config(mscclpp_call, 20)
             mscclpp_call.set_params(*best_config)
-    
 
     nccl_call = NcclAllReduce(nccl_op, memory)
 

@@ -172,7 +172,7 @@ class MscclppAllReduce4:
         proxy_service: ProxyService,
         nblocks: int = 45,
         block_size: int = 512,
-        pipeline_depth: int = 3
+        pipeline_depth: int = 3,
     ):
         self.group = group
         self.memory = memory
@@ -316,7 +316,6 @@ class MscclppAllReduce5:
         self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
         return self.memory_out
 
-
     def set_params(self, nblocks, block_size):
         self.nblocks = nblocks
         self.block_size = block_size
@@ -335,7 +334,6 @@ class MscclppAllReduce5:
             bytes(4),  # padding for memory alignment
             ctypes.c_size_t(self.memory.size),
         )
-
 
     def auto_tune(self):
         nblocks_to_try = [21, 42, 84]
