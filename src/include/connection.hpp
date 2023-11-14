@@ -36,7 +36,6 @@ class IBConnection : public Connection {
   Transport transport_;
   Transport remoteTransport_;
   IbQp* qp;
-  int numSignaledSends;
   std::unique_ptr<uint64_t> dummyAtomicSource_;  // not used anywhere but IB needs a source
   RegisteredMemory dummyAtomicSourceMem_;
   mscclpp::TransportInfo dstTransportInfo_;

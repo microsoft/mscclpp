@@ -97,7 +97,6 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context)
     : transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
-      numSignaledSends(0),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
   qp = getImpl(localEndpoint)->ibQp_;
   qp->rtr(getImpl(remoteEndpoint)->ibQpInfo_);
@@ -131,7 +130,6 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 
   qp->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset,
                 /*signaled=*/true);
-  numSignaledSends++;
 
   qp->postSend();
   INFO(MSCCLPP_NET, "IBConnection write: from %p to %p, size %lu", (uint8_t*)srcMr->getBuff() + srcOffset,
@@ -152,7 +150,6 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   *src = newValue;
 
   qp->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue, /*signaled=*/true);
-  numSignaledSends++;
 
   qp->postSend();
   INFO(MSCCLPP_NET, "IBConnection atomic Write: from %p to %p, %lu -> %lu", src, (uint8_t*)dstMrInfo.addr + dstOffset,
