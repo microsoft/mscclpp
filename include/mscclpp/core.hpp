@@ -551,11 +551,6 @@ class NonblockingFuture {
   /// @param future The shared future to move.
   NonblockingFuture(std::shared_future<T>&& future) : future(std::move(future)) {}
 
-  /// Copy constructor.
-  ///
-  /// @param other The @ref NonblockingFuture to copy.
-  NonblockingFuture(const NonblockingFuture& other) = default;
-
   /// Check if the value is ready to be retrieved.
   ///
   /// @return True if the value is ready, false otherwise.
