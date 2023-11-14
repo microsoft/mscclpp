@@ -6,7 +6,7 @@
 #include <cstring>
 #include <iostream>
 #include <mscclpp/concurrency.hpp>
-#include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/semaphore.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <string>
