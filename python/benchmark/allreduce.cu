@@ -583,84 +583,30 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
                                 size_t nelems,  // must be divisible by 3
                                 int pipelineDepth
 ) {
-  // this reduce-scatter algorithm works as follows:
-  // Step 1: each node does a local reduce-scatter on peer node data chunks with 1/pipeline portion of chunk data. For
-  // example, 2 nodes and each node has 2 ranks. rank 0 and rank 1 perform reduce-scatter on chunk 2 and chunk 3, with
-  // 1/pipeline portion of the data.
-  // Step 2: each node does a local reduce-scatter on peers data chunks with (pipeline-1)/pipeline portion of chunk
-  // data. Meanwhile, exchange the reduced data of the previous step with its cross-node neighbor (same local rank
-  // number on the other node) via IB. Then performs a reduce operation.
-  // Step 3:  each node does a local reduce-scatter on local ranks, meanwhile exchange the reduced data of the previous
-  // step with its cross-node neighbor (same local rank number on the other node) via IB. Then performs a reduce
-  // operation.
-  int pipelineSize = pipelineDepth;
-  float nBlocksForReduceScatterRatio = 0.8;
-  const size_t chunkSize = nelems / worldSize;
-  const int peerRank = (rank + nRanksPerNode) % worldSize;
-  int peerNodeId = peerRank / nRanksPerNode;
-  int nBlocksForReduceScatter =
-      (int)(nBlocksForReduceScatterRatio * gridDim.x) / (nRanksPerNode - 1) * (nRanksPerNode - 1);
-  int isComm = (threadIdx.x == 0) && (blockIdx.x == nBlocksForReduceScatter);
+  const size_t chunkSize = nelems / nRanksPerNode;
+  const int localRank = rank % nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  int nBlocksRemain = gridDim.x - nBlocksForReduceScatter;
   mscclpp::SimpleProxyChannelDeviceHandle proxyChan = proxyChans[peer];
-  if (peerNodeId == rank / nRanksPerNode) {
-    localReduceScatterSm(smChans, buff, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, gridDim.x);
-    return;
-  }
-
-  // step 1: local reduce
-  int startChunkIndex = peerNodeId * nRanksPerNode;
-  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize / pipelineSize,
-                       nBlocksForReduceScatter);
+  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, gridDim.x);
   deviceSyncer.sync(gridDim.x);
-
-  // step 2: local reduce and exchange data with neighbor
-  if (isComm) {
-    size_t offset = (peerRank * chunkSize) * sizeof(int);
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    size_t offset = (localRank * chunkSize) * sizeof(int);
     // opposite side
-    proxyChan.putWithSignal(offset, (chunkSize / pipelineSize * sizeof(int)));
-  }
-  if (pipelineSize > 1)
-    localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize, chunkSize,
-                        (pipelineSize - 1) * chunkSize / pipelineSize, nBlocksForReduceScatter);
-  if (isComm) {
-    proxyChan.wait();
-  }
-  if (blockIdx.x >= nBlocksForReduceScatter) {
-    ibDeviceSyncer.sync(nBlocksRemain);
-    // reduce data received from peer to related rank
-    size_t offset = rank * chunkSize * sizeof(int);
-    int* dst = (int*)((char*)buff + offset);
-    int* src = (int*)((char*)scratch + offset);
-    vectorSum((TYPE*)dst, (TYPE*)src, chunkSize / pipelineSize, blockIdx.x - nBlocksForReduceScatter, nBlocksRemain);
-  }
-  if (isComm) {
+    proxyChan.putWithSignal(offset, (chunkSize * sizeof(int)));
     proxyChan.flush();
-  }
-  deviceSyncer.sync(gridDim.x);
-
-  // step 3: local reduce and exchange data with neighbor
-  startChunkIndex = (rank / nRanksPerNode) * nRanksPerNode;
-  if (isComm && pipelineSize > 1) {
-    size_t offset = (peerRank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
-    proxyChan.putWithSignal(offset, (pipelineSize - 1) * chunkSize / pipelineSize * sizeof(int));
-  }
-  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize,
-                       nBlocksForReduceScatter);
-  if (isComm && pipelineSize > 1) {
     proxyChan.wait();
   }
   deviceSyncer.sync(gridDim.x);
-  // reduce to related rank, can not overlap since localReduceScatter also calculate the sum
-  size_t offset = (rank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
+  size_t offset = localRank * chunkSize * sizeof(int);
   int* dst = (int*)((char*)buff + offset);
   int* src = (int*)((char*)scratch + offset);
-  if (pipelineSize > 1)
-    vectorSum((TYPE*)dst, (TYPE*)src, (pipelineSize - 1) * chunkSize / pipelineSize);
-  if (isComm) {
-    proxyChan.flush();
-  }
+  vectorSum((TYPE*)dst, (TYPE*)src, chunkSize, blockIdx.x, gridDim.x);
+
+  deviceSyncer.sync(gridDim.x);
+
+  const size_t rankChunkSize = (nelems / nRanksPerNode) * sizeof(int);
+  localAllGatherSm(smChans, localRank, nRanksPerNode, 0, 0, rankChunkSize, rankChunkSize, gridDim.x);
+
 }
 
 extern "C" __global__ void __launch_bounds__(1024, 1) __global__
@@ -670,8 +616,8 @@ extern "C" __global__ void __launch_bounds__(1024, 1) __global__
                int nRanksPerNode, int worldSize, size_t nelems, int pipelineDepth) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
   reduceScatterSm(smChans, reduceScatterProxyChans, buff, scratch, rank, nRanksPerNode, worldSize, nelems, pipelineDepth);
-  deviceSyncer.sync(gridDim.x);
-  allGatherSm(smChans, allGatherProxyChans, rank, worldSize, nRanksPerNode, nelems / worldSize, pipelineDepth);
+  // deviceSyncer.sync(gridDim.x);
+  // allGatherSm(smChans, allGatherProxyChans, rank, worldSize, nRanksPerNode, nelems / worldSize, pipelineDepth);
 }
 
 // allreduce 5 for 2-nodes
