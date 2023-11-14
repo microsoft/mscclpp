@@ -14,7 +14,7 @@ void* localRecvBuff;
 void* localSendBuff;
 
 __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
-  int remoteRank = (blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
+  int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   for (int i = 1; i < nRanksPerNode; i++) {
     DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[blockIdx.x];
     if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank + i) % nRanksPerNode) {
@@ -29,8 +29,8 @@ __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
   }
 }
 
-__global__ void alltoall0(int rank, int worldSize, size_t nElements) {
-  int remoteRank = (blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
+__global__ void alltoall0(int rank, size_t nElements) {
+  int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[blockIdx.x];
   if (threadIdx.x == 0) {
     proxyChan.putWithSignal(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
@@ -68,7 +68,7 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   CUDATHROW(cudaMemcpyAsync((int*)localRecvBuff + paramCount_ * rank, (int*)localSendBuff + paramCount_ * rank,
                             paramCount_ * sizeof(int), cudaMemcpyDeviceToDevice, stream));
   if (kernelNum == 0) {
-    alltoall0<<<worldSize - 1, 32, 0, stream>>>(rank, worldSize, paramCount_);
+    alltoall0<<<worldSize - 1, 32, 0, stream>>>(rank, paramCount_);
   } else if (kernelNum == 1) {
     alltoall1<<<worldSize - 1, 32, 0, stream>>>(rank, nRanksPerNode, paramCount_);
   }
