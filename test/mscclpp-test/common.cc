@@ -188,7 +188,7 @@ BaseTestEngine::BaseTestEngine(const TestArgs& args, const std::string& name)
   CUDATHROW(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
 }
 
-BaseTestEngine::~BaseTestEngine() { cudaStreamDestroy(stream_); }
+BaseTestEngine::~BaseTestEngine() { (void)cudaStreamDestroy(stream_); }
 
 void BaseTestColl::setupCollTest(const TestArgs& args, size_t size) {
   this->worldSize_ = args.totalRanks;
