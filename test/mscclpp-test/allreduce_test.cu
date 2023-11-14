@@ -48,7 +48,7 @@ __forceinline__ __device__ void vectorSum(int* dst, int* src, size_t nElem, int 
   size_t nLastInts = nElem % 4;
   int4* dst4 = (int4*)dst;
   int4* src4 = (int4*)src;
-  for (int i = threadIdx.x + blockId * blockDim.x; i < nInt4; i += blockDim.x * nBlocks) {
+  for (size_t i = threadIdx.x + blockId * blockDim.x; i < nInt4; i += blockDim.x * nBlocks) {
     dst4[i].w += src4[i].w;
     dst4[i].x += src4[i].x;
     dst4[i].y += src4[i].y;
@@ -57,7 +57,7 @@ __forceinline__ __device__ void vectorSum(int* dst, int* src, size_t nElem, int 
   if (nLastInts > 0) {
     int* dstLast = dst + nInt4 * 4;
     int* srcLast = src + nInt4 * 4;
-    for (int i = threadIdx.x + blockId * blockDim.x; i < nLastInts; i += blockDim.x * nBlocks) {
+    for (size_t i = threadIdx.x + blockId * blockDim.x; i < nLastInts; i += blockDim.x * nBlocks) {
       dstLast[i] += srcLast[i];
     }
   }
@@ -68,7 +68,7 @@ __forceinline__ __device__ void vectorSum(int* dst, int* src, size_t nElem) {
 }
 
 __device__ void vectorSumSingleBlock(int* dst, int* src, size_t nElem) {
-  for (int i = threadIdx.x; i < nElem; i += blockDim.x) {
+  for (size_t i = threadIdx.x; i < nElem; i += blockDim.x) {
     dst[i] += src[i];
   }
 }
@@ -277,10 +277,10 @@ __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nel
                  nelemsPerGPU / pipelineSize * sizeof(int));
 }
 
-__device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRanksPerNode, int startChunkIndex,
-                                     size_t offsetInChunk, size_t chunkSize, size_t nelems, int nBlocks) {
+__device__ void localReduceScatterSm(int* buff, int rank, int nRanksPerNode, int startChunkIndex, size_t offsetInChunk,
+                                     size_t chunkSize, size_t nelems, int nBlocks) {
   if (nRanksPerNode == 1) return;
-  if (blockIdx.x >= nBlocks) return;
+  if ((int)blockIdx.x >= nBlocks) return;
   const int nPeer = nRanksPerNode - 1;
   DeviceHandle<mscclpp::SmChannel>* smChans = constSmOutOfPlaceGetChans;
 
@@ -299,7 +299,7 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
   reduceScatterDeviceSyncer.sync(nBlocks);
 
   const size_t nInt4 = nelems / 4;
-  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * nBlocks) {
+  for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * nBlocks) {
     int4 sum = make_int4(0, 0, 0, 0);
 
     for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
@@ -316,7 +316,7 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
   }
 
   const size_t nLastInts = nelems % 4;
-  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nLastInts; idx += blockDim.x * nBlocks) {
+  for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nLastInts; idx += blockDim.x * nBlocks) {
     int sum = 0;
     for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
       int val = smChans[peerIdx].read<int>(indexOffset + nInt4 * 4 + idx);
@@ -326,10 +326,10 @@ __device__ void localReduceScatterSm(int* buff, int* scratch, int rank, int nRan
   }
 }
 
-__device__ void localReduceScatterSm2(int* buff, int* scratch, int rank, int nRanksPerNode, size_t chunkSize,
-                                      size_t nelems, int nBlocks) {
+__device__ void localReduceScatterSm2(int* buff, int rank, int nRanksPerNode, size_t chunkSize, size_t nelems,
+                                      int nBlocks) {
   if (nRanksPerNode == 1) return;
-  if (blockIdx.x >= nBlocks) return;
+  if ((int)blockIdx.x >= nBlocks) return;
   const int nPeer = nRanksPerNode - 1;
   DeviceHandle<mscclpp::SmChannel>* smChans = constSmOutOfPlaceGetChans;
 
@@ -344,7 +344,7 @@ __device__ void localReduceScatterSm2(int* buff, int* scratch, int rank, int nRa
     smChans[tid].signal();
   }
   const int waitStart = nBlocks * blockDim.x - nPeer;
-  if (tid >= waitStart && tid < nBlocks * blockDim.x) {
+  if (tid >= waitStart && tid < (int)(nBlocks * blockDim.x)) {
     smChans[tid - waitStart].wait();
   }
   reduceScatterDeviceSyncer.sync(nBlocks);
@@ -353,7 +353,7 @@ __device__ void localReduceScatterSm2(int* buff, int* scratch, int rank, int nRa
   for (int index = 0; index < nPeer; ++index) {
     int4 val;
     int peerIdx = (index + localRankIndexInNode) % nPeer;
-    for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * nBlocks) {
+    for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * nBlocks) {
       val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
       buff4[indexOffset4 + idx].w += val.w;
       buff4[indexOffset4 + idx].x += val.x;
@@ -364,7 +364,7 @@ __device__ void localReduceScatterSm2(int* buff, int* scratch, int rank, int nRa
 
   const size_t nLastInts = nelems % 4;
   for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
-    for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nLastInts; idx += blockDim.x * nBlocks) {
+    for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nLastInts; idx += blockDim.x * nBlocks) {
       int val = smChans[(localRankIndexInNode + peerIdx) % nPeer].read<int>(indexOffset + nInt4 * 4 + idx);
       buff[indexOffset + nInt4 * 4 + idx] += val;
     }
@@ -391,18 +391,18 @@ __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPer
   int peerNodeId = peerRank / nRanksPerNode;
   int nBlocksForReduceScatter =
       (int)(nBlocksForReduceScatterRatio * gridDim.x) / (nRanksPerNode - 1) * (nRanksPerNode - 1);
-  int isComm = (threadIdx.x == 0) && (blockIdx.x == nBlocksForReduceScatter);
+  int isComm = (threadIdx.x == 0) && ((int)blockIdx.x == nBlocksForReduceScatter);
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   int nBlocksRemain = gridDim.x - nBlocksForReduceScatter;
   DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = constDevFstRoundChans[peer];
   if (peerNodeId == rank / nRanksPerNode) {
-    localReduceScatterSm(buff, scratch, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, gridDim.x);
+    localReduceScatterSm(buff, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, gridDim.x);
     return;
   }
 
   // step 1: local reduce
   int startChunkIndex = peerNodeId * nRanksPerNode;
-  localReduceScatterSm(buff, scratch, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize / pipelineSize,
+  localReduceScatterSm(buff, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize / pipelineSize,
                        nBlocksForReduceScatter);
   deviceSyncer.sync(gridDim.x);
 
@@ -412,12 +412,12 @@ __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPer
     // opposite side
     proxyChan.putWithSignal(offset, (chunkSize / pipelineSize * sizeof(int)));
   }
-  localReduceScatterSm(buff, scratch, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize, chunkSize,
+  localReduceScatterSm(buff, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize, chunkSize,
                        2 * chunkSize / pipelineSize, nBlocksForReduceScatter);
   if (isComm) {
     proxyChan.wait();
   }
-  if (blockIdx.x >= nBlocksForReduceScatter) {
+  if ((int)blockIdx.x >= nBlocksForReduceScatter) {
     ibDeviceSyncer.sync(nBlocksRemain);
     // reduce data received from peer to related rank
     size_t offset = rank * chunkSize * sizeof(int);
@@ -436,8 +436,7 @@ __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPer
     size_t offset = (peerRank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
     proxyChan.putWithSignal(offset, (pipelineSize - 1) * chunkSize / pipelineSize * sizeof(int));
   }
-  localReduceScatterSm(buff, scratch, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize,
-                       nBlocksForReduceScatter);
+  localReduceScatterSm(buff, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize, nBlocksForReduceScatter);
   if (isComm) {
     proxyChan.wait();
   }
@@ -509,7 +508,7 @@ __device__ void localRingAllGatherSm(int rank, int nRanksPerNode, uint64_t size,
     constSmInPlaceChans[tid].signal();
   }
   int waitStart = nBlocks * blockDim.x - nPeer;
-  if (tid >= waitStart && tid < nBlocks * blockDim.x) {
+  if (tid >= waitStart && tid < (int)(nBlocks * blockDim.x)) {
     constSmInPlaceChans[tid - waitStart].wait();
   }
   allGatherDeviceSyncer.sync(nBlocks);
@@ -631,8 +630,7 @@ __global__ void allreduce0(int* buff, int* scratch, int rank, int worldSize, siz
   }
 }
 
-__global__ void __launch_bounds__(1024)
-    allreduce1(int* buff, int* scratch, int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
+__global__ void __launch_bounds__(1024) allreduce1(int* buff, int* scratch, int rank, int worldSize, size_t nelems) {
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int remoteSendRank = (rank + 1) % worldSize;
   int remoteRecvRank = (rank + worldSize - 1) % worldSize;
@@ -849,23 +847,21 @@ __global__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getP
 }
 
 __global__ void __launch_bounds__(1024)
-    allreduce3(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+    allreduce3(int* buff, int* scratch, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
   reduceScatter(buff, scratch, rank, nRanksPerNode, worldSize, nelems);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     allGather(rank, worldSize, nRanksPerNode, nelems / worldSize);
   }
 }
 
-__global__ void allreduce4(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize,
-                           size_t nelems) {
+__global__ void allreduce4(int* buff, int* scratch, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
   reduceScatterSm(buff, scratch, rank, nRanksPerNode, worldSize, nelems);
   deviceSyncer.sync(gridDim.x);
   allGatherSm(rank, worldSize, nRanksPerNode, nelems / worldSize);
 }
 
-__global__ void allreduce5(int* buff, int* scratch, void* result, int rank, int nRanksPerNode, int worldSize,
-                           size_t nelems) {
-  localReduceScatterSm2(buff, scratch, rank, nRanksPerNode, nelems / worldSize, nelems / worldSize, gridDim.x);
+__global__ void allreduce5(int* buff, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+  localReduceScatterSm2(buff, rank, nRanksPerNode, nelems / worldSize, nelems / worldSize, gridDim.x);
   deviceSyncer.sync(gridDim.x);
   localRingAllGatherSm(rank, nRanksPerNode, nelems / worldSize * sizeof(int), gridDim.x);
 }
@@ -984,20 +980,19 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     allreduce0<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, rank, worldSize, paramCount_,
                                                          scratchDataCount);
   else if (kernelNum == 1)
-    allreduce1<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, rank, worldSize, paramCount_,
-                                                         scratchDataCount);
+    allreduce1<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, rank, worldSize, paramCount_);
   else if (kernelNum == 2)
     allreduce2<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, tmpBuff, putPacketBuff, getPacketBuff,
                                                          resultBuff, rank, args.nRanksPerNode, worldSize, paramCount_);
   else if (kernelNum == 3)
-    allreduce3<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, resultBuff, rank,
-                                                         args.nRanksPerNode, worldSize, paramCount_);
+    allreduce3<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, rank, args.nRanksPerNode,
+                                                         worldSize, paramCount_);
   else if (kernelNum == 4)
-    allreduce4<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, resultBuff, rank,
-                                                         args.nRanksPerNode, worldSize, paramCount_);
+    allreduce4<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, rank, args.nRanksPerNode,
+                                                         worldSize, paramCount_);
   else if (kernelNum == 5)
-    allreduce5<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, resultBuff, rank,
-                                                         args.nRanksPerNode, worldSize, paramCount_);
+    allreduce5<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, rank, args.nRanksPerNode, worldSize,
+                                                         paramCount_);
   else if (kernelNum == 6) {
     allreduce6<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, resultBuff, rank,
                                                          args.nRanksPerNode, worldSize, paramCount_);
@@ -1042,19 +1037,19 @@ void AllReduceTestColl::setupCollTest(size_t size) {
 
 std::vector<KernelRestriction> AllReduceTestColl::getKernelRestrictions() {
   return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes, alignedBytes}
-          {0, "allreduce0", true, 1, .alignedBytes = 4 * worldSize_},
-          {1, "allreduce1", true, 1, .alignedBytes = 4 * worldSize_},
-          {2, "allreduce2", true, 1, .alignedBytes = 4 * worldSize_},
-          {3, "allreduce3", true, 3, .alignedBytes = 4 * worldSize_},
+          {0, "allreduce0", true, 1, 4 * worldSize_},
+          {1, "allreduce1", true, 1, 4 * worldSize_},
+          {2, "allreduce2", true, 1, 4 * worldSize_},
+          {3, "allreduce3", true, 3, 4 * worldSize_},
           {
               4,
               "allreduce4",
               true,
               3,
-              .alignedBytes = 16 * worldSize_ /*use ulong2 to transfer data*/,
+              16 * worldSize_ /*use ulong2 to transfer data*/,
           },
-          {5, "allreduce5", false, 1, .alignedBytes = 4 * worldSize_},
-          {6, "allreduce6", false, 1, .alignedBytes = 4 * worldSize_}};
+          {5, "allreduce5", false, 1, 4 * worldSize_},
+          {6, "allreduce6", false, 1, 4 * worldSize_}};
 }
 
 class AllReduceTestEngine : public BaseTestEngine {
