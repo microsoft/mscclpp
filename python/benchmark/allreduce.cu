@@ -550,12 +550,12 @@ __device__ void allGatherSm(mscclpp::SmChannelDeviceHandle* smChans,
   const size_t step2Bytes = nelemsPerGPU * sizeof(int) - step1Bytes;
 
   // Step 1
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
+  if (threadIdx.x == 0 && blockIdx.x == 0 && step1Bytes > 0) {
     proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
   }
   localAllGatherSm(smChans, rank, nRanksPerNode, startRankIndexInLocalNode, 0, rankChunkSize, rankChunkSize,
                    nBlocksForLocalAllGather);
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
+  if (threadIdx.x == 0 && blockIdx.x == 0 && step1Bytes > 0) {
     proxyChan.wait();
     proxyChan.flush();
   }
@@ -564,8 +564,9 @@ __device__ void allGatherSm(mscclpp::SmChannelDeviceHandle* smChans,
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
   }
-  localAllGatherSm(smChans, rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
-                   nBlocksForLocalAllGather);
+  if (step1Bytes > 0)
+    localAllGatherSm(smChans, rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
+                    nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     proxyChan.wait();
     proxyChan.flush();
@@ -620,8 +621,9 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
     // opposite side
     proxyChan.putWithSignal(offset, (chunkSize / pipelineSize * sizeof(int)));
   }
-  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize, chunkSize,
-                       (pipelineSize - 1) * chunkSize / pipelineSize, nBlocksForReduceScatter);
+  if (pipelineSize > 1)
+    localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize, chunkSize,
+                        (pipelineSize - 1) * chunkSize / pipelineSize, nBlocksForReduceScatter);
   if (isComm) {
     proxyChan.wait();
   }
@@ -640,13 +642,13 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
 
   // step 3: local reduce and exchange data with neighbor
   startChunkIndex = (rank / nRanksPerNode) * nRanksPerNode;
-  if (isComm) {
+  if (isComm && pipelineSize > 1) {
     size_t offset = (peerRank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
     proxyChan.putWithSignal(offset, (pipelineSize - 1) * chunkSize / pipelineSize * sizeof(int));
   }
   localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, 0, chunkSize, chunkSize,
                        nBlocksForReduceScatter);
-  if (isComm) {
+  if (isComm && pipelineSize > 1) {
     proxyChan.wait();
   }
   deviceSyncer.sync(gridDim.x);
@@ -654,7 +656,8 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
   size_t offset = (rank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
   int* dst = (int*)((char*)buff + offset);
   int* src = (int*)((char*)scratch + offset);
-  vectorSum((TYPE*)dst, (TYPE*)src, (pipelineSize - 1) * chunkSize / pipelineSize);
+  if (pipelineSize > 1)
+    vectorSum((TYPE*)dst, (TYPE*)src, (pipelineSize - 1) * chunkSize / pipelineSize);
   if (isComm) {
     proxyChan.flush();
   }
