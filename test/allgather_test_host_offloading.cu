@@ -23,18 +23,6 @@ int nranksPerNode;
 int rank;
 int world_size;
 
-// Propagate errors up
-
-// Check CUDA RT calls
-#define CUCHECK(cmd)                                                                    \
-  do {                                                                                  \
-    cudaError_t err = cmd;                                                              \
-    if (err != cudaSuccess) {                                                           \
-      printf("%s:%d Cuda failure '%s'\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
-      exit(EXIT_FAILURE);                                                               \
-    }                                                                                   \
-  } while (false)
-
 // Measure current time in second.
 static double getTime(void) {
   struct timespec tspec;
@@ -45,8 +33,8 @@ static double getTime(void) {
   return (tspec.tv_nsec / 1.0e9) + tspec.tv_sec;
 }
 
-__global__ void kernel(int r, int nranks, mscclpp::FifoDeviceHandle fifo,
-                       mscclpp::Host2DeviceSemaphore::DeviceHandle* handles, int handleIndex) {
+__global__ void kernel(int r, mscclpp::FifoDeviceHandle fifo, mscclpp::Host2DeviceSemaphore::DeviceHandle* handles,
+                       int handleIndex) {
   int tid = threadIdx.x;
   __syncthreads();
   // uint64_t tail;
@@ -75,8 +63,8 @@ void print_usage(const char* prog) {
 
 void initializeAndAllocateAllGatherData(int rank, int world_size, size_t dataSize, size_t nelemsPerGPU, int** data_h,
                                         int** data_d) {
-  CUCHECK(cudaMalloc(data_d, dataSize));
-  CUCHECK(cudaMemset(*data_d, 0, dataSize));
+  MSCCLPP_CUDATHROW(cudaMalloc(data_d, dataSize));
+  MSCCLPP_CUDATHROW(cudaMemset(*data_d, 0, dataSize));
 
   *data_h = new int[nelemsPerGPU * world_size];
   for (size_t i = 0; i < nelemsPerGPU * world_size; i++) {
@@ -87,29 +75,29 @@ void initializeAndAllocateAllGatherData(int rank, int world_size, size_t dataSiz
       (*data_h)[i] = 0;
     }
   }
-  CUCHECK(cudaMemcpy(*data_d, *data_h, dataSize, cudaMemcpyHostToDevice));
+  MSCCLPP_CUDATHROW(cudaMemcpy(*data_d, *data_h, dataSize, cudaMemcpyHostToDevice));
 }
 
 class MyProxyService {
  private:
-  int deviceNumaNode_;
-  mscclpp::Proxy proxy_;
+  int dataSize_;
   std::vector<mscclpp::RegisteredMemory> remoteMemories_;
   mscclpp::RegisteredMemory localMemory_;
   std::vector<std::shared_ptr<mscclpp::Host2HostSemaphore>> hostSemaphores_;
   std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> deviceSemaphores1_;
   std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> deviceSemaphores2_;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections_;
-  int dataSize_;
+  mscclpp::Proxy proxy_;
+  int deviceNumaNode_;
 
  public:
   MyProxyService(mscclpp::Communicator& comm, int* data_d, int dataSize)
-      : remoteMemories_(world_size),
+      : dataSize_(dataSize),
+        remoteMemories_(world_size),
         connections_(world_size),
-        dataSize_(dataSize),
         proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
     int cudaDevice;
-    CUCHECK(cudaGetDevice(&cudaDevice));
+    MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
     deviceNumaNode_ = mscclpp::getDeviceNumaNode(cudaDevice);
 
     int thisNode = rankToNode(rank);
@@ -237,7 +225,7 @@ int main(int argc, char* argv[]) {
   MPI_Comm_free(&shmcomm);
 
   int cudaNum = rankToLocalRank(rank);
-  CUCHECK(cudaSetDevice(cudaNum));
+  MSCCLPP_CUDATHROW(cudaSetDevice(cudaNum));
 
   if (rank == 0) printf("Initializing MSCCL++\n");
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, world_size);
@@ -268,30 +256,30 @@ int main(int argc, char* argv[]) {
   mscclpp::FifoDeviceHandle fifo = proxyService.fifo().deviceHandle();
   if (rank == 0) printf("Testing the correctness of AllGather implementation\n");
   cudaStream_t stream;
-  CUCHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+  MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
   mscclpp::Host2DeviceSemaphore::DeviceHandle* deviceHandles1;
   mscclpp::Host2DeviceSemaphore::DeviceHandle* deviceHandles2;
 
-  CUCHECK(cudaMalloc(&deviceHandles1, sizeof(mscclpp::Host2DeviceSemaphore::DeviceHandle) * world_size));
+  MSCCLPP_CUDATHROW(cudaMalloc(&deviceHandles1, sizeof(mscclpp::Host2DeviceSemaphore::DeviceHandle) * world_size));
   for (int i = 0; i < world_size; ++i) {
     if (i == rank) continue;
     auto handle = proxyService.getDeviceHandle1(i);
-    CUCHECK(cudaMemcpy(&deviceHandles1[i], &handle, sizeof(mscclpp::Host2DeviceSemaphore::DeviceHandle),
-                       cudaMemcpyHostToDevice));
+    MSCCLPP_CUDATHROW(cudaMemcpy(&deviceHandles1[i], &handle, sizeof(mscclpp::Host2DeviceSemaphore::DeviceHandle),
+                                 cudaMemcpyHostToDevice));
   }
 
-  CUCHECK(cudaMalloc(&deviceHandles2, sizeof(mscclpp::Host2DeviceSemaphore::DeviceHandle) * world_size));
+  MSCCLPP_CUDATHROW(cudaMalloc(&deviceHandles2, sizeof(mscclpp::Host2DeviceSemaphore::DeviceHandle) * world_size));
   for (int i = 0; i < world_size; ++i) {
     if (i == rank) continue;
     auto handle = proxyService.getDeviceHandle2(i);
-    CUCHECK(cudaMemcpy(&deviceHandles2[i], &handle, sizeof(mscclpp::Host2DeviceSemaphore::DeviceHandle),
-                       cudaMemcpyHostToDevice));
+    MSCCLPP_CUDATHROW(cudaMemcpy(&deviceHandles2[i], &handle, sizeof(mscclpp::Host2DeviceSemaphore::DeviceHandle),
+                                 cudaMemcpyHostToDevice));
   }
 
-  kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles1, 1);
-  CUCHECK(cudaStreamSynchronize(stream));
+  kernel<<<1, world_size, 0, stream>>>(rank, fifo, deviceHandles1, 1);
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
-  CUCHECK(cudaMemcpy(data_h, data_d, dataSize, cudaMemcpyDeviceToHost));
+  MSCCLPP_CUDATHROW(cudaMemcpy(data_h, data_d, dataSize, cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < nelemsPerGPU * world_size; i++) {
     int val = i + 1;
@@ -307,14 +295,14 @@ int main(int argc, char* argv[]) {
   double t0, t1, ms, time_in_us;
   int iterwithoutcudagraph = 10;
   if (rank == 0) printf("Running %d iterations of the kernel without CUDA graph\n", iterwithoutcudagraph);
-  CUCHECK(cudaStreamSynchronize(stream));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
   bootstrap->barrier();
   t0 = getTime();
   for (int i = 0; i < iterwithoutcudagraph; ++i) {
-    kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles1, 1);
-    kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles2, 2);
+    kernel<<<1, world_size, 0, stream>>>(rank, fifo, deviceHandles1, 1);
+    kernel<<<1, world_size, 0, stream>>>(rank, fifo, deviceHandles2, 2);
   }
-  CUCHECK(cudaStreamSynchronize(stream));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
   bootstrap->barrier();
   t1 = getTime();
   ms = (t1 - t0) * 1000.0;
@@ -327,22 +315,22 @@ int main(int argc, char* argv[]) {
   if (rank == 0) printf("Capturing %d iterations of the kernel in a CUDA graph\n", cudagraphiter);
   cudaGraph_t graph;
   cudaGraphExec_t instance;
-  cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
+  MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
   for (int i = 0; i < cudagraphiter; ++i) {
-    kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles1, 1);
-    kernel<<<1, world_size, 0, stream>>>(rank, world_size, fifo, deviceHandles2, 2);
+    kernel<<<1, world_size, 0, stream>>>(rank, fifo, deviceHandles1, 1);
+    kernel<<<1, world_size, 0, stream>>>(rank, fifo, deviceHandles2, 2);
   }
-  cudaStreamEndCapture(stream, &graph);
-  cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
+  MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
+  MSCCLPP_CUDATHROW(cudaGraphInstantiate(&instance, graph, NULL, NULL, 0));
 
   int cudagraphwarmup = 10;
   if (rank == 0)
     printf("Warming up %d iterations of the CUDA graph with %d iterations of the kernel\n", cudagraphwarmup,
            cudagraphiter);
   for (int i = 0; i < cudagraphwarmup; ++i) {
-    cudaGraphLaunch(instance, stream);
+    MSCCLPP_CUDATHROW(cudaGraphLaunch(instance, stream));
   }
-  CUCHECK(cudaStreamSynchronize(stream));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
   // measure runtime
   int cudagraphlaunch = 10;
@@ -352,9 +340,9 @@ int main(int argc, char* argv[]) {
   bootstrap->barrier();
   t0 = getTime();
   for (int i = 0; i < cudagraphlaunch; ++i) {
-    cudaGraphLaunch(instance, stream);
+    MSCCLPP_CUDATHROW(cudaGraphLaunch(instance, stream));
   }
-  CUCHECK(cudaStreamSynchronize(stream));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
   t1 = getTime();
   ms = (t1 - t0) * 1000.0;
