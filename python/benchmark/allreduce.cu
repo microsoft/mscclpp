@@ -585,6 +585,7 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
 ) {
   const size_t chunkSize = nelems / nRanksPerNode;
   const int localRank = rank % nRanksPerNode;
+  const int peerRank = (rank + nRanksPerNode) % worldSize;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   mscclpp::SimpleProxyChannelDeviceHandle proxyChan = proxyChans[peer];
   localReduceScatterSm(smChans, buff, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, gridDim.x);
