@@ -566,7 +566,7 @@ __device__ void allGatherSm(mscclpp::SmChannelDeviceHandle* smChans,
   }
   if (step1Bytes > 0)
     localAllGatherSm(smChans, rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
-                    nBlocksForLocalAllGather);
+                     nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     proxyChan.wait();
     proxyChan.flush();
@@ -581,8 +581,7 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
                                 mscclpp::SimpleProxyChannelDeviceHandle* proxyChans, TYPE* buff, TYPE* scratch,
                                 int rank, int nRanksPerNode, int worldSize,
                                 size_t nelems,  // must be divisible by 3
-                                int pipelineDepth
-) {
+                                int pipelineDepth) {
   // this reduce-scatter algorithm works as follows:
   // Step 1: each node does a local reduce-scatter on peer node data chunks with 1/pipeline portion of chunk data. For
   // example, 2 nodes and each node has 2 ranks. rank 0 and rank 1 perform reduce-scatter on chunk 2 and chunk 3, with
@@ -623,7 +622,7 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
   }
   if (pipelineSize > 1)
     localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, chunkSize / pipelineSize, chunkSize,
-                        (pipelineSize - 1) * chunkSize / pipelineSize, nBlocksForReduceScatter);
+                         (pipelineSize - 1) * chunkSize / pipelineSize, nBlocksForReduceScatter);
   if (isComm) {
     proxyChan.wait();
   }
@@ -656,8 +655,7 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
   size_t offset = (rank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
   int* dst = (int*)((char*)buff + offset);
   int* src = (int*)((char*)scratch + offset);
-  if (pipelineSize > 1)
-    vectorSum((TYPE*)dst, (TYPE*)src, (pipelineSize - 1) * chunkSize / pipelineSize);
+  if (pipelineSize > 1) vectorSum((TYPE*)dst, (TYPE*)src, (pipelineSize - 1) * chunkSize / pipelineSize);
   if (isComm) {
     proxyChan.flush();
   }
@@ -669,7 +667,8 @@ extern "C" __global__ void __launch_bounds__(1024, 1) __global__
                mscclpp::SimpleProxyChannelDeviceHandle* allGatherProxyChans, TYPE* buff, TYPE* scratch, int rank,
                int nRanksPerNode, int worldSize, size_t nelems, int pipelineDepth) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
-  reduceScatterSm(smChans, reduceScatterProxyChans, buff, scratch, rank, nRanksPerNode, worldSize, nelems, pipelineDepth);
+  reduceScatterSm(smChans, reduceScatterProxyChans, buff, scratch, rank, nRanksPerNode, worldSize, nelems,
+                  pipelineDepth);
   deviceSyncer.sync(gridDim.x);
   allGatherSm(smChans, allGatherProxyChans, rank, worldSize, nRanksPerNode, nelems / worldSize, pipelineDepth);
 }
