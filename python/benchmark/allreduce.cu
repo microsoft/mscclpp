@@ -588,26 +588,27 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
   const int peerRank = (rank + nRanksPerNode) % worldSize;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   mscclpp::SimpleProxyChannelDeviceHandle proxyChan = proxyChans[peer];
-  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, gridDim.x);
-  deviceSyncer.sync(gridDim.x);
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
-    size_t offset = (localRank * chunkSize) * sizeof(int);
-    // opposite side
-    proxyChan.putWithSignal(offset, (chunkSize * sizeof(int)));
-    proxyChan.flush();
-    proxyChan.wait();
+  const size_t chunkSizePerStage = chunkSize / pipelineDepth;
+  const size_t chunkSizeByte = chunkSize * sizeof(int);
+  const size_t chunkSizePerStageBye = chunkSizePerStage * sizeof(int);
+  for (int i = 0; i < pipelineDepth; i++){
+    localReduceScatterSm(smChans, buff, rank, nRanksPerNode, 0, chunkSizePerStage * i, chunkSize, chunkSizePerStage, gridDim.x);
+    deviceSyncer.sync(gridDim.x);
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+      size_t offset = (localRank * chunkSize + chunkSizePerStage*i) * sizeof(int);
+      // opposite side
+      proxyChan.putWithSignal(offset, (chunkSizePerStage * sizeof(int)));
+      proxyChan.flush();
+      proxyChan.wait();
+    }
+    deviceSyncer.sync(gridDim.x);
+    size_t offset = (localRank * chunkSize + chunkSizePerStage * i) * sizeof(int);
+    int* dst = (int*)((char*)buff + offset);
+    int* src = (int*)((char*)scratch + offset);
+    vectorSum((TYPE*)dst, (TYPE*)src, chunkSizePerStage, blockIdx.x, gridDim.x);
+    deviceSyncer.sync(gridDim.x);
+    localAllGatherSm(smChans, localRank, nRanksPerNode, 0, chunkSizePerStageBye*i, chunkSizeByte, chunkSizePerStageBye, gridDim.x);
   }
-  deviceSyncer.sync(gridDim.x);
-  size_t offset = localRank * chunkSize * sizeof(int);
-  int* dst = (int*)((char*)buff + offset);
-  int* src = (int*)((char*)scratch + offset);
-  vectorSum((TYPE*)dst, (TYPE*)src, chunkSize, blockIdx.x, gridDim.x);
-
-  deviceSyncer.sync(gridDim.x);
-
-  const size_t rankChunkSize = (nelems / nRanksPerNode) * sizeof(int);
-  localAllGatherSm(smChans, localRank, nRanksPerNode, 0, 0, rankChunkSize, rankChunkSize, gridDim.x);
-
 }
 
 extern "C" __global__ void __launch_bounds__(1024, 1) __global__
