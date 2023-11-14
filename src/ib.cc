@@ -260,24 +260,9 @@ void IbQp::postSend() {
   this->numSignaledPostedItems += this->numSignaledStagedItems;
   this->numSignaledStagedItems = 0;
   if (this->numSignaledPostedItems + 4 > this->cq->cqe) {
-    WARN("IB: CQ is almost full ( %d / %d ). The connection needs to be flushed to prevent runtime errors.",
+    WARN("IB: CQ is almost full ( %d / %d ). The connection needs to be flushed to prevent timeout errors.",
          this->numSignaledPostedItems, this->cq->cqe);
   }
-}
-
-void IbQp::postRecv(uint64_t wrId) {
-  struct ibv_recv_wr wr, *bad_wr;
-  wr.wr_id = wrId;
-  wr.sg_list = nullptr;
-  wr.num_sge = 0;
-  wr.next = nullptr;
-  int ret = ibv_post_recv(this->qp, &wr, &bad_wr);
-  if (ret != 0) {
-    std::stringstream err;
-    err << "ibv_post_recv failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
-  }
-  this->numSignaledPostedItems += 1;
 }
 
 int IbQp::pollCq() {
@@ -291,6 +276,8 @@ int IbQp::pollCq() {
 IbQpInfo& IbQp::getInfo() { return this->info; }
 
 const ibv_wc* IbQp::getWc(int idx) const { return &this->wcs[idx]; }
+
+int IbQp::getNumCqItems() const { return this->numSignaledPostedItems; }
 
 IbCtx::IbCtx(const std::string& devName) : devName(devName) {
   int num;

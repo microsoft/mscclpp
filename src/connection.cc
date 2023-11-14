@@ -161,24 +161,23 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
 
 void IBConnection::flush(int64_t timeoutUsec) {
   Timer timer;
-  while (numSignaledSends) {
+  while (qp->getNumCqItems()) {
     int wcNum = qp->pollCq();
     if (wcNum < 0) {
       throw mscclpp::IbError("pollCq failed: error no " + std::to_string(errno), errno);
-    }
-
-    auto elapsed = timer.elapsed();
-    if ((timeoutUsec >= 0) && (elapsed > timeoutUsec)) {
-      throw Error("pollCq is stuck: waited for " + std::to_string(elapsed / 1e6) + " seconds. Expected " +
-                      std::to_string(numSignaledSends) + " signals",
-                  ErrorCode::InternalError);
+    } else if (wcNum == 0 && timeoutUsec >= 0) {
+      auto elapsed = timer.elapsed();
+      if (elapsed > timeoutUsec) {
+        throw Error("pollCq timed out: waited for " + std::to_string(elapsed / 1e6) + " seconds. Expected " +
+                        std::to_string(qp->getNumCqItems()) + " signals",
+                    ErrorCode::Timeout);
+      }
     }
     for (int i = 0; i < wcNum; ++i) {
       const ibv_wc* wc = qp->getWc(i);
       if (wc->status != IBV_WC_SUCCESS) {
-        throw mscclpp::IbError("pollCq failed: status " + std::to_string(wc->status), wc->status);
+        throw mscclpp::IbError("a work item failed: status " + std::to_string(wc->status), wc->status);
       }
-      numSignaledSends--;
     }
   }
   INFO(MSCCLPP_NET, "IBConnection flushing connection");
