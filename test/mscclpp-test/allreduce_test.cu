@@ -1091,30 +1091,30 @@ bool AllReduceTestEngine::isUsePacket() const { return (args_.kernelNum == 2 || 
 bool AllReduceTestEngine::isInPlace() const { return (args_.kernelNum != 2 && args_.kernelNum != 6); }
 
 void AllReduceTestEngine::allocateBuffer() {
-  inputBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
-  resultBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
+  inputBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
+  resultBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
   inputBuff = inputBuff_.get();
   resultBuff = resultBuff_.get();
 
   if (args_.kernelNum == 0 || args_.kernelNum == 1 || args_.kernelNum == 3 || args_.kernelNum == 4) {
-    scratchBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
+    scratchBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
     scratchBuff = scratchBuff_.get();
   } else if (args_.kernelNum == 2) {
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     // 2x for double-buffering
     const size_t scratchBuffNelem = nPacket * std::max(args_.nRanksPerNode - 1, 1) * 2;
-    scratchPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
+    scratchPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
     scratchPacketBuff = scratchPacketBuff_.get();
     const size_t packetBuffNelem = nPacket * 2;
-    putPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
-    getPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
+    putPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
+    getPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
     putPacketBuff = putPacketBuff_.get();
     getPacketBuff = getPacketBuff_.get();
   } else if (args_.kernelNum == 6) {
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     // 2x for double-buffering, scratchBuff used to store original data and reduced results
     const size_t scratchBuffNelem = nPacket * 2 /*original data & reduced result */ * 2 /* double buffering*/;
-    scratchPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
+    scratchPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
     scratchPacketBuff = scratchPacketBuff_.get();
   }
 

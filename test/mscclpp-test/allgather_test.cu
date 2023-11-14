@@ -472,7 +472,7 @@ class AllGatherTestEngine : public BaseTestEngine {
 AllGatherTestEngine::AllGatherTestEngine(const TestArgs& args) : BaseTestEngine(args, "allgather") {}
 
 void AllGatherTestEngine::allocateBuffer() {
-  sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
+  sendBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
 }
 

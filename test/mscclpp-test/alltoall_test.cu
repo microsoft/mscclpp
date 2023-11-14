@@ -139,8 +139,8 @@ class AllToAllTestEngine : public BaseTestEngine {
 AllToAllTestEngine::AllToAllTestEngine(const TestArgs& args) : BaseTestEngine(args, "alltoall") { inPlace_ = false; }
 
 void AllToAllTestEngine::allocateBuffer() {
-  sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
-  recvBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
+  sendBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
+  recvBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
 
   localSendBuff = sendBuff_.get();

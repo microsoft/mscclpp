@@ -362,7 +362,7 @@ void ProxyChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
 
   auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
   const std::string testName = std::string(testInfo->test_suite_name()) + "." + std::string(testInfo->name());
-  const int nTries = 1000;
+  const int nTries = 1000000;
 
   // Warm-up
   kernelProxyLLPingPong<false>
