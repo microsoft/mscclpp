@@ -1,0 +1,19 @@
+{
+  "build": {
+    "dockerfile": "docker/dev-cuda12.1.dockerfile",
+    "context": "."
+  },
+  "runArgs": ["--gpus", "all"],
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-vscode.cmake-tools"]
+    }
+  },
+  "remoteEnv": {
+    "OMPI_ALLOW_RUN_AS_ROOT": "1",
+    "OMPI_ALLOW_RUN_AS_ROOT_CONFIRM": "1"
+  }
+}

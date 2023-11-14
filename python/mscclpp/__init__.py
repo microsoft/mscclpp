@@ -19,6 +19,9 @@ from ._mscclpp import (
     Transport,
     TransportFlags,
     version,
+    get_ib_device_count,
+    get_ib_device_name,
+    get_ib_transport_by_device_name,
 )
 
 __version__ = version()
