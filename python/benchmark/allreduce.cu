@@ -518,119 +518,6 @@ __device__ void localAllGatherAllPairsSm(mscclpp::SmChannelDeviceHandle* smChans
   }
 }
 
-// // This is an allgather4 equivalent
-// __device__ void allGatherSm(mscclpp::SmChannelDeviceHandle* smChans,
-//                             mscclpp::SimpleProxyChannelDeviceHandle* proxyChans, int rank, int worldSize,
-//                             int nRanksPerNode, size_t nelemsPerGPU, int pipelineDepth) {
-//   // this allgather is a pipelined and hierarchical one and only works for two nodes
-//   // it is implemented as follows:
-//   // Step 1: each node does a local allgather and concurrently,
-//   // local GPU i exchange (piplineSize-1)/pipelineSize portion of their data with
-//   // its cross-node neighbor (local GPU i on the other node) via IB
-//   // Step 2: each node does a local allgather again with the data just received from its
-//   // cross-node neighbor in step 1, and concurrently, exchange the rest of the data with
-//   // its cross-node neighbor
-//   // Step 3: each node does a local allgather for the last time with the rest of the data
-
-//   int pipelineSize = pipelineDepth;
-//   int peerRank = (rank + nRanksPerNode) % worldSize;
-//   int peerNodeId = peerRank / nRanksPerNode;
-//   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-//   mscclpp::SimpleProxyChannelDeviceHandle proxyChan = proxyChans[peer];
-//   const size_t nBlocksForLocalAllGather = gridDim.x / (nRanksPerNode - 1) * (nRanksPerNode - 1);
-//   const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
-//   const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
-//   const int startRankIndexInPeerNode = (peerRank / nRanksPerNode) * nRanksPerNode;
-
-//   if (peerNodeId == rank / nRanksPerNode) {
-//     localAllGatherSm(smChans, rank, nRanksPerNode, 0, 0, rankChunkSize, rankChunkSize, gridDim.x);
-//     return;
-//   }
-
-//   constexpr size_t alignment = 128;
-//   size_t step1Bytes = (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int);
-//   step1Bytes = step1Bytes / alignment * alignment;
-//   const size_t step2Bytes = nelemsPerGPU * sizeof(int) - step1Bytes;
-
-//   // Step 1
-//   if (threadIdx.x == 0 && blockIdx.x == 0 && step1Bytes > 0) {
-//     proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
-//   }
-//   localAllGatherSm(smChans, rank, nRanksPerNode, startRankIndexInLocalNode, 0, rankChunkSize, rankChunkSize,
-//                    nBlocksForLocalAllGather);
-//   if (threadIdx.x == 0 && blockIdx.x == 0 && step1Bytes > 0) {
-//     proxyChan.wait();
-//     proxyChan.flush();
-//   }
-//   deviceSyncer.sync(gridDim.x);
-//   // Step 2
-//   if (threadIdx.x == 0 && blockIdx.x == 0) {
-//     proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
-//   }
-//   if (step1Bytes > 0)
-//     localAllGatherSm(smChans, rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
-//                     nBlocksForLocalAllGather);
-//   if (threadIdx.x == 0 && blockIdx.x == 0) {
-//     proxyChan.wait();
-//     proxyChan.flush();
-//   }
-//   deviceSyncer.sync(gridDim.x);
-//   // Step 3
-//   localAllGatherSm(smChans, rank, nRanksPerNode, startRankIndexInPeerNode, step1Bytes, rankChunkSize, step2Bytes,
-//                    nBlocksForLocalAllGather);
-// }
-
-__device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChansRs,
-                                mscclpp::SmChannelDeviceHandle* smChansAg,
-                                mscclpp::SimpleProxyChannelDeviceHandle* proxyChans, TYPE* buff, TYPE* scratch,
-                                int rank, int nRanksPerNode, int worldSize,
-                                size_t nelems,  // must be divisible by 3
-                                int pipelineDepth
-) {
-  const size_t chunkSize = nelems / nRanksPerNode;
-  const int localRank = rank % nRanksPerNode;
-  const int peerRank = (rank + nRanksPerNode) % worldSize;
-  int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  mscclpp::SimpleProxyChannelDeviceHandle proxyChan = proxyChans[peer];
-  const size_t chunkSizePerStage = chunkSize / pipelineDepth;
-  const size_t chunkSizeByte = chunkSize * sizeof(int);
-  const size_t chunkSizePerStageByte = chunkSizePerStage * sizeof(int);
-  const int nBlocksForSm =
-      (int)(0.8 * gridDim.x) / (2*(nRanksPerNode - 1)) * (2*(nRanksPerNode - 1));
-  const int nBlocksForSmRs = nBlocksForSm/2;
-  const int nBlocksForSmAg = nBlocksForSm/2;
-  const int nBlocksForIb = gridDim.x - nBlocksForSm;
-
-  for (int i = 0; i < pipelineDepth; i++){
-    if (blockIdx.x < nBlocksForSmRs)
-      localReduceScatterSm(smChansRs, buff, rank, nRanksPerNode, 0, chunkSizePerStage * i, chunkSize, chunkSizePerStage, blockIdx.x, nBlocksForSmRs);
-    __syncthreads();
-    if (blockIdx.x < nBlocksForSmRs || blockIdx.x >= nBlocksForSm)
-      step0DeviceSyncer.sync(nBlocksForSmRs+nBlocksForIb);
-    if (blockIdx.x >= nBlocksForSm){
-      if (threadIdx.x == 0 && blockIdx.x == gridDim.x-1) {
-        size_t offset = (localRank * chunkSize + chunkSizePerStage*i) * sizeof(int);
-        // opposite side
-        proxyChan.putWithSignal(offset, (chunkSizePerStage * sizeof(int)));
-        proxyChan.flush();
-        proxyChan.wait();
-      }
-      __syncthreads();
-
-      step1DeviceSyncer.sync(nBlocksForIb);
-      size_t offset = (localRank * chunkSize + chunkSizePerStage * i) * sizeof(int);
-      int* dst = (int*)((char*)buff + offset);
-      int* src = (int*)((char*)scratch + offset);
-      vectorSum((TYPE*)dst, (TYPE*)src, chunkSizePerStage, blockIdx.x - nBlocksForSm, nBlocksForIb);
-    }
-    __syncthreads();
-    if (blockIdx.x >= nBlocksForSmRs)
-      step2DeviceSyncer.sync(nBlocksForSmRs + nBlocksForIb);
-    if (blockIdx.x >= nBlocksForSmRs && blockIdx.x < nBlocksForSm)
-      localAllGatherSm(smChansAg, localRank, nRanksPerNode, 0, chunkSizePerStageByte*i, chunkSizeByte, chunkSizePerStageByte, blockIdx.x - nBlocksForSmRs, nBlocksForSmAg);
-  }
-}
-
 extern "C" __global__ void __launch_bounds__(1024, 1) __global__
     allreduce4(mscclpp::SmChannelDeviceHandle* smChansRs,
                mscclpp::SmChannelDeviceHandle* smChansAg,
@@ -638,9 +525,51 @@ extern "C" __global__ void __launch_bounds__(1024, 1) __global__
                mscclpp::SimpleProxyChannelDeviceHandle* allGatherProxyChans, TYPE* buff, TYPE* scratch, int rank,
                int nRanksPerNode, int worldSize, size_t nelems, int pipelineDepth) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
-  reduceScatterSm(smChansRs, smChansAg, reduceScatterProxyChans, buff, scratch, rank, nRanksPerNode, worldSize, nelems, pipelineDepth);
-  // deviceSyncer.sync(gridDim.x);
-  // allGatherSm(smChans, allGatherProxyChans, rank, worldSize, nRanksPerNode, nelems / worldSize, pipelineDepth);
+  const size_t chunkSize = nelems / nRanksPerNode;
+  const int localRank = rank % nRanksPerNode;
+  const int peerRank = (rank + nRanksPerNode) % worldSize;
+  int peer = (peerRank < rank) ? peerRank : peerRank - 1;
+  mscclpp::SimpleProxyChannelDeviceHandle proxyChan = reduceScatterProxyChans[peer];
+  size_t chunkSizePerStage = chunkSize / pipelineDepth;
+  // const size_t chunkSizeByte = chunkSize * sizeof(int);
+  // const size_t chunkSizePerStageByte = chunkSizePerStage * sizeof(int);
+  const int nBlocksForSm =
+      (int)(0.8 * gridDim.x) / (2*(nRanksPerNode - 1)) * (2*(nRanksPerNode - 1));
+  const int nBlocksForSmRs = nBlocksForSm/2;
+  const int nBlocksForSmAg = nBlocksForSm/2;
+  const int nBlocksForIb = gridDim.x - nBlocksForSm;
+
+  size_t doneSoFar = 0;
+  for (int i = 0; i < pipelineDepth; i++){
+    if (blockIdx.x < nBlocksForSmRs)
+      localReduceScatterSm(smChansRs, buff, rank, nRanksPerNode, 0, doneSoFar, chunkSize, chunkSizePerStage, blockIdx.x, nBlocksForSmRs);
+    if (blockIdx.x < nBlocksForSmRs || blockIdx.x >= nBlocksForSm)
+      step0DeviceSyncer.sync(nBlocksForSmRs+nBlocksForIb);
+    if (blockIdx.x >= nBlocksForSm){
+      if (threadIdx.x == 0 && blockIdx.x == gridDim.x-1) {
+        size_t offset = (localRank * chunkSize + doneSoFar) * sizeof(int);
+        // opposite side
+        proxyChan.putWithSignal(offset, (chunkSizePerStage * sizeof(int)));
+        proxyChan.flush();
+      }
+      if (threadIdx.x == 32 && blockIdx.x == gridDim.x-1) {
+        proxyChan.wait();
+      }
+
+      step1DeviceSyncer.sync(nBlocksForIb);
+      size_t offset = (localRank * chunkSize + doneSoFar) * sizeof(int);
+      int* dst = (int*)((char*)buff + offset);
+      int* src = (int*)((char*)scratch + offset);
+      vectorSum((TYPE*)dst, (TYPE*)src, chunkSizePerStage, blockIdx.x - nBlocksForSm, nBlocksForIb);
+    }
+    if (blockIdx.x >= nBlocksForSmRs)
+      step2DeviceSyncer.sync(nBlocksForSmRs + nBlocksForIb);
+    if (blockIdx.x >= nBlocksForSmRs && blockIdx.x < nBlocksForSm)
+      localAllGatherSm(smChansAg, localRank, nRanksPerNode, 0, doneSoFar*sizeof(int), chunkSize*sizeof(int), chunkSizePerStage*sizeof(int), blockIdx.x - nBlocksForSmRs, nBlocksForSmAg);
+    doneSoFar += chunkSizePerStage;
+    // if (i == 0) chunkSizePerStage *= (pipelineDepth-1);
+    // if (i == 1) chunkSizePerStage /= (pipelineDepth-2);
+  }
 }
 
 // allreduce 5 for 2-nodes
