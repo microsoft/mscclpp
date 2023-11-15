@@ -197,7 +197,8 @@ class MscclppAllReduce4:
         self.scratch = cp.zeros(self.memory.size, dtype=self.memory.dtype)
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         # create a sm_channel for each remote neighbor
-        self.sm_channels = self.group.make_sm_channels(self.memory, same_node_connections)
+        self.sm_channels_rs = self.group.make_sm_channels(self.memory, same_node_connections)
+        self.sm_channels_ag = self.group.make_sm_channels(self.memory, same_node_connections)
         self.reduce_scatter_proxy_channels = self.group.make_proxy_channels_with_scratch(
             self.proxy_service, self.memory, self.scratch, self.connections
         )
@@ -208,12 +209,14 @@ class MscclppAllReduce4:
         self.kernel = KernelBuilder(
             file="allreduce.cu", kernel_name="allreduce4", file_dir=file_dir, macro_dict={"TYPE": type_str}
         ).get_compiled_kernel()
-        self.sm_device_handles = []
+        self.sm_device_handles_rs = []
+        self.sm_device_handles_ag = []
         self.reduce_sactter_proxy_device_handles = []
         self.all_gather_proxy_device_handles = []
         for rank in range(self.group.nranks):
             if rank != self.group.my_rank and in_same_node(rank):
-                self.sm_device_handles.append(self.sm_channels[rank].device_handle().raw)
+                self.sm_device_handles_rs.append(self.sm_channels_rs[rank].device_handle().raw)
+                self.sm_device_handles_ag.append(self.sm_channels_ag[rank].device_handle().raw)
             if rank != self.group.my_rank:
                 self.reduce_sactter_proxy_device_handles.append(
                     self.reduce_scatter_proxy_channels[rank].device_handle().raw
@@ -233,7 +236,8 @@ class MscclppAllReduce4:
 
         self.params = b""
         self.params += pack(
-            cp.asarray(memoryview(b"".join(self.sm_device_handles)), dtype=cp.uint8),
+            cp.asarray(memoryview(b"".join(self.sm_device_handles_rs)), dtype=cp.uint8),
+            cp.asarray(memoryview(b"".join(self.sm_device_handles_ag)), dtype=cp.uint8),
             cp.asarray(memoryview(b"".join(self.reduce_sactter_proxy_device_handles)), dtype=cp.uint8),
             cp.asarray(memoryview(b"".join(self.all_gather_proxy_device_handles)), dtype=cp.uint8),
             self.memory,
@@ -247,9 +251,9 @@ class MscclppAllReduce4:
         )
 
     def auto_tune(self):
-        nblocks_to_try = [24]
-        block_size_to_try = [1024]
-        pipeline_depth_to_try = [2]
+        nblocks_to_try = [24,32,48,64,72,96,108]
+        block_size_to_try = [256,512,1024]
+        pipeline_depth_to_try = [1,2,3,4]
         for nblocks in nblocks_to_try:
             for block_size in block_size_to_try:
                 for pipeline_depth in pipeline_depth_to_try:
