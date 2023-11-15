@@ -162,7 +162,7 @@ void IBConnection::flush(int64_t timeoutUsec) {
     int wcNum = qp->pollCq();
     if (wcNum < 0) {
       throw mscclpp::IbError("pollCq failed: error no " + std::to_string(errno), errno);
-    } else if (wcNum == 0 && timeoutUsec >= 0) {
+    } else if (timeoutUsec >= 0) {
       auto elapsed = timer.elapsed();
       if (elapsed > timeoutUsec) {
         throw Error("pollCq timed out: waited for " + std::to_string(elapsed / 1e6) + " seconds. Expected " +
