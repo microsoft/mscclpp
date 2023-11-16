@@ -23,6 +23,9 @@ from ._mscclpp import (
 
 __version__ = version()
 
+if _os.environ.get("MSCCLPP_HOME", None) is None:
+    _os.environ["MSCCLPP_HOME"] = _os.path.abspath(_os.path.dirname(__file__))
+
 
 def get_include():
     """Return the directory that contains the MSCCL++ headers."""

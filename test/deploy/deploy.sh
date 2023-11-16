@@ -1,14 +1,10 @@
 set -e
 
 KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-SRC_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/build"
-SRC_INCLUDE_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/include"
-PYTHON_SRC_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/python"
+ROOT_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/"
 DST_DIR="/tmp/mscclpp"
 HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile"
-DEPLOY_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy"
 SSH_OPTION="StrictHostKeyChecking=no"
-MSCCLPP_TEST_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/mscclpp-test"
 
 chmod 400 ${KeyFilePath}
 ssh-keygen -t rsa -f sshkey -P ""
@@ -25,23 +21,15 @@ done
 
 set -e
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "rm -rf ${DST_DIR}"
-parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "mkdir -p ${DST_DIR}"
-parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${SRC_DIR} ${DST_DIR}
-parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${PYTHON_SRC_DIR} ${DST_DIR}
-parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${SRC_INCLUDE_DIR} ${DST_DIR}
-
-parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION sshkey ${DST_DIR}
-parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION sshkey.pub ${DST_DIR}
-parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${DEPLOY_DIR}/* ${DST_DIR}
-parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${MSCCLPP_TEST_DIR}/check_perf_result.py ${DST_DIR}
+parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${ROOT_DIR} ${DST_DIR}
 
 # force to pull the latest image
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker pull ${CONTAINERIMAGE}"
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker run --rm -itd --privileged --net=host --ipc=host --gpus=all \
-  -w /root -v ${DST_DIR}:/root/mscclpp --name=mscclpp-test \
+  -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --name=mscclpp-test \
   --entrypoint /bin/bash ${CONTAINERIMAGE}"
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-  "sudo docker exec -t --user root mscclpp-test bash '/root/mscclpp/setup.sh'"
+  "sudo docker exec -t --user root mscclpp-test bash '/root/mscclpp/test/deploy/setup.sh'"
 

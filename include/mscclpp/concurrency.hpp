@@ -33,11 +33,13 @@ struct DeviceSyncer {
       if (tmpIsAdd) {
         if (atomicAdd(&count_, 1) == maxOldCnt) {
           flag_ = 1;
+          count_ = 0;
         }
         POLL_MAYBE_JAILBREAK(!flag_, maxSpinCount);
       } else {
-        if (atomicSub(&count_, 1) == 1) {
+        if (atomicAdd(&count_, 1) == maxOldCnt) {
           flag_ = 0;
+          count_ = 0;
         }
         POLL_MAYBE_JAILBREAK(flag_, maxSpinCount);
       }
