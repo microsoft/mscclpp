@@ -31,21 +31,21 @@ def plot_graph(sizes, mscclpp_algbw, nccl_algbw, speed_ups):
     fig, ax1 = plt.subplots(figsize=(10, 6))
 
     # Plotting AlgBW for MSCCLPP and NCCL on the primary y-axis
-    line1, = ax1.plot(sizes, mscclpp_algbw, marker='o', color='blue', label='MSCCLPP AlgBW')
-    line2, = ax1.plot(sizes, nccl_algbw, marker='x', color='red', label='NCCL AlgBW')
-    ax1.set_ylabel('AlgBW (GB/s)')
-    ax1.set_xlabel('Data Size')
+    (line1,) = ax1.plot(sizes, mscclpp_algbw, marker="o", color="blue", label="MSCCLPP AlgBW")
+    (line2,) = ax1.plot(sizes, nccl_algbw, marker="x", color="red", label="NCCL AlgBW")
+    ax1.set_ylabel("AlgBW (GB/s)")
+    ax1.set_xlabel("Data Size")
 
     # Logarithmic x-axis
-    ax1.set_xscale('log', base=2)
+    ax1.set_xscale("log", base=2)
     ax1.set_xticks(sizes)
     ax1.set_xticklabels(human_readable_sizes, rotation=45)
 
     # Adding secondary y-axis for Speed Up
     ax2 = ax1.twinx()
-    line3, = ax2.plot(sizes, speed_ups, marker='^', color='green', label='Speed Up')
-    ax2.set_ylabel('Speed Up (NCCL Time / MSCCLPP Time)', color='green')
-    ax2.tick_params(axis='y', labelcolor='green')
+    (line3,) = ax2.plot(sizes, speed_ups, marker="^", color="green", label="Speed Up")
+    ax2.set_ylabel("Speed Up (NCCL Time / MSCCLPP Time)", color="green")
+    ax2.tick_params(axis="y", labelcolor="green")
 
     # Set the lower bound of the secondary y-axis to 0
     ax2.set_ylim(bottom=0)
@@ -53,14 +53,14 @@ def plot_graph(sizes, mscclpp_algbw, nccl_algbw, speed_ups):
     # Creating legends
     lines = [line1, line2, line3]
     labels = [line.get_label() for line in lines]
-    ax1.legend(lines, labels, loc='upper left')
+    ax1.legend(lines, labels, loc="upper left")
 
     # Setting title and grid
-    ax1.set_title('MSCCLPP vs NCCL -- ' + str(MPI.COMM_WORLD.size // N_GPUS_PER_NODE) + ' Nodes')
+    ax1.set_title("MSCCLPP vs NCCL -- " + str(MPI.COMM_WORLD.size // N_GPUS_PER_NODE) + " Nodes")
     ax2.grid(True, which="both", ls="--")
 
     # Saving the plot
-    plt.savefig("mscclpp_vs_nccl_comparison.pdf", format='pdf')
+    plt.savefig("mscclpp_vs_nccl_comparison.pdf", format="pdf")
 
 
 def human_readable_size(size, decimal_places=1):
@@ -197,7 +197,7 @@ def run_benchmark(
         )
     if MPI.COMM_WORLD.rank == 0:
         print(".", end="", flush=True)
-    
+
     return memory.nbytes, mscclpp_algBw, nccl_algBw, speed_up
 
 
@@ -255,14 +255,13 @@ if __name__ == "__main__":
         sizes.append(size)
         mscclpp_algbw.append(mscclpp_algBw)
         nccl_algbw.append(nccl_algBw)
-        speed_ups.append(speed_up)       
-        
+        speed_ups.append(speed_up)
 
     if MPI.COMM_WORLD.rank == 0:
         print()
         print(table)
 
-        # plot_graph(sizes, mscclpp_algbw, nccl_algbw, speed_ups)
+        plot_graph(sizes, mscclpp_algbw, nccl_algbw, speed_ups)
 
     mscclpp_group = None
     nccl_comm = None
