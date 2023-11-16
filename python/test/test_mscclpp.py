@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from concurrent.futures import ThreadPoolExecutor
+import os
 import time
 import threading
 
@@ -11,18 +12,18 @@ import netifaces as ni
 import pytest
 
 from mscclpp import (
-    TcpBootstrap,
     Fifo,
     Host2DeviceSemaphore,
     Host2HostSemaphore,
     ProxyService,
     SmDevice2DeviceSemaphore,
+    TcpBootstrap,
     Transport,
 )
+import mscclpp.comm as mscclpp_comm
+from mscclpp.utils import KernelBuilder, pack
 from ._cpp import _ext
-from .mscclpp_group import MscclppGroup
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
-from .utils import KernelBuilder, pack
 
 ethernet_interface_name = "eth0"
 
@@ -50,7 +51,7 @@ def test_group_with_ip(mpi_group: MpiGroup, ifIpPortTrio: str):
         # ranks are on different nodes
         pytest.skip("this case is not supported as localhost will be different for different nodes")
 
-    group = MscclppGroup(mpi_group, ifIpPortTrio)
+    group = mscclpp_comm.CommGroup(mpi_group.comm, ifIpPortTrio)
 
     nelem = 1024
     memory = np.zeros(nelem, dtype=np.int32)
@@ -119,7 +120,7 @@ def test_bootstrap_init_gil_release(mpi_group: MpiGroup):
 def create_and_connect(mpi_group: MpiGroup, transport: str):
     if transport == "NVLink" and all_ranks_on_the_same_node(mpi_group) is False:
         pytest.skip("cannot use nvlink for cross node")
-    group = MscclppGroup(mpi_group)
+    group = mscclpp_comm.CommGroup(mpi_group.comm)
 
     remote_nghrs = list(range(mpi_group.comm.size))
     remote_nghrs.remove(mpi_group.comm.rank)
@@ -278,33 +279,40 @@ class MscclppKernel:
         scratch=None,
         fifo=None,
     ):
+        file_dir = os.path.dirname(os.path.abspath(__file__))
         if test_name == "h2d_semaphore":
             self._kernel = KernelBuilder(
-                file="h2d_semaphore_test.cu", kernel_name="h2d_semaphore"
+                file="h2d_semaphore_test.cu", kernel_name="h2d_semaphore", file_dir=file_dir
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
         elif test_name == "d2d_semaphore":
             self._kernel = KernelBuilder(
-                file="d2d_semaphore_test.cu", kernel_name="d2d_semaphore"
+                file="d2d_semaphore_test.cu", kernel_name="d2d_semaphore", file_dir=file_dir
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
         elif test_name == "sm_channel":
-            self._kernel = KernelBuilder(file="sm_channel_test.cu", kernel_name="sm_channel").get_compiled_kernel()
+            self._kernel = KernelBuilder(
+                file="sm_channel_test.cu", kernel_name="sm_channel", file_dir=file_dir
+            ).get_compiled_kernel()
             self.nblocks = nranks
             self.nthreads = 1024
         elif test_name == "fifo":
-            self._kernel = KernelBuilder(file="fifo_test.cu", kernel_name="fifo").get_compiled_kernel()
+            self._kernel = KernelBuilder(
+                file="fifo_test.cu", kernel_name="fifo", file_dir=file_dir
+            ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = 1
         elif test_name == "proxy":
-            self._kernel = KernelBuilder(file="proxy_test.cu", kernel_name="proxy").get_compiled_kernel()
+            self._kernel = KernelBuilder(
+                file="proxy_test.cu", kernel_name="proxy", file_dir=file_dir
+            ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
         elif test_name == "simple_proxy_channel":
             self._kernel = KernelBuilder(
-                file="simple_proxy_channel_test.cu", kernel_name="simple_proxy_channel"
+                file="simple_proxy_channel_test.cu", kernel_name="simple_proxy_channel", file_dir=file_dir
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = 1024
@@ -393,7 +401,7 @@ def test_sm_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
 
     if use_packet:
-        channels = group.make_sm_channels_with_packet(memory, scratch, connections)
+        channels = group.make_sm_channels_with_scratch(memory, scratch, connections)
     else:
         channels = group.make_sm_channels(memory, connections)
     kernel = MscclppKernel("sm_channel", group.my_rank, group.nranks, channels, memory, use_packet, scratch)
@@ -496,7 +504,7 @@ def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, u
         memory_to_register = scratch
     else:
         memory_to_register = memory
-    simple_channels = group.make_proxy_channels_with_packet(proxy_service, memory_to_register, connections)
+    simple_channels = group.make_proxy_channels(proxy_service, memory_to_register, connections)
 
     kernel = MscclppKernel(
         "simple_proxy_channel",
