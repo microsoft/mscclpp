@@ -103,11 +103,9 @@ def run_benchmark(
         if memory.nbytes < 2**20:
             mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
         elif memory.nbytes < 2**29:
-            if memory.nbytes >= 2**20 and memory.nbytes <= 2**22:
-                read_only = 0
-            else:
-                read_only = 1
-            mscclpp_call = MscclppAllReduce1(mscclpp_group, memory, read_only=read_only)
+            mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
+            best_config = find_best_config(mscclpp_call, 20)
+            mscclpp_call.set_params(*best_config)
         else:
             proxy_service = ProxyService()
             mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
