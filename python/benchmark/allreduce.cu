@@ -221,7 +221,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 
 __device__ uint64_t globalFlag = 1;
 
-extern "C" __global__ void __launch_bounds__(512, 1)
+extern "C" __global__ void __launch_bounds__(1024, 1)
     allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, void* resultBuff, int rank,
                int worldSize, size_t nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));

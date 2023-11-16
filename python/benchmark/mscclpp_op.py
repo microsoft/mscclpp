@@ -69,8 +69,8 @@ class MscclppAllReduce1:
         return self.memory
 
     def set_params(self, nblocks, block_size, read_only):
-        self.block_size = block_size
         self.nblocks = nblocks
+        self.block_size = block_size
         self.read_only = read_only
         self.params = b""
         self.params += pack(
@@ -95,7 +95,7 @@ class MscclppAllReduce1:
 
 
 class MscclppAllReduce2:
-    def __init__(self, group: mscclpp_comm.CommGroup, memory: cp.ndarray, memory_out: cp.ndarray):
+    def __init__(self, group: mscclpp_comm.CommGroup, memory: cp.ndarray, memory_out: cp.ndarray, block_size: int = 512, nblocks: int = 21):
         self.group = group
         self.memory = memory
         self.memory_out = memory_out
@@ -129,13 +129,28 @@ class MscclppAllReduce2:
             ctypes.c_size_t(self.memory.size),
         )
 
+        self.set_params(nblocks, block_size)
+
     def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, 21, 512, 0, stream_ptr)
+        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
         return self.memory_out
+
+    def set_params(self, nblocks, block_size):
+        self.nblocks = nblocks
+        self.block_size = block_size
+
+
+    def auto_tune(self):
+        nblocks_to_try = [21, 42, 63, 84, 105]
+        block_size_to_try = [256, 512, 1024]
+        for nblocks in nblocks_to_try:
+            for block_size in block_size_to_try:
+                self.set_params(nblocks, block_size)
+                yield nblocks, block_size
 
 
 class MscclppAllReduce3:
-    def __init__(self, group: mscclpp_comm.CommGroup, memory: cp.ndarray, proxy_service: ProxyService):
+    def __init__(self, group: mscclpp_comm.CommGroup, memory: cp.ndarray, proxy_service: ProxyService, block_size: int = 1024, nblocks: int = 24):
         self.group = group
         self.memory = memory
         remote_nghrs = list(range(self.group.nranks))
@@ -175,10 +190,23 @@ class MscclppAllReduce3:
             ctypes.c_size_t(self.memory.size),
         )
 
+        self.set_params(nblocks, block_size)
+
     def __call__(self, stream_ptr):
         self.kernel.launch_kernel(self.params, 24, 1024, 0, stream_ptr)
         return self.memory
 
+    def set_params(self, nblocks, block_size):
+        self.nblocks = nblocks
+        self.block_size = block_size
+
+    def auto_tune(self):
+        nblocks_to_try = [8, 12, 16, 24, 32, 48, 64, 72, 96, 108]
+        block_size_to_try = [256, 512, 1024]
+        for nblocks in nblocks_to_try:
+            for block_size in block_size_to_try:
+                self.set_params(nblocks, block_size)
+                yield nblocks, block_size
 
 class MscclppAllReduce4:
     def __init__(
