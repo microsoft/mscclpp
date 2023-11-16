@@ -118,8 +118,9 @@ __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem) {
 // AllReduce1
 // -------------------------------------------
 
-template<int READ_ONLY>
-__device__ void allreduce1_helper(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nranks, size_t nelems) {
+template <int READ_ONLY>
+__device__ void allreduce1_helper(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nranks,
+                                  size_t nelems) {
   const size_t chunkSize = nelems / nranks;
   if (nranks == 1) return;
   const int nPeer = nranks - 1;
@@ -207,8 +208,8 @@ __device__ void allreduce1_helper(mscclpp::SmChannelDeviceHandle* smChans, TYPE*
   }
 }
 
-extern "C" __global__ void __launch_bounds__(1024, 1)
-    allreduce1(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nranks, size_t nelems, int read_only) {
+extern "C" __global__ void __launch_bounds__(1024, 1) allreduce1(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff,
+                                                                 int rank, int nranks, size_t nelems, int read_only) {
   if (read_only)
     allreduce1_helper<1>(smChans, buff, rank, nranks, nelems);
   else
