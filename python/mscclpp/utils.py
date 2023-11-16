@@ -6,6 +6,7 @@ import os
 import struct
 import subprocess
 import tempfile
+import torch
 from typing import Type
 
 from cuda import cuda, nvrtc, cudart
@@ -145,6 +146,8 @@ def pack(*args):
             res += struct.pack("P", arg.ctypes.data)
         elif isinstance(arg, cp.ndarray):
             res += struct.pack("P", arg.data.ptr)
+        elif isinstance(arg, torch.Tensor):
+            res += struct.pack("P", arg.data_ptr())
         # use int to represent bool, which can avoid CUDA_ERROR_LAUNCH_OUT_OF_RESOURCES error
         elif isinstance(arg, bool):
             res += struct.pack("i", arg)

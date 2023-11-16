@@ -5,6 +5,7 @@ from mscclpp import Transport, ProxyService
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, pack
 
+import torch
 
 IB_TRANSPORTS = [
     Transport.IB0,
@@ -19,11 +20,11 @@ IB_TRANSPORTS = [
 
 
 def type_to_str(dtype):
-    if dtype == cp.float16:
+    if dtype == cp.float16 or dtype == torch.half:
         return "__half"
-    elif dtype == cp.float32:
+    elif dtype == cp.float32 or dtype == torch.float32:
         return "float"
-    elif dtype == cp.int32:
+    elif dtype == cp.int32 or dtype == torch.int32:
         return "int"
     else:
         raise RuntimeError("Unknown data type")
@@ -33,7 +34,7 @@ class MscclppAllReduce1:
     def __init__(
         self,
         group: mscclpp_comm.CommGroup,
-        memory: cp.ndarray,
+        memory: torch.Tensor or cp.ndarray,
         read_only: int = 1,
         nthreads: int = 1024,
         nblocks: int = 24,
@@ -62,12 +63,13 @@ class MscclppAllReduce1:
         for rank in range(self.group.nranks):
             if rank != self.group.my_rank:
                 self.device_handles.append(self.sm_channels[rank].device_handle().raw)
+        num_elements = self.memory.numel() if isinstance(self.memory, torch.Tensor) else self.memory.size
         self.params += pack(
             cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8),
             self.memory,
             self.group.my_rank,
             self.group.nranks,
-            ctypes.c_size_t(self.memory.size),
+            ctypes.c_size_t(num_elements),
         )
         self.nthreads = nthreads
         self.nblocks = nblocks
