@@ -93,7 +93,7 @@ __forceinline__ __device__ int add_vectors<__half>(int a, int b) {
   return add_vectors_helper<__half2>(a, b);
 }
 
-__forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem, int blockId, int nBlocks) {
+__forceinline__ __device__ void vector_sum(TYPE* dst, TYPE* src, size_t nElem, int blockId, int nBlocks) {
   size_t nInt4 = nElem / 4;
   size_t nLastInts = nElem % 4;
   int4* dst4 = (int4*)dst;
@@ -110,8 +110,8 @@ __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem, in
   }
 }
 
-__forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem) {
-  vectorSum(dst, src, nElem, blockIdx.x, gridDim.x);
+__forceinline__ __device__ void vector_sum(TYPE* dst, TYPE* src, size_t nElem) {
+  vector_sum(dst, src, nElem, blockIdx.x, gridDim.x);
 }
 
 // -------------------------------------------
@@ -330,7 +330,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
     offset = chunkIndex * chunkNelem * sizeof(int);
     int* dst = (int*)((char*)buff + offset);
     int* src = (int*)((char*)scratch + offset);
-    vectorSum((TYPE*)dst, (TYPE*)src, chunkNelem / 2);
+    vector_sum((TYPE*)dst, (TYPE*)src, chunkNelem / 2);
 
     if (isComm) {
       devFstRecvChan.wait();
@@ -343,7 +343,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 
     dst += chunkNelem / 2;
     src += chunkNelem / 2;
-    vectorSum((TYPE*)dst, (TYPE*)src, chunkNelem - chunkNelem / 2);
+    vector_sum((TYPE*)dst, (TYPE*)src, chunkNelem - chunkNelem / 2);
   }
 
   // Step n
@@ -359,7 +359,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   offset = rank * chunkNelem * sizeof(int);
   int* dst = (int*)((char*)buff + offset);
   int* src = (int*)((char*)scratch + offset);
-  vectorSum((TYPE*)dst, (TYPE*)src, chunkNelem / 2);
+  vector_sum((TYPE*)dst, (TYPE*)src, chunkNelem / 2);
 
   if (isComm) {
     devFstRecvChan.wait();
@@ -372,7 +372,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 
   dst += chunkNelem / 2;
   src += chunkNelem / 2;
-  vectorSum((TYPE*)dst, (TYPE*)src, chunkNelem - chunkNelem / 2);
+  vector_sum((TYPE*)dst, (TYPE*)src, chunkNelem - chunkNelem / 2);
 
   if (isComm) {
     if (chunkNelem > 1) {
@@ -632,7 +632,7 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
     size_t offset = rank * chunkSize * sizeof(int);
     int* dst = (int*)((char*)buff + offset);
     int* src = (int*)((char*)scratch + offset);
-    vectorSum((TYPE*)dst, (TYPE*)src, chunkSize / pipelineSize, blockIdx.x - nBlocksForReduceScatter, nBlocksRemain);
+    mscclpp::Element::vectorSum((TYPE*)dst, (TYPE*)src, chunkSize / pipelineSize * sizeof(int) / sizeof(TYPE), blockIdx.x - nBlocksForReduceScatter, nBlocksRemain);
   }
   if (isComm) {
     proxyChan.flush();
@@ -655,7 +655,7 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
   size_t offset = (rank * chunkSize + chunkSize / pipelineSize) * sizeof(int);
   int* dst = (int*)((char*)buff + offset);
   int* src = (int*)((char*)scratch + offset);
-  if (pipelineSize > 1) vectorSum((TYPE*)dst, (TYPE*)src, (pipelineSize - 1) * chunkSize / pipelineSize);
+  if (pipelineSize > 1) mscclpp::Element::vectorSum((TYPE*)dst, (TYPE*)src, ((pipelineSize - 1) * chunkSize / pipelineSize) * (sizeof(int) / sizeof(TYPE)));
   if (isComm) {
     proxyChan.flush();
   }

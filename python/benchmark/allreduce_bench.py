@@ -117,13 +117,13 @@ def run_benchmark(
             proxy_service = ProxyService()
             mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
             proxy_service.start_proxy()
-            best_config = find_best_config(mscclpp_call, 100)
+            best_config = find_best_config(mscclpp_call, 1)
             mscclpp_call.set_params(*best_config)
         else:
             proxy_service = ProxyService()
             mscclpp_call = MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)
             proxy_service.start_proxy()
-            best_config = find_best_config(mscclpp_call, 20)
+            best_config = find_best_config(mscclpp_call, 1)
             mscclpp_call.set_params(*best_config)
 
     nccl_call = NcclAllReduce(nccl_op, memory)
@@ -202,9 +202,9 @@ if __name__ == "__main__":
 
     for i in range(10, 28):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
-            run_benchmark(mscclpp_group, nccl_comm, table, 100, 2**i)
+            run_benchmark(mscclpp_group, nccl_comm, table, 1, 2**i)
         elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:
-            run_benchmark(mscclpp_group, nccl_comm, table, 100, 3 * 2**i)
+            run_benchmark(mscclpp_group, nccl_comm, table, 1, 3 * 2**i)
         else:
             raise RuntimeError("Only support one node/two nodes communication")
 

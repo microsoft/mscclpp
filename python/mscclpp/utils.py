@@ -124,7 +124,7 @@ class KernelBuilder:
                 return f.read()
         except subprocess.CalledProcessError as e:
             print(e.stderr, end="")
-            raise RuntimeError("Compilation failed: ", " ".join(command))
+            raise RuntimeError("Compilation failed: ", e.stderr, " ".join(command))
 
     def get_compiled_kernel(self):
         return self._kernel

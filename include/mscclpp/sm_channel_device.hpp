@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_SM_CHANNEL_DEVICE_HPP_
 #define MSCCLPP_SM_CHANNEL_DEVICE_HPP_
 
+#include <cuda_fp16.h>
+
 #include "packet.hpp"
 #include "poll.hpp"
 #include "semaphore_device.hpp"
@@ -48,12 +50,114 @@ __forceinline__ __device__ void store(T* p, const T& v) {
 ///
 template <typename T>
 __forceinline__ __device__ void copy(T* dst, T* src, uint64_t numElems, uint32_t threadId, uint32_t numThreads) {
-  T reg;
   for (size_t i = threadId; i < numElems; i += numThreads) {
-    // Load to register first.
+    T reg;
     load(reg, src + i);
     store(dst + i, reg);
   }
+}
+
+typedef int4 Pack128;
+typedef int2 Pack64;
+
+
+template <typename To, typename From>
+__forceinline__ __device__ To bitCast(const From& src) {
+  static_assert(sizeof(To) == sizeof(From), "Size mismatch for bitCast");
+
+  union {
+    From f;
+    To t;
+  } u;
+  u.f = src;
+  return u.t;
+}
+
+template <typename T>
+__forceinline__ __device__ T addElements(T a, T b) {
+  return a + b;
+}
+
+template <>
+__forceinline__ __device__ __half2 addElements(__half2 a, __half2 b) {
+  return __hadd2(a, b);
+}
+
+template <typename T>
+__forceinline__ __device__ Pack128 addVectorsHelper(Pack128 a, Pack128 b) {
+  Pack128 ret;
+  ret.w = bitCast<int, T>(addElements(bitCast<T, int>(a.w), bitCast<T, int>(b.w)));
+  ret.x = bitCast<int, T>(addElements(bitCast<T, int>(a.x), bitCast<T, int>(b.x)));
+  ret.y = bitCast<int, T>(addElements(bitCast<T, int>(a.y), bitCast<T, int>(b.y)));
+  ret.z = bitCast<int, T>(addElements(bitCast<T, int>(a.z), bitCast<T, int>(b.z)));
+  return ret;
+}
+
+template <typename T>
+__forceinline__ __device__ Pack128 addVectors(Pack128 a, Pack128 b) {
+  return addVectorsHelper<T>(a, b);
+}
+
+template <>
+__forceinline__ __device__ Pack128 addVectors<__half>(Pack128 a, Pack128 b) {
+  return addVectorsHelper<__half2>(a, b);
+}
+
+template <typename T>
+__forceinline__ __device__ Pack64 addVectorsHelper(Pack64 a, Pack64 b) {
+  Pack64 ret;
+  ret.x = bitCast<int, T>(addElements(bitCast<T, int>(a.x), bitCast<T, int>(b.x)));
+  ret.y = bitCast<int, T>(addElements(bitCast<T, int>(a.y), bitCast<T, int>(b.y)));
+  return ret;
+}
+
+template <typename T>
+__forceinline__ __device__ Pack64 addVectors(Pack64 a, Pack64 b) {
+  return addVectorsHelper<T>(a, b);
+}
+
+template <>
+__forceinline__ __device__ Pack64 addVectors<__half>(Pack64 a, Pack64 b) {
+  return addVectorsHelper<__half2>(a, b);
+}
+
+template <typename T>
+__forceinline__ __device__ int addVectorsHelper(int a, int b) {
+  return bitCast<int, T>(addElements(bitCast<T, int>(a), bitCast<T, int>(b)));
+}
+
+template <typename T>
+__forceinline__ __device__ int addVectors(int a, int b) {
+  return addVectorsHelper<T>(a, b);
+}
+
+template <>
+__forceinline__ __device__ int addVectors<__half>(int a, int b) {
+  return addVectorsHelper<__half2>(a, b);
+}
+
+template <typename T>
+__forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem, int blockId, int nBlocks) {
+  int nTypeInPack128 = sizeof(Pack128) / sizeof(T);
+  size_t nPack128 = nElem / nTypeInPack128;
+  size_t remainingNElems = nElem % nTypeInPack128;
+  Pack128* dst128 = (Pack128*)dst;
+  Pack128* src128 = (Pack128*)src;
+  for (int i = threadIdx.x + blockId * blockDim.x; i < nPack128; i += blockDim.x * nBlocks) {
+    dst128[i] = addVectors<T>(dst128[i], src128[i]);
+  }
+  if (remainingNElems > 0) {
+    int* dstLast = ((int*)dst) + nPack128 * nTypeInPack128;
+    int* srcLast = ((int*)src) + nPack128 * nTypeInPack128;
+    for (int i = threadIdx.x + blockId * blockDim.x; i < remainingNElems; i += blockDim.x * nBlocks) {
+      dstLast[i] = addVectors<T>(dstLast[i], srcLast[i]);
+    }
+  }
+}
+
+template <typename T>
+__forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem) {
+  vectorSum(dst, src, nElem, blockIdx.x, gridDim.x);
 }
 
 }  // namespace Element
