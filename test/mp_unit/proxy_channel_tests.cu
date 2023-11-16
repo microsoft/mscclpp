@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <cstdint>
 #include <mscclpp/concurrency.hpp>
 
 #include "mp_unit_tests.hpp"
@@ -22,6 +23,9 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
   const bool isInPlace = (recvBuff == nullptr);
   mscclpp::TransportFlags transport = (useIbOnly) ? ibTransport : (mscclpp::Transport::CudaIpc | ibTransport);
 
+  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures(worldSize);
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
+
   mscclpp::RegisteredMemory sendBufRegMem = communicator->registerMemory(sendBuff, sendBuffBytes, transport);
   mscclpp::RegisteredMemory recvBufRegMem;
   if (!isInPlace) {
@@ -32,34 +36,38 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
     if (r == rank) {
       continue;
     }
-    std::shared_ptr<mscclpp::Connection> conn;
     if ((rankToNode(r) == rankToNode(gEnv->rank)) && !useIbOnly) {
-      conn = communicator->connectOnSetup(r, 0, mscclpp::Transport::CudaIpc);
+      connectionFutures[r] = communicator->connectOnSetup(r, 0, mscclpp::Transport::CudaIpc);
     } else {
-      conn = communicator->connectOnSetup(r, 0, ibTransport);
+      connectionFutures[r] = communicator->connectOnSetup(r, 0, ibTransport);
     }
-    connections[r] = conn;
 
     if (isInPlace) {
       communicator->sendMemoryOnSetup(sendBufRegMem, r, 0);
     } else {
       communicator->sendMemoryOnSetup(recvBufRegMem, r, 0);
     }
-    auto remoteMemory = communicator->recvMemoryOnSetup(r, 0);
+    remoteMemFutures[r] = communicator->recvMemoryOnSetup(r, 0);
+  }
 
-    communicator->setup();
+  communicator->setup();
 
-    mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, conn);
-    communicator->setup();
+  for (int r = 0; r < worldSize; r++) {
+    if (r == rank) {
+      continue;
+    }
+    mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, connectionFutures[r].get());
 
-    proxyChannels.emplace_back(proxyService->proxyChannel(cid), proxyService->addMemory(remoteMemory.get()),
+    proxyChannels.emplace_back(proxyService->proxyChannel(cid), proxyService->addMemory(remoteMemFutures[r].get()),
                                proxyService->addMemory(sendBufRegMem));
   }
+
+  communicator->setup();
 }
 
 __constant__ DeviceHandle<mscclpp::SimpleProxyChannel> gChannelOneToOneTestConstProxyChans;
 
-__global__ void kernelProxyPingPong(int* buff, int rank, int nElem, int* ret) {
+__global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWithPoll, int* ret) {
   DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = gChannelOneToOneTestConstProxyChans;
   volatile int* sendBuff = (volatile int*)buff;
   int nTries = 1000;
@@ -68,7 +76,20 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, int* ret) {
   for (int i = 0; i < nTries; i++) {
     if (rank == 0) {
       if (i > 0) {
-        if (threadIdx.x == 0) proxyChan.wait();
+        if (threadIdx.x == 0) {
+          if (waitWithPoll) {
+            int spin = 1000000;
+            while (!proxyChan.poll() && spin > 0) {
+              spin--;
+            }
+            if (spin == 0) {
+              // printf("rank 0 ERROR: poll timeout\n");
+              *ret = 1;
+            }
+          } else {
+            proxyChan.wait();
+          }
+        }
         __syncthreads();
         for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
           if (sendBuff[j] != rank1Offset + i - 1 + j) {
@@ -86,7 +107,20 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, int* ret) {
       if (threadIdx.x == 0) proxyChan.putWithSignal(0, nElem * sizeof(int));
     }
     if (rank == 1) {
-      if (threadIdx.x == 0) proxyChan.wait();
+      if (threadIdx.x == 0) {
+        if (waitWithPoll) {
+          int spin = 1000000;
+          while (!proxyChan.poll() && spin > 0) {
+            spin--;
+          }
+          if (spin == 0) {
+            // printf("rank 0 ERROR: poll timeout\n");
+            *ret = 1;
+          }
+        } else {
+          proxyChan.wait();
+        }
+      }
       __syncthreads();
       for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
         if (sendBuff[j] != i + j) {
@@ -112,14 +146,14 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, int* ret) {
   }
 }
 
-TEST_F(ProxyChannelOneToOneTest, PingPongIb) {
+void ProxyChannelOneToOneTest::testPingPong(bool useIbOnly, bool waitWithPoll) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
   std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
-  setupMeshConnections(proxyChannels, true, buff.get(), nElem * sizeof(int));
+  setupMeshConnections(proxyChannels, useIbOnly, buff.get(), nElem * sizeof(int));
 
   std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannelHandles;
   for (auto& ch : proxyChannels) proxyChannelHandles.push_back(ch.deviceHandle());
@@ -132,28 +166,36 @@ TEST_F(ProxyChannelOneToOneTest, PingPongIb) {
 
   std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
 
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, waitWithPoll, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
 
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, waitWithPoll, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
 
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, waitWithPoll, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
 
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, waitWithPoll, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
 
   proxyService->stopProxy();
 }
+
+TEST_F(ProxyChannelOneToOneTest, PingPong) { testPingPong(false, false); }
+
+TEST_F(ProxyChannelOneToOneTest, PingPongIb) { testPingPong(true, false); }
+
+TEST_F(ProxyChannelOneToOneTest, PingPongWithPoll) { testPingPong(false, true); }
+
+TEST_F(ProxyChannelOneToOneTest, PingPongIbWithPoll) { testPingPong(true, true); }
 
 __device__ mscclpp::DeviceSyncer gChannelOneToOneTestProxyChansSyncer;
 
@@ -196,7 +238,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
         flusher = 0;
       }
     } else {
-      mscclpp::getPackets(buff, 0, getPktBuf, 0, nElem * sizeof(int), threadId, numThreads, flag);
+      mscclpp::getPackets(getPktBuf, 0, buff, 0, nElem * sizeof(int), threadId, numThreads, flag);
       if (CheckCorrectness) {
         // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
         // __syncthreads();

@@ -15,7 +15,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   if (bid < nranks && bid != my_rank) {
     if (use_packet) {
       channels[bid].putPackets(2 * my_offset, my_offset, size_per_rank, tid, blockDim.x, flag);
-      channels[bid].getPackets(my_nghr_offset, 2 * my_nghr_offset, size_per_rank, tid, blockDim.x, flag);
+      channels[bid].getPackets(2 * my_nghr_offset, my_nghr_offset, size_per_rank, tid, blockDim.x, flag);
     } else {
       channels[bid].put(my_offset, my_offset, size_per_rank, tid, blockDim.x);
       __syncthreads();

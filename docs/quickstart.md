@@ -11,7 +11,12 @@
     * NVIDIA A100 GPUs + CUDA >= 11.1.1
     * NVIDIA H100 GPUs + CUDA >= 12.0.0
 * OS: tested over Ubuntu 18.04 and 20.04
-* Libraries: [libnuma](https://github.com/numactl/numactl), [GDRCopy](https://github.com/NVIDIA/gdrcopy) (optional), MPI (optional)
+* Libraries: [libnuma](https://github.com/numactl/numactl), MPI (optional)
+* Others
+    * `nvidia_peermem` driver should be loaded on all nodes. Check it via:
+        ```
+        lsmod | grep nvidia_peermem
+        ```
 
 ## Build from Source
 

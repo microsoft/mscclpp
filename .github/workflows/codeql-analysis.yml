@@ -2,8 +2,9 @@ name: "CodeQL"
 
 on:
   push:
-    branches:
-      - '**'
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   schedule:
     - cron: "30 1 * * 1"
 
@@ -12,7 +13,7 @@ jobs:
     name: Analyze
     runs-on: 'ubuntu-latest'
     container:
-      image: ghcr.io/microsoft/mscclpp/mscclpp:base-${{ matrix.cuda-version }}
+      image: ghcr.io/microsoft/mscclpp/mscclpp:dev-${{ matrix.cuda-version }}
 
     permissions:
       actions: read
@@ -27,7 +28,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Check disk space
       run: |
@@ -38,18 +39,14 @@ jobs:
       with:
         languages: ${{ matrix.language }}
 
-    - name: Install cmake
-      run: |
-        curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
-        tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
-        sudo ln -s /tmp/cmake-3.26.4-linux-x86_64/bin/cmake /usr/bin/cmake
-
     - name: Dubious ownership exception
       run: |
         git config --global --add safe.directory /__w/mscclpp/mscclpp
 
-    - name: Autobuild
-      uses: github/codeql-action/autobuild@v2
+    - name: Build
+      run: |
+        MPI_HOME=/usr/local/mpi cmake -DBYPASS_PEERMEM_CHECK=ON .
+        make -j
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v2

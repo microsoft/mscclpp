@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <cuda/atomic>
 #include <mscclpp/semaphore.hpp>
 
 #include "api.h"
@@ -12,14 +13,19 @@ static NonblockingFuture<RegisteredMemory> setupInboundSemaphoreId(Communicator&
                                                                    void* localInboundSemaphoreId) {
   auto localInboundSemaphoreIdsRegMem =
       communicator.registerMemory(localInboundSemaphoreId, sizeof(uint64_t), connection->transport());
-  communicator.sendMemoryOnSetup(localInboundSemaphoreIdsRegMem, connection->remoteRank(), connection->tag());
-  return communicator.recvMemoryOnSetup(connection->remoteRank(), connection->tag());
+  int remoteRank = communicator.remoteRankOf(*connection);
+  int tag = communicator.tagOf(*connection);
+  communicator.sendMemoryOnSetup(localInboundSemaphoreIdsRegMem, remoteRank, tag);
+  return communicator.recvMemoryOnSetup(remoteRank, tag);
 }
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communicator,
                                                            std::shared_ptr<Connection> connection)
     : BaseSemaphore(allocUniqueCuda<uint64_t>(), allocUniqueCuda<uint64_t>(), std::make_unique<uint64_t>()),
       connection_(connection) {
+  INFO(MSCCLPP_INIT, "Creating a Host2Device semaphore for %s transport from %d to %d",
+       connection->getTransportName().c_str(), communicator.bootstrap()->getRank(),
+       communicator.remoteRankOf(*connection));
   remoteInboundSemaphoreIdsRegMem_ =
       setupInboundSemaphoreId(communicator, connection.get(), localInboundSemaphore_.get());
 }
@@ -42,6 +48,10 @@ MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(Communicator& communicato
                                                        std::shared_ptr<Connection> connection)
     : BaseSemaphore(std::make_unique<uint64_t>(), std::make_unique<uint64_t>(), std::make_unique<uint64_t>()),
       connection_(connection) {
+  INFO(MSCCLPP_INIT, "Creating a Host2Host semaphore for %s transport from %d to %d",
+       connection->getTransportName().c_str(), communicator.bootstrap()->getRank(),
+       communicator.remoteRankOf(*connection));
+
   if (connection->transport() == Transport::CudaIpc) {
     throw Error("Host2HostSemaphore cannot be used with CudaIpc transport", ErrorCode::InvalidUsage);
   }
@@ -56,25 +66,36 @@ MSCCLPP_API_CPP void Host2HostSemaphore::signal() {
                              *outboundSemaphore_ + 1);
 }
 
-MSCCLPP_API_CPP void Host2HostSemaphore::wait() {
+MSCCLPP_API_CPP bool Host2HostSemaphore::poll() {
+  bool signaled = (cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*(uint64_t*)localInboundSemaphore_.get()}.load(
+                       cuda::memory_order_acquire) > (*expectedInboundSemaphore_));
+  if (signaled) (*expectedInboundSemaphore_) += 1;
+  return signaled;
+}
+
+MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
   (*expectedInboundSemaphore_) += 1;
-  while (*(volatile uint64_t*)localInboundSemaphore_.get() < (*expectedInboundSemaphore_)) {
+  int64_t spinCount = 0;
+  while (cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*(uint64_t*)localInboundSemaphore_.get()}.load(
+             cuda::memory_order_acquire) < (*expectedInboundSemaphore_)) {
+    if (maxSpinCount >= 0 && spinCount++ == maxSpinCount) {
+      throw Error("Host2HostSemaphore::wait timed out", ErrorCode::Timeout);
+    }
   }
 }
 
 MSCCLPP_API_CPP SmDevice2DeviceSemaphore::SmDevice2DeviceSemaphore(Communicator& communicator,
                                                                    std::shared_ptr<Connection> connection)
     : BaseSemaphore(allocUniqueCuda<uint64_t>(), allocUniqueCuda<uint64_t>(), allocUniqueCuda<uint64_t>()) {
+  INFO(MSCCLPP_INIT, "Creating a Device2Device semaphore for %s transport from %d to %d",
+       connection->getTransportName().c_str(), communicator.bootstrap()->getRank(),
+       communicator.remoteRankOf(*connection));
   if (connection->transport() == Transport::CudaIpc) {
     remoteInboundSemaphoreIdsRegMem_ =
         setupInboundSemaphoreId(communicator, connection.get(), localInboundSemaphore_.get());
-    INFO(MSCCLPP_INIT, "Creating a direct semaphore for CudaIPC transport from %d to %d",
-         communicator.bootstrap()->getRank(), connection->remoteRank());
     isRemoteInboundSemaphoreIdSet_ = true;
   } else if (AllIBTransports.has(connection->transport())) {
     // We don't need to really with any of the IB transports, since the values will be local
-    INFO(MSCCLPP_INIT, "Creating a direct semaphore for IB transport from %d to %d",
-         communicator.bootstrap()->getRank(), connection->remoteRank());
     isRemoteInboundSemaphoreIdSet_ = false;
   }
 }

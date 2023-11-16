@@ -29,6 +29,8 @@ void def_nonblocking_future(nb::handle& m, const std::string& typestr) {
 }
 
 void register_core(nb::module_& m) {
+  m.def("version", &version);
+
   nb::class_<Bootstrap>(m, "Bootstrap")
       .def("get_rank", &Bootstrap::getRank)
       .def("get_n_ranks", &Bootstrap::getNranks)
@@ -62,10 +64,10 @@ void register_core(nb::module_& m) {
           nb::arg("nRanks"))
       .def("create_unique_id", &TcpBootstrap::createUniqueId)
       .def("get_unique_id", &TcpBootstrap::getUniqueId)
-      .def("initialize", (void (TcpBootstrap::*)(UniqueId, int64_t)) & TcpBootstrap::initialize, nb::arg("uniqueId"),
-           nb::arg("timeoutSec") = 30)
-      .def("initialize", (void (TcpBootstrap::*)(const std::string&, int64_t)) & TcpBootstrap::initialize,
-           nb::arg("ifIpPortTrio"), nb::arg("timeoutSec") = 30);
+      .def("initialize", static_cast<void (TcpBootstrap::*)(UniqueId, int64_t)>(&TcpBootstrap::initialize),
+           nb::call_guard<nb::gil_scoped_release>(), nb::arg("uniqueId"), nb::arg("timeoutSec") = 30)
+      .def("initialize", static_cast<void (TcpBootstrap::*)(const std::string&, int64_t)>(&TcpBootstrap::initialize),
+           nb::call_guard<nb::gil_scoped_release>(), nb::arg("ifIpPortTrio"), nb::arg("timeoutSec") = 30);
 
   nb::enum_<Transport>(m, "Transport")
       .value("Unknown", Transport::Unknown)
@@ -105,7 +107,6 @@ void register_core(nb::module_& m) {
       .def(nb::init<>())
       .def("data", &RegisteredMemory::data)
       .def("size", &RegisteredMemory::size)
-      .def("rank", &RegisteredMemory::rank)
       .def("transports", &RegisteredMemory::transports)
       .def("serialize", &RegisteredMemory::serialize)
       .def_static("deserialize", &RegisteredMemory::deserialize, nb::arg("data"));
@@ -119,17 +120,43 @@ void register_core(nb::module_& m) {
             self->updateAndSync(dst, dstOffset, (uint64_t*)src, newValue);
           },
           nb::arg("dst"), nb::arg("dstOffset"), nb::arg("src"), nb::arg("newValue"))
-      .def("flush", &Connection::flush, nb::arg("timeoutUsec") = (int64_t)3e7)
-      .def("remote_rank", &Connection::remoteRank)
-      .def("tag", &Connection::tag)
+      .def("flush", &Connection::flush, nb::call_guard<nb::gil_scoped_release>(), nb::arg("timeoutUsec") = (int64_t)3e7)
       .def("transport", &Connection::transport)
       .def("remote_transport", &Connection::remoteTransport);
 
+  nb::class_<Endpoint>(m, "Endpoint")
+      .def("transport", &Endpoint::transport)
+      .def("serialize", &Endpoint::serialize)
+      .def_static("deserialize", &Endpoint::deserialize, nb::arg("data"));
+
+  nb::class_<EndpointConfig>(m, "EndpointConfig")
+      .def(nb::init<>())
+      .def(nb::init_implicit<Transport>(), nb::arg("transport"))
+      .def_rw("transport", &EndpointConfig::transport)
+      .def_rw("ib_max_cq_size", &EndpointConfig::ibMaxCqSize)
+      .def_rw("ib_max_cq_poll_num", &EndpointConfig::ibMaxCqPollNum)
+      .def_rw("ib_max_send_wr", &EndpointConfig::ibMaxSendWr)
+      .def_rw("ib_max_wr_per_send", &EndpointConfig::ibMaxWrPerSend);
+
+  nb::class_<Context>(m, "Context")
+      .def(nb::init<>())
+      .def(
+          "register_memory",
+          [](Communicator* self, uintptr_t ptr, size_t size, TransportFlags transports) {
+            return self->registerMemory((void*)ptr, size, transports);
+          },
+          nb::arg("ptr"), nb::arg("size"), nb::arg("transports"))
+      .def("create_endpoint", &Context::createEndpoint, nb::arg("config"))
+      .def("connect", &Context::connect, nb::arg("local_endpoint"), nb::arg("remote_endpoint"));
+
   def_nonblocking_future<RegisteredMemory>(m, "RegisteredMemory");
+  def_nonblocking_future<std::shared_ptr<Connection>>(m, "shared_ptr_Connection");
 
   nb::class_<Communicator>(m, "Communicator")
-      .def(nb::init<std::shared_ptr<Bootstrap>>(), nb::arg("bootstrap"))
+      .def(nb::init<std::shared_ptr<Bootstrap>, std::shared_ptr<Context>>(), nb::arg("bootstrap"),
+           nb::arg("context") = nullptr)
       .def("bootstrap", &Communicator::bootstrap)
+      .def("context", &Communicator::context)
       .def(
           "register_memory",
           [](Communicator* self, uintptr_t ptr, size_t size, TransportFlags transports) {
@@ -140,8 +167,9 @@ void register_core(nb::module_& m) {
            nb::arg("tag"))
       .def("recv_memory_on_setup", &Communicator::recvMemoryOnSetup, nb::arg("remoteRank"), nb::arg("tag"))
       .def("connect_on_setup", &Communicator::connectOnSetup, nb::arg("remoteRank"), nb::arg("tag"),
-           nb::arg("transport"), nb::arg("ibMaxCqSize") = 1024, nb::arg("ibMaxCqPollNum") = 1,
-           nb::arg("ibMaxSendWr") = 8192, nb::arg("ibMaxWrPerSend") = 64)
+           nb::arg("localConfig"))
+      .def("remote_rank_of", &Communicator::remoteRankOf)
+      .def("tag_of", &Communicator::tagOf)
       .def("setup", &Communicator::setup);
 }
 

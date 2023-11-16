@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 set(MSCCLPP_MAJOR "0")
-set(MSCCLPP_MINOR "2")
+set(MSCCLPP_MINOR "3")
 set(MSCCLPP_PATCH "0")
 
 set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})
@@ -26,6 +26,7 @@ option(USE_NPKIT "Use NPKIT" ON)
 option(BUILD_TESTS "Build tests" ON)
 option(BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(ALLOW_GDRCOPY "Use GDRCopy, if available" OFF)
+option(BYPASS_PEERMEM_CHECK "Bypass checking nvidia_peermem" OFF)
 
 # Find CUDAToolkit. Set CUDA flags based on the detected CUDA version
 find_package(CUDAToolkit REQUIRED)
@@ -43,6 +44,16 @@ if(CUDAToolkit_FOUND)
     endif()
 endif()
 set(CUDA_LIBRARIES CUDA::cudart CUDA::cuda_driver)
+
+# Find if nvidia_peermem is installed and loaded
+if(NOT BYPASS_PEERMEM_CHECK)
+    execute_process(COMMAND sh -c "lsmod | grep nvidia_peermem"
+                    RESULT_VARIABLE lsmod_result
+                    OUTPUT_VARIABLE lsmod_output)
+    if(NOT lsmod_result EQUAL 0)
+        message(FATAL_ERROR "nvidia_peermem is not installed or not loaded.")
+    endif()
+endif()
 
 # Find ibverbs and libnuma
 find_package(IBVerbs REQUIRED)
@@ -93,6 +104,7 @@ install(TARGETS mscclpp_static
 
 # Tests
 if (BUILD_TESTS)
+    enable_testing() # Called here to allow ctest from the build directory
     add_subdirectory(test)
 endif()
 

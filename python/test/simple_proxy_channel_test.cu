@@ -24,7 +24,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
       channels[tid].put(2 * my_offset, 2 * my_offset, 2 * size_per_rank);
     }
     if (my_nghr != my_rank && my_nghr < nranks)
-      mscclpp::getPackets(data, my_nghr_offset, scratch, 2 * my_nghr_offset, size_per_rank, tid % nthreads_per_rank,
+      mscclpp::getPackets(scratch, 2 * my_nghr_offset, data, my_nghr_offset, size_per_rank, tid % nthreads_per_rank,
                           nthreads_per_rank, flag);
   } else {
     if (tid < nranks && tid != my_rank) {

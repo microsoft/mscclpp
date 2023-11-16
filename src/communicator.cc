@@ -3,58 +3,31 @@
 
 #include "communicator.hpp"
 
-#include <mscclpp/core.hpp>
-#include <mscclpp/cuda_utils.hpp>
-#include <sstream>
-
 #include "api.h"
-#include "connection.hpp"
 #include "debug.h"
-#include "registered_memory.hpp"
-#include "utils_internal.hpp"
 
 namespace mscclpp {
 
-Communicator::Impl::Impl(std::shared_ptr<Bootstrap> bootstrap) : bootstrap_(bootstrap) {
-  rankToHash_.resize(bootstrap->getNranks());
-  auto hostHash = getHostHash();
-  INFO(MSCCLPP_INIT, "Host hash: %lx", hostHash);
-  rankToHash_[bootstrap->getRank()] = hostHash;
-  bootstrap->allGather(rankToHash_.data(), sizeof(uint64_t));
-
-  MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&ipcStream_, cudaStreamNonBlocking));
-}
-
-Communicator::Impl::~Impl() {
-  ibContexts_.clear();
-
-  cudaStreamDestroy(ipcStream_);
-}
-
-IbCtx* Communicator::Impl::getIbContext(Transport ibTransport) {
-  // Find IB context or create it
-  auto it = ibContexts_.find(ibTransport);
-  if (it == ibContexts_.end()) {
-    auto ibDev = getIBDeviceName(ibTransport);
-    ibContexts_[ibTransport] = std::make_unique<IbCtx>(ibDev);
-    return ibContexts_[ibTransport].get();
+Communicator::Impl::Impl(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<Context> context)
+    : bootstrap_(bootstrap) {
+  if (!context) {
+    context_ = std::make_shared<Context>();
   } else {
-    return it->second.get();
+    context_ = context;
   }
 }
 
-cudaStream_t Communicator::Impl::getIpcStream() { return ipcStream_; }
-
 MSCCLPP_API_CPP Communicator::~Communicator() = default;
 
-MSCCLPP_API_CPP Communicator::Communicator(std::shared_ptr<Bootstrap> bootstrap)
-    : pimpl(std::make_unique<Impl>(bootstrap)) {}
+MSCCLPP_API_CPP Communicator::Communicator(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<Context> context)
+    : pimpl_(std::make_unique<Impl>(bootstrap, context)) {}
 
-MSCCLPP_API_CPP std::shared_ptr<Bootstrap> Communicator::bootstrap() { return pimpl->bootstrap_; }
+MSCCLPP_API_CPP std::shared_ptr<Bootstrap> Communicator::bootstrap() { return pimpl_->bootstrap_; }
+
+MSCCLPP_API_CPP std::shared_ptr<Context> Communicator::context() { return pimpl_->context_; }
 
 MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports) {
-  return RegisteredMemory(
-      std::make_shared<RegisteredMemory::Impl>(ptr, size, pimpl->bootstrap_->getRank(), transports, *pimpl));
+  return context()->registerMemory(ptr, size, transports);
 }
 
 struct MemorySender : public Setuppable {
@@ -94,53 +67,64 @@ MSCCLPP_API_CPP NonblockingFuture<RegisteredMemory> Communicator::recvMemoryOnSe
   return NonblockingFuture<RegisteredMemory>(memoryReceiver->memoryPromise_.get_future());
 }
 
-MSCCLPP_API_CPP std::shared_ptr<Connection> Communicator::connectOnSetup(int remoteRank, int tag, Transport transport,
-                                                                         int ibMaxCqSize /*=1024*/,
-                                                                         int ibMaxCqPollNum /*=1*/,
-                                                                         int ibMaxSendWr /*=8192*/,
-                                                                         int ibMaxWrPerSend /*=64*/) {
-  std::shared_ptr<ConnectionBase> conn;
-  if (transport == Transport::CudaIpc) {
-    // sanity check: make sure the IPC connection is being made within a node
-    if (pimpl->rankToHash_[remoteRank] != pimpl->rankToHash_[pimpl->bootstrap_->getRank()]) {
-      std::stringstream ss;
-      ss << "Cuda IPC connection can only be made within a node: " << remoteRank << "(" << std::hex
-         << pimpl->rankToHash_[remoteRank] << ") != " << pimpl->bootstrap_->getRank() << "(" << std::hex
-         << pimpl->rankToHash_[pimpl->bootstrap_->getRank()] << ")";
-      throw mscclpp::Error(ss.str(), ErrorCode::InvalidUsage);
-    }
-    auto cudaIpcConn = std::make_shared<CudaIpcConnection>(remoteRank, tag, pimpl->getIpcStream());
-    conn = cudaIpcConn;
-    INFO(MSCCLPP_P2P, "Cuda IPC connection between rank %d(%lx) and remoteRank %d(%lx) created",
-         pimpl->bootstrap_->getRank(), pimpl->rankToHash_[pimpl->bootstrap_->getRank()], remoteRank,
-         pimpl->rankToHash_[remoteRank]);
-  } else if (AllIBTransports.has(transport)) {
-    auto ibConn = std::make_shared<IBConnection>(remoteRank, tag, transport, ibMaxCqSize, ibMaxCqPollNum, ibMaxSendWr,
-                                                 ibMaxWrPerSend, *pimpl);
-    conn = ibConn;
-    INFO(MSCCLPP_NET, "IB connection between rank %d(%lx) via %s and remoteRank %d(%lx) created",
-         pimpl->bootstrap_->getRank(), pimpl->rankToHash_[pimpl->bootstrap_->getRank()],
-         getIBDeviceName(transport).c_str(), remoteRank, pimpl->rankToHash_[remoteRank]);
-  } else {
-    throw mscclpp::Error("Unsupported transport", ErrorCode::InternalError);
+struct Communicator::Impl::Connector : public Setuppable {
+  Connector(Communicator& comm, Communicator::Impl& commImpl_, int remoteRank, int tag, EndpointConfig localConfig)
+      : comm_(comm),
+        commImpl_(commImpl_),
+        remoteRank_(remoteRank),
+        tag_(tag),
+        localEndpoint_(comm.context()->createEndpoint(localConfig)) {}
+
+  void beginSetup(std::shared_ptr<Bootstrap> bootstrap) override {
+    bootstrap->send(localEndpoint_.serialize(), remoteRank_, tag_);
   }
-  pimpl->connections_.push_back(conn);
-  onSetup(conn);
-  return conn;
+
+  void endSetup(std::shared_ptr<Bootstrap> bootstrap) override {
+    std::vector<char> data;
+    bootstrap->recv(data, remoteRank_, tag_);
+    auto remoteEndpoint = Endpoint::deserialize(data);
+    auto connection = comm_.context()->connect(localEndpoint_, remoteEndpoint);
+    commImpl_.connectionInfos_[connection.get()] = {remoteRank_, tag_};
+    connectionPromise_.set_value(connection);
+    INFO(MSCCLPP_INIT, "Connection %d -> %d created (%s)", comm_.bootstrap()->getRank(), remoteRank_,
+         connection->getTransportName().c_str());
+  }
+
+  std::promise<std::shared_ptr<Connection>> connectionPromise_;
+  Communicator& comm_;
+  Communicator::Impl& commImpl_;
+  int remoteRank_;
+  int tag_;
+  Endpoint localEndpoint_;
+};
+
+MSCCLPP_API_CPP NonblockingFuture<std::shared_ptr<Connection>> Communicator::connectOnSetup(
+    int remoteRank, int tag, EndpointConfig localConfig) {
+  auto connector = std::make_shared<Communicator::Impl::Connector>(*this, *pimpl_, remoteRank, tag, localConfig);
+  onSetup(connector);
+  return NonblockingFuture<std::shared_ptr<Connection>>(connector->connectionPromise_.get_future());
+}
+
+MSCCLPP_API_CPP int Communicator::remoteRankOf(const Connection& connection) {
+  return pimpl_->connectionInfos_.at(&connection).remoteRank;
+}
+
+MSCCLPP_API_CPP int Communicator::tagOf(const Connection& connection) {
+  return pimpl_->connectionInfos_.at(&connection).tag;
 }
 
 MSCCLPP_API_CPP void Communicator::onSetup(std::shared_ptr<Setuppable> setuppable) {
-  pimpl->toSetup_.push_back(setuppable);
+  pimpl_->toSetup_.push_back(setuppable);
 }
 
 MSCCLPP_API_CPP void Communicator::setup() {
-  for (auto& setuppable : pimpl->toSetup_) {
-    setuppable->beginSetup(pimpl->bootstrap_);
+  for (auto& setuppable : pimpl_->toSetup_) {
+    setuppable->beginSetup(pimpl_->bootstrap_);
   }
-  for (auto& setuppable : pimpl->toSetup_) {
-    setuppable->endSetup(pimpl->bootstrap_);
+  for (auto& setuppable : pimpl_->toSetup_) {
+    setuppable->endSetup(pimpl_->bootstrap_);
   }
-  pimpl->toSetup_.clear();
+  pimpl_->toSetup_.clear();
 }
 
 }  // namespace mscclpp

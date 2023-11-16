@@ -9,17 +9,18 @@
 #include <mscclpp/cuda_utils.hpp>
 
 #include "api.h"
+#include "context.hpp"
 #include "debug.h"
 #include "utils_internal.hpp"
 
 namespace mscclpp {
 
-RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags transports, Communicator::Impl& commImpl)
+RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports, Context::Impl& contextImpl)
     : data(data),
+      originalDataPtr(data),
       size(size),
-      rank(rank),
-      isRemote(false),
-      hostHash(commImpl.rankToHash_.at(rank)),
+      hostHash(getHostHash()),
+      pidHash(getPidHash()),
       transports(transports) {
   if (transports.has(Transport::CudaIpc)) {
     TransportInfo transportInfo;
@@ -39,7 +40,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags t
     auto addIb = [&](Transport ibTransport) {
       TransportInfo transportInfo;
       transportInfo.transport = ibTransport;
-      const IbMr* mr = commImpl.getIbContext(ibTransport)->registerMr(data, size);
+      const IbMr* mr = contextImpl.getIbContext(ibTransport)->registerMr(data, size);
       transportInfo.ibMr = mr;
       transportInfo.ibLocal = true;
       transportInfo.ibMrInfo = mr->getInfo();
@@ -57,30 +58,30 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, int rank, TransportFlags t
   }
 }
 
-MSCCLPP_API_CPP RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) : pimpl(pimpl) {}
+MSCCLPP_API_CPP RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) : pimpl_(pimpl) {}
 
 MSCCLPP_API_CPP RegisteredMemory::~RegisteredMemory() = default;
 
-MSCCLPP_API_CPP void* RegisteredMemory::data() const { return pimpl->data; }
+MSCCLPP_API_CPP void* RegisteredMemory::data() const { return pimpl_->data; }
 
-MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl->size; }
+MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl_->size; }
 
-MSCCLPP_API_CPP int RegisteredMemory::rank() { return pimpl->rank; }
-
-MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl->transports; }
+MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl_->transports; }
 
 MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
   std::vector<char> result;
-  std::copy_n(reinterpret_cast<char*>(&pimpl->size), sizeof(pimpl->size), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl->rank), sizeof(pimpl->rank), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl->hostHash), sizeof(pimpl->hostHash), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl->transports), sizeof(pimpl->transports), std::back_inserter(result));
-  if (pimpl->transportInfos.size() > static_cast<size_t>(std::numeric_limits<int8_t>::max())) {
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->originalDataPtr), sizeof(pimpl_->originalDataPtr),
+              std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->size), sizeof(pimpl_->size), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->hostHash), sizeof(pimpl_->hostHash), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->pidHash), sizeof(pimpl_->pidHash), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->transports), sizeof(pimpl_->transports), std::back_inserter(result));
+  if (pimpl_->transportInfos.size() > static_cast<size_t>(std::numeric_limits<int8_t>::max())) {
     throw mscclpp::Error("Too many transport info entries", ErrorCode::InternalError);
   }
-  int8_t transportCount = pimpl->transportInfos.size();
+  int8_t transportCount = pimpl_->transportInfos.size();
   std::copy_n(reinterpret_cast<char*>(&transportCount), sizeof(transportCount), std::back_inserter(result));
-  for (auto& entry : pimpl->transportInfos) {
+  for (auto& entry : pimpl_->transportInfos) {
     std::copy_n(reinterpret_cast<char*>(&entry.transport), sizeof(entry.transport), std::back_inserter(result));
     if (entry.transport == Transport::CudaIpc) {
       std::copy_n(reinterpret_cast<char*>(&entry.cudaIpcBaseHandle), sizeof(entry.cudaIpcBaseHandle),
@@ -102,12 +103,14 @@ MSCCLPP_API_CPP RegisteredMemory RegisteredMemory::deserialize(const std::vector
 
 RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
   auto it = serialization.begin();
+  std::copy_n(it, sizeof(this->originalDataPtr), reinterpret_cast<char*>(&this->originalDataPtr));
+  it += sizeof(this->originalDataPtr);
   std::copy_n(it, sizeof(this->size), reinterpret_cast<char*>(&this->size));
   it += sizeof(this->size);
-  std::copy_n(it, sizeof(this->rank), reinterpret_cast<char*>(&this->rank));
-  it += sizeof(this->rank);
   std::copy_n(it, sizeof(this->hostHash), reinterpret_cast<char*>(&this->hostHash));
   it += sizeof(this->hostHash);
+  std::copy_n(it, sizeof(this->pidHash), reinterpret_cast<char*>(&this->pidHash));
+  it += sizeof(this->pidHash);
   std::copy_n(it, sizeof(this->transports), reinterpret_cast<char*>(&this->transports));
   it += sizeof(this->transports);
   int8_t transportCount;
@@ -137,28 +140,33 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     throw mscclpp::Error("Serialization failed", ErrorCode::InternalError);
   }
 
-  if (transports.has(Transport::CudaIpc)) {
-    uint64_t localHostHash = getHostHash();
-    if (localHostHash == this->hostHash) {
-      auto entry = getTransportInfo(Transport::CudaIpc);
-      void* base;
-      MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
-      data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
-      INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", data);
-    }
+  // Next decide how to set this->data
+  if (getHostHash() == this->hostHash && getPidHash() == this->pidHash) {
+    // The memory is local to the process, so originalDataPtr is valid as is
+    this->data = this->originalDataPtr;
+  } else if (transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash) {
+    // The memory is local to the machine but not to the process, so we need to open the CUDA IPC handle
+    auto entry = getTransportInfo(Transport::CudaIpc);
+    void* base;
+    MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
+    this->data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
+    INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", this->data);
+  } else {
+    // No valid data pointer can be set
+    this->data = nullptr;
   }
-  this->isRemote = true;
 }
 
 RegisteredMemory::Impl::~Impl() {
-  uint64_t localHostHash = getHostHash();
-  if (this->isRemote && localHostHash == this->hostHash && transports.has(Transport::CudaIpc)) {
+  // Close the CUDA IPC handle if it was opened during deserialization
+  if (data && transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash && getPidHash() != this->pidHash) {
     void* base = static_cast<char*>(data) - getTransportInfo(Transport::CudaIpc).cudaIpcOffsetFromBase;
     cudaError_t err = cudaIpcCloseMemHandle(base);
     if (err != cudaSuccess) {
-      WARN("Failed to close cuda IPC handle: %s", cudaGetErrorString(err));
+      WARN("Failed to close CUDA IPC handle at pointer %p: %s", base, cudaGetErrorString(err));
+    } else {
+      INFO(MSCCLPP_P2P, "Closed CUDA IPC handle at pointer %p", base);
     }
-    INFO(MSCCLPP_P2P, "Closed CUDA IPC handle at pointer %p", base);
     data = nullptr;
   }
 }

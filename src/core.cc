@@ -2,10 +2,17 @@
 // Licensed under the MIT license.
 
 #include <mscclpp/core.hpp>
+#include <sstream>
 
 #include "api.h"
 
 namespace mscclpp {
+
+MSCCLPP_API_CPP std::string version() {
+  std::stringstream ss;
+  ss << MSCCLPP_MAJOR << "." << MSCCLPP_MINOR << "." << MSCCLPP_PATCH;
+  return ss.str();
+}
 
 MSCCLPP_API_CPP TransportFlags::TransportFlags(Transport transport)
     : detail::TransportFlagsBase(1 << static_cast<size_t>(transport)) {}

@@ -39,7 +39,7 @@ class MyProxyService {
         semaphores_(semaphores),
         proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
     int cudaDevice;
-    cudaGetDevice(&cudaDevice);
+    MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
     deviceNumaNode_ = mscclpp::getDeviceNumaNode(cudaDevice);
   }
 

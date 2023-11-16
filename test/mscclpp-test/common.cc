@@ -10,7 +10,6 @@
 #include <numa.h>
 #include <unistd.h>
 
-#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -189,7 +188,7 @@ BaseTestEngine::BaseTestEngine(const TestArgs& args, const std::string& name)
   CUDATHROW(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
 }
 
-BaseTestEngine::~BaseTestEngine() { cudaStreamDestroy(stream_); }
+BaseTestEngine::~BaseTestEngine() { (void)cudaStreamDestroy(stream_); }
 
 void BaseTestColl::setupCollTest(const TestArgs& args, size_t size) {
   this->worldSize_ = args.totalRanks;
@@ -369,6 +368,7 @@ void BaseTestEngine::setupMeshConnectionsInternal(
   const int nRanksPerNode = args_.nRanksPerNode;
   const int thisNode = rank / nRanksPerNode;
   const mscclpp::Transport ibTransport = IBs[args_.gpuNum];
+  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
 
   auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
   for (int r = 0; r < worldSize; r++) {
@@ -383,13 +383,16 @@ void BaseTestEngine::setupMeshConnectionsInternal(
         transport = ibTransport;
       }
       // Connect with all other ranks
-      connections.push_back(comm_->connectOnSetup(r, 0, transport));
+      connectionFutures.push_back(comm_->connectOnSetup(r, 0, transport));
     }
     comm_->sendMemoryOnSetup(localRegMemory, r, 0);
     auto remoteMemory = comm_->recvMemoryOnSetup(r, 0);
     remoteRegMemories.push_back(remoteMemory);
   }
   comm_->setup();
+  std::transform(
+      connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
+      [](const mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>& future) { return future.get(); });
 }
 
 // Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
