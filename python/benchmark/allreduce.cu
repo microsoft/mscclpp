@@ -118,12 +118,9 @@ __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem) {
 // AllReduce1
 // -------------------------------------------
 
-#ifndef READ_ONLY
-#define READ_ONLY 0
-#endif
-
-extern "C" __global__ void __launch_bounds__(1024, 1)
-    allreduce1(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nranks, size_t nelems) {
+template <int READ_ONLY>
+__device__ void allreduce1_helper(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, int rank, int nranks,
+                                  size_t nelems) {
   const size_t chunkSize = nelems / nranks;
   if (nranks == 1) return;
   const int nPeer = nranks - 1;
@@ -211,13 +208,21 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   }
 }
 
+extern "C" __global__ void __launch_bounds__(1024, 1) allreduce1(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff,
+                                                                 int rank, int nranks, size_t nelems, int read_only) {
+  if (read_only)
+    allreduce1_helper<1>(smChans, buff, rank, nranks, nelems);
+  else
+    allreduce1_helper<0>(smChans, buff, rank, nranks, nelems);
+}
+
 // -------------------------------------------
 // AllReduce2
 // -------------------------------------------
 
 __device__ uint64_t globalFlag = 1;
 
-extern "C" __global__ void __launch_bounds__(512, 1)
+extern "C" __global__ void __launch_bounds__(1024, 1)
     allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, void* resultBuff, int rank,
                int worldSize, size_t nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
