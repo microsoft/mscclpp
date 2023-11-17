@@ -64,8 +64,9 @@ class MscclppAllReduce1:
             if rank != self.group.my_rank:
                 self.device_handles.append(self.sm_channels[rank].device_handle().raw)
         num_elements = self.memory.numel() if isinstance(self.memory, torch.Tensor) else self.memory.size
+        self.device_handles_cp = cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8)
         self.params += pack(
-            cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8),
+            self.device_handles_cp,
             self.memory,
             self.group.my_rank,
             self.group.nranks,
