@@ -56,11 +56,12 @@ def plot_graph(sizes, mscclpp_algbw, nccl_algbw, speed_ups):
     ax1.legend(lines, labels, loc="upper left")
 
     # Setting title and grid
-    ax1.set_title("MSCCLPP vs NCCL -- " + str(MPI.COMM_WORLD.size // N_GPUS_PER_NODE) + " Nodes")
+    num_nodes = MPI.COMM_WORLD.size // N_GPUS_PER_NODE
+    ax1.set_title(f"MSCCLPP vs NCCL -- {num_nodes} Nodes")
     ax2.grid(True, which="both", ls="--")
 
     # Saving the plot
-    plt.savefig("mscclpp_vs_nccl_comparison.pdf", format="pdf")
+    plt.savefig(f"mscclpp_vs_nccl_comparison_num_nodes_{num_nodes}.jpeg", format="jpeg")
 
 
 def human_readable_size(size, decimal_places=1):
