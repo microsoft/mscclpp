@@ -8,8 +8,9 @@
     * ND_H100_v5
     * [NC_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/nc-a100-v4-series) (TBD)
 * Non-Azure Systems
-    * NVIDIA A100 GPUs + CUDA >= 11.1.1
-    * NVIDIA H100 GPUs + CUDA >= 12.0.0
+    * NVIDIA A100 GPUs + CUDA >= 11.8
+    * NVIDIA H100 GPUs + CUDA >= 12.0
+    * AMD support is underway.
 * OS: tested over Ubuntu 18.04 and 20.04
 * Libraries: [libnuma](https://github.com/numactl/numactl), MPI (optional)
 * Others
@@ -54,6 +55,8 @@ Our base image installs all prerequisites for MSCCL++.
 $ docker pull ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
 ```
 
+See all available images [here](https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp).
+
 ## Unit Tests
 
 `unit_tests` require one GPU on the system. It only tests operation of basic components.
@@ -76,9 +79,11 @@ To run `mp_unit_tests` with more than two nodes, you need to specify the `-ip_po
 $ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.0.0.5:50000
 ```
 
-## mscclpp-test
+## Performance Benchmark
 
-mscclpp-test is a set of performance benchmarks for MSCCL++. It requires MPI to be installed on the system, and the path should be provided via `MPI_HOME` environment variable to the CMake build system.
+*NOTE: mscclpp-test is now maintained only as an example of C++ implementation. If you want to get the latest performance numbers, please use the Python benchmark instead.*
+
+mscclpp-test is a set of C++ performance benchmarks. It requires MPI to be installed on the system, and the path should be provided via `MPI_HOME` environment variable to the CMake build system.
 
 ```bash
 $ MPI_HOME=/path/to/mpi cmake -DCMAKE_BUILD_TYPE=Release ..
@@ -95,18 +100,18 @@ Check the help message for more details.
 
 ```bash
 $ ./test/mscclpp-test/allreduce_test_perf --help
-USAGE: allreduce_test_perf 
-        [-b,--minbytes <min size in bytes>] 
-        [-e,--maxbytes <max size in bytes>] 
-        [-i,--stepbytes <increment size>] 
-        [-f,--stepfactor <increment factor>] 
-        [-n,--iters <iteration count>] 
-        [-w,--warmup_iters <warmup iteration count>] 
-        [-c,--check <0/1>] 
-        [-T,--timeout <time in seconds>] 
-        [-G,--cudagraph <num graph launches>] 
-        [-a,--average <0/1/2/3> report average iteration time <0=RANK0/1=AVG/2=MIN/3=MAX>] 
-        [-k,--kernel_num <kernel number of commnication primitive>] 
-        [-o, --output_file <output file name>] 
+USAGE: allreduce_test_perf
+        [-b,--minbytes <min size in bytes>]
+        [-e,--maxbytes <max size in bytes>]
+        [-i,--stepbytes <increment size>]
+        [-f,--stepfactor <increment factor>]
+        [-n,--iters <iteration count>]
+        [-w,--warmup_iters <warmup iteration count>]
+        [-c,--check <0/1>]
+        [-T,--timeout <time in seconds>]
+        [-G,--cudagraph <num graph launches>]
+        [-a,--average <0/1/2/3> report average iteration time <0=RANK0/1=AVG/2=MIN/3=MAX>]
+        [-k,--kernel_num <kernel number of commnication primitive>]
+        [-o, --output_file <output file name>]
         [-h,--help]
 ```
