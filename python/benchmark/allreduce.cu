@@ -177,11 +177,11 @@ __device__ void allreduce1_helper(mscclpp::SmChannelDeviceHandle* smChans, TYPE*
       tmp += val;
     }
     if (READ_ONLY == 0) {
-    for (int index = 0; index < nPeer; ++index) {
-      int peerIdx = (index + rank);
-      if (peerIdx >= nPeer) peerIdx -= nPeer;
-      smChans[peerIdx].write<TYPE>(idx, tmp);
-    }
+      for (int index = 0; index < nPeer; ++index) {
+        int peerIdx = (index + rank);
+        if (peerIdx >= nPeer) peerIdx -= nPeer;
+        smChans[peerIdx].write<TYPE>(idx, tmp);
+      }
     }
     buff[idx] = tmp;
   }
