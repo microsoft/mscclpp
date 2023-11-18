@@ -25,20 +25,21 @@ MSCCL++ redefines inter-GPU communication interfaces, thereby delivering a highl
 
 ## Performance
 
-While the power of MSCCL++ is fully realized with application-specific optimization, it still delivers performance benefits even in pure-communication scenarios. The following figures provide a comparison of the AllReduce throughput of MSCCL++ against that of the latest version of NCCL. 
+While the power of MSCCL++ is fully realized with application-specific optimization, it still delivers performance benefits even in pure-communication scenarios. The following figures provide a comparison of the AllReduce throughput of MSCCL++ against that of the latest version of NCCL. Tested over two [Azure NDmv4 SKUs](https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series) (8 A100-80G GPUs per node).
 
-<img src="./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_1.jpeg" alt="MSCCL++ vs NCCL AllReduce (Single-node)" style="width: 500px;"/>
-<img src="./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_2.jpeg" alt="MSCCL++ vs NCCL AllReduce (Two-node)" style="width: 500px;"/>
+<img src="./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_1.jpeg" alt="MSCCL++ vs NCCL AllReduce (Single-node)" style="width: 400px;"/>
+<img src="./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_2.jpeg" alt="MSCCL++ vs NCCL AllReduce (Two-node)" style="width: 400px;"/>
 
-## Feature Examples
+## Key Concepts
 
-The following illustrates key features of MSCCL++.
+The following highlights key concepts of MSCCL++.
 
-### On-GPU Communication Interfaces
+### On-GPU Communication Interfaces: Channels
 
-MSCCL++ provides inter-GPU communication interfaces to be called by a GPU thread. For example, the `put()` method in the following example copies 1KB data from the local GPU to a remote GPU. `channel` is a peer-to-peer communication channel between two GPUs, which consists of information on send/receive buffers. `channel` is initialized from the host side before the kernel execution.
+MSCCL++ provides peer-to-peer communication methods between GPUs. A peer-to-peer connection between two GPUs is called a *Channel*. Channels are constructed by MSCCL++ host-side interfaces and copied to GPUs during initialization. Channels provide *GPU-side interfaces*, which means that all communication methods are defined as a device function to be called from a GPU kernel code. For example, the `put()` method in the following example copies 1KB data from the local GPU to a remote GPU.
 
 ```cpp
+// `ProxyChannel` will be explained in the following section.
 __device__ mscclpp::DeviceHandle<mscclpp::SimpleProxyChannel> channel;
 __global__ void gpuKernel() {
   ...
@@ -67,9 +68,15 @@ __device__ void barrier() {
 
 MSCCL++ provides consistent interfaces, i.e., the above interfaces are used regardless of the location of the remote GPU (either on the local node or on a remote node) or the underlying link (either NVLink or InfiniBand).
 
+### ProxyChannel and SmChannel
+
+MSCCL++ delivers two types of channels, **ProxyChannel** and **SmChannel**. `ProxyChannel` provides (R)DMA-based data copy and synchronization methods. When called, these methods send/receive a signal to/from a host-side proxy (hence the name `ProxyChannel`), which will trigger (R)DMA (such as `cudaMemcpy*` or `ibv_post_send`) or regarding synchronization methods (such as `cudaStreamSynchronize` or `ibv_poll_cq`). Since the key functionalities are run by the proxy, `ProxyChannel` requires only a single GPU thread to call its methods. See all `ProxyChannel` methods from [here](./include/mscclpp/proxy_channel_device.hpp).
+
+On the other hand, `SmChannel` provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU's memory space. Comparing against `ProxyChannel`, `SmChannel` is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all `SmChannel` methods from [here](./include/mscclpp/sm_channel_device.hpp).
+
 ### Host-Side Communication Proxy
 
-MSCCL++ interfaces may send a request (called triggers) to a GPU-external helper that conducts key functionalities such as DMA or RDMA. This helper is called a *proxy*. MSCCL++ provides a default implementation of a proxy, which is a background host thread that busy polls triggers from GPUs and conducts functionalities accordingly. For example, the following is a typical host-side code for MSCCL++.
+MSCCL++ provides a default implementation of a host-side proxy for ProxyChannels, which is a background host thread that busy polls triggers from GPUs and conducts functionalities accordingly. For example, the following is a typical host-side code for MSCCL++.
 
 ```cpp
 // Bootstrap: initialize control-plane connections between all ranks
