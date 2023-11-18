@@ -81,7 +81,7 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.
 
 ## Performance Benchmark
 
-*NOTE: mscclpp-test is now maintained only as an example of C++ implementation. If you want to get the latest performance numbers, please use the Python benchmark instead.*
+*NOTE: mscclpp-test is now maintained only as an example of C++ implementation. If you want to get the latest performance numbers, please use the [Python benchmark](../python/benchmark) instead.*
 
 mscclpp-test is a set of C++ performance benchmarks. It requires MPI to be installed on the system, and the path should be provided via `MPI_HOME` environment variable to the CMake build system.
 
