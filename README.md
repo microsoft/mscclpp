@@ -27,8 +27,9 @@ MSCCL++ redefines inter-GPU communication interfaces, thereby delivering a highl
 
 While the power of MSCCL++ is fully realized with application-specific optimization, it still delivers performance benefits even in pure-communication scenarios. The following figures provide a comparison of the AllReduce throughput of MSCCL++ against that of the latest version of NCCL. Tested over two [Azure NDmv4 SKUs](https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series) (8 A100-80G GPUs per node).
 
-<img src="./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_1.jpeg" alt="MSCCL++ vs NCCL AllReduce (Single-node)" style="width: 400px;"/>
-<img src="./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_2.jpeg" alt="MSCCL++ vs NCCL AllReduce (Two-node)" style="width: 400px;"/>
+| <center>Single-node AllReduce | <center>Two-node AllReduce |
+|-------------------------------|----------------------------|
+| <img src="./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_1.jpeg" alt="MSCCL++ vs NCCL AllReduce (Single-node)" style="width: 400px;"/> | <img src="./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_2.jpeg" alt="MSCCL++ vs NCCL AllReduce (Two-node)" style="width: 400px;"/> |
 
 ## Key Concepts
 
