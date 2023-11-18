@@ -15,13 +15,20 @@ See [Quick Start](docs/quickstart.md) to quickly get started.
 
 ## Overview
 
-MSCCL++ redefines the interface for inter-GPU communication, thereby delivering a highly efficient and customizable communication stack tailored for distributed GPU applications. The followings describe the key features of MSCCL++.
+MSCCL++ redefines inter-GPU communication interfaces, thereby delivering a highly efficient and customizable communication stack for distributed GPU applications. Its design is specifically tailored to accommodate diverse performance optimization scenarios often encountered in state-of-the-art AI applications. The followings highlight the key features of MSCCL++.
 
 * **On-GPU Interfaces.** MSCCL++ provides communication interfaces to be called by a **GPU thread**. Users can easily implement highly optimized communication logics inside a GPU kernel, without awareness of detailed communication mechanisms. This enables users to implement highly fine-grained system pipelining (i.e., hiding communication delays by overlapping with computation), which has been difficult for CPU-based interfaces.
 
 * **Fine-grained Abstracts.** MSCCL++ provides fine-grained abstracts for communication primitives, such as `put()`, `get()`, `signal()`, `flush()`, and `wait()`. This enables users to easily implement flexible communication logics, such as overlapping communication with computation, or implementing customized collective communication algorithms.
 
 * **Converged Interfaces.** MSCCL++ provides consistent interfaces regardless of the location of the remote GPU (either on the local node or on a remote node) or the underlying link (either NVLink/xGMI or InfiniBand). This simplifies the code for inter-GPU communication, which is often complex and error-prone.
+
+## Performance
+
+While the power of MSCCL++ is fully realized with application-specific optimization, it still delivers performance benefits even in pure-communication scenarios. The following figures provide a comparison of the AllReduce throughput of MSCCL++ against that of the latest version of NCCL. 
+
+<img src="./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_1.jpeg" alt="MSCCL++ vs NCCL AllReduce (Single-node)" style="width: 500px;"/>
+<img src="./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_2.jpeg" alt="MSCCL++ vs NCCL AllReduce (Two-node)" style="width: 500px;"/>
 
 ## Feature Examples
 
