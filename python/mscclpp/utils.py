@@ -74,19 +74,27 @@ class Kernel:
 class KernelBuilder:
     kernel_map: dict = {}
 
-    def __init__(self, file: str, kernel_name: str):
-        if kernel_name in self.kernel_map:
-            self._kernel = self.kernel_map[kernel_name]
+    def get_key(self, kernel_name, macro_dict):
+        return kernel_name + "-".join(f"{key}={macro_dict[key]}" for key in sorted(macro_dict))
+
+    def __init__(self, file: str, kernel_name: str, file_dir: str = None, macro_dict: dict = {}):
+        kernel_key = self.get_key(kernel_name, macro_dict)
+        if kernel_key in self.kernel_map:
+            self._kernel = self.kernel_map[kernel_key]
             return
         self._tempdir = tempfile.TemporaryDirectory(suffix=f"{os.getpid()}")
-        self._current_file_dir = os.path.dirname(os.path.abspath(__file__))
+        self._current_file_dir = file_dir if file_dir else os.path.dirname(os.path.abspath(__file__))
+        self.macros = None
+        if file_dir:
+            self.macros = ["-D{}={}".format(macro, value) for macro, value in macro_dict.items()]
         device_id = cp.cuda.Device().id
         ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{kernel_name}.ptx", device_id)
         self._kernel = Kernel(ptx, kernel_name, device_id)
-        self.kernel_map[kernel_name] = self._kernel
+        self.kernel_map[kernel_key] = self._kernel
 
     def _compile_cuda(self, source_file, output_file, device_id, std_version="c++17"):
-        include_dir = os.path.join(self._current_file_dir, "../../include")
+        mscclpp_home = os.environ.get("MSCCLPP_HOME", "/usr/local/mscclpp")
+        include_dir = os.path.join(mscclpp_home, "include")
         major = _check_cuda_errors(
             cudart.cudaDeviceGetAttribute(cudart.cudaDeviceAttr.cudaDevAttrComputeCapabilityMajor, device_id)
         )
@@ -108,12 +116,15 @@ class KernelBuilder:
             "-o",
             f"{self._tempdir.name}/{output_file}",
         ]
+        if self.macros:
+            command += self.macros
         try:
             subprocess.run(command, capture_output=True, text=True, check=True, bufsize=1)
             with open(f"{self._tempdir.name}/{output_file}", "rb") as f:
                 return f.read()
         except subprocess.CalledProcessError as e:
-            raise RuntimeError("Compilation failed:", e.stderr, " ".join(command))
+            print(e.stderr, end="")
+            raise RuntimeError("Compilation failed: ", " ".join(command))
 
     def get_compiled_kernel(self):
         return self._kernel
@@ -128,6 +139,8 @@ def pack(*args):
     for arg in list(args):
         if isinstance(arg, int):
             res += struct.pack("i", arg)
+        elif isinstance(arg, ctypes.c_size_t):
+            res += struct.pack("N", arg.value)
         elif isinstance(arg, np.ndarray):
             res += struct.pack("P", arg.ctypes.data)
         elif isinstance(arg, cp.ndarray):
@@ -135,6 +148,8 @@ def pack(*args):
         # use int to represent bool, which can avoid CUDA_ERROR_LAUNCH_OUT_OF_RESOURCES error
         elif isinstance(arg, bool):
             res += struct.pack("i", arg)
+        elif isinstance(arg, bytes):
+            res += struct.pack(f"{len(arg)}s", arg)
         else:
             raise RuntimeError(f"Unsupported type: {type(arg)}")
     return res

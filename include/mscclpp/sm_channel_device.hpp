@@ -239,6 +239,13 @@ struct SmChannelDeviceHandle {
   ///
   MSCCLPP_DEVICE_INLINE void signal() { semaphore_.signal(); }
 
+  /// Signal the remote semaphore.
+  ///
+  /// This function is a relaxed version of signal() and provides no guarantee on the completion of memory operations.
+  /// User requires to call proper fencing before using this function.
+  ///
+  __forceinline__ __device__ void relaxedSignal() { semaphore_.relaxedSignal(); }
+
   /// Signal the remote semaphore for copied packets.
   ///
   /// Unlike @ref signal(), this function provides no guarantee on the completion of memory operations. This is

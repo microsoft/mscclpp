@@ -21,7 +21,7 @@ struct Host2DeviceSemaphoreDeviceHandle {
   }
 
   /// Wait for the host to signal.
-  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) {
+  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
     POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < (*expectedInboundSemaphoreId)),
                          maxSpinCount);
@@ -44,7 +44,7 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
   }
 
   /// Wait for the remote device to signal.
-  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) {
+  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
     POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < (*expectedInboundSemaphoreId)),
                          maxSpinCount);
@@ -60,6 +60,19 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
     // `outboundSemaphoreId` is visible.
     semaphoreIncrement();
     atomicStore(remoteInboundSemaphoreId, semaphoreGetLocal(), memoryOrderSeqCst);
+  }
+
+  /// Signal the remote device.
+  ///
+  /// This function is a relaxed version of signal() and provides no guarantee on the completion of memory operations.
+  /// User requires to call proper fencing before using this function.
+  ///
+  __forceinline__ __device__ void relaxedSignal() {
+    // This fence ensures that preceding writes are visible on the peer GPU before the incremented
+    // `outboundSemaphoreId` is visible.
+    semaphoreIncrement();
+    cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*remoteInboundSemaphoreId}.store(semaphoreGetLocal(),
+                                                                                           cuda::memory_order_relaxed);
   }
 
   /// Signal the remote device for copied packets.
