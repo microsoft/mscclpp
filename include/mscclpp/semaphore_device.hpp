@@ -71,8 +71,7 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
     // This fence ensures that preceding writes are visible on the peer GPU before the incremented
     // `outboundSemaphoreId` is visible.
     semaphoreIncrement();
-    cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{*remoteInboundSemaphoreId}.store(semaphoreGetLocal(),
-                                                                                           cuda::memory_order_relaxed);
+    atomicStore(remoteInboundSemaphoreId, semaphoreGetLocal(), memoryOrderRelaxed);
   }
 
   /// Signal the remote device for copied packets.
