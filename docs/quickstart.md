@@ -81,6 +81,8 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.
 
 ## Performance Benchmark
 
+### Python Benchmark
+
 [Install the MSCCL++ Python package](https://github.com/microsoft/mscclpp/blob/chhwang/docs/docs/quickstart.md#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
 
 ```bash
@@ -89,20 +91,24 @@ $ python3 -m pip install -r ./python/requirements_cu12.txt
 $ mpirun -tag-output -np 8 python3 ./python/benchmark/allreduce_bench.py
 ```
 
+### C++ Benchmark (mscclpp-test)
+
 *NOTE: mscclpp-test will be retired soon and will be maintained only as an example of C++ implementation. If you want to get the latest performance numbers, please use the Python benchmark instead.*
 
 mscclpp-test is a set of C++ performance benchmarks. It requires MPI on the system, and the path should be provided via `MPI_HOME` environment variable to the CMake build system.
 
 ```bash
 $ MPI_HOME=/path/to/mpi cmake -DCMAKE_BUILD_TYPE=Release ..
-$ make -j sendrecv_test_perf allgather_test_perf allreduce_test_perf alltoall_test_perf
+$ make -j allgather_test_perf allreduce_test_perf
 ```
 
-For example, the following command runs the AllReduce benchmark with 8 GPUs starting from 3MB to 48MB messages, by doubling the message size in between.
+For example, the following command runs the `allreduce5` algorithm with 8 GPUs starting from 3MB to 48MB messages, by doubling the message size in between. You can try different algorithms by changing the `-k 5` option to another value (e.g., `-k 3` runs `allreduce3`). Check all algorithms from the code: [allreduce_test.cu](https://github.com/microsoft/mscclpp/blob/main/test/mscclpp-test/allreduce_test.cu) and [allgather_test.cu](https://github.com/microsoft/mscclpp/blob/main/test/mscclpp-test/allgather_test.cu).
 
 ```bash
-$ mpirun -np 8 ./test/mscclpp-test/allreduce_test_perf -b 3m -e 48m -G 100 -n 100 -w 20 -f 2 -k 4
+$ mpirun --bind-to-numa -np 8 ./test/mscclpp-test/allreduce_test_perf -b 3m -e 48m -G 100 -n 100 -w 20 -f 2 -k 5
 ```
+
+*NOTE: a few algorithms set a condition on the total data size, such as to be a multiple of 3. If the condition is unmet, the command will throw a regarding error.*
 
 Check the help message for more details.
 
