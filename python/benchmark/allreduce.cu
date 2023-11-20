@@ -176,10 +176,12 @@ __device__ void allreduce1_helper(mscclpp::SmChannelDeviceHandle* smChans, TYPE*
       TYPE val = smChans[peerIdx].read<TYPE>(idx);
       tmp += val;
     }
-    for (int index = 0; index < nPeer; ++index) {
-      int peerIdx = (index + rank);
-      if (peerIdx >= nPeer) peerIdx -= nPeer;
-      smChans[peerIdx].write<TYPE>(idx, tmp);
+    if (READ_ONLY == 0) {
+      for (int index = 0; index < nPeer; ++index) {
+        int peerIdx = (index + rank);
+        if (peerIdx >= nPeer) peerIdx -= nPeer;
+        smChans[peerIdx].write<TYPE>(idx, tmp);
+      }
     }
     buff[idx] = tmp;
   }
@@ -198,6 +200,7 @@ __device__ void allreduce1_helper(mscclpp::SmChannelDeviceHandle* smChans, TYPE*
   }
 
   if (READ_ONLY) {
+    deviceSyncer.sync(gridDim.x);
     for (int i = 0; i < nPeer; ++i) {
       int peerIdx = (i + rank);
       if (peerIdx >= nPeer) peerIdx -= nPeer;
