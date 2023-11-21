@@ -29,20 +29,21 @@ union alignas(16) LLPacket {
   /// @param val2 The second 4-byte data to write.
   /// @param flag The flag to write.
   MSCCLPP_DEVICE_INLINE void write(uint32_t val1, uint32_t val2, uint32_t flag) {
+#if defined(MSCCLPP_ON_CUDA) || defined(MSCCLPP_ON_CUDA_HOST)
+    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(&raw_), "r"(val1), "r"(flag), "r"(val2), "r"(flag));
+#else
     uint4 reg = make_uint4(val1, flag, val2, flag);
     ulonglong2* p = reinterpret_cast<ulonglong2*>(&reg);
     atomicStore(&(raw_.x), p->x, memoryOrderRelaxed);
     atomicStore(&(raw_.y), p->y, memoryOrderRelaxed);
+#endif
   }
 
   /// Write 8 bytes of data to the packet.
   /// @param val The 8-byte data to write.
   /// @param flag The flag to write.
   MSCCLPP_DEVICE_INLINE void write(uint64_t val, uint32_t flag) {
-    uint4 reg = make_uint4((uint32_t)val, flag, (uint32_t)(val >> 32), flag);
-    ulonglong2* p = reinterpret_cast<ulonglong2*>(&reg);
-    atomicStore(&(raw_.x), p->x, memoryOrderRelaxed);
-    atomicStore(&(raw_.y), p->y, memoryOrderRelaxed);
+    return write((uint32_t)val, (uint32_t)(val >> 32), flag);
   }
 
   /// Helper of @ref read().
@@ -50,6 +51,13 @@ union alignas(16) LLPacket {
   /// @param data The 8-byte data read.
   /// @return True if the flag is not equal to the given flag.
   MSCCLPP_DEVICE_INLINE bool readOnce(uint32_t flag, uint2& data) const {
+#if defined(MSCCLPP_ON_CUDA) || defined(MSCCLPP_ON_CUDA_HOST)
+    uint32_t flag1, flag2;
+    asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
+                 : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2)
+                 : "l"(&raw_));
+    return (flag1 != flag) || (flag2 != flag);
+#else
     ulonglong2 reg;
     reg.x = atomicLoad(&(raw_.x), memoryOrderRelaxed);
     reg.y = atomicLoad(&(raw_.y), memoryOrderRelaxed);
@@ -57,6 +65,7 @@ union alignas(16) LLPacket {
     data.x = ptr->x;
     data.y = ptr->z;
     return (ptr->y != flag) || (ptr->w != flag);
+#endif
   }
 
   /// Read 8 bytes of data from the packet.
