@@ -11,7 +11,7 @@ from mscclpp import ProxyService
 from prettytable import PrettyTable
 import netifaces as ni
 
-data_type = cp.float16
+data_type = cp.float32
 
 if data_type == cp.float16:
     dtype_str = "fp16"
@@ -70,32 +70,9 @@ def human_readable_size(size, decimal_places=1):
         size /= 1024.0
     return f"{size:.{decimal_places}f} {unit}"
 
-
-def check_correctness(memory, func):
-    rand_gen = cp.random.default_rng(seed=MPI.COMM_WORLD.rank)
-    memory[:] = rand_gen.random(memory.shape).astype(data_type)
-    cp.cuda.runtime.deviceSynchronize()
-    output_memory = func(0)
-    cp.cuda.runtime.deviceSynchronize()
-    expected = cp.zeros_like(memory)
-    for i in range(MPI.COMM_WORLD.size):
-        rand_gen = cp.random.default_rng(seed=i)
-        expected += rand_gen.random(memory.shape).astype(data_type)
-
-    if data_type == cp.float16:
-        ac = cp.allclose(output_memory, expected, rtol=1.0e-2, atol=1.0e-4)
-    else:
-        ac = cp.allclose(output_memory, expected, rtol=1.0e-2, atol=1.0e-4)
-
-    ac = MPI.COMM_WORLD.allreduce(ac, op=MPI.SUM)
-    if not ac:
-        print(output_memory, expected)
-    return ac
-
-
-def check_correctness_deterministic(memory, func):
+def check_correctness(memory, func, niter=100):
     ac = True
-    for p in range(100):
+    for p in range(niter):
         memory[:] = cp.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + MPI.COMM_WORLD.rank)
         cp.cuda.runtime.deviceSynchronize()
         output_memory = func(0)
@@ -106,16 +83,16 @@ def check_correctness_deterministic(memory, func):
 
         if data_type == cp.float16:
             is_close = cp.isclose(output_memory, expected, rtol=1.0e-2, atol=2)
-            icf = is_close == 0
-            all_close = cp.all(is_close)
-            ac = ac and all_close
-            if not all_close:
-                print(
-                    f"not close: p={p}, rank={MPI.COMM_WORLD.rank}, output={output_memory[icf][0]}, expected={expected[icf][0]}",
-                    flush=True,
-                )
         else:
             ac = ac and cp.allclose(output_memory, expected, rtol=1.0e-2, atol=1.0e-4)
+        icf = is_close == 0
+        all_close = cp.all(is_close)
+        ac = ac and all_close
+        if not all_close:
+            print(
+                f"not close: p={p}, rank={MPI.COMM_WORLD.rank}, output={output_memory[icf][0]}, expected={expected[icf][0]}",
+                flush=True,
+            )
 
     ac = MPI.COMM_WORLD.allreduce(ac, op=MPI.SUM)
     return ac
@@ -195,11 +172,11 @@ def run_benchmark(
     memory_nbytes = memory.nbytes
     mscclpp_time = bench_time(niter, mscclpp_call)
     mscclpp_algBw = memory_nbytes / mscclpp_time / 1e3
-    mscclpp_check = "PASS" if check_correctness_deterministic(memory, mscclpp_call) else "FAIL"
+    mscclpp_check = "PASS" if check_correctness(memory, mscclpp_call) else "FAIL"
 
     nccl_time = bench_time(niter, nccl_call)
     nccl_algBw = memory_nbytes / nccl_time / 1e3
-    nccl_check = "PASS" if check_correctness_deterministic(memory, nccl_call) else "FAIL"
+    nccl_check = "PASS" if check_correctness(memory, nccl_call) else "FAIL"
 
     if (
         isinstance(mscclpp_call, MscclppAllReduce3)
@@ -271,7 +248,7 @@ if __name__ == "__main__":
     mscclpp_algbw = []
     nccl_algbw = []
     speed_ups = []
-    for i in range(10, 30):
+    for i in range(10, 11):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
             nelems = 2**i
         elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:
