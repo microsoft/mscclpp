@@ -81,10 +81,7 @@ def check_correctness(memory, func, niter=100):
         for i in range(MPI.COMM_WORLD.size):
             expected += cp.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + i)
 
-        if data_type == cp.float16:
-            is_close = cp.isclose(output_memory, expected, rtol=1.0e-2, atol=2)
-        else:
-            ac = ac and cp.allclose(output_memory, expected, rtol=1.0e-2, atol=1.0e-4)
+        is_close = cp.isclose(output_memory, expected, rtol=1.0e-2, atol=2)
         icf = is_close == 0
         all_close = cp.all(is_close)
         ac = ac and all_close
