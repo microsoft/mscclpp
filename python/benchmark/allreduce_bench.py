@@ -70,6 +70,7 @@ def human_readable_size(size, decimal_places=1):
         size /= 1024.0
     return f"{size:.{decimal_places}f} {unit}"
 
+
 def check_correctness(memory, func, niter=100):
     ac = True
     for p in range(niter):
