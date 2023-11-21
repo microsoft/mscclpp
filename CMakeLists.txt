@@ -29,8 +29,9 @@ if(BYPASS_GPU_CHECK)
         find_package(CUDAToolkit REQUIRED)
     elseif(USE_ROCM)
         message("Bypassing GPU check: using AMD/ROCm.")
+        # Temporal fix for rocm5.6
         set(CMAKE_PREFIX_PATH "/opt/rocm;${CMAKE_PREFIX_PATH}")
-        find_package(hip REQUIRED)        
+        find_package(hip REQUIRED)
     else()
         message(FATAL_ERROR "Bypassing GPU check: neither NVIDIA/CUDA nor AMD/ROCm is specified.")
     endif()
@@ -80,23 +81,25 @@ if(USE_CUDA)
 
     set(GPU_LIBRARIES CUDA::cudart CUDA::cuda_driver)
     set(GPU_INCLUDE_DIRS ${CUDAToolkit_INCLUDE_DIRS})
-    
+
     # Find if nvidia_peermem is installed and loaded
     if(NOT BYPASS_PEERMEM_CHECK)
-    execute_process(COMMAND sh -c "lsmod | grep nvidia_peermem"
-                    RESULT_VARIABLE lsmod_result
-                    OUTPUT_VARIABLE lsmod_output)
-    if(NOT lsmod_result EQUAL 0)
-        message(FATAL_ERROR "nvidia_peermem is not installed or not loaded.")
-    endif()
+        execute_process(COMMAND sh -c "lsmod | grep nvidia_peermem"
+                        RESULT_VARIABLE lsmod_result
+                        OUTPUT_VARIABLE lsmod_output)
+        if(NOT lsmod_result EQUAL 0)
+            message(FATAL_ERROR "nvidia_peermem is not installed or not loaded.")
+        endif()
     endif()
 else()
     set(CMAKE_HIP_STANDARD 17)
     set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -Wall -Wextra")
     project(mscclpp LANGUAGES CXX HIP)
 
+    set(CMAKE_HIP_ARCHITECTURES gfx90a gfx940 gfx941 gfx942)
+
     set(GPU_LIBRARIES hip::host)
-    set(GPU_INCLUDE_DIRS /opt/rocm/include)
+    set(GPU_INCLUDE_DIRS ${hip_INCLUDE_DIRS})
 endif()
 
 # Format targets
@@ -114,12 +117,6 @@ target_include_directories(mscclpp_obj
     ${NUMA_INCLUDE_DIRS})
 target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES})
 set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
-if(USE_CUDA)
-    target_compile_definitions(mscclpp_obj PUBLIC USE_CUDA)
-endif()
-if(USE_ROCM)
-    target_compile_definitions(mscclpp_obj PUBLIC USE_ROCM)
-endif()
 if(ENABLE_TRACE)
     target_compile_definitions(mscclpp_obj PRIVATE ENABLE_TRACE)
 endif()
