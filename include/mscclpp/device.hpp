@@ -22,27 +22,22 @@
 
 #define MSCCLPP_HOST_DEVICE_INLINE MSCCLPP_DEVICE_INLINE
 
-#elif defined(__NVCC__) || defined(__HIP_PLATFORM_AMD__)
-/// Host code but perhaps mixed with device code (compiled by GPU-aware compilers)
+#else
+/// Host code but perhaps mixed with device code
 
 #define MSCCLPP_ON_HOST_DEVICE
 
-#if defined(__NVCC__)
-#include <cuda_runtime.h>
-#define MSCCLPP_CUDA_HOST
-#define MSCCLPP_DEVICE_INLINE __forceinline__ __device__
-#define MSCCLPP_HOST_DEVICE_INLINE __forceinline__ __host__ __device__
-#elif defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
+#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
 #include <hip/hip_runtime.h>
 #define MSCCLPP_HIP_HOST
 #define MSCCLPP_DEVICE_INLINE __device__ inline
 #define MSCCLPP_HOST_DEVICE_INLINE __host__ __device__ inline
-#endif
-
 #else
-/// Pure host code (compiled by GPU-unaware compilers)
-#define MSCCLPP_ON_HOST
-#define MSCCLPP_HOST_DEVICE_INLINE inline
+#include <cuda_runtime.h>
+#define MSCCLPP_CUDA_HOST
+#define MSCCLPP_DEVICE_INLINE __forceinline__ __device__
+#define MSCCLPP_HOST_DEVICE_INLINE __forceinline__ __host__ __device__
+#endif
 
 #endif
 
