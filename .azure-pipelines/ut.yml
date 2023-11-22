@@ -17,7 +17,7 @@ jobs:
       cuda11:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.1
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2
 
   container:
     image: $[ variables['containerImage'] ]
