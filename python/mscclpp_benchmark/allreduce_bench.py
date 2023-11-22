@@ -255,6 +255,9 @@ if __name__ == "__main__":
         else:
             raise RuntimeError("Only support one node/two nodes communication")
 
+        if nelems * data_type().itemsize > 2**32:
+            break  # due to trigger bit width limitation, we can only support up to 2**32
+
         size, mscclpp_algBw, nccl_algBw, speed_up = run_benchmark(mscclpp_group, nccl_comm, table, 100, nelems)
         sizes.append(size)
         mscclpp_algbw.append(mscclpp_algBw)

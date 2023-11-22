@@ -13,9 +13,9 @@ jobs:
   strategy:
     matrix:
       cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda11.8
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2
 
   pool:
     name: mscclpp
@@ -30,10 +30,8 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
-        curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
-        tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
         mkdir build && cd build
-        MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
+        cmake -DCMAKE_BUILD_TYPE=Release ..
         make -j
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -122,10 +120,5 @@ jobs:
         set -e
         export PATH=/usr/local/mpi/bin:$PATH
         python3 -m pip install .
-        if [[ '$(containerImage)' == *'cuda11'* ]]; then
-          pip3 install -r ./python/requirements_cu11.txt
-        else
-          pip3 install -r ./python/requirements_cu12.txt
-        fi
         mpirun -tag-output -x MSCCLPP_HOME=$(System.DefaultWorkingDirectory) -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
       workingDirectory: '$(System.DefaultWorkingDirectory)'

@@ -13,7 +13,7 @@ jobs:
     name: Analyze
     runs-on: 'ubuntu-latest'
     container:
-      image: ghcr.io/microsoft/mscclpp/mscclpp:dev-${{ matrix.cuda-version }}
+      image: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-${{ matrix.cuda-version }}
 
     permissions:
       actions: read
@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         language: [ 'cpp', 'python' ]
-        cuda-version: [ 'cuda11.8', 'cuda12.1' ]
+        cuda-version: [ 'cuda11.8', 'cuda12.2' ]
 
     steps:
     - name: Checkout repository
@@ -45,7 +45,7 @@ jobs:
 
     - name: Build
       run: |
-        MPI_HOME=/usr/local/mpi cmake -DBYPASS_PEERMEM_CHECK=ON .
+        cmake -DBYPASS_PEERMEM_CHECK=ON .
         make -j
 
     - name: Perform CodeQL Analysis
