@@ -21,7 +21,7 @@ union alignas(16) ProxyTrigger {
   struct Data {
     uint64_t fst;
     uint64_t snd;
-  };
+  } data;
   struct {
     uint64_t fst;
     uint64_t snd;

@@ -24,7 +24,7 @@ void register_fifo(nb::module_& m) {
 
   nb::class_<Fifo>(m, "Fifo")
       .def(nb::init<int>(), nb::arg("size") = 128)
-      .def("poll", &Fifo::poll)
+      .def("poll", [](Fifo& self) -> ProxyTrigger::Data { return self.poll().data; })
       .def("pop", &Fifo::pop)
       .def("flush_tail", &Fifo::flushTail, nb::arg("sync") = false)
       .def("size", &Fifo::size)

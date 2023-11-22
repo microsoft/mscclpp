@@ -43,9 +43,7 @@ union alignas(16) LLPacket {
   /// Write 8 bytes of data to the packet.
   /// @param val The 8-byte data to write.
   /// @param flag The flag to write.
-  MSCCLPP_DEVICE_INLINE void write(uint64_t val, uint32_t flag) {
-    return write((uint32_t)val, (uint32_t)(val >> 32), flag);
-  }
+  MSCCLPP_DEVICE_INLINE void write(uint64_t val, uint32_t flag) { write((uint32_t)val, (uint32_t)(val >> 32), flag); }
 
   /// Helper of @ref read().
   /// @param flag The flag to read.
