@@ -13,7 +13,7 @@ jobs:
     name: Analyze
     runs-on: 'ubuntu-latest'
     container:
-      image: ghcr.io/microsoft/mscclpp/mscclpp:dev-${{ matrix.cuda-version }}
+      image: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-${{ matrix.cuda-version }}
 
     permissions:
       actions: read
@@ -45,7 +45,7 @@ jobs:
 
     - name: Build
       run: |
-        MPI_HOME=/usr/local/mpi cmake -DBYPASS_PEERMEM_CHECK=ON .
+        cmake -DBYPASS_PEERMEM_CHECK=ON .
         make -j
 
     - name: Perform CodeQL Analysis
