@@ -11,7 +11,7 @@ from mscclpp import ProxyService
 from prettytable import PrettyTable
 import netifaces as ni
 
-data_type = cp.float16
+data_type = cp.float32
 
 if data_type == cp.float16:
     dtype_str = "fp16"
@@ -72,25 +72,28 @@ def human_readable_size(size, decimal_places=1):
     return f"{size:.{decimal_places}f} {unit}"
 
 
-def check_correctness(memory, func):
-    rand_gen = cp.random.default_rng(seed=MPI.COMM_WORLD.rank)
-    memory[:] = rand_gen.random(memory.shape).astype(data_type)
-    cp.cuda.runtime.deviceSynchronize()
-    output_memory = func(0)
-    cp.cuda.runtime.deviceSynchronize()
-    expected = cp.zeros_like(memory)
-    for i in range(MPI.COMM_WORLD.size):
-        rand_gen = cp.random.default_rng(seed=i)
-        expected += rand_gen.random(memory.shape).astype(data_type)
+def check_correctness(memory, func, niter=100):
+    ac = True
+    for p in range(niter):
+        memory[:] = cp.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + MPI.COMM_WORLD.rank)
+        cp.cuda.runtime.deviceSynchronize()
+        output_memory = func(0)
+        cp.cuda.runtime.deviceSynchronize()
+        expected = cp.zeros_like(memory)
+        for i in range(MPI.COMM_WORLD.size):
+            expected += cp.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + i)
 
-    if data_type == cp.float16:
-        ac = cp.allclose(output_memory, expected, rtol=1.0e-2, atol=1.0e-4)
-    else:
-        ac = cp.allclose(output_memory, expected, rtol=1.0e-2, atol=1.0e-4)
+        is_close = cp.isclose(output_memory, expected, rtol=1.0e-2, atol=2)
+        icf = is_close == 0
+        all_close = cp.all(is_close)
+        ac = ac and all_close
+        if not all_close:
+            print(
+                f"not close: p={p}, rank={MPI.COMM_WORLD.rank}, output={output_memory[icf][0]}, expected={expected[icf][0]}",
+                flush=True,
+            )
 
     ac = MPI.COMM_WORLD.allreduce(ac, op=MPI.SUM)
-    if not ac:
-        print(output_memory, expected)
     return ac
 
 

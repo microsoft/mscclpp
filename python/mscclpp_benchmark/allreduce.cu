@@ -231,7 +231,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
   // This version of allreduce only works for single nodes
   const int nPeers = worldSize - 1;
-  const int nPkts = nelems / 2;
+  const size_t nPkts = nelems / 2;
   const int nelemsPerRank = nelems / worldSize;
   const int nPktsPerRank = nelemsPerRank / 2;
   // flag for packets. Initially 1
