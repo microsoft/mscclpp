@@ -33,7 +33,7 @@ jobs:
         curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
         tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
         mkdir build && cd build
-        MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
+        MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release -DBYPASS_PEERMEM_CHECK=ON -DBYPASS_GPU_CHECK=ON -DUSE_CUDA=ON ..
         make -j
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
