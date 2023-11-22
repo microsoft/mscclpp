@@ -29,7 +29,7 @@ union alignas(16) LLPacket {
   /// @param val2 The second 4-byte data to write.
   /// @param flag The flag to write.
   MSCCLPP_DEVICE_INLINE void write(uint32_t val1, uint32_t val2, uint32_t flag) {
-#if defined(MSCCLPP_ON_CUDA) || defined(MSCCLPP_ON_CUDA_HOST)
+#if defined(MSCCLPP_CUDA) || defined(MSCCLPP_CUDA_HOST)
     asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(&raw_), "r"(val1), "r"(flag), "r"(val2),
                  "r"(flag));
 #else
@@ -52,7 +52,7 @@ union alignas(16) LLPacket {
   /// @param data The 8-byte data read.
   /// @return True if the flag is not equal to the given flag.
   MSCCLPP_DEVICE_INLINE bool readOnce(uint32_t flag, uint2& data) const {
-#if defined(MSCCLPP_ON_CUDA) || defined(MSCCLPP_ON_CUDA_HOST)
+#if defined(MSCCLPP_CUDA) || defined(MSCCLPP_CUDA_HOST)
     uint32_t flag1, flag2;
     asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
                  : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2)
