@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 set(MSCCLPP_MAJOR "0")
-set(MSCCLPP_MINOR "3")
+set(MSCCLPP_MINOR "4")
 set(MSCCLPP_PATCH "0")
 
 set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})

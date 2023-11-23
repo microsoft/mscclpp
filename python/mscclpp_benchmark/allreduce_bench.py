@@ -56,11 +56,12 @@ def plot_graph(sizes, mscclpp_algbw, nccl_algbw, speed_ups):
     ax1.legend(lines, labels, loc="upper left")
 
     # Setting title and grid
-    ax1.set_title("MSCCLPP vs NCCL -- " + str(MPI.COMM_WORLD.size // N_GPUS_PER_NODE) + " Nodes")
+    num_nodes = MPI.COMM_WORLD.size // N_GPUS_PER_NODE
+    ax1.set_title(f"MSCCLPP vs NCCL -- {num_nodes} Nodes")
     ax2.grid(True, which="both", ls="--")
 
     # Saving the plot
-    plt.savefig("mscclpp_vs_nccl_comparison.pdf", format="pdf")
+    plt.savefig(f"mscclpp_vs_nccl_comparison_num_nodes_{num_nodes}.jpeg", format="jpeg")
 
 
 def human_readable_size(size, decimal_places=1):
@@ -246,13 +247,16 @@ if __name__ == "__main__":
     mscclpp_algbw = []
     nccl_algbw = []
     speed_ups = []
-    for i in range(10, 30):
+    for i in range(10, 29):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
             nelems = 2**i
         elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:
             nelems = 3 * 2**i
         else:
             raise RuntimeError("Only support one node/two nodes communication")
+
+        if nelems * data_type().itemsize > 2**32:
+            break  # due to trigger bit width limitation, we can only support up to 2**32
 
         size, mscclpp_algBw, nccl_algBw, speed_up = run_benchmark(mscclpp_group, nccl_comm, table, 100, nelems)
         sizes.append(size)
