@@ -96,7 +96,7 @@ else()
     set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -Wall -Wextra")
     project(mscclpp LANGUAGES CXX HIP)
 
-    set(CMAKE_HIP_ARCHITECTURES gfx90a gfx940 gfx941 gfx942)
+    set(CMAKE_HIP_ARCHITECTURES gfx90a gfx941 gfx942)
 
     set(GPU_LIBRARIES hip::host)
     set(GPU_INCLUDE_DIRS ${hip_INCLUDE_DIRS})
