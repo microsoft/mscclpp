@@ -10,7 +10,8 @@
 * Non-Azure Systems
     * NVIDIA A100 GPUs + CUDA >= 11.8
     * NVIDIA H100 GPUs + CUDA >= 12.0
-    * AMD support is underway.
+    * AMD MI250X GPUs + ROCm >= 5.7
+    * AMD MI300X GPUs + ROCm >= 5.7
 * OS: tested over Ubuntu 18.04 and 20.04
 * Libraries: [libnuma](https://github.com/numactl/numactl), MPI (optional)
 * Others
