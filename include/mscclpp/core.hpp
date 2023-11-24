@@ -13,9 +13,10 @@
 #include <bitset>
 #include <future>
 #include <memory>
-#include "errors.hpp"
 #include <string>
 #include <vector>
+
+#include "errors.hpp"
 
 namespace mscclpp {
 

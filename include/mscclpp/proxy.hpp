@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <memory>
+
 #include "fifo.hpp"
 
 namespace mscclpp {

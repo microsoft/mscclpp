@@ -5,6 +5,7 @@
 #define MSCCLPP_SEMAPHORE_HPP_
 
 #include <memory>
+
 #include "core.hpp"
 #include "gpu_utils.hpp"
 #include "semaphore_device.hpp"

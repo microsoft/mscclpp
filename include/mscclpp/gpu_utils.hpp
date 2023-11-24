@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include <memory>
+
 #include "errors.hpp"
 #include "gpu.hpp"
 

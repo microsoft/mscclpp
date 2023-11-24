@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/semaphore.hpp>
 
 #include "api.h"
+#include "atomic.hpp"
 #include "debug.h"
 
 namespace mscclpp {
