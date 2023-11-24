@@ -68,7 +68,7 @@ struct FifoDeviceHandle {
 #if defined(MSCCLPP_DEVICE_CUDA)
     asm volatile("st.global.release.sys.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
 #else   // !defined(MSCCLPP_DEVICE_CUDA)
-    // TODO: revisit after changing clang++ to hipcc
+    // TODO: both atomic and clang built-ins are buggy here
     triggerPtr->fst = trigger.fst;
     triggerPtr->snd = trigger.snd;
 #endif  // !defined(MSCCLPP_DEVICE_CUDA)
