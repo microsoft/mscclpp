@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 #include <algorithm>
-#include <mscclpp/concurrency.hpp>
+#include <mscclpp/concurrency_device.hpp>
 #include <string>
 
 #include "common.hpp"
@@ -405,7 +405,7 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
 }
 
 void AllGatherTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
-  if (sendBuff.size() != 1) std::unexpected();
+  if (sendBuff.size() != 1) std::runtime_error("unexpected error");
   int rank = args.rank;
   std::vector<int> dataHost(std::max(sendCount_, recvCount_), 0);
   for (size_t i = 0; i < recvCount_; i++) {
@@ -489,7 +489,7 @@ void AllGatherTestEngine::setupConnections() {
   if (!isUsingHostOffload(args_.kernelNum)) {
     setupMeshConnections(devProxyChannels, sendBuff_.get(), args_.maxBytes);
     if (devProxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
-      std::unexpected();
+      std::runtime_error("unexpected error");
     }
     CUDATHROW(cudaMemcpyToSymbol(constProxyChans, devProxyChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * devProxyChannels.size()));
@@ -497,7 +497,7 @@ void AllGatherTestEngine::setupConnections() {
     setupMeshConnections(smChannels_, sendBuff_.get(), args_.maxBytes);
     std::vector<DeviceHandle<mscclpp::SmChannel>> smChannelHandles(smChannels_.size());
     if (smChannels_.size() > sizeof(constSmChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
-      std::unexpected();
+      std::runtime_error("unexpected error");
     }
     std::transform(smChannels_.begin(), smChannels_.end(), smChannelHandles.begin(),
                    [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
@@ -519,7 +519,7 @@ void AllGatherTestEngine::setupConnections() {
                          });
     auto proxyChannels = service->proxyChannels();
     if (proxyChannels.size() > sizeof(constRawProxyChan) / sizeof(DeviceHandle<mscclpp::ProxyChannel>)) {
-      std::unexpected();
+      std::runtime_error("unexpected error");
     }
     CUDATHROW(cudaMemcpyToSymbol(constRawProxyChan, proxyChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::ProxyChannel>) * proxyChannels.size()));

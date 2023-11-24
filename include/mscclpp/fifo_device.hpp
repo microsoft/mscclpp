@@ -6,8 +6,12 @@
 
 #include <cstdint>
 
-#include "atomic.hpp"
+#include "device.hpp"
+
+#if defined(MSCCLPP_DEVICE_COMPILE)
+#include "atomic_device.hpp"
 #include "poll_device.hpp"
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace mscclpp {
 
@@ -26,9 +30,6 @@ union alignas(16) ProxyTrigger {
     uint64_t fst;
     uint64_t snd;
   };
-#if defined(MSCCLPP_ON_HOST_DEVICE)
-  longlong2 raw_;
-#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
 };
 
 /// A concurrent FIFO where multiple device threads can push work elements and a single host proxy thread consumes them.
@@ -44,7 +45,7 @@ union alignas(16) ProxyTrigger {
 /// tail as there is usually enough space for device threads to push their work into.
 ///
 struct FifoDeviceHandle {
-#if defined(MSCCLPP_ON_HOST_DEVICE)
+#if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a trigger to the FIFO.
   ///
   /// @param trigger The trigger to push.
@@ -71,7 +72,8 @@ struct FifoDeviceHandle {
     longlong2* triggerPtr = (longlong2*)&(this->triggers[curFifoHead % size]);
 
     // store with memory order release so that the while loop does not go pass this.
-    *triggerPtr = trigger.raw_;
+    triggerPtr->x = trigger.fst;
+    triggerPtr->y = trigger.snd;
 
     return curFifoHead;
   }
@@ -87,7 +89,7 @@ struct FifoDeviceHandle {
                             (atomicLoad(&(this->triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0),
                             maxSpinCount);
   }
-#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
   /// The FIFO buffer that is allocated on the host via `cudaHostAlloc()`.
   ProxyTrigger* triggers;

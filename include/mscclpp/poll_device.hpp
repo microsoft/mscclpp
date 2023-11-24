@@ -6,30 +6,17 @@
 
 #include "device.hpp"
 
-#if defined(MSCCLPP_ON_HOST_DEVICE)
+#if defined(MSCCLPP_DEVICE_COMPILE)
 
 #include <cstdint>
 
-#if defined(MSCCLPP_CUDA) || defined(MSCCLPP_CUDA_HOST)
-extern "C" __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
-                                         const char *__function) __THROW;
-#else
+#if defined(MSCCLPP_DEVICE_HIP)
 extern "C" __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
                                          const char *__function);
-#endif
-
-// If a spin is stuck, escape from it and set status to 1.
-#define POLL_MAYBE_JAILBREAK_ESCAPE(__cond, __max_spin_cnt, __status) \
-  do {                                                                \
-    int64_t __spin_cnt = 0;                                           \
-    __status = 0;                                                     \
-    while (__cond) {                                                  \
-      if (__max_spin_cnt >= 0 && __spin_cnt++ == __max_spin_cnt) {    \
-        __status = 1;                                                 \
-        break;                                                        \
-      }                                                               \
-    }                                                                 \
-  } while (0);
+#else  // !defined(MSCCLPP_DEVICE_HIP)
+extern "C" __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
+                                         const char *__function) __THROW;
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
 
 // If a spin is stuck, print a warning and keep spinning.
 #define POLL_MAYBE_JAILBREAK(__cond, __max_spin_cnt)                     \
@@ -59,6 +46,6 @@ extern "C" __device__ void __assert_fail(const char *__assertion, const char *__
     }                                                                              \
   } while (0);
 
-#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 #endif  // MSCCLPP_POLL_DEVICE_HPP_

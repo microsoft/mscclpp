@@ -242,7 +242,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   }
 
   if (proxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
-    std::unexpected();
+    std::runtime_error("unexpected error");
   }
   CUDACHECK(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
                                sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * proxyChannels.size()));

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <mscclpp/atomic.hpp>
+#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/gpu_utils.hpp>
 

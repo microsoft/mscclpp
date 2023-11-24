@@ -4,9 +4,7 @@
 #ifndef MSCCLPP_GPU_HPP_
 #define MSCCLPP_GPU_HPP_
 
-#include "device.hpp"
-
-#if defined(MSCCLPP_HIP_HOST)
+#if defined(__HIP_PLATFORM_AMD__)
 
 #include <hip/hip_runtime.h>
 
@@ -72,7 +70,7 @@ constexpr auto cudaIpcMemLazyEnablePeerAccess = hipIpcMemLazyEnablePeerAccess;
 #define cuGetErrorString(...) hipDrvGetErrorString(__VA_ARGS__)
 #define cuMemGetAddressRange(...) hipMemGetAddressRange(__VA_ARGS__)
 
-#elif defined(MSCCLPP_CUDA_HOST)
+#else
 
 #include <cuda.h>
 #include <cuda_runtime.h>

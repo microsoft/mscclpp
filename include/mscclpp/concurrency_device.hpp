@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_CONCURRENCY_HPP_
-#define MSCCLPP_CONCURRENCY_HPP_
+#ifndef MSCCLPP_CONCURRENCY_DEVICE_HPP_
+#define MSCCLPP_CONCURRENCY_DEVICE_HPP_
 
 #include "poll_device.hpp"
 
@@ -17,6 +17,7 @@ struct DeviceSyncer {
   /// Destroy the DeviceSyncer object.
   ~DeviceSyncer() = default;
 
+#if defined(MSCCLPP_DEVICE_COMPILE)
   /// Synchronize all threads inside a kernel. Guarantee that all previous work of all threads in cooperating blocks is
   /// finished.
   /// @param blockNum The number of blocks that will synchronize.
@@ -46,6 +47,7 @@ struct DeviceSyncer {
     // the flag is flipped.
     __syncthreads();
   }
+#endif  // !defined(MSCCLPP_DEVICE_COMPILE)
 
  private:
   /// The flag to indicate whether the barrier is reached by the latest thread.
@@ -58,4 +60,4 @@ struct DeviceSyncer {
 
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_CONCURRENCY_HPP_
+#endif  // MSCCLPP_CONCURRENCY_DEVICE_HPP_

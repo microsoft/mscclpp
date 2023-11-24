@@ -13,7 +13,7 @@
 #include <bitset>
 #include <future>
 #include <memory>
-#include <mscclpp/errors.hpp>
+#include "errors.hpp"
 #include <string>
 #include <vector>
 

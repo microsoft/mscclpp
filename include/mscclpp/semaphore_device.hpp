@@ -4,14 +4,18 @@
 #ifndef MSCCLPP_SEMAPHORE_DEVICE_HPP_
 #define MSCCLPP_SEMAPHORE_DEVICE_HPP_
 
-#include "atomic.hpp"
+#include "device.hpp"
+
+#if defined(MSCCLPP_DEVICE_COMPILE)
+#include "atomic_device.hpp"
 #include "poll_device.hpp"
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace mscclpp {
 
 /// Device-side handle for @ref Host2DeviceSemaphore.
 struct Host2DeviceSemaphoreDeviceHandle {
-#if defined(MSCCLPP_ON_HOST_DEVICE)
+#if defined(MSCCLPP_DEVICE_COMPILE)
   /// Poll if the host has signaled.
   /// @return true if the host has signaled.
   MSCCLPP_DEVICE_INLINE bool poll() {
@@ -26,7 +30,7 @@ struct Host2DeviceSemaphoreDeviceHandle {
     POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < (*expectedInboundSemaphoreId)),
                          maxSpinCount);
   }
-#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
   uint64_t* inboundSemaphoreId;
   uint64_t* expectedInboundSemaphoreId;
@@ -34,7 +38,7 @@ struct Host2DeviceSemaphoreDeviceHandle {
 
 /// Device-side handle for @ref SmDevice2DeviceSemaphore.
 struct SmDevice2DeviceSemaphoreDeviceHandle {
-#if defined(MSCCLPP_ON_HOST_DEVICE)
+#if defined(MSCCLPP_DEVICE_COMPILE)
   /// Poll if the remote device has signaled.
   /// @return true if the remote device has signaled.
   MSCCLPP_DEVICE_INLINE bool poll() {
@@ -67,7 +71,7 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
   /// This function is a relaxed version of signal() and provides no guarantee on the completion of memory operations.
   /// User requires to call proper fencing before using this function.
   ///
-  __forceinline__ __device__ void relaxedSignal() {
+  MSCCLPP_DEVICE_INLINE void relaxedSignal() {
     // This fence ensures that preceding writes are visible on the peer GPU before the incremented
     // `outboundSemaphoreId` is visible.
     semaphoreIncrement();
@@ -90,7 +94,7 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
 
   /// Get the value of the local semaphore.
   MSCCLPP_DEVICE_INLINE uint64_t semaphoreGetLocal() const { return *outboundSemaphoreId; }
-#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
   uint64_t* inboundSemaphoreId;
   uint64_t* outboundSemaphoreId;

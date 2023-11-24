@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 #include <cstdint>
-#include <mscclpp/concurrency.hpp>
+#include <mscclpp/concurrency_device.hpp>
 
 #include "mp_unit_tests.hpp"
 

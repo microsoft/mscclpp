@@ -6,8 +6,8 @@
 
 #include <cstring>
 #include <memory>
-#include <mscclpp/errors.hpp>
-#include <mscclpp/gpu.hpp>
+#include "errors.hpp"
+#include "gpu.hpp"
 
 /// Throw @ref mscclpp::CudaError if @p cmd does not return cudaSuccess.
 /// @param cmd The command to execute.

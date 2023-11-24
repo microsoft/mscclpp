@@ -1,18 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_ATOMIC_HPP_
-#define MSCCLPP_ATOMIC_HPP_
+#ifndef MSCCLPP_ATOMIC_DEVICE_HPP_
+#define MSCCLPP_ATOMIC_DEVICE_HPP_
 
 #include "device.hpp"
 
-#if defined(MSCCLPP_CUDA) || defined(MSCCLPP_CUDA_HOST)
+#if defined(MSCCLPP_DEVICE_CUDA)
 #include <cuda/atomic>
-#endif  // defined(MSCCLPP_CUDA) || defined(MSCCLPP_CUDA_HOST)
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
 
 namespace mscclpp {
 
-#if defined(MSCCLPP_CUDA) || defined(MSCCLPP_CUDA_HOST)
+#if defined(MSCCLPP_DEVICE_CUDA)
 
 constexpr cuda::memory_order memoryOrderRelaxed = cuda::memory_order_relaxed;
 constexpr cuda::memory_order memoryOrderAcquire = cuda::memory_order_acquire;
@@ -35,7 +35,7 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, cuda::memory_o
   return cuda::atomic_ref<T, cuda::thread_scope_system>{*ptr}.fetch_add(val, memoryOrder);
 }
 
-#else
+#elif defined(MSCCLPP_DEVICE_HIP)
 
 constexpr auto memoryOrderRelaxed = __ATOMIC_RELAXED;
 constexpr auto memoryOrderAcquire = __ATOMIC_ACQUIRE;
@@ -58,8 +58,8 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, int memoryOrde
   return __atomic_fetch_add(ptr, val, memoryOrder);
 }
 
-#endif
+#endif  // defined(MSCCLPP_DEVICE_HIP)
 
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_ATOMIC_HPP_
+#endif  // MSCCLPP_ATOMIC_DEVICE_HPP_

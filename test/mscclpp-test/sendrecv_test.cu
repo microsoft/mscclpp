@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
-#include <mscclpp/concurrency.hpp>
+#include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/semaphore.hpp>
 #include <mscclpp/sm_channel.hpp>
@@ -87,7 +87,7 @@ std::vector<KernelRestriction> SendRecvTestColl::getKernelRestrictions() {
 
 void SendRecvTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
   int rank = args.rank;
-  if (sendBuff.size() != 1) std::unexpected();
+  if (sendBuff.size() != 1) std::runtime_error("unexpected error");
   MSCCLPP_CUDATHROW(cudaMemset(sendBuff[0], 0, sendCount_ * typeSize_));
 
   // TODO: The type should not limited to int.

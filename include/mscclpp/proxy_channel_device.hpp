@@ -47,7 +47,7 @@ union ChannelTrigger {
     uint64_t reserved : MSCCLPP_BITS_FIFO_RESERVED;
   } fields;
 
-#if defined(MSCCLPP_ON_HOST_DEVICE)
+#if defined(MSCCLPP_DEVICE_COMPILE)
   /// Default constructor.
   MSCCLPP_DEVICE_INLINE ChannelTrigger() {}
 
@@ -71,7 +71,7 @@ union ChannelTrigger {
                   << MSCCLPP_BITS_OFFSET) +
                  dstOffset);
   }
-#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
 struct ProxyChannelDeviceHandle {
@@ -83,7 +83,7 @@ struct ProxyChannelDeviceHandle {
   // can produce for and the sole proxy thread consumes it.
   FifoDeviceHandle fifo_;
 
-#if defined(MSCCLPP_ON_HOST_DEVICE)
+#if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a @ref TriggerData to the FIFO.
   /// @param dst The destination memory region.
   /// @param dstOffset The offset into the destination memory region.
@@ -163,7 +163,7 @@ struct ProxyChannelDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) { semaphore_.wait(maxSpinCount); }
 
-#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
 struct SimpleProxyChannelDeviceHandle {
@@ -171,7 +171,7 @@ struct SimpleProxyChannelDeviceHandle {
   MemoryId dst_;
   MemoryId src_;
 
-#if defined(MSCCLPP_ON_HOST_DEVICE)
+#if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a @ref TriggerData to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
@@ -226,7 +226,7 @@ struct SimpleProxyChannelDeviceHandle {
   /// Wait for the proxy channel to be signaled.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) { proxyChan_.wait(maxSpinCount); }
-#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
 }  // namespace mscclpp

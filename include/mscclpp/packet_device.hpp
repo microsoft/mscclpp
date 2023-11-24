@@ -1,11 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_PACKET_HPP_
-#define MSCCLPP_PACKET_HPP_
+#ifndef MSCCLPP_PACKET_DEVICE_HPP_
+#define MSCCLPP_PACKET_DEVICE_HPP_
 
-#include "atomic.hpp"
+#include "device.hpp"
+
+#if defined(MSCCLPP_DEVICE_COMPILE)
+#include "atomic_device.hpp"
 #include "poll_device.hpp"
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace mscclpp {
 
@@ -19,7 +23,7 @@ union alignas(16) LLPacket {
     uint32_t flag2;
   };
 
-#if defined(MSCCLPP_ON_HOST_DEVICE)
+#if defined(MSCCLPP_DEVICE_COMPILE)
   ulonglong2 raw_;
 
   MSCCLPP_DEVICE_INLINE LLPacket() {}
@@ -29,10 +33,10 @@ union alignas(16) LLPacket {
   /// @param val2 The second 4-byte data to write.
   /// @param flag The flag to write.
   MSCCLPP_DEVICE_INLINE void write(uint32_t val1, uint32_t val2, uint32_t flag) {
-#if defined(MSCCLPP_CUDA) || defined(MSCCLPP_CUDA_HOST)
+#if defined(MSCCLPP_DEVICE_CUDA)
     asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(&raw_), "r"(val1), "r"(flag), "r"(val2),
                  "r"(flag));
-#else
+#else  // !defined(MSCCLPP_DEVICE_CUDA)
     uint4 reg = make_uint4(val1, flag, val2, flag);
     ulonglong2* p = reinterpret_cast<ulonglong2*>(&reg);
     atomicStore(&(raw_.x), p->x, memoryOrderRelaxed);
@@ -50,13 +54,13 @@ union alignas(16) LLPacket {
   /// @param data The 8-byte data read.
   /// @return True if the flag is not equal to the given flag.
   MSCCLPP_DEVICE_INLINE bool readOnce(uint32_t flag, uint2& data) const {
-#if defined(MSCCLPP_CUDA) || defined(MSCCLPP_CUDA_HOST)
+#if defined(MSCCLPP_DEVICE_CUDA)
     uint32_t flag1, flag2;
     asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
                  : "=r"(data.x), "=r"(flag1), "=r"(data.y), "=r"(flag2)
                  : "l"(&raw_));
     return (flag1 != flag) || (flag2 != flag);
-#else
+#else  // !defined(MSCCLPP_DEVICE_CUDA)
     ulonglong2 reg;
     reg.x = atomicLoad(&(raw_.x), memoryOrderRelaxed);
     reg.y = atomicLoad(&(raw_.y), memoryOrderRelaxed);
@@ -79,10 +83,10 @@ union alignas(16) LLPacket {
 
   /// Clear the packet.
   MSCCLPP_DEVICE_INLINE void clear() { raw_ = make_ulonglong2(0, 0); }
-#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-#if defined(MSCCLPP_ON_HOST_DEVICE)
+#if defined(MSCCLPP_DEVICE_COMPILE)
 /// Read from the origin and write to the target buffer.
 MSCCLPP_DEVICE_INLINE void putPackets(void* targetPtr, uint64_t targetOffset, const void* originPtr,
                                       uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
@@ -110,8 +114,8 @@ MSCCLPP_DEVICE_INLINE void getPackets(const void* targetPtr, uint64_t targetOffs
     originBase[i] = pkt->read(flag);
   }
 }
-#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 };  // namespace mscclpp
 
-#endif  // MSCCLPP_PACKET_HPP_
+#endif  // MSCCLPP_PACKET_DEVICE_HPP_

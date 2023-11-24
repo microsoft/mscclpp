@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <mscclpp/fifo_device.hpp>
+#include "fifo_device.hpp"
 
 namespace mscclpp {
 

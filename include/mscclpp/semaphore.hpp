@@ -5,9 +5,9 @@
 #define MSCCLPP_SEMAPHORE_HPP_
 
 #include <memory>
-#include <mscclpp/core.hpp>
-#include <mscclpp/gpu_utils.hpp>
-#include <mscclpp/semaphore_device.hpp>
+#include "core.hpp"
+#include "gpu_utils.hpp"
+#include "semaphore_device.hpp"
 
 namespace mscclpp {
 

@@ -4,13 +4,14 @@
 #ifndef MSCCLPP_SM_CHANNEL_DEVICE_HPP_
 #define MSCCLPP_SM_CHANNEL_DEVICE_HPP_
 
-#include "packet.hpp"
-#include "poll_device.hpp"
 #include "semaphore_device.hpp"
+#if defined(MSCCLPP_DEVICE_COMPILE)
+#include "packet_device.hpp"
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace mscclpp {
 
-#if defined(MSCCLPP_ON_HOST_DEVICE)
+#if defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace Element {
 
@@ -39,7 +40,7 @@ MSCCLPP_DEVICE_INLINE void copy(T* dst, T* src, uint64_t numElems, uint32_t thre
 
 }  // namespace Element
 
-#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 /// Channel for accessing peer memory directly from SM.
 struct SmChannelDeviceHandle {
@@ -48,7 +49,7 @@ struct SmChannelDeviceHandle {
   void* dst_;
   void* getPacketBuffer_;
 
-#if defined(MSCCLPP_ON_HOST_DEVICE)
+#if defined(MSCCLPP_DEVICE_COMPILE)
   /// Load a value from the remote memory.
   /// @tparam T The type of the value to be loaded.
   /// @param index The index of the value to be loaded. The offset in bytes is calculated as index * sizeof(T).
@@ -244,7 +245,7 @@ struct SmChannelDeviceHandle {
   /// This function is a relaxed version of signal() and provides no guarantee on the completion of memory operations.
   /// User requires to call proper fencing before using this function.
   ///
-  __forceinline__ __device__ void relaxedSignal() { semaphore_.relaxedSignal(); }
+  MSCCLPP_DEVICE_INLINE void relaxedSignal() { semaphore_.relaxedSignal(); }
 
   /// Signal the remote semaphore for copied packets.
   ///
@@ -267,7 +268,7 @@ struct SmChannelDeviceHandle {
   /// Wait for the remote semaphore to send a signal.
   /// @param maxSpinCount The maximum number of spins before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) { semaphore_.wait(maxSpinCount); }
-#endif  // defined(MSCCLPP_ON_HOST_DEVICE)
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
 }  // namespace mscclpp
