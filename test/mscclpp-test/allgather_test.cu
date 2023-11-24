@@ -66,7 +66,7 @@ __device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyCh
       if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.wait();
     }
 #if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
-    // TODO: group barrier
+    // NOTE: we actually need a group barrier here for better performance, but __syncthreads() is still correct.
     __syncthreads();
 #else
     asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nRanksPerNode - 1) * WARP_SIZE) : "memory");
