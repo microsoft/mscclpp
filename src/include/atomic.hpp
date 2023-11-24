@@ -8,7 +8,7 @@
 #define MSCCLPP_DEVICE_CUDA
 #include <mscclpp/atomic_device.hpp>
 #undef MSCCLPP_DEVICE_CUDA
-#else !defined(USE_CUDA)
+#else  // !defined(USE_CUDA)
 #define MSCCLPP_DEVICE_HIP
 #include <mscclpp/atomic_device.hpp>
 #undef MSCCLPP_DEVICE_HIP
