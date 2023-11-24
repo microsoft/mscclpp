@@ -9,9 +9,7 @@ namespace nb = nanobind;
 using namespace mscclpp;
 
 void register_fifo(nb::module_& m) {
-  nb::class_<ProxyTrigger::Data>(m, "ProxyTrigger")
-      .def_rw("fst", &ProxyTrigger::Data::fst)
-      .def_rw("snd", &ProxyTrigger::Data::snd);
+  nb::class_<ProxyTrigger>(m, "ProxyTrigger").def_rw("fst", &ProxyTrigger::fst).def_rw("snd", &ProxyTrigger::snd);
 
   nb::class_<FifoDeviceHandle>(m, "FifoDeviceHandle")
       .def_rw("triggers", &FifoDeviceHandle::triggers)
@@ -24,7 +22,7 @@ void register_fifo(nb::module_& m) {
 
   nb::class_<Fifo>(m, "Fifo")
       .def(nb::init<int>(), nb::arg("size") = 128)
-      .def("poll", [](Fifo& self) -> ProxyTrigger::Data { return self.poll().data; })
+      .def("poll", &Fifo::poll)
       .def("pop", &Fifo::pop)
       .def("flush_tail", &Fifo::flushTail, nb::arg("sync") = false)
       .def("size", &Fifo::size)

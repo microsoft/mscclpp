@@ -21,15 +21,8 @@ namespace mscclpp {
 /// ProxyTrigger elements and a single host proxy thread consumes these work elements.
 ///
 /// Do not use the most significant bit of @ref snd as it is reserved for memory consistency purposes
-union alignas(16) ProxyTrigger {
-  struct Data {
-    uint64_t fst;
-    uint64_t snd;
-  } data;
-  struct {
-    uint64_t fst;
-    uint64_t snd;
-  };
+struct alignas(16) ProxyTrigger {
+  uint64_t fst, snd;
 };
 
 /// A concurrent FIFO where multiple device threads can push work elements and a single host proxy thread consumes them.
