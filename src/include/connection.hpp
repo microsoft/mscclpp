@@ -4,9 +4,8 @@
 #ifndef MSCCLPP_CONNECTION_HPP_
 #define MSCCLPP_CONNECTION_HPP_
 
-#include <cuda_runtime.h>
-
 #include <mscclpp/core.hpp>
+#include <mscclpp/gpu.hpp>
 
 #include "communicator.hpp"
 #include "context.hpp"

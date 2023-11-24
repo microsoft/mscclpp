@@ -74,7 +74,12 @@ __device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyCh
     if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode)) {
       if ((threadIdx.x % 32) == 0) proxyChan.wait();
     }
+#if defined(__HIP_PLATFORM_AMD__)
+    // NOTE: we actually need a group barrier here for better performance, but __syncthreads() is still correct.
+    __syncthreads();
+#else
     asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nranksPerNode - 1) * 32) : "memory");
+#endif
   }
 }
 
@@ -237,7 +242,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   }
 
   if (proxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
-    std::unexpected();
+    std::runtime_error("unexpected error");
   }
   CUDACHECK(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
                                sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * proxyChannels.size()));

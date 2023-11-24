@@ -3,7 +3,7 @@
 
 #include <mpi.h>
 
-#include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/gpu_utils.hpp>
 
 #include "infiniband/verbs.h"
 #include "mp_unit_tests.hpp"
@@ -118,6 +118,8 @@ __global__ void kernelMemoryConsistency(uint64_t* data, volatile uint64_t* curIt
                                         uint64_t nelem, uint64_t maxIter) {
   if (blockIdx.x != 0) return;
 
+  __shared__ int errs[1024];
+
   constexpr int FlagWrong = 1;
   constexpr int FlagAbort = 2;
 
@@ -165,15 +167,18 @@ __global__ void kernelMemoryConsistency(uint64_t* data, volatile uint64_t* curIt
 #endif
       }
     }
+
+    errs[threadIdx.x] = err;
     __threadfence();
     __syncthreads();
 
-    // Shuffle err
-    for (int i = 16; i > 0; i /= 2) {
-      err += __shfl_xor_sync(0xffffffff, err, i);
+    // Check if any error is detected.
+    int total_err = 0;
+    for (size_t i = 0; i < blockDim.x; ++i) {
+      total_err += errs[i];
     }
 
-    if (err > 0) {
+    if (total_err > 0) {
       // Exit if any error is detected.
       return;
     }

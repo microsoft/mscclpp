@@ -3,7 +3,7 @@
 
 #include <atomic>
 #include <mscclpp/core.hpp>
-#include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/proxy.hpp>
 #include <mscclpp/utils.hpp>
 #include <thread>

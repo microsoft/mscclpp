@@ -7,7 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/packet.hpp>
+#include <mscclpp/packet_device.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <mscclpp/utils.hpp>

@@ -2,8 +2,8 @@
 // Licensed under the MIT license.
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/proxy.hpp>
 #include <mscclpp/semaphore.hpp>

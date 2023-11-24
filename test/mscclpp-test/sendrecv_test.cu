@@ -5,8 +5,8 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
-#include <mscclpp/concurrency.hpp>
-#include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/concurrency_device.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/semaphore.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <string>
@@ -87,7 +87,7 @@ std::vector<KernelRestriction> SendRecvTestColl::getKernelRestrictions() {
 
 void SendRecvTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
   int rank = args.rank;
-  if (sendBuff.size() != 1) std::unexpected();
+  if (sendBuff.size() != 1) std::runtime_error("unexpected error");
   MSCCLPP_CUDATHROW(cudaMemset(sendBuff[0], 0, sendCount_ * typeSize_));
 
   // TODO: The type should not limited to int.
@@ -137,8 +137,8 @@ class SendRecvTestEngine : public BaseTestEngine {
 SendRecvTestEngine::SendRecvTestEngine(const TestArgs& args) : BaseTestEngine(args, "sendrecv") { inPlace_ = false; }
 
 void SendRecvTestEngine::allocateBuffer() {
-  std::shared_ptr<int> sendBuff = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
-  std::shared_ptr<int> recvBuff = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
+  std::shared_ptr<int> sendBuff = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
+  std::shared_ptr<int> recvBuff = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
   devicePtrs_.push_back(sendBuff);
   devicePtrs_.push_back(recvBuff);
 
