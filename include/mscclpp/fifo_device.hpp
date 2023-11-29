@@ -64,9 +64,10 @@ struct FifoDeviceHandle {
 
     ProxyTrigger* triggerPtr = &(this->triggers[curFifoHead % size]);
 
-    // store with memory order release so that the while loop does not go pass this.
+    // There is a Write-After-Read hazard for the triggerPtr->fst. So the st instruction will not be executed
+    // before the loop.
 #if defined(MSCCLPP_DEVICE_CUDA)
-    asm volatile("st.global.release.cta.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
+    asm volatile("st.volatile.global.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
 #else   // !defined(MSCCLPP_DEVICE_CUDA)
     // TODO: both atomic and clang built-ins are buggy here
     triggerPtr->fst = trigger.fst;
