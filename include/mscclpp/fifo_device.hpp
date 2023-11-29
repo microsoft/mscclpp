@@ -6,7 +6,6 @@
 
 #include <cstdint>
 
-// #include "poll_device.hpp"
 #include "device.hpp"
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
