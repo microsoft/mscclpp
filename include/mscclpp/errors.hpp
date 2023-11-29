@@ -4,9 +4,6 @@
 #ifndef MSCCLPP_ERRORS_HPP_
 #define MSCCLPP_ERRORS_HPP_
 
-#include <cuda.h>
-#include <cuda_runtime.h>
-
 #include <stdexcept>
 
 namespace mscclpp {
@@ -77,14 +74,14 @@ class SysError : public BaseError {
 /// An error from a CUDA runtime library call.
 class CudaError : public BaseError {
  public:
-  CudaError(const std::string& message, cudaError_t errorCode);
+  CudaError(const std::string& message, int errorCode);
   virtual ~CudaError() = default;
 };
 
 /// An error from a CUDA driver library call.
 class CuError : public BaseError {
  public:
-  CuError(const std::string& message, CUresult errorCode);
+  CuError(const std::string& message, int errorCode);
   virtual ~CuError() = default;
 };
 

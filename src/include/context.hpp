@@ -5,7 +5,7 @@
 #define MSCCLPP_CONTEXT_HPP_
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <unordered_map>
 #include <vector>
 

@@ -6,7 +6,7 @@
 
 #include <cuda/atomic>
 
-#include "poll.hpp"
+#include "poll_device.hpp"
 
 namespace mscclpp {
 

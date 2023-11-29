@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <mscclpp/packet.hpp>
+#include <mscclpp/packet_device.hpp>
 #include <mscclpp/proxy_channel_device.hpp>
 
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing

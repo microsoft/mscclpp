@@ -13,9 +13,10 @@
 #include <bitset>
 #include <future>
 #include <memory>
-#include <mscclpp/errors.hpp>
 #include <string>
 #include <vector>
+
+#include "errors.hpp"
 
 namespace mscclpp {
 
@@ -114,7 +115,7 @@ class TcpBootstrap : public Bootstrap {
 
  private:
   // The interal implementation.
-  struct Impl;
+  class Impl;
 
   // Pointer to the internal implementation.
   std::unique_ptr<Impl> pimpl_;
@@ -400,6 +401,8 @@ class Endpoint {
 /// Represents a connection between two processes.
 class Connection {
  public:
+  virtual ~Connection() = default;
+
   /// Write data from a source @ref RegisteredMemory to a destination @ref RegisteredMemory.
   ///
   /// @param dst The destination @ref RegisteredMemory.
@@ -524,6 +527,8 @@ class Context {
 
 /// A base class for objects that can be set up during @ref Communicator::setup().
 struct Setuppable {
+  virtual ~Setuppable() = default;
+
   /// Called inside @ref Communicator::setup() before any call to @ref endSetup() of any @ref Setuppable object that is
   /// being set up within the same @ref Communicator::setup() call.
   ///

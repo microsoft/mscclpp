@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 #include <cstdint>
-#include <mscclpp/concurrency.hpp>
+#include <mscclpp/concurrency_device.hpp>
 
 #include "mp_unit_tests.hpp"
 
@@ -152,7 +152,7 @@ void ProxyChannelOneToOneTest::testPingPong(bool useIbOnly, bool waitWithPoll) {
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
-  std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
+  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
   setupMeshConnections(proxyChannels, useIbOnly, buff.get(), nElem * sizeof(int));
 
   std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannelHandles;
@@ -211,7 +211,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
   int threadId = threadIdx.x + blockIdx.x * blockDim.x;
   int numThreads = blockDim.x * gridDim.x;
   int flusher = 0;
-  const size_t nPkt = nElem / 2;
+  const int nPkt = nElem / 2;
   for (int i = 0; i < nTries; i++) {
     uint64_t flag = (uint64_t)i + 1;
 
@@ -269,11 +269,11 @@ void ProxyChannelOneToOneTest::testPacketPingPong(bool useIbOnly) {
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
-  std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
+  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
 
   const size_t nPacket = (nElem * sizeof(int) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
-  auto putPacketBuffer = mscclpp::allocSharedCuda<mscclpp::LLPacket>(nPacket);
-  auto getPacketBuffer = mscclpp::allocSharedCuda<mscclpp::LLPacket>(nPacket);
+  auto putPacketBuffer = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(nPacket);
+  auto getPacketBuffer = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(nPacket);
 
   setupMeshConnections(proxyChannels, useIbOnly, putPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket),
                        getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket));
@@ -336,11 +336,11 @@ void ProxyChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
-  std::shared_ptr<int> buff = mscclpp::allocSharedCuda<int>(nElem);
+  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
 
   const size_t nPacket = (nElem * sizeof(int) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
-  auto putPacketBuffer = mscclpp::allocSharedCuda<mscclpp::LLPacket>(nPacket);
-  auto getPacketBuffer = mscclpp::allocSharedCuda<mscclpp::LLPacket>(nPacket);
+  auto putPacketBuffer = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(nPacket);
+  auto getPacketBuffer = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(nPacket);
 
   setupMeshConnections(proxyChannels, useIbOnly, putPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket),
                        getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket));
@@ -362,7 +362,7 @@ void ProxyChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
 
   auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
   const std::string testName = std::string(testInfo->test_suite_name()) + "." + std::string(testInfo->name());
-  const int nTries = 1000;
+  const int nTries = 1000000;
 
   // Warm-up
   kernelProxyLLPingPong<false>

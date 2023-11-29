@@ -4,7 +4,7 @@
 #ifndef NPKIT_H_
 #define NPKIT_H_
 
-#include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <string>
 #include <vector>
 

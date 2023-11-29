@@ -4,8 +4,8 @@
 #ifndef MSCCLPP_SM_CHANNEL_DEVICE_HPP_
 #define MSCCLPP_SM_CHANNEL_DEVICE_HPP_
 
-#include "packet.hpp"
-#include "poll.hpp"
+#include "packet_device.hpp"
+#include "poll_device.hpp"
 #include "semaphore_device.hpp"
 
 namespace mscclpp {

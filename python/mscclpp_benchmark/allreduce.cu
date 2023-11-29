@@ -3,7 +3,7 @@
 
 #include <cuda_fp16.h>
 
-#include <mscclpp/concurrency.hpp>
+#include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/proxy_channel_device.hpp>
 #include <mscclpp/sm_channel_device.hpp>
 

@@ -9,6 +9,8 @@
 | Unit Tests (CUDA)        | [![Build Status](https://dev.azure.com/binyli/HPC/_apis/build/status%2Fmscclpp-ut?branchName=main)](https://dev.azure.com/binyli/HPC/_build/latest?definitionId=4&branchName=main) |
 | Integration Tests (CUDA) | [![Build Status](https://dev.azure.com/binyli/HPC/_apis/build/status%2Fmscclpp-test?branchName=main)](https://dev.azure.com/binyli/HPC/_build/latest?definitionId=3&branchName=main) |
 
+*NOTE (Nov 2023): Azure pipelines for ROCm will be added soon.*
+
 A GPU-driven communication stack for scalable AI applications.
 
 See [Quick Start](docs/quickstart.md) to quickly get started.
@@ -75,7 +77,7 @@ __device__ void barrier() {
 }
 ```
 
-MSCCL++ provides consistent interfaces, i.e., the above interfaces are used regardless of the location of the remote GPU (either on the local node or on a remote node) or the underlying link (either NVLink or InfiniBand).
+MSCCL++ provides consistent interfaces, i.e., the above interfaces are used regardless of the location of the remote GPU (either on the local node or on a remote node) or the underlying link (either NVLink/xGMI or InfiniBand).
 
 ### ProxyChannel and SmChannel
 

@@ -6,12 +6,12 @@
 
 #include "debug.h"
 
-#include <cuda_runtime.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/utils.hpp>
 #include <string>
 
@@ -181,7 +181,7 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
 
   int cudaDev;
   if (!(level == MSCCLPP_LOG_TRACE && flags == MSCCLPP_CALL)) {
-    cudaGetDevice(&cudaDev);
+    MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDev));
   }
 
   char buffer[1024];

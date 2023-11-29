@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 
-#include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/numa.hpp>
 
 TEST(NumaTest, Basic) {
