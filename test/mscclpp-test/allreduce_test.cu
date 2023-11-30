@@ -2,8 +2,8 @@
 // Licensed under the MIT license.
 
 #include <algorithm>
-#include <mscclpp/concurrency.hpp>
-#include <mscclpp/packet.hpp>
+#include <mscclpp/concurrency_device.hpp>
+#include <mscclpp/packet_device.hpp>
 #include <vector>
 
 #include "common.hpp"
@@ -1000,7 +1000,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
 }
 
 void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
-  if (sendBuff.size() != 1) std::unexpected();
+  if (sendBuff.size() != 1) std::runtime_error("unexpected error");
   const int rank = args.rank;
   const int worldSize = args.totalRanks;
   std::vector<int> dataHost(std::max(sendCount_, recvCount_), rank);
@@ -1091,30 +1091,30 @@ bool AllReduceTestEngine::isUsePacket() const { return (args_.kernelNum == 2 || 
 bool AllReduceTestEngine::isInPlace() const { return (args_.kernelNum != 2 && args_.kernelNum != 6); }
 
 void AllReduceTestEngine::allocateBuffer() {
-  inputBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
-  resultBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
+  inputBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
+  resultBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
   inputBuff = inputBuff_.get();
   resultBuff = resultBuff_.get();
 
   if (args_.kernelNum == 0 || args_.kernelNum == 1 || args_.kernelNum == 3 || args_.kernelNum == 4) {
-    scratchBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
+    scratchBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
     scratchBuff = scratchBuff_.get();
   } else if (args_.kernelNum == 2) {
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     // 2x for double-buffering
     const size_t scratchBuffNelem = nPacket * std::max(args_.nRanksPerNode - 1, 1) * 2;
-    scratchPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
+    scratchPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
     scratchPacketBuff = scratchPacketBuff_.get();
     const size_t packetBuffNelem = nPacket * 2;
-    putPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
-    getPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
+    putPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
+    getPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
     putPacketBuff = putPacketBuff_.get();
     getPacketBuff = getPacketBuff_.get();
   } else if (args_.kernelNum == 6) {
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     // 2x for double-buffering, scratchBuff used to store original data and reduced results
     const size_t scratchBuffNelem = nPacket * 2 /*original data & reduced result */ * 2 /* double buffering*/;
-    scratchPacketBuff_ = mscclpp::allocSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
+    scratchPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
     scratchPacketBuff = scratchPacketBuff_.get();
   }
 
@@ -1149,10 +1149,10 @@ void AllReduceTestEngine::setupConnections() {
                            scratchPacketBuffBytes);
 
       if (smOutOfPlaceChannels_.size() > sizeof(constSmOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
-        std::unexpected();
+        std::runtime_error("unexpected error");
       }
       if (proxyChannels.size() > sizeof(constDevFstRoundChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
-        std::unexpected();
+        std::runtime_error("unexpected error");
       }
 
       std::vector<DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles(smOutOfPlaceChannels_.size());
@@ -1169,7 +1169,7 @@ void AllReduceTestEngine::setupConnections() {
     // Send data from local inputBuff to remote scratchBuff (out-of-place)
     setupMeshConnections(fstRoundChannels, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
     if (fstRoundChannels.size() > sizeof(constDevFstRoundChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
-      std::unexpected();
+      std::runtime_error("unexpected error");
     }
     CUDATHROW(cudaMemcpyToSymbol(constDevFstRoundChans, fstRoundChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * fstRoundChannels.size()));
@@ -1177,14 +1177,14 @@ void AllReduceTestEngine::setupConnections() {
     // Send data from local inputBuff to remote inputBuff (in-place)
     setupMeshConnections(sndRoundChannels, inputBuff_.get(), args_.maxBytes);
     if (sndRoundChannels.size() > sizeof(constDevSndRoundChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
-      std::unexpected();
+      std::runtime_error("unexpected error");
     }
     CUDATHROW(cudaMemcpyToSymbol(constDevSndRoundChans, sndRoundChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * sndRoundChannels.size()));
 
     setupMeshConnections(smOutOfPlaceChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
     if (smOutOfPlaceChannels_.size() > sizeof(constSmOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
-      std::unexpected();
+      std::runtime_error("unexpected error");
     }
     std::vector<DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles(smOutOfPlaceChannels_.size());
     getChannelDeviceHandle(smOutOfPlaceChannels_, smChannelDeviceHandles);
@@ -1193,7 +1193,7 @@ void AllReduceTestEngine::setupConnections() {
 
     setupMeshConnections(smInPlaceChannels_, inputBuff_.get(), args_.maxBytes);
     if (smInPlaceChannels_.size() > sizeof(constSmInPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
-      std::unexpected();
+      std::runtime_error("unexpected error");
     }
     smChannelDeviceHandles.resize(smInPlaceChannels_.size());
     getChannelDeviceHandle(smInPlaceChannels_, smChannelDeviceHandles);
@@ -1204,7 +1204,7 @@ void AllReduceTestEngine::setupConnections() {
                          args_.maxBytes, ChannelSemantic::GET);
     if (smOutputPlaceGetChannels_.size() >
         sizeof(constSmOutOfPlaceGetChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
-      std::unexpected();
+      std::runtime_error("unexpected error");
     }
     smChannelDeviceHandles.resize(smOutputPlaceGetChannels_.size());
     getChannelDeviceHandle(smOutputPlaceGetChannels_, smChannelDeviceHandles);

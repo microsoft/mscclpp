@@ -1,32 +1,56 @@
 # MSCCL++
 
-GPU-driven computation & communication stack.
+[![Latest Release](https://img.shields.io/github/release/microsoft/mscclpp.svg)](https://github.com/microsoft/mscclpp/releases/latest)
+[![License](https://img.shields.io/github/license/microsoft/mscclpp.svg)](LICENSE)
+[![CodeQL](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml)
+
+| Pipelines                | Build Status      |
+|--------------------------|-------------------|
+| Unit Tests (CUDA)        | [![Build Status](https://dev.azure.com/binyli/HPC/_apis/build/status%2Fmscclpp-ut?branchName=main)](https://dev.azure.com/binyli/HPC/_build/latest?definitionId=4&branchName=main) |
+| Integration Tests (CUDA) | [![Build Status](https://dev.azure.com/binyli/HPC/_apis/build/status%2Fmscclpp-test?branchName=main)](https://dev.azure.com/binyli/HPC/_build/latest?definitionId=3&branchName=main) |
+
+*NOTE (Nov 2023): Azure pipelines for ROCm will be added soon.*
+
+A GPU-driven communication stack for scalable AI applications.
 
 See [Quick Start](docs/quickstart.md) to quickly get started.
 
-See the latest performance evaluation on Azure [NDmv4](docs/performance-ndmv4.md).
-
-Build our Doxygen document by running `doxygen` in [`docs/`](docs/) directory. Run `python3 -m http.server <PORT>` in `docs/doxygen/html/` directory to serve the generated HTML files.
-
 ## Overview
 
-MSCCL++ is a development kit for implementing highly optimized distributed GPU applications, in terms of both inter-GPU communication and GPU computation. MSCCL++ is specially designed for developers who want to fine-tune inter-GPU communication of their applications at the GPU kernel level, without awareness of detailed communication mechanisms. The key underlying concept of MSCCL++ is GPU-driven execution, where both communication and computation tasks are initiated by GPU not by CPU. That is, the communication and computation interfaces of MSCCL++ are provided as device-side APIs (called inside a GPU kernel), while the host-side APIs of MSCCL++ are for bootstrapping, initial connection setups, or background host threads for inter-GPU DMA and RDMA (called proxies). By using MSCCL++, we expect:
+MSCCL++ redefines inter-GPU communication interfaces, thereby delivering a highly efficient and customizable communication stack for distributed GPU applications. Its design is specifically tailored to accommodate diverse performance optimization scenarios often encountered in state-of-the-art AI applications. Figure below provides a high-level overview of MSCCL++ abstractions in CUDA, C, and Python.
 
-* **Holistic Optimization for High GPU Utilization.** As both communication and computation are scheduled inside a GPU kernel at the same time, we can optimize end-to-end performance of distributed GPU applications from a global view. For example, we can minimize the GPU resource contention between communication and computation, which is known to often substantially degrade throughput of distributed deep learning applications.
+| <center>MSCCL++ Abstractions Overview |
+|-------------------------------|
+| <img src="./docs/figs/abstractions.png" alt="MSCCL++ Abstractions" style="width: 800px;"/> |
 
-* **Fully Pipelined System to Reduce Overhead from the Control Plane.** We can eliminate control overhead from CPU by allowing GPU to autonomously schedule both communication and computation. This significantly reduces GPU scheduling overhead and CPU-GPU synchronization overhead. For example, this allows us to implement a highly fine-grained system pipelining (i.e., hiding communication delays by overlapping with computation), which has been difficult for CPU-controlled applications due to the large control/scheduling overhead.
+The followings highlight the key features of MSCCL++.
 
-* **Runtime Performance Optimization for Dynamic Workload.** As we can easily implement flexible communication logics, we can optimize communication performance even during runtime. For example, we can implement the system to automatically choose different communication paths or different collective communication algorithms depending on the dynamic workload at runtime.
+* **Light-weight and multi-layer abstractions.** MSCCL++ provides communication abstractions at lowest level close to hardware and at the highest level close to application API. The lowest level of abstraction is ultra light weight which enables a user to implement logics of data movement for a collective operation such as AllReduce inside a GPU kernel extremely efficiently without worrying about memory ordering of different ops. The modularity of MSCCL++ enables a user to construct the building blocks of MSCCL++ in a high level abstraction in Python and feed them to a CUDA kernel in order to facilitate the user's productivity.
 
-## Key Features (v0.3)
+* **1-sided 0-copy synchronous and asynchronous abstracts.** MSCCL++ provides fine-grained synchronous and asynchronous 0-copy 1-sided abstracts for communication primitives such as `put()`, `get()`, `signal()`, `flush()`, and `wait()`. The 1-sided abstractions allows a user to asynchronously `put()` their data on the remote GPU as soon as it is ready without requiring the remote side to issue any receive instruction. This enables users to easily implement flexible communication logics, such as overlapping communication with computation, or implementing customized collective communication algorithms without worrying about potential deadlocks. Additionally, the 0-copy capability enables MSCCL++ to directly transfer data between user's buffers without using intermediate internal buffers which saves GPU bandwidth and memory capacity.
 
-MSCCL++ v0.3 supports the following features.
+* **Unified abstractions for different interconnection hardware.** MSCCL++ provides consistent abstractions regardless of the location of the remote GPU (either on the local node or on a remote node) or the underlying link (either NVLink/xGMI or InfiniBand). This simplifies the code for inter-GPU communication, which is often complex due to memory ordering of GPU/CPU read/writes and therefore, is error-prone.
 
-### In-Kernel Communication Interfaces
+## Performance
 
-MSCCL++ provides inter-GPU communication interfaces to be called by a GPU thread. For example, the `put()` method in the following example copies 1KB data from the local GPU to a remote GPU. `channel` is a peer-to-peer communication channel between two GPUs, which consists of information on send/receive buffers. `channel` is initialized from the host side before the kernel execution.
+While the power of MSCCL++ is fully realized with application-specific optimization, it still delivers performance benefits even for collective communication operations. The following figures provide a comparison of the AllReduce throughput of MSCCL++ against NCCL 2.19.3. This benchmark was tested over two [Azure NDmv4 SKUs](https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series) (8 A100-80G GPUs per node).
+
+The key motivation behind these results is scaling of inference for LLM models using tensor parallelism. LLM requests usually are executed in two phases: prompt processing and token sampling. The prompt processing uses a large batch size that is usually equal to a request context length and the corresponding AllReduce size is `len_context*dim_hidden*sizeof(fp16)`. For a context length of 2048 with a hidden dimension of 12288 (GPT-3 size), the AllReduce size is 48MB. The token sampling uses a smaller batch size which corresponds to concurrent user requests in the system and therefore, the AllReduce size is `batch_size*dim_hidden*sizeof(fp16)`. For a concurrency of 16 users, the AllReduce size is 384KB. As the figures below demonstrates, MSCCL++ provides significant speed up over NCCL which is crucial for efficiency of serving LLMs at large scale.
+
+| <center>Single-node AllReduce | <center>Two-node AllReduce |
+|-------------------------------|----------------------------|
+| <img src="./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_1.jpeg" alt="MSCCL++ vs NCCL AllReduce (Single-node)" style="width: 400px;"/> | <img src="./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_2.jpeg" alt="MSCCL++ vs NCCL AllReduce (Two-node)" style="width: 400px;"/> |
+
+## Key Concepts
+
+The following highlights key concepts of MSCCL++.
+
+### On-GPU Communication Interfaces: Channels
+
+MSCCL++ provides peer-to-peer communication methods between GPUs. A peer-to-peer connection between two GPUs is called a *Channel*. Channels are constructed by MSCCL++ host-side interfaces and copied to GPUs during initialization. Channels provide *GPU-side interfaces*, which means that all communication methods are defined as a device function to be called from a GPU kernel code. For example, the `put()` method in the following example copies 1KB data from the local GPU to a remote GPU.
 
 ```cpp
+// `ProxyChannel` will be explained in the following section.
 __device__ mscclpp::DeviceHandle<mscclpp::SimpleProxyChannel> channel;
 __global__ void gpuKernel() {
   ...
@@ -53,11 +77,17 @@ __device__ void barrier() {
 }
 ```
 
-MSCCL++ provides consistent in-kernel interfaces, i.e., the above interfaces are used regardless of the location of the remote GPU (either on the local node or on a remote node) or the underlying link (either NVLink or InfiniBand).
+MSCCL++ provides consistent interfaces, i.e., the above interfaces are used regardless of the location of the remote GPU (either on the local node or on a remote node) or the underlying link (either NVLink/xGMI or InfiniBand).
+
+### ProxyChannel and SmChannel
+
+MSCCL++ delivers two types of channels, **ProxyChannel** and **SmChannel**. `ProxyChannel` provides (R)DMA-based data copy and synchronization methods. When called, these methods send/receive a signal to/from a host-side proxy (hence the name `ProxyChannel`), which will trigger (R)DMA (such as `cudaMemcpy*` or `ibv_post_send`) or issue synchronization methods (such as `cudaStreamSynchronize` or `ibv_poll_cq`). Since the key functionalities are run by the proxy, `ProxyChannel` requires only a single GPU thread to call its methods. See all `ProxyChannel` methods from [here](./include/mscclpp/proxy_channel_device.hpp).
+
+On the other hand, `SmChannel` provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU's memory space. Comparing against `ProxyChannel`, `SmChannel` is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all `SmChannel` methods from [here](./include/mscclpp/sm_channel_device.hpp).
 
 ### Host-Side Communication Proxy
 
-Some in-kernel communication interfaces of MSCCL++ send requests (called triggers) to a GPU-external helper that conducts key functionalities such as DMA or RDMA. This helper is called a proxy service or a proxy in short. MSCCL++ provides a default implementation of a proxy, which is a background host thread that busy polls triggers from GPUs and conducts functionalities accordingly. For example, the following is a typical host-side code for MSCCL++.
+MSCCL++ provides a default implementation of a host-side proxy for ProxyChannels, which is a background host thread that busy polls triggers from GPUs and conducts functionalities accordingly. For example, the following is a typical host-side code for MSCCL++.
 
 ```cpp
 // Bootstrap: initialize control-plane connections between all ranks
@@ -120,19 +150,9 @@ public:
 
 Customized proxies can be used for conducting a series of pre-defined data transfers within only a single trigger from GPU at runtime. This would be more efficient than sending a trigger for each data transfer one by one.
 
-### Flexible Customization
+### Python Interfaces
 
-Most of key components of MSCCL++ are designed to be easily customized. This enables MSCCL++ to easily adopt a new software / hardware technology and lets users implement algorithms optimized for their own use cases.
-
-### New in MSCCL++ v0.3 (Latest Release)
-* Updated interfaces
-* Add Python bindings and interfaces
-* Add Python unit tests
-* Add more configurable parameters
-* Add a new single-node AllReduce kernel
-* Fix bugs
-
-See details from https://github.com/microsoft/mscclpp/issues/89.
+MSCCL++ provides Python bindings and interfaces, which simplifies integration with Python applications.
 
 ## Contributing
 

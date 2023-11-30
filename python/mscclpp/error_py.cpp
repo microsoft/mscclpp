@@ -31,10 +31,10 @@ void register_error(nb::module_& m) {
       .def(nb::init<const std::string&, int>(), nb::arg("message"), nb::arg("errorCode"));
 
   nb::class_<CudaError, BaseError>(m, "CudaError")
-      .def(nb::init<const std::string&, cudaError_t>(), nb::arg("message"), nb::arg("errorCode"));
+      .def(nb::init<const std::string&, int>(), nb::arg("message"), nb::arg("errorCode"));
 
   nb::class_<CuError, BaseError>(m, "CuError")
-      .def(nb::init<const std::string&, CUresult>(), nb::arg("message"), nb::arg("errorCode"));
+      .def(nb::init<const std::string&, int>(), nb::arg("message"), nb::arg("errorCode"));
 
   nb::class_<IbError, BaseError>(m, "IbError")
       .def(nb::init<const std::string&, int>(), nb::arg("message"), nb::arg("errorCode"));

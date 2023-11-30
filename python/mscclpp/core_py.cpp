@@ -50,9 +50,9 @@ void register_core(nb::module_& m) {
           nb::arg("data"), nb::arg("size"), nb::arg("peer"), nb::arg("tag"))
       .def("all_gather", &Bootstrap::allGather, nb::arg("allData"), nb::arg("size"))
       .def("barrier", &Bootstrap::barrier)
-      .def("send", (void (Bootstrap::*)(const std::vector<char>&, int, int)) & Bootstrap::send, nb::arg("data"),
-           nb::arg("peer"), nb::arg("tag"))
-      .def("recv", (void (Bootstrap::*)(std::vector<char>&, int, int)) & Bootstrap::recv, nb::arg("data"),
+      .def("send", static_cast<void (Bootstrap::*)(const std::vector<char>&, int, int)>(&Bootstrap::send),
+           nb::arg("data"), nb::arg("peer"), nb::arg("tag"))
+      .def("recv", static_cast<void (Bootstrap::*)(std::vector<char>&, int, int)>(&Bootstrap::recv), nb::arg("data"),
            nb::arg("peer"), nb::arg("tag"));
 
   nb::class_<UniqueId>(m, "UniqueId");

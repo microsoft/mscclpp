@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 
-#include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/gpu_utils.hpp>
 
 TEST(CudaUtilsTest, AllocShared) {
   auto p1 = mscclpp::allocSharedCuda<uint32_t>();

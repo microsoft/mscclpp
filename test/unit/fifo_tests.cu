@@ -3,8 +3,8 @@
 
 #include <gtest/gtest.h>
 
-#include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 

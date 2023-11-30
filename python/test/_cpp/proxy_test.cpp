@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <cuda.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/vector.h>
@@ -9,8 +8,8 @@
 #include <iostream>
 #include <memory>
 #include <mscclpp/core.hpp>
-#include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/proxy.hpp>
 #include <mscclpp/semaphore.hpp>

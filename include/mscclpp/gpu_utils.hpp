@@ -1,14 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_CUDA_UTILS_HPP_
-#define MSCCLPP_CUDA_UTILS_HPP_
-
-#include <cuda_runtime.h>
+#ifndef MSCCLPP_GPU_UTILS_HPP_
+#define MSCCLPP_GPU_UTILS_HPP_
 
 #include <cstring>
 #include <memory>
-#include <mscclpp/errors.hpp>
+
+#include "errors.hpp"
+#include "gpu.hpp"
 
 /// Throw @ref mscclpp::CudaError if @p cmd does not return cudaSuccess.
 /// @param cmd The command to execute.
@@ -62,6 +62,21 @@ T* cudaCalloc(size_t nelem) {
   T* ptr;
   CudaStreamWithFlags stream(cudaStreamNonBlocking);
   MSCCLPP_CUDATHROW(cudaMalloc(&ptr, nelem * sizeof(T)));
+  MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, nelem * sizeof(T), stream));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+  return ptr;
+}
+
+template <class T>
+T* cudaExtCalloc(size_t nelem) {
+  AvoidCudaGraphCaptureGuard cgcGuard;
+  T* ptr;
+  CudaStreamWithFlags stream(cudaStreamNonBlocking);
+#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
+  MSCCLPP_CUDATHROW(hipExtMallocWithFlags((void**)&ptr, nelem * sizeof(T), hipDeviceMallocUncached));
+#else
+  MSCCLPP_CUDATHROW(cudaMalloc(&ptr, nelem * sizeof(T)));
+#endif
   MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, nelem * sizeof(T), stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
   return ptr;
@@ -136,6 +151,15 @@ std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, std::shared_ptr<T>>(count);
 }
 
+/// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
+/// @tparam T Type of each element in the allocated memory.
+/// @param count Number of elements to allocate.
+/// @return A std::shared_ptr to the allocated memory.
+template <class T>
+std::shared_ptr<T> allocExtSharedCuda(size_t count = 1) {
+  return detail::safeAlloc<T, detail::cudaExtCalloc<T>, CudaDeleter<T>, std::shared_ptr<T>>(count);
+}
+
 /// Unique device pointer that will call cudaFree on destruction.
 /// @tparam T Type of each element in the allocated memory.
 template <class T>
@@ -148,6 +172,15 @@ using UniqueCudaPtr = std::unique_ptr<T, CudaDeleter<T>>;
 template <class T>
 UniqueCudaPtr<T> allocUniqueCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, UniqueCudaPtr<T>>(count);
+}
+
+/// Allocates memory on the device and returns a std::unique_ptr to it. The memory is zeroed out.
+/// @tparam T Type of each element in the allocated memory.
+/// @param count Number of elements to allocate.
+/// @return A std::unique_ptr to the allocated memory.
+template <class T>
+UniqueCudaPtr<T> allocExtUniqueCuda(size_t count = 1) {
+  return detail::safeAlloc<T, detail::cudaExtCalloc<T>, CudaDeleter<T>, UniqueCudaPtr<T>>(count);
 }
 
 /// Allocates memory with cudaHostAlloc, constructs an object of type T in it and returns a std::shared_ptr to it.
@@ -238,4 +271,4 @@ void memcpyCuda(T* dst, const T* src, size_t count, cudaMemcpyKind kind = cudaMe
 
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_CUDA_UTILS_HPP_
+#endif  // MSCCLPP_GPU_UTILS_HPP_
