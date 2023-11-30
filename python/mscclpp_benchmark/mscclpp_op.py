@@ -4,6 +4,7 @@ import ctypes
 from mscclpp import Transport, ProxyService
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, pack
+import torch
 
 
 IB_TRANSPORTS = [
@@ -19,15 +20,26 @@ IB_TRANSPORTS = [
 
 
 def type_to_str(dtype):
-    if dtype == cp.float16:
+    if dtype == cp.float16 or dtype == torch.half:
         return "__half"
-    elif dtype == cp.float32:
+    elif dtype == cp.float32 or dtype == torch.float32:
         return "float"
-    elif dtype == cp.int32:
+    elif dtype == cp.int32 or dtype == torch.int32:
         return "int"
     else:
         raise RuntimeError("Unknown data type")
 
+torch_to_cupy_dtype = {
+    torch.float32: cp.float32,
+    torch.float64: cp.float64,
+    torch.float16: cp.float16,
+    torch.int8: cp.int8,
+    torch.uint8: cp.uint8,
+    torch.int16: cp.int16,
+    torch.int32: cp.int32,
+    torch.int64: cp.int64,
+    torch.bool: cp.bool_,
+}
 
 class MscclppAllReduce1:
     def __init__(
@@ -66,21 +78,25 @@ class MscclppAllReduce1:
 
         self.set_params(nblocks, block_size, read_only)
 
-    def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
+    def __call__(self, stream_ptr, num_elements):
+        params = self.params1 + pack(ctypes.c_size_t(num_elements)) + self.params2
+        self.kernel.launch_kernel(params, self.nblocks, self.block_size, 0, stream_ptr)
         return self.memory
 
     def set_params(self, nblocks, block_size, read_only):
         self.nblocks = nblocks
         self.block_size = block_size
         self.read_only = read_only
-        self.params = b""
-        self.params += pack(
+        self.params1 = b""
+        self.params1 += pack(
             self.device_handles_cp,
             self.memory,
             self.group.my_rank,
             self.group.nranks,
-            ctypes.c_size_t(self.memory.size),
+            # ctypes.c_size_t(self.memory.size),
+        )
+        self.params2 = b""
+        self.params2 += pack(
             self.read_only,
         )
 
@@ -99,14 +115,14 @@ class MscclppAllReduce2:
     def __init__(
         self,
         group: mscclpp_comm.CommGroup,
-        memory: cp.ndarray,
-        memory_out: cp.ndarray,
+        memory: cp.ndarray or torch.Tensor,
+        # memory_out: cp.ndarray,
         block_size: int = 512,
         nblocks: int = 21,
     ):
         self.group = group
         self.memory = memory
-        self.memory_out = memory_out
+        # self.memory_out = memory_out
         remote_nghrs = list(range(self.group.nranks))
         remote_nghrs.remove(self.group.my_rank)
 
@@ -115,7 +131,13 @@ class MscclppAllReduce2:
         self.connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
         type_str = type_to_str(memory.dtype)
 
-        self.scratch = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
+        num_elements = self.memory.size if isinstance(memory, cp.ndarray) else self.memory.numel()
+        # create a sm_channel for each remote neighbor
+        if isinstance(memory, cp.ndarray):
+            self.scratch = cp.zeros(num_elements * 8, dtype=self.memory.dtype)
+        else:
+            self.scratch = cp.zeros(num_elements * 8, dtype=torch_to_cupy_dtype[self.memory.dtype])
+
         # create a sm_channel for each remote neighbor
         self.sm_channels = self.group.make_sm_channels_with_scratch(self.memory, self.scratch, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -131,23 +153,26 @@ class MscclppAllReduce2:
 
         self.set_params(nblocks, block_size)
 
-    def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
-        return self.memory_out
+    def __call__(self, stream_ptr, memory_out, num_elements):
+        params = self.params1 + pack(memory_out) + self.params2 + pack(ctypes.c_size_t(num_elements))
+        self.kernel.launch_kernel(params, self.nblocks, self.block_size, 0, stream_ptr)
+        return memory_out
 
     def set_params(self, nblocks, block_size):
         self.nblocks = nblocks
         self.block_size = block_size
 
-        self.params = b""
-        self.params += pack(
+        self.params1 = b""
+        self.params2 = b""
+        self.params1 += pack(
             self.device_handles_cp,
             self.memory,
-            self.scratch,
-            self.memory_out,
+            self.scratch)
+        self.params2 += pack(
+            # self.memory_out,
             self.group.my_rank,
             self.group.nranks,
-            ctypes.c_size_t(self.memory.size),
+            # ctypes.c_size_t(self.memory.size),
         )
 
     def auto_tune(self):
