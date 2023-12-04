@@ -25,7 +25,8 @@ struct alignas(16) ProxyTrigger {
   uint64_t fst, snd;
 };
 
-/// A concurrent FIFO where multiple device threads can push work elements and a single host proxy thread consumes them.
+/// A concurrent FIFO where multiple device threads (the number of threads should not exceed the fifo size) can push
+/// work elements and a single host proxy thread consumes them.
 ///
 /// The FIFO has a head pointer allocated on the device which starts at 0 and goes up to 2^64-1, which is almost
 /// infinity. There are two copies of the tail, one on the device, @ref FifoDeviceHandle::tailReplica, and another on
@@ -64,9 +65,10 @@ struct FifoDeviceHandle {
 
     ProxyTrigger* triggerPtr = &(this->triggers[curFifoHead % size]);
 
-    // store with memory order release so that the while loop does not go pass this.
+    // There is a Write-After-Read hazard for the triggerPtr->fst. So the st instruction will not be executed
+    // before the loop.
 #if defined(MSCCLPP_DEVICE_CUDA)
-    asm volatile("st.global.release.sys.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
+    asm volatile("st.global.relaxed.sys.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
 #else   // !defined(MSCCLPP_DEVICE_CUDA)
     // TODO: both atomic and clang built-ins are buggy here
     triggerPtr->fst = trigger.fst;
