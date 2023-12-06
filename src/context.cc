@@ -11,7 +11,7 @@
 
 namespace mscclpp {
 
-Context::Impl::Impl() : ipcStream_(cudaStreamNonBlocking) {}
+Context::Impl::Impl() {}
 
 IbCtx* Context::Impl::getIbContext(Transport ibTransport) {
   // Find IB context or create it
@@ -43,7 +43,12 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpo
     if (remoteEndpoint.transport() != Transport::CudaIpc) {
       throw mscclpp::Error("Local transport is CudaIpc but remote is not", ErrorCode::InvalidUsage);
     }
-    conn = std::make_shared<CudaIpcConnection>(localEndpoint, remoteEndpoint, pimpl_->ipcStream_);
+#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
+    pimpl_->ipcStreams_.emplace_back(std::make_shared<CudaStreamWithFlags>(cudaStreamNonBlocking));
+#else
+    if (pimpl_->ipcStreams_.empty()) pimpl_->ipcStreams_.emplace_back(std::make_shared<CudaStreamWithFlags>(cudaStreamNonBlocking));
+#endif
+    conn = std::make_shared<CudaIpcConnection>(localEndpoint, remoteEndpoint, *(pimpl_->ipcStreams_.back()));
   } else if (AllIBTransports.has(localEndpoint.transport())) {
     if (!AllIBTransports.has(remoteEndpoint.transport())) {
       throw mscclpp::Error("Local transport is IB but remote is not", ErrorCode::InvalidUsage);
