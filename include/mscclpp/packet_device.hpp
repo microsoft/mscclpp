@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_PACKET_DEVICE_HPP_
 #define MSCCLPP_PACKET_DEVICE_HPP_
 
+#include <cstdint>
+
 #include "device.hpp"
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
