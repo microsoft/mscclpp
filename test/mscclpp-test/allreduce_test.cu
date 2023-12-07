@@ -402,7 +402,8 @@ __device__ void localReduceScatterSm3(int* buff, int rank, int nRanksPerNode, si
     for (int index = 0; index < nPeer; ++index) {
       int4 val;
       int peerIdx = (index + localRankIndexInNode) % nPeer;
-      for (size_t idx = base + threadIdx.x + blockIdx.x * blockDim.x; idx < base + unitNInt4; idx += blockDim.x * nBlocks) {
+      for (size_t idx = base + threadIdx.x + blockIdx.x * blockDim.x; idx < base + unitNInt4;
+           idx += blockDim.x * nBlocks) {
         val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
         buff4[indexOffset4 + idx].w += val.w;
         buff4[indexOffset4 + idx].x += val.x;
