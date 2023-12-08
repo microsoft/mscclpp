@@ -141,11 +141,11 @@ add_subdirectory(include)
 add_subdirectory(src)
 
 install(TARGETS mscclpp_obj
-    FILE_SET HEADERS DESTINATION include)
+    FILE_SET HEADERS DESTINATION ${INSTALL_PREFIX}/include)
 install(TARGETS mscclpp
-    LIBRARY DESTINATION lib)
+    LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
 install(TARGETS mscclpp_static
-    ARCHIVE DESTINATION lib)
+    ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
 
 # Tests
 if(BUILD_TESTS)
