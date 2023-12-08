@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <cstring>
+#include <fstream>
 #include <mscclpp/core.hpp>
 #include <mscclpp/fifo.hpp>
 #include <sstream>
@@ -15,6 +16,16 @@
 
 #include "api.h"
 #include "debug.h"
+
+// Check if nvidia_peermem kernel module is loaded
+static bool checkNvPeerMemLoaded() {
+  std::ifstream file("/proc/modules");
+  std::string line;
+  while (std::getline(file, line)) {
+    if (line.find("nvidia_peermem") != std::string::npos) return true;
+  }
+  return false;
+}
 
 namespace mscclpp {
 
@@ -280,6 +291,9 @@ const ibv_wc* IbQp::getWc(int idx) const { return &this->wcs[idx]; }
 int IbQp::getNumCqItems() const { return this->numSignaledPostedItems; }
 
 IbCtx::IbCtx(const std::string& devName) : devName(devName) {
+  if (!checkNvPeerMemLoaded()) {
+    throw mscclpp::Error("nvidia_peermem kernel module is not loaded", ErrorCode::InternalError);
+  }
   int num;
   struct ibv_device** devices = ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
