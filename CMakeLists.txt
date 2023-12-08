@@ -140,12 +140,20 @@ set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVER
 add_subdirectory(include)
 add_subdirectory(src)
 
+# Append "/" if INSTALL_PREFIX is not empty and does not end with "/"
+if(NOT "${INSTALL_PREFIX}" STREQUAL "")
+    string(REGEX MATCH "[^/]$" INSTALL_PREFIX_HAS_SLASH "${INSTALL_PREFIX}")
+    if(INSTALL_PREFIX_HAS_SLASH)
+        set(INSTALL_PREFIX "${INSTALL_PREFIX}/")
+    endif()
+endif()
+
 install(TARGETS mscclpp_obj
-    FILE_SET HEADERS DESTINATION ${INSTALL_PREFIX}/include)
+    FILE_SET HEADERS DESTINATION ${INSTALL_PREFIX}include)
 install(TARGETS mscclpp
-    LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
+    LIBRARY DESTINATION ${INSTALL_PREFIX}lib)
 install(TARGETS mscclpp_static
-    ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
+    ARCHIVE DESTINATION ${INSTALL_PREFIX}lib)
 
 # Tests
 if(BUILD_TESTS)
