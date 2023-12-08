@@ -17,6 +17,8 @@
 #include "api.h"
 #include "debug.h"
 
+#if !defined(__HIP_PLATFORM_AMD__) || (__HIP_PLATFORM_AMD__ == 0)
+
 // Check if nvidia_peermem kernel module is loaded
 static bool checkNvPeerMemLoaded() {
   std::ifstream file("/proc/modules");
@@ -26,6 +28,8 @@ static bool checkNvPeerMemLoaded() {
   }
   return false;
 }
+
+#endif  // !defined(__HIP_PLATFORM_AMD__) || (__HIP_PLATFORM_AMD__ == 0)
 
 namespace mscclpp {
 
@@ -291,9 +295,11 @@ const ibv_wc* IbQp::getWc(int idx) const { return &this->wcs[idx]; }
 int IbQp::getNumCqItems() const { return this->numSignaledPostedItems; }
 
 IbCtx::IbCtx(const std::string& devName) : devName(devName) {
+#if !defined(__HIP_PLATFORM_AMD__) || (__HIP_PLATFORM_AMD__ == 0)
   if (!checkNvPeerMemLoaded()) {
     throw mscclpp::Error("nvidia_peermem kernel module is not loaded", ErrorCode::InternalError);
   }
+#endif  // !defined(__HIP_PLATFORM_AMD__) || (__HIP_PLATFORM_AMD__ == 0)
   int num;
   struct ibv_device** devices = ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
