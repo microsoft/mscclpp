@@ -13,6 +13,7 @@ using cudaGraph_t = hipGraph_t;
 using cudaGraphExec_t = hipGraphExec_t;
 using cudaDeviceProp = hipDeviceProp_t;
 using cudaStream_t = hipStream_t;
+using cudaEvent_t = hipEvent_t;
 using cudaStreamCaptureMode = hipStreamCaptureMode;
 using cudaMemcpyKind = hipMemcpyKind;
 using cudaIpcMemHandle_t = hipIpcMemHandle_t;
@@ -53,6 +54,7 @@ constexpr auto cudaIpcMemLazyEnablePeerAccess = hipIpcMemLazyEnablePeerAccess;
 #define cudaMemcpy(...) hipMemcpy(__VA_ARGS__)
 #define cudaMemcpyAsync(...) hipMemcpyAsync(__VA_ARGS__)
 #define cudaMemcpyToSymbol(...) hipMemcpyToSymbol(__VA_ARGS__)
+#define cudaStreamCreate(...) hipStreamCreate(__VA_ARGS__)
 #define cudaStreamCreateWithFlags(...) hipStreamCreateWithFlags(__VA_ARGS__)
 #define cudaStreamSynchronize(...) hipStreamSynchronize(__VA_ARGS__)
 #define cudaStreamBeginCapture(...) hipStreamBeginCapture(__VA_ARGS__)
@@ -66,6 +68,10 @@ constexpr auto cudaIpcMemLazyEnablePeerAccess = hipIpcMemLazyEnablePeerAccess;
 #define cudaIpcGetMemHandle(...) hipIpcGetMemHandle(__VA_ARGS__)
 #define cudaIpcOpenMemHandle(...) hipIpcOpenMemHandle(__VA_ARGS__)
 #define cudaIpcCloseMemHandle(...) hipIpcCloseMemHandle(__VA_ARGS__)
+#define cudaEventCreate(...) hipEventCreate(__VA_ARGS__)
+#define cudaEventDestroy(...) hipEventDestroy(__VA_ARGS__)
+#define cudaEventRecord(...) hipEventRecord(__VA_ARGS__)
+#define cudaEventElapsedTime(...) hipEventElapsedTime(__VA_ARGS__)
 
 #define cuGetErrorString(...) hipDrvGetErrorString(__VA_ARGS__)
 #define cuMemGetAddressRange(...) hipMemGetAddressRange(__VA_ARGS__)
