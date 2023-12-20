@@ -98,6 +98,7 @@ class DeviceSyncerTestFixture : public ::testing::Test {
   uint64_t memrealtime_freq_mhz() {
     cudaDeviceProp deviceProp{};
     MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&deviceProp, 0));
+#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
     switch (deviceProp.gcnArch) {
       case 900: return 27;
       case 906: return 25;
@@ -107,6 +108,7 @@ class DeviceSyncerTestFixture : public ::testing::Test {
         assert(false && "clock data unavailable");
         return 0;
     }
+#endif
   }
 
   double gpu_cycles_to_us(uint64_t cycles) {
