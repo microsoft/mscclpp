@@ -141,12 +141,16 @@ set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVER
 add_subdirectory(include)
 add_subdirectory(src)
 
+if("${INSTALL_PREFIX}" STREQUAL "")
+    set(INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX})
+endif()
+
 install(TARGETS mscclpp_obj
-    FILE_SET HEADERS DESTINATION include)
+    FILE_SET HEADERS DESTINATION ${INSTALL_PREFIX}/include)
 install(TARGETS mscclpp
-    LIBRARY DESTINATION lib)
+    LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
 install(TARGETS mscclpp_static
-    ARCHIVE DESTINATION lib)
+    ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
 
 # Tests
 if(BUILD_TESTS)
