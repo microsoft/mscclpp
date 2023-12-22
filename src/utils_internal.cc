@@ -95,6 +95,7 @@ uint64_t computeHostHash(void) {
 
 uint64_t getHostHash(void) {
   thread_local std::unique_ptr<uint64_t> hostHash = std::make_unique<uint64_t>(computeHostHash());
+  // avoid crash on static destruction
   if (hostHash == nullptr) {
     hostHash = std::make_unique<uint64_t>(computeHostHash());
   }
@@ -123,6 +124,7 @@ uint64_t computePidHash(void) {
 
 uint64_t getPidHash(void) {
   thread_local std::unique_ptr<uint64_t> pidHash = std::make_unique<uint64_t>(computePidHash());
+  // avoid crash on static destruction
   if (pidHash == nullptr) {
     pidHash = std::make_unique<uint64_t>(computePidHash());
   }
