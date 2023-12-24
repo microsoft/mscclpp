@@ -142,7 +142,7 @@ add_subdirectory(include)
 add_subdirectory(src)
 
 if("${INSTALL_PREFIX}" STREQUAL "")
-    set(INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX})
+    set(INSTALL_PREFIX "./")
 endif()
 
 install(TARGETS mscclpp_obj
