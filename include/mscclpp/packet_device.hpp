@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_PACKET_DEVICE_HPP_
 #define MSCCLPP_PACKET_DEVICE_HPP_
 
+#include <cstdint>
+
 #include "device.hpp"
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
@@ -39,7 +41,6 @@ union alignas(16) LLPacket {
 #else  // !defined(MSCCLPP_DEVICE_CUDA)
     uint4 reg = make_uint4(val1, flag, val2, flag);
     ulonglong2* p = reinterpret_cast<ulonglong2*>(&reg);
-    // TODO: clang built-ins are buggy here
     atomicStore(&(raw_.x), p->x, memoryOrderRelaxed);
     atomicStore(&(raw_.y), p->y, memoryOrderRelaxed);
 #endif
@@ -63,7 +64,6 @@ union alignas(16) LLPacket {
     return (flag1 != flag) || (flag2 != flag);
 #else  // !defined(MSCCLPP_DEVICE_CUDA)
     ulonglong2 reg;
-    // TODO: clang built-ins are buggy here
     reg.x = atomicLoad(&(raw_.x), memoryOrderRelaxed);
     reg.y = atomicLoad(&(raw_.y), memoryOrderRelaxed);
     uint4* ptr = reinterpret_cast<uint4*>(&reg);
