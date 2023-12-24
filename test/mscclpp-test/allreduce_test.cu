@@ -956,7 +956,7 @@ __global__ void allreduce4(int* buff, int* scratch, int rank, int nRanksPerNode,
 }
 
 __global__ void allreduce5(int* buff, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
-#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
+#if defined(__HIP_PLATFORM_AMD__)
   localReduceScatterSm3(buff, rank, nRanksPerNode, nelems / worldSize, nelems / worldSize, gridDim.x);
   deviceSyncer.sync(gridDim.x);
   localRingAllGatherSm2(rank, nRanksPerNode, nelems / worldSize * sizeof(int), gridDim.x);
