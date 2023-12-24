@@ -30,13 +30,13 @@ struct DeviceSyncer {
     if (threadIdx.x == 0) {
       // Need a `__threadfence()` before to flip `flag`.
       __threadfence();
-      unsigned int tmp = isIncFlag_ ^ 1;
+      unsigned int tmp = preFlag_ ^ 1;
       if (atomicInc(&count_, maxOldCnt) == maxOldCnt) {
         atomicStore(&flag_, tmp, memoryOrderRelaxed);
       } else {
         POLL_MAYBE_JAILBREAK((atomicLoad(&flag_, memoryOrderRelaxed) != tmp), maxSpinCount);
       }
-      isIncFlag_ = tmp;
+      preFlag_ = tmp;
     }
     // We need sync here because only a single thread is checking whether
     // the flag is flipped.
@@ -50,7 +50,7 @@ struct DeviceSyncer {
   /// The counter of synchronized blocks.
   unsigned int count_;
   /// The flag to indicate whether to increase or decrease @ref flag_.
-  unsigned int isIncFlag_;
+  unsigned int preFlag_;
 };
 
 }  // namespace mscclpp
