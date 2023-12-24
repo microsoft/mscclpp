@@ -70,9 +70,9 @@ struct FifoDeviceHandle {
 #if defined(MSCCLPP_DEVICE_CUDA)
     asm volatile("st.global.relaxed.sys.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
 #else   // !defined(MSCCLPP_DEVICE_CUDA)
-    // TODO: both atomic and clang built-ins are buggy here
-    triggerPtr->fst = trigger.fst;
-    triggerPtr->snd = trigger.snd;
+    // store snd no later than fst.
+    atomicStore(&(triggerPtr->snd), trigger.snd, memoryOrderRelaxed);
+    atomicStore(&(triggerPtr->fst), trigger.fst, memoryOrderRelaxed);
 #endif  // !defined(MSCCLPP_DEVICE_CUDA)
 
     return curFifoHead;

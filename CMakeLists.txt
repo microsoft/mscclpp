@@ -3,7 +3,7 @@
 
 set(MSCCLPP_MAJOR "0")
 set(MSCCLPP_MINOR "4")
-set(MSCCLPP_PATCH "0")
+set(MSCCLPP_PATCH "2")
 
 set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})
 set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
@@ -97,6 +97,7 @@ include(${PROJECT_SOURCE_DIR}/cmake/AddFormatTargets.cmake)
 # Find ibverbs and libnuma
 find_package(IBVerbs REQUIRED)
 find_package(NUMA REQUIRED)
+find_package(Threads REQUIRED)
 
 add_library(mscclpp_obj OBJECT)
 target_include_directories(mscclpp_obj
@@ -104,7 +105,7 @@ target_include_directories(mscclpp_obj
     ${GPU_INCLUDE_DIRS}
     ${IBVERBS_INCLUDE_DIRS}
     ${NUMA_INCLUDE_DIRS})
-target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES})
+target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} Threads::Threads)
 set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 if(USE_CUDA)
     target_compile_definitions(mscclpp_obj PRIVATE USE_CUDA)
@@ -129,12 +130,16 @@ set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVER
 add_subdirectory(include)
 add_subdirectory(src)
 
+if("${INSTALL_PREFIX}" STREQUAL "")
+    set(INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX})
+endif()
+
 install(TARGETS mscclpp_obj
-    FILE_SET HEADERS DESTINATION include)
+    FILE_SET HEADERS DESTINATION ${INSTALL_PREFIX}/include)
 install(TARGETS mscclpp
-    LIBRARY DESTINATION lib)
+    LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
 install(TARGETS mscclpp_static
-    ARCHIVE DESTINATION lib)
+    ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
 
 # Tests
 if(BUILD_TESTS)
