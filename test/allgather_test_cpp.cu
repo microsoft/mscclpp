@@ -74,7 +74,7 @@ __device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyCh
     if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode)) {
       if ((threadIdx.x % 32) == 0) proxyChan.wait();
     }
-#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
+#if defined(__HIP_PLATFORM_AMD__)
     // NOTE: we actually need a group barrier here for better performance, but __syncthreads() is still correct.
     __syncthreads();
 #else
