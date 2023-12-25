@@ -72,7 +72,7 @@ T* cudaExtCalloc(size_t nelem) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   T* ptr;
   CudaStreamWithFlags stream(cudaStreamNonBlocking);
-#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
+#if defined(__HIP_PLATFORM_AMD__)
   MSCCLPP_CUDATHROW(hipExtMallocWithFlags((void**)&ptr, nelem * sizeof(T), hipDeviceMallocUncached));
 #else
   MSCCLPP_CUDATHROW(cudaMalloc(&ptr, nelem * sizeof(T)));
