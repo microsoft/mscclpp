@@ -37,12 +37,12 @@ jobs:
       - name: MpUnitTests
         run: |
           set -e
-          mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests
-          mpirun --allow-run-as-root -tag-output -np 4 ./build/test/mp_unit_tests
-          mpirun --allow-run-as-root -tag-output -np 8 ./build/test/mp_unit_tests
+          mpirun -np 2 ./build/test/mp_unit_tests
+          mpirun -np 4 ./build/test/mp_unit_tests
+          mpirun -np 8 ./build/test/mp_unit_tests
 
       # - name: PyTests
       #   run: |
       #     set -e
       #     cd build && make pylib-copy
-      #     mpirun --allow-run-as-root -tag-output -np 8 $(which pytest) ../python/test/test_mscclpp.py -x
+      #     mpirun -np 8 $(which pytest) ../python/test/test_mscclpp.py -x
