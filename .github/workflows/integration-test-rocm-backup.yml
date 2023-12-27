@@ -1,4 +1,4 @@
-name: IntegrationTest
+name: "IntegrationTest (ROCm)"
 
 on:
   push:
@@ -17,6 +17,9 @@ jobs:
     strategy:
       matrix:
         rocm: [ rocm6.0 ]
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.rocm }}
+      cancel-in-progress: true
 
     steps:
       - name: Checkout
