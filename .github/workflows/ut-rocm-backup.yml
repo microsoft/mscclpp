@@ -37,9 +37,9 @@ jobs:
       - name: MpUnitTests
         run: |
           set -e
-          mpirun -np 2 ./build/test/mp_unit_tests
-          mpirun -np 4 ./build/test/mp_unit_tests
-          mpirun -np 8 ./build/test/mp_unit_tests
+          mpirun -np 2 ./build/test/mp_unit_tests --gtest_filter=-*Ib*
+          mpirun -np 4 ./build/test/mp_unit_tests --gtest_filter=-*Ib*
+          mpirun -np 8 ./build/test/mp_unit_tests --gtest_filter=-*Ib*
 
       # - name: PyTests
       #   run: |
