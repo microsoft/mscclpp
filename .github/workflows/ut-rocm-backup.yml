@@ -1,0 +1,46 @@
+name: "UnitTest (ROCm)"
+
+on: workflow_dispatch
+
+jobs:
+  UnitTest:
+    runs-on: [ self-hosted, AMD ]
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        rocm: [ rocm6.0 ]
+
+    container:
+      image: "ghcr.io/microsoft/ark/ark:base-dev-${{ matrix.rocm }}"
+      options: --privileged --ipc=host --ulimit memlock=-1:-1 --security-opt seccomp=unconfined --group-add video
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release ..
+          make -j
+        working-directory: ${{ github.workspace }}
+
+      - name: UnitTests
+        run: |
+          ./build/test/unit_tests
+
+      - name: MpUnitTests
+        run: |
+          set -e
+          mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests
+          mpirun --allow-run-as-root -tag-output -np 4 ./build/test/mp_unit_tests
+          mpirun --allow-run-as-root -tag-output -np 8 ./build/test/mp_unit_tests
+
+      # - name: PyTests
+      #   run: |
+      #     set -e
+      #     cd build && make pylib-copy
+      #     mpirun --allow-run-as-root -tag-output -np 8 $(which pytest) ../python/test/test_mscclpp.py -x
