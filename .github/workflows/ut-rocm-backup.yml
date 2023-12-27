@@ -1,6 +1,12 @@
 name: "UnitTest (ROCm)"
 
-on: workflow_dispatch
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
   UnitTest:
