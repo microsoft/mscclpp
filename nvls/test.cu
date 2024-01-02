@@ -158,22 +158,24 @@ int main() {
   cudaDeviceSynchronize();
   MPI_Barrier(MPI_COMM_WORLD);
   int rept = 10;
-  int nblocks = 16;
-  int blocksize = 1024;
-  // warmup
-  for (int i = 0; i < rept; i++) {
-    testing<<<nblocks, blocksize>>>((float*)mc_va, size / sizeof(float), myrank, nranks);
+  for (int input_size = 1024*1024*8; input_size <= size; input_size *= 2){
+    int block_size = 1024;
+    int nblocks = 16;
+    // warmup
+    for (int i = 0; i < rept; i++) {
+      testing<<<nblocks, block_size>>>((float*)mc_va, input_size / sizeof(float), myrank, nranks);
+    }
+    cudaDeviceSynchronize();
+    MPI_Barrier(MPI_COMM_WORLD);
+    double st = MPI_Wtime();
+    for (int i = 0; i < rept; i++) {
+      testing<<<nblocks, block_size>>>((float*)mc_va, input_size / sizeof(float), myrank, nranks);
+    }
+    cudaDeviceSynchronize();
+    double en = MPI_Wtime();
+    double time = (en - st) / rept;
+    if (!myrank) printf("input_size %d | Time = %f, alg_bw = %f\n", input_size, time, input_size / 1024. / 1024. / 1024. / time);
   }
-  cudaDeviceSynchronize();
-  MPI_Barrier(MPI_COMM_WORLD);
-  double st = MPI_Wtime();
-  for (int i = 0; i < rept; i++) {
-    testing<<<nblocks, blocksize>>>((float*)mc_va, size / sizeof(float), myrank, nranks);
-  }
-  cudaDeviceSynchronize();
-  double en = MPI_Wtime();
-  double time = (en - st) / rept;
-  if (!myrank) printf("Time = %f, bw = %f\n", time, size / 1024. / 1024. / 1024. / time);
   MPI_Barrier(MPI_COMM_WORLD);
   MPI_Finalize();
 }
