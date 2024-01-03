@@ -21,7 +21,6 @@ option(BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(USE_ROCM "Use AMD/ROCm." OFF)
 option(BYPASS_GPU_CHECK "Bypass GPU check." OFF)
-option(BYPASS_PEERMEM_CHECK "Bypass checking nvidia_peermem" OFF)
 
 if(BYPASS_GPU_CHECK)
     if(USE_CUDA)
@@ -81,16 +80,6 @@ if(USE_CUDA)
 
     set(GPU_LIBRARIES CUDA::cudart CUDA::cuda_driver)
     set(GPU_INCLUDE_DIRS ${CUDAToolkit_INCLUDE_DIRS})
-
-    # Find if nvidia_peermem is installed and loaded
-    if(NOT BYPASS_PEERMEM_CHECK)
-        execute_process(COMMAND sh -c "lsmod | grep nvidia_peermem"
-                        RESULT_VARIABLE lsmod_result
-                        OUTPUT_VARIABLE lsmod_output)
-        if(NOT lsmod_result EQUAL 0)
-            message(FATAL_ERROR "nvidia_peermem is not installed or not loaded.")
-        endif()
-    endif()
 else()
     set(CMAKE_HIP_STANDARD 17)
     set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -Wall -Wextra")
@@ -141,12 +130,16 @@ set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVER
 add_subdirectory(include)
 add_subdirectory(src)
 
+if("${INSTALL_PREFIX}" STREQUAL "")
+    set(INSTALL_PREFIX "./")
+endif()
+
 install(TARGETS mscclpp_obj
-    FILE_SET HEADERS DESTINATION include)
+    FILE_SET HEADERS DESTINATION ${INSTALL_PREFIX}/include)
 install(TARGETS mscclpp
-    LIBRARY DESTINATION lib)
+    LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
 install(TARGETS mscclpp_static
-    ARCHIVE DESTINATION lib)
+    ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
 
 # Tests
 if(BUILD_TESTS)
