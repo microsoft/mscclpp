@@ -31,6 +31,21 @@ class CudaIpcConnection : public Connection {
   void flush(int64_t timeoutUsec) override;
 };
 
+class NvlsConnection : public Connection {
+ public:
+  NvlsConnection(Endpoint localEndpoint, std::vector<Endpoint> remoteEndpoints);
+
+  Transport transport() override;
+
+  Transport remoteTransport() override;
+
+  void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
+             uint64_t size) override;
+  void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
+
+  void flush(int64_t timeoutUsec) override;
+};
+
 class IBConnection : public Connection {
   Transport transport_;
   Transport remoteTransport_;

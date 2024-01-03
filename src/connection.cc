@@ -92,6 +92,41 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
   INFO(MSCCLPP_P2P, "CudaIpcConnection flushing connection");
 }
 
+// NVLS
+
+NvlsConnection::NvlsConnection(Endpoint localEndpoint, std::vector<Endpoint> remoteEndpoints) {
+  if (localEndpoint.transport() != Transport::Nvls) {
+    throw mscclpp::Error("NVLS connection can only be made from a NVLS endpoint", ErrorCode::InvalidUsage);
+  }
+  for (auto remoteEndpoint : remoteEndpoints) {
+    if (remoteEndpoint.transport() != Transport::Nvls) {
+      throw mscclpp::Error("NVLS connection can only be made to a NVLS endpoint", ErrorCode::InvalidUsage);
+    }
+    // sanity check: make sure the IPC connection is being made within a node
+    if (getImpl(remoteEndpoint)->hostHash_ != getImpl(localEndpoint)->hostHash_) {
+      std::stringstream ss;
+      ss << "NVLS connection can only be made within a node: " << std::hex << getImpl(remoteEndpoint)->hostHash_
+         << " != " << std::hex << getImpl(localEndpoint)->hostHash_;
+      throw mscclpp::Error(ss.str(), ErrorCode::InvalidUsage);
+    }
+  }
+  INFO(MSCCLPP_P2P, "NVLS connection created");
+}
+
+Transport NvlsConnection::transport() { return Transport::Nvls; }
+
+Transport NvlsConnection::remoteTransport() { return Transport::Nvls; }
+
+void NvlsConnection::write(RegisteredMemory, uint64_t, RegisteredMemory, uint64_t, uint64_t) {
+  throw Error("NVLS does not have a CPU write API", ErrorCode::InvalidUsage);
+}
+
+void NvlsConnection::updateAndSync(RegisteredMemory, uint64_t, uint64_t*, uint64_t) {
+  throw Error("NVLS does not have a CPU updateAndSync API", ErrorCode::InvalidUsage);
+}
+
+void NvlsConnection::flush(int64_t) { throw Error("NVLS does not have a CPU flush API", ErrorCode::InvalidUsage); }
+
 // IBConnection
 
 IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context)

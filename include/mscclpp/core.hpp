@@ -125,6 +125,7 @@ class TcpBootstrap : public Bootstrap {
 enum class Transport {
   Unknown,       // Unknown transport type.
   CudaIpc,       // CUDA IPC transport type.
+  Nvls,          // NVLS transport type.
   IB0,           // InfiniBand device 0 transport type.
   IB1,           // InfiniBand device 1 transport type.
   IB2,           // InfiniBand device 2 transport type.
@@ -136,10 +137,11 @@ enum class Transport {
   NumTransports  // The number of transports.
 };
 
-const std::string TransportNames[] = {"UNK", "IPC", "IB0", "IB1", "IB2", "IB3", "IB4", "IB5", "IB6", "IB7", "NUM"};
+const std::string TransportNames[] = {"UNK", "IPC", "NVLS", "IB0", "IB1", "IB2",
+                                      "IB3", "IB4", "IB5",  "IB6", "IB7", "NUM"};
 
 namespace detail {
-const size_t TransportFlagsSize = 10;
+const size_t TransportFlagsSize = 11;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
               "TransportFlagsSize must match the number of transports");
 /// Bitset for storing transport flags.

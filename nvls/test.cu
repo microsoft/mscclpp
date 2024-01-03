@@ -30,9 +30,22 @@
       : "l"(ptr)                                                  \
       : "memory");
 
-__global__ void testing2(float* uc_ptr) { uc_ptr[0] = 1.0; }
+__global__ void init_kernel(float* uc_ptr, int size, int myrank, int nranks) { 
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < size; idx += blockDim.x * gridDim.x){
+    uc_ptr[idx] = myrank + idx;
+  }
+}
 
-#define UNROLL 8
+__global__ void check_correctness(float* uc_ptr, int size, int myrank, int nranks) { 
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < size; idx += blockDim.x * gridDim.x){
+    float expected = (float)((nranks * (nranks-1)) / 2 + nranks * idx);
+    if (abs(uc_ptr[idx] - expected) > 0.01 * expected){
+      printf("error! idx %d: %f != %f\n", idx, uc_ptr[idx], expected);
+    }
+  }
+}
+
+
 __global__ void testing(float* mc_ptr, int size, int myrank, int nranks) {
   // for allreduce we dont even need an UC pointer. just using same mc_ptr for in-place reduction
   // line is assumed to be 16B 4 ints of 8 halves
@@ -72,7 +85,7 @@ int main() {
   CUCHECK(cuMulticastGetGranularity(&minGran, &mcProp, CU_MULTICAST_GRANULARITY_MINIMUM));
   CUCHECK(cuMulticastGetGranularity(&gran, &mcProp, CU_MULTICAST_GRANULARITY_RECOMMENDED));
 
-  if (!myrank) printf("gran = %lu, minGrad = %lu\n", gran, minGran);
+  if (!myrank) printf("nvls multicast granularity: gran = %lu, minGrad = %lu\n", gran, minGran);
   size_t mcSize = ((size + gran - 1) / gran) * gran;
   mcProp.size = mcSize;
 
@@ -154,13 +167,24 @@ int main() {
   CUCHECK(cuMemMap((CUdeviceptr)mc_va, mcSize, 0, handle, 0));
   // set access on MC address
   CUCHECK(cuMemSetAccess((CUdeviceptr)mc_va, mcSize, &accessDesc, 1));
-  testing2<<<1, 1>>>((float*)mc_va);
+
+  int rept = 10;
+  int block_size = 1024;
+  int nblocks = 16;
+
   cudaDeviceSynchronize();
   MPI_Barrier(MPI_COMM_WORLD);
-  int rept = 10;
-  for (int input_size = 1024*1024*8; input_size <= size; input_size *= 2){
-    int block_size = 1024;
-    int nblocks = 16;
+  init_kernel<<<nblocks, block_size>>>((float*)uc_va, size/sizeof(float), myrank, nranks);
+  cudaDeviceSynchronize();
+  MPI_Barrier(MPI_COMM_WORLD);
+  testing<<<nblocks, block_size>>>((float*)mc_va, size / sizeof(float), myrank, nranks);
+  cudaDeviceSynchronize();
+  MPI_Barrier(MPI_COMM_WORLD);
+  check_correctness<<<nblocks, block_size>>>((float*)uc_va, size/sizeof(float), myrank, nranks);
+  cudaDeviceSynchronize();
+  MPI_Barrier(MPI_COMM_WORLD);
+
+  for (int input_size = 1024*3; input_size <= size; input_size *= 2){
     // warmup
     for (int i = 0; i < rept; i++) {
       testing<<<nblocks, block_size>>>((float*)mc_va, input_size / sizeof(float), myrank, nranks);
@@ -174,7 +198,7 @@ int main() {
     cudaDeviceSynchronize();
     double en = MPI_Wtime();
     double time = (en - st) / rept;
-    if (!myrank) printf("input_size %d | Time = %f, alg_bw = %f\n", input_size, time, input_size / 1024. / 1024. / 1024. / time);
+    if (!myrank) printf("input_size %d | Time = %f us, alg_bw = %f (GBps)\n", input_size, time*1e6, input_size / 1e9 / time);
   }
   MPI_Barrier(MPI_COMM_WORLD);
   MPI_Finalize();
