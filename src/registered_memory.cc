@@ -20,6 +20,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       hostHash(getHostHash()),
       pidHash(getPidHash()),
       transports(transports) {
+  // CUDA IPC
   if (transports.has(Transport::CudaIpc)) {
     TransportInfo transportInfo;
     transportInfo.transport = Transport::CudaIpc;
@@ -34,6 +35,8 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     transportInfo.cudaIpcOffsetFromBase = (char*)data - (char*)baseDataPtr;
     this->transportInfos.push_back(transportInfo);
   }
+
+  // IB
   if ((transports & AllIBTransports).any()) {
     auto addIb = [&](Transport ibTransport) {
       TransportInfo transportInfo;
@@ -54,6 +57,10 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     if (transports.has(Transport::IB6)) addIb(Transport::IB6);
     if (transports.has(Transport::IB7)) addIb(Transport::IB7);
   }
+
+  // NVLS
+  // if ((transports.has(Transport::NVLS))) {
+  // }
 }
 
 MSCCLPP_API_CPP RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) : pimpl_(pimpl) {}

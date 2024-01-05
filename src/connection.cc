@@ -94,7 +94,9 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 
 // NVLS
 
-NvlsConnection::NvlsConnection(Endpoint localEndpoint, std::vector<Endpoint> remoteEndpoints) {
+NvlsConnection::NvlsConnection(Endpoint localEndpoint, std::vector<Endpoint> remoteEndpoints, size_t bufferSize,
+                               bool isRoot)
+    : isRoot_(isRoot) {
   if (localEndpoint.transport() != Transport::Nvls) {
     throw mscclpp::Error("NVLS connection can only be made from a NVLS endpoint", ErrorCode::InvalidUsage);
   }
@@ -110,6 +112,47 @@ NvlsConnection::NvlsConnection(Endpoint localEndpoint, std::vector<Endpoint> rem
       throw mscclpp::Error(ss.str(), ErrorCode::InvalidUsage);
     }
   }
+  int nDevices = 1 + remoteEndpoints.size();
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDeviceId_));
+
+  CUmulticastObjectProp mcProp = {};
+  mcProp.numDevices = nDevices;
+  mcProp.size = bufferSize;
+  mcProp.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+
+  size_t minGran = 0;
+  size_t gran = 0;
+  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minGran, &mcProp, CU_MULTICAST_GRANULARITY_MINIMUM));
+  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&gran, &mcProp, CU_MULTICAST_GRANULARITY_RECOMMENDED));
+  // only root needs to create the multicast handle
+  if (isRoot_) {
+    size_t mcSize = ((bufferSize + gran - 1) / gran) * gran;
+    mcProp.size = mcSize;
+
+    MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp));
+  }
+
+  // Allocate physical memory
+  CUmemAllocationProp prop = {};
+  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  prop.location.id = cudaDeviceId_;
+  prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+
+  // allocate physical memory (data buffer)
+  MSCCLPP_CUTHROW(cuMemCreate(&memHandle_, bufferSize, &prop, 0 /*flags*/));
+
+  // usual VA business: map both MC and PA to two different VA addresses
+  CUmemAccessDesc accessDesc = {};
+  accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  accessDesc.location.id = cudaDeviceId_;
+  accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+  // Map a VA to UC space
+  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&deviceBuffer_, bufferSize, minGran, 0U, 0));
+  MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)deviceBuffer_, bufferSize, 0, memHandle_, 0));
+  // set access on UC address
+  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)deviceBuffer_, bufferSize, &accessDesc, 1));
+
   INFO(MSCCLPP_P2P, "NVLS connection created");
 }
 
@@ -126,6 +169,8 @@ void NvlsConnection::updateAndSync(RegisteredMemory, uint64_t, uint64_t*, uint64
 }
 
 void NvlsConnection::flush(int64_t) { throw Error("NVLS does not have a CPU flush API", ErrorCode::InvalidUsage); }
+
+void* NvlsConnection::getDevicePointer() { return deviceBuffer_; }
 
 // IBConnection
 
