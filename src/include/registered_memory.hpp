@@ -27,6 +27,9 @@ struct TransportInfo {
       const IbMr* ibMr;
       IbMrInfo ibMrInfo;
     };
+    struct {
+      int fileDesciptor;
+    };
   };
 };
 

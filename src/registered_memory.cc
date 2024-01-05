@@ -59,8 +59,19 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
   }
 
   // NVLS
-  // if ((transports.has(Transport::NVLS))) {
-  // }
+  if ((transports.has(Transport::Nvls))) {
+    if (size != sizeof(CUmemGenericAllocationHandle)) {
+      throw mscclpp::Error("data must be an element of type CUmemGenericAllocationHandle", ErrorCode::InvalidUsage);
+    }
+    if ((transports & AllIBTransports).any() || (transports.has(Transport::CudaIpc))) {
+      throw mscclpp::Error("NVLS transport can only be used by itself", ErrorCode::InvalidUsage);
+    }
+    TransportInfo transportInfo;
+    MSCCLPP_CUTHROW(cuMemExportToShareableHandle(&transportInfo.fileDesciptor,
+                                                 *reinterpret_cast<CUmemGenericAllocationHandle*>(data),
+                                                 CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0 /*flags*/));
+    this->transportInfos.push_back(transportInfo);
+  }
 }
 
 MSCCLPP_API_CPP RegisteredMemory::RegisteredMemory(std::shared_ptr<Impl> pimpl) : pimpl_(pimpl) {}
@@ -95,6 +106,9 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
                   std::back_inserter(result));
     } else if (AllIBTransports.has(entry.transport)) {
       std::copy_n(reinterpret_cast<char*>(&entry.ibMrInfo), sizeof(entry.ibMrInfo), std::back_inserter(result));
+    } else if (entry.transport == Transport::Nvls) {
+      std::copy_n(reinterpret_cast<char*>(&entry.fileDesciptor), sizeof(entry.fileDesciptor),
+                  std::back_inserter(result));
     } else {
       throw mscclpp::Error("Unknown transport", ErrorCode::InternalError);
     }
@@ -136,6 +150,9 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
       std::copy_n(it, sizeof(transportInfo.ibMrInfo), reinterpret_cast<char*>(&transportInfo.ibMrInfo));
       it += sizeof(transportInfo.ibMrInfo);
       transportInfo.ibLocal = false;
+    } else if (transportInfo.transport == Transport::Nvls) {
+      std::copy_n(it, sizeof(transportInfo.fileDesciptor), reinterpret_cast<char*>(&transportInfo.fileDesciptor));
+      it += sizeof(transportInfo.fileDesciptor);
     } else {
       throw mscclpp::Error("Unknown transport", ErrorCode::InternalError);
     }
@@ -156,6 +173,12 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
     this->data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
     INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", this->data);
+  } else if (transports.has(Transport::Nvls) && getHostHash() == this->hostHash) {
+    auto entry = getTransportInfo(Transport::Nvls);
+    this->data = new CUmemGenericAllocationHandle;
+    MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(reinterpret_cast<CUmemGenericAllocationHandle*>(this->data),
+                                                   reinterpret_cast<void*>(entry.fileDesciptor),
+                                                   CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
   } else {
     // No valid data pointer can be set
     this->data = nullptr;
@@ -173,6 +196,9 @@ RegisteredMemory::Impl::~Impl() {
       INFO(MSCCLPP_P2P, "Closed CUDA IPC handle at pointer %p", base);
     }
     data = nullptr;
+  }
+  if (data && transports.has(Transport::Nvls)) {
+    delete reinterpret_cast<CUmemGenericAllocationHandle*>(this->data);
   }
 }
 
