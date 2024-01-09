@@ -22,8 +22,8 @@ using ProxyHandler = std::function<ProxyHandlerResult(ProxyTrigger)>;
 
 class Proxy {
  public:
-  Proxy(ProxyHandler handler, std::function<void()> threadInit, size_t fifoSize = 128);
-  Proxy(ProxyHandler handler, size_t fifoSize = 128);
+  Proxy(ProxyHandler handler, std::function<void()> threadInit, size_t fifoSize = DEFAULT_FIFO_SIZE);
+  Proxy(ProxyHandler handler, size_t fifoSize = DEFAULT_FIFO_SIZE);
   ~Proxy();
 
   void start();
