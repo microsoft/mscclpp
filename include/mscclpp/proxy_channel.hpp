@@ -26,7 +26,7 @@ class BaseProxyService {
 class ProxyService : public BaseProxyService {
  public:
   /// Constructor.
-  ProxyService();
+  ProxyService(size_t fifoSize = 128);
 
   /// Build and add a semaphore to the proxy service.
   /// @param connection The connection associated with the semaphore.
