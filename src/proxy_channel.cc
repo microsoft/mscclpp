@@ -16,9 +16,9 @@ MSCCLPP_API_CPP ProxyChannel::ProxyChannel(SemaphoreId semaphoreId, std::shared_
 MSCCLPP_API_CPP SimpleProxyChannel::SimpleProxyChannel(ProxyChannel proxyChan, MemoryId dst, MemoryId src)
     : proxyChan_(proxyChan), dst_(dst), src_(src) {}
 
-MSCCLPP_API_CPP ProxyService::ProxyService()
+MSCCLPP_API_CPP ProxyService::ProxyService(size_t fifoSize)
     : proxy_(std::make_shared<Proxy>([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); },
-                                     [&]() { bindThread(); })) {
+                                     [&]() { bindThread(); }, fifoSize)) {
   int cudaDevice;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
   deviceNumaNode = getDeviceNumaNode(cudaDevice);
