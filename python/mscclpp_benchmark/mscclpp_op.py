@@ -66,8 +66,8 @@ class MscclppAllReduce1:
 
         self.set_params(nblocks, block_size, read_only)
 
-    def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
+    def __call__(self, stream):
+        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream)
         return self.memory
 
     def set_params(self, nblocks, block_size, read_only):
@@ -131,8 +131,8 @@ class MscclppAllReduce2:
 
         self.set_params(nblocks, block_size)
 
-    def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
+    def __call__(self, stream):
+        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream)
         return self.memory_out
 
     def set_params(self, nblocks, block_size):
@@ -201,8 +201,8 @@ class MscclppAllReduce3:
 
         self.set_params(nblocks, block_size)
 
-    def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, 24, 1024, 0, stream_ptr)
+    def __call__(self, stream):
+        self.kernel.launch_kernel(self.params, 24, 1024, 0, stream)
         return self.memory
 
     def set_params(self, nblocks, block_size):
@@ -295,8 +295,8 @@ class MscclppAllReduce4:
 
         self.set_params(nblocks, block_size, pipeline_depth)
 
-    def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
+    def __call__(self, stream):
+        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream)
         return self.memory
 
     def set_params(self, nblocks, block_size, pipeline_depth):
@@ -388,8 +388,8 @@ class MscclppAllReduce5:
 
         self.set_params(nblocks, block_size)
 
-    def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
+    def __call__(self, stream):
+        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream)
         return self.memory_out
 
     def set_params(self, nblocks, block_size):
