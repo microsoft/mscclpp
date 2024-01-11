@@ -94,7 +94,9 @@ class KernelBuilder:
                 f"{self._tempdir.name}/{output_file}",
             ]
         else:
-            hipcc = os.environ.get("HIPCC", "hipcc")
+            # TODO (binyli): check this in rocm environment
+            rocm_home = os.environ.get("ROCM_HOME")
+            hipcc = os.path.join(rocm_home, "bin/hipcc") if rocm_home else "hipcc"
             command = [
                 hipcc,
                 f"-std={std_version}",
