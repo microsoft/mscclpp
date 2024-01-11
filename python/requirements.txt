@@ -1,5 +1,4 @@
 mpi4py
-cupy-cuda11x
 prettytable
 cuda-python
 netifaces

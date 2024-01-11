@@ -28,7 +28,7 @@ ADD . /tmp/mscclpp
 WORKDIR /tmp/mscclpp
 ARG TARGET="cuda12.1"
 RUN cuda_major_version=$(echo ${TARGET} | grep -oP 'cuda\K[0-9]+') && \
-    python3 -m pip install --no-cache-dir -r python/requirements_cu${cuda_major_version}.txt
+    python3 -m pip install --no-cache-dir -r python/requirements.txt
 
 # Set PATH
 RUN echo PATH="${PATH}" > /etc/environment

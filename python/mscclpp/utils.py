@@ -8,40 +8,20 @@ import subprocess
 import tempfile
 from typing import Type
 
-from cuda import cuda, nvrtc, cudart
 import cupy as cp
 import numpy as np
 
 
-def _check_cuda_errors(result):
-    if result[0].value:
-        raise RuntimeError(f"CUDA error code={result[0].value}({_cuda_get_error(result[0])})")
-    if len(result) == 1:
-        return None
-    elif len(result) == 2:
-        return result[1]
-    else:
-        return result[1:]
-
-
-def _cuda_get_error(error):
-    if isinstance(error, cuda.CUresult):
-        err, name = cuda.cuGetErrorName(error)
-        return name if err == cuda.CUresult.CUDA_SUCCESS else "<unknown>"
-    elif isinstance(error, cudart.cudaError_t):
-        return cudart.cudaGetErrorName(error)[1]
-    elif isinstance(error, nvrtc.nvrtcResult):
-        return nvrtc.nvrtcGetErrorString(error)[1]
-    else:
-        raise RuntimeError("Unknown error type: {}".format(error))
-
-
 class Kernel:
+    CU_LAUNCH_PARAM_BUFFER_POINTER = 0x01
+    CU_LAUNCH_PARAM_BUFFER_SIZE = 0x02
+    CU_LAUNCH_PARAM_END = 0x00 if not cp.cuda.runtime.is_hip else 0x03
+
     def __init__(self, ptx: bytes, kernel_name: str, device_id: int):
-        self._context = _check_cuda_errors(cuda.cuCtxGetCurrent())
+        self._context = cp.cuda.driver.ctxGetCurrent()
         assert self._context is not None
-        self._module = _check_cuda_errors(cuda.cuModuleLoadData(ptx))
-        self._kernel = _check_cuda_errors(cuda.cuModuleGetFunction(self._module, kernel_name.encode()))
+        self._module = cp.cuda.driver.moduleLoadData(ptx)
+        self._kernel = cp.cuda.driver.moduleGetFunction(self._module, kernel_name)
 
     def launch_kernel(
         self,
@@ -49,26 +29,27 @@ class Kernel:
         nblocks: int,
         nthreads: int,
         shared: int,
-        stream: Type[cuda.CUstream] or Type[cudart.cudaStream_t],
+        stream: Type[cp.cuda.Stream] or Type[None],
     ):
         buffer = (ctypes.c_byte * len(params)).from_buffer_copy(params)
         buffer_size = ctypes.c_size_t(len(params))
         config = np.array(
             [
-                cuda.CU_LAUNCH_PARAM_BUFFER_POINTER,
+                Kernel.CU_LAUNCH_PARAM_BUFFER_POINTER,
                 ctypes.addressof(buffer),
-                cuda.CU_LAUNCH_PARAM_BUFFER_SIZE,
+                Kernel.CU_LAUNCH_PARAM_BUFFER_SIZE,
                 ctypes.addressof(buffer_size),
-                cuda.CU_LAUNCH_PARAM_END,
+                Kernel.CU_LAUNCH_PARAM_END,
             ],
             dtype=np.uint64,
         )
-        _check_cuda_errors(
-            cuda.cuLaunchKernel(self._kernel, nblocks, 1, 1, nthreads, 1, 1, shared, stream, 0, config.ctypes.data)
+        cuda_stream = stream.ptr if stream else 0
+        cp.cuda.driver.launchKernel(
+            self._kernel, nblocks, 1, 1, nthreads, 1, 1, shared, cuda_stream, 0, config.ctypes.data
         )
 
     def __del__(self):
-        cuda.cuModuleUnload(self._module)
+        cp.cuda.driver.moduleUnload(self._module)
 
 
 class KernelBuilder:
@@ -95,27 +76,36 @@ class KernelBuilder:
     def _compile_cuda(self, source_file, output_file, device_id, std_version="c++17"):
         mscclpp_home = os.environ.get("MSCCLPP_HOME", "/usr/local/mscclpp")
         include_dir = os.path.join(mscclpp_home, "include")
-        major = _check_cuda_errors(
-            cudart.cudaDeviceGetAttribute(cudart.cudaDeviceAttr.cudaDevAttrComputeCapabilityMajor, device_id)
-        )
-        minor = _check_cuda_errors(
-            cudart.cudaDeviceGetAttribute(cudart.cudaDeviceAttr.cudaDevAttrComputeCapabilityMinor, device_id)
-        )
-        cuda_home = os.environ.get("CUDA_HOME")
-        nvcc = os.path.join(cuda_home, "bin/nvcc") if cuda_home else "nvcc"
-        command = [
-            nvcc,
-            f"-std={std_version}",
-            "-ptx",
-            "-Xcompiler",
-            "-Wall,-Wextra",
-            f"-I{include_dir}",
-            f"{source_file}",
-            f"--gpu-architecture=compute_{major}{minor}",
-            f"--gpu-code=sm_{major}{minor},compute_{major}{minor}",
-            "-o",
-            f"{self._tempdir.name}/{output_file}",
-        ]
+        compute_capability = cp.cuda.Device().compute_capability
+        if not cp.cuda.runtime.is_hip:
+            cuda_home = os.environ.get("CUDA_HOME")
+            nvcc = os.path.join(cuda_home, "bin/nvcc") if cuda_home else "nvcc"
+            command = [
+                nvcc,
+                f"-std={std_version}",
+                "-ptx",
+                "-Xcompiler",
+                "-Wall,-Wextra",
+                f"-I{include_dir}",
+                f"{source_file}",
+                f"--gpu-architecture=compute_{compute_capability}",
+                f"--gpu-code=sm_{compute_capability},compute_{compute_capability}",
+                "-o",
+                f"{self._tempdir.name}/{output_file}",
+            ]
+        else:
+            hipcc = os.environ.get("HIPCC", "hipcc")
+            command = [
+                hipcc,
+                f"-std={std_version}",
+                "-Xcompiler",
+                "-Wall,-Wextra",
+                f"--offload-arch=gfx{compute_capability}",
+                f"-I{include_dir}",
+                f"{source_file}",
+                "-o",
+                f"{self._tempdir.name}/{output_file}",
+            ]
         if self.macros:
             command += self.macros
         try:
