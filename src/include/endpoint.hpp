@@ -22,6 +22,13 @@ struct Endpoint::Impl {
   bool ibLocal_;
   IbQp* ibQp_;
   IbQpInfo ibQpInfo_;
+
+  // These are only defined for multicast (NVLS) capability
+  CUmulticastObjectProp mcProp_;
+  CUmemGenericAllocationHandle mcHandle_;
+  size_t minMcGran_;
+  size_t mcGran_;
+  int fileDesc_;
 };
 
 }  // namespace mscclpp

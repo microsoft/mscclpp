@@ -125,7 +125,8 @@ class TcpBootstrap : public Bootstrap {
 enum class Transport {
   Unknown,       // Unknown transport type.
   CudaIpc,       // CUDA IPC transport type.
-  Nvls,          // NVLS transport type.
+  NvlsRoot,      // NVLS for root transport type.
+  NvlsNonRoot,   // NVLS for non-root transport type.
   IB0,           // InfiniBand device 0 transport type.
   IB1,           // InfiniBand device 1 transport type.
   IB2,           // InfiniBand device 2 transport type.
@@ -137,11 +138,11 @@ enum class Transport {
   NumTransports  // The number of transports.
 };
 
-const std::string TransportNames[] = {"UNK", "IPC", "NVLS", "IB0", "IB1", "IB2",
+const std::string TransportNames[] = {"UNK", "IPC", "NVLSROOT", "NVLSNONROOT", "IB0", "IB1", "IB2",
                                       "IB3", "IB4", "IB5",  "IB6", "IB7", "NUM"};
 
 namespace detail {
-const size_t TransportFlagsSize = 11;
+const size_t TransportFlagsSize = 13;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
               "TransportFlagsSize must match the number of transports");
 /// Bitset for storing transport flags.
@@ -460,6 +461,8 @@ struct EndpointConfig {
   int ibMaxSendWr = DefaultMaxSendWr;
   int ibMaxWrPerSend = DefaultMaxWrPerSend;
 
+  size_t nvlsBufferSize;
+
   /// Default constructor. Sets transport to Transport::Unknown.
   EndpointConfig() : transport(Transport::Unknown) {}
 
@@ -467,6 +470,15 @@ struct EndpointConfig {
   ///
   /// @param transport The transport to use.
   EndpointConfig(Transport transport) : transport(transport) {}
+
+  /// Constructor for NVLS explicitly
+  /// @param transport must be either NvlsRoot or NvlsNonRoot
+  /// @param nvlsBufferSize is the buffer to be alloced on each device
+  EndpointConfig(Transport transport, size_t nvlsBufferSize) : transport(transport), nvlsBufferSize(nvlsBufferSize) {
+    if (!AllNvlsTransports.has(transport)) {
+      throw Error("This EndpointConfig is only NVLS!", ErrorCode::InvalidUsage);
+    }
+  }
 };
 
 /// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
@@ -687,6 +699,9 @@ extern const TransportFlags NoTransports;
 
 /// A constant TransportFlags object representing all InfiniBand transports.
 extern const TransportFlags AllIBTransports;
+
+/// A constant TransportFlags object representing all NVLS transports.
+extern const TransportFlags AllNvlsTransports;
 
 /// A constant TransportFlags object representing all transports.
 extern const TransportFlags AllTransports;
