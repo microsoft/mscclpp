@@ -67,10 +67,9 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
 
 __constant__ DeviceHandle<mscclpp::SimpleProxyChannel> gChannelOneToOneTestConstProxyChans;
 
-__global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWithPoll, int* ret) {
+__global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWithPoll, int nTries, int* ret) {
   DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = gChannelOneToOneTestConstProxyChans;
   volatile int* sendBuff = (volatile int*)buff;
-  int nTries = 1000;
   int flusher = 0;
   int rank1Offset = 10000000;
   for (int i = 0; i < nTries; i++) {
@@ -139,7 +138,7 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWit
       }
     }
     flusher++;
-    if (flusher == 100) {
+    if (flusher == 1) {
       if (threadIdx.x == 0) proxyChan.flush();
       flusher = 0;
     }
@@ -166,25 +165,71 @@ void ProxyChannelOneToOneTest::testPingPong(bool useIbOnly, bool waitWithPoll) {
 
   std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
 
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, waitWithPoll, ret.get());
+  const int nTries = 1000;
+
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, waitWithPoll, nTries, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
 
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, waitWithPoll, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, waitWithPoll, nTries, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
 
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, waitWithPoll, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, waitWithPoll, nTries, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
 
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, waitWithPoll, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, waitWithPoll, nTries, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
+
+  proxyService->stopProxy();
+}
+
+void ProxyChannelOneToOneTest::testPingPongPerf(bool useIbOnly, bool waitWithPoll) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int nElem = 4 * 1024 * 1024;
+
+  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
+  setupMeshConnections(proxyChannels, useIbOnly, buff.get(), nElem * sizeof(int));
+
+  std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannelHandles;
+  for (auto& ch : proxyChannels) proxyChannelHandles.push_back(ch.deviceHandle());
+
+  ASSERT_EQ(proxyChannels.size(), 1);
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstProxyChans, proxyChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)));
+
+  proxyService->startProxy();
+
+  std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
+
+  auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
+  const std::string testName = std::string(testInfo->test_suite_name()) + "." + std::string(testInfo->name());
+  const int nTries = 1000000;
+
+  // Warm-up
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, waitWithPoll, nTries, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  communicator->bootstrap()->barrier();
+
+  // Measure latency
+  mscclpp::Timer timer;
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, waitWithPoll, nTries, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  communicator->bootstrap()->barrier();
+
+  if (gEnv->rank == 0) {
+    std::cout << testName << ": " << std::setprecision(4) << (float)timer.elapsed() / (float)nTries << " us/iter\n";
+  }
 
   proxyService->stopProxy();
 }
@@ -196,6 +241,10 @@ TEST_F(ProxyChannelOneToOneTest, PingPongIb) { testPingPong(true, false); }
 TEST_F(ProxyChannelOneToOneTest, PingPongWithPoll) { testPingPong(false, true); }
 
 TEST_F(ProxyChannelOneToOneTest, PingPongIbWithPoll) { testPingPong(true, true); }
+
+TEST_F(ProxyChannelOneToOneTest, PingPongPerf) { testPingPongPerf(false, false); }
+
+TEST_F(ProxyChannelOneToOneTest, PingPongPerfIb) { testPingPongPerf(true, false); }
 
 __device__ mscclpp::DeviceSyncer gChannelOneToOneTestProxyChansSyncer;
 
