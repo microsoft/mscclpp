@@ -4,7 +4,7 @@
 #include <mscclpp/fifo_device.hpp>
 #include <mscclpp/semaphore_device.hpp>
 
-extern "C" __global__ void __launch_bounds__(1024, 1) proxy(int my_rank, int nranks, mscclpp::FifoDeviceHandle fifo,
+extern "C" __global__ void LAUNCH_BOUNDS proxy(int my_rank, int nranks, mscclpp::FifoDeviceHandle fifo,
                                                             mscclpp::Host2DeviceSemaphoreDeviceHandle* semaphores) {
   int tid = threadIdx.x;
   if (tid == 0) {

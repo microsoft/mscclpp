@@ -4,7 +4,7 @@
 #include <mscclpp/sm_channel_device.hpp>
 
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
-extern "C" __global__ void __launch_bounds__(1024, 1)
+extern "C" __global__ void LAUNCH_BOUNDS
     sm_channel(mscclpp::SmChannelDeviceHandle* channels, int my_rank, int nranks, int num_elements, int use_packet) {
   int tid = threadIdx.x;
   int bid = blockIdx.x;

@@ -211,7 +211,7 @@ __device__ void allreduce1_helper(mscclpp::SmChannelDeviceHandle* smChans, TYPE*
   }
 }
 
-extern "C" __global__ void __launch_bounds__(1024, 1) allreduce1(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff,
+extern "C" __global__ void LAUNCH_BOUNDS allreduce1(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff,
                                                                  int rank, int nranks, size_t nelems, int read_only) {
   if (read_only)
     allreduce1_helper<1>(smChans, buff, rank, nranks, nelems);
@@ -225,7 +225,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1) allreduce1(mscclpp::SmChan
 
 __device__ uint64_t globalFlag = 1;
 
-extern "C" __global__ void __launch_bounds__(1024, 1)
+extern "C" __global__ void LAUNCH_BOUNDS
     allreduce2(mscclpp::SmChannelDeviceHandle* smChans, TYPE* buff, TYPE* scratch, void* resultBuff, int rank,
                int worldSize, size_t nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
@@ -295,7 +295,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 // AllReduce3
 // -------------------------------------------
 
-extern "C" __global__ void __launch_bounds__(1024, 1)
+extern "C" __global__ void LAUNCH_BOUNDS
     allreduce3(mscclpp::SimpleProxyChannelDeviceHandle* fstRoundChans,
                mscclpp::SimpleProxyChannelDeviceHandle* sndRoundChans, TYPE* buff, TYPE* scratch, int rank,
                int worldSize, size_t nelems) {
@@ -669,7 +669,7 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
   }
 }
 
-extern "C" __global__ void __launch_bounds__(1024, 1) __global__
+extern "C" __global__ void LAUNCH_BOUNDS __global__
     allreduce4(mscclpp::SmChannelDeviceHandle* smChans,
                mscclpp::SimpleProxyChannelDeviceHandle* reduceScatterProxyChans,
                mscclpp::SimpleProxyChannelDeviceHandle* allGatherProxyChans, TYPE* buff, TYPE* scratch, int rank,
@@ -682,7 +682,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1) __global__
 }
 
 // allreduce 5 for 2-nodes
-extern "C" __global__ void __launch_bounds__(1024, 1)
+extern "C" __global__ void LAUNCH_BOUNDS
     allreduce5(mscclpp::SmChannelDeviceHandle* smChans, mscclpp::SimpleProxyChannelDeviceHandle* proxyChans, TYPE* buff,
                TYPE* scratch, TYPE* putBuff, TYPE* resultBuff, int rank, int nRanksPerNode, int worldSize,
                size_t nelems) {

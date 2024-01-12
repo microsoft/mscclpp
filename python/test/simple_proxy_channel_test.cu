@@ -5,7 +5,7 @@
 #include <mscclpp/proxy_channel_device.hpp>
 
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
-extern "C" __global__ void __launch_bounds__(1024, 1)
+extern "C" __global__ void LAUNCH_BOUNDS
     simple_proxy_channel(mscclpp::SimpleProxyChannelDeviceHandle* channels, int my_rank, int nranks, int* data,
                          int* scratch, int num_elements, int use_packet) {
   int tid = threadIdx.x;
