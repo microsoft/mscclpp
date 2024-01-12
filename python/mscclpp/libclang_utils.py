@@ -29,10 +29,29 @@ def code_gen_from_cursor(cursor: clang.cindex.Cursor) -> list[str]:
         prev_token = curr_token
     if len(line.strip()) > 0:
         code.append(line)
-    del line, prev_token
+    del line, prev_token, prev_location, prev_token_end_col, cur_location, line
     return code
 
 def dump_children(node: clang.cindex.Cursor):
     for n in node.get_children():
         print (n.kind, n.type.spelling, n.displayname)
         dump_children(n)
+
+def get_func_decl_data(kernel: clang.cindex.Cursor, skip_rank: bool) -> (list[str], list[str]):
+    new_params = list()
+    call_args = list()
+    if skip_rank == True:
+        for arg in kernel.get_arguments():
+            if arg.displayname == "rank" or arg.type.spelling != "int":
+                new_params.append(arg.type.spelling + " " + arg.displayname)
+                call_args.append(arg.displayname)
+    else:
+        for arg in kernel.get_arguments():
+            if arg.type.spelling != "int":
+                new_params.append(arg.type.spelling + " " + arg.displayname)
+                call_args.append(arg.displayname)
+    return (new_params, call_args)
+
+def build_str(args: list[str], sep: str) -> str:
+    args_str = sep.join(str(v) for v in args)
+    return args_str
