@@ -89,7 +89,7 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.
 ```bash
 # Choose either `requirements_cu11.txt` or `requirements_cu12.txt` according to your CUDA version.
 $ python3 -m pip install -r ./python/requirements_cu12.txt
-$ mpirun -tag-output -np 8 python3 ./python/benchmark/allreduce_bench.py
+$ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
 ```
 
 ### C++ Benchmark (mscclpp-test)
