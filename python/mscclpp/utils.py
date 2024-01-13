@@ -77,7 +77,7 @@ class KernelBuilder:
     def get_key(self, kernel_name, macro_dict):
         return kernel_name + "-".join(f"{key}={macro_dict[key]}" for key in sorted(macro_dict))
 
-    def __init__(self, file: str, kernel_name: str, file_dir: str = None, macro_dict: dict = {}):
+    def __init__(self, file: str, kernel_name: str, file_dir: str = None, macro_dict: dict = {}, include_dir_list: list = []):
         kernel_key = self.get_key(kernel_name, macro_dict)
         if kernel_key in self.kernel_map:
             self._kernel = self.kernel_map[kernel_key]
@@ -87,6 +87,9 @@ class KernelBuilder:
         self.macros = None
         if file_dir:
             self.macros = ["-D{}={}".format(macro, value) for macro, value in macro_dict.items()]
+        self.includes = include_dir_list
+        self.includes.append(os.path.join(os.environ.get("MSCCLPP_HOME", "/usr/local/mscclpp"), "include"))
+        self.includes = [f"-I{x}" for x in self.includes]
         device_id = cp.cuda.Device().id
         ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{kernel_name}.ptx", device_id)
         self._kernel = Kernel(ptx, kernel_name, device_id)
@@ -109,13 +112,13 @@ class KernelBuilder:
             "-ptx",
             "-Xcompiler",
             "-Wall,-Wextra",
-            f"-I{include_dir}",
             f"{source_file}",
             f"--gpu-architecture=compute_{major}{minor}",
             f"--gpu-code=sm_{major}{minor},compute_{major}{minor}",
             "-o",
             f"{self._tempdir.name}/{output_file}",
         ]
+        command += self.includes
         if self.macros:
             command += self.macros
         try:
