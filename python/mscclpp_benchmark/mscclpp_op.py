@@ -4,7 +4,7 @@ import ctypes
 from mscclpp import Transport, ProxyService
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, pack
-
+from kernel_gen import code_gen
 
 IB_TRANSPORTS = [
     Transport.IB0,
@@ -46,7 +46,7 @@ class MscclppAllReduce1:
         self.group.barrier()
         # create a connection for each remote neighbor
         self.connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
-        type_str = type_to_str(memory.dtype)
+        self.type_str = type_to_str(memory.dtype)
 
         # create a sm_channel for each remote neighbor
         self.sm_channels = self.group.make_sm_channels(self.memory, self.connections)
@@ -55,7 +55,7 @@ class MscclppAllReduce1:
             file="allreduce.cu",
             kernel_name="allreduce1",
             file_dir=file_dir,
-            macro_dict={"TYPE": type_str},
+            macro_dict={"TYPE": self.type_str},
         ).get_compiled_kernel()
         self.device_handles = []
         for rank in range(self.group.nranks):
@@ -69,6 +69,26 @@ class MscclppAllReduce1:
     def __call__(self, stream_ptr):
         self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
         return self.memory
+
+    def update_kernel(self):
+        file_dir = os.path.dirname(os.path.abspath(__file__))
+        kernel_name="allreduce1"
+        file_name = "allreduce.cu"
+
+        output_file_name, new_kernel_name = code_gen(file_dir, file_name, kernel_name, [self.group.nranks, self.nblocks, self.read_only])
+        kernel = KernelBuilder(
+            file=output_file_name,
+            kernel_name=new_kernel_name,
+            file_dir=file_dir,
+            macro_dict={"TYPE": self.type_str},
+        ).get_compiled_kernel()
+
+        ptx = kernel.get_ptx()
+        context = kernel.get_context()
+        kernel2 = kernel.get_kernel()
+        module = kernel.get_module()
+
+        self.kernel = kernel 
 
     def set_params(self, nblocks, block_size, read_only):
         self.nblocks = nblocks
@@ -113,14 +133,14 @@ class MscclppAllReduce2:
         self.group.barrier()
         # create a connection for each remote neighbor
         self.connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
-        type_str = type_to_str(memory.dtype)
+        self.type_str = type_to_str(memory.dtype)
 
         self.scratch = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
         # create a sm_channel for each remote neighbor
         self.sm_channels = self.group.make_sm_channels_with_scratch(self.memory, self.scratch, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
-            file="allreduce.cu", kernel_name="allreduce2", file_dir=file_dir, macro_dict={"TYPE": type_str}
+            file="allreduce.cu", kernel_name="allreduce2", file_dir=file_dir, macro_dict={"TYPE": self.type_str}
         ).get_compiled_kernel()
         self.device_handles = []
         for rank in range(self.group.nranks):
@@ -134,6 +154,24 @@ class MscclppAllReduce2:
     def __call__(self, stream_ptr):
         self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
         return self.memory_out
+
+    def update_kernel(self):
+        file_dir = os.path.dirname(os.path.abspath(__file__))
+        # print(self.type_str)
+        # print(self.group.my_rank)
+        # print(self.block_size)
+        # print(self.nblocks)
+        kernel_name="allreduce2"
+        file_name = "allreduce.cu"
+
+        # output_file_path, new_kernel_name = code_gen(file_dir, file_name, kernel_name, [self.group.nranks, self.nblocks])
+
+        # self.kernel = KernelBuilder(
+        #     file="allreduce.cu",
+        #     kernel_name="allreduce1",
+        #     file_dir=file_dir,
+        #     macro_dict={"TYPE": self.type_str},
+        # ).get_compiled_kernel()
 
     def set_params(self, nblocks, block_size):
         self.nblocks = nblocks
@@ -176,7 +214,7 @@ class MscclppAllReduce3:
         self.group.barrier()
         # create a connection for each remote neighbor
         self.connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
-        type_str = type_to_str(memory.dtype)
+        self.type_str = type_to_str(memory.dtype)
 
         self.proxy_service = proxy_service
         self.scratch = cp.zeros(self.memory.size, dtype=self.memory.dtype)
@@ -188,7 +226,7 @@ class MscclppAllReduce3:
         self.snd_round_proxy_chans = self.group.make_proxy_channels(self.proxy_service, self.memory, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
-            file="allreduce.cu", kernel_name="allreduce3", file_dir=file_dir, macro_dict={"TYPE": type_str}
+            file="allreduce.cu", kernel_name="allreduce3", file_dir=file_dir, macro_dict={"TYPE": self.type_str}
         ).get_compiled_kernel()
         self.fst_device_handles = []
         self.snd_device_handles = []
@@ -204,6 +242,24 @@ class MscclppAllReduce3:
     def __call__(self, stream_ptr):
         self.kernel.launch_kernel(self.params, 24, 1024, 0, stream_ptr)
         return self.memory
+
+    def update_kernel(self):
+        file_dir = os.path.dirname(os.path.abspath(__file__))
+        # print(self.type_str)
+        # print(self.group.my_rank)
+        # print(self.block_size)
+        # print(self.nblocks)
+        
+        kernel_name="allreduce3"
+        file_name = "allreduce.cu"
+
+        # output_file_name, new_kernel_name = code_gen(file_dir, file_name, kernel_name, [self.group.nranks, self.nblocks, self.block_size])
+        # self.kernel = KernelBuilder(
+        #     file=output_file_name,
+        #     kernel_name=new_kernel_name,
+        #     file_dir=file_dir,
+        #     macro_dict={"TYPE": self.type_str},
+        # ).get_compiled_kernel()
 
     def set_params(self, nblocks, block_size):
         self.nblocks = nblocks
@@ -271,7 +327,7 @@ class MscclppAllReduce4:
         )
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
-            file="allreduce.cu", kernel_name="allreduce4", file_dir=file_dir, macro_dict={"TYPE": type_str}
+            file="allreduce.cu", kernel_name="allreduce4", file_dir=file_dir, macro_dict={"TYPE": self.type_str}
         ).get_compiled_kernel()
         self.sm_device_handles = []
         self.reduce_sactter_proxy_device_handles = []
@@ -298,6 +354,21 @@ class MscclppAllReduce4:
     def __call__(self, stream_ptr):
         self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
         return self.memory
+
+    def update_kernel(self):
+        file_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        kernel_name="allreduce4"
+        file_name = "allreduce.cu"
+
+        # output_file_path, new_kernel_name = code_gen(file_dir, file_name, kernel_name, [self.block_size, self.nblocks])
+        #print(self.type_str)
+        # self.kernel = KernelBuilder(
+        #     file="allreduce.cu",
+        #     kernel_name="allreduce1",
+        #     file_dir=file_dir,
+        #     macro_dict={"TYPE": self.type_str},
+        # ).get_compiled_kernel()
 
     def set_params(self, nblocks, block_size, pipeline_depth):
         self.nblocks = nblocks
@@ -359,7 +430,7 @@ class MscclppAllReduce5:
         self.group.barrier()
         # create a connection for each remote neighbor
         self.connections = self.group.make_connection(remote_nghrs, transports)
-        type_str = type_to_str(memory.dtype)
+        self.type_str = type_to_str(memory.dtype)
 
         self.proxy_service = proxy_service
         self.scratch = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
@@ -373,7 +444,7 @@ class MscclppAllReduce5:
         )
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
-            file="allreduce.cu", kernel_name="allreduce5", file_dir=file_dir, macro_dict={"TYPE": type_str}
+            file="allreduce.cu", kernel_name="allreduce5", file_dir=file_dir, macro_dict={"TYPE": self.type_str}
         ).get_compiled_kernel()
         self.sm_device_handles = []
         self.proxy_device_handles = []
@@ -391,6 +462,21 @@ class MscclppAllReduce5:
     def __call__(self, stream_ptr):
         self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
         return self.memory_out
+
+    def update_kernel(self):
+        file_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        kernel_name="allreduce5"
+        file_name = "allreduce.cu"
+
+        # output_file_path, new_kernel_name = code_gen(file_dir, file_name, kernel_name, [self.block_size, self.nblocks])
+        #print(self.type_str)
+        # self.kernel = KernelBuilder(
+        #     file="allreduce.cu",
+        #     kernel_name="allreduce1",
+        #     file_dir=file_dir,
+        #     macro_dict={"TYPE": self.type_str},
+        # ).get_compiled_kernel()
 
     def set_params(self, nblocks, block_size):
         self.nblocks = nblocks
@@ -418,3 +504,4 @@ class MscclppAllReduce5:
             for block_size in block_size_to_try:
                 self.set_params(nblocks, block_size)
                 yield nblocks, block_size
+

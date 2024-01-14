@@ -142,29 +142,46 @@ def run_benchmark(
     memory = cp.zeros(nelem, dtype=data_type)
     memory_out = cp.zeros(nelem, dtype=data_type)
     cp.cuda.runtime.deviceSynchronize()
-
     proxy_service = None
     if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
         if memory.nbytes < 2**20:
+            # print("allreduce2")
             mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
         elif memory.nbytes < 2**29:
+            # print("allreduce1")
             mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
         else:
             proxy_service = ProxyService()
+            # print("allreduce3")
             mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
             proxy_service.start_proxy()
     else:
         if memory.nbytes < 2**22:
             proxy_service = ProxyService()
+            # print("allreduce5")
             mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
             proxy_service.start_proxy()
         else:
             proxy_service = ProxyService()
+            # print("allreduce4")
             mscclpp_call = MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)
             proxy_service.start_proxy()
 
     best_config = find_best_config(mscclpp_call, 20)
     mscclpp_call.set_params(*best_config)
+
+    if MPI.COMM_WORLD.rank == 0:
+        # print(mscclpp_call.block_size)
+        # print(mscclpp_call.nblocks)
+        if(isinstance(mscclpp_call, MscclppAllReduce1) == True):
+            # print("allreduce1")
+            mscclpp_call.update_kernel()
+        # elif (isinstance(mscclpp_call, MscclppAllReduce2) == True):
+        #     # print("allreduce2")
+        #     mscclpp_call.update_kernel()
+        # elif (isinstance(mscclpp_call, MscclppAllReduce3) == True):
+        #     # print("allreduce3")
+        #     mscclpp_call.update_kernel()
 
     nccl_call = NcclAllReduce(nccl_op, memory)
 
@@ -258,6 +275,7 @@ if __name__ == "__main__":
         if nelems * data_type().itemsize > 2**32:
             break  # due to trigger bit width limitation, we can only support up to 2**32
 
+        run_benchmark(mscclpp_group, nccl_comm, table, 100, nelems)
         size, mscclpp_algBw, nccl_algBw, speed_up = run_benchmark(mscclpp_group, nccl_comm, table, 100, nelems)
         sizes.append(size)
         mscclpp_algbw.append(mscclpp_algBw)
