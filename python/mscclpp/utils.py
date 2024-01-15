@@ -17,7 +17,7 @@ class Kernel:
     CU_LAUNCH_PARAM_BUFFER_SIZE = 0x02
     CU_LAUNCH_PARAM_END = 0x00 if not cp.cuda.runtime.is_hip else 0x03
 
-    def __init__(self, ptx: bytes, kernel_name: str, device_id: int):
+    def __init__(self, ptx: bytes, kernel_name: str):
         self._module = cp.cuda.driver.moduleLoadData(ptx)
         self._kernel = cp.cuda.driver.moduleGetFunction(self._module, kernel_name)
 
@@ -66,12 +66,11 @@ class KernelBuilder:
         self.macros = None
         if file_dir:
             self.macros = ["-D{}={}".format(macro, value) for macro, value in macro_dict.items()]
-        device_id = cp.cuda.Device().id
-        ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{kernel_name}.ptx", device_id)
-        self._kernel = Kernel(ptx, kernel_name, device_id)
+        ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{kernel_name}.ptx")
+        self._kernel = Kernel(ptx, kernel_name)
         self.kernel_map[kernel_key] = self._kernel
 
-    def _compile_cuda(self, source_file, output_file, device_id, std_version="c++17"):
+    def _compile_cuda(self, source_file, output_file, std_version="c++17"):
         mscclpp_home = os.environ.get("MSCCLPP_HOME", "/usr/local/mscclpp")
         include_dir = os.path.join(mscclpp_home, "include")
         if not cp.cuda.runtime.is_hip:
@@ -94,9 +93,7 @@ class KernelBuilder:
         else:
             # the gcn arch name is like "gfx942:sramecc+:xnack-"
             gcn_arch = (
-                cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)["gcnArchName"]
-                .decode("utf-8")
-                .split(":")[0]
+                cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)["gcnArchName"].decode("utf-8").split(":")[0]
             )
             rocm_home = os.environ.get("ROCM_HOME")
             hipcc = os.path.join(rocm_home, "bin/hipcc") if rocm_home else "hipcc"
