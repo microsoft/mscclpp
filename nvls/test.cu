@@ -120,9 +120,16 @@ int main() {
   }
   ncclIpcSocketClose(&ipcSock);
 
+  pid_t currentPid = getpid();
+  MPI_Bcast(&fd, sizeof(fd), MPI_CHAR, 0, MPI_COMM_WORLD);
+  MPI_Bcast(&currentPid, sizeof(currentPid), MPI_CHAR, 0, MPI_COMM_WORLD);
+
   // MPI_Bcast(&fd, sizeof(fd), MPI_CHAR, 0, MPI_COMM_WORLD);
   // everyone else would now have same multicast object
   if (myrank) CUCHECK(cuMemImportFromShareableHandle(&handle, (void*)peerfd, handleType));
+  int peerFd = 0;
+  if (myrank) peerFd = pidfd_getfd(currendPid, fd, 0);
+  printf("peerFd = %d\n", peerFd);
 
   //  if(myrank)
   //    close(peerfd);
