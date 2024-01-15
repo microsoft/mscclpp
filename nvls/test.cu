@@ -2,11 +2,10 @@
 #include <cuda_runtime.h>
 #include <mpi.h>
 #include <stdio.h>
-// #include <nccl.h>
 #include <cudaTypedefs.h>
 #include <unistd.h>
-
-#include "ipcsocket.cc"
+#include <sys/syscall.h>
+#include <sys/types.h>
 
 #define CUCHECK(cmd)                                     \
   do {                                                   \
@@ -104,32 +103,17 @@ int main() {
   // exported handles
   //  moreover it would the only way to do it on GraceHopper systems, since UDS is limited to single Unix node
 
-  volatile uint32_t abortFlag = 0;
-  struct ncclIpcSocket ipcSock = {0};
-  uint64_t opId = 0xdeadcafebeef;
-  // ncclResult_t ret = ncclSuccess;
-
-  ncclIpcSocketInit(&ipcSock, myrank, (uint64_t)opId, &abortFlag);
-  MPI_Barrier(MPI_COMM_WORLD);
-  if (!myrank) {
-    for (int p = 1; p < nranks; p++) {
-      ncclIpcSocketSendFd(&ipcSock, fd, p, (uint64_t)opId);
-    }
-  } else {
-    ncclIpcSocketRecvFd(&ipcSock, &peerfd);
-  }
-  ncclIpcSocketClose(&ipcSock);
-
   pid_t currentPid = getpid();
   MPI_Bcast(&fd, sizeof(fd), MPI_CHAR, 0, MPI_COMM_WORLD);
   MPI_Bcast(&currentPid, sizeof(currentPid), MPI_CHAR, 0, MPI_COMM_WORLD);
+  int pidFd = syscall(SYS_pidfd_open, currentPid, 0);
 
   // MPI_Bcast(&fd, sizeof(fd), MPI_CHAR, 0, MPI_COMM_WORLD);
   // everyone else would now have same multicast object
-  if (myrank) CUCHECK(cuMemImportFromShareableHandle(&handle, (void*)peerfd, handleType));
   int peerFd = 0;
-  if (myrank) peerFd = pidfd_getfd(currendPid, fd, 0);
-  printf("peerFd = %d\n", peerFd);
+  peerFd = syscall(SYS_pidfd_getfd, pidFd, fd, 0);
+  if (myrank) CUCHECK(cuMemImportFromShareableHandle(&handle, (void*)peerFd, handleType));
+  MPI_Barrier(MPI_COMM_WORLD);
 
   //  if(myrank)
   //    close(peerfd);
