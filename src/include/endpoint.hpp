@@ -28,7 +28,8 @@ struct Endpoint::Impl {
   CUmemGenericAllocationHandle mcHandle_;
   size_t minMcGran_;
   size_t mcGran_;
-  int fileDesc_;
+  pid_t rootPid_;
+  int mcFileDesc_;
 };
 
 }  // namespace mscclpp

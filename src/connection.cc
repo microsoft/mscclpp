@@ -94,49 +94,27 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 
 // NVLS
 
-NvlsConnection::NvlsConnection(Endpoint localEndpoint, std::vector<Endpoint> remoteEndpoints, size_t bufferSize,
-                               bool isRoot)
-    : isRoot_(isRoot) {
-  if (localEndpoint.transport() != Transport::Nvls) {
-    throw mscclpp::Error("NVLS connection can only be made from a NVLS endpoint", ErrorCode::InvalidUsage);
+NvlsConnection::NvlsConnection(Endpoint localEndpoint, Endpoint remoteEndpoints) {
+  if (localEndpoint.transport() == Transport::NvlsNonRoot && remoteEndpoint.transport() == Transport::NvlsRoot) {
+    throw mscclpp::Error("NVLS connection must be made with a NVLS root", ErrorCode::InvalidUsage);
   }
-  for (auto remoteEndpoint : remoteEndpoints) {
-    if (remoteEndpoint.transport() != Transport::Nvls) {
-      throw mscclpp::Error("NVLS connection can only be made to a NVLS endpoint", ErrorCode::InvalidUsage);
-    }
-    // sanity check: make sure the IPC connection is being made within a node
-    if (getImpl(remoteEndpoint)->hostHash_ != getImpl(localEndpoint)->hostHash_) {
-      std::stringstream ss;
-      ss << "NVLS connection can only be made within a node: " << std::hex << getImpl(remoteEndpoint)->hostHash_
-         << " != " << std::hex << getImpl(localEndpoint)->hostHash_;
-      throw mscclpp::Error(ss.str(), ErrorCode::InvalidUsage);
-    }
+  if (localEndpoint.transport() == Transport::NvlsRoot && remoteEndpoint.transport() == Transport::NvlsRoot) {
+    throw mscclpp::Error("NVLS connection on root must have both local and remote root NVLS transport", ErrorCode::InvalidUsage);
   }
-  int nDevices = 1 + remoteEndpoints.size();
-  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDeviceId_));
 
-  CUmulticastObjectProp mcProp = {};
-  mcProp.numDevices = nDevices;
-  mcProp.size = bufferSize;
-  mcProp.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+  mcHandle_ = localEndpoint.pimpl_.mcHandle_;
+  size_t bufferSize = localEndpoint.pimpl_.mcProp_;
 
-  size_t minGran = 0;
-  size_t gran = 0;
-  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minGran, &mcProp, CU_MULTICAST_GRANULARITY_MINIMUM));
-  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&gran, &mcProp, CU_MULTICAST_GRANULARITY_RECOMMENDED));
-  // only root needs to create the multicast handle
-  if (isRoot_) {
-    size_t mcSize = ((bufferSize + gran - 1) / gran) * gran;
-    mcProp.size = mcSize;
+  int cudaDeviceId;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDeviceId));
+  MSCCLPP_CUDATHROW(cuMulticastAddDevice(mcHandle_, cudaDeviceId));
 
-    MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp));
-  }
 
   // Allocate physical memory
   CUmemAllocationProp prop = {};
   prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  prop.location.id = cudaDeviceId_;
+  prop.location.id = cudaDeviceId;
   prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
 
   // allocate physical memory (data buffer)
@@ -148,7 +126,7 @@ NvlsConnection::NvlsConnection(Endpoint localEndpoint, std::vector<Endpoint> rem
   accessDesc.location.id = cudaDeviceId_;
   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
   // Map a VA to UC space
-  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&deviceBuffer_, bufferSize, minGran, 0U, 0));
+  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&deviceBuffer_, bufferSize, localEndpoint.pimpl_.mcProp_.minMcGran_, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)deviceBuffer_, bufferSize, 0, memHandle_, 0));
   // set access on UC address
   MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)deviceBuffer_, bufferSize, &accessDesc, 1));

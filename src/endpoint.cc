@@ -21,6 +21,7 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
     minMcGran_ = 0;
     mcGran_ = 0;
     mcProp_.size = config.nvlsBufferSize;
+    mcProp_.numDevices = config.nvlsNumDevices;
     mcProp_.handleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
     MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minMcGran_, &config.mcProp, CU_MULTICAST_GRANULARITY_MINIMUM));
     MSCCLPP_CUTHROW(cuMulticastGetGranularity(&mcGran_, &config.mcProp, CU_MULTICAST_GRANULARITY_RECOMMENDED));
@@ -29,8 +30,9 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
     if (transport_ == Transport::NvlsRoot){
       MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp_));
 
-      fileDesc_ = 0;
-      MSCCLPP_CUTHROW(cuMemExportToShareableHandle(&fileDesc_, handle, handleType, 0 /*flags*/));
+      mcFileDesc_ = 0;
+      MSCCLPP_CUTHROW(cuMemExportToShareableHandle(&mcFileDesc_, handle, handleType, 0 /*flags*/));
+      rootPid_ = getpid();
     }
   }
 }
@@ -46,7 +48,8 @@ MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() {
   }
 
   if (transport_ == Transport::NvlsRoot) {
-    std::copy_n(reinterpret_cast<char*>(&pimpl_->fileDesc_), sizeof(pimpl_->fileDesc_), std::back_inserter(data));
+    std::copy_n(reinterpret_cast<char*>(&pimpl_->mcFileDesc_), sizeof(pimpl_->mcFileDesc_), std::back_inserter(data));
+    std::copy_n(reinterpret_cast<char*>(&pimpl_->rootPid_), sizeof(pimpl_->rootPid_), std::back_inserter(data));
   }
   return data;
 }
@@ -67,10 +70,15 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
     it += sizeof(ibQpInfo_);
   }
   if (transport_ == Transport::NvlsNonRoot) {
-    fileDesc_ = 0;
-    std::copy_n(it, sizeof(fileDesc_), reinterpret_cast<char*>(&fileDesc_));
-    it += sizeof(fileDesc_);
-    MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, (void*)fileDesc_, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
+    mcFileDesc_ = 0;
+    std::copy_n(it, sizeof(mcFileDesc_), reinterpret_cast<char*>(&mcFileDesc_));
+    it += sizeof(mcFileDesc_);
+    std::copy_n(it, sizeof(rootPid_), reinterpret_cast<char*>(&mcFileDesc_));
+    it += sizeof(rootPid_);
+    int rootPidFd = syscall(SYS_pidfd_open, rootPid_, 0);
+    int mcRootFileDescFd = syscall(SYS_pidfd_getfd, rootPidFd, mcFileDesc_, 0);
+    MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, (void*)mcRootFileDescFd, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
+    close(rootPidFd);
   }
 }
 

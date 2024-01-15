@@ -462,6 +462,7 @@ struct EndpointConfig {
   int ibMaxWrPerSend = DefaultMaxWrPerSend;
 
   size_t nvlsBufferSize;
+  int nvlsNumDevices;
 
   /// Default constructor. Sets transport to Transport::Unknown.
   EndpointConfig() : transport(Transport::Unknown) {}
@@ -474,7 +475,7 @@ struct EndpointConfig {
   /// Constructor for NVLS explicitly
   /// @param transport must be either NvlsRoot or NvlsNonRoot
   /// @param nvlsBufferSize is the buffer to be alloced on each device
-  EndpointConfig(Transport transport, size_t nvlsBufferSize) : transport(transport), nvlsBufferSize(nvlsBufferSize) {
+  EndpointConfig(Transport transport, size_t nvlsBufferSize, int nvlsNumDevices) : transport(transport), nvlsBufferSize(nvlsBufferSize), nvlsNumDevices(nvlsNumDevices) {
     if (!AllNvlsTransports.has(transport)) {
       throw Error("This EndpointConfig is only NVLS!", ErrorCode::InvalidUsage);
     }
