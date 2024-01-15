@@ -7,7 +7,7 @@
 
 #include "common.hpp"
 
-#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
+#if defined(__HIP_PLATFORM_AMD__)
 #define WARP_SIZE 64
 #else
 #define WARP_SIZE 32
@@ -65,7 +65,7 @@ __device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyCh
     if ((remoteRank % nRanksPerNode) == ((rank - i + nRanksPerNode) % nRanksPerNode)) {
       if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.wait();
     }
-#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
+#if defined(__HIP_PLATFORM_AMD__)
     // NOTE: we actually need a group barrier here for better performance, but __syncthreads() is still correct.
     __syncthreads();
 #else
