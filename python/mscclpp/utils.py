@@ -18,8 +18,6 @@ class Kernel:
     CU_LAUNCH_PARAM_END = 0x00 if not cp.cuda.runtime.is_hip else 0x03
 
     def __init__(self, ptx: bytes, kernel_name: str, device_id: int):
-        self._context = cp.cuda.driver.ctxGetCurrent()
-        assert self._context is not None
         self._module = cp.cuda.driver.moduleLoadData(ptx)
         self._kernel = cp.cuda.driver.moduleGetFunction(self._module, kernel_name)
 
@@ -76,8 +74,8 @@ class KernelBuilder:
     def _compile_cuda(self, source_file, output_file, device_id, std_version="c++17"):
         mscclpp_home = os.environ.get("MSCCLPP_HOME", "/usr/local/mscclpp")
         include_dir = os.path.join(mscclpp_home, "include")
-        compute_capability = cp.cuda.Device().compute_capability
         if not cp.cuda.runtime.is_hip:
+            compute_capability = cp.cuda.Device().compute_capability
             cuda_home = os.environ.get("CUDA_HOME")
             nvcc = os.path.join(cuda_home, "bin/nvcc") if cuda_home else "nvcc"
             command = [
@@ -94,15 +92,20 @@ class KernelBuilder:
                 f"{self._tempdir.name}/{output_file}",
             ]
         else:
-            # TODO (binyli): check this in rocm environment
+            # the gcn arch name is like "gfx942:sramecc+:xnack-"
+            gcn_arch = (
+                cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)["gcnArchName"]
+                .decode("utf-8")
+                .split(":")[0]
+            )
             rocm_home = os.environ.get("ROCM_HOME")
             hipcc = os.path.join(rocm_home, "bin/hipcc") if rocm_home else "hipcc"
             command = [
                 hipcc,
                 f"-std={std_version}",
-                "-Xcompiler",
-                "-Wall,-Wextra",
-                f"--offload-arch=gfx{compute_capability}",
+                "--genco",
+                "-D__HIP_PLATFORM_AMD__",
+                f"--offload-arch={gcn_arch}",
                 f"-I{include_dir}",
                 f"{source_file}",
                 "-o",
