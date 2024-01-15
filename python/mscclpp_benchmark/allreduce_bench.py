@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import math
 import cupy as cp
 from mscclpp_op import MscclppAllReduce1, MscclppAllReduce2, MscclppAllReduce3, MscclppAllReduce4, MscclppAllReduce5
 from nccl_op import NcclAllReduce
@@ -97,12 +98,23 @@ def check_correctness(memory, func, niter=100):
     return ac
 
 
-def bench_time(niter: int, func):
+def bench_time(func, niter: int = -1):
+    if niter == -1:
+        # run the benchmark at least for the target time
+        target_us = 1e6  # 1 sec
+        nwarmup = 10
+        # warm up trial
+        us = bench_time(func, nwarmup)
+        if us >= target_us:
+            return us
+        niter = int(math.ceil(target_us / us))
+        return bench_time(func, niter)
+
     # capture cuda graph for nites of the kernel launch
     stream = cp.cuda.Stream(non_blocking=True)
     with stream:
         stream.begin_capture()
-        for i in range(niter):
+        for _ in range(niter):
             func(stream.ptr)
         graph = stream.end_capture()
 
@@ -118,13 +130,14 @@ def bench_time(niter: int, func):
     end.record(stream)
     end.synchronize()
 
+    # return the time in microseconds
     return cp.cuda.get_elapsed_time(start, end) / niter * 1000.0
 
 
-def find_best_config(mscclpp_call, niter):
+def find_best_config(mscclpp_call, niter: int = -1):
     best_time = 10000000.0
     for config in mscclpp_call.auto_tune():
-        cur_time = bench_time(niter, mscclpp_call)
+        cur_time = bench_time(mscclpp_call, niter)
         if cur_time < best_time:
             best_time = cur_time
             best_config = config
@@ -137,7 +150,7 @@ def find_best_config(mscclpp_call, niter):
 
 
 def run_benchmark(
-    mscclpp_group: mscclpp_comm.CommGroup, nccl_op: nccl.NcclCommunicator, table: PrettyTable, niter: int, nelem: int
+    mscclpp_group: mscclpp_comm.CommGroup, nccl_op: nccl.NcclCommunicator, table: PrettyTable, nelem: int, niter: int = -1
 ):
     memory = cp.zeros(nelem, dtype=data_type)
     memory_out = cp.zeros(nelem, dtype=data_type)
@@ -163,17 +176,17 @@ def run_benchmark(
             mscclpp_call = MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)
             proxy_service.start_proxy()
 
-    best_config = find_best_config(mscclpp_call, 20)
+    best_config = find_best_config(mscclpp_call)
     mscclpp_call.set_params(*best_config)
 
     nccl_call = NcclAllReduce(nccl_op, memory)
 
     memory_nbytes = memory.nbytes
-    mscclpp_time = bench_time(niter, mscclpp_call)
+    mscclpp_time = bench_time(mscclpp_call, niter)
     mscclpp_algBw = memory_nbytes / mscclpp_time / 1e3
     mscclpp_check = "PASS" if check_correctness(memory, mscclpp_call) else "FAIL"
 
-    nccl_time = bench_time(niter, nccl_call)
+    nccl_time = bench_time(nccl_call, niter)
     nccl_algBw = memory_nbytes / nccl_time / 1e3
     nccl_check = "PASS" if check_correctness(memory, nccl_call) else "FAIL"
 
@@ -258,7 +271,7 @@ if __name__ == "__main__":
         if nelems * data_type().itemsize > 2**32:
             break  # due to trigger bit width limitation, we can only support up to 2**32
 
-        size, mscclpp_algBw, nccl_algBw, speed_up = run_benchmark(mscclpp_group, nccl_comm, table, 100, nelems)
+        size, mscclpp_algBw, nccl_algBw, speed_up = run_benchmark(mscclpp_group, nccl_comm, table, nelems)
         sizes.append(size)
         mscclpp_algbw.append(mscclpp_algBw)
         nccl_algbw.append(nccl_algBw)
