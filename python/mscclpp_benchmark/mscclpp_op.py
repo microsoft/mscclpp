@@ -56,7 +56,7 @@ class MscclppAllReduce1:
             kernel_name="allreduce1",
             file_dir=file_dir,
             macro_dict={"TYPE": type_str},
-            include_dir_list=[file_dir]
+            include_dir_list=[file_dir],
         ).get_compiled_kernel()
         self.device_handles = []
         for rank in range(self.group.nranks):
@@ -121,8 +121,11 @@ class MscclppAllReduce2:
         self.sm_channels = self.group.make_sm_channels_with_scratch(self.memory, self.scratch, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
-            file="allreduce_k2.cu", kernel_name="allreduce2", file_dir=file_dir, macro_dict={"TYPE": type_str},
-            include_dir_list=[file_dir]
+            file="allreduce_k2.cu",
+            kernel_name="allreduce2",
+            file_dir=file_dir,
+            macro_dict={"TYPE": type_str},
+            include_dir_list=[file_dir],
         ).get_compiled_kernel()
         self.device_handles = []
         for rank in range(self.group.nranks):
@@ -190,8 +193,11 @@ class MscclppAllReduce3:
         self.snd_round_proxy_chans = self.group.make_proxy_channels(self.proxy_service, self.memory, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
-            file="allreduce_k3.cu", kernel_name="allreduce3", file_dir=file_dir, macro_dict={"TYPE": type_str},
-            include_dir_list=[file_dir]
+            file="allreduce_k3.cu",
+            kernel_name="allreduce3",
+            file_dir=file_dir,
+            macro_dict={"TYPE": type_str},
+            include_dir_list=[file_dir],
         ).get_compiled_kernel()
         self.fst_device_handles = []
         self.snd_device_handles = []
@@ -274,8 +280,11 @@ class MscclppAllReduce4:
         )
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
-            file="allreduce_k4.cu", kernel_name="allreduce4", file_dir=file_dir, macro_dict={"TYPE": type_str},
-            include_dir_list=[file_dir]
+            file="allreduce_k4.cu",
+            kernel_name="allreduce4",
+            file_dir=file_dir,
+            macro_dict={"TYPE": type_str},
+            include_dir_list=[file_dir],
         ).get_compiled_kernel()
         self.sm_device_handles = []
         self.reduce_sactter_proxy_device_handles = []
@@ -377,8 +386,11 @@ class MscclppAllReduce5:
         )
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
-            file="allreduce_k5.cu", kernel_name="allreduce5", file_dir=file_dir, macro_dict={"TYPE": type_str},
-            include_dir_list=[file_dir]
+            file="allreduce_k5.cu",
+            kernel_name="allreduce5",
+            file_dir=file_dir,
+            macro_dict={"TYPE": type_str},
+            include_dir_list=[file_dir],
         ).get_compiled_kernel()
         self.sm_device_handles = []
         self.proxy_device_handles = []

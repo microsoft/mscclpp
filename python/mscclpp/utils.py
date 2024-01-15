@@ -77,7 +77,9 @@ class KernelBuilder:
     def get_key(self, kernel_name, macro_dict):
         return kernel_name + "-".join(f"{key}={macro_dict[key]}" for key in sorted(macro_dict))
 
-    def __init__(self, file: str, kernel_name: str, file_dir: str = None, macro_dict: dict = {}, include_dir_list: list = []):
+    def __init__(
+        self, file: str, kernel_name: str, file_dir: str = None, macro_dict: dict = {}, include_dir_list: list = []
+    ):
         kernel_key = self.get_key(kernel_name, macro_dict)
         if kernel_key in self.kernel_map:
             self._kernel = self.kernel_map[kernel_key]

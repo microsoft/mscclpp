@@ -150,7 +150,11 @@ def find_best_config(mscclpp_call, niter: int = -1):
 
 
 def run_benchmark(
-    mscclpp_group: mscclpp_comm.CommGroup, nccl_op: nccl.NcclCommunicator, table: PrettyTable, nelem: int, niter: int = -1
+    mscclpp_group: mscclpp_comm.CommGroup,
+    nccl_op: nccl.NcclCommunicator,
+    table: PrettyTable,
+    nelem: int,
+    niter: int = -1,
 ):
     memory = cp.zeros(nelem, dtype=data_type)
     memory_out = cp.zeros(nelem, dtype=data_type)
