@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-# if defined(__HIP_PLATFORM_AMD__)
+#if defined(__HIP_PLATFORM_AMD__)
 #include <hip/hip_fp16.h>
-# else
+#else
 #include <cuda_fp16.h>
 #endif
 
