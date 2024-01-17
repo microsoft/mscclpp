@@ -27,7 +27,7 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
     MSCCLPP_CUTHROW(cuMulticastGetGranularity(&mcGran_, &config.mcProp, CU_MULTICAST_GRANULARITY_RECOMMENDED));
     mcProp_.size = ((mcProp_.size + mcGran_ - 1) / mcGran_) * mcGran_;
     // create the mc handle now only on the root
-    if (transport_ == Transport::NvlsRoot){
+    if (transport_ == Transport::NvlsRoot) {
       MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp_));
 
       mcFileDesc_ = 0;
@@ -77,7 +77,8 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
     it += sizeof(rootPid_);
     int rootPidFd = syscall(SYS_pidfd_open, rootPid_, 0);
     int mcRootFileDescFd = syscall(SYS_pidfd_getfd, rootPidFd, mcFileDesc_, 0);
-    MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, (void*)mcRootFileDescFd, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
+    MSCCLPP_CUTHROW(
+        cuMemImportFromShareableHandle(&mcHandle_, (void*)mcRootFileDescFd, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
     close(rootPidFd);
   }
 }

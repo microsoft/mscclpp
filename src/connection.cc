@@ -99,7 +99,8 @@ NvlsConnection::NvlsConnection(Endpoint localEndpoint, Endpoint remoteEndpoints)
     throw mscclpp::Error("NVLS connection must be made with a NVLS root", ErrorCode::InvalidUsage);
   }
   if (localEndpoint.transport() == Transport::NvlsRoot && remoteEndpoint.transport() == Transport::NvlsRoot) {
-    throw mscclpp::Error("NVLS connection on root must have both local and remote root NVLS transport", ErrorCode::InvalidUsage);
+    throw mscclpp::Error("NVLS connection on root must have both local and remote root NVLS transport",
+                         ErrorCode::InvalidUsage);
   }
 
   mcHandle_ = localEndpoint.pimpl_.mcHandle_;
@@ -108,7 +109,6 @@ NvlsConnection::NvlsConnection(Endpoint localEndpoint, Endpoint remoteEndpoints)
   int cudaDeviceId;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDeviceId));
   MSCCLPP_CUDATHROW(cuMulticastAddDevice(mcHandle_, cudaDeviceId));
-
 
   // Allocate physical memory
   CUmemAllocationProp prop = {};
@@ -126,7 +126,8 @@ NvlsConnection::NvlsConnection(Endpoint localEndpoint, Endpoint remoteEndpoints)
   accessDesc.location.id = cudaDeviceId_;
   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
   // Map a VA to UC space
-  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&deviceBuffer_, bufferSize, localEndpoint.pimpl_.mcProp_.minMcGran_, 0U, 0));
+  MSCCLPP_CUTHROW(
+      cuMemAddressReserve((CUdeviceptr*)&deviceBuffer_, bufferSize, localEndpoint.pimpl_.mcProp_.minMcGran_, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)deviceBuffer_, bufferSize, 0, memHandle_, 0));
   // set access on UC address
   MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)deviceBuffer_, bufferSize, &accessDesc, 1));

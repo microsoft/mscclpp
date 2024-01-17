@@ -139,7 +139,7 @@ enum class Transport {
 };
 
 const std::string TransportNames[] = {"UNK", "IPC", "NVLSROOT", "NVLSNONROOT", "IB0", "IB1", "IB2",
-                                      "IB3", "IB4", "IB5",  "IB6", "IB7", "NUM"};
+                                      "IB3", "IB4", "IB5",      "IB6",         "IB7", "NUM"};
 
 namespace detail {
 const size_t TransportFlagsSize = 13;
@@ -475,7 +475,8 @@ struct EndpointConfig {
   /// Constructor for NVLS explicitly
   /// @param transport must be either NvlsRoot or NvlsNonRoot
   /// @param nvlsBufferSize is the buffer to be alloced on each device
-  EndpointConfig(Transport transport, size_t nvlsBufferSize, int nvlsNumDevices) : transport(transport), nvlsBufferSize(nvlsBufferSize), nvlsNumDevices(nvlsNumDevices) {
+  EndpointConfig(Transport transport, size_t nvlsBufferSize, int nvlsNumDevices)
+      : transport(transport), nvlsBufferSize(nvlsBufferSize), nvlsNumDevices(nvlsNumDevices) {
     if (!AllNvlsTransports.has(transport)) {
       throw Error("This EndpointConfig is only NVLS!", ErrorCode::InvalidUsage);
     }
