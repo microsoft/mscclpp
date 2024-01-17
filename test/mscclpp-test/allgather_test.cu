@@ -292,7 +292,8 @@ __global__ void allgather5(int rank, int worldSize, int nRanksPerNode, size_t ne
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   const int lid = tid % WARP_SIZE;
   const int wid = tid / WARP_SIZE;
-  const int nWarp = blockDim.x * gridDim.x / WARP_SIZE;
+  const int nThread = blockDim.x * gridDim.x;
+  const int nWarp = nThread / WARP_SIZE;
   const int nPeer = nRanksPerNode - 1;
   const int chanOffset = nPeer * blockIdx.x;
   auto smChans = constSmChans + chanOffset;
@@ -302,11 +303,16 @@ __global__ void allgather5(int rank, int worldSize, int nRanksPerNode, size_t ne
     smChans[wid].wait();
   }
   __syncthreads();
-  constexpr size_t unitBytesPerThread = 16;
-  constexpr size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
-  const size_t unitBytes = unitBytesPerWarp * nWarp;
   const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
   const size_t bytes = bytesPerGPU * nPeer;
+  size_t unitBytesPerThread;
+  if (bytes >= nThread * 64) {
+    unitBytesPerThread = 64;
+  } else {
+    unitBytesPerThread = 16;
+  }
+  const size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
+  const size_t unitBytes = unitBytesPerWarp * nWarp;
   const size_t nLoop = bytes / unitBytes;
   for (size_t i = 0; i < nLoop; ++i) {
     const size_t gWid = wid + i * nWarp;
@@ -431,7 +437,7 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     nBlocks = 21;
     nThreads = 1024;
   } else if (kernelNum == 5) {
-    nBlocks = 32;
+    nBlocks = 24;
     nThreads = 1024;
   } else {
     nBlocks = 1;
