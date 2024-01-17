@@ -94,7 +94,8 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 
 // NVLS
 
-NvlsConnection::NvlsConnection(Endpoint localEndpoint, Endpoint remoteEndpoints) {
+NvlsConnection::NvlsConnection(Endpoint localEndpoint, Endpoint remoteEndpoint)
+    : transport_(localEndpoint.transport()), remoteTransport_(remoteEndpoint.transport()) {
   if (localEndpoint.transport() == Transport::NvlsNonRoot && remoteEndpoint.transport() == Transport::NvlsRoot) {
     throw mscclpp::Error("NVLS connection must be made with a NVLS root", ErrorCode::InvalidUsage);
   }
@@ -103,12 +104,12 @@ NvlsConnection::NvlsConnection(Endpoint localEndpoint, Endpoint remoteEndpoints)
                          ErrorCode::InvalidUsage);
   }
 
-  mcHandle_ = localEndpoint.pimpl_.mcHandle_;
-  size_t bufferSize = localEndpoint.pimpl_.mcProp_;
+  mcHandle_ = localEndpoint.pimpl_->mcHandle_;
+  size_t bufferSize = localEndpoint.pimpl_->mcProp_.size;
 
   int cudaDeviceId;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDeviceId));
-  MSCCLPP_CUDATHROW(cuMulticastAddDevice(mcHandle_, cudaDeviceId));
+  MSCCLPP_CUTHROW(cuMulticastAddDevice(mcHandle_, cudaDeviceId));
 
   // Allocate physical memory
   CUmemAllocationProp prop = {};
@@ -123,11 +124,11 @@ NvlsConnection::NvlsConnection(Endpoint localEndpoint, Endpoint remoteEndpoints)
   // usual VA business: map both MC and PA to two different VA addresses
   CUmemAccessDesc accessDesc = {};
   accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  accessDesc.location.id = cudaDeviceId_;
+  accessDesc.location.id = cudaDeviceId;
   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
   // Map a VA to UC space
   MSCCLPP_CUTHROW(
-      cuMemAddressReserve((CUdeviceptr*)&deviceBuffer_, bufferSize, localEndpoint.pimpl_.mcProp_.minMcGran_, 0U, 0));
+      cuMemAddressReserve((CUdeviceptr*)&deviceBuffer_, bufferSize, localEndpoint.pimpl_->minMcGran_, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)deviceBuffer_, bufferSize, 0, memHandle_, 0));
   // set access on UC address
   MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)deviceBuffer_, bufferSize, &accessDesc, 1));
@@ -135,9 +136,9 @@ NvlsConnection::NvlsConnection(Endpoint localEndpoint, Endpoint remoteEndpoints)
   INFO(MSCCLPP_P2P, "NVLS connection created");
 }
 
-Transport NvlsConnection::transport() { return Transport::Nvls; }
+Transport NvlsConnection::transport() { return transport_; }
 
-Transport NvlsConnection::remoteTransport() { return Transport::Nvls; }
+Transport NvlsConnection::remoteTransport() { return remoteTransport_; }
 
 void NvlsConnection::write(RegisteredMemory, uint64_t, RegisteredMemory, uint64_t, uint64_t) {
   throw Error("NVLS does not have a CPU write API", ErrorCode::InvalidUsage);

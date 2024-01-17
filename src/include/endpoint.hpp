@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_ENDPOINT_HPP_
 #define MSCCLPP_ENDPOINT_HPP_
 
+#include <cuda.h>
+
 #include <mscclpp/core.hpp>
 #include <vector>
 

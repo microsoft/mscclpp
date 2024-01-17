@@ -32,13 +32,15 @@ class CudaIpcConnection : public Connection {
 };
 
 class NvlsConnection : public Connection {
+  Transport transport_;
+  Transport remoteTransport_;
   CUmemGenericAllocationHandle mcHandle_;
   CUmemGenericAllocationHandle memHandle_;
   void* deviceBuffer_;
   size_t bufferSize_;
 
  public:
-  NvlsConnection(Endpoint localEndpoint, std::vector<Endpoint> remoteEndpoints, size_t bufferSize, bool isRoot);
+  NvlsConnection(Endpoint localEndpoint, Endpoint remoteEndpoint);
 
   Transport transport() override;
 

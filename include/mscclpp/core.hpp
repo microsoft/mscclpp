@@ -142,7 +142,7 @@ const std::string TransportNames[] = {"UNK", "IPC", "NVLSROOT", "NVLSNONROOT", "
                                       "IB3", "IB4", "IB5",      "IB6",         "IB7", "NUM"};
 
 namespace detail {
-const size_t TransportFlagsSize = 13;
+const size_t TransportFlagsSize = 12;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
               "TransportFlagsSize must match the number of transports");
 /// Bitset for storing transport flags.
@@ -399,6 +399,7 @@ class Endpoint {
 
   friend class Context;
   friend class Connection;
+  friend class NvlsConnection;
 };
 
 /// Represents a connection between two processes.
@@ -476,11 +477,7 @@ struct EndpointConfig {
   /// @param transport must be either NvlsRoot or NvlsNonRoot
   /// @param nvlsBufferSize is the buffer to be alloced on each device
   EndpointConfig(Transport transport, size_t nvlsBufferSize, int nvlsNumDevices)
-      : transport(transport), nvlsBufferSize(nvlsBufferSize), nvlsNumDevices(nvlsNumDevices) {
-    if (!AllNvlsTransports.has(transport)) {
-      throw Error("This EndpointConfig is only NVLS!", ErrorCode::InvalidUsage);
-    }
-  }
+      : transport(transport), nvlsBufferSize(nvlsBufferSize), nvlsNumDevices(nvlsNumDevices) {}
 };
 
 /// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
