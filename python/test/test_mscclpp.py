@@ -126,10 +126,11 @@ def create_and_connect(mpi_group: MpiGroup, transport: str):
     remote_nghrs.remove(mpi_group.comm.rank)
     if transport == "NVLink":
         tran = Transport.CudaIpc
-    elif tranport == "NVLS":
-        if group.rank == 0:
+    elif transport == "NVLS":
+        if mpi_group.comm.rank == 0:
             tran = Transport.NvlsRoot
         else:
+            remote_nghrs = [0]
             tran = Transport.NvlsNonRoot
     elif transport == "IB":
         tran = group.my_ib_device(group.my_rank % 8)

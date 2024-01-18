@@ -455,6 +455,8 @@ struct EndpointConfig {
   static const int DefaultMaxCqPollNum = 1;
   static const int DefaultMaxSendWr = 8192;
   static const int DefaultMaxWrPerSend = 64;
+  static const int DefaultNvlsNumDevices = 8;
+  static const int DefaultNvlsBufferSize = (1 << 29);
 
   Transport transport;
   int ibMaxCqSize = DefaultMaxCqSize;
@@ -462,8 +464,8 @@ struct EndpointConfig {
   int ibMaxSendWr = DefaultMaxSendWr;
   int ibMaxWrPerSend = DefaultMaxWrPerSend;
 
-  size_t nvlsBufferSize;
-  int nvlsNumDevices;
+  size_t nvlsBufferSize = DefaultNvlsBufferSize;
+  int nvlsNumDevices = DefaultNvlsNumDevices;
 
   /// Default constructor. Sets transport to Transport::Unknown.
   EndpointConfig() : transport(Transport::Unknown) {}

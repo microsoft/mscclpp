@@ -96,20 +96,23 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 
 NvlsConnection::NvlsConnection(Endpoint localEndpoint, Endpoint remoteEndpoint)
     : transport_(localEndpoint.transport()), remoteTransport_(remoteEndpoint.transport()) {
-  if (localEndpoint.transport() == Transport::NvlsNonRoot && remoteEndpoint.transport() == Transport::NvlsRoot) {
+  if (localEndpoint.transport() == Transport::NvlsNonRoot && remoteEndpoint.transport() == Transport::NvlsNonRoot) {
     throw mscclpp::Error("NVLS connection must be made with a NVLS root", ErrorCode::InvalidUsage);
   }
   if (localEndpoint.transport() == Transport::NvlsRoot && remoteEndpoint.transport() == Transport::NvlsRoot) {
     throw mscclpp::Error("NVLS connection on root must have both local and remote root NVLS transport",
                          ErrorCode::InvalidUsage);
   }
-
+  printf("here0\n");
   mcHandle_ = localEndpoint.pimpl_->mcHandle_;
   size_t bufferSize = localEndpoint.pimpl_->mcProp_.size;
 
   int cudaDeviceId;
+  printf("here1\n");
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDeviceId));
+  printf("here1.5 %d %d\n", (int)mcHandle_, cudaDeviceId);
   MSCCLPP_CUTHROW(cuMulticastAddDevice(mcHandle_, cudaDeviceId));
+  printf("here2\n");
 
   // Allocate physical memory
   CUmemAllocationProp prop = {};

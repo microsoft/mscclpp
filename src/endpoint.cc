@@ -23,12 +23,14 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
   if (AllNvlsTransports.has(transport_)) {
     minMcGran_ = 0;
     mcGran_ = 0;
+    mcProp_ = {};
     mcProp_.size = config.nvlsBufferSize;
     mcProp_.numDevices = config.nvlsNumDevices;
     mcProp_.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
     MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minMcGran_, &mcProp_, CU_MULTICAST_GRANULARITY_MINIMUM));
     MSCCLPP_CUTHROW(cuMulticastGetGranularity(&mcGran_, &mcProp_, CU_MULTICAST_GRANULARITY_RECOMMENDED));
     mcProp_.size = ((mcProp_.size + mcGran_ - 1) / mcGran_) * mcGran_;
+    printf("---> %ld %ld | %lld %lld\n", mcProp_.size, mcProp_.numDevices, mcGran_, minMcGran_);
     // create the mc handle now only on the root
     if (transport_ == Transport::NvlsRoot) {
       MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp_));
@@ -37,6 +39,7 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
       MSCCLPP_CUTHROW(
           cuMemExportToShareableHandle(&mcFileDesc_, mcHandle_, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0 /*flags*/));
       rootPid_ = getpid();
+      printf("LLLLLLL %lld %lld\n", mcFileDesc_, rootPid_);
     }
   }
 }
@@ -73,17 +76,18 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
     std::copy_n(it, sizeof(ibQpInfo_), reinterpret_cast<char*>(&ibQpInfo_));
     it += sizeof(ibQpInfo_);
   }
-  if (transport_ == Transport::NvlsNonRoot) {
+  if (transport_ == Transport::NvlsRoot) {
     mcFileDesc_ = 0;
     std::copy_n(it, sizeof(mcFileDesc_), reinterpret_cast<char*>(&mcFileDesc_));
     it += sizeof(mcFileDesc_);
-    std::copy_n(it, sizeof(rootPid_), reinterpret_cast<char*>(&mcFileDesc_));
+    std::copy_n(it, sizeof(rootPid_), reinterpret_cast<char*>(&rootPid_));
     it += sizeof(rootPid_);
     int rootPidFd = syscall(SYS_pidfd_open, rootPid_, 0);
-    size_t mcRootFileDescFd = syscall(SYS_pidfd_getfd, rootPidFd, mcFileDesc_, 0);
+    int mcRootFileDescFd = syscall(SYS_pidfd_getfd, rootPidFd, mcFileDesc_, 0);
+    printf("==========> %lld %lld %lld\n", rootPidFd, mcRootFileDescFd, mcFileDesc_);
     MSCCLPP_CUTHROW(
         cuMemImportFromShareableHandle(&mcHandle_, (void*)mcRootFileDescFd, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
-    close(rootPidFd);
+    // close(rootPidFd);
   }
 }
 
