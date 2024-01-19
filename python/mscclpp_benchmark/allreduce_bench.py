@@ -147,12 +147,12 @@ def run_benchmark(
     if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
         if memory.nbytes < 2**20:
             mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
-        elif memory.nbytes < 2**29:
-            mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
         else:
-            proxy_service = ProxyService()
-            mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
-            proxy_service.start_proxy()
+            mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
+        # else:
+        #     proxy_service = ProxyService()
+        #     mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
+        #     proxy_service.start_proxy()
     else:
         if memory.nbytes < 2**22:
             proxy_service = ProxyService()
@@ -247,7 +247,7 @@ if __name__ == "__main__":
     mscclpp_algbw = []
     nccl_algbw = []
     speed_ups = []
-    for i in range(10, 25):
+    for i in range(10, 28):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
             nelems = 2**i
         elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:

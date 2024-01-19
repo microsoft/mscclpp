@@ -130,15 +130,16 @@ struct NvlsConnection::Impl {
 
     int rootPidFd = syscall(SYS_pidfd_open, rootPid_, 0);
     int mcRootFileDescFd = syscall(SYS_pidfd_getfd, rootPidFd, mcFileDesc_, 0);
-    MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, (void*)mcRootFileDescFd, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
+    MSCCLPP_CUTHROW(
+        cuMemImportFromShareableHandle(&mcHandle_, (void*)mcRootFileDescFd, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
     close(rootPidFd);
 
     INFO(MSCCLPP_COLL, "NVLS handle was imported from root");
   }
 };
 
-NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices) : pimpl_(std::make_unique<Impl>(bufferSize, numDevices)) {
-}
+NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices)
+    : pimpl_(std::make_unique<Impl>(bufferSize, numDevices)) {}
 NvlsConnection::addDevice() {
   int cudaDeviceId;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDeviceId));

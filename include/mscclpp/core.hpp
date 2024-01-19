@@ -138,7 +138,7 @@ enum class Transport {
 };
 
 const std::string TransportNames[] = {"UNK", "IPC", "NVLS", "IB0", "IB1", "IB2",
-                                      "IB3", "IB4", "IB5",      "IB6",         "IB7", "NUM"};
+                                      "IB3", "IB4", "IB5",  "IB6", "IB7", "NUM"};
 
 namespace detail {
 const size_t TransportFlagsSize = 11;
@@ -460,16 +460,14 @@ class NvlsConnection {
   // Everyone needs to synchronize after creating a NVLS connection before adding devices
   void addDevice();
   void addDevice(int cudaDeviceId);
-  
+
   void* getMultiCastPointer();
 
-private:
+ private:
   struct Impl;
 
   std::unique_ptr<Impl> pimpl_;
 };
-
-
 
 /// Used to configure an endpoint.
 struct EndpointConfig {
@@ -498,8 +496,7 @@ struct EndpointConfig {
   /// Constructor for NVLS explicitly
   /// @param transport must be either NvlsRoot or NvlsNonRoot
   /// @param nvlsBufferSize is the buffer to be alloced on each device
-  EndpointConfig(Transport transport, size_t nvlsBufferSize)
-      : transport(transport), nvlsBufferSize(nvlsBufferSize) {}
+  EndpointConfig(Transport transport, size_t nvlsBufferSize) : transport(transport), nvlsBufferSize(nvlsBufferSize) {}
 };
 
 /// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
