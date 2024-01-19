@@ -125,8 +125,7 @@ class TcpBootstrap : public Bootstrap {
 enum class Transport {
   Unknown,       // Unknown transport type.
   CudaIpc,       // CUDA IPC transport type.
-  NvlsRoot,      // NVLS for root transport type.
-  NvlsNonRoot,   // NVLS for non-root transport type.
+  Nvls,          // NVLS transport type.
   IB0,           // InfiniBand device 0 transport type.
   IB1,           // InfiniBand device 1 transport type.
   IB2,           // InfiniBand device 2 transport type.
@@ -138,11 +137,11 @@ enum class Transport {
   NumTransports  // The number of transports.
 };
 
-const std::string TransportNames[] = {"UNK", "IPC", "NVLSROOT", "NVLSNONROOT", "IB0", "IB1", "IB2",
-                                      "IB3", "IB4", "IB5",  "IB6", "IB7", "NUM"};
+const std::string TransportNames[] = {"UNK", "IPC", "NVLS", "IB0", "IB1", "IB2",
+                                      "IB3", "IB4", "IB5",      "IB6",         "IB7", "NUM"};
 
 namespace detail {
-const size_t TransportFlagsSize = 13;
+const size_t TransportFlagsSize = 11;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
               "TransportFlagsSize must match the number of transports");
 /// Bitset for storing transport flags.
@@ -399,6 +398,7 @@ class Endpoint {
 
   friend class Context;
   friend class Connection;
+  friend class NvlsConnection;
 };
 
 /// Represents a connection between two processes.
@@ -448,12 +448,36 @@ class Connection {
   static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
 };
 
+class NvlsConnection {
+  CUmemGenericAllocationHandle mcHandle_;
+  size_t bufferSize_;
+
+ public:
+  NvlsConnection(size_t bufferSize, int numDevices);
+  NvlsConnection(const std::vector<char>& data);
+  std::vector<char> serialize();
+
+  // Everyone needs to synchronize after creating a NVLS connection before adding devices
+  void addDevice();
+  void addDevice(int cudaDeviceId);
+  
+  void* getMultiCastPointer();
+
+private:
+  struct Impl;
+
+  std::unique_ptr<Impl> pimpl_;
+};
+
+
+
 /// Used to configure an endpoint.
 struct EndpointConfig {
   static const int DefaultMaxCqSize = 1024;
   static const int DefaultMaxCqPollNum = 1;
   static const int DefaultMaxSendWr = 8192;
   static const int DefaultMaxWrPerSend = 64;
+  static const int DefaultNvlsBufferSize = (1 << 29);
 
   Transport transport;
   int ibMaxCqSize = DefaultMaxCqSize;
@@ -461,7 +485,7 @@ struct EndpointConfig {
   int ibMaxSendWr = DefaultMaxSendWr;
   int ibMaxWrPerSend = DefaultMaxWrPerSend;
 
-  size_t nvlsBufferSize;
+  size_t nvlsBufferSize = DefaultNvlsBufferSize;
 
   /// Default constructor. Sets transport to Transport::Unknown.
   EndpointConfig() : transport(Transport::Unknown) {}
@@ -474,11 +498,8 @@ struct EndpointConfig {
   /// Constructor for NVLS explicitly
   /// @param transport must be either NvlsRoot or NvlsNonRoot
   /// @param nvlsBufferSize is the buffer to be alloced on each device
-  EndpointConfig(Transport transport, size_t nvlsBufferSize, int nvlsNumDevices) : transport(transport), nvlsBufferSize(nvlsBufferSize), nvlsNumDevices(nvlsNumDevices) {
-    if (!AllNvlsTransports.has(transport)) {
-      throw Error("This EndpointConfig is only NVLS!", ErrorCode::InvalidUsage);
-    }
-  }
+  EndpointConfig(Transport transport, size_t nvlsBufferSize)
+      : transport(transport), nvlsBufferSize(nvlsBufferSize) {}
 };
 
 /// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
@@ -662,7 +683,7 @@ class Communicator {
   /// to the connection.
   NonblockingFuture<std::shared_ptr<Connection>> connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig);
 
-  std::shared_ptr<CUmemGenericAllocationHandle> connctNvlsCollective(std::vector<int> allRanks, EndpointConfig config);
+  std::shared_ptr<Connection> connctNvlsCollective(std::vector<int> allRanks, EndpointConfig config);
 
   /// Get the remote rank a connection is connected to.
   ///

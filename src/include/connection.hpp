@@ -31,28 +31,6 @@ class CudaIpcConnection : public Connection {
   void flush(int64_t timeoutUsec) override;
 };
 
-class NvlsConnection : public Connection {
-  CUmemGenericAllocationHandle mcHandle_;
-  CUmemGenericAllocationHandle memHandle_;
-  void* deviceBuffer_;
-  size_t bufferSize_;
-
- public:
-  NvlsConnection(Endpoint localEndpoint, std::vector<Endpoint> remoteEndpoints, size_t bufferSize, bool isRoot);
-
-  Transport transport() override;
-
-  Transport remoteTransport() override;
-
-  void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
-             uint64_t size) override;
-  void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
-
-  void flush(int64_t timeoutUsec) override;
-
-  void* getDevicePointer();
-};
-
 class IBConnection : public Connection {
   Transport transport_;
   Transport remoteTransport_;

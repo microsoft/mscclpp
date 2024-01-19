@@ -118,14 +118,20 @@ def test_bootstrap_init_gil_release(mpi_group: MpiGroup):
 
 
 def create_and_connect(mpi_group: MpiGroup, transport: str):
-    if transport == "NVLink" and all_ranks_on_the_same_node(mpi_group) is False:
-        pytest.skip("cannot use nvlink for cross node")
+    if (transport == "NVLink" or transport == "NVLS") and all_ranks_on_the_same_node(mpi_group) is False:
+        pytest.skip("cannot use nvlink/nvls for cross node")
     group = mscclpp_comm.CommGroup(mpi_group.comm)
 
     remote_nghrs = list(range(mpi_group.comm.size))
     remote_nghrs.remove(mpi_group.comm.rank)
     if transport == "NVLink":
         tran = Transport.CudaIpc
+    elif transport == "NVLS":
+        if mpi_group.comm.rank == 0:
+            tran = Transport.NvlsRoot
+        else:
+            remote_nghrs = [0]
+            tran = Transport.NvlsNonRoot
     elif transport == "IB":
         tran = group.my_ib_device(group.my_rank % 8)
     else:
@@ -522,3 +528,7 @@ def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, u
     proxy_service.stop_proxy()
     group.barrier()
     assert cp.array_equal(memory, memory_expected)
+
+@parametrize_mpi_groups(2, 4, 8, 16)
+def test_simple_proxy_channel(mpi_group: MpiGroup):
+    group, connections = create_and_connect(mpi_group, "NVLS")

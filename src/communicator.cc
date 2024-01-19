@@ -105,8 +105,55 @@ MSCCLPP_API_CPP NonblockingFuture<std::shared_ptr<Connection>> Communicator::con
   return NonblockingFuture<std::shared_ptr<Connection>>(connector->connectionPromise_.get_future());
 }
 
-MSCCLPP_API_CPP std::shared_ptr<CUmemGenericAllocationHandle> connctNvlsCollective(std::vector<int> allRanks, EndpointConfig config) {
+MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> Communicator::connctNvlsCollective(std::vector<int> allRanks, EndpointConfig config) {
+  auto bootstrap = this->bootstrap();
+  int myRank = bootstrap->getRank();
+  bool isRoot = false;
+  bool amongAllRanks = false;
+  int rootRank = allRanks[0];
+  for (auto nvlsRank : allRanks){
+    if (nvlsRank == myRank)
+      amongAllRanks = true;
+    rootRank = std::min(rootRank, nvlsRank);
+  }
+  if (amongAllRanks == false){
+    throw Error("my rank is not among allRanks", ErrorCode::InvalidUsage);
+  }
+  if (rootRank == myRank)
+    isRoot = true;
+  
+  std::shared_ptr<NvlsConnection> conn;
 
+  if (isRoot){
+    conn = std::make_shared<NvlsConnection>(config, allRanks.size());
+    auto serialized = conn->serialize();
+    for (auto nvlsRank : allRanks) {
+      if (nvlsRank != myRank)
+        bootstrap->send(serialized, nvlsRank, 0);
+    }
+  } else {
+    std::vector<char> data;
+    bootstrap->recv(data, rootRank, 0);
+    conn = std::make_shared<NvlsConnection>(data);
+  }
+
+  // Now let's synchronize all ranks
+  int dummy = 0;
+  for (auto nvlsRank : allRanks) {
+    if (nvlsRank != myRank) {
+      bootstrap->send(static_cast<void*>(&dummy), sizeof(dummy), nvlsRank, 0);
+    }
+  }
+  for (auto nvlsRank : allRanks) {
+    if (nvlsRank != myRank) {
+      bootstrap->recv(static_cast<void*>(&dummy), sizeof(dummy), nvlsRank, 0);
+    }
+  }
+
+  // now it is safe to add my device
+  conn->addDevice();
+
+  return conn;
 }
 
 

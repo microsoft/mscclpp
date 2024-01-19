@@ -94,49 +94,76 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 
 // NVLS
 
-NvlsConnection::NvlsConnection(Endpoint localEndpoint, Endpoint remoteEndpoints) {
-  if (localEndpoint.transport() == Transport::NvlsNonRoot && remoteEndpoint.transport() == Transport::NvlsRoot) {
-    throw mscclpp::Error("NVLS connection must be made with a NVLS root", ErrorCode::InvalidUsage);
-  }
-  if (localEndpoint.transport() == Transport::NvlsRoot && remoteEndpoint.transport() == Transport::NvlsRoot) {
-    throw mscclpp::Error("NVLS connection on root must have both local and remote root NVLS transport", ErrorCode::InvalidUsage);
+struct NvlsConnection::Impl {
+  CUmemGenericAllocationHandle mcHandle_;
+  size_t bufferSize_;
+  CUmulticastObjectProp mcProp_;
+  size_t minMcGran_;
+  size_t mcGran_;
+  // These are only defined for multicast (NVLS) capability
+  pid_t rootPid_;
+  int mcFileDesc_;
+
+  // use this only for the root of the NVLS
+  Impl(size_t bufferSize, int numDevices) {
+    minMcGran_ = 0;
+    mcGran_ = 0;
+    mcProp_ = {};
+    mcProp_.size = bufferSize;
+    mcProp_.numDevices = numDevices;
+    mcProp_.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+    MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minMcGran_, &mcProp_, CU_MULTICAST_GRANULARITY_MINIMUM));
+    MSCCLPP_CUTHROW(cuMulticastGetGranularity(&mcGran_, &mcProp_, CU_MULTICAST_GRANULARITY_RECOMMENDED));
+    mcProp_.size = ((mcProp_.size + mcGran_ - 1) / mcGran_) * mcGran_;
+    MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp_));
+    mcFileDesc_ = 0;
+    MSCCLPP_CUTHROW(
+        cuMemExportToShareableHandle(&mcFileDesc_, mcHandle_, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0 /*flags*/));
+    rootPid_ = getpid();
+
+    INFO(MSCCLPP_COLL, "NVLS handle created on root");
   }
 
-  mcHandle_ = localEndpoint.pimpl_.mcHandle_;
-  size_t bufferSize = localEndpoint.pimpl_.mcProp_;
+  Impl(const std::vector<char>& data) {
+    auto it = data.begin();
+    std::copy_n(it, sizeof(*this), reinterpret_cast<char*>(*this));
 
+    int rootPidFd = syscall(SYS_pidfd_open, rootPid_, 0);
+    int mcRootFileDescFd = syscall(SYS_pidfd_getfd, rootPidFd, mcFileDesc_, 0);
+    MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, (void*)mcRootFileDescFd, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
+    close(rootPidFd);
+
+    INFO(MSCCLPP_COLL, "NVLS handle was imported from root");
+  }
+};
+
+NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices) : pimpl_(std::make_unique<Impl>(bufferSize, numDevices)) {
+}
+NvlsConnection::addDevice() {
   int cudaDeviceId;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDeviceId));
-  MSCCLPP_CUDATHROW(cuMulticastAddDevice(mcHandle_, cudaDeviceId));
+  MSCCLPP_CUTHROW(cuMulticastAddDevice(pimpl_->mcHandle_, cudaDeviceId));
 
-
-  // Allocate physical memory
-  CUmemAllocationProp prop = {};
-  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  prop.location.id = cudaDeviceId;
-  prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-
-  // allocate physical memory (data buffer)
-  MSCCLPP_CUTHROW(cuMemCreate(&memHandle_, bufferSize, &prop, 0 /*flags*/));
-
-  // usual VA business: map both MC and PA to two different VA addresses
-  CUmemAccessDesc accessDesc = {};
-  accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  accessDesc.location.id = cudaDeviceId_;
-  accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-  // Map a VA to UC space
-  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&deviceBuffer_, bufferSize, localEndpoint.pimpl_.mcProp_.minMcGran_, 0U, 0));
-  MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)deviceBuffer_, bufferSize, 0, memHandle_, 0));
-  // set access on UC address
-  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)deviceBuffer_, bufferSize, &accessDesc, 1));
-
-  INFO(MSCCLPP_P2P, "NVLS connection created");
+  INFO(MSCCLPP_COLL, "NVLS connection created");
 }
 
-Transport NvlsConnection::transport() { return Transport::Nvls; }
+NvlsConnection::addDevice(int cudaDeviceId) {
+  MSCCLPP_CUTHROW(cuMulticastAddDevice(pimpl_->mcHandle_, cudaDeviceId));
 
-Transport NvlsConnection::remoteTransport() { return Transport::Nvls; }
+  INFO(MSCCLPP_COLL, "NVLS connection created");
+}
+
+NvlsConnection::NvlsConnection(const std::vector<char>& data) : pimpl_(data) {}
+
+std::vector<char> NvlsConnection::serialize() {
+  std::vector<char> result;
+  std::copy_n(reinterpret_cast<char*>(pimpl_), sizeof(*pimpl_), std::back_inserter(result));
+  return result;
+}
+
+Transport NvlsConnection::transport() { return transport_; }
+
+Transport NvlsConnection::remoteTransport() { return remoteTransport_; }
 
 void NvlsConnection::write(RegisteredMemory, uint64_t, RegisteredMemory, uint64_t, uint64_t) {
   throw Error("NVLS does not have a CPU write API", ErrorCode::InvalidUsage);

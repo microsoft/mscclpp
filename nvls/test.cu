@@ -175,7 +175,7 @@ int main() {
   cudaDeviceSynchronize();
   MPI_Barrier(MPI_COMM_WORLD);
 
-  for (int input_size = 1024*3; input_size <= size; input_size *= 2){
+  for (int input_size = 1024; input_size <= size; input_size *= 2){
     // warmup
     for (int i = 0; i < rept; i++) {
       testing<<<nblocks, block_size>>>((float*)mc_va, input_size / sizeof(float), myrank, nranks);

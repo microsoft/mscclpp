@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_ENDPOINT_HPP_
 #define MSCCLPP_ENDPOINT_HPP_
 
+#include <cuda.h>
+
 #include <mscclpp/core.hpp>
 #include <vector>
 
@@ -22,14 +24,6 @@ struct Endpoint::Impl {
   bool ibLocal_;
   IbQp* ibQp_;
   IbQpInfo ibQpInfo_;
-
-  // These are only defined for multicast (NVLS) capability
-  CUmulticastObjectProp mcProp_;
-  CUmemGenericAllocationHandle mcHandle_;
-  size_t minMcGran_;
-  size_t mcGran_;
-  pid_t rootPid_;
-  int mcFileDesc_;
 };
 
 }  // namespace mscclpp
