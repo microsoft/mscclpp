@@ -6,6 +6,7 @@
 #include <nanobind/stl/array.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include <mscclpp/core.hpp>
 
@@ -124,6 +125,8 @@ void register_core(nb::module_& m) {
       .def("flush", &Connection::flush, nb::call_guard<nb::gil_scoped_release>(), nb::arg("timeoutUsec") = (int64_t)3e7)
       .def("transport", &Connection::transport)
       .def("remote_transport", &Connection::remoteTransport);
+
+  nb::class_<NvlsConnection>(m, "NvlsConnection");
 
   nb::class_<Endpoint>(m, "Endpoint")
       .def("transport", &Endpoint::transport)
