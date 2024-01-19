@@ -3,6 +3,10 @@
 
 #include "connection.hpp"
 
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#include <algorithm>
 #include <mscclpp/utils.hpp>
 #include <sstream>
 
@@ -126,12 +130,12 @@ struct NvlsConnection::Impl {
 
   Impl(const std::vector<char>& data) {
     auto it = data.begin();
-    std::copy_n(it, sizeof(*this), reinterpret_cast<char*>(*this));
+    std::copy_n(it, sizeof(*this), reinterpret_cast<char*>(this));
 
     int rootPidFd = syscall(SYS_pidfd_open, rootPid_, 0);
     int mcRootFileDescFd = syscall(SYS_pidfd_getfd, rootPidFd, mcFileDesc_, 0);
-    MSCCLPP_CUTHROW(
-        cuMemImportFromShareableHandle(&mcHandle_, (void*)mcRootFileDescFd, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
+    MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, reinterpret_cast<void*>(mcRootFileDescFd),
+                                                   CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
     close(rootPidFd);
 
     INFO(MSCCLPP_COLL, "NVLS handle was imported from root");
@@ -140,7 +144,8 @@ struct NvlsConnection::Impl {
 
 NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices)
     : pimpl_(std::make_shared<Impl>(bufferSize, numDevices)) {}
-NvlsConnection::addDevice() {
+
+void NvlsConnection::addDevice() {
   int cudaDeviceId;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDeviceId));
   MSCCLPP_CUTHROW(cuMulticastAddDevice(pimpl_->mcHandle_, cudaDeviceId));
@@ -148,7 +153,7 @@ NvlsConnection::addDevice() {
   INFO(MSCCLPP_COLL, "NVLS connection created");
 }
 
-NvlsConnection::addDevice(int cudaDeviceId) {
+void NvlsConnection::addDevice(int cudaDeviceId) {
   MSCCLPP_CUTHROW(cuMulticastAddDevice(pimpl_->mcHandle_, cudaDeviceId));
 
   INFO(MSCCLPP_COLL, "NVLS connection created");
@@ -158,25 +163,9 @@ NvlsConnection::NvlsConnection(const std::vector<char>& data) : pimpl_(std::make
 
 std::vector<char> NvlsConnection::serialize() {
   std::vector<char> result;
-  std::copy_n(reinterpret_cast<char*>(pimpl_), sizeof(*pimpl_), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(pimpl_.get()), sizeof(*pimpl_), std::back_inserter(result));
   return result;
 }
-
-Transport NvlsConnection::transport() { return transport_; }
-
-Transport NvlsConnection::remoteTransport() { return remoteTransport_; }
-
-void NvlsConnection::write(RegisteredMemory, uint64_t, RegisteredMemory, uint64_t, uint64_t) {
-  throw Error("NVLS does not have a CPU write API", ErrorCode::InvalidUsage);
-}
-
-void NvlsConnection::updateAndSync(RegisteredMemory, uint64_t, uint64_t*, uint64_t) {
-  throw Error("NVLS does not have a CPU updateAndSync API", ErrorCode::InvalidUsage);
-}
-
-void NvlsConnection::flush(int64_t) { throw Error("NVLS does not have a CPU flush API", ErrorCode::InvalidUsage); }
-
-void* NvlsConnection::getDevicePointer() { return deviceBuffer_; }
 
 // IBConnection
 

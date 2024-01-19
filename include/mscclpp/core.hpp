@@ -462,8 +462,6 @@ class NvlsConnection {
   void addDevice();
   void addDevice(int cudaDeviceId);
 
-  void* getMultiCastPointer();
-
  private:
   struct Impl;
 
