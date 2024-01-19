@@ -298,8 +298,8 @@ __global__ void allgather5(int rank, int worldSize, int nRanksPerNode, size_t ne
   const int chanOffset = nPeer * blockIdx.x;
   auto smChans = constSmChans + chanOffset;
 
-  if (wid < nPeer) {
-    smChans[wid].signal();
+  if (wid < nPeer && lid == 0) {
+    smChans[wid].relaxedSignal();
     smChans[wid].wait();
   }
   __syncthreads();
