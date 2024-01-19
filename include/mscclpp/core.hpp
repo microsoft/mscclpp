@@ -399,7 +399,6 @@ class Endpoint {
 
   friend class Context;
   friend class Connection;
-  friend class NvlsConnection;
 };
 
 /// Represents a connection between two processes.
@@ -679,6 +678,7 @@ class Communicator {
   /// to the connection.
   NonblockingFuture<std::shared_ptr<Connection>> connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig);
 
+  /// TBD
   std::shared_ptr<NvlsConnection> connctNvlsCollective(std::vector<int> allRanks, EndpointConfig config);
 
   /// Get the remote rank a connection is connected to.
@@ -718,9 +718,6 @@ extern const TransportFlags NoTransports;
 
 /// A constant TransportFlags object representing all InfiniBand transports.
 extern const TransportFlags AllIBTransports;
-
-/// A constant TransportFlags object representing all NVLS transports.
-extern const TransportFlags AllNvlsTransports;
 
 /// A constant TransportFlags object representing all transports.
 extern const TransportFlags AllTransports;

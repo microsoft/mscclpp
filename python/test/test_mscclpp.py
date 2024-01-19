@@ -121,17 +121,16 @@ def create_and_connect(mpi_group: MpiGroup, transport: str):
     if (transport == "NVLink" or transport == "NVLS") and all_ranks_on_the_same_node(mpi_group) is False:
         pytest.skip("cannot use nvlink/nvls for cross node")
     group = mscclpp_comm.CommGroup(mpi_group.comm)
-
+    if transport == "NVLS":
+        all_ranks = list(range(mpi_group.comm.size))
+        tran = Transport.Nvls
+        connection = group.make_connection(all_ranks, tran)
+        return group, connection
+    
     remote_nghrs = list(range(mpi_group.comm.size))
     remote_nghrs.remove(mpi_group.comm.rank)
     if transport == "NVLink":
         tran = Transport.CudaIpc
-    elif transport == "NVLS":
-        if mpi_group.comm.rank == 0:
-            tran = Transport.NvlsRoot
-        else:
-            remote_nghrs = [0]
-            tran = Transport.NvlsNonRoot
     elif transport == "IB":
         tran = group.my_ib_device(group.my_rank % 8)
     else:
