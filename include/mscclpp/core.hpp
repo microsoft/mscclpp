@@ -13,6 +13,7 @@
 #include <bitset>
 #include <future>
 #include <memory>
+#include <mscclpp/gpu.hpp>
 #include <string>
 #include <vector>
 
