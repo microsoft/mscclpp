@@ -462,7 +462,6 @@ struct EndpointConfig {
   int ibMaxWrPerSend = DefaultMaxWrPerSend;
 
   size_t nvlsBufferSize;
-  int nvlsNumDevices;
 
   /// Default constructor. Sets transport to Transport::Unknown.
   EndpointConfig() : transport(Transport::Unknown) {}
@@ -662,6 +661,8 @@ class Communicator {
   /// @return NonblockingFuture<NonblockingFuture<std::shared_ptr<Connection>>> A non-blocking future of shared pointer
   /// to the connection.
   NonblockingFuture<std::shared_ptr<Connection>> connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig);
+
+  std::shared_ptr<CUmemGenericAllocationHandle> connctNvlsCollective(std::vector<int> allRanks, EndpointConfig config);
 
   /// Get the remote rank a connection is connected to.
   ///

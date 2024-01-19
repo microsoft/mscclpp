@@ -105,6 +105,11 @@ MSCCLPP_API_CPP NonblockingFuture<std::shared_ptr<Connection>> Communicator::con
   return NonblockingFuture<std::shared_ptr<Connection>>(connector->connectionPromise_.get_future());
 }
 
+MSCCLPP_API_CPP std::shared_ptr<CUmemGenericAllocationHandle> connctNvlsCollective(std::vector<int> allRanks, EndpointConfig config) {
+
+}
+
+
 MSCCLPP_API_CPP int Communicator::remoteRankOf(const Connection& connection) {
   return pimpl_->connectionInfos_.at(&connection).remoteRank;
 }
