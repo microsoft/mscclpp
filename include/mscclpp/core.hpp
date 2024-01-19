@@ -681,7 +681,7 @@ class Communicator {
   /// to the connection.
   NonblockingFuture<std::shared_ptr<Connection>> connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig);
 
-  std::shared_ptr<Connection> connctNvlsCollective(std::vector<int> allRanks, EndpointConfig config);
+  std::shared_ptr<NvlsConnection> connctNvlsCollective(std::vector<int> allRanks, EndpointConfig config);
 
   /// Get the remote rank a connection is connected to.
   ///
