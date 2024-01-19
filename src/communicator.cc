@@ -124,7 +124,7 @@ MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> Communicator::connctNvlsCollecti
   std::shared_ptr<NvlsConnection> conn;
 
   if (isRoot) {
-    conn = std::make_shared<NvlsConnection>(config, allRanks.size());
+    conn = std::make_shared<NvlsConnection>(config.nvlsBufferSize, allRanks.size());
     auto serialized = conn->serialize();
     for (auto nvlsRank : allRanks) {
       if (nvlsRank != myRank) bootstrap->send(serialized, nvlsRank, 0);
