@@ -135,10 +135,6 @@ int main() {
   // allocate physical memory (data buffer)
   CUCHECK(cuMemCreate(&memhandle, size, &prop, 0 /*flags*/));
 
-  // everyone binds memory to the multicast
-  CUCHECK(cuMulticastBindMem(handle, 0 /*mcOffset*/, memhandle, 0 /*memOffset*/, size, 0));
-  MPI_Barrier(MPI_COMM_WORLD);
-  // usual VA business: map both MC and PA to two different VA addresses
   void* uc_va;
   void* mc_va;
   CUmemAccessDesc accessDesc = {};
@@ -152,6 +148,12 @@ int main() {
   CUCHECK(cuMemMap((CUdeviceptr)uc_va, size, 0, memhandle, 0));
   // set access on UC address
   CUCHECK(cuMemSetAccess((CUdeviceptr)uc_va, size, &accessDesc, 1));
+
+
+  // everyone binds memory to the multicast
+  CUCHECK(cuMulticastBindMem(handle, 0 /*mcOffset*/, memhandle, 0 /*memOffset*/, size, 0));
+  MPI_Barrier(MPI_COMM_WORLD);
+  // usual VA business: map both MC and PA to two different VA addresses
 
   // Map a VA to MC space
   CUCHECK(cuMemAddressReserve((CUdeviceptr*)&mc_va, mcSize, minGran, 0U, 0));

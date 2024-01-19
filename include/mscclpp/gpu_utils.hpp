@@ -50,6 +50,12 @@ struct CudaStreamWithFlags {
   cudaStream_t stream_;
 };
 
+template <class T>
+struct PhysicalCudaMemory {
+  CUmemGenericAllocationHandle memHandle;
+  T* devicePtr;
+};
+
 namespace detail {
 
 /// A wrapper of cudaMalloc that sets the allocated memory to zero.
@@ -65,6 +71,42 @@ T* cudaCalloc(size_t nelem) {
   MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, nelem * sizeof(T), stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
   return ptr;
+}
+
+template <class T>
+PhysicalCudaMemory<T>* cudaPhysicalCalloc(size_t nelem, size_t gran) {
+  AvoidCudaGraphCaptureGuard cgcGuard;
+
+  int deviceId = -1;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+
+  PhysicalCudaMemory<T>* ret = new PhysicalCudaMemory<T>();
+  CUmemAllocationProp prop = {};
+  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  prop.location.id = deviceId;
+  prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+
+  size_t bufferSize = sizeof(T) * nelem;
+  // allocate physical memory
+  MSCCLPP_CUTHROW(cuMemCreate(&ret->memHandle, bufferSize, &prop, 0 /*flags*/));
+
+  CUmemAccessDesc accessDesc = {};
+  accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  accessDesc.location.id = deviceId;
+  accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+
+  // Map the device pointer
+  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&ret->devicePtr, bufferSize, gran, 0U, 0));
+  MSCCLPP_CUDATHROW(cudaMemset(ret->devicePtr, 0, bufferSize));
+  MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)ret->devicePtr, bufferSize, 0, ret->memHandle, 0));
+  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)ret->devicePtr, bufferSize, &accessDesc, 1));
+
+  CudaStreamWithFlags stream(cudaStreamNonBlocking);
+  MSCCLPP_CUDATHROW(cudaMemsetAsync(ret->devicePtr, 0, nelem * sizeof(T), stream));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+
+  return ret;
 }
 
 template <class T>
@@ -118,6 +160,20 @@ Memory safeAlloc(size_t nelem) {
   return Memory(ptr, Deleter());
 }
 
+template <class T, T*(alloc)(size_t), class Deleter, class Memory>
+Memory safeAlloc(size_t nelem, size_t gran) {
+  T* ptr = nullptr;
+  try {
+    ptr = alloc(nelem, gran);
+  } catch (...) {
+    if (ptr) {
+      Deleter()(ptr);
+    }
+    throw;
+  }
+  return Memory(ptr, Deleter());
+}
+
 }  // namespace detail
 
 /// A deleter that calls cudaFree for use with std::unique_ptr or std::shared_ptr.
@@ -128,6 +184,16 @@ struct CudaDeleter {
   void operator()(TPtrOrArray ptr) {
     AvoidCudaGraphCaptureGuard cgcGuard;
     MSCCLPP_CUDATHROW(cudaFree(ptr));
+  }
+};
+
+template <class T>
+struct CudaPhysicalDeleter {
+  using TPtrOrArray =
+      std::conditional_t<std::is_array_v<PhysicalCudaMemory<T>>, PhysicalCudaMemory<T>, PhysicalCudaMemory<T>*>;
+  void operator()(TPtrOrArray ptr) {
+    AvoidCudaGraphCaptureGuard cgcGuard;
+    // TODO: adding free'ing stuff here
   }
 };
 
@@ -151,6 +217,13 @@ std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, std::shared_ptr<T>>(count);
 }
 
+/// TODO: docs...
+template <class T>
+std::shared_ptr<T> allocSharedPhysicalCuda(size_t count, size_t gran) {
+  return detail::safeAlloc<PhysicalCudaMemory<T>, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
+                           std::shared_ptr<PhysicalCudaMemory<T>>>(count, gran);
+}
+
 /// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
 /// @tparam T Type of each element in the allocated memory.
 /// @param count Number of elements to allocate.
@@ -172,6 +245,12 @@ using UniqueCudaPtr = std::unique_ptr<T, CudaDeleter<T>>;
 template <class T>
 UniqueCudaPtr<T> allocUniqueCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, UniqueCudaPtr<T>>(count);
+}
+
+template <class T>
+std::shared_ptr<T> allocUniquePhysicalCuda(size_t count, size_t gran) {
+  return detail::safeAlloc<PhysicalCudaMemory<T>, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
+                           std::unique_ptr<CudaPhysicalDeleter<T>, CudaDeleter<CudaPhysicalDeleter<T>>>>(count, gran);
 }
 
 /// Allocates memory on the device and returns a std::unique_ptr to it. The memory is zeroed out.

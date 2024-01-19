@@ -123,6 +123,7 @@ struct NvlsConnection::Impl {
     mcFileDesc_ = 0;
     MSCCLPP_CUTHROW(
         cuMemExportToShareableHandle(&mcFileDesc_, mcHandle_, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0 /*flags*/));
+    // TODO: we need proper throw in here.
     rootPid_ = getpid();
 
     INFO(MSCCLPP_COLL, "NVLS handle created on root");
@@ -132,6 +133,7 @@ struct NvlsConnection::Impl {
     auto it = data.begin();
     std::copy_n(it, sizeof(*this), reinterpret_cast<char*>(this));
 
+    // TODO: proper throw
     int rootPidFd = syscall(SYS_pidfd_open, rootPid_, 0);
     int mcRootFileDescFd = syscall(SYS_pidfd_getfd, rootPidFd, mcFileDesc_, 0);
     MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, reinterpret_cast<void*>(mcRootFileDescFd),
@@ -140,6 +142,8 @@ struct NvlsConnection::Impl {
 
     INFO(MSCCLPP_COLL, "NVLS handle was imported from root");
   }
+
+  // TODO: close all FDs and deallocate all handles.
 };
 
 NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices)
