@@ -49,8 +49,6 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpo
       throw mscclpp::Error("Local transport is IB but remote is not", ErrorCode::InvalidUsage);
     }
     conn = std::make_shared<IBConnection>(localEndpoint, remoteEndpoint, *this);
-  } else if (AllNvlsTransports.has(localEndpoint.transport()) && AllNvlsTransports.has(remoteEndpoint.transport())) {
-    conn = std::make_shared<NvlsConnection>(localEndpoint, remoteEndpoint);
   } else {
     throw mscclpp::Error("Unsupported transport", ErrorCode::InternalError);
   }
