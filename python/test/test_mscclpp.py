@@ -529,5 +529,5 @@ def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, u
     assert cp.array_equal(memory, memory_expected)
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-def test_simple_proxy_channel(mpi_group: MpiGroup):
+def test_nvls(mpi_group: MpiGroup):
     group, connections = create_and_connect(mpi_group, "NVLS")
