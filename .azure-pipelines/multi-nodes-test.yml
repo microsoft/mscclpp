@@ -28,7 +28,6 @@ jobs:
         mkdir build && cd build
         cmake -DCMAKE_BUILD_TYPE=Release -DBYPASS_GPU_CHECK=ON -DUSE_CUDA=ON ..
         make -j
-        make pylib-copy
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: DownloadSecureFile@1
