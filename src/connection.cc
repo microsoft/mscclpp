@@ -139,7 +139,7 @@ struct NvlsConnection::Impl {
 };
 
 NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices)
-    : pimpl_(std::make_unique<Impl>(bufferSize, numDevices)) {}
+    : pimpl_(std::make_shared<Impl>(bufferSize, numDevices)) {}
 NvlsConnection::addDevice() {
   int cudaDeviceId;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDeviceId));
@@ -154,7 +154,7 @@ NvlsConnection::addDevice(int cudaDeviceId) {
   INFO(MSCCLPP_COLL, "NVLS connection created");
 }
 
-NvlsConnection::NvlsConnection(const std::vector<char>& data) : pimpl_(data) {}
+NvlsConnection::NvlsConnection(const std::vector<char>& data) : pimpl_(std::make_shared<Impl>(data)) {}
 
 std::vector<char> NvlsConnection::serialize() {
   std::vector<char> result;

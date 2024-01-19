@@ -467,7 +467,7 @@ class NvlsConnection {
  private:
   struct Impl;
 
-  std::unique_ptr<Impl> pimpl_;
+  std::shared_ptr<Impl> pimpl_;
 };
 
 /// Used to configure an endpoint.
