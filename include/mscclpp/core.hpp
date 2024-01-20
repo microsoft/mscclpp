@@ -14,6 +14,7 @@
 #include <future>
 #include <memory>
 #include <mscclpp/gpu.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <string>
 #include <vector>
 
@@ -449,17 +450,25 @@ class Connection {
 };
 
 class NvlsConnection {
-  CUmemGenericAllocationHandle mcHandle_;
-  size_t bufferSize_;
-
  public:
   NvlsConnection(size_t bufferSize, int numDevices);
   NvlsConnection(const std::vector<char>& data);
+  NvlsConnection() = delete;
+  // TODO: Clean up after yourself!
+  // ~NvlsConnection();
   std::vector<char> serialize();
 
   // Everyone needs to synchronize after creating a NVLS connection before adding devices
   void addDevice();
   void addDevice(int cudaDeviceId);
+
+  struct DeviceMulticastPointer {
+   public:
+    std::shared_ptr<char> devicePtr_;
+    std::shared_ptr<char> mcPtr_;
+  };
+
+  std::shared_ptr<DeviceMulticastPointer> allocateAndBindCuda(size_t size);
 
  private:
   struct Impl;

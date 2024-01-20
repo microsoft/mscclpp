@@ -107,9 +107,11 @@ struct NvlsConnection::Impl {
   // These are only defined for multicast (NVLS) capability
   pid_t rootPid_;
   int mcFileDesc_;
+  size_t offset_;
+  std::vector<std::shared_ptr<PhysicalCudaMemory<char>>> physicalMemoryStorage;
 
   // use this only for the root of the NVLS
-  Impl(size_t bufferSize, int numDevices) {
+  Impl(size_t bufferSize, int numDevices) : offset_(0) {
     minMcGran_ = 0;
     mcGran_ = 0;
     mcProp_ = {};
@@ -129,7 +131,7 @@ struct NvlsConnection::Impl {
     INFO(MSCCLPP_COLL, "NVLS handle created on root");
   }
 
-  Impl(const std::vector<char>& data) {
+  Impl(const std::vector<char>& data) : offset_(0) {
     auto it = data.begin();
     std::copy_n(it, sizeof(*this), reinterpret_cast<char*>(this));
 
@@ -141,6 +143,41 @@ struct NvlsConnection::Impl {
     close(rootPidFd);
 
     INFO(MSCCLPP_COLL, "NVLS handle was imported from root");
+  }
+
+  struct MultiCastDeleter {
+    void operator()(char* ptr) {
+      // TODO: do something in here
+    }
+  };
+
+  std::shared_ptr<char> bindMemory(std::shared_ptr<PhysicalCudaMemory<char>> physicalMem, size_t devBuffSize) {
+    if (offset_ > bufferSize_) {
+      throw Error("This NVLS connection mapped more than it was supposed to", ErrorCode::InternalError);
+    }
+    if (bufferSize_ - offset_ < devBuffSize) {
+      throw Error("This NVLS connection cannot map the requested devBuffSize", ErrorCode::InvalidUsage);
+    }
+
+    physicalMemoryStorage.push_back(physicalMem);
+
+    MSCCLPP_CUTHROW(
+        cuMulticastBindMem(mcHandle_, offset_ /*mcOffset*/, physicalMem->memHandle_, 0 /*memOffset*/, devBuffSize, 0));
+
+    char* mcPtr;
+
+    CUmemAccessDesc accessDesc = {};
+    accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+    int deviceId = -1;
+    MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+    accessDesc.location.id = deviceId;
+    accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+    MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)(&mcPtr), devBuffSize, minMcGran_, 0U, 0));
+    MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), devBuffSize, 0, mcHandle_, offset_));
+    MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)(mcPtr), devBuffSize, &accessDesc, 1));
+    offset_ += devBuffSize;
+
+    return std::shared_ptr<char>(mcPtr, MultiCastDeleter());
   }
 
   // TODO: close all FDs and deallocate all handles.
@@ -169,6 +206,15 @@ std::vector<char> NvlsConnection::serialize() {
   std::vector<char> result;
   std::copy_n(reinterpret_cast<char*>(pimpl_.get()), sizeof(*pimpl_), std::back_inserter(result));
   return result;
+}
+
+std::shared_ptr<NvlsConnection::DeviceMulticastPointer> NvlsConnection::allocateAndBindCuda(size_t size) {
+  auto mem = allocSharedPhysicalCuda<char>(size, pimpl_->minMcGran_);
+  auto mcPtr = pimpl_->bindMemory(mem, size);
+  auto ret = std::make_shared<DeviceMulticastPointer>();
+  ret->devicePtr_ = mem->devicePtr_;
+  ret->mcPtr_ = mcPtr;
+  return ret;
 }
 
 // IBConnection

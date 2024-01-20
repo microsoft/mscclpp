@@ -50,10 +50,14 @@ struct CudaStreamWithFlags {
   cudaStream_t stream_;
 };
 
+template <class T> struct CudaDeleter;
+
 template <class T>
 struct PhysicalCudaMemory {
-  CUmemGenericAllocationHandle memHandle;
-  T* devicePtr;
+  CUmemGenericAllocationHandle memHandle_;
+  std::shared_ptr<T> devicePtr_;
+  PhysicalCudaMemory(CUmemGenericAllocationHandle memHandle, T* devicePtr)
+      : memHandle_(memHandle), devicePtr_(std::shared_ptr<T>(devicePtr, CudaDeleter<T>())) {}
 };
 
 namespace detail {
@@ -80,33 +84,35 @@ PhysicalCudaMemory<T>* cudaPhysicalCalloc(size_t nelem, size_t gran) {
   int deviceId = -1;
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
 
-  PhysicalCudaMemory<T>* ret = new PhysicalCudaMemory<T>();
   CUmemAllocationProp prop = {};
   prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   prop.location.id = deviceId;
   prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
 
+  CUmemGenericAllocationHandle memHandle;
   size_t bufferSize = sizeof(T) * nelem;
   // allocate physical memory
-  MSCCLPP_CUTHROW(cuMemCreate(&ret->memHandle, bufferSize, &prop, 0 /*flags*/));
+  MSCCLPP_CUTHROW(cuMemCreate(&memHandle, bufferSize, &prop, 0 /*flags*/));
 
   CUmemAccessDesc accessDesc = {};
   accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   accessDesc.location.id = deviceId;
   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
 
+  T* devicePtr;
   // Map the device pointer
-  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&ret->devicePtr, bufferSize, gran, 0U, 0));
-  MSCCLPP_CUDATHROW(cudaMemset(ret->devicePtr, 0, bufferSize));
-  MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)ret->devicePtr, bufferSize, 0, ret->memHandle, 0));
-  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)ret->devicePtr, bufferSize, &accessDesc, 1));
+  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, bufferSize, gran, 0U, 0));
+  MSCCLPP_CUDATHROW(cudaMemset(devicePtr, 0, bufferSize));
+  MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, bufferSize, 0, memHandle, 0));
+  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)devicePtr, bufferSize, &accessDesc, 1));
 
   CudaStreamWithFlags stream(cudaStreamNonBlocking);
-  MSCCLPP_CUDATHROW(cudaMemsetAsync(ret->devicePtr, 0, nelem * sizeof(T), stream));
+  MSCCLPP_CUDATHROW(cudaMemsetAsync(devicePtr, 0, nelem * sizeof(T), stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
-  return ret;
+
+  return new PhysicalCudaMemory<T>(memHandle, devicePtr);
 }
 
 template <class T>
@@ -160,7 +166,7 @@ Memory safeAlloc(size_t nelem) {
   return Memory(ptr, Deleter());
 }
 
-template <class T, T*(alloc)(size_t), class Deleter, class Memory>
+template <class T, T*(alloc)(size_t, size_t), class Deleter, class Memory>
 Memory safeAlloc(size_t nelem, size_t gran) {
   T* ptr = nullptr;
   try {
@@ -219,7 +225,7 @@ std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
 
 /// TODO: docs...
 template <class T>
-std::shared_ptr<T> allocSharedPhysicalCuda(size_t count, size_t gran) {
+std::shared_ptr<PhysicalCudaMemory<T>> allocSharedPhysicalCuda(size_t count, size_t gran) {
   return detail::safeAlloc<PhysicalCudaMemory<T>, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
                            std::shared_ptr<PhysicalCudaMemory<T>>>(count, gran);
 }
@@ -248,7 +254,7 @@ UniqueCudaPtr<T> allocUniqueCuda(size_t count = 1) {
 }
 
 template <class T>
-std::shared_ptr<T> allocUniquePhysicalCuda(size_t count, size_t gran) {
+std::shared_ptr<PhysicalCudaMemory<T>> allocUniquePhysicalCuda(size_t count, size_t gran) {
   return detail::safeAlloc<PhysicalCudaMemory<T>, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
                            std::unique_ptr<CudaPhysicalDeleter<T>, CudaDeleter<CudaPhysicalDeleter<T>>>>(count, gran);
 }
