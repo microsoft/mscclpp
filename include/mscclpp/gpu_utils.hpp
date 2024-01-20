@@ -50,7 +50,8 @@ struct CudaStreamWithFlags {
   cudaStream_t stream_;
 };
 
-template <class T> struct CudaDeleter;
+template <class T>
+struct CudaDeleter;
 
 template <class T>
 struct PhysicalCudaMemory {
@@ -100,17 +101,16 @@ PhysicalCudaMemory<T>* cudaPhysicalCalloc(size_t nelem, size_t gran) {
   accessDesc.location.id = deviceId;
   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
 
-  T* devicePtr;
+  T* devicePtr = NULL;
   // Map the device pointer
   MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, bufferSize, gran, 0U, 0));
-  MSCCLPP_CUDATHROW(cudaMemset(devicePtr, 0, bufferSize));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, bufferSize, 0, memHandle, 0));
   MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)devicePtr, bufferSize, &accessDesc, 1));
+  MSCCLPP_CUDATHROW(cudaMemset(devicePtr, 0, bufferSize));
 
   CudaStreamWithFlags stream(cudaStreamNonBlocking);
   MSCCLPP_CUDATHROW(cudaMemsetAsync(devicePtr, 0, nelem * sizeof(T), stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-
 
   return new PhysicalCudaMemory<T>(memHandle, devicePtr);
 }

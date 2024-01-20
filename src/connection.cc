@@ -10,6 +10,7 @@
 #include <mscclpp/utils.hpp>
 #include <sstream>
 
+#include "api.h"
 #include "debug.h"
 #include "endpoint.hpp"
 #include "infiniband/verbs.h"
@@ -121,6 +122,7 @@ struct NvlsConnection::Impl {
     MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minMcGran_, &mcProp_, CU_MULTICAST_GRANULARITY_MINIMUM));
     MSCCLPP_CUTHROW(cuMulticastGetGranularity(&mcGran_, &mcProp_, CU_MULTICAST_GRANULARITY_RECOMMENDED));
     mcProp_.size = ((mcProp_.size + mcGran_ - 1) / mcGran_) * mcGran_;
+    bufferSize_ = mcProp_.size;
     MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp_));
     mcFileDesc_ = 0;
     MSCCLPP_CUTHROW(
@@ -214,8 +216,18 @@ std::shared_ptr<NvlsConnection::DeviceMulticastPointer> NvlsConnection::allocate
   auto ret = std::make_shared<DeviceMulticastPointer>();
   ret->devicePtr_ = mem->devicePtr_;
   ret->mcPtr_ = mcPtr;
+  ret->bufferSize_ = size;
   return ret;
 }
+
+MSCCLPP_API_CPP NvlsConnection::DeviceMulticastPointer::DeviceHandle
+NvlsConnection::DeviceMulticastPointer::deviceHandle() {
+  NvlsConnection::DeviceMulticastPointer::DeviceHandle device;
+  device.devicePtr = this->devicePtr_.get();
+  device.mcPtr = this->mcPtr_.get();
+  device.bufferSize = this->bufferSize_;
+  return device;
+};
 
 // IBConnection
 

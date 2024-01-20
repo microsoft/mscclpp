@@ -15,6 +15,7 @@
 #include <memory>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/nvls_device.hpp>
 #include <string>
 #include <vector>
 
@@ -463,9 +464,16 @@ class NvlsConnection {
   void addDevice(int cudaDeviceId);
 
   struct DeviceMulticastPointer {
-   public:
+   private:
     std::shared_ptr<char> devicePtr_;
     std::shared_ptr<char> mcPtr_;
+    size_t bufferSize_;
+
+   public:
+    using DeviceHandle = DeviceMulticastPointerDeviceHandle;
+    DeviceHandle deviceHandle();
+
+    friend class NvlsConnection;
   };
 
   std::shared_ptr<DeviceMulticastPointer> allocateAndBindCuda(size_t size);

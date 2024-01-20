@@ -283,6 +283,7 @@ class MscclppKernel:
         use_packet=False,
         scratch=None,
         fifo=None,
+        nvls_mem_handle=None
     ):
         file_dir = os.path.dirname(os.path.abspath(__file__))
         if test_name == "h2d_semaphore":
@@ -321,6 +322,12 @@ class MscclppKernel:
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = 1024
+        elif test_name == "nvls":
+            self._kernel = KernelBuilder(
+                file="nvls_test.cu", kernel_name="nvls_test", file_dir=file_dir
+            ).get_compiled_kernel()
+            self.nblocks = 1
+            self.nthreads = 1
         else:
             assert False
 
@@ -349,6 +356,8 @@ class MscclppKernel:
             semaphore_device_handles = [semaphore.device_handle().raw for semaphore in semaphore_or_channels]
             self._d_semaphore_or_channels = cp.asarray(memoryview(b"".join(semaphore_device_handles)), dtype=cp.uint8)
             self.params = pack(my_rank, nranks) + fifo.raw + pack(self._d_semaphore_or_channels)
+        elif test_name == "nvls":
+            self.params = nvls_mem_handle.device_handle().raw + pack(my_rank, nranks)
 
     def __call__(self):
         return self._kernel.launch_kernel(self.params, self.nblocks, self.nthreads, 0, None)
@@ -530,4 +539,15 @@ def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, u
 
 @parametrize_mpi_groups(2, 4, 8)
 def test_nvls(mpi_group: MpiGroup):
-    group, connections = create_and_connect(mpi_group, "NVLS")
+    group, connection = create_and_connect(mpi_group, "NVLS")
+    nelem = 2**29
+    mem_handle = connection.allocate_bind_memory(nelem)
+
+    kernel = MscclppKernel(
+        "nvls",
+        my_rank=group.my_rank,
+        nranks=group.nranks,
+        nvls_mem_handle=mem_handle
+    )
+
+    kernel()
