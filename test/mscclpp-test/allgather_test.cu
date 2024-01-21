@@ -23,7 +23,7 @@ using DeviceHandle = mscclpp::DeviceHandle<T>;
 __constant__ DeviceHandle<mscclpp::SimpleProxyChannel> constProxyChans[16];
 __constant__ DeviceHandle<mscclpp::ProxyChannel> constRawProxyChan[16];
 
-__constant__ DeviceHandle<mscclpp::SmChannel> constSmChans[256];
+__constant__ DeviceHandle<mscclpp::SmChannel> constSmChans[512];
 
 __global__ void allgather0(int rank, size_t nelemsPerGPU) {
   int warpId = threadIdx.x / WARP_SIZE;
@@ -288,14 +288,18 @@ __global__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
                    nBlocksForLocalAllGather);
 }
 
-__global__ void allgather5(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
-  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  const int lid = tid % WARP_SIZE;
-  const int wid = tid / WARP_SIZE;
-  const int nThread = blockDim.x * gridDim.x;
-  const int nWarp = nThread / WARP_SIZE;
-  const int nPeer = nRanksPerNode - 1;
-  const int chanOffset = nPeer * blockIdx.x;
+__global__ void __launch_bounds__(1024, 1) allgather5(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
+  const size_t nBlock = gridDim.x;
+  if (blockIdx.x >= nBlock) return;
+
+  const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+  const size_t lid = tid % WARP_SIZE;
+  const size_t wid = tid / WARP_SIZE;
+
+  const size_t nThread = blockDim.x * nBlock;
+  const size_t nWarp = nThread / WARP_SIZE;
+  const size_t nPeer = nRanksPerNode - 1;
+  const size_t chanOffset = nPeer * blockIdx.x;
   auto smChans = constSmChans + chanOffset;
 
   if (wid < nPeer && lid == 0) {
@@ -314,25 +318,34 @@ __global__ void allgather5(int rank, int worldSize, int nRanksPerNode, size_t ne
   const size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
   const size_t unitBytes = unitBytesPerWarp * nWarp;
   const size_t nLoop = bytes / unitBytes;
-  for (size_t i = 0; i < nLoop; ++i) {
+
+  if (nLoop > 0) {
+    // First loop unrolling
+    const size_t peerIdx = wid % nPeer;
+    const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
+    const size_t offset = bytesPerGPU * remoteRankLocalIndex + (wid / nPeer) * unitBytesPerWarp;
+    smChans[peerIdx].get<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+  }
+
+  for (size_t i = 1; i < nLoop; ++i) {
     const size_t gWid = wid + i * nWarp;
-    const int peerIdx = gWid % nPeer;
-    const int remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
+    const size_t peerIdx = gWid % nPeer;
+    const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * remoteRankLocalIndex + (gWid / nPeer) * unitBytesPerWarp;
-    smChans[peerIdx].get(offset, unitBytesPerWarp, lid, WARP_SIZE);
+    smChans[peerIdx].get<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
   }
 
   if (bytes % unitBytes > 0) {
     const size_t gWid = wid + nLoop * nWarp;
-    const int peerIdx = gWid % nPeer;
-    const int remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
+    const size_t peerIdx = gWid % nPeer;
+    const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
     const size_t offset = bytesPerGPU * remoteRankLocalIndex + offsetWithinRank;
     const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
                                    ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
                                    : unitBytesPerWarp;
     if (remainBytes > 0) {
-      smChans[peerIdx].get(offset, remainBytes, lid, WARP_SIZE);
+      smChans[peerIdx].get<16, true>(offset, remainBytes, lid, WARP_SIZE);
     }
   }
 }
@@ -549,7 +562,7 @@ void AllGatherTestEngine::setupConnections() {
     CUDATHROW(cudaMemcpyToSymbol(constProxyChans, devProxyChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * devProxyChannels.size()));
 
-    setupMeshConnections(smChannels_, sendBuff_.get(), args_.maxBytes, nullptr, 0, ChannelSemantic::PUT, 32);
+    setupMeshConnections(smChannels_, sendBuff_.get(), args_.maxBytes, nullptr, 0, ChannelSemantic::PUT, 64);
     std::vector<DeviceHandle<mscclpp::SmChannel>> smChannelHandles(smChannels_.size());
     if (smChannels_.size() > sizeof(constSmChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
       std::runtime_error("unexpected error");
