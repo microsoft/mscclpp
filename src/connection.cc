@@ -189,10 +189,12 @@ struct NvlsConnection::Impl {
     MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)(mcPtr), devBuffSize, &accessDesc, 1));
 
     // Is this enough? Or we should update the offset as well
-    auto deleter = [=](char* ptr) {
+    auto deleter = [=, bindOffset = offset_](char* ptr) {
+      CUdevice device;
+      MSCCLPP_CUTHROW(cuDeviceGet(&device, deviceId));
       MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, devBuffSize));
       MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, devBuffSize));
-      MSCCLPP_CUTHROW(cuMulticastUnbind(mcHandle_, deviceId, offset_, devBuffSize));
+      MSCCLPP_CUTHROW(cuMulticastUnbind(mcHandle_, device, bindOffset, devBuffSize));
     };
     offset_ += devBuffSize;
 
