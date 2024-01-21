@@ -170,9 +170,10 @@ struct NvlsConnection::Impl {
     MultiCastBindDeleter(CUmemGenericAllocationHandle mcHandle, int deviceId, size_t offset, size_t bufferSize)
         : mcHandle_(mcHandle), deviceId_(deviceId), offset_(offset), bufferSize_(bufferSize) {}
     void operator()(char* ptr) {
-      MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, bufferSize_));
-      MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, bufferSize_));
-      MSCCLPP_CUTHROW(cuMulticastUnbind(mcHandle_, deviceId_, offset_, bufferSize_));
+      // MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, bufferSize_));
+      // printf("NNNNNN %p\n", ptr);
+      // MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, bufferSize_));
+      // MSCCLPP_CUTHROW(cuMulticastUnbind(mcHandle_, deviceId_, offset_, bufferSize_));
 
       INFO(MSCCLPP_COLL, "NVLS unbound pointer %p.", ptr);
     }

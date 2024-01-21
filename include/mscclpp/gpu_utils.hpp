@@ -62,8 +62,9 @@ struct PhysicalCudaMemory {
   // deallocation will happen with CudaPhysicalDeleter.
   PhysicalCudaMemory(CUmemGenericAllocationHandle memHandle, T* devicePtr, size_t bufferSize)
       : memHandle_(memHandle), bufferSize_(bufferSize), devicePtr_(std::shared_ptr<T>(devicePtr, [this](T* ptr) {
-          MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, this->bufferSize_));
-          MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, this->bufferSize_));
+          // MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, this->bufferSize_));
+          // printf("MMMMMMMMM %p\n", ptr);
+          // MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, this->bufferSize_));
         })) {}
 };
 
