@@ -116,19 +116,15 @@ def test_bootstrap_init_gil_release(mpi_group: MpiGroup):
 
     mpi_group.comm.barrier()
 
-
-def create_and_connect(mpi_group: MpiGroup, transport: str):
-    if (transport == "NVLink" or transport == "NVLS") and all_ranks_on_the_same_node(mpi_group) is False:
-        pytest.skip("cannot use nvlink/nvls for cross node")
-    group = mscclpp_comm.CommGroup(mpi_group.comm)
+def create_connection(group: mscclpp_comm.CommGroup, transport: str):
     if transport == "NVLS":
-        all_ranks = list(range(mpi_group.comm.size))
+        all_ranks = list(range(group.nranks))
         tran = Transport.Nvls
         connection = group.make_connection(all_ranks, tran)
-        return group, connection
+        return connection
     
-    remote_nghrs = list(range(mpi_group.comm.size))
-    remote_nghrs.remove(mpi_group.comm.rank)
+    remote_nghrs = list(range(group.nranks))
+    remote_nghrs.remove(group.my_rank)
     if transport == "NVLink":
         tran = Transport.CudaIpc
     elif transport == "IB":
@@ -136,20 +132,27 @@ def create_and_connect(mpi_group: MpiGroup, transport: str):
     else:
         assert False
     connections = group.make_connection(remote_nghrs, tran)
-    return group, connections
+    return connections
+
+def create_group_and_connection(mpi_group: MpiGroup, transport: str):
+    if (transport == "NVLink" or transport == "NVLS") and all_ranks_on_the_same_node(mpi_group) is False:
+        pytest.skip("cannot use nvlink/nvls for cross node")
+    group = mscclpp_comm.CommGroup(mpi_group.comm)
+    connection = create_connection(group, transport)
+    return group, connection
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
 def test_group_with_connections(mpi_group: MpiGroup, transport: str):
-    create_and_connect(mpi_group, transport)
+    create_group_and_connection(mpi_group, transport)
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 def test_connection_write(mpi_group: MpiGroup, transport: Transport, nelem: int):
-    group, connections = create_and_connect(mpi_group, transport)
+    group, connections = create_group_and_connection(mpi_group, transport)
     memory = cp.zeros(nelem, dtype=cp.int32)
     nelemPerRank = nelem // group.nranks
     sizePerRank = nelemPerRank * memory.itemsize
@@ -190,7 +193,7 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, transport: Transport, 
 
     if device == "cpu" and transport == "NVLink":
         pytest.skip("nvlink doesn't work with host allocated memory")
-    group, connections = create_and_connect(mpi_group, transport)
+    group, connections = create_group_and_connection(mpi_group, transport)
     xp = cp if device == "cuda" else np
     if group.my_rank == 0:
         memory = xp.random.randn(nelem)
@@ -234,7 +237,7 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, transport: Transport, 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 def test_h2h_semaphores(mpi_group: MpiGroup):
-    group, connections = create_and_connect(mpi_group, "IB")
+    group, connections = create_group_and_connection(mpi_group, "IB")
 
     semaphores = group.make_semaphore(connections, Host2HostSemaphore)
     for rank in connections:
@@ -247,7 +250,7 @@ def test_h2h_semaphores(mpi_group: MpiGroup):
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 def test_h2h_semaphores_gil_release(mpi_group: MpiGroup):
-    group, connections = create_and_connect(mpi_group, "IB")
+    group, connections = create_group_and_connection(mpi_group, "IB")
 
     semaphores = group.make_semaphore(connections, Host2HostSemaphore)
 
@@ -283,7 +286,8 @@ class MscclppKernel:
         use_packet=False,
         scratch=None,
         fifo=None,
-        nvls_mem_handle=None
+        nvls_mem_handle=None,
+        nvls_buffer_size=None
     ):
         file_dir = os.path.dirname(os.path.abspath(__file__))
         if test_name == "h2d_semaphore":
@@ -332,7 +336,7 @@ class MscclppKernel:
             assert False
 
         self.params = b""
-        if test_name in ["h2d_semaphore", "d2d_semaphore", "sm_channel", "simple_proxy_channel"]:
+        if semaphore_or_channels != None:
             first_arg = next(iter(semaphore_or_channels.values()))
             size_of_semaphore_or_channels = len(first_arg.device_handle().raw)
             device_handles = []
@@ -345,6 +349,8 @@ class MscclppKernel:
                     device_handles.append(semaphore_or_channels[rank].device_handle().raw)
             # keep a reference to the device handles so that they don't get garbage collected
             self._d_semaphore_or_channels = cp.asarray(memoryview(b"".join(device_handles)), dtype=cp.uint8)
+
+        if test_name in ["h2d_semaphore", "d2d_semaphore", "sm_channel", "simple_proxy_channel"]:
             self.params += pack(self._d_semaphore_or_channels, my_rank, nranks)
             if test_name == "sm_channel":
                 self.params += pack(tensor.size, use_packet)
@@ -357,7 +363,7 @@ class MscclppKernel:
             self._d_semaphore_or_channels = cp.asarray(memoryview(b"".join(semaphore_device_handles)), dtype=cp.uint8)
             self.params = pack(my_rank, nranks) + fifo.raw + pack(self._d_semaphore_or_channels)
         elif test_name == "nvls":
-            self.params = nvls_mem_handle.device_handle().raw + pack(my_rank, nranks)
+            self.params = nvls_mem_handle.device_handle().raw + pack(self._d_semaphore_or_channels) + pack(my_rank, nranks, nvls_buffer_size)
 
     def __call__(self):
         return self._kernel.launch_kernel(self.params, self.nblocks, self.nthreads, 0, None)
@@ -370,7 +376,7 @@ def test_h2d_semaphores(mpi_group: MpiGroup, transport: str):
         for rank in semaphores:
             semaphores[rank].signal()
 
-    group, connections = create_and_connect(mpi_group, transport)
+    group, connections = create_group_and_connection(mpi_group, transport)
 
     semaphores = group.make_semaphore(connections, Host2DeviceSemaphore)
     kernel = MscclppKernel("h2d_semaphore", group.my_rank, group.nranks, semaphores)
@@ -386,7 +392,7 @@ def test_h2d_semaphores(mpi_group: MpiGroup, transport: str):
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 def test_d2d_semaphores(mpi_group: MpiGroup):
-    group, connections = create_and_connect(mpi_group, "NVLink")
+    group, connections = create_group_and_connection(mpi_group, "NVLink")
 
     semaphores = group.make_semaphore(connections, SmDevice2DeviceSemaphore)
     group.barrier()
@@ -400,7 +406,7 @@ def test_d2d_semaphores(mpi_group: MpiGroup):
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("use_packet", [False, True])
 def test_sm_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
-    group, connections = create_and_connect(mpi_group, "NVLink")
+    group, connections = create_group_and_connection(mpi_group, "NVLink")
 
     memory = cp.zeros(nelem, dtype=cp.int32)
     if use_packet:
@@ -448,7 +454,7 @@ def test_fifo(
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
 def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
-    group, connections = create_and_connect(mpi_group, transport)
+    group, connections = create_group_and_connection(mpi_group, transport)
 
     memory = cp.zeros(nelem, dtype=cp.int32)
     nelemPerRank = nelem // group.nranks
@@ -498,7 +504,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
 @pytest.mark.parametrize("transport", ["NVLink", "IB"])
 @pytest.mark.parametrize("use_packet", [False, True])
 def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
-    group, connections = create_and_connect(mpi_group, transport)
+    group, connections = create_group_and_connection(mpi_group, transport)
 
     memory = cp.zeros(nelem, dtype=cp.int32)
     if use_packet:
@@ -539,23 +545,22 @@ def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, u
 
 @parametrize_mpi_groups(8)
 def test_nvls(mpi_group: MpiGroup):
-    group, connection = create_and_connect(mpi_group, "NVLS")
+    group, nvls_connection = create_group_and_connection(mpi_group, "NVLS")
     nbytes = 2**21
-    mem_handle = connection.allocate_bind_memory(nbytes)
+    mem_handle = nvls_connection.allocate_bind_memory(nbytes)
 
-    nbytes = 2**21
-    mem_handle2 = connection.allocate_bind_memory(nbytes)
+    nvlinks_connections = create_connection(group, "NVLink")
+    semaphores = group.make_semaphore(nvlinks_connections, SmDevice2DeviceSemaphore)
 
     kernel = MscclppKernel(
         "nvls",
         my_rank=group.my_rank,
         nranks=group.nranks,
-        nvls_mem_handle=mem_handle
+        nvls_mem_handle=mem_handle,
+        nvls_buffer_size=nbytes,
+        semaphore_or_channels=semaphores
     )
+
     kernel()
     cp.cuda.runtime.deviceSynchronize()
     group.barrier()
-    kernel()
-    cp.cuda.runtime.deviceSynchronize()
-    group.barrier()
-    time.sleep(100)

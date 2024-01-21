@@ -173,6 +173,8 @@ struct NvlsConnection::Impl {
       MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, bufferSize_));
       MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, bufferSize_));
       MSCCLPP_CUTHROW(cuMulticastUnbind(mcHandle_, deviceId_, offset_, bufferSize_));
+
+      INFO(MSCCLPP_COLL, "NVLS unbound pointer %p.", ptr);
     }
   };
 

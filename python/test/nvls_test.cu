@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <mscclpp/nvls_device.hpp>
+#include <mscclpp/semaphore_device.hpp>
 
 #define MULTIMEM_ST(val, ptr)                                                                                   \
   asm volatile("multimem.st.global.v4.f32 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x), "r"(val.y), "r"(val.z), \
@@ -15,7 +16,8 @@
       : "memory");
 
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    nvls_test(mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs, int my_rank, int nranks) {
+    nvls_test(mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs,
+              mscclpp::SmDevice2DeviceSemaphoreDeviceHandle* semaphores, int my_rank, int nranks, int nbytes) {
   int tid = threadIdx.x;
   int bid = blockIdx.x;
   if (tid == 0 && bid == 0) {
