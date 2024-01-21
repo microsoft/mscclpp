@@ -201,7 +201,7 @@ struct CudaPhysicalDeleter {
   void operator()(TPtrOrArray ptr) {
     AvoidCudaGraphCaptureGuard cgcGuard;
     printf("IIIIIIIIII %p\n", ptr);
-    delete ptr;
+    // delete ptr;
     printf("deleted successfully\n");
   }
 };
