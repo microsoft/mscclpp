@@ -3,6 +3,10 @@
 
 #include <mscclpp/nvls_device.hpp>
 #include <mscclpp/semaphore_device.hpp>
+#include <mscclpp/concurrency_device.hpp>
+#include <mscclpp/poll_device.hpp>
+
+__device__ mscclpp::DeviceSyncer deviceSyncer;
 
 #define MULTIMEM_ST(val, ptr)                                                                                   \
   asm volatile("multimem.st.global.v4.f32 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x), "r"(val.y), "r"(val.z), \
@@ -18,27 +22,57 @@
 extern "C" __global__ void __launch_bounds__(1024, 1)
     nvls_test(mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs,
               mscclpp::SmDevice2DeviceSemaphoreDeviceHandle* semaphores, int my_rank, int nranks, int nbytes) {
+
+  int nelem = nbytes/sizeof(float);
+  float* dev_ptr = (float*)nvlsPtrs.devicePtr;
+  float* mc_ptr = (float*)nvlsPtrs.mcPtr;
   int tid = threadIdx.x;
   int bid = blockIdx.x;
-  if (tid == 0 && bid == 0) {
-    float* devPtr = (float*)nvlsPtrs.devicePtr;
-    devPtr[0] = 3;
-    devPtr[1] = 4;
-    devPtr[2] = 5;
-    devPtr[3] = 6;
+
+  for (int idx = bid*blockDim.x+tid; idx < nelem; idx += blockDim.x*gridDim.x){
+    dev_ptr[idx] = my_rank;
+  }
+  deviceSyncer.sync(gridDim.x);
+  if (tid == 0 && bid == 0){
     __threadfence_system();
   }
-  if (tid == 0 && bid == 0 && my_rank == 0) {
-    float* devPtr = (float*)nvlsPtrs.devicePtr;
 
-    float* mcPtr = (float*)nvlsPtrs.mcPtr;
+  if (bid == 0){
+    if (tid < nranks && tid != my_rank) {
+      semaphores[tid].signal();
+      semaphores[tid].wait();
+    }
+  }
+  deviceSyncer.sync(gridDim.x);
+
+  int my_st = ((int64_t)nelem * (int64_t)my_rank) / (int64_t)nranks;
+  int my_en = ((int64_t)nelem * (int64_t)(my_rank + 1)) / (int64_t)nranks;
+
+  int my_offset = (tid + bid * blockDim.x) * 4;
+  int my_step = blockDim.x * gridDim.x * 4;
+
+  for (int idx = my_st + my_offset; idx < my_en; idx += my_step) {
     uint4 val;
-    MULTIMEM_LD(val, mcPtr);
-    MULTIMEM_ST(val, mcPtr);
+    MULTIMEM_LD(val, mc_ptr + idx);
+    MULTIMEM_ST(val, mc_ptr + idx);
+  }
+
+  deviceSyncer.sync(gridDim.x);
+  if (tid == 0 && bid == 0){
     __threadfence_system();
+  }
 
-    float tmp = *(float*)&val.x;
+  if (bid == 0){
+    if (tid < nranks && tid != my_rank) {
+      semaphores[tid].signal();
+      semaphores[tid].wait();
+    }
+  }
+  deviceSyncer.sync(gridDim.x);
 
-    printf("RRR %f %f\n", *devPtr, tmp);
+  for (int idx = bid*blockDim.x+tid; idx < nelem; idx += blockDim.x*gridDim.x){
+    if (dev_ptr[idx] != ((nranks * (nranks-1))/2)){
+      __assert_fail("dev_ptr[idx] != nranks", __FILE__, __LINE__, __PRETTY_FUNCTION__);
+    }
   }
 }

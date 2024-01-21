@@ -330,8 +330,8 @@ class MscclppKernel:
             self._kernel = KernelBuilder(
                 file="nvls_test.cu", kernel_name="nvls_test", file_dir=file_dir
             ).get_compiled_kernel()
-            self.nblocks = 1
-            self.nthreads = 1
+            self.nblocks = 64
+            self.nthreads = 1024
         else:
             assert False
 
