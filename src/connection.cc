@@ -167,6 +167,7 @@ struct NvlsConnection::Impl {
     int deviceId_;
     size_t offset_;
     size_t bufferSize_;
+    MultiCastBindDeleter() = default;
     MultiCastBindDeleter(CUmemGenericAllocationHandle mcHandle, int deviceId, size_t offset, size_t bufferSize)
         : mcHandle_(mcHandle), deviceId_(deviceId), offset_(offset), bufferSize_(bufferSize) {}
     void operator()(char* ptr) {
@@ -217,14 +218,11 @@ NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices)
 void NvlsConnection::addDevice() {
   int cudaDeviceId;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDeviceId));
-  MSCCLPP_CUTHROW(cuMulticastAddDevice(pimpl_->mcHandle_, cudaDeviceId));
-
-  INFO(MSCCLPP_COLL, "NVLS connection created");
+  this->addDevice(cudaDeviceId);
 }
 
 void NvlsConnection::addDevice(int cudaDeviceId) {
   MSCCLPP_CUTHROW(cuMulticastAddDevice(pimpl_->mcHandle_, cudaDeviceId));
-
   INFO(MSCCLPP_COLL, "NVLS connection created");
 }
 
@@ -236,11 +234,13 @@ std::vector<char> NvlsConnection::serialize() {
   return result;
 }
 
+// TODO: we need to atuo delete the memory we multicast pointer is no used anymore
 std::shared_ptr<NvlsConnection::DeviceMulticastPointer> NvlsConnection::allocateAndBindCuda(size_t size) {
   auto mem = allocSharedPhysicalCuda<char>(size, pimpl_->minMcGran_);
   auto mcPtr = pimpl_->bindMemory(mem, size);
   auto ret = std::make_shared<DeviceMulticastPointer>();
-  ret->devicePtr_ = mem->devicePtr_;
+  // hack, need to update
+  ret->devicePtr_ = std::shared_ptr<char>(mem->devicePtr_, NvlsConnection::Impl::MultiCastBindDeleter());
   ret->mcPtr_ = mcPtr;
   ret->bufferSize_ = size;
   return ret;

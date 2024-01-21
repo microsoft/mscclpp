@@ -56,16 +56,10 @@ struct CudaDeleter;
 template <class T>
 struct PhysicalCudaMemory {
   CUmemGenericAllocationHandle memHandle_;
-  size_t bufferSize_;
-  std::shared_ptr<T> devicePtr_;
-  // The deallocator for devicePtr will only unmap and free the address range. The physical memory
-  // deallocation will happen with CudaPhysicalDeleter.
-  PhysicalCudaMemory(CUmemGenericAllocationHandle memHandle, T* devicePtr, size_t bufferSize)
-      : memHandle_(memHandle), bufferSize_(bufferSize), devicePtr_(std::shared_ptr<T>(devicePtr, [this](T* ptr) {
-          // MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, this->bufferSize_));
-          // printf("MMMMMMMMM %p\n", ptr);
-          // MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, this->bufferSize_));
-        })) {}
+  T* devicePtr_;
+  size_t size_;
+  PhysicalCudaMemory(CUmemGenericAllocationHandle memHandle, T* devicePtr, size_t size)
+      : memHandle_(memHandle), devicePtr_(devicePtr), size_(size) {}
 };
 
 namespace detail {
@@ -201,12 +195,12 @@ struct CudaDeleter {
 
 template <class T>
 struct CudaPhysicalDeleter {
-  using TPtrOrArray =
-      std::conditional_t<std::is_array_v<PhysicalCudaMemory<T>>, PhysicalCudaMemory<T>, PhysicalCudaMemory<T>*>;
-  void operator()(TPtrOrArray ptr) {
+  static_assert(!std::is_array_v<T>, "T must not be an array");
+  void operator()(PhysicalCudaMemory<T>* ptr) {
     AvoidCudaGraphCaptureGuard cgcGuard;
+    MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr->devicePtr_, ptr->size_));
+    MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr->devicePtr_, ptr->size_));
     MSCCLPP_CUTHROW(cuMemRelease(ptr->memHandle_));
-    delete ptr;
   }
 };
 

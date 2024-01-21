@@ -35,6 +35,20 @@ struct ExtInfo {
   SocketAddress extAddressListen;
 };
 
+MSCCLPP_API_CPP void Bootstrap::groupBarrier(const std::vector<int>& ranks) {
+  int dummy = 0;
+  for (auto rank : ranks) {
+    if (rank != this->getRank()) {
+      this->send(static_cast<void*>(&dummy), sizeof(dummy), rank, 0);
+    }
+  }
+  for (auto rank : ranks) {
+    if (rank != this->getRank()) {
+      this->recv(static_cast<void*>(&dummy), sizeof(dummy), rank, 0);
+    }
+  }
+}
+
 MSCCLPP_API_CPP void Bootstrap::send(const std::vector<char>& data, int peer, int tag) {
   size_t size = data.size();
   send((void*)&size, sizeof(size_t), peer, tag);

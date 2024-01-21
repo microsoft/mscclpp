@@ -3,6 +3,8 @@
 
 #include "communicator.hpp"
 
+#include <algorithm>
+
 #include "api.h"
 #include "debug.h"
 
@@ -111,6 +113,7 @@ MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> Communicator::connctNvlsCollecti
   int myRank = bootstrap->getRank();
   bool isRoot = false;
   bool amongAllRanks = false;
+  std::sort(allRanks.begin(), allRanks.end());
   int rootRank = allRanks[0];
   for (auto nvlsRank : allRanks) {
     if (nvlsRank == myRank) amongAllRanks = true;
@@ -122,7 +125,6 @@ MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> Communicator::connctNvlsCollecti
   if (rootRank == myRank) isRoot = true;
 
   std::shared_ptr<NvlsConnection> conn;
-
   if (isRoot) {
     conn = std::make_shared<NvlsConnection>(config.nvlsBufferSize, allRanks.size());
     auto serialized = conn->serialize();
@@ -136,21 +138,12 @@ MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> Communicator::connctNvlsCollecti
   }
 
   // Now let's synchronize all ranks
-  int dummy = 0;
-  for (auto nvlsRank : allRanks) {
-    if (nvlsRank != myRank) {
-      bootstrap->send(static_cast<void*>(&dummy), sizeof(dummy), nvlsRank, 0);
-    }
-  }
-  for (auto nvlsRank : allRanks) {
-    if (nvlsRank != myRank) {
-      bootstrap->recv(static_cast<void*>(&dummy), sizeof(dummy), nvlsRank, 0);
-    }
-  }
-
+  bootstrap->groupBarrier(allRanks);
   // now it is safe to add my device
   conn->addDevice();
 
+  // sync here to make sure all ranks have added their devices
+  bootstrap->groupBarrier(allRanks);
   return conn;
 }
 

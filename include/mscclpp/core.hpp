@@ -43,6 +43,7 @@ class Bootstrap {
   virtual void allGather(void* allData, int size) = 0;
   virtual void barrier() = 0;
 
+  void groupBarrier(const std::vector<int>& ranks);
   void send(const std::vector<char>& data, int peer, int tag);
   void recv(std::vector<char>& data, int peer, int tag);
 };
