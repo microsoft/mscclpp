@@ -553,3 +553,5 @@ def test_nvls(mpi_group: MpiGroup):
     cp.cuda.runtime.deviceSynchronize()
     group.barrier()
     kernel()
+    cp.cuda.runtime.deviceSynchronize()
+    group.barrier()

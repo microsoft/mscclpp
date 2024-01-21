@@ -106,10 +106,9 @@ PhysicalCudaMemory<T>* cudaPhysicalCalloc(size_t nelem, size_t gran) {
   MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, bufferSize, gran, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, bufferSize, 0, memHandle, 0));
   MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)devicePtr, bufferSize, &accessDesc, 1));
-  MSCCLPP_CUDATHROW(cudaMemset(devicePtr, 0, bufferSize));
-
   CudaStreamWithFlags stream(cudaStreamNonBlocking);
-  MSCCLPP_CUDATHROW(cudaMemsetAsync(devicePtr, 0, nelem * sizeof(T), stream));
+  MSCCLPP_CUDATHROW(cudaMemsetAsync(devicePtr, 0, bufferSize, stream));
+
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
   return new PhysicalCudaMemory<T>(memHandle, devicePtr);
@@ -188,8 +187,10 @@ template <class T>
 struct CudaDeleter {
   using TPtrOrArray = std::conditional_t<std::is_array_v<T>, T, T*>;
   void operator()(TPtrOrArray ptr) {
+    printf("QQQQQ %p\n", ptr);
     AvoidCudaGraphCaptureGuard cgcGuard;
     MSCCLPP_CUDATHROW(cudaFree(ptr));
+    printf("deletedCuda successfully\n");
   }
 };
 
@@ -199,7 +200,9 @@ struct CudaPhysicalDeleter {
       std::conditional_t<std::is_array_v<PhysicalCudaMemory<T>>, PhysicalCudaMemory<T>, PhysicalCudaMemory<T>*>;
   void operator()(TPtrOrArray ptr) {
     AvoidCudaGraphCaptureGuard cgcGuard;
-    // TODO: adding free'ing stuff here
+    printf("IIIIIIIIII %p\n", ptr);
+    delete ptr;
+    printf("deleted successfully\n");
   }
 };
 
