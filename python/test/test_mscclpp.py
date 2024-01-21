@@ -540,8 +540,11 @@ def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, u
 @parametrize_mpi_groups(8)
 def test_nvls(mpi_group: MpiGroup):
     group, connection = create_and_connect(mpi_group, "NVLS")
-    nelem = 2**29
-    mem_handle = connection.allocate_bind_memory(nelem)
+    nbytes = 2**21
+    mem_handle = connection.allocate_bind_memory(nbytes)
+
+    nbytes = 2**21
+    mem_handle2 = connection.allocate_bind_memory(nbytes)
 
     kernel = MscclppKernel(
         "nvls",
@@ -555,3 +558,4 @@ def test_nvls(mpi_group: MpiGroup):
     kernel()
     cp.cuda.runtime.deviceSynchronize()
     group.barrier()
+    time.sleep(100)

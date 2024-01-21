@@ -121,7 +121,7 @@ struct NvlsConnection::Impl {
     mcProp_.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
     MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minMcGran_, &mcProp_, CU_MULTICAST_GRANULARITY_MINIMUM));
     MSCCLPP_CUTHROW(cuMulticastGetGranularity(&mcGran_, &mcProp_, CU_MULTICAST_GRANULARITY_RECOMMENDED));
-    mcProp_.size = ((mcProp_.size + mcGran_ - 1) / mcGran_) * mcGran_;
+    mcProp_.size = ((mcProp_.size + minMcGran_ - 1) / minMcGran_) * minMcGran_;
     bufferSize_ = mcProp_.size;
     MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp_));
     mcFileDesc_ = 0;
@@ -133,7 +133,8 @@ struct NvlsConnection::Impl {
       throw mscclpp::SysError("getpid() failed", errno);
     }
 
-    INFO(MSCCLPP_COLL, "NVLS handle created on root");
+    INFO(MSCCLPP_COLL, "NVLS handle created on root with size %ld. minGranularity %ld and recommendedGranularity %ld\n",
+         mcProp_.size, minMcGran_, mcGran_);
   }
 
   Impl(const std::vector<char>& data) : offset_(0) {
@@ -198,7 +199,7 @@ struct NvlsConnection::Impl {
     accessDesc.location.id = deviceId;
     accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
     MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)(&mcPtr), devBuffSize, minMcGran_, 0U, 0));
-    MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), devBuffSize, 0, mcHandle_, offset_));
+    MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), devBuffSize, 0, mcHandle_, 0));
     MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)(mcPtr), devBuffSize, &accessDesc, 1));
     MultiCastBindDeleter deleter(mcHandle_, deviceId, offset_, devBuffSize);
     offset_ += devBuffSize;
