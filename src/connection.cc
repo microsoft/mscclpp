@@ -162,24 +162,6 @@ struct NvlsConnection::Impl {
     // we don't need to free multicast handle object according to NCCL.
   }
 
-  struct MultiCastBindDeleter {
-    CUmemGenericAllocationHandle mcHandle_;
-    int deviceId_;
-    size_t offset_;
-    size_t bufferSize_;
-    MultiCastBindDeleter() = default;
-    MultiCastBindDeleter(CUmemGenericAllocationHandle mcHandle, int deviceId, size_t offset, size_t bufferSize)
-        : mcHandle_(mcHandle), deviceId_(deviceId), offset_(offset), bufferSize_(bufferSize) {}
-    void operator()(char* ptr) {
-      // MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, bufferSize_));
-      // printf("NNNNNN %p\n", ptr);
-      // MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, bufferSize_));
-      // MSCCLPP_CUTHROW(cuMulticastUnbind(mcHandle_, deviceId_, offset_, bufferSize_));
-
-      INFO(MSCCLPP_COLL, "NVLS unbound pointer %p.", ptr);
-    }
-  };
-
   std::shared_ptr<char> bindMemory(std::shared_ptr<PhysicalCudaMemory<char>> physicalMem, size_t devBuffSize) {
     if (offset_ > bufferSize_) {
       throw Error("This NVLS connection mapped more than it was supposed to", ErrorCode::InternalError);
@@ -205,7 +187,13 @@ struct NvlsConnection::Impl {
     MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)(&mcPtr), devBuffSize, minMcGran_, 0U, 0));
     MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), devBuffSize, 0, mcHandle_, 0));
     MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)(mcPtr), devBuffSize, &accessDesc, 1));
-    MultiCastBindDeleter deleter(mcHandle_, deviceId, offset_, devBuffSize);
+
+    // Is this enough? Or we should update the offset as well
+    auto deleter = [=](char* ptr) {
+      MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, devBuffSize));
+      MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, devBuffSize));
+      MSCCLPP_CUTHROW(cuMulticastUnbind(mcHandle_, deviceId, offset_, devBuffSize));
+    };
     offset_ += devBuffSize;
 
     return std::shared_ptr<char>(mcPtr, deleter);
@@ -238,18 +226,13 @@ std::vector<char> NvlsConnection::serialize() {
 std::shared_ptr<NvlsConnection::DeviceMulticastPointer> NvlsConnection::allocateAndBindCuda(size_t size) {
   auto mem = allocSharedPhysicalCuda<char>(size, pimpl_->minMcGran_);
   auto mcPtr = pimpl_->bindMemory(mem, size);
-  auto ret = std::make_shared<DeviceMulticastPointer>();
-  // hack, need to update
-  ret->devicePtr_ = std::shared_ptr<char>(mem->devicePtr_, NvlsConnection::Impl::MultiCastBindDeleter());
-  ret->mcPtr_ = mcPtr;
-  ret->bufferSize_ = size;
-  return ret;
+  return std::make_shared<DeviceMulticastPointer>(mem, mcPtr, size);
 }
 
 MSCCLPP_API_CPP NvlsConnection::DeviceMulticastPointer::DeviceHandle
 NvlsConnection::DeviceMulticastPointer::deviceHandle() {
   NvlsConnection::DeviceMulticastPointer::DeviceHandle device;
-  device.devicePtr = this->devicePtr_.get();
+  device.devicePtr = this->deviceMem_->devicePtr_;
   device.mcPtr = this->mcPtr_.get();
   device.bufferSize = this->bufferSize_;
   return device;

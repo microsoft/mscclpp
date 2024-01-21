@@ -464,12 +464,15 @@ class NvlsConnection {
 
   struct DeviceMulticastPointer {
    private:
-    std::shared_ptr<char> devicePtr_;
+    std::shared_ptr<PhysicalCudaMemory<char>> deviceMem_;
     std::shared_ptr<char> mcPtr_;
     size_t bufferSize_;
 
    public:
     using DeviceHandle = DeviceMulticastPointerDeviceHandle;
+    DeviceMulticastPointer(std::shared_ptr<PhysicalCudaMemory<char>> deviceMem, std::shared_ptr<char> mcPtr,
+                           size_t bufferSize)
+        : deviceMem_(deviceMem), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
     DeviceHandle deviceHandle();
 
     friend class NvlsConnection;
