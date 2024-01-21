@@ -455,8 +455,6 @@ class NvlsConnection {
   NvlsConnection(size_t bufferSize, int numDevices);
   NvlsConnection(const std::vector<char>& data);
   NvlsConnection() = delete;
-  // TODO: Clean up after yourself!
-  // ~NvlsConnection();
   std::vector<char> serialize();
 
   // Everyone needs to synchronize after creating a NVLS connection before adding devices

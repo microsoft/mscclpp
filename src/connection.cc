@@ -127,8 +127,11 @@ struct NvlsConnection::Impl {
     mcFileDesc_ = 0;
     MSCCLPP_CUTHROW(
         cuMemExportToShareableHandle(&mcFileDesc_, mcHandle_, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0 /*flags*/));
-    // TODO: we need proper throw in here.
+
     rootPid_ = getpid();
+    if (rootPid_ < 0) {
+      throw mscclpp::SysError("getpid() failed", errno);
+    }
 
     INFO(MSCCLPP_COLL, "NVLS handle created on root");
   }
@@ -139,12 +142,23 @@ struct NvlsConnection::Impl {
 
     // TODO: proper throw
     int rootPidFd = syscall(SYS_pidfd_open, rootPid_, 0);
+    if (rootPidFd < 0) {
+      throw mscclpp::SysError("pidfd_open() failed", errno);
+    }
     int mcRootFileDescFd = syscall(SYS_pidfd_getfd, rootPidFd, mcFileDesc_, 0);
+    if (mcRootFileDescFd < 0) {
+      throw mscclpp::SysError("pidfd_getfd() failed", errno);
+    }
     MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, reinterpret_cast<void*>(mcRootFileDescFd),
                                                    CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
     close(rootPidFd);
+    close(mcRootFileDescFd);
 
     INFO(MSCCLPP_COLL, "NVLS handle was imported from root");
+  }
+
+  ~Impl() {
+    // we don't need to free multicast handle object according to NCCL.
   }
 
   struct MultiCastBindDeleter {
@@ -169,6 +183,7 @@ struct NvlsConnection::Impl {
       throw Error("This NVLS connection cannot map the requested devBuffSize", ErrorCode::InvalidUsage);
     }
 
+    // keepin a copy physicalMem around so that the user doesn't accidentally get rids of all of them.
     physicalMemoryStorage.push_back(physicalMem);
 
     MSCCLPP_CUTHROW(
@@ -190,8 +205,6 @@ struct NvlsConnection::Impl {
 
     return std::shared_ptr<char>(mcPtr, deleter);
   }
-
-  // TODO: close all FDs and deallocate all handles.
 };
 
 NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices)
