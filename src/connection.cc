@@ -147,9 +147,17 @@ struct NvlsConnection::Impl {
     INFO(MSCCLPP_COLL, "NVLS handle was imported from root");
   }
 
-  struct MultiCastDeleter {
+  struct MultiCastBindDeleter {
+    CUmemGenericAllocationHandle mcHandle_;
+    int deviceId_;
+    size_t offset_;
+    size_t bufferSize_;
+    MultiCastBindDeleter(CUmemGenericAllocationHandle mcHandle, int deviceId, size_t offset, size_t bufferSize)
+        : mcHandle_(mcHandle), deviceId_(deviceId), offset_(offset), bufferSize_(bufferSize) {}
     void operator()(char* ptr) {
-      // TODO: do something in here
+      MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, bufferSize_));
+      MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, bufferSize_));
+      MSCCLPP_CUTHROW(cuMulticastUnbind(mcHandle_, deviceId_, offset_, bufferSize_));
     }
   };
 
@@ -177,9 +185,10 @@ struct NvlsConnection::Impl {
     MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)(&mcPtr), devBuffSize, minMcGran_, 0U, 0));
     MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), devBuffSize, 0, mcHandle_, offset_));
     MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)(mcPtr), devBuffSize, &accessDesc, 1));
+    MultiCastBindDeleter deleter(mcHandle_, deviceId, offset_, devBuffSize);
     offset_ += devBuffSize;
 
-    return std::shared_ptr<char>(mcPtr, MultiCastDeleter());
+    return std::shared_ptr<char>(mcPtr, deleter);
   }
 
   // TODO: close all FDs and deallocate all handles.

@@ -56,8 +56,8 @@ struct CudaDeleter;
 template <class T>
 struct PhysicalCudaMemory {
   CUmemGenericAllocationHandle memHandle_;
-  std::shared_ptr<T> devicePtr_;
   size_t bufferSize_;
+  std::shared_ptr<T> devicePtr_;
   // The deallocator for devicePtr will only unmap and free the address range. The physical memory
   // deallocation will happen with CudaPhysicalDeleter.
   PhysicalCudaMemory(CUmemGenericAllocationHandle memHandle, T* devicePtr, size_t bufferSize)
