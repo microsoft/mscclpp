@@ -14,7 +14,6 @@
       : "l"(ptr)                                                  \
       : "memory");
 
-
 extern "C" __global__ void __launch_bounds__(1024, 1)
     nvls_test(mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs, int my_rank, int nranks) {
   int tid = threadIdx.x;

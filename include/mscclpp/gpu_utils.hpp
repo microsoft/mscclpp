@@ -57,8 +57,14 @@ template <class T>
 struct PhysicalCudaMemory {
   CUmemGenericAllocationHandle memHandle_;
   std::shared_ptr<T> devicePtr_;
-  PhysicalCudaMemory(CUmemGenericAllocationHandle memHandle, T* devicePtr)
-      : memHandle_(memHandle), devicePtr_(std::shared_ptr<T>(devicePtr, CudaDeleter<T>())) {}
+  size_t bufferSize_;
+  // The deallocator for devicePtr will only unmap and free the address range. The physical memory
+  // deallocation will happen with CudaPhysicalDeleter.
+  PhysicalCudaMemory(CUmemGenericAllocationHandle memHandle, T* devicePtr, size_t bufferSize)
+      : memHandle_(memHandle), bufferSize_(bufferSize), devicePtr_(std::shared_ptr<T>(devicePtr, [this](T* ptr) {
+          MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, this->bufferSize_));
+          MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, this->bufferSize_));
+        })) {}
 };
 
 namespace detail {
@@ -111,7 +117,7 @@ PhysicalCudaMemory<T>* cudaPhysicalCalloc(size_t nelem, size_t gran) {
 
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
-  return new PhysicalCudaMemory<T>(memHandle, devicePtr);
+  return new PhysicalCudaMemory<T>(memHandle, devicePtr, bufferSize);
 }
 
 template <class T>
@@ -187,10 +193,8 @@ template <class T>
 struct CudaDeleter {
   using TPtrOrArray = std::conditional_t<std::is_array_v<T>, T, T*>;
   void operator()(TPtrOrArray ptr) {
-    printf("QQQQQ %p\n", ptr);
     AvoidCudaGraphCaptureGuard cgcGuard;
     MSCCLPP_CUDATHROW(cudaFree(ptr));
-    printf("deletedCuda successfully\n");
   }
 };
 
@@ -200,9 +204,8 @@ struct CudaPhysicalDeleter {
       std::conditional_t<std::is_array_v<PhysicalCudaMemory<T>>, PhysicalCudaMemory<T>, PhysicalCudaMemory<T>*>;
   void operator()(TPtrOrArray ptr) {
     AvoidCudaGraphCaptureGuard cgcGuard;
-    printf("IIIIIIIIII %p\n", ptr);
-    // delete ptr;
-    printf("deleted successfully\n");
+    MSCCLPP_CUTHROW(cuMemRelease(ptr->memHandle_));
+    delete ptr;
   }
 };
 
@@ -226,7 +229,12 @@ std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, std::shared_ptr<T>>(count);
 }
 
-/// TODO: docs...
+/// Allocated physical memory on the device and returns a memory handle along with a memory handle for it.
+/// The deallocation only happens PhysicalCudaMemory goes out of scope.
+/// @tparam T Type of each element in the allocated memory.
+/// @param count Number of elements to allocate.
+/// @param gran the granularity forof the allocation.
+/// @return A std::shared_ptr to the memory handle and a device pointer for that memory.
 template <class T>
 std::shared_ptr<PhysicalCudaMemory<T>> allocSharedPhysicalCuda(size_t count, size_t gran) {
   return detail::safeAlloc<PhysicalCudaMemory<T>, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
