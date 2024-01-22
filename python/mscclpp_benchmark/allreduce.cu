@@ -796,8 +796,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 extern "C" __global__ void __launch_bounds__(1024, 1)
     allreduce6(mscclpp::SmDevice2DeviceSemaphoreDeviceHandle* semaphores,
                mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs, TYPE* buff, int my_rank, int nranks,
-               size_t nbytes) {
-  int nelem = nbytes / sizeof(float);
+               size_t nelem) {
   float* dev_ptr = (float*)nvlsPtrs.devicePtr;
   float* mc_ptr = (float*)nvlsPtrs.mcPtr;
   int tid = threadIdx.x;

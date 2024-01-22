@@ -472,10 +472,10 @@ class MscclppAllReduce6:
         self.params += pack(
             self.device_handles_cp,
             self.nvls_handle,
-            # self.memory,
+            self.memory,
             self.group.my_rank,
             self.group.nranks,
-            # ctypes.c_size_t(self.memory.size),
+            ctypes.c_size_t(self.memory.size),
         )
 
     def auto_tune(self):
@@ -485,4 +485,3 @@ class MscclppAllReduce6:
             for block_size in block_size_to_try:
                 self.set_params(nblocks, block_size)
                 yield nblocks, block_size
-
