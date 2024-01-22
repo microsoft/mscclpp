@@ -14,7 +14,6 @@
 #include "endpoint.hpp"
 #include "infiniband/verbs.h"
 #include "npkit/npkit.h"
-#include "registered_memory.hpp"
 
 namespace mscclpp {
 
@@ -98,7 +97,7 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 
 // NVLS
 
-struct NvlsConnection::Impl {
+struct NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection::Impl> {
   CUmemGenericAllocationHandle mcHandle_;
   size_t bufferSize_;
   CUmulticastObjectProp mcProp_;
@@ -107,11 +106,12 @@ struct NvlsConnection::Impl {
   // These are only defined for multicast (NVLS) capability
   pid_t rootPid_;
   int mcFileDesc_;
-  size_t offset_;
-  std::vector<std::shared_ptr<PhysicalCudaMemory<char>>> physicalMemoryStorage;
+
+  std::list<std::pair<size_t, size_t>> allocatedRanges_;
+  std::list<std::pair<size_t, size_t>> freeRanges_;
 
   // use this only for the root of the NVLS
-  Impl(size_t bufferSize, int numDevices) : offset_(0) {
+  Impl(size_t bufferSize, int numDevices) {
     minMcGran_ = 0;
     mcGran_ = 0;
     mcProp_ = {};
@@ -126,6 +126,7 @@ struct NvlsConnection::Impl {
     mcFileDesc_ = 0;
     MSCCLPP_CUTHROW(
         cuMemExportToShareableHandle(&mcFileDesc_, mcHandle_, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0 /*flags*/));
+    freeRanges_.emplace_back(0, bufferSize_);
 
     rootPid_ = getpid();
     if (rootPid_ < 0) {
@@ -136,11 +137,21 @@ struct NvlsConnection::Impl {
          mcProp_.size, minMcGran_, mcGran_);
   }
 
-  Impl(const std::vector<char>& data) : offset_(0) {
+  Impl(const std::vector<char>& data) {
     auto it = data.begin();
-    std::copy_n(it, sizeof(*this), reinterpret_cast<char*>(this));
+    std::copy_n(it, sizeof(this->mcHandle_), reinterpret_cast<char*>(&this->mcHandle_));
+    it += sizeof(this->mcHandle_);
+    std::copy_n(it, sizeof(this->bufferSize_), reinterpret_cast<char*>(&this->bufferSize_));
+    it += sizeof(this->bufferSize_);
+    std::copy_n(it, sizeof(this->minMcGran_), reinterpret_cast<char*>(&this->minMcGran_));
+    it += sizeof(this->minMcGran_);
+    std::copy_n(it, sizeof(this->mcGran_), reinterpret_cast<char*>(&this->mcGran_));
+    it += sizeof(this->mcGran_);
+    std::copy_n(it, sizeof(this->rootPid_), reinterpret_cast<char*>(&this->rootPid_));
+    it += sizeof(this->rootPid_);
+    std::copy_n(it, sizeof(this->mcFileDesc_), reinterpret_cast<char*>(&this->mcFileDesc_));
 
-    // TODO: proper throw
+    freeRanges_.emplace_back(0, bufferSize_);
     int rootPidFd = syscall(SYS_pidfd_open, rootPid_, 0);
     if (rootPidFd < 0) {
       throw mscclpp::SysError("pidfd_open() failed", errno);
@@ -159,21 +170,76 @@ struct NvlsConnection::Impl {
 
   ~Impl() {
     // we don't need to free multicast handle object according to NCCL.
+    if (rootPid_ == getpid()) {
+      close(mcFileDesc_);
+    }
+  }
+
+  Impl(const Impl&) = delete;
+  Impl& operator=(const Impl&) = delete;
+
+  size_t allocateBuffer(size_t size) {
+    if (freeRanges_.empty()) {
+      throw Error("This NVLS connection mapped more than it was supposed to", ErrorCode::InvalidUsage);
+    }
+    auto it = std::find_if(freeRanges_.begin(), freeRanges_.end(),
+                           [size](const std::pair<size_t, size_t>& range) { return range.second >= size; });
+    if (it != freeRanges_.end()) {
+      size_t offset = it->first;
+      size_t rangeSize = it->second;
+      if (rangeSize == size) {
+        freeRanges_.erase(it);
+      } else {
+        it->first += size;
+        it->second -= size;
+      }
+      allocatedRanges_.emplace_back(offset, size);
+      return offset;
+    }
+    throw Error("This NVLS connection cannot map the requested devBuffSize", ErrorCode::InvalidUsage);
+  }
+
+  void freeBuffer(size_t offset, size_t size) noexcept {
+    auto it = std::find_if(allocatedRanges_.begin(), allocatedRanges_.end(),
+                           [offset, size](const std::pair<size_t, size_t>& range) {
+                             return range.first == offset && range.second == size;
+                           });
+    if (it == allocatedRanges_.end()) {
+      return;
+    }
+    allocatedRanges_.erase(it);
+    it = std::find_if(freeRanges_.begin(), freeRanges_.end(), [offset, size](const std::pair<size_t, size_t>& range) {
+      return range.first + range.second >= offset;
+    });
+    if (it == freeRanges_.end()) {
+      freeRanges_.emplace_back(offset, size);
+      return;
+    }
+    if (it->first + it->second == offset) {
+      // merge with the previous free range if possible
+      it->second += size;
+      // merge with the next free range if possible
+      auto nextItr = std::next(it);
+      if (nextItr != freeRanges_.end() && it->first + it->second == nextItr->first) {
+        it->second += nextItr->second;
+        freeRanges_.erase(nextItr);
+      }
+      return;
+    } else if (it->first == offset + size) {
+      // merge with the next free range if possible
+      it->first -= size;
+      it->second += size;
+      return;
+    } else {
+      freeRanges_.emplace(it, offset, size);
+      return;
+    }
   }
 
   std::shared_ptr<char> bindMemory(std::shared_ptr<PhysicalCudaMemory<char>> physicalMem, size_t devBuffSize) {
-    if (offset_ > bufferSize_) {
-      throw Error("This NVLS connection mapped more than it was supposed to", ErrorCode::InternalError);
-    }
-    if (bufferSize_ - offset_ < devBuffSize) {
-      throw Error("This NVLS connection cannot map the requested devBuffSize", ErrorCode::InvalidUsage);
-    }
-
-    // keepin a copy physicalMem around so that the user doesn't accidentally get rids of all of them.
-    physicalMemoryStorage.push_back(physicalMem);
-
+    size_t offset = allocateBuffer(devBuffSize);
     MSCCLPP_CUTHROW(
-        cuMulticastBindMem(mcHandle_, offset_ /*mcOffset*/, physicalMem->memHandle_, 0 /*memOffset*/, devBuffSize, 0));
+        cuMulticastBindMem(mcHandle_, offset /*mcOffset*/, physicalMem->memHandle_, 0 /*memOffset*/, devBuffSize, 0));
 
     char* mcPtr;
 
@@ -187,15 +253,14 @@ struct NvlsConnection::Impl {
     MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), devBuffSize, 0, mcHandle_, 0));
     MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)(mcPtr), devBuffSize, &accessDesc, 1));
 
-    // Is this enough? Or we should update the offset as well
-    auto deleter = [=, bindOffset = offset_](char* ptr) {
+    auto deleter = [=, self = shared_from_this()](char* ptr) {
       CUdevice device;
       MSCCLPP_CUTHROW(cuDeviceGet(&device, deviceId));
       MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, devBuffSize));
       MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, devBuffSize));
-      MSCCLPP_CUTHROW(cuMulticastUnbind(mcHandle_, device, bindOffset, devBuffSize));
+      MSCCLPP_CUTHROW(cuMulticastUnbind(mcHandle_, device, offset, devBuffSize));
+      self->freeBuffer(offset, devBuffSize);
     };
-    offset_ += devBuffSize;
 
     return std::shared_ptr<char>(mcPtr, deleter);
   }
@@ -219,7 +284,12 @@ NvlsConnection::NvlsConnection(const std::vector<char>& data) : pimpl_(std::make
 
 std::vector<char> NvlsConnection::serialize() {
   std::vector<char> result;
-  std::copy_n(reinterpret_cast<char*>(pimpl_.get()), sizeof(*pimpl_), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->mcHandle_), sizeof(pimpl_->mcHandle_), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->bufferSize_), sizeof(pimpl_->bufferSize_), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->minMcGran_), sizeof(pimpl_->minMcGran_), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->mcGran_), sizeof(pimpl_->mcGran_), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->rootPid_), sizeof(pimpl_->rootPid_), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->mcFileDesc_), sizeof(pimpl_->mcFileDesc_), std::back_inserter(result));
   return result;
 }
 
