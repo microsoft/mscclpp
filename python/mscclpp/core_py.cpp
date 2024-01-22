@@ -126,10 +126,10 @@ void register_core(nb::module_& m) {
       .def("transport", &Connection::transport)
       .def("remote_transport", &Connection::remoteTransport);
 
-  nb::class_<NvlsConnection::DeviceMulticastPointer> deviceMulticastPointer(m, "DeviceMulticastPointer");
-  deviceMulticastPointer.def("device_handle", &NvlsConnection::DeviceMulticastPointer::deviceHandle);
+  nb::class_<NvlsConnection::DeviceMulticastPointer>(m, "DeviceMulticastPointer")
+      .def("device_handle", &NvlsConnection::DeviceMulticastPointer::deviceHandle);
 
-  nb::class_<NvlsConnection::DeviceMulticastPointer::DeviceHandle>(deviceMulticastPointer, "DeviceHandle")
+  nb::class_<NvlsConnection::DeviceMulticastPointer::DeviceHandle>(m, "DeviceHandle")
       .def(nb::init<>())
       .def_rw("devicePtr", &NvlsConnection::DeviceMulticastPointer::DeviceHandle::devicePtr)
       .def_rw("mcPtr", &NvlsConnection::DeviceMulticastPointer::DeviceHandle::mcPtr)
