@@ -127,6 +127,8 @@ void register_core(nb::module_& m) {
       .def("remote_transport", &Connection::remoteTransport);
 
   nb::class_<NvlsConnection::DeviceMulticastPointer>(m, "DeviceMulticastPointer")
+      .def("get_device_ptr",
+           [](NvlsConnection::DeviceMulticastPointer* self) { return (uintptr_t)self->getDevicePtr(); })
       .def("device_handle", &NvlsConnection::DeviceMulticastPointer::deviceHandle);
 
   nb::class_<NvlsConnection::DeviceMulticastPointer::DeviceHandle>(m, "DeviceHandle")
@@ -138,7 +140,9 @@ void register_core(nb::module_& m) {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
 
-  nb::class_<NvlsConnection>(m, "NvlsConnection").def("allocate_bind_memory", &NvlsConnection::allocateAndBindCuda);
+  nb::class_<NvlsConnection>(m, "NvlsConnection")
+      .def("allocate_bind_memory", &NvlsConnection::allocateAndBindCuda)
+      .def("get_multicast_min_granularity", &NvlsConnection::getMultiCastMinGranularity);
 
   nb::class_<Endpoint>(m, "Endpoint")
       .def("transport", &Endpoint::transport)

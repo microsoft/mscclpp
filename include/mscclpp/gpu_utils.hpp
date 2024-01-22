@@ -233,7 +233,9 @@ std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
 template <class T>
 std::shared_ptr<PhysicalCudaMemory<T>> allocSharedPhysicalCuda(size_t count, size_t gran) {
   if (count % gran) {
-    throw Error("The request allocation size is not divisible by the required granularity", ErrorCode::InvalidUsage);
+    throw Error("The request allocation size is not divisible by the required granularity:" + std::to_string(count) +
+                    " vs " + std::to_string(gran),
+                ErrorCode::InvalidUsage);
   }
   return detail::safeAlloc<PhysicalCudaMemory<T>, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
                            std::shared_ptr<PhysicalCudaMemory<T>>>(count, gran);

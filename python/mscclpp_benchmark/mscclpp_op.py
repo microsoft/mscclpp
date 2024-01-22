@@ -420,18 +420,19 @@ class MscclppAllReduce5:
                 yield nblocks, block_size
 
 
-
 class MscclppAllReduce6:
     def __init__(
         self,
         group: mscclpp_comm.CommGroup,
-        memory: cp.ndarray,
+        nelem: int,
+        memory_dtype: cp.dtype,
         block_size: int = 1024,
         nblocks: int = 32,
     ):
         self.group = group
-        self.memory = memory
-        type_str = type_to_str(memory.dtype)
+        datatype_size = memory_dtype().itemsize
+        buffer_size = nelem * datatype_size
+        type_str = type_to_str(memory_dtype)
         all_ranks = list(range(group.nranks))
         remote_nghrs = all_ranks.copy()
         remote_nghrs.remove(self.group.my_rank)
@@ -440,7 +441,15 @@ class MscclppAllReduce6:
         # create a connection for each remote neighbor
         self.nvlink_connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
         self.nvls_connection = group.make_connection(all_ranks, Transport.Nvls)
-        self.nvls_mem_handle = self.nvls_connection.allocate_bind_memory(2**29) # just using recommended size for now
+        min_gran = self.nvls_connection.get_multicast_min_granularity()
+        aligned_buffer_size = int(((buffer_size + min_gran - 1) // min_gran) * min_gran)
+        self.nvls_mem_handle = self.nvls_connection.allocate_bind_memory(
+            aligned_buffer_size
+        )  # just using recommended size for now
+        self.memory_ptr = self.nvls_mem_handle.get_device_ptr()
+
+        self.cp_memory_ptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(self.memory_ptr, aligned_buffer_size, None), 0)
+        self.memory = cp.ndarray(nelem, memory_dtype, self.cp_memory_ptr)
 
         # create a sm_channel for each remote neighbor
         self.semaphores = group.make_semaphore(self.nvlink_connections, SmDevice2DeviceSemaphore)
@@ -460,6 +469,9 @@ class MscclppAllReduce6:
         self.nvls_handle = self.nvls_mem_handle.device_handle().raw
 
         self.set_params(nblocks, block_size)
+
+    def get_memory(self):
+        return self.memory
 
     def __call__(self, stream_ptr):
         self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)

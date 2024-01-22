@@ -474,11 +474,14 @@ class NvlsConnection {
                            size_t bufferSize)
         : deviceMem_(deviceMem), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
     DeviceHandle deviceHandle();
+    char* getDevicePtr();
 
     friend class NvlsConnection;
   };
 
   std::shared_ptr<DeviceMulticastPointer> allocateAndBindCuda(size_t size);
+
+  size_t getMultiCastMinGranularity();
 
  private:
   struct Impl;

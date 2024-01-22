@@ -116,13 +116,14 @@ def test_bootstrap_init_gil_release(mpi_group: MpiGroup):
 
     mpi_group.comm.barrier()
 
+
 def create_connection(group: mscclpp_comm.CommGroup, transport: str):
     if transport == "NVLS":
         all_ranks = list(range(group.nranks))
         tran = Transport.Nvls
         connection = group.make_connection(all_ranks, tran)
         return connection
-    
+
     remote_nghrs = list(range(group.nranks))
     remote_nghrs.remove(group.my_rank)
     if transport == "NVLink":
@@ -133,6 +134,7 @@ def create_connection(group: mscclpp_comm.CommGroup, transport: str):
         assert False
     connections = group.make_connection(remote_nghrs, tran)
     return connections
+
 
 def create_group_and_connection(mpi_group: MpiGroup, transport: str):
     if (transport == "NVLink" or transport == "NVLS") and all_ranks_on_the_same_node(mpi_group) is False:
@@ -150,7 +152,7 @@ def test_group_with_connections(mpi_group: MpiGroup, transport: str):
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
-@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
 def test_connection_write(mpi_group: MpiGroup, transport: Transport, nelem: int):
     group, connections = create_group_and_connection(mpi_group, transport)
     memory = cp.zeros(nelem, dtype=cp.int32)
@@ -185,7 +187,7 @@ def test_connection_write(mpi_group: MpiGroup, transport: Transport, nelem: int)
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
-@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20, 27]])
+@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20, 27]])
 @pytest.mark.parametrize("device", ["cuda", "cpu"])
 def test_connection_write_and_signal(mpi_group: MpiGroup, transport: Transport, nelem: int, device: str):
     # this test starts with a random tensor on rank 0 and rotates it all the way through all ranks
@@ -287,7 +289,7 @@ class MscclppKernel:
         scratch=None,
         fifo=None,
         nvls_mem_handle=None,
-        nvls_buffer_size=None
+        nvls_buffer_size=None,
     ):
         file_dir = os.path.dirname(os.path.abspath(__file__))
         if test_name == "h2d_semaphore":
@@ -363,7 +365,11 @@ class MscclppKernel:
             self._d_semaphore_or_channels = cp.asarray(memoryview(b"".join(semaphore_device_handles)), dtype=cp.uint8)
             self.params = pack(my_rank, nranks) + fifo.raw + pack(self._d_semaphore_or_channels)
         elif test_name == "nvls":
-            self.params = nvls_mem_handle.device_handle().raw + pack(self._d_semaphore_or_channels) + pack(my_rank, nranks, nvls_buffer_size)
+            self.params = (
+                nvls_mem_handle.device_handle().raw
+                + pack(self._d_semaphore_or_channels)
+                + pack(my_rank, nranks, nvls_buffer_size)
+            )
 
     def __call__(self):
         return self._kernel.launch_kernel(self.params, self.nblocks, self.nthreads, 0, None)
@@ -403,7 +409,7 @@ def test_d2d_semaphores(mpi_group: MpiGroup):
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
 @pytest.mark.parametrize("use_packet", [False, True])
 def test_sm_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
     group, connections = create_group_and_connection(mpi_group, "NVLink")
@@ -451,7 +457,7 @@ def test_fifo(
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
 def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
     group, connections = create_group_and_connection(mpi_group, transport)
@@ -500,7 +506,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["NVLink", "IB"])
 @pytest.mark.parametrize("use_packet", [False, True])
 def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
@@ -543,10 +549,11 @@ def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, u
     group.barrier()
     assert cp.array_equal(memory, memory_expected)
 
+
 @parametrize_mpi_groups(8)
 def test_nvls(mpi_group: MpiGroup):
     group, nvls_connection = create_group_and_connection(mpi_group, "NVLS")
-    nbytes = 2**21
+    nbytes = 2 ** 21
     mem_handle = nvls_connection.allocate_bind_memory(nbytes)
 
     nvlinks_connections = create_connection(group, "NVLink")
@@ -558,7 +565,7 @@ def test_nvls(mpi_group: MpiGroup):
         nranks=group.nranks,
         nvls_mem_handle=mem_handle,
         nvls_buffer_size=nbytes,
-        semaphore_or_channels=semaphores
+        semaphore_or_channels=semaphores,
     )
 
     kernel()

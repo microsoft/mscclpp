@@ -10,7 +10,6 @@
 #include <mscclpp/utils.hpp>
 #include <sstream>
 
-#include "api.h"
 #include "debug.h"
 #include "endpoint.hpp"
 #include "infiniband/verbs.h"
@@ -231,14 +230,17 @@ std::shared_ptr<NvlsConnection::DeviceMulticastPointer> NvlsConnection::allocate
   return std::make_shared<DeviceMulticastPointer>(mem, mcPtr, size);
 }
 
-MSCCLPP_API_CPP NvlsConnection::DeviceMulticastPointer::DeviceHandle
-NvlsConnection::DeviceMulticastPointer::deviceHandle() {
+NvlsConnection::DeviceMulticastPointer::DeviceHandle NvlsConnection::DeviceMulticastPointer::deviceHandle() {
   NvlsConnection::DeviceMulticastPointer::DeviceHandle device;
   device.devicePtr = this->deviceMem_->devicePtr_;
   device.mcPtr = this->mcPtr_.get();
   device.bufferSize = this->bufferSize_;
   return device;
 };
+
+char* NvlsConnection::DeviceMulticastPointer::getDevicePtr() { return deviceMem_->devicePtr_; };
+
+size_t NvlsConnection::getMultiCastMinGranularity() { return pimpl_->minMcGran_; }
 
 // IBConnection
 
