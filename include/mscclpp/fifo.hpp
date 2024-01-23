@@ -12,12 +12,14 @@
 
 namespace mscclpp {
 
+constexpr size_t DEFAULT_FIFO_SIZE = 128;
+
 /// A class representing a host proxy FIFO that can consume work elements pushed by device threads.
 class Fifo {
  public:
   /// Constructs a new @ref Fifo object.
   /// @param size The number of entires in the FIFO.
-  Fifo(int size = 128);
+  Fifo(int size = DEFAULT_FIFO_SIZE);
 
   /// Destroys the @ref Fifo object.
   ~Fifo();

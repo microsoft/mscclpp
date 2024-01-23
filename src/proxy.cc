@@ -25,15 +25,17 @@ struct Proxy::Impl {
   std::thread service;
   std::atomic_bool running;
 
-  Impl(ProxyHandler handler, std::function<void()> threadInit)
-      : handler(handler), threadInit(threadInit), running(false) {}
+  Impl(ProxyHandler handler, std::function<void()> threadInit, size_t fifoSize)
+      : handler(handler), threadInit(threadInit), fifo(fifoSize), running(false) {}
 };
 
-MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, std::function<void()> threadInit) {
-  pimpl = std::make_unique<Impl>(handler, threadInit);
+MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, std::function<void()> threadInit, size_t fifoSize) {
+  pimpl = std::make_unique<Impl>(handler, threadInit, fifoSize);
 }
 
-MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler) : Proxy(handler, [] {}) {}
+MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, size_t fifoSize)
+    : Proxy(
+          handler, [] {}, fifoSize) {}
 
 MSCCLPP_API_CPP Proxy::~Proxy() {
   if (pimpl) {

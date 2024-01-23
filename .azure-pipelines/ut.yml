@@ -77,6 +77,5 @@ jobs:
       script: |
         set -e
         export PATH=/usr/local/mpi/bin:$PATH
-        cd build && make pylib-copy
-        mpirun -tag-output -x MSCCLPP_HOME=$(System.DefaultWorkingDirectory) -np 8 python3 -m pytest ../python/test/test_mscclpp.py -x
+        mpirun -tag-output -x MSCCLPP_HOME=$(System.DefaultWorkingDirectory) -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x
       workingDirectory: '$(System.DefaultWorkingDirectory)'
