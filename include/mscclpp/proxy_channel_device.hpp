@@ -22,7 +22,7 @@ const TriggerType TriggerSync = 0x4;  // Trigger a flush.
 
 #define MSCCLPP_BITS_SIZE 32
 #define MSCCLPP_BITS_OFFSET 32
-#define MSCCLPP_BITS_REGMEM_HANDLE 8
+#define MSCCLPP_BITS_REGMEM_HANDLE 9
 #define MSCCLPP_BITS_TYPE 3
 #define MSCCLPP_BITS_CONNID 10
 #define MSCCLPP_BITS_FIFO_RESERVED 1
