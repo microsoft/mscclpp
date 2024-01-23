@@ -228,7 +228,7 @@ std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
 /// The deallocation only happens PhysicalCudaMemory goes out of scope.
 /// @tparam T Type of each element in the allocated memory.
 /// @param count Number of elements to allocate.
-/// @param gran the granularity forof the allocation.
+/// @param gran the granularity of the allocation.
 /// @return A std::shared_ptr to the memory handle and a device pointer for that memory.
 template <class T>
 std::shared_ptr<PhysicalCudaMemory<T>> allocSharedPhysicalCuda(size_t count, size_t gran) {
@@ -264,8 +264,14 @@ UniqueCudaPtr<T> allocUniqueCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, UniqueCudaPtr<T>>(count);
 }
 
+/// Allocated physical memory on the device and returns a memory handle along with a virtual memory handle for it.
+/// The memory is zeroed out.
+/// @tparam T Type of each element in the allocated memory.
+/// @param count Number of elements to allocate.
+/// @param gran the granularity of the allocation.
+/// @return A std::unique_ptr to the memory handle and a device pointer for that memory.
 template <class T>
-std::shared_ptr<PhysicalCudaMemory<T>> allocUniquePhysicalCuda(size_t count, size_t gran) {
+std::unique_ptr<PhysicalCudaMemory<T>> allocUniquePhysicalCuda(size_t count, size_t gran) {
   return detail::safeAlloc<PhysicalCudaMemory<T>, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
                            std::unique_ptr<CudaPhysicalDeleter<T>, CudaDeleter<CudaPhysicalDeleter<T>>>>(count, gran);
 }

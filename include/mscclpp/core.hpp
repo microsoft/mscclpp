@@ -480,12 +480,10 @@ class NvlsConnection {
   };
 
   std::shared_ptr<DeviceMulticastPointer> allocateAndBindCuda(size_t size);
-
   size_t getMultiCastMinGranularity();
 
  private:
   struct Impl;
-
   std::shared_ptr<Impl> pimpl_;
 };
 
