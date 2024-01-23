@@ -4,7 +4,6 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-#include <algorithm>
 #include <mscclpp/core.hpp>
 #include <mscclpp/utils.hpp>
 
@@ -12,7 +11,8 @@
 #include "endpoint.hpp"
 
 namespace mscclpp {
-#if defined(__CUDACC_VER_MAJOR__) && (__CUDACC_VER_MAJOR__ >= 12) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
+
+#if (CUDART_VERSION >= 12010) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
 class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection::Impl> {
  public:
   // use this only for the root of the NVLS

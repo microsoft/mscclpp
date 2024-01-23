@@ -14,7 +14,7 @@ from nccl_op import NcclAllReduce
 from mpi4py import MPI
 import cupy.cuda.nccl as nccl
 import mscclpp.comm as mscclpp_comm
-from mscclpp import ProxyService
+from mscclpp import ProxyService, is_nvls_supported
 from prettytable import PrettyTable
 import netifaces as ni
 
@@ -77,11 +77,6 @@ def human_readable_size(size, decimal_places=1):
             break
         size /= 1024.0
     return f"{size:.{decimal_places}f} {unit}"
-
-
-def is_nvls_enabled():
-    compute_capability = cp.cuda.Device().compute_capability
-    return not cp.cuda.runtime.is_hip and compute_capability >= "90"
 
 
 def check_correctness(memory, func, niter=100):
@@ -159,10 +154,10 @@ def run_benchmark(
     if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
         if memory.nbytes < 2**20:
             mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
-        elif memory.nbytes < 2**21 if is_nvls_enabled() else memory.nbytes < 2**29:
+        elif memory.nbytes < 2**21 if is_nvls_supported() else memory.nbytes < 2**29:
             mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
         else:
-            if is_nvls_enabled():
+            if is_nvls_supported():
                 mscclpp_call = MscclppAllReduce6(mscclpp_group, nelem, data_type)
                 memory = mscclpp_call.get_memory()
             else:
@@ -263,7 +258,7 @@ if __name__ == "__main__":
     mscclpp_algbw = []
     nccl_algbw = []
     speed_ups = []
-    end_range = 28 if is_nvls_enabled() else 29
+    end_range = 28 if is_nvls_supported() else 29
     for i in range(10, end_range):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
             nelems = 2**i

@@ -19,6 +19,7 @@ from mscclpp import (
     SmDevice2DeviceSemaphore,
     TcpBootstrap,
     Transport,
+    is_nvls_supported,
 )
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, pack
@@ -361,8 +362,6 @@ class MscclppKernel:
         elif test_name == "fifo":
             self.params = fifo.device_handle().raw
         elif test_name == "proxy":
-            semaphore_device_handles = [semaphore.device_handle().raw for semaphore in semaphore_or_channels]
-            self._d_semaphore_or_channels = cp.asarray(memoryview(b"".join(semaphore_device_handles)), dtype=cp.uint8)
             self.params = pack(my_rank, nranks) + fifo.raw + pack(self._d_semaphore_or_channels)
         elif test_name == "nvls":
             self.params = (
@@ -494,7 +493,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
     fifo_device_handle = proxy.fifo_device_handle()
 
     kernel = MscclppKernel(
-        "proxy", my_rank=group.my_rank, nranks=group.nranks, semaphore_or_channels=list_sem, fifo=fifo_device_handle
+        "proxy", my_rank=group.my_rank, nranks=group.nranks, semaphore_or_channels=semaphores, fifo=fifo_device_handle
     )
     proxy.start()
     group.barrier()
@@ -551,6 +550,7 @@ def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, u
 
 
 @parametrize_mpi_groups(8)
+@pytest.mark.skipif(is_nvls_supported() is False, reason="NVLS is not supported")
 def test_nvls(mpi_group: MpiGroup):
     group, nvls_connection = create_group_and_connection(mpi_group, "NVLS")
     nbytes = 2**21

@@ -153,3 +153,6 @@ def pack(*args):
         else:
             raise RuntimeError(f"Unsupported type: {type(arg)}")
     return res
+
+def is_nvls_supported():
+    return cp.cuda.runtime.runtimeGetVersion() >= 12010
