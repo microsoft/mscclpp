@@ -110,26 +110,25 @@ MSCCLPP_API_CPP NonblockingFuture<std::shared_ptr<Connection>> Communicator::con
 MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> Communicator::connctNvlsCollective(std::vector<int> allRanks,
                                                                                    EndpointConfig config) {
   auto bootstrap = this->bootstrap();
-  int myRank = bootstrap->getRank();
+  int rank = bootstrap->getRank();
   bool isRoot = false;
   bool amongAllRanks = false;
-  std::sort(allRanks.begin(), allRanks.end());
   int rootRank = allRanks[0];
   for (auto nvlsRank : allRanks) {
-    if (nvlsRank == myRank) amongAllRanks = true;
+    if (nvlsRank == rank) amongAllRanks = true;
     rootRank = std::min(rootRank, nvlsRank);
   }
   if (amongAllRanks == false) {
-    throw Error("my rank is not among allRanks", ErrorCode::InvalidUsage);
+    throw Error("rank is not among allRanks", ErrorCode::InvalidUsage);
   }
-  if (rootRank == myRank) isRoot = true;
+  if (rootRank == rank) isRoot = true;
 
   std::shared_ptr<NvlsConnection> conn;
   if (isRoot) {
     conn = std::make_shared<NvlsConnection>(config.nvlsBufferSize, allRanks.size());
     auto serialized = conn->serialize();
     for (auto nvlsRank : allRanks) {
-      if (nvlsRank != myRank) bootstrap->send(serialized, nvlsRank, 0);
+      if (nvlsRank != rank) bootstrap->send(serialized, nvlsRank, 0);
     }
   } else {
     std::vector<char> data;

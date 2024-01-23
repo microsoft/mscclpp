@@ -1,2 +1,0 @@
-nvcc -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi -L/usr/lib/x86_64-linux-gnu/openmpi/lib -L /usr/local/cuda/lib64/ -lmpi_cxx -lmpi -lcupti  -lcupti_static test.cu  -gencode arch=compute_90,code=sm_90 -lcuda -lcudart -lnccl
-
