@@ -168,6 +168,11 @@ Memory safeAlloc(size_t nelem) {
 
 template <class T, T*(alloc)(size_t, size_t), class Deleter, class Memory>
 Memory safeAlloc(size_t nelem, size_t gran) {
+  if (nelem * sizeof(T) % gran) {
+    throw Error("The request allocation size is not divisible by the required granularity:" +
+                    std::to_string(nelem * sizeof(T)) + " vs " + std::to_string(gran),
+                ErrorCode::InvalidUsage);
+  }
   T* ptr = nullptr;
   try {
     ptr = alloc(nelem, gran);
@@ -232,11 +237,6 @@ std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
 /// @return A std::shared_ptr to the memory handle and a device pointer for that memory.
 template <class T>
 std::shared_ptr<PhysicalCudaMemory<T>> allocSharedPhysicalCuda(size_t count, size_t gran) {
-  if (count % gran) {
-    throw Error("The request allocation size is not divisible by the required granularity:" + std::to_string(count) +
-                    " vs " + std::to_string(gran),
-                ErrorCode::InvalidUsage);
-  }
   return detail::safeAlloc<PhysicalCudaMemory<T>, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
                            std::shared_ptr<PhysicalCudaMemory<T>>>(count, gran);
 }

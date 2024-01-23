@@ -698,7 +698,14 @@ class Communicator {
   /// to the connection.
   NonblockingFuture<std::shared_ptr<Connection>> connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig);
 
-  /// TBD
+  /// Connect to NVLS on setup.
+  ///
+  /// This function used to connect to NVLS on setup. NVLS collective using multicast operations to send/recv data.
+  /// Here we need to put all involved ranks into the collective group.
+  ///
+  /// @param allRanks The ranks of all processes involved in the collective.
+  /// @param config The configuration for the local endpoint.
+  /// @return std::shared_ptr<NvlsConnection> A shared pointer to the NVLS connection.
   std::shared_ptr<NvlsConnection> connctNvlsCollective(std::vector<int> allRanks, EndpointConfig config);
 
   /// Get the remote rank a connection is connected to.
