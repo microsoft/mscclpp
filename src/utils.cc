@@ -70,10 +70,10 @@ std::string getHostName(int maxlen, const char delim) {
 bool isNvlsSupported() {
 #if (CUDART_VERSION >= 12010)
   CUdevice dev;
-  int nvlsSupport;
+  int isNvlsSupported;
   MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
-  MSCCLPP_CUTHROW(cuDeviceGetAttribute(&nvlsSupport, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
-  return nvlsSupport == 1;
+  MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isNvlsSupported, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
+  return isNvlsSupported == 1;
 #endif
   return false;
 }

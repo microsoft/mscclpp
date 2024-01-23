@@ -4,6 +4,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <mscclpp/core.hpp>
 #include <mscclpp/utils.hpp>
 
