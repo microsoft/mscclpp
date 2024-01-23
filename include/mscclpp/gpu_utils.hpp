@@ -90,7 +90,12 @@ PhysicalCudaMemory<T>* cudaPhysicalCalloc(size_t nelem, size_t gran) {
   prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   prop.location.id = deviceId;
+#if defined(__HIP_PLATFORM_AMD__)
+  // TODO: revisit when HIP fixes this typo in the field name
+  prop.requestedHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+#else
   prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+#endif
 
   CUmemGenericAllocationHandle memHandle;
   size_t bufferSize = sizeof(T) * nelem;
