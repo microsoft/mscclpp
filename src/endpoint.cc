@@ -1,8 +1,5 @@
 #include "endpoint.hpp"
 
-#include <sys/syscall.h>
-#include <unistd.h>
-
 #include <algorithm>
 
 #include "api.h"

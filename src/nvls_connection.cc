@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
-#include <linux/version.h>
+
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -13,7 +13,7 @@
 
 namespace mscclpp {
 
-#if (CUDART_VERSION >= 12010) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
+#if (USE_NVLS)
 class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection::Impl> {
  public:
   // use this only for the root of the NVLS
@@ -212,7 +212,7 @@ std::shared_ptr<char> NvlsConnection::Impl::bindMemory(std::shared_ptr<PhysicalC
 
   return std::shared_ptr<char>(mcPtr, deleter);
 }
-#else
+#else   // !(USE_NVLS)
 class NvlsConnection::Impl {
  public:
   // use this only for the root of the NVLS
@@ -232,7 +232,7 @@ class NvlsConnection::Impl {
  private:
   Error notSupportedError = Error("NVLS is not supported on this CUDA version", ErrorCode::InvalidUsage);
 };
-#endif
+#endif  // !(USE_NVLS)
 
 NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices)
     : pimpl_(std::make_shared<Impl>(bufferSize, numDevices)) {}

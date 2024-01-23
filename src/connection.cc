@@ -3,10 +3,6 @@
 
 #include "connection.hpp"
 
-#include <sys/syscall.h>
-#include <unistd.h>
-
-#include <algorithm>
 #include <mscclpp/utils.hpp>
 #include <sstream>
 

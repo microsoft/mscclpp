@@ -3,8 +3,6 @@
 
 #include "communicator.hpp"
 
-#include <algorithm>
-
 #include "api.h"
 #include "debug.h"
 
