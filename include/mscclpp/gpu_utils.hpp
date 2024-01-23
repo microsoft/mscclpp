@@ -173,7 +173,7 @@ Memory safeAlloc(size_t nelem) {
 
 template <class T, T*(alloc)(size_t, size_t), class Deleter, class Memory>
 Memory safeAlloc(size_t nelem, size_t gran) {
-  if (nelem * sizeof(T) % gran) {
+  if ((nelem * sizeof(T)) % gran) {
     throw Error("The request allocation size is not divisible by the required granularity:" +
                     std::to_string(nelem * sizeof(T)) + " vs " + std::to_string(gran),
                 ErrorCode::InvalidUsage);
