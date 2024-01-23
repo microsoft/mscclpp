@@ -79,6 +79,11 @@ def human_readable_size(size, decimal_places=1):
     return f"{size:.{decimal_places}f} {unit}"
 
 
+def is_nvls_enabled():
+    compute_capability = cp.cuda.Device().compute_capability
+    return not cp.cuda.runtime.is_hip and compute_capability >= "90"
+
+
 def check_correctness(memory, func, niter=100):
     ac = True
     for p in range(niter):
@@ -152,18 +157,18 @@ def run_benchmark(
 
     proxy_service = None
     if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
-        # mscclpp_call = MscclppAllReduce6(mscclpp_group, nelem, data_type)
-        # memory = mscclpp_call.get_memory()
         if memory.nbytes < 2**20:
             mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
-        elif memory.nbytes < 2**21:
+        elif memory.nbytes < 2**21 if is_nvls_enabled() else memory.nbytes < 2**29:
             mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
         else:
-            mscclpp_call = MscclppAllReduce6(mscclpp_group, nelem, data_type)
-            memory = mscclpp_call.get_memory()
-            # proxy_service = ProxyService()
-            # mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
-            # proxy_service.start_proxy()
+            if is_nvls_enabled():
+                mscclpp_call = MscclppAllReduce6(mscclpp_group, nelem, data_type)
+                memory = mscclpp_call.get_memory()
+            else:
+                proxy_service = ProxyService()
+                mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
+                proxy_service.start_proxy()
     else:
         if memory.nbytes < 2**22:
             proxy_service = ProxyService()
@@ -258,7 +263,8 @@ if __name__ == "__main__":
     mscclpp_algbw = []
     nccl_algbw = []
     speed_ups = []
-    for i in range(10, 28):
+    end_range = 28 if is_nvls_enabled() else 29
+    for i in range(10, end_range):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
             nelems = 2**i
         elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:

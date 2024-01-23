@@ -782,6 +782,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 // NVLS
 // -------------------------------------------
 
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 #define MULTIMEM_ST(val, ptr)                                                                                   \
   asm volatile("multimem.st.global.v4.f32 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x), "r"(val.y), "r"(val.z), \
                "r"(val.w)                                                                                       \
@@ -838,3 +839,4 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   }
   deviceSyncer.sync(gridDim.x);
 }
+#endif
