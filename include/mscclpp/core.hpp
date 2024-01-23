@@ -483,7 +483,7 @@ class NvlsConnection {
   size_t getMultiCastMinGranularity();
 
  private:
-  struct Impl;
+  class Impl;
   std::shared_ptr<Impl> pimpl_;
 };
 

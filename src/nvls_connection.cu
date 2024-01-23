@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
-
+#include <linux/version.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -12,8 +12,7 @@
 #include "endpoint.hpp"
 
 namespace mscclpp {
-
-#if defined(__CUDACC_VER_MAJOR__) && (__CUDACC_VER_MAJOR__ >= 12)
+#if defined(__CUDACC_VER_MAJOR__) && (__CUDACC_VER_MAJOR__ >= 12) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
 class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection::Impl> {
  public:
   // use this only for the root of the NVLS
