@@ -154,9 +154,9 @@ def run_benchmark(
     if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
         # mscclpp_call = MscclppAllReduce6(mscclpp_group, nelem, data_type)
         # memory = mscclpp_call.get_memory()
-        if memory.nbytes < 2 ** 20:
+        if memory.nbytes < 2**20:
             mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
-        elif memory.nbytes < 2 ** 21:
+        elif memory.nbytes < 2**21:
             mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
         else:
             mscclpp_call = MscclppAllReduce6(mscclpp_group, nelem, data_type)
@@ -165,7 +165,7 @@ def run_benchmark(
             # mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
             # proxy_service.start_proxy()
     else:
-        if memory.nbytes < 2 ** 22:
+        if memory.nbytes < 2**22:
             proxy_service = ProxyService()
             mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
             proxy_service.start_proxy()
@@ -260,13 +260,13 @@ if __name__ == "__main__":
     speed_ups = []
     for i in range(10, 28):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
-            nelems = 2 ** i
+            nelems = 2**i
         elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:
-            nelems = 3 * 2 ** i
+            nelems = 3 * 2**i
         else:
             raise RuntimeError("Only support one node/two nodes communication")
 
-        if nelems * data_type().itemsize > 2 ** 32:
+        if nelems * data_type().itemsize > 2**32:
             break  # due to trigger bit width limitation, we can only support up to 2**32
 
         size, mscclpp_algBw, nccl_algBw, speed_up = run_benchmark(mscclpp_group, nccl_comm, table, 100, nelems)
