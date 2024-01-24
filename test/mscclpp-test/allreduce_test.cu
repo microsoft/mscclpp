@@ -970,9 +970,8 @@ __global__ void allreduce5(int* buff, int rank, int nRanksPerNode, int worldSize
 __global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, int nRanksPerNode, int worldSize,
                            size_t nelems) {
   // This version of allreduce only works for single nodes
-  if (worldSize != nRanksPerNode) return;
   const int nPeers = nRanksPerNode - 1;
-  const int nPkts = nelems / 2;
+  const size_t nPkts = nelems / 2;
   const int nelemsPerRank = nelems / worldSize;
   const int nPktsPerRank = nelemsPerRank / 2;
   // flag for packets. Initially 1
@@ -982,7 +981,6 @@ __global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, 
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
   const int peerIdx = blockIdx.x / nBlocksPerPeer;
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
-  DeviceHandle<mscclpp::SmChannel> smChan = constSmOutOfPlaceChans[peerIdx];
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   // double buffering
   size_t scratchBaseOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LLPacket);
@@ -995,7 +993,7 @@ __global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, 
   uint2* dst = (uint2*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
 
   // step 1: write to scratch buffer
-  smChan.putPackets(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid, blockDim.x * nBlocksPerPeer, flag);
+  constSmOutOfPlaceChans[peerIdx].putPackets(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid, blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     uint2 data = make_uint2(0, 0);
@@ -1008,11 +1006,16 @@ __global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, 
     }
     data.x += src[idx].x;
     data.y += src[idx].y;
-    dst[idx].x = data.x;
-    dst[idx].y = data.y;
+    dst[idx] = data;
+
+    mscclpp::LLPacket packet;
+    packet.data1 = data.x;
+    packet.flag1 = flag;
+    packet.data2 = data.y;
+    packet.flag2 = flag;
+    size_t offset = scratchResultOffset / sizeof(mscclpp::LLPacket) + (idx + rank * nPktsPerRank);
     for (int index = 0; index < nPeers; index++) {
-      mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)constSmOutOfPlaceChans[index].dst_ + scratchResultOffset);
-      dstPkt[idx + rank * nPktsPerRank].write(data.x, data.y, flag);
+      constSmOutOfPlaceChans[index].write(offset, packet);
     }
   }
   // step 3: get data result from scratch buffer
@@ -1180,7 +1183,7 @@ class AllReduceTestEngine : public BaseTestEngine {
   std::shared_ptr<int[]> expectedBuff_;
   std::vector<mscclpp::SmChannel> smOutOfPlaceChannels_;
   std::vector<mscclpp::SmChannel> smInPlaceChannels_;
-  std::vector<mscclpp::SmChannel> smOutputPlaceGetChannels_;
+  std::vector<mscclpp::SmChannel> smOutOfPlaceGetChannels_;
 };
 
 AllReduceTestEngine::AllReduceTestEngine(const TestArgs& args) : BaseTestEngine(args, "allreduce") {
@@ -1301,14 +1304,14 @@ void AllReduceTestEngine::setupConnections() {
     CUDATHROW(cudaMemcpyToSymbol(constSmInPlaceChans, smChannelDeviceHandles.data(),
                                  sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
 
-    setupMeshConnections(smOutputPlaceGetChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(),
+    setupMeshConnections(smOutOfPlaceGetChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(),
                          args_.maxBytes, ChannelSemantic::GET);
-    if (smOutputPlaceGetChannels_.size() >
+    if (smOutOfPlaceGetChannels_.size() >
         sizeof(constSmOutOfPlaceGetChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
       std::runtime_error("unexpected error");
     }
-    smChannelDeviceHandles.resize(smOutputPlaceGetChannels_.size());
-    getChannelDeviceHandle(smOutputPlaceGetChannels_, smChannelDeviceHandles);
+    smChannelDeviceHandles.resize(smOutOfPlaceGetChannels_.size());
+    getChannelDeviceHandle(smOutOfPlaceGetChannels_, smChannelDeviceHandles);
     CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceGetChans, smChannelDeviceHandles.data(),
                                  sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
   }

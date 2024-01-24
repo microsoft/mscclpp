@@ -458,7 +458,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
       if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
         smChannels.emplace_back(smSemaphores[cid][i], remoteRegMemories[cid].get(),
                                 (outputBuff && semantic == ChannelSemantic::GET) ? outputBuff : inputBufRegMem.data(),
-                                nullptr);
+                                outputBuff);
       }
     }
   }
