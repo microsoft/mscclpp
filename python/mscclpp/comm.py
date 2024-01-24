@@ -8,6 +8,7 @@ import cupy as cp
 from ._mscclpp import (
     Communicator,
     Connection,
+    EndpointConfig,
     Host2DeviceSemaphore,
     Host2HostSemaphore,
     ProxyService,
@@ -79,17 +80,21 @@ class CommGroup:
             assert False  # only 8 IBs are supported
 
     def make_connection(
-        self, all_ranks: list[int], transports: Transport | dict[int, Transport]
+        self,
+        all_ranks: list[int],
+        endpoints: EndpointConfig | Transport | dict[int, EndpointConfig] | dict[int, Transport],
     ) -> dict[int, Connection]:
-        if transports == Transport.Nvls:
-            return self.communicator.connct_nvls_collective(all_ranks, transports)
+        if type(endpoints) is Transport:
+            endpoints = EndpointConfig(endpoints)
+        if endpoints.transport == Transport.Nvls:
+            return self.communicator.connct_nvls_collective(all_ranks, endpoints)
         connections = {}
         for rank in all_ranks:
-            if type(transports) is dict:
-                transport = transports[rank]
+            if type(endpoints) is dict:
+                endpoint = endpoints[rank]
             else:
-                transport = transports
-            connections[rank] = self.communicator.connect_on_setup(rank, 0, transport)
+                endpoint = endpoints
+            connections[rank] = self.communicator.connect_on_setup(rank, 0, endpoint)
         self.communicator.setup()
         connections = {rank: connections[rank].get() for rank in connections}
         return connections

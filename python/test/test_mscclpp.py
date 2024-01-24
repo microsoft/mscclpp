@@ -12,6 +12,7 @@ import netifaces as ni
 import pytest
 
 from mscclpp import (
+    EndpointConfig,
     Fifo,
     Host2DeviceSemaphore,
     Host2HostSemaphore,
@@ -276,6 +277,24 @@ def test_h2h_semaphores_gil_release(mpi_group: MpiGroup):
     wait_thread.join()
 
     group.barrier()
+
+
+@parametrize_mpi_groups(8)
+@pytest.mark.skipif(is_nvls_supported() is False, reason="NVLS is not supported")
+def test_nvls_connection(mpi_group: MpiGroup):
+    if all_ranks_on_the_same_node(mpi_group) is False:
+        pytest.skip("cannot use nvls for cross node")
+    group = mscclpp_comm.CommGroup(mpi_group.comm)
+    all_ranks = list(range(group.nranks))
+    endpoint = EndpointConfig(Transport.Nvls, 2**22)
+    nvls_connection = group.make_connection(all_ranks, endpoint)
+    mem_handle1 = nvls_connection.allocate_bind_memory(2**21)
+    mem_handle2 = nvls_connection.allocate_bind_memory(2**21)
+    with pytest.raises(Exception):
+        mem_handle3 = nvls_connection.allocate_bind_memory(2**21)
+    # the memory is freed on the destructor of mem_handle2
+    mem_handle2 = None
+    mem_handle3 = nvls_connection.allocate_bind_memory(2**21)
 
 
 class MscclppKernel:
@@ -549,7 +568,7 @@ def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, u
     assert cp.array_equal(memory, memory_expected)
 
 
-@parametrize_mpi_groups(8)
+@parametrize_mpi_groups(4, 8)
 @pytest.mark.skipif(is_nvls_supported() is False, reason="NVLS is not supported")
 def test_nvls(mpi_group: MpiGroup):
     group, nvls_connection = create_group_and_connection(mpi_group, "NVLS")

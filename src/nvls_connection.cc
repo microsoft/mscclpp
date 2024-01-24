@@ -142,6 +142,7 @@ size_t NvlsConnection::Impl::allocateBuffer(size_t size) {
       it->second -= size;
     }
     allocatedRanges_.emplace_back(offset, size);
+    INFO(MSCCLPP_COLL, "NVLS connection allocated %ld bytes at offset %ld", size, offset);
     return offset;
   }
   throw Error("This NVLS connection cannot map the requested devBuffSize", ErrorCode::InvalidUsage);
@@ -152,6 +153,7 @@ void NvlsConnection::Impl::freeBuffer(size_t offset, size_t size) noexcept {
       allocatedRanges_.begin(), allocatedRanges_.end(),
       [offset, size](const std::pair<size_t, size_t>& range) { return range.first == offset && range.second == size; });
   if (it == allocatedRanges_.end()) {
+    WARN("NVLS connection tried to free a buffer that was not allocated");
     return;
   }
   allocatedRanges_.erase(it);
