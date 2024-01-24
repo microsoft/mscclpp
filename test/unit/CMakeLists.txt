@@ -8,6 +8,7 @@ target_sources(unit_tests PRIVATE
     fifo_tests.cu
     numa_tests.cc
     socket_tests.cc
+    sync_tests.cu
     utils_tests.cc
     utils_internal_tests.cc
 )
