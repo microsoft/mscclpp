@@ -8,17 +8,6 @@
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
-#define MULTIMEM_ST(val, ptr)                                                                                   \
-  asm volatile("multimem.st.global.v4.f32 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x), "r"(val.y), "r"(val.z), \
-               "r"(val.w)                                                                                       \
-               : "memory");
-// specific PTX for fp16 reduction. bf16 would be multimem.ld_reduce.global.add.v4.bf16x2 etc
-#define MULTIMEM_LD(val, ptr)                                     \
-  asm("multimem.ld_reduce.global.add.v4.f32 {%0,%1,%2,%3}, [%4];" \
-      : "=r"(val.x), "=r"(val.y), "=r"(val.z), "=r"(val.w)        \
-      : "l"(ptr)                                                  \
-      : "memory");
-
 extern "C" __global__ void __launch_bounds__(1024, 1)
     nvls_test(mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs,
               mscclpp::SmDevice2DeviceSemaphoreDeviceHandle* semaphores, int my_rank, int nranks, int nbytes) {
@@ -52,8 +41,8 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 
   for (int idx = my_st + my_offset; idx < my_en; idx += my_step) {
     uint4 val;
-    MULTIMEM_LD(val, mc_ptr + idx);
-    MULTIMEM_ST(val, mc_ptr + idx);
+    nvlsPtrs.multimemLoad(val, mc_ptr + idx);
+    nvlsPtrs.multimemStore(val, mc_ptr + idx);
   }
 
   deviceSyncer.sync(gridDim.x);
