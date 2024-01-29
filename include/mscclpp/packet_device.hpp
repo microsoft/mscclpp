@@ -41,8 +41,10 @@ union alignas(16) LLPacket {
 #else  // !defined(MSCCLPP_DEVICE_CUDA)
     uint4 reg = make_uint4(val1, flag, val2, flag);
     ulonglong2* p = reinterpret_cast<ulonglong2*>(&reg);
-    atomicStore(&(raw_.x), p->x, memoryOrderRelaxed);
-    atomicStore(&(raw_.y), p->y, memoryOrderRelaxed);
+    //atomicStore(&(raw_.x), p->x, memoryOrderRelaxed);
+    //atomicStore(&(raw_.y), p->y, memoryOrderRelaxed);
+    __builtin_nontemporal_store(p->x, &(raw_.x));
+    __builtin_nontemporal_store(p->y, &(raw_.y));
 #endif
   }
 
@@ -79,7 +81,21 @@ union alignas(16) LLPacket {
   /// @return The 8-byte data read.
   MSCCLPP_DEVICE_INLINE uint2 read(uint32_t flag, int64_t maxSpinCount = 100000000) const {
     uint2 data;
-    POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
+    //POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
+    int64_t spins = 0;
+    ulonglong2 reg;
+    uint4* ptr;
+
+    do {
+        reg.x = __builtin_nontemporal_load(&(raw_.x));
+        reg.y = __builtin_nontemporal_load(&(raw_.y));
+        ptr = reinterpret_cast<uint4*>(&reg);
+        if (spins >= maxSpinCount) break;
+        spins++;
+    } while ((ptr->y != flag) || (ptr->w != flag));
+    data.x = ptr->x;
+    data.y = ptr->z;
+
     return data;
   }
 

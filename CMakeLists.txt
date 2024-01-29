@@ -10,6 +10,7 @@ set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
 
 cmake_minimum_required(VERSION 3.25)
 enable_language(CXX)
+#enable_language(HIPCC)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
@@ -83,11 +84,13 @@ if(USE_CUDA)
 else()
     set(CMAKE_HIP_STANDARD 17)
     set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -Wall -Wextra")
-    project(mscclpp LANGUAGES CXX HIP)
+    #project(mscclpp LANGUAGES CXX HIP)
+    project(mscclpp LANGUAGES CXX)
 
     set(CMAKE_HIP_ARCHITECTURES gfx90a gfx941 gfx942)
 
-    set(GPU_LIBRARIES hip::host)
+    #set(GPU_LIBRARIES hip::host)
+    set(GPU_LIBRARIES hip::device)
     set(GPU_INCLUDE_DIRS ${hip_INCLUDE_DIRS})
 endif()
 
