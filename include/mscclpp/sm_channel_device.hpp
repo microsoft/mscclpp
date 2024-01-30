@@ -233,6 +233,16 @@ struct SmChannelDeviceHandle {
     mscclpp::getPackets(getPacketBuffer_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
   }
 
+  MSCCLPP_DEVICE_INLINE void putPackets2(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
+                                         uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+    mscclpp::putPackets2(dst_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
+  }
+
+  MSCCLPP_DEVICE_INLINE void getPackets2(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
+                                         uint32_t threadId, uint32_t numThreads, uint32_t flag) {
+    mscclpp::getPackets2(getPacketBuffer_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
+  }
+
   /// Signal the remote semaphore.
   ///
   /// This function guarantees that all the memory operation before this function is completed before the remote
