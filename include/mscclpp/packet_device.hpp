@@ -137,18 +137,18 @@ union alignas(8) LLPacket2 {
 
   MSCCLPP_DEVICE_INLINE uint32_t read(uint32_t flag, int64_t maxSpinCount = 100000000) const {
     uint32_t data;
-    POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
-    // int64_t spins = 0;
-    // uint64_t reg;
-    // uint2* ptr;
+    // POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
+    int64_t spins = 0;
+    uint64_t reg;
+    uint2* ptr;
 
-    // do {
-    //     reg = __builtin_nontemporal_load(&(raw_));
-    //     ptr = reinterpret_cast<uint2*>(&reg);
-    //     if (spins >= maxSpinCount) break;
-    //     spins++;
-    // } while ((ptr->y != flag));
-    // data = ptr->x;
+    do {
+      reg = atomicLoad(&(raw_), memoryOrderRelaxed);
+      ptr = reinterpret_cast<uint2*>(&reg);
+      if (spins >= maxSpinCount) break;
+      spins++;
+    } while ((ptr->y != flag));
+    data = ptr->x;
     return data;
   }
 
