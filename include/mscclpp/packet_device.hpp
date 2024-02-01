@@ -40,10 +40,10 @@ union alignas(16) LLPacket {
 #else  // !defined(MSCCLPP_DEVICE_CUDA)
     uint4 reg = make_uint4(val1, flag, val2, flag);
     ulonglong2* p = reinterpret_cast<ulonglong2*>(&reg);
-    // atomicStore(&(raw_.x), p->x, memoryOrderRelaxed);
-    // atomicStore(&(raw_.y), p->y, memoryOrderRelaxed);
-    __builtin_nontemporal_store(p->x, &(raw_.x));
-    __builtin_nontemporal_store(p->y, &(raw_.y));
+    atomicStore(&(raw_.x), p->x, memoryOrderRelaxed);
+    atomicStore(&(raw_.y), p->y, memoryOrderRelaxed);
+    // __builtin_nontemporal_store(p->x, &(raw_.x));
+    // __builtin_nontemporal_store(p->y, &(raw_.y));
 #endif
   }
 
@@ -65,10 +65,10 @@ union alignas(16) LLPacket {
     return (flag1 != flag) || (flag2 != flag);
 #else  // !defined(MSCCLPP_DEVICE_CUDA)
     ulonglong2 reg;
-    // reg.x = atomicLoad(&(raw_.x), memoryOrderRelaxed);
-    // reg.y = atomicLoad(&(raw_.y), memoryOrderRelaxed);
-    reg.x = __builtin_nontemporal_load(&(raw_.x));
-    reg.y = __builtin_nontemporal_load(&(raw_.y));
+    reg.x = atomicLoad(&(raw_.x), memoryOrderRelaxed);
+    reg.y = atomicLoad(&(raw_.y), memoryOrderRelaxed);
+    // reg.x = __builtin_nontemporal_load(&(raw_.x));
+    // reg.y = __builtin_nontemporal_load(&(raw_.y));
     uint4* ptr = reinterpret_cast<uint4*>(&reg);
     data.x = ptr->x;
     data.y = ptr->z;
