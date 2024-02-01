@@ -993,7 +993,8 @@ __global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, 
   uint2* dst = (uint2*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
 
   // step 1: write to scratch buffer
-  constSmOutOfPlaceChans[peerIdx].putPackets(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid, blockDim.x * nBlocksPerPeer, flag);
+  constSmOutOfPlaceChans[peerIdx].putPackets(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
+                                             blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     uint2 data = make_uint2(0, 0);
@@ -1058,7 +1059,8 @@ __global__ void allreduce7(int* buff, int* scratch, void* resultBuff, int rank, 
   uint32_t* dst = (uint32_t*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
 
   // step 1: write to scratch buffer
-  constSmOutOfPlaceChans[peerIdx].putPackets2(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid, blockDim.x * nBlocksPerPeer, flag);
+  constSmOutOfPlaceChans[peerIdx].putPackets2(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
+                                              blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     uint32_t data = 0;
@@ -1140,7 +1142,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     tmpBuff = scratchPacketBuff;
     nThreadsPerBlock = 1024;
 
-  }else {
+  } else {
     nBlocks = std::max(args.nRanksPerNode - 1, 1) * BLOCKS_PER_PEER;
     tmpBuff = scratchPacketBuff;
     nThreadsPerBlock = 1024;
@@ -1165,8 +1167,7 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   else if (kernelNum == 6) {
     allreduce6<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, resultBuff, rank,
                                                          args.nRanksPerNode, worldSize, paramCount_);
-  }
-  else if (kernelNum == 7) {
+  } else if (kernelNum == 7) {
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, resultBuff, rank,
                                                          args.nRanksPerNode, worldSize, paramCount_);
   }
@@ -1378,8 +1379,8 @@ void AllReduceTestEngine::setupConnections() {
     CUDATHROW(cudaMemcpyToSymbol(constSmInPlaceChans, smChannelDeviceHandles.data(),
                                  sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
 
-    setupMeshConnections(smOutOfPlaceGetChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(),
-                         args_.maxBytes, ChannelSemantic::GET);
+    setupMeshConnections(smOutOfPlaceGetChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes,
+                         ChannelSemantic::GET);
     if (smOutOfPlaceGetChannels_.size() >
         sizeof(constSmOutOfPlaceGetChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
       std::runtime_error("unexpected error");

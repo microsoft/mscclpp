@@ -290,7 +290,8 @@ __global__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
                    nBlocksForLocalAllGather);
 }
 
-__global__ void __launch_bounds__(1024, 1) allgather5(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
+__global__ void __launch_bounds__(1024, 1)
+    allgather5(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
   const size_t nBlock = gridDim.x;
   if (blockIdx.x >= nBlock) return;
 
@@ -352,7 +353,8 @@ __global__ void __launch_bounds__(1024, 1) allgather5(size_t rank, [[maybe_unuse
   }
 }
 
-__global__ void __launch_bounds__(1024, 1) allgather6(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
+__global__ void __launch_bounds__(1024, 1)
+    allgather6(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
   const size_t nBlock = gridDim.x;
   if (blockIdx.x >= nBlock) return;
 
@@ -414,7 +416,8 @@ __global__ void __launch_bounds__(1024, 1) allgather6(size_t rank, [[maybe_unuse
   }
 }
 
-__global__ void __launch_bounds__(1024, 1) allgather7(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
+__global__ void __launch_bounds__(1024, 1)
+    allgather7(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
   const size_t nBlock = gridDim.x;
   if (blockIdx.x >= nBlock) return;
 
@@ -457,13 +460,11 @@ __global__ void __launch_bounds__(1024, 1) allgather7(size_t rank, [[maybe_unuse
     smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
   }
 
-
   if (nLoop > 0) {
     // First loop unrolling
     const size_t peerIdx = wid % nPeer;
     const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * remoteRankLocalIndex + (wid / nPeer) * unitBytesPerWarp;
-    // if (lid == 0) printf("get %p, rank %zu, wid %zu, remoteRankLocalIndex %zu, offset %zu\n", smChans[peerIdx].getPacketBuffer_, rank, wid, remoteRankLocalIndex, offset);
     smChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
   }
 
@@ -515,7 +516,8 @@ __global__ void __launch_bounds__(1024, 1) allgather7(size_t rank, [[maybe_unuse
   }
 }
 
-__global__ void __launch_bounds__(1024, 1) allgather8(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
+__global__ void __launch_bounds__(1024, 1)
+    allgather8(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
   const size_t nBlock = gridDim.x / 2;
   const bool isPut = blockIdx.x < nBlock;
 
@@ -561,7 +563,6 @@ __global__ void __launch_bounds__(1024, 1) allgather8(size_t rank, [[maybe_unuse
                           unitBytesPerWarp, lid, WARP_SIZE, flag);
     }
 
-
     for (size_t i = 1; i < nLoop; ++i) {
       const size_t gWid = wid + i * nWarp;
       const size_t peerIdx = gWid % nPeer;
@@ -579,8 +580,8 @@ __global__ void __launch_bounds__(1024, 1) allgather8(size_t rank, [[maybe_unuse
       const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
       const size_t offset = bytesPerGPU * rank + offsetWithinRank;
       const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
-                                    ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
-                                    : unitBytesPerWarp;
+                                     ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
+                                     : unitBytesPerWarp;
       if (remainBytes > 0) {
         // smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
         mscclpp::putPackets(smChans[peerIdx].dst_, scratchOffset + offset * 2, smChans[peerIdx].src_, offset,
@@ -593,8 +594,6 @@ __global__ void __launch_bounds__(1024, 1) allgather8(size_t rank, [[maybe_unuse
       const size_t peerIdx = wid % nPeer;
       const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
       const size_t offset = bytesPerGPU * remoteRankLocalIndex + (wid / nPeer) * unitBytesPerWarp;
-      // if (lid == 0) printf("get %p, rank %zu, wid %zu, remoteRankLocalIndex %zu, offset %zu\n", smChans[peerIdx].getPacketBuffer_, rank, wid, remoteRankLocalIndex, offset);
-      // smChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
       mscclpp::getPackets(smChans[peerIdx].getPacketBuffer_, scratchOffset + offset * 2, smChans[peerIdx].src_, offset,
                           unitBytesPerWarp, lid, WARP_SIZE, flag);
     }
@@ -616,12 +615,12 @@ __global__ void __launch_bounds__(1024, 1) allgather8(size_t rank, [[maybe_unuse
       const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
       const size_t offset = bytesPerGPU * remoteRankLocalIndex + offsetWithinRank;
       const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
-                                    ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
-                                    : unitBytesPerWarp;
+                                     ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
+                                     : unitBytesPerWarp;
       if (remainBytes > 0) {
         // smChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
-        mscclpp::getPackets(smChans[peerIdx].getPacketBuffer_, scratchOffset + offset * 2, smChans[peerIdx].src_, offset,
-                            remainBytes, lid, WARP_SIZE, flag);
+        mscclpp::getPackets(smChans[peerIdx].getPacketBuffer_, scratchOffset + offset * 2, smChans[peerIdx].src_,
+                            offset, remainBytes, lid, WARP_SIZE, flag);
       }
     }
   }

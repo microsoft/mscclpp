@@ -4,11 +4,13 @@
 #ifndef MSCCLPP_POLL_DEVICE_HPP_
 #define MSCCLPP_POLL_DEVICE_HPP_
 
-#include "device.hpp"
+#include "atomic_device.hpp"
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
 
 #include <cstdint>
+
+__device__ uint64_t abortFlag;
 
 #if defined(MSCCLPP_DEVICE_HIP)
 extern "C" __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
@@ -26,6 +28,9 @@ extern "C" __device__ void __assert_fail(const char *__assertion, const char *__
       if (__max_spin_cnt >= 0 && __spin_cnt++ == __max_spin_cnt) {       \
         __assert_fail(#__cond, __FILE__, __LINE__, __PRETTY_FUNCTION__); \
       }                                                                  \
+      if ((atomicLoad(&abortFlag, memoryOrderAcquire) != 0)) {           \
+        break;                                                           \
+      }                                                                  \
     }                                                                    \
   } while (0);
 
@@ -42,6 +47,9 @@ extern "C" __device__ void __assert_fail(const char *__assertion, const char *__
       }                                                                            \
       if (__max_spin_cnt >= 0 && __spin_cnt++ == __max_spin_cnt) {                 \
         __assert_fail(#__cond1 #__cond2, __FILE__, __LINE__, __PRETTY_FUNCTION__); \
+      }                                                                            \
+      if ((atomicLoad(&abortFlag, memoryOrderAcquire) != 0)) {                     \
+        break;                                                                     \
       }                                                                            \
     }                                                                              \
   } while (0);
