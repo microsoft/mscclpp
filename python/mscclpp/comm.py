@@ -22,6 +22,8 @@ from ._mscclpp import (
 import mpi4py
 import numpy as np
 
+from mscclpp.utils import is_torch_tensor
+
 
 class CommGroup:
     def __init__(
@@ -98,8 +100,15 @@ class CommGroup:
         transport_flags = TransportFlags()
         for rank in connections:
             transport_flags |= connections[rank].transport()
-        data_ptr = tensor.data.ptr if isinstance(tensor, cp.ndarray) else tensor.ctypes.data
-        local_reg_memory = self.communicator.register_memory(data_ptr, tensor.size * tensor.itemsize, transport_flags)
+        data_ptr = (
+            tensor.data.ptr
+            if isinstance(tensor, cp.ndarray)
+            else tensor.data_ptr() if is_torch_tensor(tensor) else tensor.ctypes.data
+        )
+        tensor_size = (
+            tensor.numel() * tensor.element_size() if is_torch_tensor(tensor) else tensor.size * tensor.itemsize
+        )
+        local_reg_memory = self.communicator.register_memory(data_ptr, tensor_size, transport_flags)
         all_registered_memories = {}
         all_registered_memories[self.my_rank] = local_reg_memory
         future_memories = {}
@@ -126,20 +135,24 @@ class CommGroup:
         semaphores = self.make_semaphore(connections, SmDevice2DeviceSemaphore)
         registered_memories = self.register_tensor_with_connections(tensor, connections)
         channels = {}
+        tensor_data_ptr = tensor.data_ptr() if is_torch_tensor(tensor) else tensor.data.ptr
         for rank in connections:
-            channels[rank] = SmChannel(semaphores[rank], registered_memories[rank], tensor.data.ptr)
+            channels[rank] = SmChannel(semaphores[rank], registered_memories[rank], tensor_data_ptr)
         return channels
 
     def make_sm_channels_with_scratch(
-        self, tensor: cp.ndarray, scratchTensor: cp.ndarray, connections: dict[int, Connection]
+        self,
+        tensor: cp.ndarray,
+        scratchTensor: cp.ndarray,
+        connections: dict[int, Connection],
     ) -> dict[int, SmChannel]:
         semaphores = self.make_semaphore(connections, SmDevice2DeviceSemaphore)
         registered_memories = self.register_tensor_with_connections(scratchTensor, connections)
         channels = {}
+        tensor_data_ptr = tensor.data_ptr() if is_torch_tensor(tensor) else tensor.data.ptr
+        scratch_data_ptr = scratchTensor.data_ptr() if is_torch_tensor(scratchTensor) else scratchTensor.data.ptr
         for rank in connections:
-            channels[rank] = SmChannel(
-                semaphores[rank], registered_memories[rank], tensor.data.ptr, scratchTensor.data.ptr
-            )
+            channels[rank] = SmChannel(semaphores[rank], registered_memories[rank], tensor_data_ptr, scratch_data_ptr)
         return channels
 
     def make_proxy_channels(
@@ -170,8 +183,15 @@ class CommGroup:
         transport_flags = TransportFlags()
         for rank in connections:
             transport_flags |= connections[rank].transport()
-        data_ptr = tensor.data.ptr if isinstance(tensor, cp.ndarray) else tensor.ctypes.data
-        local_reg_memory = self.communicator.register_memory(data_ptr, tensor.size * tensor.itemsize, transport_flags)
+        data_ptr = (
+            tensor.data.ptr
+            if isinstance(tensor, cp.ndarray)
+            else tensor.data_ptr() if is_torch_tensor(tensor) else tensor.ctypes.data
+        )
+        tensor_size = (
+            tensor.numel() * tensor.element_size() if is_torch_tensor(tensor) else tensor.size * tensor.itemsize
+        )
+        local_reg_memory = self.communicator.register_memory(data_ptr, tensor_size, transport_flags)
 
         semaphores = self.make_semaphore(connections, Host2DeviceSemaphore)
         registered_memories = self.register_tensor_with_connections(scratchTensor, connections)
