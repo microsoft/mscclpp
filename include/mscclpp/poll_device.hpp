@@ -4,13 +4,11 @@
 #ifndef MSCCLPP_POLL_DEVICE_HPP_
 #define MSCCLPP_POLL_DEVICE_HPP_
 
-#include "atomic_device.hpp"
+#include "device.hpp"
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
 
 #include <cstdint>
-
-__device__ uint64_t abortFlag;
 
 #if defined(NDEBUG)
 #define __assert_fail(__assertion, __file, __line, __function) ;

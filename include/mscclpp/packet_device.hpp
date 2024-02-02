@@ -42,8 +42,6 @@ union alignas(16) LLPacket {
     ulonglong2* p = reinterpret_cast<ulonglong2*>(&reg);
     atomicStore(&(raw_.x), p->x, memoryOrderRelaxed);
     atomicStore(&(raw_.y), p->y, memoryOrderRelaxed);
-    // __builtin_nontemporal_store(p->x, &(raw_.x));
-    // __builtin_nontemporal_store(p->y, &(raw_.y));
 #endif
   }
 
@@ -67,8 +65,6 @@ union alignas(16) LLPacket {
     ulonglong2 reg;
     reg.x = atomicLoad(&(raw_.x), memoryOrderRelaxed);
     reg.y = atomicLoad(&(raw_.y), memoryOrderRelaxed);
-    // reg.x = __builtin_nontemporal_load(&(raw_.x));
-    // reg.y = __builtin_nontemporal_load(&(raw_.y));
     uint4* ptr = reinterpret_cast<uint4*>(&reg);
     data.x = ptr->x;
     data.y = ptr->z;
@@ -80,24 +76,9 @@ union alignas(16) LLPacket {
   /// @param flag The flag to read.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   /// @return The 8-byte data read.
-  MSCCLPP_DEVICE_INLINE uint2 read(uint32_t flag, int64_t maxSpinCount = 1000000000) const {
+  MSCCLPP_DEVICE_INLINE uint2 read(uint32_t flag, int64_t maxSpinCount = 100000000) const {
     uint2 data;
     POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
-    // uint32_t spins = 0;
-    // ulonglong2 reg;
-    // uint4* ptr;
-
-    // do {
-    //     reg.x = __builtin_nontemporal_load(&(raw_.x));
-    //     reg.y = __builtin_nontemporal_load(&(raw_.y));
-    //     ptr = reinterpret_cast<uint4*>(&reg);
-    //     if (spins >= maxSpinCount) {
-    //       asm volatile("s_waitcnt vmcnt(0)");
-    //       spins = 0;
-    //     }
-    // } while ((ptr->y != flag) || (ptr->w != flag));
-    // data.x = ptr->x;
-    // data.y = ptr->z;
     return data;
   }
 
@@ -119,6 +100,7 @@ union alignas(8) LLPacket64 {
 
   MSCCLPP_DEVICE_INLINE void write(uint32_t val, uint32_t flag) {
 #if defined(MSCCLPP_DEVICE_CUDA)
+    asm volatile("st.volatile.global.v2.u32 [%0], {%1,%2};" ::"l"(&raw_), "r"(val), "r"(flag));
 #else  // !defined(MSCCLPP_DEVICE_CUDA)
     uint2 reg = make_uint2(val, flag);
     uint64_t* p = reinterpret_cast<uint64_t*>(&reg);
@@ -128,6 +110,9 @@ union alignas(8) LLPacket64 {
 
   MSCCLPP_DEVICE_INLINE bool readOnce(uint32_t flag, uint32_t& data) const {
 #if defined(MSCCLPP_DEVICE_CUDA)
+    uint32_t f;
+    asm volatile("ld.volatile.global.v2.u32 {%0,%1}, [%4];" : "=r"(data), "=r"(f) : "l"(&raw_));
+    return (f != flag);
 #else  // !defined(MSCCLPP_DEVICE_CUDA)
     uint64_t reg;
     reg = atomicLoad(&(raw_), memoryOrderRelaxed);

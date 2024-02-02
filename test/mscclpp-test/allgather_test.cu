@@ -388,7 +388,6 @@ __global__ void __launch_bounds__(1024, 1)
   if (nLoop > 0) {
     // First loop unrolling
     const size_t peerIdx = wid % nPeer;
-    // const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * rank + (wid / nPeer) * unitBytesPerWarp;
     smChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
   }
@@ -396,7 +395,6 @@ __global__ void __launch_bounds__(1024, 1)
   for (size_t i = 1; i < nLoop; ++i) {
     const size_t gWid = wid + i * nWarp;
     const size_t peerIdx = gWid % nPeer;
-    // const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * rank + (gWid / nPeer) * unitBytesPerWarp;
     smChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
   }
@@ -404,7 +402,6 @@ __global__ void __launch_bounds__(1024, 1)
   if (bytes % unitBytes > 0) {
     const size_t gWid = wid + nLoop * nWarp;
     const size_t peerIdx = gWid % nPeer;
-    const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
     const size_t offset = bytesPerGPU * rank + offsetWithinRank;
     const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
@@ -471,7 +468,6 @@ __global__ void __launch_bounds__(1024, 1)
   for (size_t i = 1; i < nLoop; ++i) {
     const size_t gWid = wid + i * nWarp;
     const size_t peerIdx = gWid % nPeer;
-    // const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * rank + (gWid / nPeer) * unitBytesPerWarp;
     smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
   }
@@ -487,7 +483,6 @@ __global__ void __launch_bounds__(1024, 1)
   if (bytes % unitBytes > 0) {
     const size_t gWid = wid + nLoop * nWarp;
     const size_t peerIdx = gWid % nPeer;
-    const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
     const size_t offset = bytesPerGPU * rank + offsetWithinRank;
     const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
@@ -508,120 +503,6 @@ __global__ void __launch_bounds__(1024, 1)
                                    : unitBytesPerWarp;
     if (remainBytes > 0) {
       smChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
-    }
-  }
-
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
-    globalFlag += 1;
-  }
-}
-
-__global__ void __launch_bounds__(1024, 1)
-    allgather8(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
-  const size_t nBlock = gridDim.x / 2;
-  const bool isPut = blockIdx.x < nBlock;
-
-  const size_t tid = threadIdx.x + (blockIdx.x % nBlock) * blockDim.x;
-  const size_t lid = tid % WARP_SIZE;
-  const size_t wid = tid / WARP_SIZE;
-
-  const size_t nThread = blockDim.x * nBlock;
-  const size_t nWarp = nThread / WARP_SIZE;
-  const size_t nPeer = nRanksPerNode - 1;
-  // const size_t chanOffset = nPeer * blockIdx.x;
-  auto smChans = constSmOutOfPlaceChans;
-
-  const uint32_t flag = (uint32_t)globalFlag;
-  // if (wid < nPeer && lid == 0) {
-  //   smChans[wid].relaxedSignal();
-  //   smChans[wid].wait();
-  // }
-  // __syncthreads();
-  const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
-  const size_t bytes = bytesPerGPU * nPeer;
-  size_t unitBytesPerThread = 8;
-  // if (bytes >= nThread * 64) {
-  //   unitBytesPerThread = 64;
-  // } else {
-  //   unitBytesPerThread = 16;
-  // }
-  const size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
-  const size_t unitBytes = unitBytesPerWarp * nWarp;
-  const size_t nLoop = bytes / unitBytes;
-
-  // double buffering
-  const size_t scratchOffset = (flag & 1) ? 0 : bytesPerGPU * nRanksPerNode * 2;
-
-  if (isPut) {
-    if (nLoop > 0) {
-      // First loop unrolling
-      const size_t peerIdx = wid % nPeer;
-      // const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
-      const size_t offset = bytesPerGPU * rank + (wid / nPeer) * unitBytesPerWarp;
-      // smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
-      mscclpp::putPackets(smChans[peerIdx].dst_, scratchOffset + offset * 2, smChans[peerIdx].src_, offset,
-                          unitBytesPerWarp, lid, WARP_SIZE, flag);
-    }
-
-    for (size_t i = 1; i < nLoop; ++i) {
-      const size_t gWid = wid + i * nWarp;
-      const size_t peerIdx = gWid % nPeer;
-      // const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
-      const size_t offset = bytesPerGPU * rank + (gWid / nPeer) * unitBytesPerWarp;
-      // smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
-      mscclpp::putPackets(smChans[peerIdx].dst_, scratchOffset + offset * 2, smChans[peerIdx].src_, offset,
-                          unitBytesPerWarp, lid, WARP_SIZE, flag);
-    }
-
-    if (bytes % unitBytes > 0) {
-      const size_t gWid = wid + nLoop * nWarp;
-      const size_t peerIdx = gWid % nPeer;
-      const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
-      const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
-      const size_t offset = bytesPerGPU * rank + offsetWithinRank;
-      const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
-                                     ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
-                                     : unitBytesPerWarp;
-      if (remainBytes > 0) {
-        // smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
-        mscclpp::putPackets(smChans[peerIdx].dst_, scratchOffset + offset * 2, smChans[peerIdx].src_, offset,
-                            remainBytes, lid, WARP_SIZE, flag);
-      }
-    }
-  } else {
-    if (nLoop > 0) {
-      // First loop unrolling
-      const size_t peerIdx = wid % nPeer;
-      const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
-      const size_t offset = bytesPerGPU * remoteRankLocalIndex + (wid / nPeer) * unitBytesPerWarp;
-      mscclpp::getPackets(smChans[peerIdx].getPacketBuffer_, scratchOffset + offset * 2, smChans[peerIdx].src_, offset,
-                          unitBytesPerWarp, lid, WARP_SIZE, flag);
-    }
-
-    for (size_t i = 1; i < nLoop; ++i) {
-      const size_t gWid = wid + i * nWarp;
-      const size_t peerIdx = gWid % nPeer;
-      const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
-      const size_t offset = bytesPerGPU * remoteRankLocalIndex + (gWid / nPeer) * unitBytesPerWarp;
-      // smChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
-      mscclpp::getPackets(smChans[peerIdx].getPacketBuffer_, scratchOffset + offset * 2, smChans[peerIdx].src_, offset,
-                          unitBytesPerWarp, lid, WARP_SIZE, flag);
-    }
-
-    if (bytes % unitBytes > 0) {
-      const size_t gWid = wid + nLoop * nWarp;
-      const size_t peerIdx = gWid % nPeer;
-      const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
-      const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
-      const size_t offset = bytesPerGPU * remoteRankLocalIndex + offsetWithinRank;
-      const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
-                                     ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
-                                     : unitBytesPerWarp;
-      if (remainBytes > 0) {
-        // smChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
-        mscclpp::getPackets(smChans[peerIdx].getPacketBuffer_, scratchOffset + offset * 2, smChans[peerIdx].src_,
-                            offset, remainBytes, lid, WARP_SIZE, flag);
-      }
     }
   }
 
@@ -738,9 +619,6 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   } else if (kernelNum == 7) {
     nBlocks = 4;
     nThreads = 896;
-  } else if (kernelNum == 8) {
-    nBlocks = 2;
-    nThreads = 896;
   } else {
     nBlocks = 1;
     nThreads = WARP_SIZE * (worldSize - 1);
@@ -761,8 +639,6 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     allgather6<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
   } else if (kernelNum == 7) {
     allgather7<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
-  } else if (kernelNum == 8) {
-    allgather8<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
   }
 }
 
@@ -818,8 +694,7 @@ std::vector<KernelRestriction> AllGatherTestColl::getKernelRestrictions() {
           {4, "allgather4", true, 3, 16 * worldSize_ /*use ulong2 to transfer data*/},
           {5, "allgather5", false, 1, 16 * worldSize_ /*use ulong2 to transfer data*/},
           {6, "allgather6", false, 1, 16 * worldSize_ /*use ulong2 to transfer data*/},
-          {7, "allgather7", false, 1, 16 * worldSize_ /*use ulong2 to transfer data*/},
-          {8, "allgather8", false, 1, 16 * worldSize_ /*use ulong2 to transfer data*/}};
+          {7, "allgather7", false, 1, 16 * worldSize_ /*use ulong2 to transfer data*/}};
 }
 
 class AllGatherTestEngine : public BaseTestEngine {
@@ -850,7 +725,7 @@ AllGatherTestEngine::AllGatherTestEngine(const TestArgs& args) : BaseTestEngine(
 void AllGatherTestEngine::allocateBuffer() {
   sendBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
-  if (args_.kernelNum == 7 || args_.kernelNum == 8) {
+  if (args_.kernelNum == 7) {
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     // 2x for double-buffering, scratchBuff used to store original data and reduced results
     const size_t scratchBuffNelem = nPacket * 2 /*original data & reduced result */ * 2 /* double buffering*/;
@@ -878,7 +753,7 @@ void AllGatherTestEngine::setupConnections() {
     CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannelHandles.data(),
                                  sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelHandles.size()));
 
-    if (args_.kernelNum == 7 || args_.kernelNum == 8) {
+    if (args_.kernelNum == 7) {
       const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
       const size_t scratchPacketBuffBytes = nPacket * 2 * 2 * sizeof(mscclpp::LLPacket);
       setupMeshConnections(smOutOfPlaceChannels_, sendBuff_.get(), args_.maxBytes, scratchPacketBuff_.get(),
