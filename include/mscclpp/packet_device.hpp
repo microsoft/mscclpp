@@ -111,7 +111,7 @@ union alignas(8) LLPacket64 {
   MSCCLPP_DEVICE_INLINE bool readOnce(uint32_t flag, uint32_t& data) const {
 #if defined(MSCCLPP_DEVICE_CUDA)
     uint32_t f;
-    asm volatile("ld.volatile.global.v2.u32 {%0,%1}, [%4];" : "=r"(data), "=r"(f) : "l"(&raw_));
+    asm volatile("ld.volatile.global.v2.u32 {%0,%1}, [%2];" : "=r"(data), "=r"(f) : "l"(&raw_));
     return (f != flag);
 #else  // !defined(MSCCLPP_DEVICE_CUDA)
     uint64_t reg;
