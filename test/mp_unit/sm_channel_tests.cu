@@ -252,29 +252,29 @@ __global__ void kernelSmPacketPingPong(int* buff, int rank, int nElem, int* ret,
     // rank=1: 1, 0, 1, 0, ...
     if ((rank ^ (i & 1)) == 0) {
       // If each thread writes 8 bytes at once, we don't need a barrier before putPackets().
-      for (int j = threadIdx.x; j < nElem / 2; j += blockDim.x) {
-        sendBuff[2 * j] = putOffset + i + 2 * j;
-        sendBuff[2 * j + 1] = putOffset + i + 2 * j + 1;
+      for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+        sendBuff[j] = putOffset + i + j;
+        // sendBuff[2 * j + 1] = putOffset + i + 2 * j + 1;
       }
       // __syncthreads();
-      smChan.putPackets(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      smChan.putPackets2(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
     } else {
-      smChan.getPackets(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      smChan.getPackets2(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
       // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
       // __syncthreads();
-      for (int j = threadIdx.x; j < nElem / 2; j += blockDim.x) {
-        if (sendBuff[2 * j] != getOffset + i + 2 * j) {
+      for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
+        if (sendBuff[j] != getOffset + i + j) {
           // printf("ERROR: rank = %d, sendBuff[%d] = %d, expected %d. Skipping following errors\n", rank, 2 * j,
           //        sendBuff[2 * j], getOffset + i + 2 * j);
           *ret = 1;
           break;
         }
-        if (sendBuff[2 * j + 1] != getOffset + i + 2 * j + 1) {
-          // printf("ERROR: rank = %d, sendBuff[%d] = %d, expected %d. Skipping following errors\n", rank, 2 * j + 1,
-          //        sendBuff[2 * j + 1], getOffset + i + 2 * j + 1);
-          *ret = 1;
-          break;
-        }
+        // if (sendBuff[2 * j + 1] != getOffset + i + 2 * j + 1) {
+        //   // printf("ERROR: rank = %d, sendBuff[%d] = %d, expected %d. Skipping following errors\n", rank, 2 * j + 1,
+        //   //        sendBuff[2 * j + 1], getOffset + i + 2 * j + 1);
+        //   *ret = 1;
+        //   break;
+        // }
       }
     }
     // Make sure all threads are done in this iteration

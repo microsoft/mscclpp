@@ -120,8 +120,8 @@ union alignas(8) LLPacket2 {
 #else  // !defined(MSCCLPP_DEVICE_CUDA)
     uint2 reg = make_uint2(val, flag);
     uint64_t* p = reinterpret_cast<uint64_t*>(&reg);
-    __builtin_nontemporal_store(*p, &(raw_));
-    // atomicStore(&(raw_), *p, memoryOrderRelaxed);
+    // __builtin_nontemporal_store(*p, &(raw_));
+    atomicStore(&(raw_), *p, memoryOrderRelaxed);
 #endif
   }
 
@@ -137,20 +137,22 @@ union alignas(8) LLPacket2 {
 #endif
   }
 
-  MSCCLPP_DEVICE_INLINE uint32_t read(uint32_t flag, int64_t maxSpinCount = 100000000) const {
+  MSCCLPP_DEVICE_INLINE uint32_t read(uint32_t flag, int64_t maxSpinCount = 1000000) const {
     uint32_t data;
-    POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
-    // int64_t spins = 0;
-    // uint64_t reg;
-    // uint2* ptr;
+    // POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
+    int64_t spins = 0;
+    uint64_t reg;
+    uint2* ptr;
 
-    // do {
-    //     reg = __builtin_nontemporal_load(&(raw_));
-    //     ptr = reinterpret_cast<uint2*>(&reg);
-    //     if (spins >= maxSpinCount) break;
-    //     spins++;
-    // } while ((ptr->y != flag));
-    // data = ptr->x;
+    do {
+      reg = __builtin_nontemporal_load(&(raw_));
+      ptr = reinterpret_cast<uint2*>(&reg);
+      // if (spins >= maxSpinCount) {
+        asm volatile("s_waitcnt vmcnt(0)");
+      //   spins = 0;
+      // }
+    } while ((ptr->y != flag));
+    data = ptr->x;
     return data;
   }
 
