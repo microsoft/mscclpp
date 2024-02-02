@@ -251,7 +251,6 @@ struct SmChannelDeviceHandle {
     mscclpp::putPackets64(dst_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
   }
 
-
   /// Retrieve data from @ref LLPacket in the local packet buffer (target) and write it on the local data (origin).
   ///
   /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.

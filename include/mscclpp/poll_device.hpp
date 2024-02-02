@@ -12,6 +12,9 @@
 
 __device__ uint64_t abortFlag;
 
+#if defined(NDEBUG)
+#define __assert_fail(__assertion, __file, __line, __function) ;
+#else  // !defined(NDEBUG)
 #if defined(MSCCLPP_DEVICE_HIP)
 extern "C" __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
                                          const char *__function);
@@ -19,6 +22,7 @@ extern "C" __device__ void __assert_fail(const char *__assertion, const char *__
 extern "C" __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
                                          const char *__function) __THROW;
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
+#endif  // NDEBUG
 
 // If a spin is stuck, print a warning and keep spinning.
 #define POLL_MAYBE_JAILBREAK(__cond, __max_spin_cnt)                     \
@@ -26,6 +30,7 @@ extern "C" __device__ void __assert_fail(const char *__assertion, const char *__
     int64_t __spin_cnt = 0;                                              \
     while (__cond) {                                                     \
       if (__max_spin_cnt >= 0 && __spin_cnt++ == __max_spin_cnt) {       \
+        __assert_fail(#__cond, __FILE__, __LINE__, __PRETTY_FUNCTION__); \
       }                                                                  \
     }                                                                    \
   } while (0);
@@ -42,6 +47,7 @@ extern "C" __device__ void __assert_fail(const char *__assertion, const char *__
         break;                                                                     \
       }                                                                            \
       if (__max_spin_cnt >= 0 && __spin_cnt++ == __max_spin_cnt) {                 \
+        __assert_fail(#__cond1 #__cond2, __FILE__, __LINE__, __PRETTY_FUNCTION__); \
       }                                                                            \
     }                                                                              \
   } while (0);
