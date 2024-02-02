@@ -493,6 +493,7 @@ struct EndpointConfig {
   static const int DefaultMaxCqPollNum = 1;
   static const int DefaultMaxSendWr = 8192;
   static const int DefaultMaxWrPerSend = 64;
+  // the recommended buffer size for NVLS, returned by cuMulticastGetGranularity
   static const int DefaultNvlsBufferSize = (1 << 29);
 
   Transport transport;
