@@ -104,7 +104,7 @@ union alignas(16) LLPacket {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-union alignas(8) LLPacket2 {
+union alignas(8) LLPacket64 {
   // Assume data is written with an atomicity of 8 bytes (IB/RDMA).
   struct {
     uint32_t data;
@@ -113,14 +113,13 @@ union alignas(8) LLPacket2 {
   uint64_t raw_;
 #if defined(MSCCLPP_DEVICE_COMPILE)
 
-  MSCCLPP_DEVICE_INLINE LLPacket2() {}
+  MSCCLPP_DEVICE_INLINE LLPacket64() {}
 
   MSCCLPP_DEVICE_INLINE void write(uint32_t val, uint32_t flag) {
 #if defined(MSCCLPP_DEVICE_CUDA)
 #else  // !defined(MSCCLPP_DEVICE_CUDA)
     uint2 reg = make_uint2(val, flag);
     uint64_t* p = reinterpret_cast<uint64_t*>(&reg);
-    // __builtin_nontemporal_store(*p, &(raw_));
     atomicStore(&(raw_), *p, memoryOrderRelaxed);
 #endif
   }
@@ -129,8 +128,7 @@ union alignas(8) LLPacket2 {
 #if defined(MSCCLPP_DEVICE_CUDA)
 #else  // !defined(MSCCLPP_DEVICE_CUDA)
     uint64_t reg;
-    // reg = atomicLoad(&(raw_), memoryOrderRelaxed);
-    reg = __builtin_nontemporal_load(&(raw_));
+    reg = atomicLoad(&(raw_), memoryOrderRelaxed);
     uint2* ptr = reinterpret_cast<uint2*>(&reg);
     data = ptr->x;
     return (ptr->y != flag);
@@ -139,20 +137,7 @@ union alignas(8) LLPacket2 {
 
   MSCCLPP_DEVICE_INLINE uint32_t read(uint32_t flag, int64_t maxSpinCount = 1000000) const {
     uint32_t data;
-    // POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
-    int64_t spins = 0;
-    uint64_t reg;
-    uint2* ptr;
-
-    do {
-      reg = __builtin_nontemporal_load(&(raw_));
-      ptr = reinterpret_cast<uint2*>(&reg);
-      // if (spins >= maxSpinCount) {
-        asm volatile("s_waitcnt vmcnt(0)");
-      //   spins = 0;
-      // }
-    } while ((ptr->y != flag));
-    data = ptr->x;
+    POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
     return data;
   }
 
@@ -190,30 +175,30 @@ MSCCLPP_DEVICE_INLINE void getPackets(const void* targetPtr, uint64_t targetOffs
   }
 }
 
-/// Read from the origin and write to the target buffer.
-MSCCLPP_DEVICE_INLINE void putPackets2(void* targetPtr, uint64_t targetOffset, const void* originPtr,
-                                       uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
-                                       uint32_t numThreads, uint32_t flag) {
+/// Read from the origin and write to the target buffer. Write 64-bit data at a time (32bit data + 32bit flag).
+MSCCLPP_DEVICE_INLINE void putPackets64(void* targetPtr, uint64_t targetOffset, const void* originPtr,
+                                        uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
+                                        uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
   const uint32_t* originBase = (const uint32_t*)((const char*)originPtr + originOffset);
-  LLPacket2* targetBase = (LLPacket2*)((char*)targetPtr + targetOffset);
+  LLPacket64* targetBase = (LLPacket64*)((char*)targetPtr + targetOffset);
   size_t nElem = originBytes / sizeof(uint32_t);
   for (size_t i = threadId; i < nElem; i += numThreads) {
-    LLPacket2* pkt = &targetBase[i];
+    LLPacket64* pkt = &targetBase[i];
     pkt->write(originBase[i], flag);
   }
 }
 
-/// Read from the target buffer and write to the origin.
-MSCCLPP_DEVICE_INLINE void getPackets2(const void* targetPtr, uint64_t targetOffset, void* originPtr,
-                                       uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
-                                       uint32_t numThreads, uint32_t flag) {
+/// Read from the target buffer and write to the origin. Read 64-bit data at a time (32bit data + 32bit flag).
+MSCCLPP_DEVICE_INLINE void getPackets64(const void* targetPtr, uint64_t targetOffset, void* originPtr,
+                                        uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
+                                        uint32_t numThreads, uint32_t flag) {
   // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-  const LLPacket2* targetBase = (const LLPacket2*)((const char*)targetPtr + targetOffset);
+  const LLPacket64* targetBase = (const LLPacket64*)((const char*)targetPtr + targetOffset);
   uint32_t* originBase = (uint32_t*)((char*)originPtr + originOffset);
   size_t nElem = originBytes / sizeof(uint32_t);
   for (size_t i = threadId; i < nElem; i += numThreads) {
-    const LLPacket2* pkt = &targetBase[i];
+    const LLPacket64* pkt = &targetBase[i];
     originBase[i] = pkt->read(flag);
   }
 }

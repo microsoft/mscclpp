@@ -257,9 +257,9 @@ __global__ void kernelSmPacketPingPong(int* buff, int rank, int nElem, int* ret,
         // sendBuff[2 * j + 1] = putOffset + i + 2 * j + 1;
       }
       // __syncthreads();
-      smChan.putPackets2(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      smChan.putPackets64(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
     } else {
-      smChan.getPackets2(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      smChan.getPackets64(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
       // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
       // __syncthreads();
       for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
