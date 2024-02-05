@@ -2,12 +2,19 @@
 # Licensed under the MIT license.
 
 import cupy as cp
-from mscclpp_op import MscclppAllReduce1, MscclppAllReduce2, MscclppAllReduce3, MscclppAllReduce4, MscclppAllReduce5
+from mscclpp_op import (
+    MscclppAllReduce1,
+    MscclppAllReduce2,
+    MscclppAllReduce3,
+    MscclppAllReduce4,
+    MscclppAllReduce5,
+    MscclppAllReduce6,
+)
 from nccl_op import NcclAllReduce
 from mpi4py import MPI
 import cupy.cuda.nccl as nccl
 import mscclpp.comm as mscclpp_comm
-from mscclpp import ProxyService
+from mscclpp import ProxyService, is_nvls_supported
 from prettytable import PrettyTable
 import netifaces as ni
 
@@ -121,6 +128,21 @@ def bench_time(niter: int, func):
     return cp.cuda.get_elapsed_time(start, end) / niter * 1000.0
 
 
+def find_best_algo(mscclpp_algos, niter):
+    assert len(mscclpp_algos) > 0
+    best_time = 10000000.0
+    best_algo = None
+    for algo in mscclpp_algos:
+        config, cur_time = find_best_config(algo, niter)
+        if cur_time < best_time:
+            best_time = cur_time
+            best_algo = algo
+            algo.set_params(*config)
+    if MPI.COMM_WORLD.rank == 0:
+        print(best_algo, end="", flush=True)
+    return best_algo
+
+
 def find_best_config(mscclpp_call, niter):
     best_time = 10000000.0
     for config in mscclpp_call.auto_tune():
@@ -133,7 +155,7 @@ def find_best_config(mscclpp_call, niter):
     best_config = MPI.COMM_WORLD.bcast(best_config, root=0)
     if MPI.COMM_WORLD.rank == 0:
         print(best_config, end="", flush=True)
-    return best_config
+    return best_config, best_time
 
 
 def run_benchmark(
@@ -145,26 +167,27 @@ def run_benchmark(
 
     proxy_service = None
     if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
+        proxy_service = ProxyService()
         if memory.nbytes < 2**20:
-            mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
-        elif memory.nbytes < 2**29:
-            mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
+            mscclpp_algos = [MscclppAllReduce2(mscclpp_group, memory, memory_out)]
         else:
-            proxy_service = ProxyService()
-            mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
-            proxy_service.start_proxy()
+            mscclpp_algos = [
+                MscclppAllReduce1(mscclpp_group, memory),
+                MscclppAllReduce3(mscclpp_group, memory, proxy_service),
+            ]
+            if is_nvls_supported():
+                mscclpp_algos.append(MscclppAllReduce6(mscclpp_group, nelem, data_type))
     else:
         if memory.nbytes < 2**22:
-            proxy_service = ProxyService()
-            mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
-            proxy_service.start_proxy()
+            mscclpp_algos = [MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)]
         else:
-            proxy_service = ProxyService()
-            mscclpp_call = MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)
-            proxy_service.start_proxy()
+            mscclpp_algos = [MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)]
 
-    best_config = find_best_config(mscclpp_call, 20)
-    mscclpp_call.set_params(*best_config)
+    proxy_service.start_proxy()
+    MPI.COMM_WORLD.barrier()
+    mscclpp_call = find_best_algo(mscclpp_algos, 20)
+    if isinstance(mscclpp_call, MscclppAllReduce6):
+        memory = mscclpp_call.get_memory()
 
     nccl_call = NcclAllReduce(nccl_op, memory)
 
@@ -177,13 +200,8 @@ def run_benchmark(
     nccl_algBw = memory_nbytes / nccl_time / 1e3
     nccl_check = "PASS" if check_correctness(memory, nccl_call) else "FAIL"
 
-    if (
-        isinstance(mscclpp_call, MscclppAllReduce3)
-        or isinstance(mscclpp_call, MscclppAllReduce5)
-        or isinstance(mscclpp_call, MscclppAllReduce4)
-    ):
-        MPI.COMM_WORLD.barrier()
-        proxy_service.stop_proxy()
+    MPI.COMM_WORLD.barrier()
+    proxy_service.stop_proxy()
 
     speed_up = nccl_time / mscclpp_time
     if MPI.COMM_WORLD.rank == 0:
@@ -247,7 +265,8 @@ if __name__ == "__main__":
     mscclpp_algbw = []
     nccl_algbw = []
     speed_ups = []
-    for i in range(10, 29):
+    end_range = 28 if is_nvls_supported() else 29
+    for i in range(10, end_range):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
             nelems = 2**i
         elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:

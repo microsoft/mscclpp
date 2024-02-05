@@ -19,6 +19,9 @@ using cudaIpcMemHandle_t = hipIpcMemHandle_t;
 
 using CUresult = hipError_t;
 using CUdeviceptr = hipDeviceptr_t;
+using CUmemGenericAllocationHandle = hipMemGenericAllocationHandle_t;
+using CUmemAllocationProp = hipMemAllocationProp;
+using CUmemAccessDesc = hipMemAccessDesc;
 
 constexpr auto cudaSuccess = hipSuccess;
 constexpr auto cudaStreamNonBlocking = hipStreamNonBlocking;
@@ -31,6 +34,11 @@ constexpr auto cudaMemcpyDeviceToDevice = hipMemcpyDeviceToDevice;
 constexpr auto cudaMemcpyHostToDevice = hipMemcpyHostToDevice;
 constexpr auto cudaMemcpyDeviceToHost = hipMemcpyDeviceToHost;
 constexpr auto cudaIpcMemLazyEnablePeerAccess = hipIpcMemLazyEnablePeerAccess;
+
+constexpr auto CU_MEM_ALLOCATION_TYPE_PINNED = hipMemAllocationTypePinned;
+constexpr auto CU_MEM_LOCATION_TYPE_DEVICE = hipMemLocationTypeDevice;
+constexpr auto CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR = hipMemHandleTypePosixFileDescriptor;
+constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWrite;
 
 #ifndef CUDA_SUCCESS
 #define CUDA_SUCCESS hipSuccess
@@ -68,13 +76,29 @@ constexpr auto cudaIpcMemLazyEnablePeerAccess = hipIpcMemLazyEnablePeerAccess;
 #define cudaIpcCloseMemHandle(...) hipIpcCloseMemHandle(__VA_ARGS__)
 
 #define cuGetErrorString(...) hipDrvGetErrorString(__VA_ARGS__)
+#define cuMemAddressReserve(...) hipMemAddressReserve(__VA_ARGS__)
+#define cuMemAddressFree(...) hipMemAddressFree(__VA_ARGS__)
 #define cuMemGetAddressRange(...) hipMemGetAddressRange(__VA_ARGS__)
+#define cuMemCreate(...) hipMemCreate(__VA_ARGS__)
+#define cuMemRelease(...) hipMemRelease(__VA_ARGS__)
+#define cuMemSetAccess(...) hipMemSetAccess(__VA_ARGS__)
+#define cuMemMap(...) hipMemMap(__VA_ARGS__)
+#define cuMemUnmap(...) hipMemUnmap(__VA_ARGS__)
 
 #else
 
 #include <cuda.h>
+#include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
 #endif
+
+// NVLS
+#if !defined(__HIP_PLATFORM_AMD__)
+#include <linux/version.h>
+#define USE_NVLS ((CUDART_VERSION >= 12010) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)))
+#else  // !defined(__HIP_PLATFORM_AMD__)
+#define USE_NVLS 0
+#endif  // !defined(__HIP_PLATFORM_AMD__)
 
 #endif  // MSCCLPP_GPU_HPP_

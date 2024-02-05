@@ -10,7 +10,6 @@
 #include "endpoint.hpp"
 #include "infiniband/verbs.h"
 #include "npkit/npkit.h"
-#include "registered_memory.hpp"
 
 namespace mscclpp {
 
