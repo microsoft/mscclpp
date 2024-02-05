@@ -1141,7 +1141,6 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     nBlocks = 28;
     tmpBuff = scratchPacketBuff;
     nThreadsPerBlock = 1024;
-
   } else {
     nBlocks = std::max(args.nRanksPerNode - 1, 1) * BLOCKS_PER_PEER;
     tmpBuff = scratchPacketBuff;

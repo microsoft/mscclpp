@@ -425,23 +425,12 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t nThread = blockDim.x * nBlock;
   const size_t nWarp = nThread / WARP_SIZE;
   const size_t nPeer = nRanksPerNode - 1;
-  // const size_t chanOffset = nPeer * blockIdx.x;
   auto smChans = constSmOutOfPlaceChans;
 
   const uint32_t flag = (uint32_t)globalFlag;
-  // if (wid < nPeer && lid == 0) {
-  //   smChans[wid].relaxedSignal();
-  //   smChans[wid].wait();
-  // }
-  // __syncthreads();
   const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
   const size_t bytes = bytesPerGPU * nPeer;
   size_t unitBytesPerThread = 8;
-  // if (bytes >= nThread * 64) {
-  //   unitBytesPerThread = 64;
-  // } else {
-  //   unitBytesPerThread = 16;
-  // }
   const size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
   const size_t unitBytes = unitBytesPerWarp * nWarp;
   const size_t nLoop = bytes / unitBytes;
@@ -452,7 +441,6 @@ __global__ void __launch_bounds__(1024, 1)
   if (nLoop > 0) {
     // First loop unrolling
     const size_t peerIdx = wid % nPeer;
-    // const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * rank + (wid / nPeer) * unitBytesPerWarp;
     smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
   }
