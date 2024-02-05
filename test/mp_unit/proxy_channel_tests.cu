@@ -435,6 +435,9 @@ void ProxyChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
   proxyService->stopProxy();
 }
 
+// TODO: MSRCHA-371
+#if defined(MSCCLPP_DEVICE_CUDA)
+
 TEST_F(ProxyChannelOneToOneTest, PacketPingPong) { testPacketPingPong(false); }
 
 TEST_F(ProxyChannelOneToOneTest, PacketPingPongIb) { testPacketPingPong(true); }
@@ -442,3 +445,5 @@ TEST_F(ProxyChannelOneToOneTest, PacketPingPongIb) { testPacketPingPong(true); }
 TEST_F(ProxyChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(false); }
 
 TEST_F(ProxyChannelOneToOneTest, PacketPingPongPerfIb) { testPacketPingPongPerf(true); }
+
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
