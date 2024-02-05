@@ -293,7 +293,7 @@ TEST_F(SmChannelOneToOneTest, GetPingPong) {
   EXPECT_EQ(*ret, 0);
 }
 
-__global__ void kernelSmPacket64PingPong(int* buff, int rank, int nElem, int* ret, int nTries = 1000) {
+__global__ void kernelSmPacket64PingPong(int* buff, int rank, int nElem, int* ret, int nTries) {
   if (rank > 1) return;
 
   DeviceHandle<mscclpp::SmChannel>& smChan = gChannelOneToOneTestConstSmChans;
