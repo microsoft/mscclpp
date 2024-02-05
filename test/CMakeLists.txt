@@ -23,6 +23,7 @@ endfunction()
 
 add_test_executable(allgather_test_cpp allgather_test_cpp.cu)
 add_test_executable(allgather_test_host_offloading allgather_test_host_offloading.cu)
+add_test_executable(nvls_test nvls_test.cu)
 
 configure_file(run_mpi_test.sh.in run_mpi_test.sh)
 

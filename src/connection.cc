@@ -10,7 +10,6 @@
 #include "endpoint.hpp"
 #include "infiniband/verbs.h"
 #include "npkit/npkit.h"
-#include "registered_memory.hpp"
 
 namespace mscclpp {
 
@@ -73,9 +72,9 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
   validateTransport(dst, remoteTransport());
   uint64_t oldValue = *src;
   *src = newValue;
-  uint64_t* dstPtr = (uint64_t*)dst.data();
+  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
 
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, src, sizeof(uint64_t), cudaMemcpyHostToDevice, stream_));
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr, src, sizeof(uint64_t), cudaMemcpyHostToDevice, stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
        newValue);
 
