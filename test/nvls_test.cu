@@ -1,11 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <stdio.h>
+
+#if (USE_NVLS)
 #include <cuda.h>
 #include <cudaTypedefs.h>
 #include <cuda_runtime.h>
 #include <mpi.h>
-#include <stdio.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -71,7 +73,6 @@ __global__ void testing(float* mc_ptr, int size, int myrank, int nranks) {
 }
 
 int main() {
-#if (USE_NVLS)
   int myrank, nranks;
   MPI_Init(NULL, NULL);
   MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
@@ -199,5 +200,14 @@ int main() {
   }
   MPI_Barrier(MPI_COMM_WORLD);
   MPI_Finalize();
-#endif  // (USE_NVLS)
+  return 0;
 }
+
+#else  // !(USE_NVLS)
+
+int main() {
+  printf("This test requires NVLS to be enabled\n");
+  return 0;
+}
+
+#endif  // !(USE_NVLS)

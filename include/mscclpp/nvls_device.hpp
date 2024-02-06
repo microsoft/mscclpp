@@ -20,7 +20,7 @@ struct DeviceMulticastPointerDeviceHandle {
   void* mcPtr;
   size_t bufferSize;
 
-#if defined(MSCCLPP_DEVICE_COMPILE)
+#if defined(MSCCLPP_DEVICE_CUDA)
   template <int NElemPerThread = 4, typename TVaule = float4, typename T = float>
   MSCCLPP_DEVICE_INLINE void multimemLoad(TVaule& val, T* ptr) {
     static_assert(NElemPerThread == 4, "Only support NElemPerThread == 4");
@@ -54,7 +54,7 @@ struct DeviceMulticastPointerDeviceHandle {
       static_assert(dependentFalse<T>, "Not supported type");
     }
   };
-#endif
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
 };
 
 }  // namespace mscclpp
