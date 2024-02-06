@@ -70,7 +70,7 @@ static_assert(sizeof(UniqueIdInternal) <= sizeof(UniqueId), "UniqueIdInternal is
 
 class TcpBootstrap::Impl {
  public:
-  Impl(int rank, int nRanks);
+  Impl();
   ~Impl();
   void initialize(const UniqueId& uniqueId, int64_t timeoutSec);
   void initialize(const std::string& ifIpPortTrio, int64_t timeoutSec);
@@ -120,11 +120,7 @@ class TcpBootstrap::Impl {
 };
 
 TcpBootstrap::Impl::Impl(int rank, int nRanks)
-    : rank_(rank),
-      nRanks_(nRanks),
-      netInitialized(false),
-      peerCommAddresses_(nRanks, SocketAddress()),
-      barrierArr_(nRanks, 0),
+    : netInitialized(false),
       abortFlagStorage_(new uint32_t(0)),
       abortFlag_(abortFlagStorage_.get()) {}
 
