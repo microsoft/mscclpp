@@ -4,6 +4,7 @@
 #include <cuda_fp16.h>
 
 #include <mscclpp/concurrency_device.hpp>
+#include <mscclpp/nvls_device.hpp>
 #include <mscclpp/proxy_channel_device.hpp>
 #include <mscclpp/sm_channel_device.hpp>
 
@@ -775,3 +776,57 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
     globalFlag += 1;
   }
 }
+
+// -------------------------------------------
+// AllReduce6
+// NVLS
+// -------------------------------------------
+
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+
+extern "C" __global__ void __launch_bounds__(1024, 1)
+    allreduce6(mscclpp::SmDevice2DeviceSemaphoreDeviceHandle* semaphores,
+               mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs, TYPE* buff, int my_rank, int nranks,
+               size_t nelem) {
+  float* dev_ptr = (float*)nvlsPtrs.devicePtr;
+  float* mc_ptr = (float*)nvlsPtrs.mcPtr;
+  int tid = threadIdx.x;
+  int bid = blockIdx.x;
+
+  if (tid == 0 && bid == 0) {
+    __threadfence_system();
+  }
+  if (bid == 0) {
+    if (tid < nranks - 1) {
+      semaphores[tid].signal();
+      semaphores[tid].wait();
+    }
+  }
+  deviceSyncer.sync(gridDim.x);
+
+  int my_st = ((int64_t)nelem * (int64_t)my_rank) / (int64_t)nranks;
+  int my_en = ((int64_t)nelem * (int64_t)(my_rank + 1)) / (int64_t)nranks;
+
+  int my_offset = (tid + bid * blockDim.x) * 4;
+  int my_step = blockDim.x * gridDim.x * 4;
+
+  for (int idx = my_st + my_offset; idx < my_en; idx += my_step) {
+    uint4 val;
+    nvlsPtrs.multimemLoad(val, mc_ptr + idx);
+    nvlsPtrs.multimemStore(val, mc_ptr + idx);
+  }
+
+  deviceSyncer.sync(gridDim.x);
+  if (tid == 0 && bid == 0) {
+    __threadfence_system();
+  }
+
+  if (bid == 0) {
+    if (tid < nranks - 1) {
+      semaphores[tid].signal();
+      semaphores[tid].wait();
+    }
+  }
+  deviceSyncer.sync(gridDim.x);
+}
+#endif
