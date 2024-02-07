@@ -15,6 +15,8 @@ int main(int argc, char** argv) {
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
   ncclComm_t comm;
   ncclCommInitRank(&comm, world_size, id, rank);
+  // ncclAllReduce(nullptr, nullptr, 1, ncclInt, ncclSum, comm, 0, MPI_COMM_WORLD);
+  ncclCommDestroy(comm);
 
   MPI_Finalize();
   return 0;
