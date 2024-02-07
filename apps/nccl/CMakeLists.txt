@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/nccl.cu src/allreduce.cu)
 file(GLOB_RECURSE HEADERS CONFIGURE_DEPENDS include/nccl.h)
 
 add_library(mscclpp_nccl_obj OBJECT)
