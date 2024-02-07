@@ -18,6 +18,7 @@ option(ENABLE_TRACE "Enable tracing" OFF)
 option(USE_NPKIT "Use NPKIT" ON)
 option(BUILD_TESTS "Build tests" ON)
 option(BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
+option(BUILD_APPS_NCCL "Build NCCL interfaces" OFF)
 option(USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(USE_ROCM "Use AMD/ROCm." OFF)
 option(BYPASS_GPU_CHECK "Bypass GPU check." OFF)
@@ -150,4 +151,9 @@ endif()
 # Python bindings
 if(BUILD_PYTHON_BINDINGS)
     add_subdirectory(python)
+endif()
+
+# NCCL interfaces
+if(BUILD_APPS_NCCL)
+    add_subdirectory(apps/nccl)
 endif()
