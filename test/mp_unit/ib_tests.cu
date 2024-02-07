@@ -24,7 +24,7 @@ void IbPeerToPeerTest::SetUp() {
 
   if (gEnv->rank < 2) {
     // This test needs only two ranks
-    bootstrap = std::make_shared<mscclpp::TcpBootstrap>();
+    bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, 2);
     if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
   }
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
@@ -33,7 +33,7 @@ void IbPeerToPeerTest::SetUp() {
     return;
   }
 
-  bootstrap->initialize(id, gEnv->rank, 2);
+  bootstrap->initialize(id);
 
   ibCtx = std::make_shared<mscclpp::IbCtx>(ibDevName);
   qp = ibCtx->createQp(1024, 1, 8192, 0, 64);

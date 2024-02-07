@@ -51,15 +51,17 @@ class Bootstrap {
 /// A native implementation of the bootstrap using TCP sockets.
 class TcpBootstrap : public Bootstrap {
  public:
+  /// Create a random unique ID.
+  /// @return The created unique ID.
+  static UniqueId createUniqueId();
+
   /// Constructor.
-  TcpBootstrap();
+  /// @param rank The rank of the process.
+  /// @param nRanks The total number of ranks.
+  TcpBootstrap(int rank, int nRanks);
 
   /// Destructor.
   ~TcpBootstrap();
-
-  /// Create a random unique ID and store it in the @ref TcpBootstrap.
-  /// @return The created unique ID.
-  UniqueId createUniqueId();
 
   /// Return the unique ID stored in the @ref TcpBootstrap.
   /// @return The unique ID stored in the @ref TcpBootstrap.
@@ -67,17 +69,13 @@ class TcpBootstrap : public Bootstrap {
 
   /// Initialize the @ref TcpBootstrap with a given unique ID.
   /// @param uniqueId The unique ID to initialize the @ref TcpBootstrap with.
-  /// @param rank The rank of the process.
-  /// @param nRanks The total number of ranks.
   /// @param timeoutSec The connection timeout in seconds.
-  void initialize(UniqueId uniqueId, int rank, int nRanks, int64_t timeoutSec = 30);
+  void initialize(UniqueId uniqueId, int64_t timeoutSec = 30);
 
   /// Initialize the @ref TcpBootstrap with a string formatted as "ip:port" or "interface:ip:port".
   /// @param ifIpPortTrio The string formatted as "ip:port" or "interface:ip:port".
-  /// @param rank The rank of the process.
-  /// @param nRanks The total number of ranks.
   /// @param timeoutSec The connection timeout in seconds.
-  void initialize(const std::string& ifIpPortTrio, int rank, int nRanks, int64_t timeoutSec = 30);
+  void initialize(const std::string& ifIpPortTrio, int64_t timeoutSec = 30);
 
   /// Return the rank of the process.
   int getRank() override;

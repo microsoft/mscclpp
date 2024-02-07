@@ -9,8 +9,8 @@
 class LocalCommunicatorTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    bootstrap = std::make_shared<mscclpp::TcpBootstrap>();
-    bootstrap->initialize(bootstrap->createUniqueId(), 0, 1);
+    bootstrap = std::make_shared<mscclpp::TcpBootstrap>(0, 1);
+    bootstrap->initialize(bootstrap->createUniqueId());
     comm = std::make_shared<mscclpp::Communicator>(bootstrap);
   }
 

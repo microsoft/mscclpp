@@ -49,17 +49,17 @@ void BootstrapTest::bootstrapTestAll(std::shared_ptr<mscclpp::Bootstrap> bootstr
 }
 
 TEST_F(BootstrapTest, WithId) {
-  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>();
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
   mscclpp::UniqueId id;
   if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
-  bootstrap->initialize(id, gEnv->rank, gEnv->worldSize);
+  bootstrap->initialize(id);
   bootstrapTestAll(bootstrap);
 }
 
 TEST_F(BootstrapTest, WithIpPortPair) {
-  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>();
-  bootstrap->initialize(gEnv->args["ip_port"], gEnv->rank, gEnv->worldSize);
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
+  bootstrap->initialize(gEnv->args["ip_port"]);
   bootstrapTestAll(bootstrap);
 }
 
@@ -68,23 +68,23 @@ TEST_F(BootstrapTest, ResumeWithId) {
   bootstrapTestTimer.set(300);
 
   for (int i = 0; i < 3000; ++i) {
-    auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>();
+    auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
     mscclpp::UniqueId id;
     if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
     MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
-    bootstrap->initialize(id, gEnv->rank, gEnv->worldSize, 300);
+    bootstrap->initialize(id, 300);
   }
 }
 
 TEST_F(BootstrapTest, ResumeWithIpPortPair) {
   for (int i = 0; i < 5; ++i) {
-    auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>();
-    bootstrap->initialize(gEnv->args["ip_port"], gEnv->rank, gEnv->worldSize);
+    auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
+    bootstrap->initialize(gEnv->args["ip_port"]);
   }
 }
 
 TEST_F(BootstrapTest, ExitBeforeConnect) {
-  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>();
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
   bootstrap->createUniqueId();
 }
 
@@ -92,12 +92,12 @@ TEST_F(BootstrapTest, TimeoutWithId) {
   mscclpp::Timer timer;
 
   // All ranks initialize a bootstrap with their own id (will hang)
-  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>();
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
   mscclpp::UniqueId id = bootstrap->createUniqueId();
 
   try {
     // Set bootstrap timeout to 1 second
-    bootstrap->initialize(id, gEnv->rank, gEnv->worldSize, 1);
+    bootstrap->initialize(id, 1);
   } catch (const mscclpp::Error& e) {
     ASSERT_EQ(e.getErrorCode(), mscclpp::ErrorCode::Timeout);
   }

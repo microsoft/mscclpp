@@ -22,7 +22,7 @@ void CommunicatorTestBase::SetUp() {
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   mscclpp::UniqueId id;
   if (gEnv->rank < numRanksToUse) {
-    bootstrap = std::make_shared<mscclpp::TcpBootstrap>();
+    bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, numRanksToUse);
     if (gEnv->rank == 0) id = bootstrap->createUniqueId();
   }
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
@@ -30,7 +30,7 @@ void CommunicatorTestBase::SetUp() {
   if (gEnv->rank >= numRanksToUse) {
     return;
   }
-  bootstrap->initialize(id, gEnv->rank, numRanksToUse);
+  bootstrap->initialize(id);
   communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
 }
 

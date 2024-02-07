@@ -70,12 +70,14 @@ static_assert(sizeof(UniqueIdInternal) <= sizeof(UniqueId), "UniqueIdInternal is
 
 class TcpBootstrap::Impl {
  public:
-  Impl();
+  static UniqueId createUniqueId();
+  static UniqueId getUniqueId(const UniqueIdInternal& uniqueId);
+
+  Impl(int rank, int nRanks);
   ~Impl();
-  void initialize(const UniqueId& uniqueId, int rank, int nRanks, int64_t timeoutSec);
-  void initialize(const std::string& ifIpPortTrio, int rank, int nRanks, int64_t timeoutSec);
+  void initialize(const UniqueId& uniqueId, int64_t timeoutSec);
+  void initialize(const std::string& ifIpPortTrio, int64_t timeoutSec);
   void establishConnections(int64_t timeoutSec);
-  UniqueId createUniqueId();
   UniqueId getUniqueId() const;
   int getRank();
   int getNranks();
@@ -99,7 +101,6 @@ class TcpBootstrap::Impl {
   std::unique_ptr<uint32_t> abortFlagStorage_;
   volatile uint32_t* abortFlag_;
   std::thread rootThread_;
-  char netIfName_[MAX_IF_NAME_SIZE + 1];
   SocketAddress netIfAddr_;
   std::unordered_map<std::pair<int, int>, std::shared_ptr<Socket>, PairHash> peerSendSockets_;
   std::unordered_map<std::pair<int, int>, std::shared_ptr<Socket>, PairHash> peerRecvSockets_;
@@ -110,49 +111,62 @@ class TcpBootstrap::Impl {
   std::shared_ptr<Socket> getPeerSendSocket(int peer, int tag);
   std::shared_ptr<Socket> getPeerRecvSocket(int peer, int tag);
 
+  static void assignPortToUniqueId(UniqueIdInternal& uniqueId);
+  static void netInit(std::string ipPortPair, std::string interface, SocketAddress& netIfAddr);
+
   void bootstrapCreateRoot();
   void bootstrapRoot();
   void getRemoteAddresses(Socket* listenSock, std::vector<SocketAddress>& rankAddresses,
                           std::vector<SocketAddress>& rankAddressesRoot, int& rank);
   void sendHandleToPeer(int peer, const std::vector<SocketAddress>& rankAddresses,
                         const std::vector<SocketAddress>& rankAddressesRoot);
-  void netInit(std::string ipPortPair, std::string interface);
 };
 
-TcpBootstrap::Impl::Impl()
-    : netInitialized(false), abortFlagStorage_(new uint32_t(0)), abortFlag_(abortFlagStorage_.get()) {}
+UniqueId TcpBootstrap::Impl::createUniqueId() {
+  UniqueIdInternal uniqueId;
+  SocketAddress netIfAddr;
+  netInit("", "", netIfAddr);
+  getRandomData(&uniqueId.magic, sizeof(uniqueId_.magic));
+  std::memcpy(&uniqueId.addr, &netIfAddr, sizeof(SocketAddress));
+  assignPortToUniqueId(uniqueId);
+  return getUniqueId(uniqueId);
+}
 
-UniqueId TcpBootstrap::Impl::getUniqueId() const {
+UniqueId TcpBootstrap::Impl::getUniqueId(const UniqueIdInternal& uniqueId) {
   UniqueId ret;
-  std::memcpy(&ret, &uniqueId_, sizeof(uniqueId_));
+  std::memcpy(&ret, &uniqueId, sizeof(uniqueId));
   return ret;
 }
 
-UniqueId TcpBootstrap::Impl::createUniqueId() {
-  netInit("", "");
-  getRandomData(&uniqueId_.magic, sizeof(uniqueId_.magic));
-  std::memcpy(&uniqueId_.addr, &netIfAddr_, sizeof(SocketAddress));
-  bootstrapCreateRoot();
-  return getUniqueId();
-}
+TcpBootstrap::Impl::Impl(int rank, int nRanks)
+    : rank_(rank),
+      nRanks_(nRanks),
+      netInitialized(false),
+      peerCommAddresses_(nRanks, SocketAddress()),
+      barrierArr_(nRanks, 0),
+      abortFlagStorage_(new uint32_t(0)),
+      abortFlag_(abortFlagStorage_.get()) {}
+
+UniqueId TcpBootstrap::Impl::getUniqueId() const { return getUniqueId(uniqueId_); }
 
 int TcpBootstrap::Impl::getRank() { return rank_; }
 
 int TcpBootstrap::Impl::getNranks() { return nRanks_; }
 
-void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId, int rank, int nRanks, int64_t timeoutSec) {
-  rank_ = rank;
-  nRanks_ = nRanks;
-
-  netInit("", "");
+void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId, int64_t timeoutSec) {
+  netInit("", "", netIfAddr_);
   std::memcpy(&uniqueId_, &uniqueId, sizeof(uniqueId_));
+  if (rank_ == 0) {
+    bootstrapCreateRoot();
+  }
+
+  char line[MAX_IF_NAME_SIZE + 1];
+  SocketToString(&uniqueId_.addr, line);
+  INFO(MSCCLPP_INIT, "rank %d nranks %d - connecting to %s", rank_, nRanks_, line);
   establishConnections(timeoutSec);
 }
 
-void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int rank, int nRanks, int64_t timeoutSec) {
-  rank_ = rank;
-  nRanks_ = nRanks;
-
+void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int64_t timeoutSec) {
   // first check if it is a trio
   int nColons = 0;
   for (auto c : ifIpPortTrio) {
@@ -168,7 +182,7 @@ void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int rank, i
     ipPortPair = ifIpPortTrio.substr(ipPortPair.find_first_of(':') + 1);
   }
 
-  netInit(ipPortPair, interface);
+  netInit(ipPortPair, interface, netIfAddr_);
 
   uniqueId_.magic = 0xdeadbeef;
   std::memcpy(&uniqueId_.addr, &netIfAddr_, sizeof(SocketAddress));
@@ -228,9 +242,15 @@ void TcpBootstrap::Impl::sendHandleToPeer(int peer, const std::vector<SocketAddr
   netSend(&sock, &rankAddresses[next], sizeof(SocketAddress));
 }
 
+void TcpBootstrap::Impl::assignPortToUniqueId(UniqueIdInternal& uniqueId) {
+  std::unique_ptr<Socket> socket = std::make_unique<Socket>(&uniqueId.addr, uniqueId.magic, SocketTypeBootstrap);
+  socket->bind();
+  uniqueId.addr = socket->getAddr();
+}
+
 void TcpBootstrap::Impl::bootstrapCreateRoot() {
   listenSockRoot_ = std::make_unique<Socket>(&uniqueId_.addr, uniqueId_.magic, SocketTypeBootstrap, abortFlag_, 0);
-  listenSockRoot_->listen();
+  listenSockRoot_->bindAndListen();
   uniqueId_.addr = listenSockRoot_->getAddr();
 
   rootThread_ = std::thread([this]() {
@@ -277,34 +297,33 @@ void TcpBootstrap::Impl::bootstrapRoot() {
   TRACE(MSCCLPP_INIT, "DONE");
 }
 
-void TcpBootstrap::Impl::netInit(std::string ipPortPair, std::string interface) {
-  if (netInitialized) return;
+void TcpBootstrap::Impl::netInit(std::string ipPortPair, std::string interface, SocketAddress& netIfAddr) {
+  char netIfName[MAX_IF_NAME_SIZE + 1];
   if (!ipPortPair.empty()) {
     if (interface != "") {
       // we know the <interface>
-      int ret = FindInterfaces(netIfName_, &netIfAddr_, MAX_IF_NAME_SIZE, 1, interface.c_str());
+      int ret = FindInterfaces(netIfName, &netIfAddr, MAX_IF_NAME_SIZE, 1, interface.c_str());
       if (ret <= 0) throw Error("NET/Socket : No interface named " + interface + " found.", ErrorCode::InternalError);
     } else {
       // we do not know the <interface> try to match it next
       SocketAddress remoteAddr;
       SocketGetAddrFromString(&remoteAddr, ipPortPair.c_str());
-      if (FindInterfaceMatchSubnet(netIfName_, &netIfAddr_, &remoteAddr, MAX_IF_NAME_SIZE, 1) <= 0) {
+      if (FindInterfaceMatchSubnet(netIfName, &netIfAddr, &remoteAddr, MAX_IF_NAME_SIZE, 1) <= 0) {
         throw Error("NET/Socket : No usable listening interface found", ErrorCode::InternalError);
       }
     }
 
   } else {
-    int ret = FindInterfaces(netIfName_, &netIfAddr_, MAX_IF_NAME_SIZE, 1);
+    int ret = FindInterfaces(netIfName, &netIfAddr, MAX_IF_NAME_SIZE, 1);
     if (ret <= 0) {
       throw Error("TcpBootstrap : no socket interface found", ErrorCode::InternalError);
     }
   }
 
   char line[SOCKET_NAME_MAXLEN + MAX_IF_NAME_SIZE + 2];
-  std::sprintf(line, " %s:", netIfName_);
-  SocketToString(&netIfAddr_, line + strlen(line));
+  std::sprintf(line, " %s:", netIfName);
+  SocketToString(&netIfAddr, line + strlen(line));
   INFO(MSCCLPP_INIT, "TcpBootstrap : Using%s", line);
-  netInitialized = true;
 }
 
 #define TIMEOUT(__exp)                                                      \
@@ -343,13 +362,13 @@ void TcpBootstrap::Impl::establishConnections(int64_t timeoutSec) {
   uint64_t magic = uniqueId_.magic;
   // Create socket for other ranks to contact me
   listenSock_ = std::make_unique<Socket>(&netIfAddr_, magic, SocketTypeBootstrap, abortFlag_);
-  listenSock_->listen();
+  listenSock_->bindAndListen();
   info.extAddressListen = listenSock_->getAddr();
 
   {
     // Create socket for root to contact me
     Socket lsock(&netIfAddr_, magic, SocketTypeBootstrap, abortFlag_);
-    lsock.listen();
+    lsock.bindAndListen();
     info.extAddressListenRoot = lsock.getAddr();
 
     // stagger connection times to avoid an overload of the root
@@ -484,9 +503,9 @@ void TcpBootstrap::Impl::close() {
   peerRecvSockets_.clear();
 }
 
-MSCCLPP_API_CPP TcpBootstrap::TcpBootstrap() { pimpl_ = std::make_unique<Impl>(); }
+MSCCLPP_API_CPP UniqueId TcpBootstrap::createUniqueId() { return Impl::createUniqueId(); }
 
-MSCCLPP_API_CPP UniqueId TcpBootstrap::createUniqueId() { return pimpl_->createUniqueId(); }
+MSCCLPP_API_CPP TcpBootstrap::TcpBootstrap(int rank, int nRanks) { pimpl_ = std::make_unique<Impl>(rank, nRanks); }
 
 MSCCLPP_API_CPP UniqueId TcpBootstrap::getUniqueId() const { return pimpl_->getUniqueId(); }
 
@@ -504,12 +523,12 @@ MSCCLPP_API_CPP void TcpBootstrap::recv(void* data, int size, int peer, int tag)
 
 MSCCLPP_API_CPP void TcpBootstrap::allGather(void* allData, int size) { pimpl_->allGather(allData, size); }
 
-MSCCLPP_API_CPP void TcpBootstrap::initialize(UniqueId uniqueId, int rank, int nRanks, int64_t timeoutSec) {
-  pimpl_->initialize(uniqueId, rank, nRanks, timeoutSec);
+MSCCLPP_API_CPP void TcpBootstrap::initialize(UniqueId uniqueId, int64_t timeoutSec) {
+  pimpl_->initialize(uniqueId, timeoutSec);
 }
 
-MSCCLPP_API_CPP void TcpBootstrap::initialize(const std::string& ipPortPair, int rank, int nRanks, int64_t timeoutSec) {
-  pimpl_->initialize(ipPortPair, rank, nRanks, timeoutSec);
+MSCCLPP_API_CPP void TcpBootstrap::initialize(const std::string& ipPortPair, int64_t timeoutSec) {
+  pimpl_->initialize(ipPortPair, timeoutSec);
 }
 
 MSCCLPP_API_CPP void TcpBootstrap::barrier() { pimpl_->barrier(); }
