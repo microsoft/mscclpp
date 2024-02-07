@@ -72,8 +72,8 @@ class TcpBootstrap::Impl {
  public:
   Impl();
   ~Impl();
-  void initialize(const UniqueId& uniqueId, int64_t timeoutSec);
-  void initialize(const std::string& ifIpPortTrio, int64_t timeoutSec);
+  void initialize(const UniqueId& uniqueId, int rank, int nRanks, int64_t timeoutSec);
+  void initialize(const std::string& ifIpPortTrio, int rank, int nRanks, int64_t timeoutSec);
   void establishConnections(int64_t timeoutSec);
   UniqueId createUniqueId();
   UniqueId getUniqueId() const;
@@ -120,9 +120,7 @@ class TcpBootstrap::Impl {
 };
 
 TcpBootstrap::Impl::Impl()
-    : netInitialized(false),
-      abortFlagStorage_(new uint32_t(0)),
-      abortFlag_(abortFlagStorage_.get()) {}
+    : netInitialized(false), abortFlagStorage_(new uint32_t(0)), abortFlag_(abortFlagStorage_.get()) {}
 
 UniqueId TcpBootstrap::Impl::getUniqueId() const {
   UniqueId ret;
@@ -142,15 +140,19 @@ int TcpBootstrap::Impl::getRank() { return rank_; }
 
 int TcpBootstrap::Impl::getNranks() { return nRanks_; }
 
-void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId, int64_t timeoutSec) {
+void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId, int rank, int nRanks, int64_t timeoutSec) {
+  rank_ = rank;
+  nRanks_ = nRanks;
+
   netInit("", "");
-
   std::memcpy(&uniqueId_, &uniqueId, sizeof(uniqueId_));
-
   establishConnections(timeoutSec);
 }
 
-void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int64_t timeoutSec) {
+void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int rank, int nRanks, int64_t timeoutSec) {
+  rank_ = rank;
+  nRanks_ = nRanks;
+
   // first check if it is a trio
   int nColons = 0;
   for (auto c : ifIpPortTrio) {
@@ -503,11 +505,11 @@ MSCCLPP_API_CPP void TcpBootstrap::recv(void* data, int size, int peer, int tag)
 MSCCLPP_API_CPP void TcpBootstrap::allGather(void* allData, int size) { pimpl_->allGather(allData, size); }
 
 MSCCLPP_API_CPP void TcpBootstrap::initialize(UniqueId uniqueId, int rank, int nRanks, int64_t timeoutSec) {
-  pimpl_->initialize(uniqueId, timeoutSec);
+  pimpl_->initialize(uniqueId, rank, nRanks, timeoutSec);
 }
 
 MSCCLPP_API_CPP void TcpBootstrap::initialize(const std::string& ipPortPair, int rank, int nRanks, int64_t timeoutSec) {
-  pimpl_->initialize(ipPortPair, timeoutSec);
+  pimpl_->initialize(ipPortPair, rank, nRanks, timeoutSec);
 }
 
 MSCCLPP_API_CPP void TcpBootstrap::barrier() { pimpl_->barrier(); }

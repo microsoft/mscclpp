@@ -59,16 +59,17 @@ void register_core(nb::module_& m) {
   nb::class_<UniqueId>(m, "UniqueId");
 
   nb::class_<TcpBootstrap, Bootstrap>(m, "TcpBootstrap")
-      .def(nb::init<int, int>(), "Do not use this constructor. Use create instead.")
-      .def_static(
-          "create", [](int rank, int nRanks) { return std::make_shared<TcpBootstrap>(rank, nRanks); }, nb::arg("rank"),
-          nb::arg("nRanks"))
+      .def(nb::init<>(), "Do not use this constructor. Use create instead.")
+      .def_static("create", []() { return std::make_shared<TcpBootstrap>(); })
       .def("create_unique_id", &TcpBootstrap::createUniqueId)
       .def("get_unique_id", &TcpBootstrap::getUniqueId)
-      .def("initialize", static_cast<void (TcpBootstrap::*)(UniqueId, int64_t)>(&TcpBootstrap::initialize),
-           nb::call_guard<nb::gil_scoped_release>(), nb::arg("uniqueId"), nb::arg("timeoutSec") = 30)
-      .def("initialize", static_cast<void (TcpBootstrap::*)(const std::string&, int64_t)>(&TcpBootstrap::initialize),
-           nb::call_guard<nb::gil_scoped_release>(), nb::arg("ifIpPortTrio"), nb::arg("timeoutSec") = 30);
+      .def("initialize", static_cast<void (TcpBootstrap::*)(UniqueId, int, int, int64_t)>(&TcpBootstrap::initialize),
+           nb::call_guard<nb::gil_scoped_release>(), nb::arg("uniqueId"), nb::arg("rank"), nb::arg("nRanks"),
+           nb::arg("timeoutSec") = 30)
+      .def("initialize",
+           static_cast<void (TcpBootstrap::*)(const std::string&, int, int, int64_t)>(&TcpBootstrap::initialize),
+           nb::call_guard<nb::gil_scoped_release>(), nb::arg("ifIpPortTrio"), nb::arg("rank"), nb::arg("nRanks"),
+           nb::arg("timeoutSec") = 30);
 
   nb::enum_<Transport>(m, "Transport")
       .value("Unknown", Transport::Unknown)

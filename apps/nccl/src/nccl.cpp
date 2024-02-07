@@ -16,5 +16,6 @@ NCCL_API ncclResult_t ncclGetVersion(int *version) {
 NCCL_API ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
   if (uniqueId == nullptr) return ncclInvalidArgument;
   if (MSCCLPP_UNIQUE_ID_BYTES != NCCL_UNIQUE_ID_BYTES) return ncclInternalError;
+  // std::shared_ptr<mscclpp::TcpBootstrap>
   return ncclSuccess;
 }
