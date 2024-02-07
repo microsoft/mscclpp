@@ -324,11 +324,11 @@ void BaseTestEngine::runTest() {
 }
 
 void BaseTestEngine::bootstrap() {
-  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(args_.rank, args_.totalRanks);
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>();
   mscclpp::UniqueId id;
   if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
-  bootstrap->initialize(id);
+  bootstrap->initialize(id, args_.rank, args_.totalRanks);
   comm_ = std::make_shared<mscclpp::Communicator>(bootstrap);
 }
 

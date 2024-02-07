@@ -119,7 +119,7 @@ class TcpBootstrap::Impl {
   void netInit(std::string ipPortPair, std::string interface);
 };
 
-TcpBootstrap::Impl::Impl(int rank, int nRanks)
+TcpBootstrap::Impl::Impl()
     : netInitialized(false),
       abortFlagStorage_(new uint32_t(0)),
       abortFlag_(abortFlagStorage_.get()) {}
@@ -482,7 +482,7 @@ void TcpBootstrap::Impl::close() {
   peerRecvSockets_.clear();
 }
 
-MSCCLPP_API_CPP TcpBootstrap::TcpBootstrap(int rank, int nRanks) { pimpl_ = std::make_unique<Impl>(rank, nRanks); }
+MSCCLPP_API_CPP TcpBootstrap::TcpBootstrap() { pimpl_ = std::make_unique<Impl>(); }
 
 MSCCLPP_API_CPP UniqueId TcpBootstrap::createUniqueId() { return pimpl_->createUniqueId(); }
 
@@ -502,11 +502,11 @@ MSCCLPP_API_CPP void TcpBootstrap::recv(void* data, int size, int peer, int tag)
 
 MSCCLPP_API_CPP void TcpBootstrap::allGather(void* allData, int size) { pimpl_->allGather(allData, size); }
 
-MSCCLPP_API_CPP void TcpBootstrap::initialize(UniqueId uniqueId, int64_t timeoutSec) {
+MSCCLPP_API_CPP void TcpBootstrap::initialize(UniqueId uniqueId, int rank, int nRanks, int64_t timeoutSec) {
   pimpl_->initialize(uniqueId, timeoutSec);
 }
 
-MSCCLPP_API_CPP void TcpBootstrap::initialize(const std::string& ipPortPair, int64_t timeoutSec) {
+MSCCLPP_API_CPP void TcpBootstrap::initialize(const std::string& ipPortPair, int rank, int nRanks, int64_t timeoutSec) {
   pimpl_->initialize(ipPortPair, timeoutSec);
 }
 
