@@ -154,7 +154,11 @@ int TcpBootstrap::Impl::getRank() { return rank_; }
 int TcpBootstrap::Impl::getNranks() { return nRanks_; }
 
 void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId, int64_t timeoutSec) {
-  netInit("", "", netIfAddr_);
+  if (!netInitialized) {
+    netInit("", "", netIfAddr_);
+    netInitialized = true;
+  }
+
   std::memcpy(&uniqueId_, &uniqueId, sizeof(uniqueId_));
   if (rank_ == 0) {
     bootstrapCreateRoot();
@@ -182,7 +186,10 @@ void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int64_t tim
     ipPortPair = ifIpPortTrio.substr(ipPortPair.find_first_of(':') + 1);
   }
 
-  netInit(ipPortPair, interface, netIfAddr_);
+  if (!netInitialized) {
+    netInit("", "", netIfAddr_);
+    netInitialized = true;
+  }
 
   uniqueId_.magic = 0xdeadbeef;
   std::memcpy(&uniqueId_.addr, &netIfAddr_, sizeof(SocketAddress));

@@ -3,9 +3,9 @@
 
 find_package(MPI)
 
-set(TEST_LIBS_COMMON mscclpp ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} Threads::Threads)
+set(TEST_LIBS_COMMON mscclpp_nccl mscclpp ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} Threads::Threads)
 set(TEST_LIBS_GTEST GTest::gtest_main GTest::gmock_main)
-set(TEST_INC_COMMON PRIVATE ${PROJECT_SOURCE_DIR}/include ${GPU_INCLUDE_DIRS})
+set(TEST_INC_COMMON PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/apps/nccl/include ${GPU_INCLUDE_DIRS})
 set(TEST_INC_INTERNAL PRIVATE ${PROJECT_SOURCE_DIR}/src/include)
 
 if(USE_ROCM)
@@ -24,6 +24,7 @@ endfunction()
 add_test_executable(allgather_test_cpp allgather_test_cpp.cu)
 add_test_executable(allgather_test_host_offloading allgather_test_host_offloading.cu)
 add_test_executable(nvls_test nvls_test.cu)
+add_test_executable(nccl_api_test nccl_api_test.cc)
 
 configure_file(run_mpi_test.sh.in run_mpi_test.sh)
 
