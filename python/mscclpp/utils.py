@@ -6,10 +6,19 @@ import os
 import struct
 import subprocess
 import tempfile
-from typing import Type
+from typing import Any, Type
 
 import cupy as cp
 import numpy as np
+
+try:
+    import torch
+
+    _use_torch = True
+    torchTensor = torch.Tensor
+except ImportError:
+    _use_torch = False
+    torchTensor = Type[Any]
 
 
 class Kernel:
@@ -137,6 +146,8 @@ def pack(*args):
             res += struct.pack("P", arg.ctypes.data)
         elif isinstance(arg, cp.ndarray):
             res += struct.pack("P", arg.data.ptr)
+        elif is_torch_tensor(arg):
+            res += struct.pack("P", arg.data_ptr())
         # use int to represent bool, which can avoid CUDA_ERROR_LAUNCH_OUT_OF_RESOURCES error
         elif isinstance(arg, bool):
             res += struct.pack("i", arg)
@@ -145,3 +156,7 @@ def pack(*args):
         else:
             raise RuntimeError(f"Unsupported type: {type(arg)}")
     return res
+
+
+def is_torch_tensor(tensor: Any) -> bool:
+    return _use_torch and isinstance(tensor, torchTensor)

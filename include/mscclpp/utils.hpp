@@ -37,6 +37,8 @@ struct ScopedTimer : public Timer {
 
 std::string getHostName(int maxlen, const char delim);
 
+bool isNvlsSupported();
+
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_UTILS_HPP_
