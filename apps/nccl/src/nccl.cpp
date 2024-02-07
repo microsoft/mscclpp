@@ -59,3 +59,8 @@ NCCL_API const char* ncclGetErrorString(ncclResult_t result) {
     default                         : return "unknown result code";
   }
 }
+
+NCCL_API ncclResult_t  ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count,
+    ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
+  return ncclSuccess;
+}
