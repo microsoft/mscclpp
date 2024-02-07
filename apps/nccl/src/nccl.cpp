@@ -45,3 +45,17 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
   delete comm;
   return ncclSuccess;
 }
+
+NCCL_API const char* ncclGetErrorString(ncclResult_t result) {
+  switch (result) {
+    case ncclSuccess                : return "no error";
+    case ncclUnhandledCudaError     : return "unhandled cuda error (run with NCCL_DEBUG=INFO for details)";
+    case ncclSystemError            : return "unhandled system error (run with NCCL_DEBUG=INFO for details)";
+    case ncclInternalError          : return "internal error - please report this issue to the NCCL developers";
+    case ncclInvalidArgument        : return "invalid argument (run with NCCL_DEBUG=WARN for details)";
+    case ncclInvalidUsage           : return "invalid usage (run with NCCL_DEBUG=WARN for details)";
+    case ncclRemoteError            : return "remote process exited or there was a network error";
+    case ncclInProgress             : return "NCCL operation in progress";
+    default                         : return "unknown result code";
+  }
+}
