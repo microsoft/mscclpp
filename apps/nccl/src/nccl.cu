@@ -246,6 +246,14 @@ static size_t ncclTypeSize(ncclDataType_t type) {
   return 0;
 }
 
+static mscclpp::Transport getTransport(int rank, int peerRank) {
+  if (rank / nRanksPerNode == peerRank / nRanksPerNode) {
+    return mscclpp::Transport::CudaIpc;
+  } else {
+    return IBs[rank % nRanksPerNode];
+  }
+}
+
 NCCL_API ncclResult_t ncclGetVersion(int* version) {
   if (version == nullptr) return ncclInvalidArgument;
   *version = MSCCLPP_VERSION;
@@ -268,8 +276,19 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   memcpy(id.data(), &commId, sizeof(ncclUniqueId));
   bootstrap->initialize(id);
   std::shared_ptr<mscclpp::Communicator> mscclppComm = std::make_shared<mscclpp::Communicator>(bootstrap);
+  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+
+  for (int i = 0; i < mscclppComm->bootstrap()->getNranks(); i++) {
+    if (i == rank) continue;
+    mscclpp::Transport transport = getTransport(rank, i);
+    connectionFutures.push_back(mscclppComm->connectOnSetup(i, 0, transport));
+  }
+  mscclppComm->setup();
   ncclComm* comm_ptr = new ncclComm();
   comm_ptr->comm = mscclppComm;
+  std::transform(
+      connectionFutures.begin(), connectionFutures.end(), std::back_inserter(comm_ptr->connections),
+      [](const mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>& future) { return future.get(); });
   *comm = comm_ptr;
   return ncclSuccess;
 }
@@ -300,32 +319,20 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
   int rank = comm->comm->bootstrap()->getRank();
   int localRank = rank % nRanksPerNode;
-  if (comm->connections.empty()) {
+  if (comm->registeredMemories.empty()) {
     comm->scratchBuff = mscclpp::allocExtSharedCuda<char>(bytes * 8);
     comm->registeredMemories.emplace(
         comm->scratchBuff.get(),
         comm->comm->registerMemory(comm->scratchBuff.get(), bytes, mscclpp::Transport::CudaIpc | IBs[localRank]));
     auto& localRegMemory = comm->registeredMemories.at(comm->scratchBuff.get());
-    std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
     std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
-    auto rankToNode = [&](int r) { return r / nRanksPerNode; };
     for (int i = 0; i < comm->comm->bootstrap()->getNranks(); i++) {
       if (i == rank) continue;
-      mscclpp::Transport transport;
-      if (rankToNode(i) == rankToNode(rank)) {
-        transport = mscclpp::Transport::CudaIpc;
-      } else {
-        transport = IBs[localRank];
-      }
-      connectionFutures.push_back(comm->comm->connectOnSetup(i, 0, transport));
+      mscclpp::Transport transport = getTransport(rank, i);
       remoteRegMemoryFutures.push_back(comm->comm->recvMemoryOnSetup(i, 0));
       comm->comm->sendMemoryOnSetup(localRegMemory, i, 0);
     }
     comm->comm->setup();
-
-    std::transform(
-        connectionFutures.begin(), connectionFutures.end(), std::back_inserter(comm->connections),
-        [](const mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>& future) { return future.get(); });
 
     std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
     for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
@@ -348,6 +355,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     CUDACHECK(cudaMemcpyToSymbol(constSmChannels, smChannelDeviceHandles.data(),
                                  sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
   }
+
   switch (datatype) {
     case ncclFloat16:
       CUDACHECK(allreduce((half*)sendbuff, (half*)comm->scratchBuff.get(), (half*)recvbuff,
