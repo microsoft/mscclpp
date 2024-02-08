@@ -21,6 +21,104 @@
     }                                                                                       \
   } while (0)
 
+template <typename To, typename From>
+__forceinline__ __device__ To bit_cast(const From& src) {
+  static_assert(sizeof(To) == sizeof(From), "Size mismatch for bit_cast");
+
+  union {
+    From f;
+    To t;
+  } u;
+  u.f = src;
+  return u.t;
+}
+
+template <typename T>
+__forceinline__ __device__ T add_elements(T a, T b) {
+  return a + b;
+}
+
+template <>
+__forceinline__ __device__ __half2 add_elements(__half2 a, __half2 b) {
+  return __hadd2(a, b);
+}
+
+template <typename T>
+__forceinline__ __device__ int4 add_vectors_helper(int4 a, int4 b) {
+  int4 ret;
+  ret.w = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.w), bit_cast<T, int>(b.w)));
+  ret.x = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
+  ret.y = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.y), bit_cast<T, int>(b.y)));
+  ret.z = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.z), bit_cast<T, int>(b.z)));
+  return ret;
+}
+
+template <typename T>
+__forceinline__ __device__ int4 add_vectors(int4 a, int4 b) {
+  return add_vectors_helper<T>(a, b);
+}
+
+template <>
+__forceinline__ __device__ int4 add_vectors<__half>(int4 a, int4 b) {
+  return add_vectors_helper<__half2>(a, b);
+}
+
+template <typename T>
+__forceinline__ __device__ uint2 add_vectors_helper(uint2 a, uint2 b) {
+  uint2 ret;
+  ret.x = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
+  ret.y = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.y), bit_cast<T, int>(b.y)));
+  return ret;
+}
+
+template <typename T>
+__forceinline__ __device__ uint2 add_vectors(uint2 a, uint2 b) {
+  return add_vectors_helper<T>(a, b);
+}
+
+template <>
+__forceinline__ __device__ uint2 add_vectors<__half>(uint2 a, uint2 b) {
+  return add_vectors_helper<__half2>(a, b);
+}
+
+template <typename T>
+__forceinline__ __device__ int add_vectors_helper(int a, int b) {
+  return bit_cast<int, T>(add_elements(bit_cast<T, int>(a), bit_cast<T, int>(b)));
+}
+
+template <typename T>
+__forceinline__ __device__ int add_vectors(int a, int b) {
+  return add_vectors_helper<T>(a, b);
+}
+
+template <>
+__forceinline__ __device__ int add_vectors<__half>(int a, int b) {
+  return add_vectors_helper<__half2>(a, b);
+}
+
+template <typename T>
+__forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem, int blockId, int nBlocks) {
+  size_t nInt4 = nElem / 4;
+  size_t nLastInts = nElem % 4;
+  int4* dst4 = (int4*)dst;
+  int4* src4 = (int4*)src;
+  for (int i = threadIdx.x + blockId * blockDim.x; i < nInt4; i += blockDim.x * nBlocks) {
+    dst4[i] = add_vectors<T>(dst4[i], src4[i]);
+  }
+  if (nLastInts > 0) {
+    int* dstLast = ((int*)dst) + nInt4 * 4;
+    int* srcLast = ((int*)src) + nInt4 * 4;
+    for (int i = threadIdx.x + blockId * blockDim.x; i < nLastInts; i += blockDim.x * nBlocks) {
+      dstLast[i] = add_vectors<T>(dstLast[i], srcLast[i]);
+    }
+  }
+}
+
+template <typename T>
+__forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem) {
+  vectorSum(dst, src, nElem, blockIdx.x, gridDim.x);
+}
+
 // TODO:
 static const int nRanksPerNode = 8;
 
@@ -47,10 +145,12 @@ cudaError_t allreduce(int* buff, int* scratch, void* resultBuff, int rank, int n
 // extern __constant__ mscclpp::SmChannelDeviceHandle *constSmChannels;
 __device__ uint64_t globalFlag;
 
-__global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, int nRanksPerNode, int worldSize,
+template <typename T>
+__global__ void allreduce6(T* buff, T* scratch, T* resultBuff, int rank, int nRanksPerNode, int worldSize,
                            size_t nelems) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
+  nelems = nelems / (sizeof(int) / sizeof(T));
   const int nPeers = nRanksPerNode - 1;
   const int nPkts = nelems / 2;
   const int nelemsPerRank = nelems / worldSize;
@@ -83,11 +183,9 @@ __global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, 
       const int remoteRank = index < rank ? index : index + 1;
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
       uint2 val = dstPkt[idx].read(flag);
-      data.x += val.x;
-      data.y += val.y;
+      data = add_vectors<T>(val, data);
     }
-    data.x += src[idx].x;
-    data.y += src[idx].y;
+    data = add_vectors<T>(data, src[idx]);
     dst[idx].x = data.x;
     dst[idx].y = data.y;
     for (int index = 0; index < nPeers; index++) {
@@ -109,8 +207,9 @@ __global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, 
   }
 }
 
-cudaError_t allreduce(int* buff, int* scratch, void* resultBuff, int rank, int nRanksPerNode, int worldSize,
-                      size_t nelems, cudaStream_t stream) {
+template <typename T>
+cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, int rank, int nRanksPerNode, int worldSize, size_t nelems,
+                      cudaStream_t stream) {
   allreduce6<<<21, 512, 0, stream>>>(buff, scratch, resultBuff, rank, nRanksPerNode, worldSize, nelems);
   return cudaGetLastError();
 }
@@ -195,15 +294,17 @@ NCCL_API const char* ncclGetErrorString(ncclResult_t result) {
   }
 }
 
-NCCL_API ncclResult_t  ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count,
-    ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
+NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
+                                    ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
   size_t bytes = count * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
   int rank = comm->comm->bootstrap()->getRank();
   int localRank = rank % nRanksPerNode;
   if (comm->connections.empty()) {
     comm->scratchBuff = mscclpp::allocExtSharedCuda<char>(bytes * 8);
-    comm->registeredMemories.emplace(comm->scratchBuff.get(), comm->comm->registerMemory(comm->scratchBuff.get(), bytes, mscclpp::Transport::CudaIpc | IBs[localRank]));
+    comm->registeredMemories.emplace(
+        comm->scratchBuff.get(),
+        comm->comm->registerMemory(comm->scratchBuff.get(), bytes, mscclpp::Transport::CudaIpc | IBs[localRank]));
     auto& localRegMemory = comm->registeredMemories.at(comm->scratchBuff.get());
     std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
     std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
@@ -229,7 +330,8 @@ NCCL_API ncclResult_t  ncclAllReduce(const void* sendbuff, void* recvbuff, size_
     std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
     for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
       if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-        smSemaphores.emplace_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*(comm->comm), comm->connections[cid]));
+        smSemaphores.emplace_back(
+            std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*(comm->comm), comm->connections[cid]));
       }
     }
     comm->comm->setup();
@@ -241,13 +343,29 @@ NCCL_API ncclResult_t  ncclAllReduce(const void* sendbuff, void* recvbuff, size_
       }
     }
     std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
-    std::transform(
-        comm->smChannels.begin(), comm->smChannels.end(), std::back_inserter(smChannelDeviceHandles),
-        [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
+    std::transform(comm->smChannels.begin(), comm->smChannels.end(), std::back_inserter(smChannelDeviceHandles),
+                   [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
     CUDACHECK(cudaMemcpyToSymbol(constSmChannels, smChannelDeviceHandles.data(),
-                                  sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
+                                 sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
   }
-  CUDACHECK(allreduce((int*)sendbuff, (int*)comm->scratchBuff.get(), recvbuff, comm->comm->bootstrap()->getRank(), nRanksPerNode,
-                      comm->comm->bootstrap()->getNranks(), count, stream));
+  switch (datatype) {
+    case ncclFloat16:
+      CUDACHECK(allreduce((half*)sendbuff, (half*)comm->scratchBuff.get(), (half*)recvbuff,
+                          comm->comm->bootstrap()->getRank(), nRanksPerNode, comm->comm->bootstrap()->getNranks(),
+                          count, stream));
+      break;
+    case ncclFloat32:
+      CUDACHECK(allreduce((float*)sendbuff, (float*)comm->scratchBuff.get(), (float*)recvbuff,
+                          comm->comm->bootstrap()->getRank(), nRanksPerNode, comm->comm->bootstrap()->getNranks(),
+                          count, stream));
+      break;
+    case ncclInt32:
+      CUDACHECK(allreduce((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff,
+                          comm->comm->bootstrap()->getRank(), nRanksPerNode, comm->comm->bootstrap()->getNranks(),
+                          count, stream));
+      break;
+    default:
+      return ncclInvalidArgument;
+  }
   return ncclSuccess;
 }
