@@ -201,10 +201,10 @@ NCCL_API ncclResult_t  ncclAllReduce(const void* sendbuff, void* recvbuff, size_
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
   int rank = comm->comm->bootstrap()->getRank();
   int localRank = rank % nRanksPerNode;
-  comm->scratchBuff = mscclpp::allocExtSharedCuda<char>(bytes * 8);
-  comm->registeredMemories.emplace(comm->scratchBuff.get(), comm->comm->registerMemory(comm->scratchBuff.get(), bytes, mscclpp::Transport::CudaIpc | IBs[localRank]));
-  auto& localRegMemory = comm->registeredMemories.at(comm->scratchBuff.get());
   if (comm->connections.empty()) {
+    comm->scratchBuff = mscclpp::allocExtSharedCuda<char>(bytes * 8);
+    comm->registeredMemories.emplace(comm->scratchBuff.get(), comm->comm->registerMemory(comm->scratchBuff.get(), bytes, mscclpp::Transport::CudaIpc | IBs[localRank]));
+    auto& localRegMemory = comm->registeredMemories.at(comm->scratchBuff.get());
     std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
     std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
     auto rankToNode = [&](int r) { return r / nRanksPerNode; };
@@ -246,7 +246,7 @@ NCCL_API ncclResult_t  ncclAllReduce(const void* sendbuff, void* recvbuff, size_
     CUDACHECK(cudaMemcpyToSymbol(constSmChannels, smChannelDeviceHandles.data(),
                                   sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
   }
-  CUDACHECK(allreduce((int*)sendbuff, (int*)localRegMemory.data(), recvbuff, comm->comm->bootstrap()->getRank(), nRanksPerNode,
+  CUDACHECK(allreduce((int*)sendbuff, (int*)comm->scratchBuff.get(), recvbuff, comm->comm->bootstrap()->getRank(), nRanksPerNode,
                       comm->comm->bootstrap()->getNranks(), count, stream));
   return ncclSuccess;
 }
