@@ -130,8 +130,11 @@ __constant__ mscclpp::DeviceHandle<mscclpp::SmChannel> constSmChannels[8];
 
 struct ncclComm {
   std::shared_ptr<mscclpp::Communicator> comm;
-  std::unordered_map<const void*, mscclpp::RegisteredMemory> registeredMemories;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
+
+  // Maybe changed during communication collectives
+  std::unordered_map<const void*, mscclpp::RegisteredMemory> registeredMemories;
   std::vector<mscclpp::SmChannel> smChannels;
   std::shared_ptr<char> scratchBuff;
 };
@@ -284,11 +287,24 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     connectionFutures.push_back(mscclppComm->connectOnSetup(i, 0, transport));
   }
   mscclppComm->setup();
+
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
+                 [](const auto& future) { return future.get(); });
+
+  std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
+  for (size_t cid = 0; cid < connections.size(); ++cid) {
+    if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+      smSemaphores.emplace_back(
+          std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*(mscclppComm), connections[cid]));
+    }
+  }
+  mscclppComm->setup();
+
   ncclComm* comm_ptr = new ncclComm();
   comm_ptr->comm = mscclppComm;
-  std::transform(
-      connectionFutures.begin(), connectionFutures.end(), std::back_inserter(comm_ptr->connections),
-      [](const mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>& future) { return future.get(); });
+  comm_ptr->connections = connections;
+  comm_ptr->smSemaphores = smSemaphores;
   *comm = comm_ptr;
   return ncclSuccess;
 }
@@ -319,6 +335,9 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
   int rank = comm->comm->bootstrap()->getRank();
   int localRank = rank % nRanksPerNode;
+  // TODO: For each api, we may use different channels and registered memories.For registered memories, we can use the
+  // memory address as the key. Then we can get the related registered memory from the map. For smChannels, it related
+  // with (cid, dst, src). If the tuple (cid, dst, src) is the same, we can use the same smChannel.
   if (comm->registeredMemories.empty()) {
     comm->scratchBuff = mscclpp::allocExtSharedCuda<char>(bytes * 8);
     comm->registeredMemories.emplace(
@@ -334,15 +353,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     }
     comm->comm->setup();
 
-    std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
-    for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
-      if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-        smSemaphores.emplace_back(
-            std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*(comm->comm), comm->connections[cid]));
-      }
-    }
-    comm->comm->setup();
-
+    std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>>& smSemaphores = comm->smSemaphores;
     for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
       if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
         comm->smChannels.emplace_back(smSemaphores[cid], remoteRegMemoryFutures[cid].get(), const_cast<void*>(sendbuff),
