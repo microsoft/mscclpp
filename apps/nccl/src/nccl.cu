@@ -135,6 +135,10 @@ struct ncclComm {
 
   // Maybe changed during communication collectives
   std::unordered_map<const void*, mscclpp::RegisteredMemory> registeredMemories;
+  // The key is addr, rank
+  // std::unordered_map<std::pair<const void*, int>, mscclpp::RegisteredMemory> registeredMemories;
+  // The key is (cid, dst, src)
+  // std::unordered_map<std::tuple<int, void*, void*>, mscclpp::SmChannel> smChannels;
   std::vector<mscclpp::SmChannel> smChannels;
   std::shared_ptr<char> scratchBuff;
 };
@@ -338,6 +342,8 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   // TODO: For each api, we may use different channels and registered memories.For registered memories, we can use the
   // memory address as the key. Then we can get the related registered memory from the map. For smChannels, it related
   // with (cid, dst, src). If the tuple (cid, dst, src) is the same, we can use the same smChannel.
+  // This assumes each memory area can only communicate other peers's fixed memory area. We can use local memory address
+  // to get the remote memory addresses. They are not changed for a same comm.
   if (comm->registeredMemories.empty()) {
     comm->scratchBuff = mscclpp::allocExtSharedCuda<char>(bytes * 8);
     comm->registeredMemories.emplace(
