@@ -165,9 +165,8 @@ def run_benchmark(
     memory_out = cp.zeros(nelem, dtype=data_type)
     cp.cuda.runtime.deviceSynchronize()
 
-    proxy_service = None
+    proxy_service = ProxyService()
     if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
-        proxy_service = ProxyService()
         if memory.nbytes < 2**20:
             mscclpp_algos = [MscclppAllReduce2(mscclpp_group, memory, memory_out)]
         else:
