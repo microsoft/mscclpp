@@ -201,7 +201,7 @@ NCCL_API ncclResult_t  ncclAllReduce(const void* sendbuff, void* recvbuff, size_
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
   int rank = comm->comm->bootstrap()->getRank();
   int localRank = rank % nRanksPerNode;
-  comm->scratchBuff = mscclpp::allocExtSharedCuda<char>(bytes * 4);
+  comm->scratchBuff = mscclpp::allocExtSharedCuda<char>(bytes * 8);
   comm->registeredMemories.emplace(comm->scratchBuff.get(), comm->comm->registerMemory(comm->scratchBuff.get(), bytes, mscclpp::Transport::CudaIpc | IBs[localRank]));
   auto& localRegMemory = comm->registeredMemories.at(comm->scratchBuff.get());
   if (comm->connections.empty()) {
