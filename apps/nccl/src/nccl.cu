@@ -56,7 +56,7 @@ __global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, 
   const int nelemsPerRank = nelems / worldSize;
   const int nPktsPerRank = nelemsPerRank / 2;
   // flag for packets. Initially 1
-  const uint32_t flag = (uint32_t)globalFlag;
+  const uint32_t flag = (uint32_t)globalFlag + 1;
   // thread block & channel info
   const int nBlocksPerPeer = gridDim.x / nPeers;
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
@@ -225,7 +225,7 @@ NCCL_API ncclResult_t  ncclAllReduce(const void* sendbuff, void* recvbuff, size_
     std::transform(
         connectionFutures.begin(), connectionFutures.end(), std::back_inserter(comm->connections),
         [](const mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>& future) { return future.get(); });
-    
+
     std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
     for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
       if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
@@ -236,7 +236,8 @@ NCCL_API ncclResult_t  ncclAllReduce(const void* sendbuff, void* recvbuff, size_
 
     for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
       if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-        comm->smChannels.emplace_back(smSemaphores[cid], remoteRegMemoryFutures[cid].get(), localRegMemory.data(), nullptr);
+        comm->smChannels.emplace_back(smSemaphores[cid], remoteRegMemoryFutures[cid].get(), const_cast<void*>(sendbuff),
+                                      nullptr);
       }
     }
     std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
