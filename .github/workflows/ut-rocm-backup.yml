@@ -1,0 +1,51 @@
+name: "UnitTest (ROCm)"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  UnitTest:
+    runs-on: [ self-hosted, AMD ]
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        rocm: [ rocm6.0 ]
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.rocm }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release ..
+          make -j
+        working-directory: ${{ github.workspace }}
+
+      - name: UnitTests
+        run: |
+          ./build/test/unit_tests
+
+      - name: MpUnitTests
+        run: |
+          set -e
+          mpirun -np 2 ./build/test/mp_unit_tests --gtest_filter=-*Ib*
+          mpirun -np 4 ./build/test/mp_unit_tests --gtest_filter=-*Ib*
+          mpirun -np 8 ./build/test/mp_unit_tests --gtest_filter=-*Ib*
+
+      # - name: PyTests
+      #   run: |
+      #     set -e
+      #     cd build && make pylib-copy
+      #     mpirun -np 8 $(which pytest) ../python/test/test_mscclpp.py -x

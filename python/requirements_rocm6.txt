@@ -1,0 +1,6 @@
+mpi4py
+prettytable
+netifaces
+pytest
+numpy
+matplotlib
