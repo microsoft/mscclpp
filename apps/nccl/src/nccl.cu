@@ -1,14 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "nccl.h"
-
 #include <algorithm>
 #include <map>
+#include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <mscclpp/sm_channel_device.hpp>
 #include <vector>
+
+#include "nccl.h"
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
 
@@ -129,6 +130,8 @@ static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Trans
                             mscclpp::Transport::IB6, mscclpp::Transport::IB7};
 
 __constant__ mscclpp::DeviceHandle<mscclpp::SmChannel> constSmChannels[8];
+__constant__ mscclpp::DeviceHandle<mscclpp::SmChannel> constSmOutChannels[8];
+__device__ mscclpp::DeviceSyncer deviceSyncer;
 
 struct ncclComm {
   std::shared_ptr<mscclpp::Communicator> comm;
@@ -213,9 +216,92 @@ __global__ void allreduce6(T* buff, T* scratch, T* resultBuff, int rank, int nRa
 }
 
 template <typename T>
+__global__ void allreduce1(mscclpp::SmChannelDeviceHandle* smChans, mscclpp::SmChannelDeviceHandle* smOutChans, T* src,
+                           T* dst, int rank, int nranks, size_t nelems) {
+  const size_t chunkSize = nelems / nranks;
+  if (nranks == 1) return;
+  const int nPeer = nranks - 1;
+  const size_t indexOffset = rank * chunkSize;
+  const size_t vectorSize = sizeof(int4) / sizeof(T);
+  const size_t indexOffset4 = indexOffset / vectorSize;
+  int4* src4 = (int4*)src;
+  int4* dst4 = (int4*)dst;
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+  // synchronize everyone
+  if (tid == 0) {
+    __threadfence_system();
+  }
+  __syncthreads();
+  if (tid < nPeer) {
+    smChans[tid].relaxedSignal();
+  }
+  if (tid >= nPeer && tid < nPeer * 2) {
+    smChans[tid - nPeer].wait();
+  }
+  deviceSyncer.sync(gridDim.x);
+
+  // use int4 as much as possible
+  const size_t nInt4 = chunkSize / vectorSize;
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * gridDim.x) {
+    int4 tmp = src4[indexOffset4 + idx];
+    for (int index = 0; index < nPeer; ++index) {
+      int4 val;
+      int peerIdx = (index + rank);
+      if (peerIdx >= nPeer) peerIdx -= nPeer;
+      val = smChans[peerIdx].read<int4>(indexOffset4 + idx);
+      tmp = add_vectors<T>(tmp, val);
+    }
+    dst4[indexOffset4 + idx] = tmp;
+  }
+
+  // use the given TYPE for the rest
+  size_t processed = nInt4 * vectorSize * nranks;
+  const size_t nRemElems = nelems - processed;
+  const size_t startIdx = processed + (nRemElems * rank) / nranks;
+  const size_t endIdx = processed + (nRemElems * (rank + 1)) / nranks;
+  for (int idx = threadIdx.x + blockIdx.x * blockDim.x + startIdx; idx < endIdx; idx += blockDim.x * gridDim.x) {
+    T tmp = src[idx];
+    for (int index = 0; index < nPeer; ++index) {
+      int peerIdx = (index + rank);
+      if (peerIdx >= nPeer) peerIdx -= nPeer;
+      T val = smChans[peerIdx].read<T>(idx);
+      tmp += val;
+    }
+    dst[idx] = tmp;
+  }
+
+  // synchronize everyone again
+  deviceSyncer.sync(gridDim.x);
+  if (tid == 0) {
+    __threadfence_system();
+  }
+  __syncthreads();
+  if (tid < nPeer) {
+    smChans[tid].relaxedSignal();
+  }
+  if (tid >= nPeer && tid < nPeer * 2) {
+    smChans[tid - nPeer].wait();
+  }
+
+  deviceSyncer.sync(gridDim.x);
+  for (int i = 0; i < nPeer; ++i) {
+    int peerIdx = (i + rank);
+    if (peerIdx >= nPeer) peerIdx -= nPeer;
+    const int remoteRank = (peerIdx < rank ? peerIdx : peerIdx + 1);
+    size_t offset = chunkSize * remoteRank * sizeof(T);
+    smOutChans[peerIdx].get(offset, chunkSize * sizeof(T), tid, blockDim.x * gridDim.x);
+  }
+}
+
+template <typename T>
 cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, int rank, int nRanksPerNode, int worldSize, size_t nelems,
                       cudaStream_t stream) {
-  allreduce6<<<21, 512, 0, stream>>>(buff, scratch, resultBuff, rank, nRanksPerNode, worldSize, nelems);
+  if (sizeof(T) * nelems <= (1 << 20)) {
+    allreduce6<<<21, 512, 0, stream>>>(buff, scratch, resultBuff, rank, nRanksPerNode, worldSize, nelems);
+  } else {
+    allreduce1<<<24, 1024, 0, stream>>>(constSmChannels, constSmOutChannels, buff, resultBuff, rank, worldSize, nelems);
+  }
   return cudaGetLastError();
 }
 
@@ -353,25 +439,60 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
   int rank = comm->comm->bootstrap()->getRank();
   std::pair<const void*, const void*> key(sendbuff, recvbuff);
-  std::vector<mscclpp::SmChannel> channels;
-  if (comm->smChannels.find(key) == comm->smChannels.end()) {
-    std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>>& smSemaphores = comm->smSemaphores;
-    for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
-      if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-        channels.emplace_back(smSemaphores[cid], comm->remoteScratchRegMemories[cid], const_cast<void*>(sendbuff),
-                              nullptr);
+  if (bytes <= 1 << 20) {
+    std::vector<mscclpp::SmChannel> channels;
+    if (comm->smChannels.find(key) == comm->smChannels.end()) {
+      std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>>& smSemaphores = comm->smSemaphores;
+      for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
+        if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+          channels.emplace_back(smSemaphores[cid], comm->remoteScratchRegMemories[cid], const_cast<void*>(sendbuff),
+                                nullptr);
+        }
       }
+      comm->smChannels.emplace(key, channels);
+    } else {
+      channels = comm->smChannels[key];
     }
-    comm->smChannels.emplace(key, channels);
+    std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
+    std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
+                   [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
+    // TODO: if sendbuff and recvbuff don't change, we can avoid copying smChannelDeviceHandles to device
+    CUDACHECK(cudaMemcpyToSymbol(constSmChannels, smChannelDeviceHandles.data(),
+                                 sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
   } else {
-    channels = comm->smChannels[key];
+    // TODO: Debug this
+    std::vector<mscclpp::SmChannel> channels;
+    if (comm->smChannels.find(key) == comm->smChannels.end()) {
+      mscclpp::RegisteredMemory memory = comm->comm->registerMemory(
+          const_cast<void*>(sendbuff), bytes, mscclpp::Transport::CudaIpc | IBs[rank % nRanksPerNode]);
+      std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
+      for (int i = 0; i < comm->comm->bootstrap()->getNranks(); i++) {
+        if (i == rank) continue;
+        mscclpp::Transport transport = getTransport(rank, i);
+        remoteRegMemoryFutures.push_back(comm->comm->recvMemoryOnSetup(i, 0));
+        comm->comm->sendMemoryOnSetup(memory, i, 0);
+      }
+      comm->comm->setup();
+      std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>>& smSemaphores = comm->smSemaphores;
+      for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
+        if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+          channels.emplace_back(smSemaphores[cid], remoteRegMemoryFutures[cid].get(), const_cast<void*>(sendbuff),
+                                nullptr);
+        }
+      }
+      comm->smChannels.emplace(key, channels);
+    } else {
+      channels = comm->smChannels[key];
+    }
+    std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
+    std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
+                   [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
+    // TODO: if sendbuff and recvbuff don't change, we can avoid copying smChannelDeviceHandles to device
+    CUDACHECK(cudaMemcpyToSymbol(constSmChannels, smChannelDeviceHandles.data(),
+                                 sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
+    CUDACHECK(cudaMemcpyToSymbol(constSmOutChannels, smChannelDeviceHandles.data(),
+                                 sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
   }
-  std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
-  std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
-                 [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
-  // TODO: if sendbuff and recvbuff don't change, we can avoid copying smChannelDeviceHandles to device
-  CUDACHECK(cudaMemcpyToSymbol(constSmChannels, smChannelDeviceHandles.data(),
-                               sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
 
   switch (datatype) {
     case ncclFloat16:
