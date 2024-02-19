@@ -97,7 +97,7 @@ class CommGroup:
             else:
                 endpoint = endpoints
             if endpoint.transport == Transport.Nvls:
-                connections[rank] = self.communicator.connct_nvls_collective(all_ranks, endpoint)
+                return self.communicator.connct_nvls_collective(all_ranks, endpoint)
             else:
                 connections[rank] = self.communicator.connect_on_setup(rank, 0, endpoint)
         self.communicator.setup()
