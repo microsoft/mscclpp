@@ -11,9 +11,8 @@ namespace mscclpp {
 
 static NonblockingFuture<RegisteredMemory> setupInboundSemaphoreId(Communicator& communicator, Connection* connection,
                                                                    void* localInboundSemaphoreId) {
-  // TODO: MSRCHA-371
   auto localInboundSemaphoreIdsRegMem =
-      communicator.registerMemory(localInboundSemaphoreId, sizeof(uint64_t) * 2, connection->transport());
+      communicator.registerMemory(localInboundSemaphoreId, sizeof(uint64_t), connection->transport());
   int remoteRank = communicator.remoteRankOf(*connection);
   int tag = communicator.tagOf(*connection);
   communicator.sendMemoryOnSetup(localInboundSemaphoreIdsRegMem, remoteRank, tag);

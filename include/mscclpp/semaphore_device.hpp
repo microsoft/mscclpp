@@ -20,22 +20,14 @@ struct Host2DeviceSemaphoreDeviceHandle {
   /// @return true if the host has signaled.
   MSCCLPP_DEVICE_INLINE bool poll() {
     bool signaled = (atomicLoad(inboundSemaphoreId, memoryOrderAcquire) > (*expectedInboundSemaphoreId));
-    if (signaled) {
-      (*expectedInboundSemaphoreId) += 1;
-    } else {
-      // TODO: MSRCHA-371
-      atomicStore(&inboundSemaphoreId[1], uint64_t{0}, memoryOrderRelaxed);
-    }
+    if (signaled) (*expectedInboundSemaphoreId) += 1;
     return signaled;
   }
 
   /// Wait for the host to signal.
   MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
-    // TODO: MSRCHA-371
-    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < (*expectedInboundSemaphoreId))
-                             ? (atomicStore(&inboundSemaphoreId[1], uint64_t{0}, memoryOrderRelaxed), true)
-                             : false,
+    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < (*expectedInboundSemaphoreId)),
                          maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
