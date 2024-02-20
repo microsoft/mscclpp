@@ -1,7 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#if defined(__HIP_PLATFORM_AMD__)
+#include <hip/hip_fp16.h>
+#else
 #include <cuda_fp16.h>
+#endif
 
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/nvls_device.hpp>
