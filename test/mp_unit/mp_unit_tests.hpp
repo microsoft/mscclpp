@@ -149,6 +149,8 @@ class SmChannelOneToOneTest : public CommunicatorTestBase {
 
   void setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels, void* inputBuff, size_t inputBuffBytes,
                             void* outputBuff = nullptr, size_t outputBuffBytes = 0);
+  using PacketPingPongKernelWrapper = std::function<void(int*, int, int, int*, int)>;
+  void packetPingPongTest(const std::string testName, PacketPingPongKernelWrapper kernelWrapper);
 
   std::unordered_map<int, std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
 };
