@@ -275,7 +275,7 @@ ncclResult_t pncclReduce(const void* sendbuff, void* recvbuff, size_t count, ncc
  * root is the rank (not the CUDA device) where data resides before the
  * operation is started.
  *
- * This operation is implicitely in place.
+ * This operation is implicitly in place.
  */
 ncclResult_t  ncclBcast(void* buff, size_t count, ncclDataType_t datatype, int root,
     ncclComm_t comm, cudaStream_t stream);
