@@ -1060,7 +1060,7 @@ __global__ void allreduce7(int* buff, int* scratch, void* resultBuff, int rank, 
 
   // step 1: write to scratch buffer
   constSmOutOfPlaceChans[peerIdx].putPackets<LL8Packet>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
-                                               blockDim.x * nBlocksPerPeer, flag);
+                                                        blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     uint32_t data = 0;

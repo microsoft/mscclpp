@@ -234,7 +234,8 @@ struct SmChannelDeviceHandle {
   template <typename PacketType = LL16Packet>
   MSCCLPP_DEVICE_INLINE void getPackets(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
                                         uint32_t threadId, uint32_t numThreads, uint32_t flag) {
-    mscclpp::getPackets<PacketType>(getPacketBuffer_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
+    mscclpp::getPackets<PacketType>(getPacketBuffer_, targetOffset, src_, originOffset, originBytes, threadId,
+                                    numThreads, flag);
   }
 
   /// Signal the remote semaphore.
