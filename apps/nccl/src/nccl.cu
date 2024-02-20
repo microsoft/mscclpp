@@ -2,7 +2,6 @@
 // Licensed under the MIT license.
 
 #include <algorithm>
-#include <map>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/sm_channel.hpp>
@@ -133,14 +132,31 @@ __constant__ mscclpp::DeviceHandle<mscclpp::SmChannel> constSmChannels[8];
 __constant__ mscclpp::DeviceHandle<mscclpp::SmChannel> constSmOutChannels[8];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
+struct channelKey {
+  const void* sendbuff;
+  const void* recvbuff;
+  size_t bytes;
+  bool operator==(const channelKey& other) const {
+    return sendbuff == other.sendbuff && recvbuff == other.recvbuff && bytes == other.bytes;
+  }
+};
+
+namespace std {
+template <>
+struct hash<channelKey> {
+  std::size_t operator()(const channelKey& k) const {
+    return std::hash<const void*>()(k.sendbuff) ^ std::hash<const void*>()(k.recvbuff) ^ std::hash<size_t>()(k.bytes);
+  }
+};
+}  // namespace std
+
 struct ncclComm {
   std::shared_ptr<mscclpp::Communicator> comm;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
   std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
 
-  // key is the pair of sendbuff and recvbuff
-  std::map<std::pair<const void*, const void*>, std::vector<mscclpp::SmChannel>> smChannels;
-  std::map<std::pair<const void*, const void*>, std::vector<mscclpp::SmChannel>> smOutChannels;
+  std::unordered_map<channelKey, std::vector<mscclpp::SmChannel>> smChannels;
+  std::unordered_map<channelKey, std::vector<mscclpp::SmChannel>> smOutChannels;
   std::shared_ptr<char> scratchBuff;
   std::vector<mscclpp::RegisteredMemory> remoteScratchRegMemories;
 };
@@ -458,7 +474,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   size_t bytes = count * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
   int rank = comm->comm->bootstrap()->getRank();
-  std::pair<const void*, const void*> key(sendbuff, recvbuff);
+  channelKey key{sendbuff, recvbuff, bytes};
   if (bytes <= 1 << 20) {
     auto it = comm->smChannels.find(key);
     if (it == comm->smChannels.end()) {
