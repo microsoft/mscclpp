@@ -97,7 +97,7 @@ class CommGroup:
             else:
                 endpoint = endpoints
             if endpoint.transport == Transport.Nvls:
-                connections[rank] = self.communicator.connct_nvls_collective(all_ranks, endpoint)
+                return self.communicator.connct_nvls_collective(all_ranks, endpoint)
             else:
                 connections[rank] = self.communicator.connect_on_setup(rank, 0, endpoint)
         self.communicator.setup()
@@ -220,3 +220,24 @@ class CommGroup:
                 proxy_service.proxy_channel(semaphore_ids[rank]), memory_ids[rank], memory_ids[self.my_rank]
             )
         return channels
+
+    def register_semaphore_with_proxy(
+        self, proxy_service: ProxyService, connections: dict[int, Connection]
+    ) -> dict[int, SmChannel]:
+        semaphores = self.make_semaphore(connections, Host2DeviceSemaphore)
+        semaphore_ids = {}
+        for rank in semaphores:
+            semaphore_ids[rank] = proxy_service.add_semaphore(semaphores[rank])
+        channels = {}
+        for rank in semaphores:
+            channels[rank] = proxy_service.proxy_channel(semaphore_ids[rank])
+        return channels
+
+    def register_memory_with_proxy(
+        self, proxy_service: ProxyService, tensor: cp.ndarray, connections: dict[int, Connection]
+    ) -> dict[int, int]:
+        registered_memories = self.register_tensor_with_connections(tensor, connections)
+        memory_ids = {}
+        for rank in registered_memories:
+            memory_ids[rank] = proxy_service.add_memory(registered_memories[rank])
+        return memory_ids

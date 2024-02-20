@@ -16,7 +16,8 @@ class NcclAllReduce:
         else:
             raise RuntimeError("Make sure that the data type is mapped to the correct NCCL data type")
 
-    def __call__(self, stream_ptr):
+    def __call__(self, stream):
+        stream_ptr = stream.ptr if stream else 0
         self.nccl_comm.allReduce(
             self.memory.data.ptr, self.memory.data.ptr, self.memory.size, self.nccl_dtype, nccl.NCCL_SUM, stream_ptr
         )
