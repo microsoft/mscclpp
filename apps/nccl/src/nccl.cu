@@ -345,6 +345,37 @@ static mscclpp::Transport getTransport(int rank, int peerRank) {
   }
 }
 
+static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
+                                                                  void* buff, size_t bytes,
+                                                                  mscclpp::TransportFlags transport) {
+  std::vector<mscclpp::RegisteredMemory> remoteMemories;
+  mscclpp::RegisteredMemory memory = comm->registerMemory(buff, bytes, transport);
+  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
+  for (int i = 0; i < comm->bootstrap()->getNranks(); i++) {
+    if (i == rank) continue;
+    mscclpp::Transport transport = getTransport(rank, i);
+    remoteRegMemoryFutures.push_back(comm->recvMemoryOnSetup(i, 0));
+    comm->sendMemoryOnSetup(memory, i, 0);
+  }
+  comm->setup();
+  std::transform(remoteRegMemoryFutures.begin(), remoteRegMemoryFutures.end(), std::back_inserter(remoteMemories),
+                 [](const auto& future) { return future.get(); });
+  return remoteMemories;
+}
+
+static std::vector<mscclpp::SmChannel> setupSmChannels(ncclComm_t comm,
+                                                       const std::vector<mscclpp::RegisteredMemory>& remoteMemories,
+                                                       void* src) {
+  std::vector<mscclpp::SmChannel> channels;
+  std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>>& smSemaphores = comm->smSemaphores;
+  for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
+    if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+      channels.emplace_back(smSemaphores[cid], remoteMemories[cid], src, nullptr);
+    }
+  }
+  return channels;
+}
+
 NCCL_API ncclResult_t ncclGetVersion(int* version) {
   if (version == nullptr) return ncclInvalidArgument;
   *version = MSCCLPP_VERSION;
@@ -395,20 +426,9 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->smSemaphores = std::move(smSemaphores);
   // using scratch buffer for message size less then 1MB
   commPtr->scratchBuff = mscclpp::allocExtSharedCuda<char>(scratchSize);
+  commPtr->remoteScratchRegMemories = setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), scratchSize,
+                                                          mscclpp::Transport::CudaIpc | IBs[rank % nRanksPerNode]);
 
-  mscclpp::RegisteredMemory memory = mscclppComm->registerMemory(
-      commPtr->scratchBuff.get(), scratchSize, mscclpp::Transport::CudaIpc | IBs[rank % nRanksPerNode]);
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
-  for (int i = 0; i < commPtr->comm->bootstrap()->getNranks(); i++) {
-    if (i == rank) continue;
-    mscclpp::Transport transport = getTransport(rank, i);
-    remoteRegMemoryFutures.push_back(commPtr->comm->recvMemoryOnSetup(i, 0));
-    commPtr->comm->sendMemoryOnSetup(memory, i, 0);
-  }
-  commPtr->comm->setup();
-  std::transform(remoteRegMemoryFutures.begin(), remoteRegMemoryFutures.end(),
-                 std::back_inserter(commPtr->remoteScratchRegMemories),
-                 [](const auto& future) { return future.get(); });
   *comm = commPtr;
   return ncclSuccess;
 }
@@ -440,83 +460,44 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   int rank = comm->comm->bootstrap()->getRank();
   std::pair<const void*, const void*> key(sendbuff, recvbuff);
   if (bytes <= 1 << 20) {
-    std::vector<mscclpp::SmChannel> channels;
-    if (comm->smChannels.find(key) == comm->smChannels.end()) {
-      std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>>& smSemaphores = comm->smSemaphores;
-      for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
-        if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-          channels.emplace_back(smSemaphores[cid], comm->remoteScratchRegMemories[cid], const_cast<void*>(sendbuff),
-                                nullptr);
-        }
-      }
-      comm->smChannels.emplace(key, channels);
-    } else {
-      channels = comm->smChannels[key];
+    auto it = comm->smChannels.find(key);
+    if (it == comm->smChannels.end()) {
+      std::vector<mscclpp::SmChannel> channels =
+          setupSmChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>(sendbuff));
+      it = comm->smChannels.emplace(key, channels).first;
     }
     std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
-    std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
+    std::transform(it->second.begin(), it->second.end(), std::back_inserter(smChannelDeviceHandles),
                    [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
     // TODO: if sendbuff and recvbuff don't change, we can avoid copying smChannelDeviceHandles to device
     CUDACHECK(cudaMemcpyToSymbol(constSmChannels, smChannelDeviceHandles.data(),
                                  sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
   } else {
-    std::vector<mscclpp::SmChannel> channels;
-    std::vector<mscclpp::SmChannel> outChannels;
-    if (comm->smChannels.find(key) == comm->smChannels.end()) {
-      mscclpp::RegisteredMemory memory = comm->comm->registerMemory(
-          const_cast<void*>(sendbuff), bytes, mscclpp::Transport::CudaIpc | IBs[rank % nRanksPerNode]);
-      std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
-      for (int i = 0; i < comm->comm->bootstrap()->getNranks(); i++) {
-        if (i == rank) continue;
-        mscclpp::Transport transport = getTransport(rank, i);
-        remoteRegMemoryFutures.push_back(comm->comm->recvMemoryOnSetup(i, 0));
-        comm->comm->sendMemoryOnSetup(memory, i, 0);
-      }
-      comm->comm->setup();
-      std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>>& smSemaphores = comm->smSemaphores;
-      for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
-        if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-          channels.emplace_back(smSemaphores[cid], remoteRegMemoryFutures[cid].get(), const_cast<void*>(sendbuff),
-                                nullptr);
-        }
-      }
-      comm->smChannels.emplace(key, channels);
+    auto it = comm->smChannels.find(key);
+    auto outIt = comm->smOutChannels.find(key);
+    if (it == comm->smChannels.end()) {
+      std::vector<mscclpp::RegisteredMemory> remoteMemories =
+          setupRemoteMemories(comm->comm, rank, const_cast<void*>(sendbuff), bytes,
+                              mscclpp::Transport::CudaIpc | IBs[rank % nRanksPerNode]);
+      std::vector<mscclpp::SmChannel> channels = setupSmChannels(comm, remoteMemories, const_cast<void*>(sendbuff));
+      it = comm->smChannels.emplace(key, channels).first;
       if (sendbuff != recvbuff) {
-        mscclpp::RegisteredMemory memory = comm->comm->registerMemory(
-            const_cast<void*>(recvbuff), bytes, mscclpp::Transport::CudaIpc | IBs[rank % nRanksPerNode]);
-        std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
-        for (int i = 0; i < comm->comm->bootstrap()->getNranks(); i++) {
-          if (i == rank) continue;
-          mscclpp::Transport transport = getTransport(rank, i);
-          remoteRegMemoryFutures.push_back(comm->comm->recvMemoryOnSetup(i, 0));
-          comm->comm->sendMemoryOnSetup(memory, i, 0);
-        }
-        comm->comm->setup();
-        std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>>& smSemaphores = comm->smSemaphores;
-        for (size_t cid = 0; cid < comm->connections.size(); ++cid) {
-          if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-            outChannels.emplace_back(smSemaphores[cid], remoteRegMemoryFutures[cid].get(), const_cast<void*>(recvbuff),
-                                  nullptr);
-          }
-        }
-        comm->smOutChannels.emplace(key, outChannels);
-      }
-    } else {
-      channels = comm->smChannels[key];
-      if (sendbuff != recvbuff) {
-        outChannels = comm->smOutChannels[key];
+        std::vector<mscclpp::RegisteredMemory> remoteMemories =
+            setupRemoteMemories(comm->comm, rank, recvbuff, bytes, mscclpp::Transport::CudaIpc | IBs[rank % nRanksPerNode]);
+        std::vector<mscclpp::SmChannel> outChannels = setupSmChannels(comm, remoteMemories, recvbuff);
+        outIt = comm->smOutChannels.emplace(key, outChannels).first;
       }
     }
     std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
-    std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
+    std::transform(it->second.begin(), it->second.end(), std::back_inserter(smChannelDeviceHandles),
                    [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
     // TODO: if sendbuff and recvbuff don't change, we can avoid copying smChannelDeviceHandles to device
     CUDACHECK(cudaMemcpyToSymbol(constSmChannels, smChannelDeviceHandles.data(),
                                  sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
     if (sendbuff != recvbuff) {
       smChannelDeviceHandles.clear();
-      std::transform(outChannels.begin(), outChannels.end(), std::back_inserter(smChannelDeviceHandles),
-                    [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
+      std::transform(outIt->second.begin(), outIt->second.end(), std::back_inserter(smChannelDeviceHandles),
+                     [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
     }
     CUDACHECK(cudaMemcpyToSymbol(constSmOutChannels, smChannelDeviceHandles.data(),
                                    sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
