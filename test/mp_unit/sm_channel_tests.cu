@@ -293,7 +293,7 @@ TEST_F(SmChannelOneToOneTest, GetPingPong) {
   EXPECT_EQ(*ret, 0);
 }
 
-__global__ void kernelSmPacket64PingPong(int* buff, int rank, int nElem, int* ret, int nTries) {
+__global__ void kernelSmLL8PacketPingPong(int* buff, int rank, int nElem, int* ret, int nTries) {
   if (rank > 1) return;
 
   DeviceHandle<mscclpp::SmChannel>& smChan = gChannelOneToOneTestConstSmChans;
@@ -312,9 +312,9 @@ __global__ void kernelSmPacket64PingPong(int* buff, int rank, int nElem, int* re
         // sendBuff[2 * j + 1] = putOffset + i + 2 * j + 1;
       }
       // __syncthreads();
-      smChan.putPackets64(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      smChan.putPackets<LL8Packet>(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
     } else {
-      smChan.getPackets64(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      smChan.getPackets<LL8Packet>(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
       // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
       // __syncthreads();
       for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
@@ -331,7 +331,7 @@ __global__ void kernelSmPacket64PingPong(int* buff, int rank, int nElem, int* re
   }
 }
 
-__global__ void kernelSmPacketPingPong(int* buff, int rank, int nElem, int* ret, int nTries) {
+__global__ void kernelSmLL16PacketPingPong(int* buff, int rank, int nElem, int* ret, int nTries) {
   if (rank > 1) return;
 
   DeviceHandle<mscclpp::SmChannel>& smChan = gChannelOneToOneTestConstSmChans;
@@ -349,9 +349,9 @@ __global__ void kernelSmPacketPingPong(int* buff, int rank, int nElem, int* ret,
         sendBuff[2 * j + 1] = putOffset + i + 2 * j + 1;
       }
       // __syncthreads();
-      smChan.putPackets(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      smChan.putPackets<LL16Packet>(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
     } else {
-      smChan.getPackets(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      smChan.getPackets<LL16Packet>(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
       // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
       // __syncthreads();
       for (int j = threadIdx.x; j < nElem / 2; j += blockDim.x) {
@@ -374,16 +374,16 @@ __global__ void kernelSmPacketPingPong(int* buff, int rank, int nElem, int* ret,
   }
 }
 
-TEST_F(SmChannelOneToOneTest, Packet64PingPong) {
-  auto kernelSmPacket64PingPongWrapper = [](int* buff, int rank, int nElem, int* ret, int nTries) {
-    kernelSmPacket64PingPong<<<1, 1024>>>(buff, rank, nElem, ret, nTries);
+TEST_F(SmChannelOneToOneTest, LL8PacketPingPong) {
+  auto kernelSmLL8PacketPingPongWrapper = [](int* buff, int rank, int nElem, int* ret, int nTries) {
+    kernelSmLL8PacketPingPong<<<1, 1024>>>(buff, rank, nElem, ret, nTries);
   };
-  packetPingPongTest("smPacket64PingPong", kernelSmPacket64PingPongWrapper);
+  packetPingPongTest("smLL8PacketPingPong", kernelSmLL8PacketPingPongWrapper);
 }
 
-TEST_F(SmChannelOneToOneTest, PacketPingPong) {
-  auto kernelSmPacketPingPongWrapper = [](int* buff, int rank, int nElem, int* ret, int nTries) {
-    kernelSmPacketPingPong<<<1, 1024>>>(buff, rank, nElem, ret, nTries);
+TEST_F(SmChannelOneToOneTest, LL16PacketPingPong) {
+  auto kernelSmLL16PacketPingPongWrapper = [](int* buff, int rank, int nElem, int* ret, int nTries) {
+    kernelSmLL16PacketPingPong<<<1, 1024>>>(buff, rank, nElem, ret, nTries);
   };
-  packetPingPongTest("smPacketPingPong", kernelSmPacketPingPongWrapper);
+  packetPingPongTest("smLL16PacketPingPong", kernelSmLL16PacketPingPongWrapper);
 }

@@ -1049,40 +1049,40 @@ __global__ void allreduce7(int* buff, int* scratch, void* resultBuff, int rank, 
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   // double buffering
-  size_t scratchBaseOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LLPacket64);
+  size_t scratchBaseOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LL8Packet);
   void* scratchBuff = (void*)((char*)scratch + scratchBaseOffset);
-  size_t scratchOffset = scratchBaseOffset + rank * nPktsPerRank * sizeof(mscclpp::LLPacket64);
+  size_t scratchOffset = scratchBaseOffset + rank * nPktsPerRank * sizeof(mscclpp::LL8Packet);
   size_t scratchResultOffset =
-      (flag & 1) ? 2 * nPkts * sizeof(mscclpp::LLPacket64) : 3 * nPkts * sizeof(mscclpp::LLPacket64);
+      (flag & 1) ? 2 * nPkts * sizeof(mscclpp::LL8Packet) : 3 * nPkts * sizeof(mscclpp::LL8Packet);
   size_t srcOffset = remoteRank * nelemsPerRank * sizeof(int);
   uint32_t* src = (uint32_t*)((char*)buff + rank * nelemsPerRank * sizeof(int));
   uint32_t* dst = (uint32_t*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
 
   // step 1: write to scratch buffer
-  constSmOutOfPlaceChans[peerIdx].putPackets64(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
+  constSmOutOfPlaceChans[peerIdx].putPackets<LL8Packet>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
                                                blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     uint32_t data = 0;
     for (int index = 0; index < nPeers; index++) {
       const int remoteRank = index < rank ? index : index + 1;
-      mscclpp::LLPacket64* dstPkt = (mscclpp::LLPacket64*)scratchBuff + remoteRank * nPktsPerRank;
+      mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)scratchBuff + remoteRank * nPktsPerRank;
       uint32_t val = dstPkt[idx].read(flag);
       data += val;
     }
     data += src[idx];
     dst[idx] = data;
 
-    mscclpp::LLPacket64 packet;
+    mscclpp::LL8Packet packet;
     packet.data = data;
     packet.flag = flag;
-    size_t offset = scratchResultOffset / sizeof(mscclpp::LLPacket64) + (idx + rank * nPktsPerRank);
+    size_t offset = scratchResultOffset / sizeof(mscclpp::LL8Packet) + (idx + rank * nPktsPerRank);
     for (int index = 0; index < nPeers; index++) {
       constSmOutOfPlaceChans[index].write(offset, packet);
     }
   }
   // step 3: get data result from scratch buffer
-  mscclpp::LLPacket64* dstPkt = (mscclpp::LLPacket64*)((char*)scratch + scratchResultOffset);
+  mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)((char*)scratch + scratchResultOffset);
   const int dstOffset = remoteRank * nPktsPerRank;
   uint32_t* result = (uint32_t*)((char*)resultBuff + remoteRank * nelemsPerRank * sizeof(int));
   for (int idx = threadIdx.x + localBlockIdx * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * nBlocksPerPeer) {

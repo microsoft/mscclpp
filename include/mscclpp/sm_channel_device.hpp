@@ -211,10 +211,12 @@ struct SmChannelDeviceHandle {
   /// @param threadId The index of the current thread among all threads running this function. This is different from
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
+  /// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
   ///
+  template <typename PacketType = LL16Packet>
   MSCCLPP_DEVICE_INLINE void putPackets(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
                                         uint32_t threadId, uint32_t numThreads, uint32_t flag) {
-    mscclpp::putPackets(dst_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
+    mscclpp::putPackets<PacketType>(dst_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
   }
 
   /// Retrieve data from @ref LLPacket in the local packet buffer (target) and write it on the local data (origin).
@@ -227,45 +229,12 @@ struct SmChannelDeviceHandle {
   /// @param threadId The index of the current thread among all threads running this function. This is different from
   /// the `threadIdx` in CUDA.
   /// @param numThreads The total number of threads that run this function.
+  /// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
   ///
+  template <typename PacketType = LL16Packet>
   MSCCLPP_DEVICE_INLINE void getPackets(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
                                         uint32_t threadId, uint32_t numThreads, uint32_t flag) {
-    mscclpp::getPackets(getPacketBuffer_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
-  }
-
-  /// Construct @ref LLPacket64 from the data in the local memory (origin) and write it on the remote packet buffer
-  /// (target).
-  ///
-  /// This function is intended to be collectively called by multiple threads. Each thread copies a part of packets.
-  /// Note that this function is intended to be used with @ref getPacket64() on the remote side to copy data in 64-bit.
-  ///
-  /// @param targetOffset The offset in bytes of the remote packet buffer.
-  /// @param originOffset The offset in bytes of the local data.
-  /// @param originBytes Bytes of the origin to be copied.
-  /// @param threadId The index of the current thread among all threads running this function. This is different from
-  /// the `threadIdx` in CUDA.
-  /// @param numThreads The total number of threads that run this function.
-  ///
-  MSCCLPP_DEVICE_INLINE void putPackets64(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
-                                          uint32_t threadId, uint32_t numThreads, uint32_t flag) {
-    mscclpp::putPackets64(dst_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
-  }
-
-  /// Retrieve data from @ref LLPacket in the local packet buffer (target) and write it on the local data (origin).
-  ///
-  /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
-  /// Note that this function is intended to be used with @ref putPacket64() on the remote side to copy data in 64-bit.
-  ///
-  /// @param targetOffset The offset in bytes of the local packet buffer.
-  /// @param originOffset The offset in bytes of the local data.
-  /// @param originBytes Bytes of the origin to be copied.
-  /// @param threadId The index of the current thread among all threads running this function. This is different from
-  /// the `threadIdx` in CUDA.
-  /// @param numThreads The total number of threads that run this function.
-  ///
-  MSCCLPP_DEVICE_INLINE void getPackets64(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
-                                          uint32_t threadId, uint32_t numThreads, uint32_t flag) {
-    mscclpp::getPackets64(getPacketBuffer_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
+    mscclpp::getPackets<PacketType>(getPacketBuffer_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
   }
 
   /// Signal the remote semaphore.
