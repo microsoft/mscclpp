@@ -1059,8 +1059,8 @@ __global__ void allreduce7(int* buff, int* scratch, void* resultBuff, int rank, 
   uint32_t* dst = (uint32_t*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
 
   // step 1: write to scratch buffer
-  constSmOutOfPlaceChans[peerIdx].putPackets<LL8Packet>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
-                                                        blockDim.x * nBlocksPerPeer, flag);
+  constSmOutOfPlaceChans[peerIdx].putPackets<mscclpp::LL8Packet>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int),
+                                                                 tid, blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     uint32_t data = 0;
