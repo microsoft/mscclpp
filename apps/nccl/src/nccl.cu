@@ -405,6 +405,11 @@ NCCL_API ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
   return ncclSuccess;
 }
 
+NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank, ncclConfig_t* config) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
 NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
   if (comm == nullptr) return ncclInvalidArgument;
   if (nranks < 0 || rank < 0 || rank >= nranks) return ncclInvalidArgument;
@@ -448,10 +453,30 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   return ncclSuccess;
 }
 
+NCCL_API ncclResult_t ncclCommInitAll(ncclComm_t* comm, int ndev, const int* devlist) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclCommFinalize(ncclComm_t comm) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
 NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
   if (comm == nullptr) return ncclInvalidArgument;
   delete comm;
   return ncclSuccess;
+}
+
+NCCL_API ncclResult_t ncclCommAbort(ncclComm_t comm) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclComm_t *newcomm, ncclConfig_t* config) {
+  // TODO: implement this function
+  return ncclInternalError;
 }
 
 NCCL_API const char* ncclGetErrorString(ncclResult_t result) {
@@ -466,6 +491,62 @@ NCCL_API const char* ncclGetErrorString(ncclResult_t result) {
     case ncclInProgress             : return "NCCL operation in progress";
     default                         : return "unknown result code";
   }
+}
+
+NCCL_API const char* ncclGetLastError(ncclComm_t comm) {
+  // TODO: implement this function
+  return nullptr;
+}
+
+NCCL_API ncclResult_t ncclCommGetAsyncError(ncclComm_t comm, ncclResult_t *asyncError) {
+  // TODO: implement this function
+  return ncclInternalError;
+
+}
+
+NCCL_API ncclResult_t ncclCommCount(const ncclComm_t comm, int* count) {
+  if (comm == nullptr || count == nullptr) return ncclInvalidArgument;
+  *count = comm->comm->bootstrap()->getNranks();
+  return ncclSuccess;
+}
+
+NCCL_API ncclResult_t ncclCommCuDevice(const ncclComm_t comm, int* device) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
+  if (comm == nullptr || rank == nullptr) return ncclInvalidArgument;
+  *rank = comm->comm->bootstrap()->getRank();
+  return ncclSuccess;
+}
+
+NCCL_API ncclResult_t ncclRedOpCreatePreMulSum(ncclRedOp_t *op, void *scalar, ncclDataType_t datatype, ncclScalarResidence_t residence, ncclComm_t comm) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclRedOpDestroy(ncclRedOp_t op, ncclComm_t comm) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclReduce(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
+                                 ncclRedOp_t op, int root, ncclComm_t comm, cudaStream_t stream) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclBcast(void* buff, size_t count, ncclDataType_t datatype, int root,
+    ncclComm_t comm, cudaStream_t stream) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
+    ncclComm_t comm, cudaStream_t stream) {
+  // TODO: implement this function
+  return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
@@ -538,5 +619,46 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     default:
       return ncclInvalidArgument;
   }
+  return ncclSuccess;
+}
+
+NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff,
+    size_t recvcount, ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm,
+    cudaStream_t stream) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t sendcount,
+    ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatype, int peer,
+    ncclComm_t comm, cudaStream_t stream) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclRecv(void* recvbuff, size_t count, ncclDataType_t datatype, int peer,
+    ncclComm_t comm, cudaStream_t stream) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclAllToAll(const void* sendbuff, void* recvbuff, size_t count,
+    ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream) {
+  // TODO: implement this function
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclGroupStart() {
+  // Do nothing
+  return ncclSuccess;
+}
+
+NCCL_API ncclResult_t ncclGroupEnd() {
+  // Do nothing
   return ncclSuccess;
 }
