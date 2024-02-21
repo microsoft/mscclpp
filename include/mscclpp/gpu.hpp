@@ -8,7 +8,7 @@
 
 #include <hip/hip_runtime.h>
 #include <hip/hip_fp16.h>
-#include <hip/hip_bf16.h>
+// #include <hip/hip_bf16.h>
 
 using cudaError_t = hipError_t;
 using cudaGraph_t = hipGraph_t;

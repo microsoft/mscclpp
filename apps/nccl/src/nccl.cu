@@ -511,8 +511,8 @@ NCCL_API ncclResult_t ncclCommCount(const ncclComm_t comm, int* count) {
 }
 
 NCCL_API ncclResult_t ncclCommCuDevice(const ncclComm_t comm, int* device) {
-  // TODO: implement this function
-  return ncclInternalError;
+  *device = comm->comm->bootstrap()->getRank();
+  return ncclSuccess;
 }
 
 NCCL_API ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
