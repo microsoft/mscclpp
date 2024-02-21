@@ -139,9 +139,9 @@ static const int nRanksPerNode = 8;
 // Only use scratch buffer for message size less then 1MB
 static const int scratchSize = 1024 * 1024 * 8;
 
-static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
-                            mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
-                            mscclpp::Transport::IB6, mscclpp::Transport::IB7};
+// static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
+//                             mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
+//                             mscclpp::Transport::IB6, mscclpp::Transport::IB7};
 
 __constant__ mscclpp::DeviceHandle<mscclpp::SmChannel> constSmChannels[8];
 __constant__ mscclpp::DeviceHandle<mscclpp::SmChannel> constSmOutChannels[8];
@@ -444,11 +444,12 @@ static size_t ncclTypeSize(ncclDataType_t type) {
 }
 
 static mscclpp::Transport getTransport(int rank, int peerRank) {
-  if (rank / nRanksPerNode == peerRank / nRanksPerNode) {
-    return mscclpp::Transport::CudaIpc;
-  } else {
-    return IBs[rank % nRanksPerNode];
-  }
+  // if (rank / nRanksPerNode == peerRank / nRanksPerNode) {
+  //   return mscclpp::Transport::CudaIpc;
+  // } else {
+  //   return IBs[rank % nRanksPerNode];
+  // }
+  return mscclpp::Transport::CudaIpc;
 }
 
 static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
@@ -537,7 +538,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   // using scratch buffer for message size less then 1MB
   commPtr->scratchBuff = mscclpp::allocExtSharedCuda<char>(scratchSize);
   commPtr->remoteScratchRegMemories = setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), scratchSize,
-                                                          mscclpp::Transport::CudaIpc | IBs[rank % nRanksPerNode]);
+                                                          mscclpp::Transport::CudaIpc);
 
   *comm = commPtr;
   return ncclSuccess;
@@ -665,12 +666,12 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     if (it == comm->smChannels.end()) {
       std::vector<mscclpp::RegisteredMemory> remoteMemories =
           setupRemoteMemories(comm->comm, rank, const_cast<void*>(sendbuff), bytes,
-                              mscclpp::Transport::CudaIpc | IBs[rank % nRanksPerNode]);
+                              mscclpp::Transport::CudaIpc);
       std::vector<mscclpp::SmChannel> channels = setupSmChannels(comm, remoteMemories, const_cast<void*>(sendbuff));
       it = comm->smChannels.emplace(key, channels).first;
       if (sendbuff != recvbuff) {
         std::vector<mscclpp::RegisteredMemory> remoteMemories =
-            setupRemoteMemories(comm->comm, rank, recvbuff, bytes, mscclpp::Transport::CudaIpc | IBs[rank % nRanksPerNode]);
+            setupRemoteMemories(comm->comm, rank, recvbuff, bytes, mscclpp::Transport::CudaIpc);
         std::vector<mscclpp::SmChannel> outChannels = setupSmChannels(comm, remoteMemories, recvbuff);
         outIt = comm->smOutChannels.emplace(key, outChannels).first;
       }
