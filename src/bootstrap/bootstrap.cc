@@ -187,7 +187,7 @@ void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int64_t tim
   }
 
   if (!netInitialized) {
-    netInit("", "", netIfAddr_);
+    netInit(ipPortPair, interface, netIfAddr_);
     netInitialized = true;
   }
 

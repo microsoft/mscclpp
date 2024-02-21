@@ -1138,9 +1138,15 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     tmpBuff = scratchPacketBuff;
     nThreadsPerBlock = 512;
   } else if (kernelNum == 7) {
-    nBlocks = 28;
     tmpBuff = scratchPacketBuff;
-    nThreadsPerBlock = 1024;
+    // tune the #blocks and #threads for MI300X
+    if (paramCount_ < 8192) {
+      nBlocks = 28;
+      nThreadsPerBlock = 1024;
+    } else {
+      nBlocks = 56;
+      nThreadsPerBlock = (paramCount_ <= 76800) ? 512 : 1024;
+    }
   } else {
     nBlocks = std::max(args.nRanksPerNode - 1, 1) * BLOCKS_PER_PEER;
     tmpBuff = scratchPacketBuff;
