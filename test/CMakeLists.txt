@@ -10,7 +10,7 @@ set(TEST_INC_INTERNAL PRIVATE ${PROJECT_SOURCE_DIR}/src/include)
 
 if(USE_ROCM)
     file(GLOB_RECURSE CU_SOURCES CONFIGURE_DEPENDS *.cu)
-    set_source_files_properties(${CU_SOURCES} PROPERTIES LANGUAGE HIP)
+    set_source_files_properties(${CU_SOURCES} PROPERTIES LANGUAGE CXX)
 endif()
 
 function(add_test_executable name sources)

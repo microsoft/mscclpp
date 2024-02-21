@@ -27,7 +27,21 @@ CMake 3.25 or later is required.
 ```bash
 $ git clone https://github.com/microsoft/mscclpp.git
 $ mkdir -p mscclpp/build && cd mscclpp/build
+```
+
+For NVIDIA platforms, build MSCCL++ as follows.
+
+```bash
+# For NVIDIA platforms
 $ cmake -DCMAKE_BUILD_TYPE=Release ..
+$ make -j
+```
+
+For AMD platforms, use HIPCC instead of the default C++ compiler. Replace `/path/to/hipcc` from the command below into the your HIPCC path.
+
+```bash
+# For AMD platforms
+$ CXX=/path/to/hipcc cmake -DCMAKE_BUILD_TYPE=Release ..
 $ make -j
 ```
 
