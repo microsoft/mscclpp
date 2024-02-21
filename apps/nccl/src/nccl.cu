@@ -102,13 +102,13 @@ __forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem, int bloc
   size_t nLastInts = nElem % 4;
   int4* dst4 = (int4*)dst;
   int4* src4 = (int4*)src;
-  for (int i = threadIdx.x + blockId * blockDim.x; i < nInt4; i += blockDim.x * nBlocks) {
+  for (size_t i = threadIdx.x + blockId * blockDim.x; i < nInt4; i += blockDim.x * nBlocks) {
     dst4[i] = add_vectors<T>(dst4[i], src4[i]);
   }
   if (nLastInts > 0) {
     int* dstLast = ((int*)dst) + nInt4 * 4;
     int* srcLast = ((int*)src) + nInt4 * 4;
-    for (int i = threadIdx.x + blockId * blockDim.x; i < nLastInts; i += blockDim.x * nBlocks) {
+    for (size_t i = threadIdx.x + blockId * blockDim.x; i < nLastInts; i += blockDim.x * nBlocks) {
       dstLast[i] = add_vectors<T>(dstLast[i], srcLast[i]);
     }
   }
@@ -259,7 +259,7 @@ __global__ void allreduce1(T* src, T* dst, int rank, int nranks, size_t nelems) 
 
   // use int4 as much as possible
   const size_t nInt4 = chunkSize / vectorSize;
-  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * gridDim.x) {
+  for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nInt4; idx += blockDim.x * gridDim.x) {
     int4 tmp = src4[indexOffset4 + idx];
     for (int index = 0; index < nPeer; ++index) {
       int4 val;
@@ -276,7 +276,7 @@ __global__ void allreduce1(T* src, T* dst, int rank, int nranks, size_t nelems) 
   const size_t nRemElems = nelems - processed;
   const size_t startIdx = processed + (nRemElems * rank) / nranks;
   const size_t endIdx = processed + (nRemElems * (rank + 1)) / nranks;
-  for (int idx = threadIdx.x + blockIdx.x * blockDim.x + startIdx; idx < endIdx; idx += blockDim.x * gridDim.x) {
+  for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x + startIdx; idx < endIdx; idx += blockDim.x * gridDim.x) {
     T tmp = src[idx];
     for (int index = 0; index < nPeer; ++index) {
       int peerIdx = (index + rank);
@@ -369,7 +369,6 @@ static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_pt
   std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
   for (int i = 0; i < comm->bootstrap()->getNranks(); i++) {
     if (i == rank) continue;
-    mscclpp::Transport transport = getTransport(rank, i);
     remoteRegMemoryFutures.push_back(comm->recvMemoryOnSetup(i, 0));
     comm->sendMemoryOnSetup(memory, i, 0);
   }

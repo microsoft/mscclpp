@@ -7,6 +7,8 @@
 #if defined(__HIP_PLATFORM_AMD__)
 
 #include <hip/hip_runtime.h>
+#include <hip/hip_fp16.h>
+#include <hip/hip_bf16.h>
 
 using cudaError_t = hipError_t;
 using cudaGraph_t = hipGraph_t;
@@ -61,6 +63,7 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define cudaMemcpy(...) hipMemcpy(__VA_ARGS__)
 #define cudaMemcpyAsync(...) hipMemcpyAsync(__VA_ARGS__)
 #define cudaMemcpyToSymbol(...) hipMemcpyToSymbol(__VA_ARGS__)
+#define cudaStreamCreate(...) hipStreamCreate(__VA_ARGS__)
 #define cudaStreamCreateWithFlags(...) hipStreamCreateWithFlags(__VA_ARGS__)
 #define cudaStreamSynchronize(...) hipStreamSynchronize(__VA_ARGS__)
 #define cudaStreamBeginCapture(...) hipStreamBeginCapture(__VA_ARGS__)
@@ -88,8 +91,14 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #else
 
 #include <cuda.h>
-#include <cuda_fp16.h>
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
+#if (CUDART_VERSION >= 11000)
+#include <cuda_bf16.h>
+#endif
+#if (CUDART_VERSION >= 11080)
+#include <cuda_fp8.h>
+#endif
 
 #endif
 

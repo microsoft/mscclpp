@@ -8,14 +8,7 @@
 #ifndef NCCL_H_
 #define NCCL_H_
 
-#include <cuda_runtime.h>
-#include <cuda_fp16.h>
-#if CUDART_VERSION >= 11000
-#include <cuda_bf16.h>
-#endif
-#if CUDART_VERSION >= 11080
-#include <cuda_fp8.h>
-#endif
+#include <mscclpp/gpu.hpp>
 
 #ifdef __cplusplus
 extern "C" {

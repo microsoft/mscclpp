@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#include "cuda_runtime.h"
+#include <mscclpp/gpu.hpp>
 #include "mpi.h"
 #include "nccl.h"
 
