@@ -485,6 +485,8 @@ __global__ void __launch_bounds__(1024, 1)
 template <typename T>
 cudaError_t allgather(T* buff, T* scratch, T* resultBuff, int rank, int nRanksPerNode, int worldSize, size_t nelems,
                       cudaStream_t stream) {
+  cudaError_t err = cudaMemcpyAsync(resultBuff + nelems * rank, buff, nelems * sizeof(T), cudaMemcpyDeviceToDevice, stream);
+  if (err != cudaSuccess) return err;
   allgather5<<<24, 1024, 0, stream>>>(rank, worldSize, nRanksPerNode, nelems);
   return cudaGetLastError();
 }
