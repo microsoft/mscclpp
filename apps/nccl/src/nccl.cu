@@ -633,8 +633,8 @@ NCCL_API ncclResult_t ncclCommInitAll(ncclComm_t* comm, int ndev, const int* dev
 }
 
 NCCL_API ncclResult_t ncclCommFinalize(ncclComm_t comm) {
-  // TODO: implement this function
-  return ncclInternalError;
+  comm->comm->bootstrap()->barrier();
+  return ncclSuccess;
 }
 
 NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
@@ -645,7 +645,7 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
 
 NCCL_API ncclResult_t ncclCommAbort(ncclComm_t comm) {
   // TODO: implement this function
-  return ncclInternalError;
+  return ncclSuccess;
 }
 
 NCCL_API ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclComm_t *newcomm, ncclConfig_t* config) {
@@ -673,9 +673,9 @@ NCCL_API const char* ncclGetLastError(ncclComm_t comm) {
 }
 
 NCCL_API ncclResult_t ncclCommGetAsyncError(ncclComm_t comm, ncclResult_t *asyncError) {
-  // TODO: implement this function
-  return ncclInternalError;
-
+  if (asyncError == nullptr) return ncclInvalidArgument;
+  *asyncError = ncclSuccess;
+  return ncclSuccess;
 }
 
 NCCL_API ncclResult_t ncclCommCount(const ncclComm_t comm, int* count) {
