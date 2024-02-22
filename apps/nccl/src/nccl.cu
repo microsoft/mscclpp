@@ -182,6 +182,8 @@ struct ncclComm {
   std::unordered_map<channelKey, std::vector<mscclpp::SmChannel>> smOutChannels;
   std::shared_ptr<char> scratchBuff;
   std::vector<mscclpp::RegisteredMemory> remoteScratchRegMemories;
+  std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smDeviceHandles;
+  std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smOutDeviceHandles;
 };
 
 cudaError_t allreduce(int* buff, int* scratch, void* resultBuff, int rank, int nRanksPerNode, int worldSize,
@@ -739,12 +741,14 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
           setupSmChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>(sendbuff));
       it = comm->smChannels.emplace(key, channels).first;
     }
-    std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
+    std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>>& smChannelDeviceHandles = comm->smDeviceHandles;
+    smChannelDeviceHandles.clear();
     std::transform(it->second.begin(), it->second.end(), std::back_inserter(smChannelDeviceHandles),
                    [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
     // TODO: if sendbuff and recvbuff don't change, we can avoid copying smChannelDeviceHandles to device
-    CUDACHECK(cudaMemcpyToSymbol(constSmChannels, smChannelDeviceHandles.data(),
-                                 sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
+    CUDACHECK(cudaMemcpyToSymbolAsync(constSmChannels, smChannelDeviceHandles.data(),
+                                      sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size(),
+                                      0, cudaMemcpyHostToDevice, stream));
   } else {
     auto it = comm->smChannels.find(key);
     auto outIt = comm->smOutChannels.find(key);

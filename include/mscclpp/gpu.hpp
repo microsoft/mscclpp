@@ -63,6 +63,7 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define cudaMemcpy(...) hipMemcpy(__VA_ARGS__)
 #define cudaMemcpyAsync(...) hipMemcpyAsync(__VA_ARGS__)
 #define cudaMemcpyToSymbol(...) hipMemcpyToSymbol(__VA_ARGS__)
+#define cudaMemcpyToSymbolAsync(...) hipMemcpyToSymbolAsync(__VA_ARGS__)
 #define cudaStreamCreate(...) hipStreamCreate(__VA_ARGS__)
 #define cudaStreamCreateWithFlags(...) hipStreamCreateWithFlags(__VA_ARGS__)
 #define cudaStreamSynchronize(...) hipStreamSynchronize(__VA_ARGS__)
