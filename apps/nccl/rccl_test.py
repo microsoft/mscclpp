@@ -38,16 +38,29 @@ shape_c = (M,N)
 a = torch.ones(shape_a, device="cuda")
 b = torch.ones(shape_b, device="cuda")
 c = torch.mm(a, b)
- 
+
 print(c)
- 
-nccl_op = nccl.NCCL_SUM
-group.allReduce(
-    sendbuf=c.data_ptr(),
-    recvbuf=c.data_ptr(),
-    count=c.nelement(),
+
+# nccl_op = nccl.NCCL_SUM
+# group.allReduce(
+#     sendbuf=c.data_ptr(),
+#     recvbuf=c.data_ptr(),
+#     count=c.nelement(),
+#     datatype=nccl.NCCL_FLOAT,
+#     op=nccl_op,
+#     stream=torch.cuda.current_stream().cuda_stream)
+
+# print(c)
+
+d = torch.ones((1024*1024,), device="cuda")
+e = torch.zeros((8*1024*1024,), device="cuda")
+e[rank*1024*1024:(rank+1)*1024*1024] = d
+
+group.allGather(
+    sendbuf=d.data_ptr(),
+    recvbuf=e.data_ptr(),
+    count=d.nelement(),
     datatype=nccl.NCCL_FLOAT,
-    op=nccl_op,
     stream=torch.cuda.current_stream().cuda_stream)
- 
-print(c)
+
+print(e)
