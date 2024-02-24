@@ -424,7 +424,7 @@ __global__ void allreduce8(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHa
     for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
       const size_t remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
       int4 val = buff4[nInt4PerRank * remoteRank + idx];
-      smChans[peerIdx].write(nInt4PerRank * remoteRank + idx, val);
+      smChans[peerIdx].write(nInt4PerRank * rank + idx, val);
     }
   }
 
@@ -446,7 +446,7 @@ __global__ void allreduce8(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHa
     resultBuff4[nInt4PerRank * rank + idx] = data;
     for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
       const size_t remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
-      smOutChans[peerIdx].write(nInt4PerRank * remoteRank + idx, data);
+      smOutChans[peerIdx].write(nInt4PerRank * rank + idx, data);
     }
   }
 }
@@ -457,18 +457,18 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                       int worldSize, size_t nelems, cudaStream_t stream) {
   static uint32_t flag = 1;
 #if defined(__HIP_PLATFORM_AMD__)
-  // int nBlocks = 28;
-  // int nThreadsPerBlock = 1024;
-  // if (nelems >= 8192) {
-  //   nBlocks = 56;
-  //   nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
-  // }
-  int nBlocks = 28;
-  int nThreadsPerBlock = 1024;
   if (sizeof(T) * nelems <= (1 << 20)) {
+    int nBlocks = 28;
+    int nThreadsPerBlock = 1024;
+    if (nelems >= 8192) {
+      nBlocks = 56;
+      nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
+    }
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, rank, nRanksPerNode,
                                                          worldSize, nelems, flag++);
   } else {
+    int nBlocks = 16;
+    int nThreadsPerBlock = 1024;
     allreduce8<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, smOutChannels, rank, nRanksPerNode,
                                                          worldSize, nelems);
   }
