@@ -585,6 +585,20 @@ static std::vector<mscclpp::SmChannel> setupSmChannels(ncclComm_t comm,
   return channels;
 }
 
+static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> setupSmChannelDeviceHandles(
+    const std::vector<mscclpp::SmChannel>& smChannels) {
+  std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
+  std::transform(smChannels.begin(), smChannels.end(), std::back_inserter(smChannelDeviceHandles),
+                 [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> ptr =
+      mscclpp::allocSharedCuda<mscclpp::DeviceHandle<mscclpp::SmChannel>>(smChannelDeviceHandles.size());
+  mscclpp::AvoidCudaGraphCaptureGuard guard;
+  CUDACHECK(cudaMemcpy(ptr.get(), smChannelDeviceHandles.data(),
+                       sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size(),
+                       cudaMemcpyHostToDevice));
+  return ptr;
+}
+
 NCCL_API ncclResult_t ncclGetVersion(int* version) {
   if (version == nullptr) return ncclInvalidArgument;
   *version = MSCCLPP_VERSION;
@@ -770,18 +784,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     if (it == comm->channelInfos.end()) {
       std::vector<mscclpp::SmChannel> channels =
           setupSmChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>(sendbuff));
-      std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
-      std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
-                     [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
-      std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> ptr =
-          mscclpp::allocSharedCuda<mscclpp::DeviceHandle<mscclpp::SmChannel>>(smChannelDeviceHandles.size());
-      {
-        mscclpp::AvoidCudaGraphCaptureGuard guard;
-        CUDACHECK(cudaMemcpy(ptr.get(), smChannelDeviceHandles.data(),
-                             sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size(),
-                             cudaMemcpyHostToDevice));
-      }
-      ChannelInfo channelInfo{channels, {}, ptr, nullptr};
+      ChannelInfo channelInfo{channels, {}, setupSmChannelDeviceHandles(channels), nullptr};
       it = comm->channelInfos.emplace(key, channelInfo).first;
     }
     smChannels = it->second.smChannelDeviceHandles.get();
@@ -791,43 +794,17 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
       std::vector<mscclpp::RegisteredMemory> remoteMemories =
           setupRemoteMemories(comm->comm, rank, const_cast<void*>(sendbuff), bytes, mscclpp::Transport::CudaIpc);
       std::vector<mscclpp::SmChannel> channels = setupSmChannels(comm, remoteMemories, const_cast<void*>(sendbuff));
-      std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
-      std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
-                     [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
-      std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> ptr =
-          mscclpp::allocSharedCuda<mscclpp::DeviceHandle<mscclpp::SmChannel>>(smChannelDeviceHandles.size());
-      {
-        mscclpp::AvoidCudaGraphCaptureGuard guard;
-        CUDACHECK(cudaMemcpy(ptr.get(), smChannelDeviceHandles.data(),
-                             sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size(),
-                             cudaMemcpyHostToDevice));
-      }
-      ChannelInfo channelInfo{channels, {}, ptr, nullptr};
+      ChannelInfo channelInfo{channels, {},  setupSmChannelDeviceHandles(channels), nullptr};
       it = comm->channelInfos.emplace(key, channelInfo).first;
       if (sendbuff != recvbuff) {
         std::vector<mscclpp::RegisteredMemory> remoteMemories =
             setupRemoteMemories(comm->comm, rank, recvbuff, bytes, mscclpp::Transport::CudaIpc);
         std::vector<mscclpp::SmChannel> outChannels = setupSmChannels(comm, remoteMemories, recvbuff);
-        std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smOutChannelDeviceHandles;
-        std::transform(outChannels.begin(), outChannels.end(), std::back_inserter(smOutChannelDeviceHandles),
-                       [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
-        std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> outPtr =
-            mscclpp::allocSharedCuda<mscclpp::DeviceHandle<mscclpp::SmChannel>>(smOutChannelDeviceHandles.size());
-        {
-          mscclpp::AvoidCudaGraphCaptureGuard guard;
-          CUDACHECK(cudaMemcpy(outPtr.get(), smOutChannelDeviceHandles.data(),
-                               sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smOutChannelDeviceHandles.size(),
-                               cudaMemcpyHostToDevice));
-        }
+        std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> outPtr = setupSmChannelDeviceHandles(outChannels);
         it->second.smOutChannels = outChannels;
         it->second.smOutChannelDeviceHandles = outPtr;
       } else {
-        std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> outPtr =
-            mscclpp::allocSharedCuda<mscclpp::DeviceHandle<mscclpp::SmChannel>>(smChannelDeviceHandles.size());
-        mscclpp::AvoidCudaGraphCaptureGuard guard;
-        CUDACHECK(cudaMemcpy(outPtr.get(), smChannelDeviceHandles.data(),
-                             sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size(),
-                             cudaMemcpyHostToDevice));
+        std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> outPtr = setupSmChannelDeviceHandles(channels);
         it->second.smOutChannelDeviceHandles = outPtr;
       }
     }
@@ -882,15 +859,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
     std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
                    [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
-    std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> ptr =
-        mscclpp::allocSharedCuda<mscclpp::DeviceHandle<mscclpp::SmChannel>>(smChannelDeviceHandles.size());
-    {
-      mscclpp::AvoidCudaGraphCaptureGuard guard;
-      CUDACHECK(cudaMemcpy(ptr.get(), smChannelDeviceHandles.data(),
-                           sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size(),
-                           cudaMemcpyHostToDevice));
-    }
-    ChannelInfo channelInfo{channels, {}, ptr, nullptr};
+    ChannelInfo channelInfo{channels, {}, setupSmChannelDeviceHandles(channels), nullptr};
     it = comm->channelInfos.emplace(key, channelInfo).first;
   }
   smChannels = it->second.smChannelDeviceHandles.get();
