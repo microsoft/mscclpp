@@ -393,26 +393,19 @@ __global__ void allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHa
 
 template <typename T>
 __global__ void allreduce8(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-                           mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels,
-                           int rank, int nRanksPerNode, int worldSize, size_t nelems, uint32_t flag) {
+                           mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, int rank, int nRanksPerNode,
+                           int worldSize, size_t nelems) {
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
   // assume (nelems * sizeof(T)) is divisible by (16 * worldSize)
   const size_t nInt4 = nelems * sizeof(T) / sizeof(int4);
   const size_t nInt4PerRank = nInt4 / worldSize;
+  auto smChans = smChannels + chanOffset;
   auto smOutChans = smOutChannels + chanOffset;
 
   int4* buff4 = reinterpret_cast<int4*>(buff);
   int4* scratch4 = reinterpret_cast<int4*>(scratch);
   int4* resultBuff4 = reinterpret_cast<int4*>(resultBuff);
-
-  /// Starts reduce-scatter
-
-  if (threadIdx.x < nPeer) {
-    smOutChans[threadIdx.x].relaxedSignal();
-    smOutChans[threadIdx.x].wait();
-  }
-  __syncthreads();
 
   // Distribute `nInt4PerRank` across all blocks with the unit size `unitNInt4`
   constexpr size_t unitNInt4 = 1024;
@@ -425,6 +418,23 @@ __global__ void allreduce8(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHa
   } else if (blockIdx.x == nNeededBlocks - 1) {
     nInt4OfThisBlock = nInt4PerRank - maxNInt4PerBlock * (nNeededBlocks - 1);
   }
+
+  /// Starts allgather
+  for (size_t idx = offsetOfThisBlock + threadIdx.x; idx < offsetOfThisBlock + nInt4OfThisBlock; idx += blockDim.x) {
+    for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      const size_t remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
+      int4 val = buff4[nInt4PerRank * remoteRank + idx];
+      smChans[peerIdx].write(nInt4PerRank * remoteRank + idx, val);
+    }
+  }
+
+  /// Starts reduce-scatter
+
+  if (threadIdx.x < nPeer) {
+    smOutChans[threadIdx.x].relaxedSignal();
+    smOutChans[threadIdx.x].wait();
+  }
+  __syncthreads();
 
   for (size_t idx = offsetOfThisBlock + threadIdx.x; idx < offsetOfThisBlock + nInt4OfThisBlock; idx += blockDim.x) {
     int4 data = buff4[nInt4PerRank * rank + idx];
@@ -460,7 +470,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                                                          worldSize, nelems, flag++);
   } else {
     allreduce8<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, smOutChannels, rank, nRanksPerNode,
-                                                         worldSize, nelems, flag++);
+                                                         worldSize, nelems);
   }
 #else
   if (sizeof(T) * nelems <= (1 << 20)) {
