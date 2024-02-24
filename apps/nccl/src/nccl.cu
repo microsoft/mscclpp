@@ -414,14 +414,16 @@ __global__ void allreduce8(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHa
   }
   __syncthreads();
 
-  // Distribute `nInt4PerRank` across all blocks with the unit size `unitNInt4PerBlock`
-  constexpr size_t unitNInt4PerBlock = 1024;
-  const size_t nUnitsPerBlock = (nInt4PerRank + unitNInt4PerBlock - 1) / unitNInt4PerBlock;
-  size_t offsetOfThisBlock = unitNInt4PerBlock * nUnitsPerBlock * blockIdx.x;
-  size_t nInt4OfThisBlock = unitNInt4PerBlock * nUnitsPerBlock;
-  if ((nInt4PerRank % unitNInt4PerBlock != 0) && (blockIdx.x == gridDim.x - 1)) {
-    // The last block may have fewer int4 than others
-    nInt4OfThisBlock = unitNInt4PerBlock * (nUnitsPerBlock - 1) + nInt4PerRank % unitNInt4PerBlock;
+  // Distribute `nInt4PerRank` across all blocks with the unit size `unitNInt4`
+  constexpr size_t unitNInt4 = 1024;
+  const size_t maxNInt4PerBlock = (((nInt4PerRank + gridDim.x - 1) / gridDim.x) + unitNInt4 - 1) / unitNInt4 * unitNInt4;
+  size_t offsetOfThisBlock = maxNInt4PerBlock * blockIdx.x;
+  size_t nInt4OfThisBlock = maxNInt4PerBlock;
+  size_t nNeededBlocks = (nInt4PerRank + maxNInt4PerBlock - 1) / maxNInt4PerBlock;
+  if (blockIdx.x >= nNeededBlocks) {
+    nInt4OfThisBlock = 0;
+  } else if (blockIdx.x == nNeededBlocks - 1) {
+    nInt4OfThisBlock = nInt4PerRank - maxNInt4PerBlock * (nNeededBlocks - 1);
   }
 
   for (size_t idx = offsetOfThisBlock + threadIdx.x; idx < offsetOfThisBlock + nInt4OfThisBlock; idx += blockDim.x) {
@@ -451,7 +453,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
   //   nBlocks = 56;
   //   nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
   // }
-  int nBlocks = 1;
+  int nBlocks = 28;
   int nThreadsPerBlock = 1024;
   if (sizeof(T) * nelems <= (1 << 20)) {
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, rank, nRanksPerNode,
