@@ -198,11 +198,10 @@ cudaError_t allreduce(int* buff, int* scratch, void* resultBuff, int rank, int n
 #include <mscclpp/sm_channel_device.hpp>
 
 // extern __constant__ mscclpp::SmChannelDeviceHandle *constSmChannels;
-__device__ uint64_t globalFlag;
 
 template <typename T>
 __global__ void allreduce6(T* buff, T* scratch, T* resultBuff, int rank, int nRanksPerNode, int worldSize,
-                           size_t nelems) {
+                           size_t nelems, uint32_t flag) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
   nelems = nelems / (sizeof(int) / sizeof(T));
@@ -210,8 +209,6 @@ __global__ void allreduce6(T* buff, T* scratch, T* resultBuff, int rank, int nRa
   const int nPkts = nelems / 2;
   const int nelemsPerRank = nelems / worldSize;
   const int nPktsPerRank = nelemsPerRank / 2;
-  // flag for packets. Initially 1
-  const uint32_t flag = (uint32_t)globalFlag + 1;
   // thread block & channel info
   const int nBlocksPerPeer = gridDim.x / nPeers;
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
@@ -256,9 +253,6 @@ __global__ void allreduce6(T* buff, T* scratch, T* resultBuff, int rank, int nRa
     uint2 data = dstPkt[idx + dstOffset].read(flag);
     result[idx].x = data.x;
     result[idx].y = data.y;
-  }
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
-    globalFlag += 1;
   }
 }
 
@@ -342,7 +336,7 @@ __global__ void allreduce1(T* src, T* dst, int rank, int nranks, size_t nelems) 
 
 template <typename T>
 __global__ void allreduce7(T* buff, T* scratch, T* resultBuff, int rank, int nRanksPerNode, int worldSize,
-                           size_t nelems) {
+                           size_t nelems, uint32_t flag) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
   nelems = nelems / (sizeof(int) / sizeof(T));
@@ -350,8 +344,6 @@ __global__ void allreduce7(T* buff, T* scratch, T* resultBuff, int rank, int nRa
   const size_t nPkts = nelems;
   const int nelemsPerRank = nelems / worldSize;
   const int nPktsPerRank = nelemsPerRank;
-  // flag for packets. Initially 1
-  const uint32_t flag = (uint32_t)globalFlag;
   // thread block & channel info
   const int nBlocksPerPeer = gridDim.x / nPeers;
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
@@ -399,14 +391,12 @@ __global__ void allreduce7(T* buff, T* scratch, T* resultBuff, int rank, int nRa
     uint32_t data = dstPkt[idx + dstOffset].read(flag);
     result[idx] = data;
   }
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
-    globalFlag += 1;
-  }
 }
 
 template <typename T>
 cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, int rank, int nRanksPerNode, int worldSize, size_t nelems,
                       cudaStream_t stream) {
+  static uint32_t flag = 1;
   if (sizeof(T) * nelems <= (1 << 20)) {
 #if defined(__HIP_PLATFORM_AMD__)
     int nBlocks = 28;
@@ -416,9 +406,9 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, int rank, int nRanksPe
       nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
     }
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, rank, nRanksPerNode, worldSize,
-                                                         nelems);
+                                                         nelems, flag++);
 #else
-    allreduce6<<<21, 512, 0, stream>>>(buff, scratch, resultBuff, rank, nRanksPerNode, worldSize, nelems);
+    allreduce6<<<21, 512, 0, stream>>>(buff, scratch, resultBuff, rank, nRanksPerNode, worldSize, nelems, flag++);
 #endif
   } else {
     allreduce1<<<24, 1024, 0, stream>>>(buff, resultBuff, rank, worldSize, nelems);
