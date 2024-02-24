@@ -466,11 +466,13 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
     }
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, rank, nRanksPerNode,
                                                          worldSize, nelems, flag++);
-  } else {
+  } else if (sizeof(T) * nelems <= (40 << 20)) {
     int nBlocks = 32;
     int nThreadsPerBlock = 512;
     allreduce8<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, smOutChannels, rank, nRanksPerNode,
                                                          worldSize, nelems);
+  } else {
+    // TODO:
   }
 #else
   if (sizeof(T) * nelems <= (1 << 20)) {
