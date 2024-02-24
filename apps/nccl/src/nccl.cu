@@ -22,7 +22,7 @@
     }                                                                                       \
   } while (0)
 
-#define NUM_CHANNELS_PER_CONNECTION 32
+#define NUM_CHANNELS_PER_CONNECTION 64
 
 #if defined(__HIP_PLATFORM_AMD__)
 #define WARP_SIZE 64
@@ -145,8 +145,8 @@ __forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem) {
 
 // TODO:
 static const int nRanksPerNode = 8;
-// Only use scratch buffer for message size less then 1MB
-static const int scratchSize = 1024 * 1024 * 8;
+
+static const int scratchSize = 1024 * 1024 * 40;
 
 // static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
 //                             mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
@@ -392,27 +392,82 @@ __global__ void allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHa
 }
 
 template <typename T>
+__global__ void allreduce8(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
+                           mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels,
+                           int rank, int nRanksPerNode, int worldSize, size_t nelems, uint32_t flag) {
+  const size_t nPeer = nRanksPerNode - 1;
+  const size_t chanOffset = nPeer * blockIdx.x;
+  // assume (nelems * sizeof(T)) is divisible by (16 * worldSize)
+  const size_t nInt4 = nelems * sizeof(T) / sizeof(int4);
+  const size_t nInt4PerRank = nInt4 / worldSize;
+  auto smOutChans = smOutChannels + chanOffset;
+
+  int4* buff4 = reinterpret_cast<int4*>(buff);
+  int4* scratch4 = reinterpret_cast<int4*>(scratch);
+  int4* resultBuff4 = reinterpret_cast<int4*>(resultBuff);
+
+  /// Starts reduce-scatter
+
+  if (threadIdx.x < nPeer) {
+    smOutChans[threadIdx.x].relaxedSignal();
+    smOutChans[threadIdx.x].wait();
+  }
+  __syncthreads();
+
+  // Distribute `nInt4PerRank` across all blocks with the unit size `unitNInt4PerBlock`
+  constexpr size_t unitNInt4PerBlock = 1024;
+  const size_t nUnitsPerBlock = (nInt4PerRank + unitNInt4PerBlock - 1) / unitNInt4PerBlock;
+  size_t offsetOfThisBlock = unitNInt4PerBlock * nUnitsPerBlock * blockIdx.x;
+  size_t nInt4OfThisBlock = unitNInt4PerBlock * nUnitsPerBlock;
+  if ((nInt4PerRank % unitNInt4PerBlock != 0) && (blockIdx.x == gridDim.x - 1)) {
+    // The last block may have fewer int4 than others
+    nInt4OfThisBlock = unitNInt4PerBlock * (nUnitsPerBlock - 1) + nInt4PerRank % unitNInt4PerBlock;
+  }
+
+  for (size_t idx = offsetOfThisBlock + threadIdx.x; idx < offsetOfThisBlock + nInt4OfThisBlock; idx += blockDim.x) {
+    int4 data = buff4[nInt4PerRank * rank + idx];
+    for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      const size_t remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
+      int4 val = scratch4[nInt4PerRank * remoteRank + idx];
+      data = add_vectors<T>(val, data);
+    }
+    resultBuff4[nInt4PerRank * rank + idx] = data;
+    for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      const size_t remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
+      smOutChans[peerIdx].write(nInt4PerRank * remoteRank + idx, data);
+    }
+  }
+}
+
+template <typename T>
 cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
                       mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, int rank, int nRanksPerNode,
                       int worldSize, size_t nelems, cudaStream_t stream) {
   static uint32_t flag = 1;
-  if (sizeof(T) * nelems <= (1 << 20)) {
 #if defined(__HIP_PLATFORM_AMD__)
-    int nBlocks = 28;
-    int nThreadsPerBlock = 1024;
-    if (nelems >= 8192) {
-      nBlocks = 56;
-      nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
-    }
+  // int nBlocks = 28;
+  // int nThreadsPerBlock = 1024;
+  // if (nelems >= 8192) {
+  //   nBlocks = 56;
+  //   nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
+  // }
+  int nBlocks = 1;
+  int nThreadsPerBlock = 1024;
+  if (sizeof(T) * nelems <= (1 << 20)) {
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, rank, nRanksPerNode,
                                                          worldSize, nelems, flag++);
+  } else {
+    allreduce8<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, smOutChannels, rank, nRanksPerNode,
+                                                         worldSize, nelems, flag++);
+  }
 #else
+  if (sizeof(T) * nelems <= (1 << 20)) {
     allreduce6<<<21, 512, 0, stream>>>(buff, scratch, resultBuff, smChannels, rank, nRanksPerNode, worldSize, nelems,
                                        flag++);
-#endif
   } else {
     allreduce1<<<24, 1024, 0, stream>>>(buff, resultBuff, smChannels, smOutChannels, rank, worldSize, nelems);
   }
+#endif
   return cudaGetLastError();
 }
 
@@ -613,8 +668,8 @@ NCCL_API ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank,
-                                             ncclConfig_t* config) {
+NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t*, int, ncclUniqueId, int,
+                                             ncclConfig_t*) {
   // TODO: implement this function
   return ncclInternalError;
 }
@@ -655,7 +710,6 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->comm = mscclppComm;
   commPtr->connections = std::move(connections);
   commPtr->smSemaphores = std::move(smSemaphores);
-  // using scratch buffer for message size less then 1MB
   commPtr->scratchBuff = mscclpp::allocExtSharedCuda<char>(scratchSize);
   commPtr->remoteScratchRegMemories =
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), scratchSize, mscclpp::Transport::CudaIpc);
@@ -664,7 +718,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclCommInitAll(ncclComm_t* comm, int ndev, const int* devlist) {
+NCCL_API ncclResult_t ncclCommInitAll(ncclComm_t*, int, const int*) {
   // TODO: implement this function
   return ncclInternalError;
 }
@@ -680,12 +734,12 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclCommAbort(ncclComm_t comm) {
+NCCL_API ncclResult_t ncclCommAbort(ncclComm_t) {
   // TODO: implement this function
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclComm_t* newcomm, ncclConfig_t* config) {
+NCCL_API ncclResult_t ncclCommSplit(ncclComm_t, int, int, ncclComm_t*, ncclConfig_t*) {
   // TODO: implement this function
   return ncclInternalError;
 }
@@ -742,31 +796,31 @@ NCCL_API ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclRedOpCreatePreMulSum(ncclRedOp_t* op, void* scalar, ncclDataType_t datatype,
-                                               ncclScalarResidence_t residence, ncclComm_t comm) {
+NCCL_API ncclResult_t ncclRedOpCreatePreMulSum(ncclRedOp_t*, void*, ncclDataType_t,
+                                               ncclScalarResidence_t, ncclComm_t) {
   // TODO: implement this function
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclRedOpDestroy(ncclRedOp_t op, ncclComm_t comm) {
+NCCL_API ncclResult_t ncclRedOpDestroy(ncclRedOp_t, ncclComm_t) {
   // TODO: implement this function
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclReduce(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
-                                 ncclRedOp_t op, int root, ncclComm_t comm, cudaStream_t stream) {
+NCCL_API ncclResult_t ncclReduce(const void*, void*, size_t, ncclDataType_t,
+                                 ncclRedOp_t, int, ncclComm_t, cudaStream_t) {
   // TODO: implement this function
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclBcast(void* buff, size_t count, ncclDataType_t datatype, int root, ncclComm_t comm,
-                                cudaStream_t stream) {
+NCCL_API ncclResult_t ncclBcast(void*, size_t, ncclDataType_t, int, ncclComm_t,
+                                cudaStream_t) {
   // TODO: implement this function
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
-                                    int root, ncclComm_t comm, cudaStream_t stream) {
+NCCL_API ncclResult_t ncclBroadcast(const void*, void*, size_t, ncclDataType_t,
+                                    int, ncclComm_t, cudaStream_t) {
   // TODO: implement this function
   return ncclInternalError;
 }
@@ -779,38 +833,26 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   channelKey key{sendbuff, recvbuff, bytes};
   mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels = nullptr;
   mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels = nullptr;
-  if (bytes <= 1 << 20) {
-    auto it = comm->channelInfos.find(key);
-    if (it == comm->channelInfos.end()) {
-      std::vector<mscclpp::SmChannel> channels =
-          setupSmChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>(sendbuff));
-      ChannelInfo channelInfo{channels, {}, setupSmChannelDeviceHandles(channels), nullptr};
-      it = comm->channelInfos.emplace(key, channelInfo).first;
-    }
-    smChannels = it->second.smChannelDeviceHandles.get();
-  } else {
-    auto it = comm->channelInfos.find(key);
-    if (it == comm->channelInfos.end()) {
+
+  auto it = comm->channelInfos.find(key);
+  if (it == comm->channelInfos.end()) {
+    // setup smChannels (src: sendbuff, dst: remote scratch buff)
+    std::vector<mscclpp::SmChannel> channels = setupSmChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>(sendbuff));
+    ChannelInfo channelInfo{channels, {}, setupSmChannelDeviceHandles(channels), nullptr};
+    it = comm->channelInfos.emplace(key, channelInfo).first;
+
+    // setup smOutChannels (src: recvbuff, dst: remote recvbuff)
+    if (bytes > (1 << 20)) {
       std::vector<mscclpp::RegisteredMemory> remoteMemories =
-          setupRemoteMemories(comm->comm, rank, const_cast<void*>(sendbuff), bytes, mscclpp::Transport::CudaIpc);
-      std::vector<mscclpp::SmChannel> channels = setupSmChannels(comm, remoteMemories, const_cast<void*>(sendbuff));
-      ChannelInfo channelInfo{channels, {},  setupSmChannelDeviceHandles(channels), nullptr};
-      it = comm->channelInfos.emplace(key, channelInfo).first;
-      if (sendbuff != recvbuff) {
-        std::vector<mscclpp::RegisteredMemory> remoteMemories =
-            setupRemoteMemories(comm->comm, rank, recvbuff, bytes, mscclpp::Transport::CudaIpc);
-        std::vector<mscclpp::SmChannel> outChannels = setupSmChannels(comm, remoteMemories, recvbuff);
-        std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> outPtr = setupSmChannelDeviceHandles(outChannels);
-        it->second.smOutChannels = outChannels;
-        it->second.smOutChannelDeviceHandles = outPtr;
-      } else {
-        std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> outPtr = setupSmChannelDeviceHandles(channels);
-        it->second.smOutChannelDeviceHandles = outPtr;
-      }
+          setupRemoteMemories(comm->comm, rank, recvbuff, bytes, mscclpp::Transport::CudaIpc);
+      std::vector<mscclpp::SmChannel> outChannels = setupSmChannels(comm, remoteMemories, recvbuff);
+      it->second.smOutChannels = outChannels;
+      it->second.smOutChannelDeviceHandles = setupSmChannelDeviceHandles(outChannels);
     }
-    smChannels = it->second.smChannelDeviceHandles.get();
-    smOutChannels = it->second.smOutChannelDeviceHandles.get();
   }
+
+  smChannels = it->second.smChannelDeviceHandles.get();
+  smOutChannels = it->second.smOutChannelDeviceHandles.get();
 
   switch (datatype) {
     case ncclFloat16:
@@ -834,8 +876,8 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype,
-                                        ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
+NCCL_API ncclResult_t ncclReduceScatter(const void*, void*, size_t, ncclDataType_t,
+                                        ncclRedOp_t, ncclComm_t, cudaStream_t) {
   // TODO: implement this function
   return ncclInternalError;
 }
@@ -873,20 +915,20 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatype, int peer, ncclComm_t comm,
-                               cudaStream_t stream) {
+NCCL_API ncclResult_t ncclSend(const void*, size_t, ncclDataType_t, int, ncclComm_t,
+                               cudaStream_t) {
   // TODO: implement this function
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclRecv(void* recvbuff, size_t count, ncclDataType_t datatype, int peer, ncclComm_t comm,
-                               cudaStream_t stream) {
+NCCL_API ncclResult_t ncclRecv(void*, size_t, ncclDataType_t, int, ncclComm_t,
+                               cudaStream_t) {
   // TODO: implement this function
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclAllToAll(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
-                                   ncclComm_t comm, cudaStream_t stream) {
+NCCL_API ncclResult_t ncclAllToAll(const void*, void*, size_t, ncclDataType_t,
+                                   ncclComm_t, cudaStream_t) {
   // TODO: implement this function
   return ncclInternalError;
 }
