@@ -430,20 +430,29 @@ __global__ void __launch_bounds__(1024, 1)
     nInt4OfThisBlock = nInt4PerRank - maxNInt4PerBlock * (nNeededBlocks - 1);
   }
 
+  __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> channels[NRANKS_PER_NODE - 1];
+  __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> outChannels[NRANKS_PER_NODE - 1];
+  const int lid = threadIdx.x % WARP_SIZE;
+  if (lid < nPeer) {
+    channels[lid] = smChans[lid];
+    outChannels[lid] = smOutChans[lid];
+  }
+  __syncwarp();
+
   /// Starts allgather
   for (size_t idx = offsetOfThisBlock + threadIdx.x; idx < offsetOfThisBlock + nInt4OfThisBlock; idx += blockDim.x) {
     for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
       const size_t remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
       int4 val = buff4[nInt4PerRank * remoteRank + idx];
-      smChans[peerIdx].write(nInt4PerRank * rank + idx, val);
+      channels[peerIdx].write(nInt4PerRank * rank + idx, val);
     }
   }
 
   /// Starts reduce-scatter
 
   if (threadIdx.x < nPeer) {
-    smOutChans[threadIdx.x].relaxedSignal();
-    smOutChans[threadIdx.x].wait();
+    outChannels[threadIdx.x].relaxedSignal();
+    outChannels[threadIdx.x].wait();
   }
   __syncthreads();
 
@@ -457,7 +466,7 @@ __global__ void __launch_bounds__(1024, 1)
     resultBuff4[nInt4PerRank * rank + idx] = data;
     for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
       const size_t remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
-      smOutChans[peerIdx].write(nInt4PerRank * rank + idx, data);
+      outChannels[peerIdx].write(nInt4PerRank * rank + idx, data);
     }
   }
 }
