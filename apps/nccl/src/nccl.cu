@@ -576,7 +576,8 @@ __global__ void __launch_bounds__(1024, 1)
 template <bool IsOutOfPlace, typename T>
 cudaError_t allgather(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
                       int rank, int nRanksPerNode, int worldSize, size_t nelems, cudaStream_t stream) {
-  allgather6<IsOutOfPlace><<<24, 1024, 0, stream>>>((void*)buff, smChannels, rank, worldSize, nRanksPerNode, nelems);
+  allgather6<IsOutOfPlace><<<28, 1024, 0, stream>>>((void*)buff, smChannels, rank, worldSize, nRanksPerNode,
+                                                    nelems * sizeof(T) / sizeof(int));
   return cudaGetLastError();
 }
 
