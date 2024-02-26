@@ -26,6 +26,7 @@
 
 #if defined(__HIP_PLATFORM_AMD__)
 #define WARP_SIZE 64
+#define __syncwarp() __builtin_amdgcn_wave_barrier()
 #else
 #define WARP_SIZE 32
 #endif
@@ -144,9 +145,8 @@ __forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem) {
 }
 
 // TODO:
-static const int nRanksPerNode = 8;
-
-static const int scratchSize = 1024 * 1024 * 40;
+static const int NRANKS_PER_NODE = 8;
+static const int SCRATCH_SIZE = 1024 * 1024 * 40;
 
 // static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
 //                             mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
@@ -196,8 +196,9 @@ cudaError_t allreduce(int* buff, int* scratch, void* resultBuff, int rank, int n
 #include <mscclpp/sm_channel_device.hpp>
 
 template <typename T>
-__global__ void allreduce6(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-                           int rank, int nRanksPerNode, int worldSize, size_t nelems, uint32_t flag) {
+__global__ void __launch_bounds__(1024, 1)
+    allreduce6(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, int rank,
+               int nRanksPerNode, int worldSize, size_t nelems, uint32_t flag) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
   nelems = nelems / (sizeof(int) / sizeof(T));
@@ -253,9 +254,9 @@ __global__ void allreduce6(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHa
 }
 
 template <typename T>
-__global__ void allreduce1(T* src, T* dst, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-                           mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, int rank, int nranks,
-                           size_t nelems) {
+__global__ void __launch_bounds__(1024, 1)
+    allreduce1(T* src, T* dst, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
+               mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, int rank, int nranks, size_t nelems) {
   const size_t chunkSize = nelems / nranks;
   if (nranks == 1) return;
   const int nPeer = nranks - 1;
@@ -333,8 +334,9 @@ __global__ void allreduce1(T* src, T* dst, mscclpp::DeviceHandle<mscclpp::SmChan
 }
 
 template <typename T>
-__global__ void allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-                           int rank, int nRanksPerNode, int worldSize, size_t nelems, uint32_t flag) {
+__global__ void __launch_bounds__(1024, 1)
+    allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, int rank,
+               int nRanksPerNode, int worldSize, size_t nelems, uint32_t flag) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
   nelems = nelems / (sizeof(int) / sizeof(T));
@@ -358,9 +360,17 @@ __global__ void allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHa
   uint32_t* src = (uint32_t*)((char*)buff + rank * nelemsPerRank * sizeof(int));
   uint32_t* dst = (uint32_t*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
 
+  // Put channels into shared memory, read channel info from global memory is unexpectable slow.
+  __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> channels[NRANKS_PER_NODE - 1];
+  const int lid = tid % WARP_SIZE;
+  if (lid < nPeers) {
+    channels[lid] = smChannels[lid];
+  }
+  __syncwarp();
+
   // step 1: write to scratch buffer
-  smChannels[peerIdx].putPackets<mscclpp::LL8Packet>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
-                                                     blockDim.x * nBlocksPerPeer, flag);
+  channels[peerIdx].putPackets<mscclpp::LL8Packet>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
+                                                          blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     uint32_t data = 0;
@@ -378,7 +388,7 @@ __global__ void allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHa
     packet.flag = flag;
     size_t offset = scratchResultOffset / sizeof(mscclpp::LL8Packet) + (idx + rank * nPktsPerRank);
     for (int index = 0; index < nPeers; index++) {
-      smChannels[index].write(offset, packet);
+      channels[index].write(offset, packet);
     }
   }
   // step 3: get data result from scratch buffer
@@ -392,9 +402,10 @@ __global__ void allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHa
 }
 
 template <typename T>
-__global__ void allreduce8(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-                           mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, int rank, int nRanksPerNode,
-                           int worldSize, size_t nelems) {
+__global__ void __launch_bounds__(1024, 1)
+    allreduce8(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
+               mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, int rank, int nRanksPerNode, int worldSize,
+               size_t nelems) {
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
   // assume (nelems * sizeof(T)) is divisible by (16 * worldSize)
@@ -725,9 +736,9 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->comm = mscclppComm;
   commPtr->connections = std::move(connections);
   commPtr->smSemaphores = std::move(smSemaphores);
-  commPtr->scratchBuff = mscclpp::allocExtSharedCuda<char>(scratchSize);
+  commPtr->scratchBuff = mscclpp::allocExtSharedCuda<char>(SCRATCH_SIZE);
   commPtr->remoteScratchRegMemories =
-      setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), scratchSize, mscclpp::Transport::CudaIpc);
+      setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
 
   *comm = commPtr;
   return ncclSuccess;
@@ -872,17 +883,17 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   switch (datatype) {
     case ncclFloat16:
       CUDACHECK(allreduce((half*)sendbuff, (half*)comm->scratchBuff.get(), (half*)recvbuff, smChannels, smOutChannels,
-                          rank, nRanksPerNode, comm->comm->bootstrap()->getNranks(), count, stream));
+                          rank, NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream));
       break;
     case ncclFloat32:
       CUDACHECK(allreduce((float*)sendbuff, (float*)comm->scratchBuff.get(), (float*)recvbuff, smChannels,
-                          smOutChannels, comm->comm->bootstrap()->getRank(), nRanksPerNode,
+                          smOutChannels, comm->comm->bootstrap()->getRank(), NRANKS_PER_NODE,
                           comm->comm->bootstrap()->getNranks(), count, stream));
       break;
     case ncclInt32:
     case ncclUint32:
       CUDACHECK(allreduce((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, smChannels, smOutChannels,
-                          comm->comm->bootstrap()->getRank(), nRanksPerNode, comm->comm->bootstrap()->getNranks(),
+                          comm->comm->bootstrap()->getRank(), NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(),
                           count, stream));
       break;
     default:
@@ -922,10 +933,10 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   smChannels = it->second.smChannelDeviceHandles.get();
   if ((char*)sendbuff == (char*)recvbuff + rank * sendcount) {
     CUDACHECK(allgather<false>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, smChannels,
-                        rank, nRanksPerNode, nRank, bytes / sizeof(int), stream));
+                        rank, NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
   } else {
     CUDACHECK(allgather<true>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, smChannels,
-                        rank, nRanksPerNode, nRank, bytes / sizeof(int), stream));
+                        rank, NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
   }
   return ncclSuccess;
 }
