@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <mscclpp/gpu.hpp>
+
 #include "mpi.h"
 #include "nccl.h"
 

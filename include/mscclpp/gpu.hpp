@@ -6,9 +6,9 @@
 
 #if defined(__HIP_PLATFORM_AMD__)
 
-#include <hip/hip_runtime.h>
 #include <hip/hip_fp16.h>
-// #include <hip/hip_bf16.h>
+#include <hip/hip_runtime.h>
+#include <hip/hip_bf16.h>
 
 using cudaError_t = hipError_t;
 using cudaGraph_t = hipGraph_t;
@@ -92,8 +92,8 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #else
 
 #include <cuda.h>
-#include <cuda_runtime.h>
 #include <cuda_fp16.h>
+#include <cuda_runtime.h>
 #if (CUDART_VERSION >= 11000)
 #include <cuda_bf16.h>
 #endif
