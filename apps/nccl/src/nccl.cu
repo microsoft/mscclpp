@@ -8,6 +8,7 @@
 #include <mscclpp/sm_channel_device.hpp>
 #include <unordered_map>
 #include <vector>
+#include <iostream>
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
@@ -147,10 +148,12 @@ static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> setupSmChannel
                  [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> ptr =
       mscclpp::allocSharedCuda<mscclpp::DeviceHandle<mscclpp::SmChannel>>(smChannelDeviceHandles.size());
-  mscclpp::AvoidCudaGraphCaptureGuard guard;
-  CUDACHECK(cudaMemcpy(ptr.get(), smChannelDeviceHandles.data(),
-                       sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size(),
-                       cudaMemcpyHostToDevice));
+  // mscclpp::AvoidCudaGraphCaptureGuard guard;
+  // CUDACHECK(cudaMemcpy(ptr.get(), smChannelDeviceHandles.data(),
+  //                      sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size(),
+  //                      cudaMemcpyHostToDevice));
+  mscclpp::memcpyCuda<mscclpp::DeviceHandle<mscclpp::SmChannel>>(ptr.get(), smChannelDeviceHandles.data(),
+                      smChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
   return ptr;
 }
 
@@ -327,6 +330,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void*, void*, size_t, ncclDataType_t,
 
 NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
                                     ncclRedOp_t, ncclComm_t comm, cudaStream_t stream) {
+  std::cerr << "ncclAllReduce called\n";
   size_t bytes = count * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
   int rank = comm->comm->bootstrap()->getRank();
@@ -336,10 +340,16 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
 
   auto it = comm->channelInfos.find(key);
   if (it == comm->channelInfos.end()) {
+    std::cerr << "Entering Barrier1\n";
+    comm->comm->bootstrap()->barrier();
+    std::cerr << "Done Barrier1\n";
     // setup smChannels (src: sendbuff, dst: remote scratch buff)
     std::vector<mscclpp::SmChannel> channels = setupSmChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>(sendbuff));
     ChannelInfo channelInfo{channels, {}, setupSmChannelDeviceHandles(channels), nullptr};
     it = comm->channelInfos.emplace(key, channelInfo).first;
+    std::cerr << "Entering Barrier2\n";
+    comm->comm->bootstrap()->barrier();
+    std::cerr << "Done Barrier2\n";
 
     // setup smOutChannels (src: recvbuff, dst: remote recvbuff)
     if (bytes > (1 << 20)) {
@@ -349,6 +359,9 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
       it->second.smOutChannels = outChannels;
       it->second.smOutChannelDeviceHandles = setupSmChannelDeviceHandles(outChannels);
     }
+    std::cerr << "Entering Barrier3\n";
+    comm->comm->bootstrap()->barrier();
+    std::cerr << "Done Barrier3\n";
   }
 
   smChannels = it->second.smChannelDeviceHandles.get();
@@ -384,6 +397,7 @@ NCCL_API ncclResult_t ncclReduceScatter(const void*, void*, size_t, ncclDataType
 
 NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype,
                                     ncclComm_t comm, cudaStream_t stream) {
+  std::cerr << "ncclAllGather called\n";
   size_t bytes = sendcount * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
   int rank = comm->comm->bootstrap()->getRank();
@@ -393,16 +407,19 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
 
   auto it = comm->channelInfos.find(key);
   if (it == comm->channelInfos.end()) {
+    std::cerr << "Entering Barrier4\n";
+    comm->comm->bootstrap()->barrier();
+    std::cerr << "Done Barrier4\n";
     std::vector<mscclpp::RegisteredMemory> remoteMemories =
         setupRemoteMemories(comm->comm, rank, const_cast<void*>(recvbuff), bytes * nRank,
                             mscclpp::Transport::CudaIpc);
     std::vector<mscclpp::SmChannel> channels =
         setupSmChannels(comm, remoteMemories, const_cast<void*>(recvbuff));
-    std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
-    std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
-                   [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
     ChannelInfo channelInfo{channels, {}, setupSmChannelDeviceHandles(channels), nullptr};
     it = comm->channelInfos.emplace(key, channelInfo).first;
+    std::cerr << "Entering Barrier5\n";
+    comm->comm->bootstrap()->barrier();
+    std::cerr << "Done Barrier5\n";
   }
   smChannels = it->second.smChannelDeviceHandles.get();
   if ((char*)sendbuff == (char*)recvbuff + rank * sendcount) {

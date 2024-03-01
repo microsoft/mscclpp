@@ -102,6 +102,7 @@ template <bool IsOutOfPlace, typename T>
 cudaError_t allgather(T* buff, [[maybe_unused]] T* scratch, [[maybe_unused]] T* resultBuff,
                       mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, int rank, int nRanksPerNode, int worldSize,
                       size_t nelems, cudaStream_t stream) {
+  return cudaSuccess;
   allgather6<IsOutOfPlace><<<28, 1024, 0, stream>>>((void*)buff, smChannels, rank, worldSize, nRanksPerNode,
                                                     nelems * sizeof(T) / sizeof(int));
   return cudaGetLastError();

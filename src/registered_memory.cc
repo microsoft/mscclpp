@@ -146,7 +146,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     // The memory is local to the machine but not to the process, so we need to open the CUDA IPC handle
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
-    MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
+    // MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
     this->data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
     INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", this->data);
   } else {

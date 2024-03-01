@@ -452,6 +452,7 @@ template <typename T>
 cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
                       mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, int rank, int nRanksPerNode,
                       int worldSize, size_t nelems, cudaStream_t stream) {
+  return cudaSuccess;
   static uint32_t flag = 1;
 #if defined(__HIP_PLATFORM_AMD__)
   if (sizeof(T) * nelems <= (1 << 20)) {
