@@ -147,10 +147,8 @@ static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> setupSmChannel
                  [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> ptr =
       mscclpp::allocSharedCuda<mscclpp::DeviceHandle<mscclpp::SmChannel>>(smChannelDeviceHandles.size());
-  mscclpp::AvoidCudaGraphCaptureGuard guard;
-  CUDACHECK(cudaMemcpy(ptr.get(), smChannelDeviceHandles.data(),
-                       sizeof(mscclpp::DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size(),
-                       cudaMemcpyHostToDevice));
+  mscclpp::memcpyCuda<mscclpp::DeviceHandle<mscclpp::SmChannel>>(ptr.get(), smChannelDeviceHandles.data(),
+                       smChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
   return ptr;
 }
 
