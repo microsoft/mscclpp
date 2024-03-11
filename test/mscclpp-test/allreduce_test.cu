@@ -949,13 +949,15 @@ __global__ void __launch_bounds__(1024)
   }
 }
 
-__global__ void allreduce4(int* buff, int* scratch, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+__global__ void __launch_bounds__(1024)
+    allreduce4(int* buff, int* scratch, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
   reduceScatterSm(buff, scratch, rank, nRanksPerNode, worldSize, nelems);
   deviceSyncer.sync(gridDim.x);
   allGatherSm(rank, worldSize, nRanksPerNode, nelems / worldSize);
 }
 
-__global__ void allreduce5(int* buff, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+__global__ void __launch_bounds__(1024)
+    allreduce5(int* buff, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
 #if defined(__HIP_PLATFORM_AMD__)
   localReduceScatterSm3(buff, rank, nRanksPerNode, nelems / worldSize, nelems / worldSize, gridDim.x);
   deviceSyncer.sync(gridDim.x);
@@ -967,8 +969,8 @@ __global__ void allreduce5(int* buff, int rank, int nRanksPerNode, int worldSize
 #endif
 }
 
-__global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, int nRanksPerNode, int worldSize,
-                           size_t nelems) {
+__global__ void __launch_bounds__(1024)
+    allreduce6(int* buff, int* scratch, void* resultBuff, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
   // This version of allreduce only works for single nodes
   const int nPeers = nRanksPerNode - 1;
   const size_t nPkts = nelems / 2;
@@ -1033,8 +1035,8 @@ __global__ void allreduce6(int* buff, int* scratch, void* resultBuff, int rank, 
   }
 }
 
-__global__ void allreduce7(int* buff, int* scratch, void* resultBuff, int rank, int nRanksPerNode, int worldSize,
-                           size_t nelems) {
+__global__ void __launch_bounds__(1024)
+    allreduce7(int* buff, int* scratch, void* resultBuff, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
   // This version of allreduce only works for single nodes
   const int nPeers = nRanksPerNode - 1;
   const size_t nPkts = nelems;
@@ -1163,13 +1165,12 @@ void AllReduceTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   else if (kernelNum == 5)
     allreduce5<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, rank, args.nRanksPerNode, worldSize,
                                                          paramCount_);
-  else if (kernelNum == 6) {
+  else if (kernelNum == 6)
     allreduce6<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, resultBuff, rank,
                                                          args.nRanksPerNode, worldSize, paramCount_);
-  } else if (kernelNum == 7) {
+  else if (kernelNum == 7)
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>((int*)inputBuff, (int*)tmpBuff, resultBuff, rank,
                                                          args.nRanksPerNode, worldSize, paramCount_);
-  }
 }
 
 void AllReduceTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
