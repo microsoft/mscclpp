@@ -350,7 +350,7 @@ __global__ void __launch_bounds__(1024, 1)
   int4* resultBuff4 = reinterpret_cast<int4*>(resultBuff);
 
   // Distribute `nInt4PerRank` across all blocks with the unit size `unitNInt4`
-  constexpr size_t unitNInt4 = 1024;
+  constexpr size_t unitNInt4 = 512;
   const size_t maxNInt4PerBlock = (((nInt4PerRank + gridDim.x - 1) / gridDim.x) + unitNInt4 - 1) / unitNInt4 * unitNInt4;
   size_t offsetOfThisBlock = maxNInt4PerBlock * blockIdx.x;
   size_t nInt4OfThisBlock = maxNInt4PerBlock;
