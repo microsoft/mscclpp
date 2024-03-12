@@ -12,6 +12,6 @@
 #endif
 
 constexpr int NRANKS_PER_NODE = 8;
-constexpr int SCRATCH_SIZE = 1024 * 1024 * 64; // 32 thread-blocks * 8 ranks * 256KB = 64MB
+constexpr int SCRATCH_SIZE = 1024 * 1024 * 70; // 35 thread-blocks * 8 ranks * 256KB = 70MB
 
 #endif // NCCL_COMMON_HPP_

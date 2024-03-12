@@ -379,13 +379,14 @@ __global__ void __launch_bounds__(1024, 1)
   // we can use double buffering to hide synchronization overhead
   for (size_t itr = 0; itr < nItrs; itr++) {
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
-      outChannels[threadIdx.x].relaxedSignal();
+      outChannels[threadIdx.x].signal();
       outChannels[threadIdx.x].wait();
     }
     __syncthreads();
     // Starts allgather
     for (size_t idx = threadIdx.x; idx < nInt4PerChunk; idx += blockDim.x) {
-      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      for (int i = 0; i < nPeer; i++) {
+        const int peerIdx = (i + blockIdx.x) % nPeer;
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = buff4[nInt4PerRank * remoteRank + idx + offsetOfThisBlock];
         channels[peerIdx].write(scratchChunkRankOffset + blockOffset + idx, val);
@@ -394,7 +395,7 @@ __global__ void __launch_bounds__(1024, 1)
 
     /// Starts reduce-scatter
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
-      outChannels[threadIdx.x].relaxedSignal();
+      outChannels[threadIdx.x].signal();
       outChannels[threadIdx.x].wait();
     }
     __syncthreads();
@@ -415,12 +416,13 @@ __global__ void __launch_bounds__(1024, 1)
   }
   if (restNInt4 > 0) {
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
-      outChannels[threadIdx.x].relaxedSignal();
+      outChannels[threadIdx.x].signal();
       outChannels[threadIdx.x].wait();
     }
     __syncthreads();
     for (size_t idx = threadIdx.x; idx < restNInt4; idx += blockDim.x) {
-      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      for (int i = 0; i < nPeer; i++) {
+        const int peerIdx = (i + blockIdx.x) % nPeer;
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = buff4[nInt4PerRank * remoteRank + idx + offsetOfThisBlock];
         channels[peerIdx].write(scratchChunkRankOffset + blockOffset + idx, val);
@@ -428,7 +430,7 @@ __global__ void __launch_bounds__(1024, 1)
     }
 
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
-      outChannels[threadIdx.x].relaxedSignal();
+      outChannels[threadIdx.x].signal();
       outChannels[threadIdx.x].wait();
     }
     __syncthreads();
@@ -464,7 +466,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, rank, nRanksPerNode,
                                                          worldSize, nelems, flag++);
   } else {
-    int nBlocks = 32;
+    int nBlocks = 35;
     int nThreadsPerBlock = 512;
     allreduce8<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, smOutChannels, rank, nRanksPerNode,
                                                          worldSize, nelems);
