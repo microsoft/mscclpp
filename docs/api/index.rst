@@ -1,0 +1,5 @@
+Docs
+====
+
+.. doxygennamespace:: mscclpp
+   :members:

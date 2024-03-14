@@ -20,6 +20,9 @@ templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 # Breathe configuration
+breathe_projects = {
+    "mscclpp": "./doxygen/xml"
+}
 breathe_default_project = "mscclpp"
 
 # -- Options for HTML output -------------------------------------------------

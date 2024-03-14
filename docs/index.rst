@@ -6,10 +6,20 @@
 Welcome to MSCCL++'s documentation!
 ===================================
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
+MSCCL++ is a GPU-driven communication stack for scalable AI applications.
 
+Getting Started
+---------------
+- Follow the :doc:`installation instructions <getting-started/quickstart>` for your platform of choice.
+- Take a look at the :doc:`tutorials <getting-started/tutorials/index>` to learn how to write your first Triton program.
+
+.. toctree::
+   :maxdepth: 1
+   :caption:  Getting Started
+   :hidden:
+
+   getting-started/quickstart
+   api/index
 
 
 Indices and tables
@@ -18,9 +28,3 @@ Indices and tables
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
-
-Docs
-====
-
-.. doxygennamespace:: mscclpp
-   :members:
