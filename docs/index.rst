@@ -27,7 +27,7 @@ Design
 
 .. toctree::
    :maxdepth: 1
-   :caption:  Performance
+   :caption:  Design
    :hidden:
 
    design/design
