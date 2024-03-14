@@ -1,5 +1,5 @@
-Docs
-====
+API Reference
+=============
 
 .. doxygennamespace:: mscclpp
    :members:

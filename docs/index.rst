@@ -11,7 +11,7 @@ MSCCL++ is a GPU-driven communication stack for scalable AI applications.
 Getting Started
 ---------------
 - Follow the :doc:`installation instructions <getting-started/quickstart>` for your platform of choice.
-- Take a look at the :doc:`tutorials <getting-started/tutorials/index>` to learn how to write your first Triton program.
+- Take a look at the :doc:`tutorials <getting-started/tutorials/index>` to learn how to write your first mscclpp program.
 
 .. toctree::
    :maxdepth: 1
@@ -19,8 +19,41 @@ Getting Started
    :hidden:
 
    getting-started/quickstart
-   api/index
+   getting-started/tutorials/index
 
+Design
+-------
+- :doc:`Design <design/design>`
+
+.. toctree::
+   :maxdepth: 1
+   :caption:  Performance
+   :hidden:
+
+   design/design
+
+Performance
+---------------
+- :doc:`Performance <performance/performance-ndmv4>`
+
+.. toctree::
+   :maxdepth: 1
+   :caption:  Performance
+   :hidden:
+
+   performance/performance-ndmv4
+
+C++ API
+---------------
+- :doc:`mscclpp <api/index>`
+
+
+.. toctree::
+   :maxdepth: 1
+   :caption: C++ API
+   :hidden:
+
+   api/index
 
 Indices and tables
 ==================
