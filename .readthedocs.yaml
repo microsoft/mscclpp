@@ -13,7 +13,7 @@ build:
     python: "3.12"
   jobs:
     pre_build:
-    - doxygen
+    - cd docs && doxygen
 
 # Build documentation in the "docs/" directory with Sphinx
 sphinx:
