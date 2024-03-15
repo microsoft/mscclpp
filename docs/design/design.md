@@ -2,10 +2,6 @@
 ## Introduction
 MSCCL++ redefines inter-GPU communication interfaces, thereby delivering a highly efficient and customizable communication stack for distributed GPU applications. Its design is specifically tailored to accommodate diverse performance optimization scenarios often encountered in state-of-the-art AI applications. The figure below provides a high-level overview of MSCCL++ abstractions in CUDA, C, and Python.
 
-<!-- <center>MSCCL++ Abstractions Overview</center>
-
-![MSCCL++ Abstractions](../figs/abstractions.png) -->
-
 
 ```{figure} ../figs/abstractions.png
 :name: MSCCL++ Abstractions
@@ -26,7 +22,7 @@ The followings highlight the key features of MSCCL++.
 
 To implement the list of features above, some concepts are introduced.
 ### Channel
-MSCCL++ provides peer-to-peer communication methods between GPUs. A peer-to-peer connection between two GPUs is called a Channel. Channels are constructed by MSCCL++ host-side interfaces and copied to GPUs during initialization. Channels provide GPU-side interfaces, which means that all communication methods are defined as a device function to be called from a GPU kernel code. Following code shows the basic usage for channel, the put() method in the following code copies 1KB data from the local GPU to a remote GPU.
+MSCCL++ provides peer-to-peer communication methods between GPUs. A peer-to-peer connection between two GPUs is called a *Channel*. Channels are constructed by MSCCL++ host-side interfaces and copied to GPUs during initialization. Channels provide *GPU-side interfaces*, which means that all communication methods are defined as a device function to be called from a GPU kernel code. Following code shows the basic usage for channel, the `put()` method in the following code copies 1KB data from the local GPU to a remote GPU.
 ```cpp
 __global__ void gpuKernel() {
   ...
@@ -35,13 +31,32 @@ __global__ void gpuKernel() {
   ...
 }
 ```
+MSCCL++ also provides efficient synchronization methods, `signal()`, `flush()`, and `wait()`. We will discuss these methods in the following sections.
 
 #### SmChannel & ProxyChannel
-MSCCL++ delivers two types of channels, ProxyChannel and SmChannel. ProxyChannel provides (R)DMA-based data copy and synchronization methods. When called, these methods send/receive a signal to/from a host-side proxy (hence the name ProxyChannel), which will trigger (R)DMA (such as cudaMemcpy* or ibv_post_send) or issue synchronization methods (such as cudaStreamSynchronize or ibv_poll_cq). Since the key functionalities are run by the proxy, ProxyChannel requires only a single GPU thread to call its methods.
-On the other hand, SmChannel provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU's memory space. Comparing against ProxyChannel, SmChannel is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all SmChannel methods from here.
+MSCCL++ delivers two types of channels, **ProxyChannel** and **SmChannel**. `ProxyChannel` provides (R)DMA-based data copy and synchronization methods. When called, these methods send/receive a signal to/from a host-side proxy (hence the name `ProxyChannel`), which will trigger (R)DMA (such as `cudaMemcpy*` or `ibv_post_send`) or issue synchronization methods (such as `cudaStreamSynchronize` or `ibv_poll_cq`). Since the key functionalities are run by the proxy, ProxyChannel requires only a single GPU thread to call its methods. See all `ProxyChannel` methods from [here](https://github.com/microsoft/mscclpp/blob/main/include/mscclpp/proxy_channel_device.hpp).
+
+On the other hand, `SmChannel` provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU's memory space. Comparing against ProxyChannel, SmChannel is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all SmChannel methods from [here](https://github.com/microsoft/mscclpp/blob/main/include/mscclpp/sm_channel_device.hpp).
 
 ### Fifo & Trigger
-To offload the communication logic from the GPU to the CPU, MSCCL++ introduces the concept of `Fifo` and `Trigger`. A Fifo is a circular buffer that shared between the GPU and the CPU. It is used to store `Trigger`. A Trigger is a signal that is sent from the GPU to the CPU to notify the CPU that there are commands in the Fifo that need to be processed. The CPU will then process the commands in the Fifo and send a signal back to the GPU to notify the GPU that the commands have been processed.
+One of the key features of MSCCL++ is to offload the communication logic from the GPU to the CPU.
+To offload the communication logic from the GPU to the CPU, MSCCL++ introduces the concept of `Fifo` and `Trigger`. A Fifo is a circular buffer that shared between the GPU and the CPU. It is used to store `Trigger`. A `Trigger` is a signal that is sent from the GPU to the CPU to notify the CPU that there are commands in the Fifo that need to be processed. The CPU will then process the commands in the Fifo and send a signal back to the GPU to notify the GPU that the commands have been processed. The implementation details of Fifo and Trigger can be found in following sections.
 
 ### ProxyService
-Proxy service is a persistent service that resides in the CPU side. It functions as a polling service that receives the message trigger from the GPU side and then transfers data according to the command.  When we use ProxyChannel for communication, a trigger is sent from the GPU side to the ProxyService. Then ProxyService will invoke cudaMemcpy* or IB verbs to transfer data to the targe GPU.
+Proxy service is a persistent service that resides in the CPU side. It functions as a polling service that receives the message `Trigger` from the GPU side and then transfers data according to the command.  When we use `ProxyChannel` for communication, a `Trigger` is sent from the GPU side to the `ProxyService`. Then `ProxyService` will invoke `cudaMemcpy*` or `IB verbs` to transfer data to the targe device.
+
+## Implementation
+
+The core of MSCCL++ is implemented in C++ and CUDA. We offer both C++ and Python APIs to initialize communication channels. For kernel-side interfaces, we provide a set of low-level device functions that can be called from a GPU kernel. The following sections will discuss the implementation details of MSCCL++.
+
+### MSCCL++ programming model
+
+### The mechanism for offloading communication logic from the GPU to the CPU
+
+## Use Cases
+
+### Overlapping communication with computation
+
+### Fusion of communication and computation
+
+### Implementing customized collective communication algorithms
