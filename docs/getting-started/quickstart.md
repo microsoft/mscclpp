@@ -20,6 +20,16 @@
         lsmod | grep nvidia_peermem
         ```
 
+## Build with Docker Images
+
+We provide docker images which package all prerequisites for MSCCL++. You can setup your dev environment with the following command.
+
+```bash
+$ docker run -it --privileged --net=host --ipc=host --gpus all ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2 mscclpp-dev bash
+```
+
+See all available images [here](https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp).
+
 ## Build from Source
 
 CMake 3.25 or later is required.
@@ -61,16 +71,6 @@ Python 3.8 or later is required.
 ```bash
 $ python -m pip install .
 ```
-
-## Docker Images
-
-Our base image installs all prerequisites for MSCCL++.
-
-```bash
-$ docker pull ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
-```
-
-See all available images [here](https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp).
 
 ## Unit Tests
 

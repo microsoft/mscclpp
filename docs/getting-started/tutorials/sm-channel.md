@@ -1,1 +1,3 @@
-# How to use SM channel
+# Using SmChannel for Intra-Node Communication
+
+TBU

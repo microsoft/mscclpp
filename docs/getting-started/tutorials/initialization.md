@@ -1,3 +1,1 @@
-# Initialize with mscclpp API
-
-TBU
+# Commnunication initialize with mscclpp API

@@ -6,11 +6,11 @@
 Welcome to MSCCL++'s documentation!
 ===================================
 
-MSCCL++ is a GPU-driven communication stack for scalable AI applications.
+MSCCL++ is a GPU-driven communication stack for scalable AI applications. It is designed to provide a high-performance, scalable, and customizable communication stack for distributed GPU applications.
 
 Getting Started
 ---------------
-- Follow the :doc:`installation instructions <getting-started/quickstart>` for your platform of choice.
+- Follow the :doc:`quick start <getting-started/quickstart>` for your platform of choice.
 - Take a look at the :doc:`tutorials <getting-started/tutorials/index>` to learn how to write your first mscclpp program.
 
 .. toctree::
@@ -23,7 +23,7 @@ Getting Started
 
 Design
 -------
-- :doc:`Design <design/design>`
+- :doc:`Design <design/design>` doc for those who want to understand the internals of MSCCL++.
 
 .. toctree::
    :maxdepth: 1
@@ -34,7 +34,7 @@ Design
 
 Performance
 ---------------
-- :doc:`Performance <performance/performance-ndmv4>`
+- We evaluate the performance of MSCCL++ in A100 and H100. Here are some :doc:`performance results <performance/performance-ndmv4>` for all-reduce operations.
 
 .. toctree::
    :maxdepth: 1

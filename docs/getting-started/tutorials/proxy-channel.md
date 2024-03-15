@@ -1,1 +1,3 @@
-# How to use proxy channel
+# Offload commnunication to CPU with ProxyChannel
+
+TBU
