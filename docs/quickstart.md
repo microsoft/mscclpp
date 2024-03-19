@@ -59,7 +59,10 @@ $ sudo make install/fast
 Python 3.8 or later is required.
 
 ```bash
+# For NVIDIA platforms
 $ python -m pip install .
+# For AMD platforms
+$ CXX=/path/to/hipcc python -m pip install .
 ```
 
 ## Docker Images

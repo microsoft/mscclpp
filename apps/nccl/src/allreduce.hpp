@@ -5,8 +5,10 @@
 #define ALLREDUCE_HPP_
 
 #include <mscclpp/concurrency_device.hpp>
+#include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/packet_device.hpp>
+#include <mscclpp/sm_channel.hpp>
 #include <mscclpp/sm_channel_device.hpp>
 
 #include "common.hpp"
