@@ -21,10 +21,10 @@ elseif(USE_ROCM)
 endif()
 
 add_library(mscclpp_nccl SHARED)
-target_link_libraries(mscclpp_nccl PUBLIC mscclpp_nccl_obj)
+target_link_libraries(mscclpp_nccl PUBLIC mscclpp_obj mscclpp_nccl_obj)
 set_target_properties(mscclpp_nccl PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 add_library(mscclpp_nccl_static STATIC)
-target_link_libraries(mscclpp_nccl_static PUBLIC mscclpp_nccl_obj)
+target_link_libraries(mscclpp_nccl_static PUBLIC mscclpp_obj mscclpp_nccl_obj)
 set_target_properties(mscclpp_nccl_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 install(TARGETS mscclpp_nccl_obj
