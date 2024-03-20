@@ -50,8 +50,16 @@ Proxy service is a persistent service that resides in the CPU side. It functions
 The core of MSCCL++ is implemented in C++ and CUDA. We offer both C++ and Python APIs to initialize communication channels. For kernel-side interfaces, we provide a set of low-level device functions that can be called from a GPU kernel. The following sections will discuss the implementation details of MSCCL++.
 
 ### MSCCL++ programming model
+MSCCL++ offers two set of APIs. The first set is used to initialize communication channels and the second set is used to call communication methods from a GPU kernel.
 
 ### The mechanism for offloading communication logic from the GPU to the CPU
+
+```
+|-------------------|-------------------|-------------------|-----------------|-----------------|---------|-------------------|---------------|
+|    32bit size     |  32bit src offset |  32bit dst offset | 9bit src mem id | 9bit dst mem id | 3bit op | 10bit channel id  | 1bit reserved |
+|-------------------|-------------------|-------------------|-----------------|-----------------|---------|-------------------|---------------|
+```
+<center>The proxy trigger format</center>
 
 ## Use Cases
 
