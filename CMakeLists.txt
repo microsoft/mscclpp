@@ -102,7 +102,7 @@ find_package(Threads REQUIRED)
 
 add_library(mscclpp_obj OBJECT)
 target_include_directories(mscclpp_obj
-    PRIVATE
+    SYSTEM PRIVATE
     ${GPU_INCLUDE_DIRS}
     ${IBVERBS_INCLUDE_DIRS}
     ${NUMA_INCLUDE_DIRS})
