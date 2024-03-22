@@ -12,6 +12,21 @@
 
 #include "common.hpp"
 
+extern __device__ mscclpp::DeviceSyncer deviceSyncer;
+
+__forceinline__ __device__ void world_barrier(mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels) {
+  if (threadIdx.x == 0) {
+    __threadfence_system();
+  }
+  __syncthreads();
+  deviceSyncer.sync(gridDim.x);
+  if (blockIdx.x == 0 && threadIdx.x < 7) {
+    smChannels[threadIdx.x].signal();
+    smChannels[threadIdx.x].wait();
+  }
+  deviceSyncer.sync(gridDim.x);
+}
+
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
     allgather6(void* sendbuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, size_t rank,
@@ -34,6 +49,7 @@ __global__ void __launch_bounds__(1024, 1)
     smChans[threadIdx.x / WARP_SIZE].wait();
   }
   __syncthreads();
+  world_barrier(smChannels);
   const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
   const size_t bytes = bytesPerGPU * nPeer;
   size_t unitBytesPerThread;
@@ -98,6 +114,7 @@ __global__ void __launch_bounds__(1024, 1)
       }
     }
   }
+  world_barrier(smChannels);
 }
 
 template <bool IsOutOfPlace, typename T>
