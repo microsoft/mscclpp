@@ -164,7 +164,7 @@ __global__ void __launch_bounds__(1024, 1)
     for (int index = 0; index < nPeers; index++) {
       const int remoteRank = index < rank ? index : index + 1;
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
-      uint2 val = dstPkt[idx].read(flag);
+      uint2 val = dstPkt[idx].read(flag, -1);
       data = add_vectors<T>(val, data);
     }
     data = add_vectors<T>(data, src[idx]);
@@ -180,7 +180,7 @@ __global__ void __launch_bounds__(1024, 1)
   const int dstOffset = remoteRank * nPktsPerRank;
   uint2* result = (uint2*)((char*)resultBuff + remoteRank * nelemsPerRank * sizeof(int));
   for (int idx = threadIdx.x + localBlockIdx * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * nBlocksPerPeer) {
-    uint2 data = dstPkt[idx + dstOffset].read(flag);
+    uint2 data = dstPkt[idx + dstOffset].read(flag, -1);
     result[idx].x = data.x;
     result[idx].y = data.y;
   }
@@ -310,7 +310,7 @@ __global__ void __launch_bounds__(1024, 1)
     for (int index = 0; index < nPeers; index++) {
       const int remoteRank = index < rank ? index : index + 1;
       mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)scratchBuff + remoteRank * nPktsPerRank;
-      uint32_t val = dstPkt[idx].read(flag);
+      uint32_t val = dstPkt[idx].read(flag, -1);
       data = add_vectors<T>(val, data);
     }
     data = add_vectors<T>(data, src[idx]);
@@ -329,13 +329,13 @@ __global__ void __launch_bounds__(1024, 1)
   const int dstOffset = remoteRank * nPktsPerRank;
   uint32_t* result = (uint32_t*)((char*)resultBuff + remoteRank * nelemsPerRank * sizeof(int));
   for (int idx = threadIdx.x + localBlockIdx * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * nBlocksPerPeer) {
-    uint32_t data = dstPkt[idx + dstOffset].read(flag);
+    uint32_t data = dstPkt[idx + dstOffset].read(flag, -1);
     result[idx] = data;
   }
 }
 
 template <typename T>
-__global__ void __launch_bounds__(1024, 1)
+__global__ void __launch_bounds__(512, 1)
     allreduce8(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
                mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, int rank, int nRanksPerNode, int worldSize,
                size_t nelems) {
