@@ -29,9 +29,9 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t chanOffset = nPeer * blockIdx.x;
   auto smChans = smChannels + chanOffset;
 
-  if (wid < nPeer && lid == 0) {
-    smChans[wid].relaxedSignal();
-    smChans[wid].wait();
+  if (threadIdx.x / WARP_SIZE < nPeer && lid == 0) {
+    smChans[threadIdx.x / WARP_SIZE].signal();
+    smChans[threadIdx.x / WARP_SIZE].wait();
   }
   __syncthreads();
   const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
