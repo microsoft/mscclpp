@@ -29,7 +29,7 @@ __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
   }
 }
 
-__global__ void alltoall0(int rank, size_t nElements) {
+__global__ void __launch_bounds__(1024) alltoall0(int rank, size_t nElements) {
   int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[blockIdx.x];
   if (threadIdx.x == 0) {
@@ -44,7 +44,7 @@ __global__ void alltoall0(int rank, size_t nElements) {
   }
 }
 
-__global__ void alltoall1(int rank, int nRanksPerNode, size_t nElements) {
+__global__ void __launch_bounds__(1024) alltoall1(int rank, int nRanksPerNode, size_t nElements) {
   localAlltoall(rank, nRanksPerNode, nElements);
 }
 

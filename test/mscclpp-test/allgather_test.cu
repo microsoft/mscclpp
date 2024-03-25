@@ -27,7 +27,7 @@ __constant__ DeviceHandle<mscclpp::SmChannel> constSmChans[512];
 __constant__ DeviceHandle<mscclpp::SmChannel> constSmOutOfPlaceChans[16];
 __device__ uint64_t globalFlag;
 
-__global__ void allgather0(int rank, size_t nelemsPerGPU) {
+__global__ void __launch_bounds__(1024) allgather0(int rank, size_t nelemsPerGPU) {
   int warpId = threadIdx.x / WARP_SIZE;
 
   // Each warp is responsible for one of the remote ranks
@@ -124,7 +124,7 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunk
   constSmChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
 
-__global__ void allgather1(int rank, int nRanksPerNode, size_t nelemsPerGPU) {
+__global__ void __launch_bounds__(1024) allgather1(int rank, int nRanksPerNode, size_t nelemsPerGPU) {
   int warpId = threadIdx.x / WARP_SIZE;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
 
@@ -135,7 +135,7 @@ __global__ void allgather1(int rank, int nRanksPerNode, size_t nelemsPerGPU) {
                  nelemsPerGPU * sizeof(int));
 }
 
-__global__ void allgather2(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
+__global__ void __launch_bounds__(1024) allgather2(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
   int warpId = threadIdx.x / WARP_SIZE;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
 
@@ -210,7 +210,7 @@ __global__ void allgather2(int rank, int worldSize, int nRanksPerNode, size_t ne
   }
 }
 
-__global__ void allgather3() {
+__global__ void __launch_bounds__(1024) allgather3() {
   int warpId = threadIdx.x / WARP_SIZE;
 
   // Each warp is responsible for one of the remote ranks
@@ -232,7 +232,7 @@ __global__ void allgather3() {
   }
 }
 
-__global__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
+__global__ void __launch_bounds__(1024) allgather4(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
   // Step 1: each node does a local allgather and concurrently,
