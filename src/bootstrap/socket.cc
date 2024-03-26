@@ -390,7 +390,7 @@ Socket::Socket(const SocketAddress* addr, uint64_t magic, enum SocketType type, 
 
 Socket::~Socket() { close(); }
 
-void Socket::listen() {
+void Socket::bind() {
   if (fd_ == -1) {
     throw Error("file descriptor is -1", ErrorCode::InvalidUsage);
   }
@@ -433,7 +433,11 @@ void Socket::listen() {
   if (::getsockname(fd_, &addr_.sa, &size) != 0) {
     throw SysError("getsockname failed", errno);
   }
+  state_ = SocketStateBound;
+}
 
+void Socket::bindAndListen() {
+  bind();
 #ifdef ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
   TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Listening on socket %s", SocketToString(&addr_, line));
