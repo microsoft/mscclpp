@@ -51,6 +51,7 @@ TEST(FifoTest, Fifo) {
   uint64_t flushCnt = 0;
   mscclpp::Timer timer(3);
   for (uint64_t i = 0; i < ITER; ++i) {
+    trigger = hostFifo.poll();
     while (trigger.fst == 0 || trigger.snd == 0) {
       trigger = hostFifo.poll();
 
@@ -66,7 +67,6 @@ TEST(FifoTest, Fifo) {
     if ((++flushCnt % hostFifo.size()) == 0) {
       hostFifo.flushTail();
     }
-    trigger.fst = 0;
     spin = 0;
   }
   hostFifo.flushTail(true);
