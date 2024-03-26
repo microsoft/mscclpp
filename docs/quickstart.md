@@ -11,11 +11,11 @@
     * NVIDIA A100 GPUs + CUDA >= 11.8
     * NVIDIA H100 GPUs + CUDA >= 12.0
     * AMD MI250X GPUs + ROCm >= 5.7
-    * AMD MI300X GPUs + ROCm >= 5.7
+    * AMD MI300X GPUs + ROCm >= 6.0
 * OS: tested over Ubuntu 18.04 and 20.04
 * Libraries: [libnuma](https://github.com/numactl/numactl), MPI (optional)
 * Others
-    * `nvidia_peermem` driver should be loaded on all nodes. Check it via:
+    * For NVIDIA platforms, `nvidia_peermem` driver should be loaded on all nodes. Check it via:
         ```
         lsmod | grep nvidia_peermem
         ```
@@ -59,7 +59,10 @@ $ sudo make install/fast
 Python 3.8 or later is required.
 
 ```bash
+# For NVIDIA platforms
 $ python -m pip install .
+# For AMD platforms
+$ CXX=/path/to/hipcc python -m pip install .
 ```
 
 ## Docker Images
@@ -67,7 +70,7 @@ $ python -m pip install .
 Our base image installs all prerequisites for MSCCL++.
 
 ```bash
-$ docker pull ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+$ docker pull ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.3
 ```
 
 See all available images [here](https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp).
@@ -101,8 +104,8 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.
 [Install the MSCCL++ Python package](https://github.com/microsoft/mscclpp/blob/chhwang/docs/docs/quickstart.md#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
 
 ```bash
-# Choose either `requirements_cu11.txt` or `requirements_cu12.txt` according to your CUDA version.
-$ python3 -m pip install -r ./python/requirements_cu12.txt
+# Choose `requirements_*.txt` according to your CUDA/ROCm version.
+$ python3 -m pip install -r ./python/requirements_cuda12.txt
 $ mpirun -tag-output -np 8 python3 ./python/benchmark/allreduce_bench.py
 ```
 
