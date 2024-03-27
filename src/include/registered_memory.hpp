@@ -4,10 +4,9 @@
 #ifndef MSCCLPP_REGISTERED_MEMORY_HPP_
 #define MSCCLPP_REGISTERED_MEMORY_HPP_
 
-#include <cuda_runtime.h>
-
 #include <mscclpp/core.hpp>
 #include <mscclpp/errors.hpp>
+#include <mscclpp/gpu.hpp>
 
 #include "communicator.hpp"
 #include "ib.hpp"

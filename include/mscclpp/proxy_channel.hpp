@@ -4,10 +4,10 @@
 #ifndef MSCCLPP_PROXY_CHANNEL_HPP_
 #define MSCCLPP_PROXY_CHANNEL_HPP_
 
-#include <mscclpp/core.hpp>
-#include <mscclpp/proxy.hpp>
-#include <mscclpp/proxy_channel_device.hpp>
-#include <mscclpp/semaphore.hpp>
+#include "core.hpp"
+#include "proxy.hpp"
+#include "proxy_channel_device.hpp"
+#include "semaphore.hpp"
 
 namespace mscclpp {
 
@@ -26,7 +26,7 @@ class BaseProxyService {
 class ProxyService : public BaseProxyService {
  public:
   /// Constructor.
-  ProxyService();
+  ProxyService(size_t fifoSize = DEFAULT_FIFO_SIZE);
 
   /// Build and add a semaphore to the proxy service.
   /// @param connection The connection associated with the semaphore.

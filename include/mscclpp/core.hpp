@@ -5,17 +5,21 @@
 #define MSCCLPP_CORE_HPP_
 
 #define MSCCLPP_MAJOR 0
-#define MSCCLPP_MINOR 3
-#define MSCCLPP_PATCH 0
+#define MSCCLPP_MINOR 4
+#define MSCCLPP_PATCH 2
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
 #include <array>
 #include <bitset>
 #include <future>
 #include <memory>
-#include <mscclpp/errors.hpp>
+#include <mscclpp/gpu.hpp>
+#include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/nvls_device.hpp>
 #include <string>
 #include <vector>
+
+#include "errors.hpp"
 
 namespace mscclpp {
 
@@ -39,6 +43,7 @@ class Bootstrap {
   virtual void allGather(void* allData, int size) = 0;
   virtual void barrier() = 0;
 
+  void groupBarrier(const std::vector<int>& ranks);
   void send(const std::vector<char>& data, int peer, int tag);
   void recv(std::vector<char>& data, int peer, int tag);
 };
@@ -46,6 +51,10 @@ class Bootstrap {
 /// A native implementation of the bootstrap using TCP sockets.
 class TcpBootstrap : public Bootstrap {
  public:
+  /// Create a random unique ID.
+  /// @return The created unique ID.
+  static UniqueId createUniqueId();
+
   /// Constructor.
   /// @param rank The rank of the process.
   /// @param nRanks The total number of ranks.
@@ -53,10 +62,6 @@ class TcpBootstrap : public Bootstrap {
 
   /// Destructor.
   ~TcpBootstrap();
-
-  /// Create a random unique ID and store it in the @ref TcpBootstrap.
-  /// @return The created unique ID.
-  UniqueId createUniqueId();
 
   /// Return the unique ID stored in the @ref TcpBootstrap.
   /// @return The unique ID stored in the @ref TcpBootstrap.
@@ -114,7 +119,7 @@ class TcpBootstrap : public Bootstrap {
 
  private:
   // The interal implementation.
-  struct Impl;
+  class Impl;
 
   // Pointer to the internal implementation.
   std::unique_ptr<Impl> pimpl_;
@@ -124,6 +129,7 @@ class TcpBootstrap : public Bootstrap {
 enum class Transport {
   Unknown,       // Unknown transport type.
   CudaIpc,       // CUDA IPC transport type.
+  Nvls,          // NVLS transport type.
   IB0,           // InfiniBand device 0 transport type.
   IB1,           // InfiniBand device 1 transport type.
   IB2,           // InfiniBand device 2 transport type.
@@ -135,10 +141,11 @@ enum class Transport {
   NumTransports  // The number of transports.
 };
 
-const std::string TransportNames[] = {"UNK", "IPC", "IB0", "IB1", "IB2", "IB3", "IB4", "IB5", "IB6", "IB7", "NUM"};
+const std::string TransportNames[] = {"UNK", "IPC", "NVLS", "IB0", "IB1", "IB2",
+                                      "IB3", "IB4", "IB5",  "IB6", "IB7", "NUM"};
 
 namespace detail {
-const size_t TransportFlagsSize = 10;
+const size_t TransportFlagsSize = 11;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
               "TransportFlagsSize must match the number of transports");
 /// Bitset for storing transport flags.
@@ -400,6 +407,8 @@ class Endpoint {
 /// Represents a connection between two processes.
 class Connection {
  public:
+  virtual ~Connection() = default;
+
   /// Write data from a source @ref RegisteredMemory to a destination @ref RegisteredMemory.
   ///
   /// @param dst The destination @ref RegisteredMemory.
@@ -442,18 +451,58 @@ class Connection {
   static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
 };
 
+class NvlsConnection {
+ public:
+  NvlsConnection(size_t bufferSize, int numDevices);
+  NvlsConnection(const std::vector<char>& data);
+  NvlsConnection() = delete;
+  std::vector<char> serialize();
+
+  // Everyone needs to synchronize after creating a NVLS connection before adding devices
+  void addDevice();
+  void addDevice(int cudaDeviceId);
+
+  struct DeviceMulticastPointer {
+   private:
+    std::shared_ptr<PhysicalCudaMemory<char>> deviceMem_;
+    std::shared_ptr<char> mcPtr_;
+    size_t bufferSize_;
+
+   public:
+    using DeviceHandle = DeviceMulticastPointerDeviceHandle;
+    DeviceMulticastPointer(std::shared_ptr<PhysicalCudaMemory<char>> deviceMem, std::shared_ptr<char> mcPtr,
+                           size_t bufferSize)
+        : deviceMem_(deviceMem), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
+    DeviceHandle deviceHandle();
+    char* getDevicePtr();
+
+    friend class NvlsConnection;
+  };
+
+  std::shared_ptr<DeviceMulticastPointer> allocateAndBindCuda(size_t size);
+  size_t getMultiCastMinGranularity();
+
+ private:
+  class Impl;
+  std::shared_ptr<Impl> pimpl_;
+};
+
 /// Used to configure an endpoint.
 struct EndpointConfig {
   static const int DefaultMaxCqSize = 1024;
   static const int DefaultMaxCqPollNum = 1;
   static const int DefaultMaxSendWr = 8192;
   static const int DefaultMaxWrPerSend = 64;
+  // the recommended buffer size for NVLS, returned by cuMulticastGetGranularity
+  static const int DefaultNvlsBufferSize = (1 << 29);
 
   Transport transport;
   int ibMaxCqSize = DefaultMaxCqSize;
   int ibMaxCqPollNum = DefaultMaxCqPollNum;
   int ibMaxSendWr = DefaultMaxSendWr;
   int ibMaxWrPerSend = DefaultMaxWrPerSend;
+
+  size_t nvlsBufferSize = DefaultNvlsBufferSize;
 
   /// Default constructor. Sets transport to Transport::Unknown.
   EndpointConfig() : transport(Transport::Unknown) {}
@@ -462,6 +511,11 @@ struct EndpointConfig {
   ///
   /// @param transport The transport to use.
   EndpointConfig(Transport transport) : transport(transport) {}
+
+  /// Constructor for NVLS explicitly
+  /// @param transport must be either NvlsRoot or NvlsNonRoot
+  /// @param nvlsBufferSize is the buffer to be alloced on each device
+  EndpointConfig(Transport transport, size_t nvlsBufferSize) : transport(transport), nvlsBufferSize(nvlsBufferSize) {}
 };
 
 /// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
@@ -524,6 +578,8 @@ class Context {
 
 /// A base class for objects that can be set up during @ref Communicator::setup().
 struct Setuppable {
+  virtual ~Setuppable() = default;
+
   /// Called inside @ref Communicator::setup() before any call to @ref endSetup() of any @ref Setuppable object that is
   /// being set up within the same @ref Communicator::setup() call.
   ///
@@ -642,6 +698,16 @@ class Communicator {
   /// @return NonblockingFuture<NonblockingFuture<std::shared_ptr<Connection>>> A non-blocking future of shared pointer
   /// to the connection.
   NonblockingFuture<std::shared_ptr<Connection>> connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig);
+
+  /// Connect to NVLS on setup.
+  ///
+  /// This function used to connect to NVLS on setup. NVLS collective using multicast operations to send/recv data.
+  /// Here we need to put all involved ranks into the collective group.
+  ///
+  /// @param allRanks The ranks of all processes involved in the collective.
+  /// @param config The configuration for the local endpoint.
+  /// @return std::shared_ptr<NvlsConnection> A shared pointer to the NVLS connection.
+  std::shared_ptr<NvlsConnection> connctNvlsCollective(std::vector<int> allRanks, EndpointConfig config);
 
   /// Get the remote rank a connection is connected to.
   ///

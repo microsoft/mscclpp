@@ -6,7 +6,8 @@
 
 #include <functional>
 #include <memory>
-#include <mscclpp/fifo.hpp>
+
+#include "fifo.hpp"
 
 namespace mscclpp {
 
@@ -21,8 +22,8 @@ using ProxyHandler = std::function<ProxyHandlerResult(ProxyTrigger)>;
 
 class Proxy {
  public:
-  Proxy(ProxyHandler handler, std::function<void()> threadInit);
-  Proxy(ProxyHandler handler);
+  Proxy(ProxyHandler handler, std::function<void()> threadInit, size_t fifoSize = DEFAULT_FIFO_SIZE);
+  Proxy(ProxyHandler handler, size_t fifoSize = DEFAULT_FIFO_SIZE);
   ~Proxy();
 
   void start();

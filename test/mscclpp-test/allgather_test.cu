@@ -1,13 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <cuda_runtime.h>
-
 #include <algorithm>
-#include <mscclpp/concurrency.hpp>
+#include <mscclpp/concurrency_device.hpp>
 #include <string>
 
 #include "common.hpp"
+
+#if defined(__HIP_PLATFORM_AMD__)
+#define WARP_SIZE 64
+#else
+#define WARP_SIZE 32
+#endif
 
 namespace {
 auto isUsingHostOffload = [](int kernelNum) { return kernelNum == 3; };
@@ -19,10 +23,12 @@ using DeviceHandle = mscclpp::DeviceHandle<T>;
 __constant__ DeviceHandle<mscclpp::SimpleProxyChannel> constProxyChans[16];
 __constant__ DeviceHandle<mscclpp::ProxyChannel> constRawProxyChan[16];
 
-__constant__ DeviceHandle<mscclpp::SmChannel> constSmChans[8];
+__constant__ DeviceHandle<mscclpp::SmChannel> constSmChans[512];
+__constant__ DeviceHandle<mscclpp::SmChannel> constSmOutOfPlaceChans[16];
+__device__ uint64_t globalFlag;
 
-__global__ void allgather0(int rank, size_t nelemsPerGPU) {
-  int warpId = threadIdx.x / 32;
+__global__ void __launch_bounds__(1024) allgather0(int rank, size_t nelemsPerGPU) {
+  int warpId = threadIdx.x / WARP_SIZE;
 
   // Each warp is responsible for one of the remote ranks
   DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[warpId];
@@ -31,14 +37,16 @@ __global__ void allgather0(int rank, size_t nelemsPerGPU) {
 
   // this thread's role is a sender role
   // put your data asynchronously
-  if (threadIdx.x % 32 == 0) proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+  if (threadIdx.x % WARP_SIZE == 0) {
+    proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+  }
   // make sure everyone is put their data before some thread randomly blocks everyone else in signal
   __syncthreads();
   // push with flag and sync to make sure the data is received
-  if (threadIdx.x % 32 == 0) proxyChan.flush();
+  if (threadIdx.x % WARP_SIZE == 0) proxyChan.flush();
 
   // this thread's role is a receiver role. wait on the semaphore to make sure the data is ready
-  if (threadIdx.x % 32 == 0) proxyChan.wait();
+  if (threadIdx.x % WARP_SIZE == 0) proxyChan.wait();
 }
 
 __device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, int rank, int nRanksPerNode,
@@ -52,14 +60,19 @@ __device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyCh
   for (int i = 1; i < nRanksPerNode; i++) {
     if ((remoteRank % nRanksPerNode) == ((rank + i) % nRanksPerNode)) {
       // put your data to GPU (rank+i) % nRanksPerNode and signal in one call
-      if (flushAfterSignal && (threadIdx.x % 32) == 0) proxyChan.putWithSignalAndFlush(offset, size);
-      if (!flushAfterSignal && (threadIdx.x % 32) == 0) proxyChan.putWithSignal(offset, size);
+      if (flushAfterSignal && (threadIdx.x % WARP_SIZE) == 0) proxyChan.putWithSignalAndFlush(offset, size);
+      if (!flushAfterSignal && (threadIdx.x % WARP_SIZE) == 0) proxyChan.putWithSignal(offset, size);
     }
     // wait for the data from GPU (rank-i) % nRanksPerNode to arrive
     if ((remoteRank % nRanksPerNode) == ((rank - i + nRanksPerNode) % nRanksPerNode)) {
-      if ((threadIdx.x % 32) == 0) proxyChan.wait();
+      if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.wait();
     }
-    asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nRanksPerNode - 1) * 32) : "memory");
+#if defined(__HIP_PLATFORM_AMD__)
+    // NOTE: we actually need a group barrier here for better performance, but __syncthreads() is still correct.
+    __syncthreads();
+#else
+    asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nRanksPerNode - 1) * WARP_SIZE) : "memory");
+#endif
   }
 }
 
@@ -111,8 +124,8 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunk
   constSmChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
 
-__global__ void allgather1(int rank, int nRanksPerNode, size_t nelemsPerGPU) {
-  int warpId = threadIdx.x / 32;
+__global__ void __launch_bounds__(1024) allgather1(int rank, int nRanksPerNode, size_t nelemsPerGPU) {
+  int warpId = threadIdx.x / WARP_SIZE;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
 
   // Each warp is responsible for one of the remote ranks
@@ -122,8 +135,8 @@ __global__ void allgather1(int rank, int nRanksPerNode, size_t nelemsPerGPU) {
                  nelemsPerGPU * sizeof(int));
 }
 
-__global__ void allgather2(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
-  int warpId = threadIdx.x / 32;
+__global__ void __launch_bounds__(1024) allgather2(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
+  int warpId = threadIdx.x / WARP_SIZE;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
 
   // Each warp is responsible for one of the remote ranks
@@ -150,10 +163,10 @@ __global__ void allgather2(int rank, int worldSize, int nRanksPerNode, size_t ne
   // cross-node exchange
   if (remoteRank % nRanksPerNode == rank % nRanksPerNode) {
     // opposite side
-    if ((threadIdx.x % 32) == 0)
+    if ((threadIdx.x % WARP_SIZE) == 0)
       proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
                               (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
-    if ((threadIdx.x % 32) == 0) proxyChan.wait();
+    if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.wait();
   }
 
   // sync here to make sure IB flush dose not block the CUDA IPC traffic
@@ -161,7 +174,7 @@ __global__ void allgather2(int rank, int worldSize, int nRanksPerNode, size_t ne
   // need to flush ib channel here to avoid cq overflow. since we won't change send suffer after send, we don't need
   // to flush for IPC channel.
   if (remoteRank % nRanksPerNode == rank % nRanksPerNode) {
-    if ((threadIdx.x % 32) == 0) proxyChan.flush();
+    if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.flush();
   }
   __syncthreads();
 
@@ -176,15 +189,15 @@ __global__ void allgather2(int rank, int worldSize, int nRanksPerNode, size_t ne
   // cross-node exchange
   if (remoteRank % nRanksPerNode == rank % nRanksPerNode) {
     // opposite side
-    if ((threadIdx.x % 32) == 0)
+    if ((threadIdx.x % WARP_SIZE) == 0)
       proxyChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
                               nelemsPerGPU / pipelineSize * sizeof(int));
-    if ((threadIdx.x % 32) == 0) proxyChan.wait();
+    if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.wait();
   }
 
   __syncthreads();
   if (remoteRank % nRanksPerNode == rank % nRanksPerNode) {
-    if ((threadIdx.x % 32) == 0) proxyChan.flush();
+    if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.flush();
   }
   __syncthreads();
 
@@ -197,8 +210,8 @@ __global__ void allgather2(int rank, int worldSize, int nRanksPerNode, size_t ne
   }
 }
 
-__global__ void allgather3() {
-  int warpId = threadIdx.x / 32;
+__global__ void __launch_bounds__(1024) allgather3() {
+  int warpId = threadIdx.x / WARP_SIZE;
 
   // Each warp is responsible for one of the remote ranks
   DeviceHandle<mscclpp::ProxyChannel> proxyChan = constRawProxyChan[warpId];
@@ -214,12 +227,12 @@ __global__ void allgather3() {
     // wait for the work to be done in cpu side
     proxyChan.fifo_.sync(currentFifoHead);
   }
-  if (tid % 32 == 0) {
+  if (tid % WARP_SIZE == 0) {
     proxyChan.wait();
   }
 }
 
-__global__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
+__global__ void __launch_bounds__(1024) allgather4(int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU) {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
   // Step 1: each node does a local allgather and concurrently,
@@ -275,6 +288,215 @@ __global__ void allgather4(int rank, int worldSize, int nRanksPerNode, size_t ne
   // Step 3
   localAllGatherSm(rank, nRanksPerNode, startRankIndexInPeerNode, step1Bytes, rankChunkSize, step2Bytes,
                    nBlocksForLocalAllGather);
+}
+
+__global__ void __launch_bounds__(1024, 1)
+    allgather5(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
+  const size_t nBlock = gridDim.x;
+  if (blockIdx.x >= nBlock) return;
+
+  const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+  const size_t lid = tid % WARP_SIZE;
+  const size_t wid = tid / WARP_SIZE;
+
+  const size_t nThread = blockDim.x * nBlock;
+  const size_t nWarp = nThread / WARP_SIZE;
+  const size_t nPeer = nRanksPerNode - 1;
+  const size_t chanOffset = nPeer * blockIdx.x;
+  auto smChans = constSmChans + chanOffset;
+
+  if (wid < nPeer && lid == 0) {
+    smChans[wid].relaxedSignal();
+    smChans[wid].wait();
+  }
+  __syncthreads();
+  const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
+  const size_t bytes = bytesPerGPU * nPeer;
+  size_t unitBytesPerThread;
+  if (bytes >= nThread * 64) {
+    unitBytesPerThread = 64;
+  } else {
+    unitBytesPerThread = 16;
+  }
+  const size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
+  const size_t unitBytes = unitBytesPerWarp * nWarp;
+  const size_t nLoop = bytes / unitBytes;
+
+  if (nLoop > 0) {
+    // First loop unrolling
+    const size_t peerIdx = wid % nPeer;
+    const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
+    const size_t offset = bytesPerGPU * remoteRankLocalIndex + (wid / nPeer) * unitBytesPerWarp;
+    smChans[peerIdx].get<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+  }
+
+  for (size_t i = 1; i < nLoop; ++i) {
+    const size_t gWid = wid + i * nWarp;
+    const size_t peerIdx = gWid % nPeer;
+    const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
+    const size_t offset = bytesPerGPU * remoteRankLocalIndex + (gWid / nPeer) * unitBytesPerWarp;
+    smChans[peerIdx].get<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+  }
+
+  if (bytes % unitBytes > 0) {
+    const size_t gWid = wid + nLoop * nWarp;
+    const size_t peerIdx = gWid % nPeer;
+    const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
+    const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
+    const size_t offset = bytesPerGPU * remoteRankLocalIndex + offsetWithinRank;
+    const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
+                                   ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
+                                   : unitBytesPerWarp;
+    if (remainBytes > 0) {
+      smChans[peerIdx].get<16, true>(offset, remainBytes, lid, WARP_SIZE);
+    }
+  }
+}
+
+__global__ void __launch_bounds__(1024, 1)
+    allgather6(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
+  const size_t nBlock = gridDim.x;
+  if (blockIdx.x >= nBlock) return;
+
+  const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+  const size_t lid = tid % WARP_SIZE;
+  const size_t wid = tid / WARP_SIZE;
+
+  const size_t nThread = blockDim.x * nBlock;
+  const size_t nWarp = nThread / WARP_SIZE;
+  const size_t nPeer = nRanksPerNode - 1;
+  const size_t chanOffset = nPeer * blockIdx.x;
+  auto smChans = constSmChans + chanOffset;
+
+  if (wid < nPeer && lid == 0) {
+    smChans[wid].relaxedSignal();
+    smChans[wid].wait();
+  }
+  __syncthreads();
+  const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
+  const size_t bytes = bytesPerGPU * nPeer;
+  size_t unitBytesPerThread;
+  if (bytes >= nThread * 64) {
+    unitBytesPerThread = 64;
+  } else {
+    unitBytesPerThread = 16;
+  }
+  const size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
+  const size_t unitBytes = unitBytesPerWarp * nWarp;
+  const size_t nLoop = bytes / unitBytes;
+
+  if (nLoop > 0) {
+    // First loop unrolling
+    const size_t peerIdx = wid % nPeer;
+    const size_t offset = bytesPerGPU * rank + (wid / nPeer) * unitBytesPerWarp;
+    smChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+  }
+
+  for (size_t i = 1; i < nLoop; ++i) {
+    const size_t gWid = wid + i * nWarp;
+    const size_t peerIdx = gWid % nPeer;
+    const size_t offset = bytesPerGPU * rank + (gWid / nPeer) * unitBytesPerWarp;
+    smChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+  }
+
+  if (bytes % unitBytes > 0) {
+    const size_t gWid = wid + nLoop * nWarp;
+    const size_t peerIdx = gWid % nPeer;
+    const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
+    const size_t offset = bytesPerGPU * rank + offsetWithinRank;
+    const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
+                                   ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
+                                   : unitBytesPerWarp;
+    if (remainBytes > 0) {
+      smChans[peerIdx].put<16, true>(offset, remainBytes, lid, WARP_SIZE);
+    }
+  }
+}
+
+__global__ void __launch_bounds__(1024, 1)
+    allgather7(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
+  const size_t nBlock = gridDim.x;
+  if (blockIdx.x >= nBlock) return;
+
+  const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+  const size_t lid = tid % WARP_SIZE;
+  const size_t wid = tid / WARP_SIZE;
+
+  const size_t nThread = blockDim.x * nBlock;
+  const size_t nWarp = nThread / WARP_SIZE;
+  const size_t nPeer = nRanksPerNode - 1;
+  auto smChans = constSmOutOfPlaceChans;
+
+  const uint32_t flag = (uint32_t)globalFlag;
+  const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
+  const size_t bytes = bytesPerGPU * nPeer;
+  size_t unitBytesPerThread = 8;
+  const size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
+  const size_t unitBytes = unitBytesPerWarp * nWarp;
+  const size_t nLoop = bytes / unitBytes;
+
+  // double buffering
+  const size_t scratchOffset = (flag & 1) ? 0 : bytesPerGPU * nRanksPerNode * 2;
+
+  if (nLoop > 0) {
+    // First loop unrolling
+    const size_t peerIdx = wid % nPeer;
+    const size_t offset = bytesPerGPU * rank + (wid / nPeer) * unitBytesPerWarp;
+    smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
+  }
+
+  if (nLoop > 0) {
+    // First loop unrolling
+    const size_t peerIdx = wid % nPeer;
+    const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
+    const size_t offset = bytesPerGPU * remoteRankLocalIndex + (wid / nPeer) * unitBytesPerWarp;
+    smChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
+  }
+
+  for (size_t i = 1; i < nLoop; ++i) {
+    const size_t gWid = wid + i * nWarp;
+    const size_t peerIdx = gWid % nPeer;
+    const size_t offset = bytesPerGPU * rank + (gWid / nPeer) * unitBytesPerWarp;
+    smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
+  }
+
+  for (size_t i = 1; i < nLoop; ++i) {
+    const size_t gWid = wid + i * nWarp;
+    const size_t peerIdx = gWid % nPeer;
+    const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
+    const size_t offset = bytesPerGPU * remoteRankLocalIndex + (gWid / nPeer) * unitBytesPerWarp;
+    smChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
+  }
+
+  if (bytes % unitBytes > 0) {
+    const size_t gWid = wid + nLoop * nWarp;
+    const size_t peerIdx = gWid % nPeer;
+    const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
+    const size_t offset = bytesPerGPU * rank + offsetWithinRank;
+    const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
+                                   ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
+                                   : unitBytesPerWarp;
+    if (remainBytes > 0) {
+      smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
+    }
+  }
+  if (bytes % unitBytes > 0) {
+    const size_t gWid = wid + nLoop * nWarp;
+    const size_t peerIdx = gWid % nPeer;
+    const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
+    const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
+    const size_t offset = bytesPerGPU * remoteRankLocalIndex + offsetWithinRank;
+    const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
+                                   ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
+                                   : unitBytesPerWarp;
+    if (remainBytes > 0) {
+      smChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
+    }
+  }
+
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    globalFlag += 1;
+  }
 }
 
 class AllGatherProxyService : public mscclpp::BaseProxyService {
@@ -376,9 +598,18 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   if (kernelNum == 4) {
     nBlocks = 21;
     nThreads = 1024;
+  } else if (kernelNum == 5) {
+    nBlocks = 24;
+    nThreads = 1024;
+  } else if (kernelNum == 6) {
+    nBlocks = 24;
+    nThreads = 1024;
+  } else if (kernelNum == 7) {
+    nBlocks = 4;
+    nThreads = 896;
   } else {
     nBlocks = 1;
-    nThreads = 32 * (worldSize - 1);
+    nThreads = WARP_SIZE * (worldSize - 1);
   }
   if (kernelNum == 0) {
     allgather0<<<nBlocks, nThreads, 0, stream>>>(rank, paramCount_);
@@ -390,11 +621,17 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     allgather3<<<nBlocks, nThreads, 0, stream>>>();
   } else if (kernelNum == 4) {
     allgather4<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
+  } else if (kernelNum == 5) {
+    allgather5<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
+  } else if (kernelNum == 6) {
+    allgather6<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
+  } else if (kernelNum == 7) {
+    allgather7<<<nBlocks, nThreads, 0, stream>>>(rank, worldSize, nRanksPerNode, paramCount_);
   }
 }
 
 void AllGatherTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
-  if (sendBuff.size() != 1) std::unexpected();
+  if (sendBuff.size() != 1) std::runtime_error("unexpected error");
   int rank = args.rank;
   std::vector<int> dataHost(std::max(sendCount_, recvCount_), 0);
   for (size_t i = 0; i < recvCount_; i++) {
@@ -442,7 +679,10 @@ std::vector<KernelRestriction> AllGatherTestColl::getKernelRestrictions() {
           {1, "allgather1", false, 1, 4 * worldSize_},
           {2, "allgather2", true, 3, 4 * worldSize_},
           {3, "allgather3", true, 1, 4 * worldSize_},
-          {4, "allgather4", true, 3, 16 * worldSize_ /*use ulong2 to transfer data*/}};
+          {4, "allgather4", true, 3, 16 * worldSize_ /*use ulong2 to transfer data*/},
+          {5, "allgather5", false, 1, 16 * worldSize_ /*use ulong2 to transfer data*/},
+          {6, "allgather6", false, 1, 16 * worldSize_ /*use ulong2 to transfer data*/},
+          {7, "allgather7", false, 1, 16 * worldSize_ /*use ulong2 to transfer data*/}};
 }
 
 class AllGatherTestEngine : public BaseTestEngine {
@@ -463,14 +703,22 @@ class AllGatherTestEngine : public BaseTestEngine {
 
   std::shared_ptr<int> sendBuff_;
   std::shared_ptr<int[]> expectedBuff_;
+  std::shared_ptr<mscclpp::LLPacket> scratchPacketBuff_;
   std::vector<mscclpp::SmChannel> smChannels_;
+  std::vector<mscclpp::SmChannel> smOutOfPlaceChannels_;
 };
 
 AllGatherTestEngine::AllGatherTestEngine(const TestArgs& args) : BaseTestEngine(args, "allgather") {}
 
 void AllGatherTestEngine::allocateBuffer() {
-  sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
+  sendBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
+  if (args_.kernelNum == 7) {
+    const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
+    // 2x for double-buffering, scratchBuff used to store original data and reduced results
+    const size_t scratchBuffNelem = nPacket * 2 /*original data & reduced result */ * 2 /* double buffering*/;
+    scratchPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
+  }
 }
 
 void AllGatherTestEngine::setupConnections() {
@@ -478,20 +726,35 @@ void AllGatherTestEngine::setupConnections() {
   if (!isUsingHostOffload(args_.kernelNum)) {
     setupMeshConnections(devProxyChannels, sendBuff_.get(), args_.maxBytes);
     if (devProxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
-      std::unexpected();
+      std::runtime_error("unexpected error");
     }
     CUDATHROW(cudaMemcpyToSymbol(constProxyChans, devProxyChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * devProxyChannels.size()));
 
-    setupMeshConnections(smChannels_, sendBuff_.get(), args_.maxBytes);
+    setupMeshConnections(smChannels_, sendBuff_.get(), args_.maxBytes, nullptr, 0, ChannelSemantic::PUT, 64);
     std::vector<DeviceHandle<mscclpp::SmChannel>> smChannelHandles(smChannels_.size());
     if (smChannels_.size() > sizeof(constSmChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
-      std::unexpected();
+      std::runtime_error("unexpected error");
     }
     std::transform(smChannels_.begin(), smChannels_.end(), smChannelHandles.begin(),
                    [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
     CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannelHandles.data(),
                                  sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelHandles.size()));
+
+    if (args_.kernelNum == 7) {
+      const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
+      const size_t scratchPacketBuffBytes = nPacket * 2 * 2 * sizeof(mscclpp::LLPacket);
+      setupMeshConnections(smOutOfPlaceChannels_, sendBuff_.get(), args_.maxBytes, scratchPacketBuff_.get(),
+                           scratchPacketBuffBytes);
+      std::vector<DeviceHandle<mscclpp::SmChannel>> smOutOfPlaceChannelHandles(smOutOfPlaceChannels_.size());
+      if (smOutOfPlaceChannels_.size() > sizeof(constSmOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
+        std::runtime_error("unexpected error");
+      }
+      std::transform(smOutOfPlaceChannels_.begin(), smOutOfPlaceChannels_.end(), smOutOfPlaceChannelHandles.begin(),
+                     [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
+      CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceChans, smOutOfPlaceChannelHandles.data(),
+                                   sizeof(DeviceHandle<mscclpp::SmChannel>) * smOutOfPlaceChannelHandles.size()));
+    }
   } else {
     auto service = std::dynamic_pointer_cast<AllGatherProxyService>(chanService_);
     setupMeshConnections(devProxyChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,
@@ -508,7 +771,7 @@ void AllGatherTestEngine::setupConnections() {
                          });
     auto proxyChannels = service->proxyChannels();
     if (proxyChannels.size() > sizeof(constRawProxyChan) / sizeof(DeviceHandle<mscclpp::ProxyChannel>)) {
-      std::unexpected();
+      std::runtime_error("unexpected error");
     }
     CUDATHROW(cudaMemcpyToSymbol(constRawProxyChan, proxyChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::ProxyChannel>) * proxyChannels.size()));

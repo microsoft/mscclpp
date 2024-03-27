@@ -6,6 +6,7 @@ import os as _os
 from ._mscclpp import (
     Communicator,
     Connection,
+    EndpointConfig,
     Fifo,
     Host2DeviceSemaphore,
     Host2HostSemaphore,
@@ -19,9 +20,13 @@ from ._mscclpp import (
     Transport,
     TransportFlags,
     version,
+    is_nvls_supported,
 )
 
 __version__ = version()
+
+if _os.environ.get("MSCCLPP_HOME", None) is None:
+    _os.environ["MSCCLPP_HOME"] = _os.path.abspath(_os.path.dirname(__file__))
 
 
 def get_include():

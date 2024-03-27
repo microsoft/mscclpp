@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <cuda/atomic>
-#include <mscclpp/cuda_utils.hpp>
 #include <mscclpp/fifo.hpp>
+#include <mscclpp/gpu_utils.hpp>
 
 #include "api.h"
+#include "atomic.hpp"
 
 namespace mscclpp {
 
@@ -43,21 +43,20 @@ MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
   ProxyTrigger trigger;
   ProxyTrigger* ptr = &pimpl->triggers.get()[pimpl->hostTail % pimpl->size];
   // we are loading fst first. if fst is non-zero then snd is also valid
-  trigger.fst = cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{ptr->fst}.load(cuda::memory_order_acquire);
+  trigger.fst = atomicLoad(&(ptr->fst), memoryOrderAcquire);
   trigger.snd = ptr->snd;
   return trigger;
 }
 
 MSCCLPP_API_CPP void Fifo::pop() {
-  cuda::atomic_ref<uint64_t, cuda::thread_scope_system>{pimpl->triggers.get()[pimpl->hostTail % pimpl->size].fst}.store(
-      0, cuda::memory_order_release);
-
+  atomicStore(&(pimpl->triggers.get()[pimpl->hostTail % pimpl->size].fst), uint64_t{0}, memoryOrderRelease);
   (pimpl->hostTail)++;
 }
 
 MSCCLPP_API_CPP void Fifo::flushTail(bool sync) {
   // Flush the tail to device memory. This is either triggered every ProxyFlushPeriod to make sure that the fifo can
   // make progress even if there is no request mscclppSync. However, mscclppSync type is for flush request.
+  AvoidCudaGraphCaptureGuard cgcGuard;
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(pimpl->tailReplica.get(), &pimpl->hostTail, sizeof(uint64_t),
                                     cudaMemcpyHostToDevice, pimpl->stream));
   if (sync) {

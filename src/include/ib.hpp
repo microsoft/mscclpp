@@ -68,11 +68,11 @@ class IbQp {
   void stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
                         uint64_t dstOffset, bool signaled, unsigned int immData);
   void postSend();
-  void postRecv(uint64_t wrId);
   int pollCq();
 
   IbQpInfo& getInfo();
   const ibv_wc* getWc(int idx) const;
+  int getNumCqItems() const;
 
  private:
   struct WrInfo {
@@ -92,6 +92,8 @@ class IbQp {
   std::unique_ptr<ibv_send_wr[]> wrs;
   std::unique_ptr<ibv_sge[]> sges;
   int wrn;
+  int numSignaledPostedItems;
+  int numSignaledStagedItems;
 
   const int maxCqPollNum;
   const int maxWrPerSend;

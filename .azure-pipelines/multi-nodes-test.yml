@@ -10,9 +10,9 @@ jobs:
   strategy:
     matrix:
       cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda11.8
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2
   pool:
     name: mscclpp-it
   container:
@@ -25,12 +25,9 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
-        curl -L https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.tar.gz -o /tmp/cmake-3.26.4-linux-x86_64.tar.gz
-        tar xzf /tmp/cmake-3.26.4-linux-x86_64.tar.gz -C /tmp
         mkdir build && cd build
-        MPI_HOME=/usr/local/mpi /tmp/cmake-3.26.4-linux-x86_64/bin/cmake -DCMAKE_BUILD_TYPE=Release -DBYPASS_PEERMEM_CHECK=ON ..
+        cmake -DCMAKE_BUILD_TYPE=Release -DBYPASS_GPU_CHECK=ON -DUSE_CUDA=ON ..
         make -j
-        make pylib-copy
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: DownloadSecureFile@1
@@ -83,7 +80,7 @@ jobs:
         tail -f output/mscclit-000000 &
         CHILD_PID=$!
         parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mscclpp-test'
+        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test'
         kill $CHILD_PID
 
   - task: Bash@3
@@ -102,7 +99,7 @@ jobs:
         tail -f output/mscclit-000000 &
         CHILD_PID=$!
         parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh mp-ut'
+        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh mp-ut'
         kill $CHILD_PID
 
   - task: Bash@3
@@ -121,7 +118,26 @@ jobs:
         tail -f output/mscclit-000000 &
         CHILD_PID=$!
         parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/run_tests.sh pytests'
+        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh pytests'
+        kill $CHILD_PID
+
+  - task: Bash@3
+    name: RunMultiNodePythonBenchmark
+    displayName: Run multi-nodes python benchmark
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        rm -rf output/*
+        mkdir -p output
+        touch output/mscclit-000000
+        tail -f output/mscclit-000000 &
+        CHILD_PID=$!
+        parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark'
         kill $CHILD_PID
 
   - task: AzureCLI@2

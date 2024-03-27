@@ -3,11 +3,11 @@
 
 #include "npkit.h"
 
-#include <cuda_runtime.h>
 #include <unistd.h>
 
 #include <chrono>
 #include <fstream>
+#include <mscclpp/gpu.hpp>
 
 uint64_t NpKit::rank_ = 0;
 

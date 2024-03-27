@@ -11,10 +11,10 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        cuda: [ cuda11.8, cuda12.1 ]
+        cuda: [ cuda11.8, cuda12.2 ]
 
     container:
-      image: "ghcr.io/microsoft/mscclpp/mscclpp:dev-${{ matrix.cuda }}"
+      image: "ghcr.io/microsoft/mscclpp/mscclpp:base-dev-${{ matrix.cuda }}"
       options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
 
     steps:
@@ -29,7 +29,7 @@ jobs:
       - name: Build
         run: |
           mkdir build && cd build
-          MPI_HOME=/usr/local/mpi cmake -DCMAKE_BUILD_TYPE=Release ..
+          cmake -DCMAKE_BUILD_TYPE=Release ..
           make -j
         working-directory: ${{ github.workspace }}
 
@@ -54,11 +54,11 @@ jobs:
       - name: PyTests
         run: |
           set -e
-          cd build && make pylib-copy
-          mpirun --allow-run-as-root -tag-output -np 8 $(which pytest) ../python/test/test_mscclpp.py -x
+          mpirun --allow-run-as-root -tag-output -np 8 $(which pytest) ./python/test/test_mscclpp.py -x
 
       - name: ReportCoverage
         run: |
+          set -e
           cd build
           lcov --capture --directory . --output-file coverage.info
           lcov --remove coverage.info \

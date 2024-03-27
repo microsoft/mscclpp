@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 #include <cstdint>
-#include <mscclpp/concurrency.hpp>
+#include <mscclpp/concurrency_device.hpp>
 
 #include "common.hpp"
 
@@ -29,7 +29,7 @@ __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
   }
 }
 
-__global__ void alltoall0(int rank, size_t nElements) {
+__global__ void __launch_bounds__(1024) alltoall0(int rank, size_t nElements) {
   int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[blockIdx.x];
   if (threadIdx.x == 0) {
@@ -44,7 +44,7 @@ __global__ void alltoall0(int rank, size_t nElements) {
   }
 }
 
-__global__ void alltoall1(int rank, int nRanksPerNode, size_t nElements) {
+__global__ void __launch_bounds__(1024) alltoall1(int rank, int nRanksPerNode, size_t nElements) {
   localAlltoall(rank, nRanksPerNode, nElements);
 }
 
@@ -75,7 +75,7 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
 }
 
 void AllToAllTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
-  if (sendBuff.size() != 1) std::unexpected();
+  if (sendBuff.size() != 1) std::runtime_error("unexpected error");
   const int rank = args.rank;
   std::vector<int> dataHost(recvCount_, 0);
   // For rank 0, the data is 0, 1, 2 ... recvCount_ - 1, for rank 1, the data is recvCount_, recvCount_ + 1, ...
@@ -139,8 +139,8 @@ class AllToAllTestEngine : public BaseTestEngine {
 AllToAllTestEngine::AllToAllTestEngine(const TestArgs& args) : BaseTestEngine(args, "alltoall") { inPlace_ = false; }
 
 void AllToAllTestEngine::allocateBuffer() {
-  sendBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
-  recvBuff_ = mscclpp::allocSharedCuda<int>(args_.maxBytes / sizeof(int));
+  sendBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
+  recvBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
 
   localSendBuff = sendBuff_.get();
@@ -152,7 +152,7 @@ void AllToAllTestEngine::setupConnections() {
   setupMeshConnections(proxyChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
 
   if (proxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
-    std::unexpected();
+    std::runtime_error("unexpected error");
   }
   CUDATHROW(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
                                sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * proxyChannels.size()));

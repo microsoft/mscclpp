@@ -10,7 +10,6 @@
 #include "endpoint.hpp"
 #include "infiniband/verbs.h"
 #include "npkit/npkit.h"
-#include "registered_memory.hpp"
 
 namespace mscclpp {
 
@@ -73,9 +72,9 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
   validateTransport(dst, remoteTransport());
   uint64_t oldValue = *src;
   *src = newValue;
-  uint64_t* dstPtr = (uint64_t*)dst.data();
+  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
 
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, src, sizeof(uint64_t), cudaMemcpyHostToDevice, stream_));
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr, src, sizeof(uint64_t), cudaMemcpyHostToDevice, stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
        newValue);
 
@@ -97,7 +96,6 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context)
     : transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
-      numSignaledSends(0),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
   qp = getImpl(localEndpoint)->ibQp_;
   qp->rtr(getImpl(remoteEndpoint)->ibQpInfo_);
@@ -131,7 +129,6 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 
   qp->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset,
                 /*signaled=*/true);
-  numSignaledSends++;
 
   qp->postSend();
   INFO(MSCCLPP_NET, "IBConnection write: from %p to %p, size %lu", (uint8_t*)srcMr->getBuff() + srcOffset,
@@ -152,7 +149,6 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   *src = newValue;
 
   qp->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue, /*signaled=*/true);
-  numSignaledSends++;
 
   qp->postSend();
   INFO(MSCCLPP_NET, "IBConnection atomic Write: from %p to %p, %lu -> %lu", src, (uint8_t*)dstMrInfo.addr + dstOffset,
@@ -161,24 +157,23 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
 
 void IBConnection::flush(int64_t timeoutUsec) {
   Timer timer;
-  while (numSignaledSends) {
+  while (qp->getNumCqItems()) {
     int wcNum = qp->pollCq();
     if (wcNum < 0) {
       throw mscclpp::IbError("pollCq failed: error no " + std::to_string(errno), errno);
-    }
-
-    auto elapsed = timer.elapsed();
-    if ((timeoutUsec >= 0) && (elapsed > timeoutUsec)) {
-      throw Error("pollCq is stuck: waited for " + std::to_string(elapsed / 1e6) + " seconds. Expected " +
-                      std::to_string(numSignaledSends) + " signals",
-                  ErrorCode::InternalError);
+    } else if (timeoutUsec >= 0) {
+      auto elapsed = timer.elapsed();
+      if (elapsed > timeoutUsec) {
+        throw Error("pollCq timed out: waited for " + std::to_string(elapsed / 1e6) + " seconds. Expected " +
+                        std::to_string(qp->getNumCqItems()) + " signals",
+                    ErrorCode::Timeout);
+      }
     }
     for (int i = 0; i < wcNum; ++i) {
       const ibv_wc* wc = qp->getWc(i);
       if (wc->status != IBV_WC_SUCCESS) {
-        throw mscclpp::IbError("pollCq failed: status " + std::to_string(wc->status), wc->status);
+        throw mscclpp::IbError("a work item failed: status " + std::to_string(wc->status), wc->status);
       }
-      numSignaledSends--;
     }
   }
   INFO(MSCCLPP_NET, "IBConnection flushing connection");

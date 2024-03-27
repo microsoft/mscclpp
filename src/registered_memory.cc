@@ -3,10 +3,8 @@
 
 #include "registered_memory.hpp"
 
-#include <cuda.h>
-
 #include <algorithm>
-#include <mscclpp/cuda_utils.hpp>
+#include <mscclpp/gpu_utils.hpp>
 
 #include "api.h"
 #include "context.hpp"
