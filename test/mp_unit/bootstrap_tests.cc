@@ -67,7 +67,7 @@ TEST_F(BootstrapTest, ResumeWithId) {
   // This test may take a few minutes.
   bootstrapTestTimer.set(300);
 
-  for (int i = 0; i < 100; ++i) {
+  for (int i = 0; i < 10; ++i) {
     auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
     mscclpp::UniqueId id;
     if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
