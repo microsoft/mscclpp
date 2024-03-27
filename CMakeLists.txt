@@ -11,6 +11,18 @@ set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
 cmake_minimum_required(VERSION 3.25)
 enable_language(CXX)
 
+# Code coverage from https://github.com/codecov/example-cpp11-cmake
+add_library(coverage_config INTERFACE)
+if(CMAKE_BUILD_TYPE MATCHES "Debug" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # Add required flags (GCC & LLVM/Clang)
+    target_compile_options(coverage_config INTERFACE
+        -O0        # no optimization
+        -g         # generate debug info
+        --coverage # sets all required flags
+    )
+    target_link_options(coverage_config INTERFACE --coverage)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Options
@@ -106,6 +118,7 @@ target_include_directories(mscclpp_obj
     ${IBVERBS_INCLUDE_DIRS}
     ${NUMA_INCLUDE_DIRS})
 target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} Threads::Threads)
+target_link_libraries(mscclpp_obj PUBLIC coverage_config)
 set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 if(USE_CUDA)
     target_compile_definitions(mscclpp_obj PRIVATE USE_CUDA)
