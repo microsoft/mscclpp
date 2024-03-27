@@ -27,8 +27,8 @@ ENV PATH="/usr/local/cmake-${CMAKE_VERSION}-linux-x86_64/bin:${PATH}"
 ADD . /tmp/mscclpp
 WORKDIR /tmp/mscclpp
 ARG TARGET="cuda12.1"
-RUN cuda_major_version=$(echo ${TARGET} | grep -oP 'cuda\K[0-9]+') && \
-    python3 -m pip install --no-cache-dir -r python/requirements_cu${cuda_major_version}.txt
+RUN target_type=$(echo $TARGET | sed 's/\.[0-9]*$//') && \
+    python3 -m pip install --no-cache-dir -r python/requirements_${target_type}.txt
 
 # Set PATH
 RUN echo PATH="${PATH}" > /etc/environment
