@@ -17,7 +17,7 @@ TEST(Socket, ListenAndConnect) {
   ASSERT_NO_THROW(mscclpp::SocketGetAddrFromString(&listenAddr, ipPortPair.c_str()));
 
   mscclpp::Socket listenSock(&listenAddr);
-  listenSock.listen();
+  listenSock.bindAndListen();
 
   std::thread clientThread([&listenAddr]() {
     mscclpp::Socket sock(&listenAddr);

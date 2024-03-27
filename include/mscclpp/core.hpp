@@ -51,6 +51,10 @@ class Bootstrap {
 /// A native implementation of the bootstrap using TCP sockets.
 class TcpBootstrap : public Bootstrap {
  public:
+  /// Create a random unique ID.
+  /// @return The created unique ID.
+  static UniqueId createUniqueId();
+
   /// Constructor.
   /// @param rank The rank of the process.
   /// @param nRanks The total number of ranks.
@@ -58,10 +62,6 @@ class TcpBootstrap : public Bootstrap {
 
   /// Destructor.
   ~TcpBootstrap();
-
-  /// Create a random unique ID and store it in the @ref TcpBootstrap.
-  /// @return The created unique ID.
-  UniqueId createUniqueId();
 
   /// Return the unique ID stored in the @ref TcpBootstrap.
   /// @return The unique ID stored in the @ref TcpBootstrap.
