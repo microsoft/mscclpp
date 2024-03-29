@@ -33,6 +33,19 @@ enum class ChannelType {
   PROXY,
 };
 
+enum class BufferType {
+  INPUT,
+  OUTPUT,
+  SCRATCH,
+};
+
+struct ChannelInfo {
+  BufferType srcBufferType;
+  BufferType dstBufferType;
+  ChannelType channelType;
+  std::vector<int> connectedPeers;
+};
+
 struct Channels {
   mscclpp::DeviceHandle<mscclpp::SmChannel> smChannels[MAX_CHANNEL];
   mscclpp::DeviceHandle<mscclpp::ProxyChannel> proxyChannels[MAX_CHANNEL];
@@ -53,16 +66,25 @@ struct Operation {
 struct DeviceExecutionPlan {
   int nSmChannels;
   int nProxyChannels;
-  Channels channels;
   int nOperations;
+  Channels channels;
   Operation operations[1];
 };
 
-class ExectionPlan {
+class ExecutionPlan {
  public:
-  ExectionPlan();
-  void loadExecutionPlan(const std::string& json);
-  ~ExectionPlan();
+  ExecutionPlan();
+  void loadExecutionPlan(std::ifstream& file);
+  std::vector<int> getConnectedPeers(int rank);
+  size_t getScratchSize(size_t inputSize);
+  std::vector<Operation> getOperations(int rank, int threadblock);
+  std::pair<int, int> getThreadBlockChannelRange(int rank, int threadblock, BufferType srcBufferType,
+                                                 BufferType dstBufferType, ChannelType channelType);
+  ~ExecutionPlan();
+
+ private:
+  // operations for [rank][threadblock]
+  std::vector<std::vector<Operation>> operations_;
 };
 
 }  // namespace mscclpp

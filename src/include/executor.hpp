@@ -28,7 +28,7 @@ class Executor {
 struct Executor::Impl {
   Impl();
   void setupCommnucation(void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
-                         const ExectionPlan& plan);
+                         const ExecutionPlan& plan);
   void launchKernel();
   ~Impl();
 };
