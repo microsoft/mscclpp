@@ -73,10 +73,14 @@ struct DeviceExecutionPlan {
 
 class ExecutionPlan {
  public:
-  ExecutionPlan();
+  ExecutionPlan(std::string name);
+  std::string getName() const;
   void loadExecutionPlan(std::ifstream& file);
-  std::vector<int> getConnectedPeers(int rank);
-  size_t getScratchSize(size_t inputSize);
+  int nranksPerNode() const;
+  std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
+  std::vector<ChannelInfo> getChannelInfos(int rank, BufferType bufferType) const;
+  std::vector<BufferType> getConnectedBufferTypes(int rank, ChannelType channelType) const;
+  size_t getScratchBufferSize(int rank, size_t inputSize) const;
   std::vector<Operation> getOperations(int rank, int threadblock);
   std::pair<int, int> getThreadBlockChannelRange(int rank, int threadblock, BufferType srcBufferType,
                                                  BufferType dstBufferType, ChannelType channelType);
@@ -85,6 +89,7 @@ class ExecutionPlan {
  private:
   // operations for [rank][threadblock]
   std::vector<std::vector<Operation>> operations_;
+  std::string name_;
 };
 
 }  // namespace mscclpp

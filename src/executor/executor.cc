@@ -5,9 +5,67 @@
 
 #include "executor.hpp"
 
+namespace {
+static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
+                                         mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
+                                         mscclpp::Transport::IB6, mscclpp::Transport::IB7};
+}  // namespace
+
 namespace mscclpp {
 
-void Executor::Impl::launchKernel() {
+ExecutionContext Executor::Impl::setupExecutionContext(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize,
+                                                       size_t recvBuffSize, const ExecutionPlan& plan) {
+  ExecutionPlanKey key = {sendbuff, recvBuff, sendBuffSize, recvBuffSize, plan.getName()};
+  if (this->contexts.find(key) != this->contexts.end()) {
+    return this->contexts[key];
+  }
+  ExecutionContext context;
+  size_t scratchBufferSize = plan.getScratchBufferSize(rank, sendBuffSize);
+  std::shared_ptr<char> scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
+  context.scratchBuffer = scratchBuffer;
+
+  std::vector<BufferType> bufferTypes = plan.getConnectedBufferTypes(rank, ChannelType::SM);
+  int nranksPerNode = plan.nranksPerNode();
+  auto getTransportFlags = [&](std::vector<ChannelInfo>& infos, int rank) -> mscclpp::TransportFlags {
+    return mscclpp::Transport::CudaIpc;
+  };
+  auto getBufferInfo = [&](BufferType type) {
+    switch (type) {
+      case BufferType::INPUT:
+        return std::make_pair(sendbuff, sendBuffSize);
+      case BufferType::OUTPUT:
+        return std::make_pair(recvBuff, recvBuffSize);
+      case BufferType::SCRATCH:
+        return std::make_pair((void*)scratchBuffer.get(), scratchBufferSize);
+      default:
+        throw std::runtime_error("Invalid buffer type");
+    }
+  };
+  auto getConnectedPeers = [&](std::vector<ChannelInfo>& infos) {
+    std::vector<int> peers;
+    return peers;
+  };
+
+  for (BufferType bufferType : bufferTypes) {
+    std::vector<ChannelInfo> channelInfos = plan.getChannelInfos(rank, bufferType);
+    mscclpp::TransportFlags transportFlags = getTransportFlags(channelInfos, rank);
+    mscclpp::RegisteredMemory memory =
+        this->comm->registerMemory(getBufferInfo(bufferType).first, getBufferInfo(bufferType).second, transportFlags);
+    std::vector<int> connectedPeers = getConnectedPeers(channelInfos);
+    std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
+    for (int peer : connectedPeers) {
+      remoteRegMemoryFutures.push_back(comm->recvMemoryOnSetup(peer, 0));
+      comm->sendMemoryOnSetup(memory, peer, 0);
+    }
+    comm->setup();
+    for (int i = 0; i < remoteRegMemoryFutures.size(); i++) {
+      context.registeredMemories[{bufferType, connectedPeers[i]}].push_back(remoteRegMemoryFutures[i].get());
+    }
+  }
+  std::vector<ChannelInfo> smChannelInfos = plan.getChannelInfos(rank, ChannelType::SM);
+  return context;
 }
+
+void Executor::Impl::launchKernel() {}
 
 }  // namespace mscclpp
