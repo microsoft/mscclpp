@@ -12,7 +12,33 @@
 #include "execution_plan.hpp"
 
 namespace mscclpp {
+struct ExecutionContextKey {
+  void* sendBuff;
+  void* recvBuff;
+  size_t sendBuffSize;
+  size_t recvBuffSize;
+  std::string plan;
+};
+}  // namespace mscclpp
 
+namespace std {
+template <>
+struct hash<std::pair<mscclpp::BufferType, int>> {
+  std::size_t operator()(const std::pair<mscclpp::BufferType, int>& key) const {
+    return std::hash<int>()(key.second) ^ std::hash<int>()(static_cast<int>(key.first));
+  }
+};
+
+template <>
+struct hash<mscclpp::ExecutionContextKey> {
+  std::size_t operator()(const mscclpp::ExecutionContextKey& key) const {
+    return std::hash<void*>()(key.sendBuff) ^ std::hash<void*>()(key.recvBuff) ^ std::hash<size_t>()(key.sendBuffSize) ^
+           std::hash<size_t>()(key.recvBuffSize) ^ std::hash<std::string>()(key.plan);
+  }
+};
+}  // namespace std
+
+namespace mscclpp {
 class Executor {
  public:
   Executor(const std::unordered_map<int, mscclpp::Connection> connections);
@@ -28,45 +54,33 @@ class Executor {
 };
 
 struct ExecutionContext {
-  std::unordered_map<std::pair<BufferType, int>, std::vector<mscclpp::RegisteredMemory>> registeredMemories;
+  std::unordered_map<std::pair<BufferType, int>, mscclpp::RegisteredMemory> registeredMemories;
+  std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
+  std::vector<mscclpp::SemaphoreId> proxySemaphores;
   std::vector<mscclpp::SmChannel> smChannels;
-  std::vector<mscclpp::ProxyChannel> proxyChannels;
+  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
   std::vector<DeviceExecutionPlan> deviceExecutionPlans;
   std::shared_ptr<char> scratchBuffer;
-};
-
-struct ExecutionPlanKey {
-  void* sendBuff;
-  void* recvBuff;
-  size_t sendBuffSize;
-  size_t recvBuffSize;
-  std::string plan;
+  size_t scratchBufferSize;
 };
 
 struct Executor::Impl {
-  std::unordered_map<ExecutionPlanKey, ExecutionContext> contexts;
-  const std::unordered_map<int, mscclpp::Connection> connections;
+  std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
+  const std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> connections;
   std::shared_ptr<mscclpp::Communicator> comm;
+  std::shared_ptr<mscclpp::ProxyService> proxyService;
 
   Impl(const std::unordered_map<int, mscclpp::Connection> connections);
-  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize,
-                                         size_t recvBuffSize, const ExecutionPlan& plan);
-  void setupRegisteredMemories(ExecutionContext& context, int rank, const ExecutionPlan& plan);
-  void setupChannels(ExecutionContext& context, int rank, const ExecutionPlan& plan);
-  void launchKernel();
-  ~Impl();
+  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t sendBufferSize,
+                                         size_t recvBufferSize, const ExecutionPlan& plan);
+  void setupRegisteredMemories(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
+                               size_t recvBufferSize, int rank, const ExecutionPlan& plan);
+  void setupChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize, int rank,
+                     const ExecutionPlan& plan);
+  void launchKernel(ExecutionContext& context);
+  ~Impl() = default;
 };
 
 }  // namespace mscclpp
-
-namespace std {
-template <>
-struct hash<mscclpp::ExecutionPlanKey> {
-  std::size_t operator()(const mscclpp::ExecutionPlanKey& key) const {
-    return std::hash<void*>()(key.sendBuff) ^ std::hash<void*>()(key.recvBuff) ^ std::hash<size_t>()(key.sendBuffSize) ^
-           std::hash<size_t>()(key.recvBuffSize) ^ std::hash<std::string>()(key.plan);
-  }
-};
-}  // namespace std
 
 #endif  // MSCCLPP_EXECUTOR_HPP_

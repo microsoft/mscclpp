@@ -48,7 +48,7 @@ struct ChannelInfo {
 
 struct Channels {
   mscclpp::DeviceHandle<mscclpp::SmChannel> smChannels[MAX_CHANNEL];
-  mscclpp::DeviceHandle<mscclpp::ProxyChannel> proxyChannels[MAX_CHANNEL];
+  mscclpp::DeviceHandle<mscclpp::SimpleProxyChannel> proxyChannels[MAX_CHANNEL];
 };
 
 struct Operation {
@@ -79,7 +79,7 @@ class ExecutionPlan {
   int nranksPerNode() const;
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
   std::vector<ChannelInfo> getChannelInfos(int rank, BufferType bufferType) const;
-  std::vector<BufferType> getConnectedBufferTypes(int rank, ChannelType channelType) const;
+  std::vector<BufferType> getConnectedBufferTypes(int rank) const;
   size_t getScratchBufferSize(int rank, size_t inputSize) const;
   std::vector<Operation> getOperations(int rank, int threadblock);
   std::pair<int, int> getThreadBlockChannelRange(int rank, int threadblock, BufferType srcBufferType,
