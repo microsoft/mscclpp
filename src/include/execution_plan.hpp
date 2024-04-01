@@ -7,8 +7,8 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
-
 #include <string>
+#include <unordered_map>
 
 namespace mscclpp {
 
@@ -73,9 +73,8 @@ struct DeviceExecutionPlan {
 
 class ExecutionPlan {
  public:
-  ExecutionPlan(std::string name);
+  ExecutionPlan(std::ifstream& file);
   std::string getName() const;
-  void loadExecutionPlan(std::ifstream& file);
   int nranksPerNode() const;
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
   std::vector<ChannelInfo> getChannelInfos(int rank, BufferType bufferType) const;
@@ -84,12 +83,16 @@ class ExecutionPlan {
   std::vector<Operation> getOperations(int rank, int threadblock);
   std::pair<int, int> getThreadBlockChannelRange(int rank, int threadblock, BufferType srcBufferType,
                                                  BufferType dstBufferType, ChannelType channelType);
-  ~ExecutionPlan();
+  ~ExecutionPlan() = default;
 
  private:
+  void loadExecutionPlan(std::ifstream& file);
+
   // operations for [rank][threadblock]
   std::vector<std::vector<Operation>> operations_;
+  std::unordered_map<int, std::vector<ChannelInfo>> channelInfos_;
   std::string name_;
+  int nranksPerNode_;
 };
 
 }  // namespace mscclpp

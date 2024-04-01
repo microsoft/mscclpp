@@ -41,11 +41,9 @@ struct hash<mscclpp::ExecutionContextKey> {
 namespace mscclpp {
 class Executor {
  public:
-  Executor(const std::unordered_map<int, mscclpp::Connection> connections);
-  template <typename T>
-  void execute(std::shared_ptr<T> sendbuff, std::shared_ptr<T> recvBuff, size_t sendBuffSize, size_t recvBuffSize,
-               const ExecutionPlan& plan);
-  ~Executor();
+  Executor(std::shared_ptr<Communicator> comm, const std::unordered_map<int, mscclpp::Connection> connections);
+  void execute(void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, const ExecutionPlan& plan);
+  ~Executor() = default;
 
  private:
   struct Impl;
@@ -65,12 +63,12 @@ struct ExecutionContext {
 };
 
 struct Executor::Impl {
+  std::shared_ptr<Communicator> comm;
+  const std::unordered_map<int, std::shared_ptr<Connection>> connections;
+  std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
-  const std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> connections;
-  std::shared_ptr<mscclpp::Communicator> comm;
-  std::shared_ptr<mscclpp::ProxyService> proxyService;
 
-  Impl(const std::unordered_map<int, mscclpp::Connection> connections);
+  Impl(std::shared_ptr<Communicator> comm, const std::unordered_map<int, std::shared_ptr<Connection>> connections);
   ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t sendBufferSize,
                                          size_t recvBufferSize, const ExecutionPlan& plan);
   void setupRegisteredMemories(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,

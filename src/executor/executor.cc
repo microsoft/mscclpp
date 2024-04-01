@@ -13,6 +13,22 @@ static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Trans
 
 namespace mscclpp {
 
+Executor::Executor(std::shared_ptr<Communicator> comm, const std::unordered_map<int, mscclpp::Connection> connections)
+    : impl_(std::make_shared<Impl>(comm, connections)) {}
+
+void Executor::execute(void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
+                       const ExecutionPlan& plan) {
+  ExecutionContext context =
+      this->impl_->setupExecutionContext(0, sendbuff, recvBuff, sendBuffSize, recvBuffSize, plan);
+  this->impl_->launchKernel(context);
+}
+
+Executor::Impl::Impl(std::shared_ptr<Communicator> comm,
+                     const std::unordered_map<int, std::shared_ptr<Connection>> connections)
+    : comm(comm), connections(connections) {
+  this->proxyService = std::make_shared<ProxyService>();
+}
+
 ExecutionContext Executor::Impl::setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t sendBufferSize,
                                                        size_t recvBufferSize, const ExecutionPlan& plan) {
   ExecutionContextKey key = {sendbuff, recvbuff, sendBufferSize, recvBufferSize, plan.getName()};
@@ -25,7 +41,7 @@ ExecutionContext Executor::Impl::setupExecutionContext(int rank, void* sendbuff,
   context.scratchBuffer = scratchBuffer;
   context.scratchBufferSize = scratchBufferSize;
   this->setupRegisteredMemories(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
-  this->setupChannels(context, sendbuff, recvbuff, rank, plan);
+  this->setupChannels(context, sendbuff, recvbuff, sendBufferSize, rank, plan);
   return context;
 }
 
@@ -95,8 +111,7 @@ void Executor::Impl::setupChannels(ExecutionContext& context, void* sendbuff, vo
     for (ChannelInfo& info : channelInfos) {
       for (int peer : info.connectedPeers) {
         if (channelType == ChannelType::SM) {
-          smSemaphores.push_back(
-              std::make_shared<SmDevice2DeviceSemaphore>(*this->comm, this->connections.at(peer)));
+          smSemaphores.push_back(std::make_shared<SmDevice2DeviceSemaphore>(*this->comm, this->connections.at(peer)));
         } else if (channelType == ChannelType::PROXY) {
           proxySemaphores.push_back(this->proxyService->buildAndAddSemaphore(*this->comm, this->connections.at(peer)));
         }
@@ -142,6 +157,9 @@ void Executor::Impl::setupChannels(ExecutionContext& context, void* sendbuff, vo
   }
 }
 
-void Executor::Impl::launchKernel(ExecutionContext& context) {}
+void Executor::Impl::launchKernel(ExecutionContext& context) {
+  // Need to change to use flush function and make sure the proxy service will get the latest data.
+  this->proxyService->startProxy();
+}
 
 }  // namespace mscclpp
