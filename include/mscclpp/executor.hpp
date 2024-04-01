@@ -27,7 +27,7 @@ class Executor {
   Executor(std::shared_ptr<Communicator> comm, const std::unordered_map<int, std::shared_ptr<Connection>> connections);
   Executor(const Executor&) = delete;
   Executor& operator=(const Executor&) = delete;
-  ~Executor() = default;
+  ~Executor();
 
   void execute(void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, const ExecutionPlan& plan);
 

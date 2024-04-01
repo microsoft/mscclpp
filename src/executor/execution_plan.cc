@@ -84,4 +84,6 @@ void ExecutionPlan::Impl::loadExecutionPlan(std::ifstream& file) {
   }
 }
 
+ExecutionPlan::ExecutionPlan(std::ifstream& file) : impl_(std::make_shared<Impl>(file)) {}
+
 }  // namespace mscclpp

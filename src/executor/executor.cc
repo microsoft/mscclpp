@@ -212,4 +212,6 @@ void Executor::execute(void* sendbuff, void* recvBuff, size_t sendBuffSize, size
   this->impl_->launchKernel(context);
 }
 
+Executor::~Executor() = default;
+
 }  // namespace mscclpp
