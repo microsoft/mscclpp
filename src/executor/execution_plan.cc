@@ -3,6 +3,7 @@
 
 #include "execution_plan.hpp"
 
+#include <fstream>
 #include <nlohmann/json.hpp>
 
 namespace {
@@ -17,23 +18,30 @@ std::vector<T> filter(const std::vector<T>& vec, Predicate pred) {
 namespace mscclpp {
 using json = nlohmann::json;
 
-ExecutionPlan::ExecutionPlan(std::ifstream& file) { this->loadExecutionPlan(file); }
+ExecutionPlan::Impl::Impl(std::ifstream& file) { this->loadExecutionPlan(file); }
 
-std::string ExecutionPlan::getName() const { return this->name_; }
-
-int ExecutionPlan::nranksPerNode() const { return this->nranksPerNode_; }
-
-std::vector<ChannelInfo> ExecutionPlan::getChannelInfos(int rank, ChannelType channelType) const {
+std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, ChannelType channelType) const {
   auto pred = [channelType](const ChannelInfo& info) { return info.channelType == channelType; };
-  return filter(this->channelInfos_.at(rank), pred);
+  return filter(this->channelInfos.at(rank), pred);
 }
-
-std::vector<ChannelInfo> ExecutionPlan::getChannelInfos(int rank, BufferType dstBufferType) const {
+std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, BufferType dstBufferType) const {
   auto pred = [dstBufferType](const ChannelInfo& info) { return info.dstBufferType == dstBufferType; };
-  return filter(this->channelInfos_.at(rank), pred);
+  return filter(this->channelInfos.at(rank), pred);
 }
 
-void ExecutionPlan::loadExecutionPlan(std::ifstream& file) {
+std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) const {
+  return std::vector<BufferType>();
+}
+size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize) const { return 0; };
+std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadblock) {
+  return std::vector<Operation>();
+}
+std::pair<int, int> ExecutionPlan::Impl::getThreadBlockChannelRange(int rank, int threadblock, BufferType srcBufferType,
+                                                                    BufferType dstBufferType, ChannelType channelType) {
+  return std::make_pair(0, 0);
+}
+
+void ExecutionPlan::Impl::loadExecutionPlan(std::ifstream& file) {
   auto convertToBufferType = [](const std::string& str) {
     if (str == "input") {
       return BufferType::INPUT;
@@ -56,8 +64,8 @@ void ExecutionPlan::loadExecutionPlan(std::ifstream& file) {
   };
 
   json obj = json::parse(file);
-  this->name_ = obj["name"];
-  this->nranksPerNode_ = obj["nranksPerNode"];
+  this->name = obj["name"];
+  this->nranksPerNode = obj["nranksPerNode"];
   auto gpus = obj["gpus"];
   for (const auto& gpu : gpus) {
     int rank = gpu["rank"];
@@ -72,7 +80,7 @@ void ExecutionPlan::loadExecutionPlan(std::ifstream& file) {
       }
       channelInfos.push_back(info);
     }
-    this->channelInfos_[rank] = channelInfos;
+    this->channelInfos[rank] = channelInfos;
   }
 }
 

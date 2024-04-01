@@ -5,6 +5,7 @@
 #define MSCCLPP_EXECUTOR_PLAN_HPP_
 
 #include <mscclpp/core.hpp>
+#include <mscclpp/executor.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <string>
@@ -71,11 +72,11 @@ struct DeviceExecutionPlan {
   Operation operations[1];
 };
 
-class ExecutionPlan {
+struct ExecutionPlan::Impl {
  public:
-  ExecutionPlan(std::ifstream& file);
-  std::string getName() const;
-  int nranksPerNode() const;
+  Impl(std::ifstream& file);
+  ~Impl() = default;
+
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
   std::vector<ChannelInfo> getChannelInfos(int rank, BufferType bufferType) const;
   std::vector<BufferType> getConnectedBufferTypes(int rank) const;
@@ -83,16 +84,13 @@ class ExecutionPlan {
   std::vector<Operation> getOperations(int rank, int threadblock);
   std::pair<int, int> getThreadBlockChannelRange(int rank, int threadblock, BufferType srcBufferType,
                                                  BufferType dstBufferType, ChannelType channelType);
-  ~ExecutionPlan() = default;
-
- private:
   void loadExecutionPlan(std::ifstream& file);
 
   // operations for [rank][threadblock]
-  std::vector<std::vector<Operation>> operations_;
-  std::unordered_map<int, std::vector<ChannelInfo>> channelInfos_;
-  std::string name_;
-  int nranksPerNode_;
+  std::vector<std::vector<Operation>> operations;
+  std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
+  std::string name;
+  int nranksPerNode;
 };
 
 }  // namespace mscclpp
