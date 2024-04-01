@@ -5,6 +5,7 @@
 
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <set>
 
 namespace {
 template <typename T, typename Predicate>
@@ -27,6 +28,16 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, ChannelT
 std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, BufferType dstBufferType) const {
   auto pred = [dstBufferType](const ChannelInfo& info) { return info.dstBufferType == dstBufferType; };
   return filter(this->channelInfos.at(rank), pred);
+}
+
+std::vector<int> ExecutionPlan::Impl::getConnectedPeers(int rank) const {
+  std::set<int> peers;
+  for (const auto& info : this->channelInfos.at(rank)) {
+    for (int peer : info.connectedPeers) {
+      peers.insert(peer);
+    }
+  }
+  return std::vector<int>(peers.begin(), peers.end());
 }
 
 std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) const {

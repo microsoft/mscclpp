@@ -79,6 +79,7 @@ struct ExecutionPlan::Impl {
 
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
   std::vector<ChannelInfo> getChannelInfos(int rank, BufferType bufferType) const;
+  std::vector<int> getConnectedPeers(int rank) const;
   std::vector<BufferType> getConnectedBufferTypes(int rank) const;
   size_t getScratchBufferSize(int rank, size_t inputSize) const;
   std::vector<Operation> getOperations(int rank, int threadblock);

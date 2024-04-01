@@ -41,6 +41,10 @@ struct hash<mscclpp::ExecutionContextKey> {
 }  // namespace std
 
 namespace {
+auto inSameNode = [](int rank1, int rank2, int nranksPerNode) {
+  return rank1 / nranksPerNode == rank2 / nranksPerNode;
+};
+
 static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
                                          mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
                                          mscclpp::Transport::IB6, mscclpp::Transport::IB7};
@@ -61,14 +65,11 @@ struct ExecutionContext {
 
 struct Executor::Impl {
   std::shared_ptr<Communicator> comm;
-  const std::unordered_map<int, std::shared_ptr<Connection>> connections;
+  std::unordered_map<int, std::shared_ptr<Connection>> connections;
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
 
-  Impl(std::shared_ptr<Communicator> comm, const std::unordered_map<int, std::shared_ptr<Connection>> connections)
-      : comm(comm), connections(connections) {
-    this->proxyService = std::make_shared<ProxyService>();
-  }
+  Impl(std::shared_ptr<Communicator> comm) : comm(comm) { this->proxyService = std::make_shared<ProxyService>(); }
   ~Impl() = default;
 
   ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t sendBufferSize,
@@ -82,9 +83,24 @@ struct Executor::Impl {
     std::shared_ptr<char> scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
     context.scratchBuffer = scratchBuffer;
     context.scratchBufferSize = scratchBufferSize;
+    this->setupConnections(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
     this->setupChannels(context, sendbuff, recvbuff, sendBufferSize, rank, plan);
     return context;
+  }
+
+  void setupConnections(ExecutionContext& context, int rank, const ExecutionPlan& plan) {
+    std::vector<int> connectedPeers = plan.impl_->getConnectedPeers(rank);
+    std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+    for (int peer : connectedPeers) {
+      Transport transport = inSameNode(rank, peer, plan.impl_->nranksPerNode) ? Transport::CudaIpc
+                                                                              : IBs[rank % plan.impl_->nranksPerNode];
+      connectionFutures.push_back(this->comm->connectOnSetup(peer, 0, transport));
+    }
+    this->comm->setup();
+    for (size_t i = 0; i < connectionFutures.size(); i++) {
+      this->connections[connectedPeers[i]] = connectionFutures[i].get();
+    }
   }
 
   void setupRegisteredMemories(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
@@ -96,7 +112,11 @@ struct Executor::Impl {
         if (info.channelType == ChannelType::SM) {
           flags |= Transport::CudaIpc;
         } else if (info.channelType == ChannelType::PROXY) {
-          flags |= IBs[rank % nranksPerNode];
+          for (int peer : info.connectedPeers) {
+            if (inSameNode(rank, peer, nranksPerNode)) {
+              flags |= IBs[rank % nranksPerNode];
+            }
+          }
         }
       }
       return flags;
@@ -201,9 +221,7 @@ struct Executor::Impl {
   void launchKernel(ExecutionContext& context) {}
 };
 
-Executor::Executor(std::shared_ptr<Communicator> comm,
-                   const std::unordered_map<int, std::shared_ptr<Connection>> connections)
-    : impl_(std::make_unique<Impl>(comm, connections)) {}
+Executor::Executor(std::shared_ptr<Communicator> comm) : impl_(std::make_unique<Impl>(comm)) {}
 
 void Executor::execute(void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
                        const ExecutionPlan& plan) {

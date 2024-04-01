@@ -24,7 +24,7 @@ class ExecutionPlan {
 
 class Executor {
  public:
-  Executor(std::shared_ptr<Communicator> comm, const std::unordered_map<int, std::shared_ptr<Connection>> connections);
+  Executor(std::shared_ptr<Communicator> comm);
   Executor(const Executor&) = delete;
   Executor& operator=(const Executor&) = delete;
   ~Executor();

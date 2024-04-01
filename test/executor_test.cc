@@ -17,8 +17,7 @@ int main() {
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
   bootstrap->initialize(id);
   auto comm = std::make_shared<mscclpp::Communicator>(bootstrap);
-  std::shared_ptr<mscclpp::Executor> executor =
-      std::make_shared<mscclpp::Executor>(comm, std::unordered_map<int, std::shared_ptr<mscclpp::Connection>>());
+  std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(comm);
   std::ifstream file("execution_plan.json");
   mscclpp::ExecutionPlan plan(file);
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(1024);
