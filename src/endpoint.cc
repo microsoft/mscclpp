@@ -5,6 +5,7 @@
 #include "api.h"
 #include "context.hpp"
 #include "utils_internal.hpp"
+#include "socket.h"
 
 namespace mscclpp {
 
@@ -24,7 +25,7 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
 
     // Starting Server Socket
     socket_ = std::make_unique<Socket>(&socketAddress_, 0xdeadbeef, SocketTypeBootstrap, abortFlag_);
-    socket_->listen();
+    socket_->bindAndListen();
     socketAddress_ = socket_->getAddr();
   }
 }
