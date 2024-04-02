@@ -29,7 +29,8 @@ class Executor {
   Executor& operator=(const Executor&) = delete;
   ~Executor();
 
-  void execute(void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, const ExecutionPlan& plan);
+  void execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
+               const ExecutionPlan& plan);
 
  private:
   struct Impl;

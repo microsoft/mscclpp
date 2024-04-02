@@ -27,7 +27,7 @@ int main() {
   mscclpp::ExecutionPlan plan(file);
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(1024);
   std::shared_ptr<char> recvbuff = mscclpp::allocExtSharedCuda<char>(1024);
-  executor->execute(sendbuff.get(), recvbuff.get(), 1024, 1024, plan);
+  executor->execute(rank, sendbuff.get(), recvbuff.get(), 1024, 1024, plan);
 
   MPI_Finalize();
   return 0;

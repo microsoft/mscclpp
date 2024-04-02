@@ -41,7 +41,11 @@ std::vector<int> ExecutionPlan::Impl::getConnectedPeers(int rank) const {
 }
 
 std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) const {
-  return std::vector<BufferType>();
+  std::set<BufferType> bufferTypes;
+  for (const auto& info : this->channelInfos.at(rank)) {
+    bufferTypes.insert(info.dstBufferType);
+  }
+  return std::vector<BufferType>(bufferTypes.begin(), bufferTypes.end());
 }
 size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize) const {
   return inputSize / this->inputChunks.at(rank) * this->scratchChunks.at(rank);
