@@ -82,7 +82,6 @@ void ExecutionPlan::Impl::loadExecutionPlan(std::ifstream& file) {
 
   json obj = json::parse(file);
   this->name = obj["name"];
-  this->nranksPerNode = obj["nranksPerNode"];
   auto gpus = obj["gpus"];
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];

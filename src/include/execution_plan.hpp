@@ -91,7 +91,6 @@ struct ExecutionPlan::Impl {
   std::vector<std::vector<Operation>> operations;
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
   std::string name;
-  int nranksPerNode;
   std::unordered_map<int, uint32_t> inputChunks;
   std::unordered_map<int, uint32_t> outputChunks;
   std::unordered_map<int, uint32_t> scratchChunks;

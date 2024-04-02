@@ -3,7 +3,6 @@
   "colletive": "allreduce",
   "protocol": "Simple",
   "inplace": true,
-  "nranksPerNode": 8,
   "gpus": [
     {
       "id": 0,

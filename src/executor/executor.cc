@@ -65,11 +65,14 @@ struct ExecutionContext {
 };
 
 struct Executor::Impl {
+  int nranksPerNode;
   std::shared_ptr<Communicator> comm;
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
 
-  Impl(std::shared_ptr<Communicator> comm) : comm(comm) { this->proxyService = std::make_shared<ProxyService>(); }
+  Impl(std::shared_ptr<Communicator> comm, int nranksPerNode) : nranksPerNode(nranksPerNode), comm(comm) {
+    this->proxyService = std::make_shared<ProxyService>();
+  }
   ~Impl() = default;
 
   ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t sendBufferSize,
@@ -93,8 +96,8 @@ struct Executor::Impl {
     std::vector<int> connectedPeers = plan.impl_->getConnectedPeers(rank);
     std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
     for (int peer : connectedPeers) {
-      Transport transport = inSameNode(rank, peer, plan.impl_->nranksPerNode) ? Transport::CudaIpc
-                                                                              : IBs[rank % plan.impl_->nranksPerNode];
+      Transport transport =
+          inSameNode(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
       connectionFutures.push_back(this->comm->connectOnSetup(peer, 0, transport));
     }
     this->comm->setup();
@@ -105,7 +108,6 @@ struct Executor::Impl {
 
   void setupRegisteredMemories(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
                                size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
-    int nranksPerNode = plan.impl_->nranksPerNode;
     auto getTransportFlags = [&](std::vector<ChannelInfo>& infos, int rank) {
       TransportFlags flags;
       for (ChannelInfo& info : infos) {
@@ -113,8 +115,8 @@ struct Executor::Impl {
           flags |= Transport::CudaIpc;
         } else if (info.channelType == ChannelType::PROXY) {
           for (int peer : info.connectedPeers) {
-            if (!inSameNode(rank, peer, nranksPerNode)) {
-              flags |= IBs[rank % nranksPerNode];
+            if (!inSameNode(rank, peer, this->nranksPerNode)) {
+              flags |= IBs[rank % this->nranksPerNode];
             }
           }
         }
@@ -222,7 +224,8 @@ struct Executor::Impl {
   void launchKernel(ExecutionContext& context) {}
 };
 
-Executor::Executor(std::shared_ptr<Communicator> comm) : impl_(std::make_unique<Impl>(comm)) {}
+Executor::Executor(std::shared_ptr<Communicator> comm, int nranksPerNode)
+    : impl_(std::make_unique<Impl>(comm, nranksPerNode)) {}
 
 void Executor::execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
                        const ExecutionPlan& plan) {

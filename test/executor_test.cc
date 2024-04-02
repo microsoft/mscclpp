@@ -21,7 +21,7 @@ int main() {
   // sleep 10s
   // std::this_thread::sleep_for(std::chrono::seconds(20));
   auto comm = std::make_shared<mscclpp::Communicator>(bootstrap);
-  std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(comm);
+  std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(comm, 8 /*nranksPerNode*/);
 
   std::ifstream file(MSCCLPP_ROOT_PATH + "/test/execution-files/allreduce.json");
   mscclpp::ExecutionPlan plan(file);
