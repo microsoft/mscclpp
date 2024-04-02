@@ -35,10 +35,11 @@ enum SocketState {
   SocketStateConnecting = 4,
   SocketStateConnectPolling = 5,
   SocketStateConnected = 6,
-  SocketStateReady = 7,
-  SocketStateClosed = 8,
-  SocketStateError = 9,
-  SocketStateNum = 10
+  SocketStateBound = 7,
+  SocketStateReady = 8,
+  SocketStateClosed = 9,
+  SocketStateError = 10,
+  SocketStateNum = 11
 };
 
 enum SocketType {
@@ -62,7 +63,8 @@ class Socket {
          enum SocketType type = SocketTypeUnknown, volatile uint32_t* abortFlag = nullptr, int asyncFlag = 0);
   ~Socket();
 
-  void listen();
+  void bind();
+  void bindAndListen();
   void connect(int64_t timeout = -1);
   void accept(const Socket* listenSocket, int64_t timeout = -1);
   void send(void* ptr, int size);

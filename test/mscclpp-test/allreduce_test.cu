@@ -674,7 +674,8 @@ __device__ void allGatherSm(int rank, int worldSize, int nRanksPerNode, size_t n
                    nBlocksForLocalAllGather);
 }
 
-__global__ void allreduce0(int* buff, int* scratch, int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
+__global__ void __launch_bounds__(1024)
+    allreduce0(int* buff, int* scratch, int rank, int worldSize, size_t nelems, size_t scratchDataCount) {
   int peerId = blockIdx.x / BLOCKS_PER_PEER;
   int isComm = (threadIdx.x == 0) && (blockIdx.x % BLOCKS_PER_PEER == 0);
   int remoteRank = (peerId < rank) ? peerId : peerId + 1;
@@ -836,8 +837,9 @@ __global__ void __launch_bounds__(1024) allreduce1(int* buff, int* scratch, int 
   }
 }
 
-__global__ void allreduce2(int* buff, void* scratch, void* putPktBuf, void* getPktBuf, void* result, int rank,
-                           int nRanksPerNode, int worldSize, size_t nelems) {
+__global__ void __launch_bounds__(1024)
+    allreduce2(int* buff, void* scratch, void* putPktBuf, void* getPktBuf, void* result, int rank, int nRanksPerNode,
+               int worldSize, size_t nelems) {
   int numPeersPerNode = nRanksPerNode - 1;
   size_t nPkts = nelems / 2;  // 2 elems per packet, assume nelems is even
   size_t pktBytes = nPkts * sizeof(mscclpp::LLPacket);
