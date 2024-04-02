@@ -92,7 +92,7 @@ class CommunicatorTestBase : public MultiProcessTest {
   void TearDown() override;
 
   void setNumRanksToUse(int num);
-  void connectMesh(bool useIbOnly = false);
+  void connectMesh(bool useIpc = true, bool useIb = true, bool useEthernet = false);
 
   // Register a local memory and receive corresponding remote memories
   void registerMemoryPairs(void* buff, size_t buffSize, mscclpp::TransportFlags transport, int tag,

@@ -5,6 +5,7 @@
 
 #include <mscclpp/utils.hpp>
 #include <sstream>
+#include <thread>
 
 #include "debug.h"
 #include "endpoint.hpp"
@@ -178,6 +179,106 @@ void IBConnection::flush(int64_t timeoutUsec) {
   }
   INFO(MSCCLPP_NET, "IBConnection flushing connection");
   // npkitCollectExitEvents(conn, NPKIT_EVENT_IB_SEND_EXIT);
+}
+
+// EthernetConnection
+
+EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint) : stopRcvMessages(false), abortFlag_(0) {
+  // Validating Transport Protocol
+  if (localEndpoint.transport() != Transport::Ethernet || remoteEndpoint.transport() != Transport::Ethernet) {
+    throw mscclpp::Error("Ethernet connection can only be made from Ethernet endpoints", ErrorCode::InvalidUsage);
+  }
+
+  // Creating Thread to Accept the Connection
+  auto parameter = (getImpl(localEndpoint)->socket_).get();
+  std::thread t([this, parameter]() {
+    rcvSocket = std::make_unique<Socket>(nullptr, MSCCLPP_SOCKET_MAGIC, SocketTypeUnknown, abortFlag_);
+    rcvSocket->accept(parameter);
+  });
+
+  // Starting Connection
+  sendSocket = std::make_unique<Socket>(&(getImpl(remoteEndpoint)->socketAddress_), 0xdeadbeef, SocketTypeBootstrap, abortFlag_);
+  sendSocket->connect();
+
+  // Ensure the Connection was Established
+  t.join();
+
+  // Starting Thread to Receive Messages
+  threadRcvMessages = std::thread([this]() {
+    int* response = (int*)malloc(sizeof(int));
+    uint64_t size;
+    int* buffer;
+    int closed = 0;
+    bool received;
+
+    while (!stopRcvMessages) {
+      received = true;
+      
+      if(closed == 0) rcvSocket->recvUntilEnd(&response, sizeof(int*), &closed);
+      received &= !closed;
+      
+      if(closed == 0) rcvSocket->recvUntilEnd(&size, sizeof(uint64_t), &closed);
+      received &= !closed;
+      
+      buffer = (int*)malloc(size);
+      if(closed == 0) rcvSocket->recvUntilEnd(buffer, size, &closed);
+      received &= !closed;
+      
+      if(received) mscclpp::memcpyCuda<int>(response, buffer, size/sizeof(int), cudaMemcpyHostToDevice);
+    }
+  });
+
+  INFO(MSCCLPP_NET, "Ethernet connection created");
+}
+
+EthernetConnection::~EthernetConnection(){
+  sendSocket->close();
+  stopRcvMessages = true;
+  rcvSocket->close();
+  threadRcvMessages.join();
+}
+
+Transport EthernetConnection::transport() { return Transport::Ethernet; }
+
+Transport EthernetConnection::remoteTransport() { return Transport::Ethernet; }
+
+void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
+                               uint64_t size) {
+  // Validating Transport Protocol
+  validateTransport(dst, remoteTransport());
+  validateTransport(src, transport());
+
+  // Initalizing Variables
+  int* srcPtr = reinterpret_cast<int*>(src.data()) + srcOffset/sizeof(int);
+  int* dstPtr = reinterpret_cast<int*>(dst.originalDataPtr()) + dstOffset/sizeof(int);
+  int* data;
+
+  // Getting Data From GPU
+  data = (int*)malloc(size);
+  mscclpp::memcpyCuda<int>(data, (int*)srcPtr, size/sizeof(int), cudaMemcpyDeviceToHost);
+
+  // Sending Data
+  sendSocket->send(&dstPtr, sizeof(int*));
+  sendSocket->send(&size, sizeof(uint64_t));
+  sendSocket->send(data, size);
+
+  INFO(MSCCLPP_NET, "EthernetConnection write: from %p to %p, size %lu", srcPtr, dstPtr, size);
+}
+
+void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
+  validateTransport(dst, remoteTransport());
+  uint64_t oldValue = *src;
+  *src = newValue;
+  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
+
+  *dstPtr = newValue;
+  INFO(MSCCLPP_NET, "EthernetConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
+       newValue);
+}
+
+void EthernetConnection::flush(int64_t timeoutUsec) {
+
+  INFO(MSCCLPP_NET, "EthernetConnection flushing connection");
 }
 
 }  // namespace mscclpp

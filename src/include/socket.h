@@ -67,6 +67,7 @@ class Socket {
   void accept(const Socket* listenSocket, int64_t timeout = -1);
   void send(void* ptr, int size);
   void recv(void* ptr, int size);
+  void recvUntilEnd(void *ptr, int size, int* closed);
   void close();
 
   int getFd() const { return fd_; }

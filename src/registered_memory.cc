@@ -62,6 +62,8 @@ MSCCLPP_API_CPP RegisteredMemory::~RegisteredMemory() = default;
 
 MSCCLPP_API_CPP void* RegisteredMemory::data() const { return pimpl_->data; }
 
+MSCCLPP_API_CPP void* RegisteredMemory::originalDataPtr() const { return pimpl_->originalDataPtr; }
+
 MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl_->size; }
 
 MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl_->transports; }
@@ -139,7 +141,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
   }
 
   // Next decide how to set this->data
-  if (getHostHash() == this->hostHash && getPidHash() == this->pidHash) {
+  if ((getHostHash() == this->hostHash && getPidHash() == this->pidHash)) {
     // The memory is local to the process, so originalDataPtr is valid as is
     this->data = this->originalDataPtr;
   } else if (transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash) {

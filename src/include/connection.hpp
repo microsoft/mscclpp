@@ -11,6 +11,7 @@
 #include "context.hpp"
 #include "ib.hpp"
 #include "registered_memory.hpp"
+#include "socket.h"
 
 namespace mscclpp {
 
@@ -41,6 +42,29 @@ class IBConnection : public Connection {
 
  public:
   IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context);
+
+  Transport transport() override;
+
+  Transport remoteTransport() override;
+
+  void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
+             uint64_t size) override;
+  void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
+
+  void flush(int64_t timeoutUsec) override;
+};
+
+class EthernetConnection : public Connection {
+  std::unique_ptr<Socket> sendSocket;
+  std::unique_ptr<Socket> rcvSocket;
+  std::thread threadRcvMessages;
+  bool stopRcvMessages;
+  volatile uint32_t* abortFlag_;
+  
+  public:
+  EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint);
+
+  ~EthernetConnection();
 
   Transport transport() override;
 
