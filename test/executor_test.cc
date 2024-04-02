@@ -3,6 +3,8 @@
 #include <fstream>
 #include <mscclpp/executor.hpp>
 
+const std::string MSCCLPP_ROOT_PATH = "/root/mscclpp";
+
 int main() {
   int rank;
   int world_size;
@@ -16,9 +18,12 @@ int main() {
   }
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
   bootstrap->initialize(id);
+  // sleep 10s
+  // std::this_thread::sleep_for(std::chrono::seconds(20));
   auto comm = std::make_shared<mscclpp::Communicator>(bootstrap);
   std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(comm);
-  std::ifstream file("execution_plan.json");
+
+  std::ifstream file(MSCCLPP_ROOT_PATH + "/test/execution-files/allreduce.json");
   mscclpp::ExecutionPlan plan(file);
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(1024);
   std::shared_ptr<char> recvbuff = mscclpp::allocExtSharedCuda<char>(1024);

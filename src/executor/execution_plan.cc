@@ -43,7 +43,9 @@ std::vector<int> ExecutionPlan::Impl::getConnectedPeers(int rank) const {
 std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) const {
   return std::vector<BufferType>();
 }
-size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize) const { return 0; };
+size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize) const {
+  return inputSize / this->inputChunks.at(rank) * this->scratchChunks.at(rank);
+}
 std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadblock) {
   return std::vector<Operation>();
 }
@@ -54,11 +56,11 @@ std::pair<int, int> ExecutionPlan::Impl::getThreadBlockChannelRange(int rank, in
 
 void ExecutionPlan::Impl::loadExecutionPlan(std::ifstream& file) {
   auto convertToBufferType = [](const std::string& str) {
-    if (str == "input") {
+    if (str == "i") {
       return BufferType::INPUT;
-    } else if (str == "output") {
+    } else if (str == "o") {
       return BufferType::OUTPUT;
-    } else if (str == "scratch") {
+    } else if (str == "s") {
       return BufferType::SCRATCH;
     } else {
       throw std::runtime_error("Invalid buffer type");
@@ -79,12 +81,15 @@ void ExecutionPlan::Impl::loadExecutionPlan(std::ifstream& file) {
   this->nranksPerNode = obj["nranksPerNode"];
   auto gpus = obj["gpus"];
   for (const auto& gpu : gpus) {
-    int rank = gpu["rank"];
+    int rank = gpu["id"];
+    this->inputChunks[rank] = gpu["inputChunks"];
+    this->outputChunks[rank] = gpu["outputChunks"];
+    this->scratchChunks[rank] = gpu["scratchChunks"];
     std::vector<ChannelInfo> channelInfos;
     for (const auto& channel : gpu["channels"]) {
       ChannelInfo info;
-      info.srcBufferType = convertToBufferType(channel["srcBuffer"]);
-      info.dstBufferType = convertToBufferType(channel["dstBuffer"]);
+      info.srcBufferType = convertToBufferType(channel["srcbuff"]);
+      info.dstBufferType = convertToBufferType(channel["dstbuff"]);
       info.channelType = convertToChannelType(channel["type"]);
       for (const auto& peer : channel["connectedTo"]) {
         info.connectedPeers.push_back(peer);
