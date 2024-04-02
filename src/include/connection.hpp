@@ -55,10 +55,11 @@ class IBConnection : public Connection {
 };
 
 class EthernetConnection : public Connection {
-  std::unique_ptr<Socket> sendSocket;
-  std::unique_ptr<Socket> rcvSocket;
-  std::thread threadRcvMessages;
-  bool stopRcvMessages;
+  std::unique_ptr<Socket> sendSocket_;
+  std::unique_ptr<Socket> rcvSocket_;
+  cudaStream_t stream_;
+  std::thread threadRcvMessages_;
+  bool stopRcvMessages_;
   volatile uint32_t* abortFlag_;
   
   public:
@@ -75,6 +76,9 @@ class EthernetConnection : public Connection {
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
 
   void flush(int64_t timeoutUsec) override;
+
+  private:
+  void rcvMessages();
 };
 
 }  // namespace mscclpp
