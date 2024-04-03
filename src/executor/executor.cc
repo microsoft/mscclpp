@@ -247,6 +247,9 @@ struct Executor::Impl {
 
   void launchKernel(ExecutionContext& context) {
     // copy context to shared memory
+    // std::cout << sizeof(Channels) << std::endl;
+    // std::cout << sizeof(Operation) << std::endl;
+    // std::cout << sizeof(DeviceExecutionPlan) << std::endl;
     // launch kernel
   }
 };
