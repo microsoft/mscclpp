@@ -1,6 +1,5 @@
 #include <mpi.h>
 
-#include <fstream>
 #include <mscclpp/executor.hpp>
 
 const std::string MSCCLPP_ROOT_PATH = "/root/mscclpp";
@@ -23,8 +22,7 @@ int main() {
   auto comm = std::make_shared<mscclpp::Communicator>(bootstrap);
   std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(comm, 8 /*nranksPerNode*/);
 
-  std::ifstream file(MSCCLPP_ROOT_PATH + "/test/execution-files/allreduce.json");
-  mscclpp::ExecutionPlan plan(file);
+  mscclpp::ExecutionPlan plan(MSCCLPP_ROOT_PATH + "/test/execution-files/allreduce.json");
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(1024);
   std::shared_ptr<char> recvbuff = mscclpp::allocExtSharedCuda<char>(1024);
   executor->execute(rank, sendbuff.get(), recvbuff.get(), 1024, 1024, plan);

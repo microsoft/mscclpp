@@ -60,6 +60,7 @@ struct ExecutionContext {
   std::vector<mscclpp::SmChannel> smChannels;
   std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
   std::vector<DeviceExecutionPlan> deviceExecutionPlans;
+  std::vector<std::vector<Operation>> operations;
   std::shared_ptr<char> scratchBuffer;
   size_t scratchBufferSize;
 };
@@ -81,6 +82,8 @@ struct Executor::Impl {
     if (this->contexts.find(key) != this->contexts.end()) {
       return this->contexts[key];
     }
+    plan.impl_->loadExecutionPlan(sendBufferSize);
+
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize);
     std::shared_ptr<char> scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
@@ -89,6 +92,7 @@ struct Executor::Impl {
     this->setupConnections(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
     this->setupChannels(context, sendbuff, recvbuff, sendBufferSize, rank, plan);
+    this->setupDeviceExecutionPlan(context, rank, plan);
     return context;
   }
 
@@ -221,7 +225,30 @@ struct Executor::Impl {
     }
   }
 
-  void launchKernel(ExecutionContext& context) {}
+  void setupDeviceExecutionPlan(ExecutionContext& context, int rank, const ExecutionPlan& plan) {
+    std::vector<DeviceExecutionPlan> deviceExecutionPlans;
+    for (int threadblock = 0; threadblock < plan.impl_->getThreadblockCount(rank); threadblock++) {
+      DeviceExecutionPlan deviceExecutionPlan;
+      std::vector<Operation> ops = plan.impl_->getOperations(rank, threadblock);
+      context.operations.emplace_back(std::move(ops));
+      deviceExecutionPlan.nOperations = ops.size();
+      deviceExecutionPlan.nSmChannels = plan.impl_->threadblockSMChannelMap.at(rank).at(threadblock).size();
+      deviceExecutionPlan.nProxyChannels = plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock).size();
+      for (const auto& [index, key] : plan.impl_->threadblockSMChannelMap.at(rank).at(threadblock)) {
+        deviceExecutionPlan.channels.smChannels[index] = mscclpp::deviceHandle(context.smChannels[index]);
+      }
+      for (const auto& [index, key] : plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock)) {
+        deviceExecutionPlan.channels.proxyChannels[index] = mscclpp::deviceHandle(context.proxyChannels[index]);
+      }
+      deviceExecutionPlans.push_back(deviceExecutionPlan);
+    }
+    context.deviceExecutionPlans = std::move(deviceExecutionPlans);
+  }
+
+  void launchKernel(ExecutionContext& context) {
+    // copy context to shared memory
+    // launch kernel
+  }
 };
 
 Executor::Executor(std::shared_ptr<Communicator> comm, int nranksPerNode)

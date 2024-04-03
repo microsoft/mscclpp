@@ -15,27 +15,33 @@
           "ops": [
             {
               "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "o_cids": [
                 {
                   "id": 0,
                   "off": 2
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             },
             {
               "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "i_cids": [
                 {
                   "id": 0,
                   "off": 0
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             },
             {
               "name": "nop",
@@ -47,20 +53,28 @@
               ]
             },
             {
-              "name": "rrcs",
+              "name": "rrs",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "i_cids": [
                 {
                   "id": 0,
                   "off": 0
                 }
               ],
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "o_cids": [
                 {
                   "id": 0,
                   "off": 0
                 }
               ],
-              "srcbuff": "i",
+              "dst": 0,
               "dstbuff": "i",
               "dstoff": 0,
               "ctype": "sm",
@@ -77,27 +91,33 @@
             },
             {
               "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "o_cids": [
                 {
                   "id": 0,
                   "off": 0
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             },
             {
               "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "i_cids": [
                 {
                   "id": 0,
                   "off": 2
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             }
           ],
           "channels": [
@@ -105,7 +125,7 @@
               "src": "i",
               "dst": "i",
               "ctype": "sm",
-              "cid": [
+              "cids": [
                 0
               ]
             }
@@ -116,27 +136,33 @@
           "ops": [
             {
               "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "o_cids": [
                 {
                   "id": 0,
                   "off": 3
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             },
             {
               "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "i_cids": [
                 {
                   "id": 0,
                   "off": 1
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             },
             {
               "name": "nop",
@@ -148,20 +174,28 @@
               ]
             },
             {
-              "name": "rrcs",
+              "name": "rrs",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "i_cids": [
                 {
                   "id": 0,
                   "off": 1
                 }
               ],
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "o_cids": [
                 {
                   "id": 0,
                   "off": 0
                 }
               ],
-              "srcbuff": "i",
+              "dst": 0,
               "dstbuff": "i",
               "dstoff": 1,
               "ctype": "sm",
@@ -178,27 +212,33 @@
             },
             {
               "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "o_cids": [
                 {
                   "id": 0,
                   "off": 0
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             },
             {
               "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "i_cids": [
                 {
                   "id": 0,
                   "off": 2
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             }
           ],
           "channels": [
@@ -206,7 +246,7 @@
               "src": "i",
               "dst": "i",
               "ctype": "sm",
-              "cid": [
+              "cids": [
                 1
               ]
             }
@@ -236,27 +276,33 @@
           "ops": [
             {
               "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "o_cids": [
                 {
                   "id": 0,
                   "off": 0
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             },
             {
               "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "i_cids": [
                 {
                   "id": 0,
                   "off": 2
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             },
             {
               "name": "nop",
@@ -268,20 +314,28 @@
               ]
             },
             {
-              "name": "rrcs",
+              "name": "rrs",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "i_cids": [
                 {
                   "id": 0,
                   "off": 2
                 }
               ],
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "o_cids": [
                 {
                   "id": 0,
                   "off": 2
                 }
               ],
-              "srcbuff": "i",
+              "dst": 1,
               "dstbuff": "i",
               "dstoff": 2,
               "ctype": "sm",
@@ -298,27 +352,33 @@
             },
             {
               "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "o_cids": [
                 {
                   "id": 0,
                   "off": 2
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             },
             {
               "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "i_cids": [
                 {
                   "id": 0,
                   "off": 0
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             }
           ],
           "channels": [
@@ -326,7 +386,7 @@
               "src": "i",
               "dst": "i",
               "ctype": "sm",
-              "cid": [
+              "cids": [
                 0
               ]
             }
@@ -337,27 +397,33 @@
           "ops": [
             {
               "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "o_cids": [
                 {
                   "id": 0,
                   "off": 1
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             },
             {
               "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "i_cids": [
                 {
                   "id": 0,
                   "off": 3
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             },
             {
               "name": "nop",
@@ -369,20 +435,28 @@
               ]
             },
             {
-              "name": "rrcs",
+              "name": "rrs",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "i_cids": [
                 {
                   "id": 0,
                   "off": 3
                 }
               ],
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "o_cids": [
                 {
                   "id": 0,
                   "off": 2
                 }
               ],
-              "srcbuff": "i",
+              "dst": 1,
               "dstbuff": "i",
               "dstoff": 3,
               "ctype": "sm",
@@ -399,27 +473,33 @@
             },
             {
               "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "o_cids": [
                 {
                   "id": 0,
                   "off": 2
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             },
             {
               "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
               "i_cids": [
                 {
                   "id": 0,
                   "off": 0
                 }
               ],
-              "srcbuff": "i",
-              "dstbuff": "i",
-              "ctype": "sm"
+              "ctype": "sm",
+              "cnt": 1
             }
           ],
           "channels": [
@@ -427,7 +507,7 @@
               "src": "i",
               "dst": "i",
               "ctype": "sm",
-              "cid": [
+              "cids": [
                 1
               ]
             }

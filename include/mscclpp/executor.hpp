@@ -12,7 +12,7 @@ namespace mscclpp {
 
 class ExecutionPlan {
  public:
-  ExecutionPlan(std::ifstream& file);
+  ExecutionPlan(std::string planPath);
   ~ExecutionPlan() = default;
 
  private:

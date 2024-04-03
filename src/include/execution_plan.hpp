@@ -8,8 +8,43 @@
 #include <mscclpp/executor.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
+
+namespace mscclpp {
+
+enum class BufferType {
+  INPUT,
+  OUTPUT,
+  SCRATCH,
+};
+
+enum class ChannelType {
+  SM,
+  PROXY,
+};
+
+struct ChannelKey {
+  BufferType srcBufferType;
+  BufferType dstBufferType;
+  ChannelType channelType;
+  bool operator==(const ChannelKey& other) const {
+    return srcBufferType == other.srcBufferType && dstBufferType == other.dstBufferType &&
+           channelType == other.channelType;
+  }
+};
+}  // namespace mscclpp
+
+namespace std {
+template <>
+struct hash<mscclpp::ChannelKey> {
+  std::size_t operator()(const mscclpp::ChannelKey& key) const {
+    return std::hash<int>()(static_cast<int>(key.srcBufferType)) ^
+           std::hash<int>()(static_cast<int>(key.dstBufferType)) ^ std::hash<int>()(static_cast<int>(key.channelType));
+  }
+};
+}  // namespace std
 
 namespace mscclpp {
 
@@ -29,17 +64,6 @@ enum class OperationType {
   READ_REDUCE_COPY_PUT,
 };
 
-enum class ChannelType {
-  SM,
-  PROXY,
-};
-
-enum class BufferType {
-  INPUT,
-  OUTPUT,
-  SCRATCH,
-};
-
 struct ChannelInfo {
   BufferType srcBufferType;
   BufferType dstBufferType;
@@ -55,10 +79,14 @@ struct Channels {
 struct Operation {
   OperationType type;
   ChannelType channelType;
+  uint16_t nInputChannels;
+  uint16_t nOutputChannels;
   uint16_t inputChannelIndex[MAX_CHANNEL_PER_OPERATION];
   uint16_t outputChannelIndex[MAX_CHANNEL_PER_OPERATION];
   size_t inputOffset[MAX_CHANNEL_PER_OPERATION];
   size_t outputOffset[MAX_CHANNEL_PER_OPERATION];
+  BufferType srcBufferType;
+  BufferType dstBufferType;
   size_t srcOffset;
   size_t dstOffset;
   size_t size;
@@ -74,7 +102,7 @@ struct DeviceExecutionPlan {
 
 struct ExecutionPlan::Impl {
  public:
-  Impl(std::ifstream& file);
+  Impl(std::string planPath);
   ~Impl() = default;
 
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
@@ -82,18 +110,25 @@ struct ExecutionPlan::Impl {
   std::vector<int> getConnectedPeers(int rank) const;
   std::vector<BufferType> getConnectedBufferTypes(int rank) const;
   size_t getScratchBufferSize(int rank, size_t inputSize) const;
-  std::vector<Operation> getOperations(int rank, int threadblock);
-  std::pair<int, int> getThreadBlockChannelRange(int rank, int threadblock, BufferType srcBufferType,
-                                                 BufferType dstBufferType, ChannelType channelType);
-  void loadExecutionPlan(std::ifstream& file);
+  std::vector<Operation> getOperations(int rank, int threadblock) const;
+  int getThreadblockCount(int rank) const;
 
-  // operations for [rank][threadblock]
-  std::vector<std::vector<Operation>> operations;
+  void loadExecutionPlan(size_t inputSize);
+  void setupChannels(const nlohmann::json& gpus);
+  void setupOperations(const nlohmann::json& gpus);
+
+  std::string planPath;
+  // operations for [rank][threadblock] = [operations]
+  std::unordered_map<int, std::vector<std::vector<Operation>>> operations;
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
+  // threadblockChannelMap[rank][threadblock] = [channelIndex]
+  std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockSMChannelMap;
+  std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockProxyChannelMap;
   std::string name;
   std::unordered_map<int, uint32_t> inputChunks;
   std::unordered_map<int, uint32_t> outputChunks;
   std::unordered_map<int, uint32_t> scratchChunks;
+  size_t chunkSize;
 };
 
 }  // namespace mscclpp
