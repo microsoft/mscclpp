@@ -61,8 +61,9 @@ enum class OperationType : uint8_t {
   WAIT,
   FLUSH,
   REDUCE,
-  READ_REDUCE_COPY,
-  READ_REDUCE_COPY_PUT,
+  REDUCE_SEND,
+  READ_REDUCE,
+  READ_REDUCE_SEND,
 };
 
 struct ChannelInfo {

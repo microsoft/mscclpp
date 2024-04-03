@@ -29,12 +29,14 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::WAIT;
   } else if (str == "flush") {
     return mscclpp::OperationType::FLUSH;
-  } else if (str == "reduce") {
+  } else if (str == "re") {
     return mscclpp::OperationType::REDUCE;
-  } else if (str == "read_reduce_copy") {
-    return mscclpp::OperationType::READ_REDUCE_COPY;
-  } else if (str == "read_reduce_copy_put") {
-    return mscclpp::OperationType::READ_REDUCE_COPY_PUT;
+  } else if (str == "rs") {
+    return mscclpp::OperationType::REDUCE_SEND;
+  } else if (str == "rr") {
+    return mscclpp::OperationType::READ_REDUCE;
+  } else if (str == "rrs") {
+    return mscclpp::OperationType::READ_REDUCE_SEND;
   } else {
     throw std::runtime_error("Invalid operation type");
   }
@@ -157,6 +159,9 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
         channelMap[key].push_back(i);
       }
     }
+    int nthreadblocks = gpu["threadblocks"].size();
+    this->threadblockSMChannelMap[rank].resize(nthreadblocks);
+    this->threadblockProxyChannelMap[rank].resize(nthreadblocks);
     for (const auto& threadblock : gpu["threadblocks"]) {
       for (const auto& channel : threadblock["channels"]) {
         ChannelType channelType = convertToChannelType(channel["ctype"]);
@@ -204,18 +209,18 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
           operation.nOutputChannels = op["o_cids"].size();
         }
         for (int i = 0; i < operation.nInputChannels; i++) {
-          BufferType srcBufferType = convertToBufferType(op["i_buff"][i]["src"]);
-          BufferType dstBufferType = convertToBufferType(op["i_buff"][i]["dst"]);
+          BufferType srcBufferType = convertToBufferType(op["i_buff"]["src"]);
+          BufferType dstBufferType = convertToBufferType(op["i_buff"]["dst"]);
           operation.inputChannelIndex[i] =
               channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
-          operation.inputOffset[i] = this->chunkSize * (int)op["i_cids"][i]["offset"];
+          operation.inputOffset[i] = this->chunkSize * (int)op["i_cids"][i]["off"];
         }
         for (int i = 0; i < operation.nOutputChannels; i++) {
-          BufferType srcBufferType = convertToBufferType(op["o_buff"][i]["src"]);
-          BufferType dstBufferType = convertToBufferType(op["o_buff"][i]["dst"]);
+          BufferType srcBufferType = convertToBufferType(op["o_buff"]["src"]);
+          BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
           operation.outputChannelIndex[i] =
               channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["o_cids"][i]["id"]];
-          operation.outputOffset[i] = this->chunkSize * (int)op["o_cids"][i]["offset"];
+          operation.outputOffset[i] = this->chunkSize * (int)op["o_cids"][i]["off"];
         }
         if (op.contains("srcbuff")) {
           operation.srcBufferType = convertToBufferType(op["srcbuff"]);
