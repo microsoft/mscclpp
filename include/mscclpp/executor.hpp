@@ -29,7 +29,7 @@ class Executor {
   Executor& operator=(const Executor&) = delete;
   ~Executor();
 
-  void execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
+  void execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, int nthreads,
                const ExecutionPlan& plan);
 
  private:

@@ -6,6 +6,7 @@
 #include <mscclpp/sm_channel.hpp>
 #include <set>
 
+#include "execution_kernel.hpp"
 #include "execution_plan.hpp"
 
 namespace mscclpp {
@@ -60,9 +61,9 @@ struct ExecutionContext {
   std::vector<mscclpp::SmChannel> smChannels;
   std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
   std::vector<DeviceExecutionPlan> deviceExecutionPlans;
-  std::vector<std::vector<Operation>> operations;
   std::shared_ptr<char> scratchBuffer;
   size_t scratchBufferSize;
+  std::shared_ptr<char> deviceExecutionPlansBuffer;
 };
 
 struct Executor::Impl {
@@ -70,8 +71,10 @@ struct Executor::Impl {
   std::shared_ptr<Communicator> comm;
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
+  CudaStreamWithFlags stream;
 
-  Impl(std::shared_ptr<Communicator> comm, int nranksPerNode) : nranksPerNode(nranksPerNode), comm(comm) {
+  Impl(std::shared_ptr<Communicator> comm, int nranksPerNode)
+      : nranksPerNode(nranksPerNode), comm(comm), stream(cudaStreamNonBlocking) {
     this->proxyService = std::make_shared<ProxyService>();
   }
   ~Impl() = default;
@@ -93,6 +96,12 @@ struct Executor::Impl {
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
     this->setupChannels(context, sendbuff, recvbuff, sendBufferSize, rank, plan);
     this->setupDeviceExecutionPlan(context, rank, plan);
+    context.deviceExecutionPlansBuffer =
+        allocExtSharedCuda<char>(context.deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan));
+    MSCCLPP_CUDATHROW(cudaMemcpyAsync(context.deviceExecutionPlansBuffer.get(), context.deviceExecutionPlans.data(),
+                                      context.deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan),
+                                      cudaMemcpyHostToDevice, stream));
+    MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
     return context;
   }
 
@@ -230,7 +239,6 @@ struct Executor::Impl {
     for (int threadblock = 0; threadblock < plan.impl_->getThreadblockCount(rank); threadblock++) {
       DeviceExecutionPlan deviceExecutionPlan;
       std::vector<Operation> ops = plan.impl_->getOperations(rank, threadblock);
-      context.operations.emplace_back(std::move(ops));
       deviceExecutionPlan.nOperations = ops.size();
       deviceExecutionPlan.nSmChannels = plan.impl_->threadblockSMChannelMap.at(rank).at(threadblock).size();
       deviceExecutionPlan.nProxyChannels = plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock).size();
@@ -240,28 +248,29 @@ struct Executor::Impl {
       for (const auto& [index, key] : plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.proxyChannels[index] = mscclpp::deviceHandle(context.proxyChannels[index]);
       }
+      for (size_t i = 0; i < ops.size(); i++) {
+        deviceExecutionPlan.operations[i] = ops[i];
+      }
       deviceExecutionPlans.push_back(deviceExecutionPlan);
     }
     context.deviceExecutionPlans = std::move(deviceExecutionPlans);
   }
 
-  void launchKernel(ExecutionContext& context) {
-    // copy context to shared memory
-    // std::cout << sizeof(Channels) << std::endl;
-    // std::cout << sizeof(Operation) << std::endl;
-    // std::cout << sizeof(DeviceExecutionPlan) << std::endl;
-    // launch kernel
+  void launchKernel(ExecutionContext& context, int nthreadsPerBlock) {
+    int nthreadblocks = context.deviceExecutionPlans.size();
+    ExecutionKernel::launchKernel(nthreadblocks, nthreadsPerBlock,
+                                  (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), this->stream);
   }
 };
 
 Executor::Executor(std::shared_ptr<Communicator> comm, int nranksPerNode)
     : impl_(std::make_unique<Impl>(comm, nranksPerNode)) {}
 
-void Executor::execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
+void Executor::execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, int nthreads,
                        const ExecutionPlan& plan) {
   ExecutionContext context =
       this->impl_->setupExecutionContext(rank, sendbuff, recvBuff, sendBuffSize, recvBuffSize, plan);
-  this->impl_->launchKernel(context);
+  this->impl_->launchKernel(context, nthreads);
 }
 
 Executor::~Executor() = default;
