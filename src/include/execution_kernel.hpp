@@ -70,7 +70,8 @@ struct DeviceExecutionPlan {
 
 class ExecutionKernel {
  public:
-  static void launchKernel(int nthreadblocks, int nthreads, DeviceExecutionPlan* plan, cudaStream_t stream);
+  static void launchKernel(int nthreadblocks, int nthreads, DeviceExecutionPlan* plan, size_t sharedMemSize,
+                           cudaStream_t stream);
 };
 
 }  // namespace mscclpp

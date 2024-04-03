@@ -258,8 +258,10 @@ struct Executor::Impl {
 
   void launchKernel(ExecutionContext& context, int nthreadsPerBlock) {
     int nthreadblocks = context.deviceExecutionPlans.size();
+    size_t sharedMemSize = sizeof(DeviceExecutionPlan);
     ExecutionKernel::launchKernel(nthreadblocks, nthreadsPerBlock,
-                                  (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), this->stream);
+                                  (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), sharedMemSize,
+                                  this->stream);
   }
 };
 
