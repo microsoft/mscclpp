@@ -19,6 +19,9 @@ from ._mscclpp import (
     TcpBootstrap,
     Transport,
     TransportFlags,
+    DataType,
+    Executor,
+    ExecutionPlan,
     version,
     is_nvls_supported,
 )
