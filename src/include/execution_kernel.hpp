@@ -4,6 +4,7 @@
 #ifndef MSCCLPP_EXECUTION_KERNEL_HPP_
 #define MSCCLPP_EXECUTION_KERNEL_HPP_
 
+#include <mscclpp/executor.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
 
@@ -35,7 +36,9 @@ enum class OperationType : uint8_t {
   REDUCE,
   REDUCE_SEND,
   READ_REDUCE,
+  READ_REDUCE_COPY,
   READ_REDUCE_SEND,
+  READ_REDUCE_COPY_SEND,
 };
 
 struct Channels {
@@ -70,8 +73,8 @@ struct DeviceExecutionPlan {
 
 class ExecutionKernel {
  public:
-  static void launchKernel(int rank, int nthreadblocks, int nthreads, DeviceExecutionPlan* plan, size_t sharedMemSize,
-                           cudaStream_t stream);
+  static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
+                           DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize, cudaStream_t stream);
 };
 
 }  // namespace mscclpp

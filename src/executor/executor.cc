@@ -255,23 +255,24 @@ struct Executor::Impl {
     context.deviceExecutionPlans = std::move(deviceExecutionPlans);
   }
 
-  void launchKernel(ExecutionContext& context, int rank, int nthreadsPerBlock, cudaStream_t stream) {
+  void launchKernel(ExecutionContext& context, int rank, int nthreadsPerBlock, void* sendbuff, void* recvbuff,
+                    DataType dataType, cudaStream_t stream) {
     int nthreadblocks = context.deviceExecutionPlans.size();
     size_t sharedMemSize = sizeof(DeviceExecutionPlan);
-    ExecutionKernel::launchKernel(rank, nthreadblocks, nthreadsPerBlock,
-                                  (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), sharedMemSize,
-                                  stream);
+    ExecutionKernel::launchKernel(
+        rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(), dataType,
+        (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), sharedMemSize, stream);
   }
 };
 
 Executor::Executor(std::shared_ptr<Communicator> comm, int nranksPerNode)
     : impl_(std::make_unique<Impl>(comm, nranksPerNode)) {}
 
-void Executor::execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, int nthreads,
-                       const ExecutionPlan& plan, cudaStream_t stream) {
+void Executor::execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
+                       DataType dataType, int nthreads, const ExecutionPlan& plan, cudaStream_t stream) {
   ExecutionContext context =
       this->impl_->setupExecutionContext(rank, sendbuff, recvBuff, sendBuffSize, recvBuffSize, plan, stream);
-  this->impl_->launchKernel(context, rank, nthreads, stream);
+  this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvBuff, dataType, stream);
 }
 
 Executor::~Executor() = default;

@@ -10,6 +10,13 @@
 
 namespace mscclpp {
 
+enum class DataType {
+  INT32,
+  UINT32,
+  FLOAT16,
+  FLOAT32,
+};
+
 class ExecutionPlan {
  public:
   ExecutionPlan(std::string planPath);
@@ -29,8 +36,8 @@ class Executor {
   Executor& operator=(const Executor&) = delete;
   ~Executor();
 
-  void execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, int nthreads,
-               const ExecutionPlan& plan, cudaStream_t stream);
+  void execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, DataType dataType,
+               int nthreads, const ExecutionPlan& plan, cudaStream_t stream);
 
  private:
   struct Impl;
