@@ -66,7 +66,7 @@ MSCCLPP_DEVICE_INLINE uint2 add_vectors(uint2 a, uint2 b) {
 }
 
 template <>
-MSCCLPP_DEVICE_INLINE uint2 add_vectors<__half>(uint2 a, uint2 b) {
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__half>(uint2 a, uint2 b) {
   return add_vectors_helper<__half2>(a, b);
 }
 
@@ -81,7 +81,7 @@ MSCCLPP_DEVICE_INLINE int add_vectors(int a, int b) {
 }
 
 template <>
-MSCCLPP_DEVICE_INLINE int add_vectors<__half>(int a, int b) {
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__half>(int a, int b) {
   return add_vectors_helper<__half2>(a, b);
 }
 
@@ -96,32 +96,10 @@ MSCCLPP_DEVICE_INLINE uint32_t add_vectors(uint32_t a, uint32_t b) {
 }
 
 template <>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__half>(uint32_t a, uint32_t b) {
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint32_t add_vectors<__half>(uint32_t a, uint32_t b) {
   return add_vectors_helper<__half2>(a, b);
 }
 
-template <typename T>
-MSCCLPP_DEVICE_INLINE void vectorSum(T* dst, T* src, size_t nElem, int blockId, int nBlocks) {
-  size_t nInt4 = nElem / 4;
-  size_t nLastInts = nElem % 4;
-  int4* dst4 = (int4*)dst;
-  int4* src4 = (int4*)src;
-  for (size_t i = threadIdx.x + blockId * blockDim.x; i < nInt4; i += blockDim.x * nBlocks) {
-    dst4[i] = add_vectors<T>(dst4[i], src4[i]);
-  }
-  if (nLastInts > 0) {
-    int* dstLast = ((int*)dst) + nInt4 * 4;
-    int* srcLast = ((int*)src) + nInt4 * 4;
-    for (size_t i = threadIdx.x + blockId * blockDim.x; i < nLastInts; i += blockDim.x * nBlocks) {
-      dstLast[i] = add_vectors<T>(dstLast[i], srcLast[i]);
-    }
-  }
-}
-
-template <typename T>
-MSCCLPP_DEVICE_INLINE void vectorSum(T* dst, T* src, size_t nElem) {
-  vectorSum(dst, src, nElem, blockIdx.x, gridDim.x);
-}
 }  // namespace
 
 namespace mscclpp {
@@ -234,19 +212,10 @@ __global__ void kernel(int rank, T* input, T* output, T* scratch, DeviceExecutio
         __syncthreads();
         break;
       case OperationType::SIGNAL:
-        // if (tid == 0) {
-        //   printf("rank: %d bid: %d, noutputchannels: %d outputChannelIndex %d\n", rank, bid,
-        //          operations[i].nOutputChannels, operations[i].outputChannelIndex[0]);
-        // }
         handleSignal(tid, smChannels, proxyChannels, operations[i].outputChannelIndexes, operations[i].nOutputChannels,
                      operations[i].channelType);
         break;
       case OperationType::WAIT:
-        // if (tid == 0) {
-        //   printf("rank: %d bid: %d, ninputchannels: %d inputChannelIndex %d\n", rank, bid,
-        //   operations[i].nInputChannels,
-        //          operations[i].inputChannelIndex[0]);
-        // }
         handleWait(tid, smChannels, proxyChannels, operations[i].inputChannelIndexes, operations[i].nInputChannels,
                    operations[i].channelType);
         break;
