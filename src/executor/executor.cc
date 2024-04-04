@@ -71,16 +71,14 @@ struct Executor::Impl {
   std::shared_ptr<Communicator> comm;
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
-  CudaStreamWithFlags stream;
 
-  Impl(std::shared_ptr<Communicator> comm, int nranksPerNode)
-      : nranksPerNode(nranksPerNode), comm(comm), stream(cudaStreamNonBlocking) {
+  Impl(std::shared_ptr<Communicator> comm, int nranksPerNode) : nranksPerNode(nranksPerNode), comm(comm) {
     this->proxyService = std::make_shared<ProxyService>();
   }
   ~Impl() = default;
 
   ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t sendBufferSize,
-                                         size_t recvBufferSize, const ExecutionPlan& plan) {
+                                         size_t recvBufferSize, const ExecutionPlan& plan, cudaStream_t stream) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendBufferSize, recvBufferSize, plan.impl_->name};
     if (this->contexts.find(key) != this->contexts.end()) {
       return this->contexts[key];
@@ -102,6 +100,7 @@ struct Executor::Impl {
                                       context.deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan),
                                       cudaMemcpyHostToDevice, stream));
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+    this->contexts.insert({key, context});
     return context;
   }
 
@@ -256,12 +255,12 @@ struct Executor::Impl {
     context.deviceExecutionPlans = std::move(deviceExecutionPlans);
   }
 
-  void launchKernel(ExecutionContext& context, int nthreadsPerBlock) {
+  void launchKernel(ExecutionContext& context, int rank, int nthreadsPerBlock, cudaStream_t stream) {
     int nthreadblocks = context.deviceExecutionPlans.size();
     size_t sharedMemSize = sizeof(DeviceExecutionPlan);
-    ExecutionKernel::launchKernel(nthreadblocks, nthreadsPerBlock,
+    ExecutionKernel::launchKernel(rank, nthreadblocks, nthreadsPerBlock,
                                   (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), sharedMemSize,
-                                  this->stream);
+                                  stream);
   }
 };
 
@@ -269,10 +268,10 @@ Executor::Executor(std::shared_ptr<Communicator> comm, int nranksPerNode)
     : impl_(std::make_unique<Impl>(comm, nranksPerNode)) {}
 
 void Executor::execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, int nthreads,
-                       const ExecutionPlan& plan) {
+                       const ExecutionPlan& plan, cudaStream_t stream) {
   ExecutionContext context =
-      this->impl_->setupExecutionContext(rank, sendbuff, recvBuff, sendBuffSize, recvBuffSize, plan);
-  this->impl_->launchKernel(context, nthreads);
+      this->impl_->setupExecutionContext(rank, sendbuff, recvBuff, sendBuffSize, recvBuffSize, plan, stream);
+  this->impl_->launchKernel(context, rank, nthreads, stream);
 }
 
 Executor::~Executor() = default;

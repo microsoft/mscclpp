@@ -70,7 +70,7 @@ struct DeviceExecutionPlan {
 
 class ExecutionKernel {
  public:
-  static void launchKernel(int nthreadblocks, int nthreads, DeviceExecutionPlan* plan, size_t sharedMemSize,
+  static void launchKernel(int rank, int nthreadblocks, int nthreads, DeviceExecutionPlan* plan, size_t sharedMemSize,
                            cudaStream_t stream);
 };
 

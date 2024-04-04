@@ -30,7 +30,7 @@ class Executor {
   ~Executor();
 
   void execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, int nthreads,
-               const ExecutionPlan& plan);
+               const ExecutionPlan& plan, cudaStream_t stream);
 
  private:
   struct Impl;
