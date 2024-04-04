@@ -220,11 +220,11 @@ struct Executor::Impl {
         RegisteredMemory localMemory = this->comm->registerMemory(src, sendBufferSize, transport);
         for (int peer : info.connectedPeers) {
           if (channelType == ChannelType::SM) {
-            context.smChannels.emplace_back(context.smSemaphores[index],
+            context.smChannels.emplace_back(context.smSemaphores[index++],
                                             context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
           } else if (channelType == ChannelType::PROXY) {
             context.proxyChannels.emplace_back(
-                this->proxyService->proxyChannel(context.proxySemaphores[index]),
+                this->proxyService->proxyChannel(context.proxySemaphores[index++]),
                 this->proxyService->addMemory(context.registeredMemories[{info.dstBufferType, peer}]),
                 this->proxyService->addMemory(localMemory));
           }
@@ -236,16 +236,18 @@ struct Executor::Impl {
   void setupDeviceExecutionPlan(ExecutionContext& context, int rank, const ExecutionPlan& plan) {
     std::vector<DeviceExecutionPlan> deviceExecutionPlans;
     for (int threadblock = 0; threadblock < plan.impl_->getThreadblockCount(rank); threadblock++) {
-      DeviceExecutionPlan deviceExecutionPlan;
+      DeviceExecutionPlan deviceExecutionPlan = {};
       std::vector<Operation> ops = plan.impl_->getOperations(rank, threadblock);
       deviceExecutionPlan.nOperations = ops.size();
       deviceExecutionPlan.nSmChannels = plan.impl_->threadblockSMChannelMap.at(rank).at(threadblock).size();
       deviceExecutionPlan.nProxyChannels = plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock).size();
-      for (const auto& [index, key] : plan.impl_->threadblockSMChannelMap.at(rank).at(threadblock)) {
-        deviceExecutionPlan.channels.smChannels[index] = mscclpp::deviceHandle(context.smChannels[index]);
+      int chanIndex = 0;
+      for (const auto& [index, _] : plan.impl_->threadblockSMChannelMap.at(rank).at(threadblock)) {
+        deviceExecutionPlan.channels.smChannels[chanIndex++] = mscclpp::deviceHandle(context.smChannels[index]);
       }
-      for (const auto& [index, key] : plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock)) {
-        deviceExecutionPlan.channels.proxyChannels[index] = mscclpp::deviceHandle(context.proxyChannels[index]);
+      chanIndex = 0;
+      for (const auto& [index, _] : plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock)) {
+        deviceExecutionPlan.channels.proxyChannels[chanIndex++] = mscclpp::deviceHandle(context.proxyChannels[index]);
       }
       for (size_t i = 0; i < ops.size(); i++) {
         deviceExecutionPlan.operations[i] = ops[i];

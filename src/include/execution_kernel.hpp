@@ -35,9 +35,7 @@ enum class OperationType : uint8_t {
   FLUSH,
   REDUCE,
   REDUCE_SEND,
-  READ_REDUCE,
   READ_REDUCE_COPY,
-  READ_REDUCE_SEND,
   READ_REDUCE_COPY_SEND,
 };
 
@@ -53,10 +51,10 @@ struct Operation {
   BufferType dstBufferType;
   uint8_t nInputChannels;
   uint8_t nOutputChannels;
-  uint8_t inputChannelIndex[MAX_CHANNEL_PER_OPERATION];
-  uint8_t outputChannelIndex[MAX_CHANNEL_PER_OPERATION];
-  uint32_t inputOffset[MAX_CHANNEL_PER_OPERATION];
-  uint32_t outputOffset[MAX_CHANNEL_PER_OPERATION];
+  uint8_t inputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
+  uint8_t outputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
+  uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+  uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
   uint32_t srcOffset;
   uint32_t dstOffset;
   uint32_t size;

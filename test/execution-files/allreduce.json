@@ -53,7 +53,7 @@
               ]
             },
             {
-              "name": "rrs",
+              "name": "rrcs",
               "i_buff": {
                 "src": "i",
                 "dst": "i"
@@ -74,6 +74,9 @@
                   "off": 0
                 }
               ],
+              "src": 0,
+              "srcbuff": "i",
+              "srcoff": 0,
               "dst": 0,
               "dstbuff": "i",
               "dstoff": 0,
@@ -174,7 +177,7 @@
               ]
             },
             {
-              "name": "rrs",
+              "name": "rrcs",
               "i_buff": {
                 "src": "i",
                 "dst": "i"
@@ -195,6 +198,9 @@
                   "off": 0
                 }
               ],
+              "src": 0,
+              "srcbuff": "i",
+              "srcoff": 1,
               "dst": 0,
               "dstbuff": "i",
               "dstoff": 1,
@@ -314,7 +320,7 @@
               ]
             },
             {
-              "name": "rrs",
+              "name": "rrcs",
               "i_buff": {
                 "src": "i",
                 "dst": "i"
@@ -335,6 +341,9 @@
                   "off": 2
                 }
               ],
+              "src": 1,
+              "srcbuff": "i",
+              "srcoff": 2,
               "dst": 1,
               "dstbuff": "i",
               "dstoff": 2,
@@ -435,7 +444,7 @@
               ]
             },
             {
-              "name": "rrs",
+              "name": "rrcs",
               "i_buff": {
                 "src": "i",
                 "dst": "i"
@@ -456,6 +465,9 @@
                   "off": 2
                 }
               ],
+              "src": 1,
+              "srcbuff": "i",
+              "srcoff": 3,
               "dst": 1,
               "dstbuff": "i",
               "dstoff": 3,

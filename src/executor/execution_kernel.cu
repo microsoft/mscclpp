@@ -126,6 +126,20 @@ MSCCLPP_DEVICE_INLINE void vectorSum(T* dst, T* src, size_t nElem) {
 
 namespace mscclpp {
 
+template <typename T>
+MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType bufferType) {
+  if (bufferType == BufferType::INPUT) {
+    return input;
+  }
+  if (bufferType == BufferType::OUTPUT) {
+    return output;
+  }
+  if (bufferType == BufferType::SCRATCH) {
+    return scratch;
+  }
+  return nullptr;
+}
+
 MSCCLPP_DEVICE_INLINE void handleSignal(int tid, DeviceHandle<SmChannel>* smChannels,
                                         DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* channelIndex,
                                         int nChannels, ChannelType chType) {
@@ -158,7 +172,6 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* input, uint32_t inputOffs
                                                     uint8_t* srcChannelIndex, uint8_t* dstChannelIndex,
                                                     uint32_t* srcOffsets, uint32_t* dstOffsets, int nSrcChannels,
                                                     int nDstChannels, uint32_t size) {
-  const size_t vectorSize = sizeof(int4) / sizeof(T);
   const size_t nInt4 = size / sizeof(int4);
   const size_t inputOffset4 = inputOffsetByBytes / sizeof(int4);
   const size_t outputOffset4 = outputOffsetByBytes / sizeof(int4);
@@ -213,9 +226,8 @@ __global__ void kernel(int rank, T* input, T* output, T* scratch, DeviceExecutio
   Operation* operations = localPlan->operations;
   DeviceHandle<SmChannel>* smChannels = localPlan->channels.smChannels;
   DeviceHandle<SimpleProxyChannel>* proxyChannels = localPlan->channels.proxyChannels;
-  if (bid > 0) {
-    return;
-  }
+  T* src = nullptr;
+  T* dst = nullptr;
   for (int i = 0; i < localPlan->nOperations; i++) {
     switch (operations[i].type) {
       case OperationType::BARRIER:
@@ -226,7 +238,7 @@ __global__ void kernel(int rank, T* input, T* output, T* scratch, DeviceExecutio
         //   printf("rank: %d bid: %d, noutputchannels: %d outputChannelIndex %d\n", rank, bid,
         //          operations[i].nOutputChannels, operations[i].outputChannelIndex[0]);
         // }
-        handleSignal(tid, smChannels, proxyChannels, operations[i].outputChannelIndex, operations[i].nOutputChannels,
+        handleSignal(tid, smChannels, proxyChannels, operations[i].outputChannelIndexes, operations[i].nOutputChannels,
                      operations[i].channelType);
         break;
       case OperationType::WAIT:
@@ -235,13 +247,15 @@ __global__ void kernel(int rank, T* input, T* output, T* scratch, DeviceExecutio
         //   operations[i].nInputChannels,
         //          operations[i].inputChannelIndex[0]);
         // }
-        handleWait(tid, smChannels, proxyChannels, operations[i].inputChannelIndex, operations[i].nInputChannels,
+        handleWait(tid, smChannels, proxyChannels, operations[i].inputChannelIndexes, operations[i].nInputChannels,
                    operations[i].channelType);
         break;
-      case OperationType::READ_REDUCE_SEND:
-        handleReadReduceCopySend(input, operations[i].srcOffset, input, operations[i].srcOffset, smChannels,
-                                 operations[i].inputChannelIndex, operations[i].outputChannelIndex,
-                                 operations[i].inputOffset, operations[i].outputOffset, operations[i].nInputChannels,
+      case OperationType::READ_REDUCE_COPY_SEND:
+        src = getBuffer(input, output, scratch, operations[i].srcBufferType);
+        dst = getBuffer(input, output, scratch, operations[i].dstBufferType);
+        handleReadReduceCopySend(src, operations[i].srcOffset, dst, operations[i].dstOffset, smChannels,
+                                 operations[i].inputChannelIndexes, operations[i].outputChannelIndexes,
+                                 operations[i].inputOffsets, operations[i].outputOffsets, operations[i].nInputChannels,
                                  operations[i].nOutputChannels, operations[i].size);
         break;
       default:
