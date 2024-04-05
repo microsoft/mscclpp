@@ -193,8 +193,8 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* input, uint32_t inputOffs
 }
 
 template <typename T>
-__global__ void kernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
-                       DeviceExecutionPlan* plan) {
+__global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
+                                DeviceExecutionPlan* plan) {
   extern __shared__ int sharedMem[];
   int bid = blockIdx.x;
   int tid = threadIdx.x;
@@ -241,28 +241,33 @@ __global__ void kernel([[maybe_unused]] int rank /*for debug*/, T* input, T* out
 
 class ExecutionKernel {
  public:
+#if defined(MSCCLPP_DEVICE_HIP)
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
                            DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize, cudaStream_t stream) {
     switch (dataType) {
       case DataType::INT32:
-        kernel<int32_t><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(rank, (int32_t*)src, (int32_t*)dst,
-                                                                            (int32_t*)scratch, plan);
+        executionKernel<int32_t><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(rank, (int32_t*)src, (int32_t*)dst,
+                                                                                     (int32_t*)scratch, plan);
         break;
       case DataType::UINT32:
-        kernel<uint32_t><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(rank, (uint32_t*)src, (uint32_t*)dst,
-                                                                             (uint32_t*)scratch, plan);
+        executionKernel<uint32_t><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, plan);
         break;
       case DataType::FLOAT16:
-        kernel<half>
+        executionKernel<half>
             <<<nthreadblocks, nthreads, sharedMemSize, stream>>>(rank, (half*)src, (half*)dst, (half*)scratch, plan);
         break;
       case DataType::FLOAT32:
-        kernel<float>
+        executionKernel<float>
             <<<nthreadblocks, nthreads, sharedMemSize, stream>>>(rank, (float*)src, (float*)dst, (float*)scratch, plan);
         break;
     }
   }
 };
+#else   // !defined(MSCCLPP_DEVICE_HIP)
+  static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
+                           DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize, cudaStream_t stream);
+#endif  // defined(MSCCLPP_DEVICE_HIP)
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_EXECUTION_KERNEL_HPP_
