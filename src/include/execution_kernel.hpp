@@ -245,7 +245,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
 
 class ExecutionKernel {
  public:
-#if defined(MSCCLPP_DEVICE_COMPILE)
+#if defined(MSCCLPP_DEVICE_HIP)
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
                            DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize, cudaStream_t stream) {
     switch (dataType) {
@@ -267,9 +267,10 @@ class ExecutionKernel {
         break;
     }
   }
-#else   // !defined(MSCCLPP_DEVICE_COMPILE)
-  static void launchKernel(int, int, int, void*, void*, void*, DataType, DeviceExecutionPlan*, size_t, cudaStream_t) {}
-#endif  // !defined(MSCCLPP_DEVICE_COMPILE)
+#else   // !defined(MSCCLPP_DEVICE_HIP)
+  static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
+                           DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize, cudaStream_t stream);
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
 };
 }  // namespace mscclpp
 
