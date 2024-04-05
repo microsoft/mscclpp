@@ -244,12 +244,20 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
 }
 
 void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
+  // Validating Transport Protocol
   validateTransport(dst, remoteTransport());
-  uint64_t oldValue = *src;
-  *src = newValue;
-  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
 
-  *dstPtr = newValue;
+  // Initalizing Variables
+  uint64_t oldValue = *src;
+  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
+  uint64_t size = sizeof(uint64_t);
+  *src = newValue;
+
+  // Sending Data
+  sendSocket_->send(&dstPtr, sizeof(char*));
+  sendSocket_->send(&size, sizeof(uint64_t));
+  sendSocket_->send(src, size);
+  
   INFO(MSCCLPP_NET, "EthernetConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
        newValue);
 }
@@ -260,17 +268,15 @@ void EthernetConnection::flush(int64_t timeoutUsec) {
 }
 
 void EthernetConnection::rcvMessages(){
-  // Declarating Variables
-  char* ptr = (char*)malloc(sizeof(char));
-  char* buffer;
-  uint64_t size;
-  int closed = 0;
-  bool received;
-
   // Receiving Messages Until Connection is Closed
   while (!stopRcvMessages_) {
-    received = true;
-    
+    // Declarating Variables
+    char* ptr;
+    char* buffer;
+    uint64_t size;
+    int closed = 0;
+    bool received = true;
+
     // Receiving Data Address
     if(closed == 0) rcvSocket_->recvUntilEnd(&ptr, sizeof(char*), &closed);
     received &= !closed;

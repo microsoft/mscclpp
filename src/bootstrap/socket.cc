@@ -548,7 +548,7 @@ void Socket::recvUntilEnd(void *ptr, int size, int* closed){
   *closed = 0;
   if (state_ != SocketStateReady) {
     std::stringstream ss;
-    ss << "socket state (" << state_ << ") is not ready";
+    ss << "socket state (" << state_ << ") is not ready in recvUntilEnd";
     throw Error(ss.str(), ErrorCode::InternalError);
   }
 
