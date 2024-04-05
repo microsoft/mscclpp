@@ -35,10 +35,11 @@ int main() {
 
   std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(comm, 8 /*nranksPerNode*/);
   mscclpp::ExecutionPlan plan(MSCCLPP_ROOT_PATH + "/test/execution-files/allreduce.json");
-  std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(1024 * 1024);
+  const int bufferSize = 1024 * 1024;
+  std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
   mscclpp::CudaStreamWithFlags stream(cudaStreamNonBlocking);
-  executor->execute(rank, sendbuff.get(), sendbuff.get(), 1024 * 1024, 1024 * 1024, mscclpp::DataType::FLOAT16, 512,
-                    plan, stream);
+  executor->execute(rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16, 512, plan,
+                    stream);
   CUDACHECK(cudaStreamSynchronize(stream));
 
   MPI_Finalize();

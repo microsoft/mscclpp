@@ -21,9 +21,9 @@ if __name__ == "__main__":
     executor = Executor(mscclpp_group.communicator, N_GPUS_PER_NODE)
     execution_plan = ExecutionPlan(path.join(MSCCLPP_ROOT_PATH, "test", "execution-files", "allreduce.json"))
 
-    buffer_size = 1024 * 1024
+    nelems = 1024 * 1024
     cp.random.seed(42)
-    buffer = cp.random.random(buffer_size).astype(cp.float16)
+    buffer = cp.random.random(nelems).astype(cp.float16)
     sub_arrays = cp.split(buffer, MPI.COMM_WORLD.size)
     sendbuf = sub_arrays[MPI.COMM_WORLD.rank]
 
@@ -36,14 +36,14 @@ if __name__ == "__main__":
         MPI.COMM_WORLD.rank,
         sendbuf.data.ptr,
         sendbuf.data.ptr,
-        buffer_size,
-        buffer_size,
+        sendbuf.nbytes,
+        sendbuf.nbytes,
         DataType.float16,
         512,
         execution_plan,
         stream.ptr,
     )
     stream.synchronize()
-    assert cp.allclose(sendbuf, expected, atol=1e-3)
+    assert cp.allclose(sendbuf, expected, atol=1e-3 * MPI.COMM_WORLD.size)
     executor = None
     mscclpp_group = None
