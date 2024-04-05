@@ -10,7 +10,7 @@
 #include <string>
 #include <unordered_map>
 
-#include "execution_kernel.hpp"
+#include "execution_common.hpp"
 
 namespace mscclpp {
 
