@@ -6,7 +6,7 @@
   "gpus": [
     {
       "id": 0,
-      "inputChunks": 4,
+      "inputChunks": 8,
       "outputChunks": 0,
       "scratchChunks": 0,
       "threadblocks": [
@@ -146,6 +146,130 @@
               "o_cids": [
                 {
                   "id": 0,
+                  "off": 6
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 4
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 1,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "name": "rrcs",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 4
+                }
+              ],
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 4
+                }
+              ],
+              "src": 0,
+              "srcbuff": "i",
+              "srcoff": 4,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 4,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 1,
+                  "step": 3
+                }
+              ]
+            },
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 4
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 6
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "sm",
+              "cids": [
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
                   "off": 3
                 }
               ],
@@ -171,7 +295,7 @@
               "name": "nop",
               "deps": [
                 {
-                  "tb": 1,
+                  "tb": 2,
                   "step": 1
                 }
               ]
@@ -211,7 +335,7 @@
               "name": "nop",
               "deps": [
                 {
-                  "tb": 1,
+                  "tb": 2,
                   "step": 3
                 }
               ]
@@ -253,7 +377,131 @@
               "dst": "i",
               "ctype": "sm",
               "cids": [
-                1
+                2
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 7
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 5
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 3,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "name": "rrcs",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 5
+                }
+              ],
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 5
+                }
+              ],
+              "src": 0,
+              "srcbuff": "i",
+              "srcoff": 5,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 5,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 3,
+                  "step": 3
+                }
+              ]
+            },
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 5
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 7
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "sm",
+              "cids": [
+                3
               ]
             }
           ]
@@ -266,6 +514,8 @@
           "type": "sm",
           "connectedTo": [
             1,
+            1,
+            1,
             1
           ]
         }
@@ -273,7 +523,7 @@
     },
     {
       "id": 1,
-      "inputChunks": 4,
+      "inputChunks": 8,
       "outputChunks": 0,
       "scratchChunks": 0,
       "threadblocks": [
@@ -413,6 +663,130 @@
               "o_cids": [
                 {
                   "id": 0,
+                  "off": 4
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 6
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 1,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "name": "rrcs",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 6
+                }
+              ],
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 6
+                }
+              ],
+              "src": 1,
+              "srcbuff": "i",
+              "srcoff": 6,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 6,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 1,
+                  "step": 3
+                }
+              ]
+            },
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 6
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 4
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "sm",
+              "cids": [
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
                   "off": 1
                 }
               ],
@@ -438,7 +812,7 @@
               "name": "nop",
               "deps": [
                 {
-                  "tb": 1,
+                  "tb": 2,
                   "step": 1
                 }
               ]
@@ -478,7 +852,7 @@
               "name": "nop",
               "deps": [
                 {
-                  "tb": 1,
+                  "tb": 2,
                   "step": 3
                 }
               ]
@@ -520,7 +894,131 @@
               "dst": "i",
               "ctype": "sm",
               "cids": [
-                1
+                2
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 5
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 7
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 3,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "name": "rrcs",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 7
+                }
+              ],
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 7
+                }
+              ],
+              "src": 1,
+              "srcbuff": "i",
+              "srcoff": 7,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 7,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 3,
+                  "step": 3
+                }
+              ]
+            },
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 7
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 5
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "sm",
+              "cids": [
+                3
               ]
             }
           ]
@@ -532,6 +1030,8 @@
           "dstbuff": "i",
           "type": "sm",
           "connectedTo": [
+            0,
+            0,
             0,
             0
           ]
