@@ -3,6 +3,7 @@
 
 #include "execution_kernel.hpp"
 
+#if defined(MSCCLPP_DEVICE_CUDA)
 namespace mscclpp {
 void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
                                    DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize,
@@ -27,3 +28,4 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
   }
 }
 }  // namespace mscclpp
+#endif
