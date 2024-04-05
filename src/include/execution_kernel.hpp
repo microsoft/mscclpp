@@ -140,24 +140,29 @@ MSCCLPP_DEVICE_INLINE void handleSignal(int tid, DeviceHandle<SmChannel>* smChan
 }
 
 MSCCLPP_DEVICE_INLINE void handleWait(int tid, DeviceHandle<SmChannel>* smChannels,
-                                      DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* channelIndex,
+                                      DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* channelIndexes,
                                       int nChannels, ChannelType chType) {
   if (tid < nChannels) {
     if (chType == ChannelType::SM) {
-      smChannels[channelIndex[tid]].wait();
+      smChannels[channelIndexes[tid]].wait();
     }
     if (chType == ChannelType::PROXY) {
-      proxyChannels[channelIndex[tid]].wait();
+      proxyChannels[channelIndexes[tid]].wait();
     }
   }
+}
+
+MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<SmChannel>& smChannel, uint32_t srcOffset, uint32_t dstOffset,
+                                     uint32_t size) {
+  smChannel.get(dstOffset, srcOffset, size, threadIdx.x, blockDim.x);
 }
 
 template <typename T>
 MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* input, uint32_t inputOffsetByBytes, T* output,
                                                     uint32_t outputOffsetByBytes, DeviceHandle<SmChannel>* smChannels,
-                                                    uint8_t* srcChannelIndex, uint8_t* dstChannelIndex,
+                                                    uint8_t* srcChannelIndexes, uint8_t* dstChannelIndexes,
                                                     uint32_t* srcOffsets, uint32_t* dstOffsets, int nSrcChannels,
-                                                    int nDstChannels, uint32_t size) {
+                                                    int nDstChannels, uint32_t size, bool sendToRemote = true) {
   const size_t nInt4 = size / sizeof(int4);
   const size_t inputOffset4 = inputOffsetByBytes / sizeof(int4);
   const size_t outputOffset4 = outputOffsetByBytes / sizeof(int4);
@@ -168,13 +173,15 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* input, uint32_t inputOffs
     for (int index = 0; index < nSrcChannels; ++index) {
       int4 val;
       size_t srcOffset = srcOffsets[index] / sizeof(int4);
-      val = smChannels[srcChannelIndex[index]].read<int4>(srcOffset + idx);
+      val = smChannels[srcChannelIndexes[index]].read<int4>(srcOffset + idx);
       tmp = add_vectors<T>(tmp, val);
     }
     output4[outputOffset4 + idx] = tmp;
-    for (int index = 0; index < nDstChannels; ++index) {
-      size_t dstOffset = dstOffsets[index] / sizeof(int4);
-      smChannels[dstChannelIndex[index]].write<int4>(dstOffset + idx, tmp);
+    if (sendToRemote) {
+      for (int index = 0; index < nDstChannels; ++index) {
+        size_t dstOffset = dstOffsets[index] / sizeof(int4);
+        smChannels[dstChannelIndexes[index]].write<int4>(dstOffset + idx, tmp);
+      }
     }
   }
   // handle rest of data
@@ -185,12 +192,14 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* input, uint32_t inputOffs
     T tmp = input[idx];
     for (int index = 0; index < nSrcChannels; ++index) {
       size_t srcOffset = srcOffsets[index] / sizeof(T);
-      tmp += smChannels[srcChannelIndex[index]].read<T>(srcOffset + idx);
+      tmp += smChannels[srcChannelIndexes[index]].read<T>(srcOffset + idx);
     }
     output[idx] = tmp;
-    for (int index = 0; index < nDstChannels; ++index) {
-      size_t dstOffset = dstOffsets[index] / sizeof(T);
-      smChannels[dstChannelIndex[index]].write<T>(dstOffset + idx, tmp);
+    if (sendToRemote) {
+      for (int index = 0; index < nDstChannels; ++index) {
+        size_t dstOffset = dstOffsets[index] / sizeof(T);
+        smChannels[dstChannelIndexes[index]].write<T>(dstOffset + idx, tmp);
+      }
     }
   }
 }
@@ -228,6 +237,10 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
         handleWait(tid, smChannels, proxyChannels, operations[i].inputChannelIndexes, operations[i].nInputChannels,
                    operations[i].channelType);
         break;
+      case OperationType::GET:
+        handleGet(smChannels[operations[i].inputChannelIndexes[0]], operations[i].inputOffsets[0],
+                  operations[i].dstOffset, operations[i].size);
+        break;
       case OperationType::READ_REDUCE_COPY_SEND:
         src = getBuffer(input, output, scratch, operations[i].srcBufferType);
         dst = getBuffer(input, output, scratch, operations[i].dstBufferType);
@@ -235,6 +248,14 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                                  operations[i].inputChannelIndexes, operations[i].outputChannelIndexes,
                                  operations[i].inputOffsets, operations[i].outputOffsets, operations[i].nInputChannels,
                                  operations[i].nOutputChannels, operations[i].size);
+        break;
+      case OperationType::READ_REDUCE_COPY:
+        src = getBuffer(input, output, scratch, operations[i].srcBufferType);
+        dst = getBuffer(input, output, scratch, operations[i].dstBufferType);
+        handleReadReduceCopySend(src, operations[i].srcOffset, dst, operations[i].dstOffset, smChannels,
+                                 operations[i].inputChannelIndexes, operations[i].outputChannelIndexes,
+                                 operations[i].inputOffsets, operations[i].outputOffsets, operations[i].nInputChannels,
+                                 operations[i].nOutputChannels, operations[i].size, false);
         break;
       default:
         break;
