@@ -37,6 +37,12 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::READ_REDUCE_COPY;
   } else if (str == "rrcs") {
     return mscclpp::OperationType::READ_REDUCE_COPY_SEND;
+  } else if (str == "ppkt") {
+    return mscclpp::OperationType::PUT_PACKET;
+  } else if (str == "rspkt") {
+    return mscclpp::OperationType::REDUCE_SEND_PACKET;
+  } else if (str == "cpkt") {
+    return mscclpp::OperationType::COPY_PACKET;
   } else {
     throw std::runtime_error("Invalid operation type");
   }
@@ -59,6 +65,8 @@ auto convertToChannelType = [](const std::string& str) {
     return mscclpp::ChannelType::SM;
   } else if (str == "proxy") {
     return mscclpp::ChannelType::PROXY;
+  } else if (str == "none") {
+    return mscclpp::ChannelType::NONE;
   } else {
     throw std::runtime_error("Invalid channel type");
   }
@@ -99,6 +107,9 @@ std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) c
   return std::vector<BufferType>(bufferTypes.begin(), bufferTypes.end());
 }
 size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize) const {
+  if (this->isUsingPacket) {
+    return inputSize / this->inputChunks.at(rank) * this->scratchChunks.at(rank) * 2;
+  }
   return inputSize / this->inputChunks.at(rank) * this->scratchChunks.at(rank);
 }
 std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadblock) const {
@@ -220,6 +231,13 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
           operation.inputChannelIndexes[i] =
               channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
           operation.inputOffsets[i] = this->chunkSize * (int)op["i_cids"][i]["off"];
+        }
+        // will have either srcs or i_cids
+        if (op.contains("srcs")) {
+          operation.nInputs = op["srcs"].size();
+        }
+        for (int i = 0; i < operation.nInputs; i++) {
+          operation.inputOffsets[i] = this->chunkSize * (int)op["srcs"][i]["off"];
         }
         for (int i = 0; i < operation.nOutputs; i++) {
           BufferType srcBufferType = convertToBufferType(op["o_buff"]["src"]);

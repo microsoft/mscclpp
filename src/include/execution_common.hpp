@@ -20,6 +20,7 @@ enum class BufferType : uint8_t {
 };
 
 enum class ChannelType : uint8_t {
+  NONE,
   SM,
   PROXY,
 };
