@@ -52,8 +52,8 @@ struct Operation {
   ChannelType channelType;
   BufferType srcBufferType;
   BufferType dstBufferType;
-  uint8_t nInputChannels;
-  uint8_t nOutputChannels;
+  uint8_t nInputs;
+  uint8_t nOutputs;
   uint8_t inputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
   uint8_t outputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
   uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];

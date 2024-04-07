@@ -209,19 +209,19 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
           operation.channelType = convertToChannelType(op["ctype"]);
         }
         if (op.contains("i_cids")) {
-          operation.nInputChannels = op["i_cids"].size();
+          operation.nInputs = op["i_cids"].size();
         }
         if (op.contains("o_cids")) {
-          operation.nOutputChannels = op["o_cids"].size();
+          operation.nOutputs = op["o_cids"].size();
         }
-        for (int i = 0; i < operation.nInputChannels; i++) {
+        for (int i = 0; i < operation.nInputs; i++) {
           BufferType srcBufferType = convertToBufferType(op["i_buff"]["src"]);
           BufferType dstBufferType = convertToBufferType(op["i_buff"]["dst"]);
           operation.inputChannelIndexes[i] =
               channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
           operation.inputOffsets[i] = this->chunkSize * (int)op["i_cids"][i]["off"];
         }
-        for (int i = 0; i < operation.nOutputChannels; i++) {
+        for (int i = 0; i < operation.nOutputs; i++) {
           BufferType srcBufferType = convertToBufferType(op["o_buff"]["src"]);
           BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
           operation.outputChannelIndexes[i] =

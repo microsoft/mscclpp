@@ -283,11 +283,11 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
         __syncthreads();
         break;
       case OperationType::SIGNAL:
-        handleSignal(tid, smChannels, proxyChannels, operations[i].outputChannelIndexes, operations[i].nOutputChannels,
+        handleSignal(tid, smChannels, proxyChannels, operations[i].outputChannelIndexes, operations[i].nOutputs,
                      operations[i].channelType);
         break;
       case OperationType::WAIT:
-        handleWait(tid, smChannels, proxyChannels, operations[i].inputChannelIndexes, operations[i].nInputChannels,
+        handleWait(tid, smChannels, proxyChannels, operations[i].inputChannelIndexes, operations[i].nInputs,
                    operations[i].channelType);
         break;
       case OperationType::GET:
@@ -299,29 +299,28 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
         src = getBuffer(input, output, scratch, operations[i].srcBufferType);
         handleReadReduceCopySend(dst, operations[i].dstOffset, src, operations[i].srcOffset, smChannels,
                                  operations[i].outputChannelIndexes, operations[i].inputChannelIndexes,
-                                 operations[i].outputOffsets, operations[i].inputOffsets, operations[i].nOutputChannels,
-                                 operations[i].nInputChannels, operations[i].size);
+                                 operations[i].outputOffsets, operations[i].inputOffsets, operations[i].nOutputs,
+                                 operations[i].nInputs, operations[i].size);
         break;
       case OperationType::READ_REDUCE_COPY:
         dst = getBuffer(input, output, scratch, operations[i].dstBufferType);
         src = getBuffer(input, output, scratch, operations[i].srcBufferType);
         handleReadReduceCopySend(dst, operations[i].dstOffset, src, operations[i].srcOffset, smChannels,
                                  operations[i].outputChannelIndexes, operations[i].inputChannelIndexes,
-                                 operations[i].outputOffsets, operations[i].inputOffsets, operations[i].nOutputChannels,
-                                 operations[i].nInputChannels, operations[i].size, false);
+                                 operations[i].outputOffsets, operations[i].inputOffsets, operations[i].nOutputs,
+                                 operations[i].nInputs, operations[i].size, false);
         break;
       case OperationType::PUT_PACKET:
         handlePutPacket<PacketType>(operations[i].srcOffset, smChannels, operations[i].outputChannelIndexes,
-                                    operations[i].outputOffsets, operations[i].nOutputChannels, operations[i].size,
-                                    flag);
+                                    operations[i].outputOffsets, operations[i].nOutputs, operations[i].size, flag);
         break;
       case OperationType::REDUCE_SEND_PACKET:
         dst = getBuffer(input, output, scratch, operations[i].dstBufferType);
         src = getBuffer(input, output, scratch, operations[i].srcBufferType);
         handleReduceSendPacket<T, PacketType>(dst, operations[i].dstOffset, src, operations[i].srcOffset, smChannels,
                                               operations[i].outputChannelIndexes, operations[i].outputOffsets,
-                                              operations[i].inputOffsets, operations[i].nOutputChannels,
-                                              operations[i].nInputChannels, operations[i].size, flag);
+                                              operations[i].inputOffsets, operations[i].nOutputs, operations[i].nInputs,
+                                              operations[i].size, flag);
         break;
       case OperationType::COPY_PACKET:
         dst = getBuffer(input, output, scratch, operations[i].dstBufferType);
