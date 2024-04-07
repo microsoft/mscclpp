@@ -29,7 +29,7 @@ int main() {
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
   bootstrap->initialize(id);
   // sleep 20s
-  std::this_thread::sleep_for(std::chrono::seconds(20));
+  // std::this_thread::sleep_for(std::chrono::seconds(20));
   auto comm = std::make_shared<mscclpp::Communicator>(bootstrap);
   CUDACHECK(cudaSetDevice(rank));
 

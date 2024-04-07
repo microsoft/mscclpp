@@ -211,36 +211,36 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(uint32_t inputOffsetByBytes, DeviceHa
                                            uint8_t* dstChannelIndexes, uint32_t* dstOffsets, int nDstChannels,
                                            uint32_t size, uint32_t flag) {
   for (int index = 0; index < nDstChannels; ++index) {
-    smChannels[dstChannelIndexes[index]].putPackets<PacketType>(
-        dstOffsets[index] * sizeof(PacketType), inputOffsetByBytes, size, threadIdx.x, blockDim.x, flag);
+    smChannels[dstChannelIndexes[index]].putPackets<PacketType>(dstOffsets[index] * 2, inputOffsetByBytes, size,
+                                                                threadIdx.x, blockDim.x, flag);
   }
 }
 
 template <typename T, typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* output, uint32_t outputOffsetByBytes, T* input,
-                                                  uint32_t inputOffsetByBytes, DeviceHandle<SmChannel>* smChannels,
-                                                  uint8_t* dstChannelIndexes, uint32_t* dstOffsets,
-                                                  uint32_t* srcOffsets, int nDstChannels, int nSrcs, size_t size,
+MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBytes, T* src, uint32_t srcOffsetByBytes,
+                                                  T* inputBuff, uint32_t* inputOffsets, int nSrcs,
+                                                  DeviceHandle<SmChannel>* smChannels, uint8_t* outputChannelIndexes,
+                                                  uint32_t* outputOffsets, int nDstChannels, size_t size,
                                                   uint32_t flag) {
   size_t nPackets = size * 2 / sizeof(PacketType);
-  const uint32_t srcOffset = inputOffsetByBytes / sizeof(PacketValType<PacketType>);
-  const uint32_t dstOffset = outputOffsetByBytes / sizeof(PacketValType<PacketType>);
-  PacketValType<PacketType>* src = (PacketValType<PacketType>*)input + srcOffset;
-  PacketValType<PacketType>* dst = (PacketValType<PacketType>*)output + dstOffset;
+  const uint32_t srcOffset = dstOffsetByBytes / sizeof(PacketValType<PacketType>);
+  const uint32_t dstOffset = dstOffsetByBytes / sizeof(PacketValType<PacketType>);
+  PacketValType<PacketType>* srcPacketValue = (PacketValType<PacketType>*)src + srcOffset;
+  PacketValType<PacketType>* dstPacketValue = (PacketValType<PacketType>*)dst + dstOffset;
   for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketValType<PacketType> data = {};
     for (int index = 0; index < nSrcs; ++index) {
-      PacketType* pkt = (PacketType*)((char*)input + 2 * srcOffsets[index]);
+      PacketType* pkt = (PacketType*)((char*)inputBuff + 2 * inputOffsets[index]);
       PacketValType<PacketType> val = pkt[idx].read(flag);
       data = add_vectors<T>(data, val);
     }
-    data = add_vectors<T>(data, src[idx]);
-    dst[idx] = data;
+    data = add_vectors<T>(data, srcPacketValue[idx]);
+    dstPacketValue[idx] = data;
 
     PacketType pkt(data, flag);
     for (int index = 0; index < nDstChannels; ++index) {
-      size_t offset = (dstOffsets[index] * 2) / sizeof(PacketType);
-      smChannels[dstChannelIndexes[index]].write(offset + idx, pkt);
+      size_t offset = (outputOffsets[index] * 2) / sizeof(PacketType);
+      smChannels[outputChannelIndexes[index]].write(offset + idx, pkt);
     }
   }
 }
@@ -277,6 +277,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   DeviceHandle<SimpleProxyChannel>* proxyChannels = localPlan->channels.proxyChannels;
   T* src = nullptr;
   T* dst = nullptr;
+  T* tmp = nullptr;
   for (int i = 0; i < localPlan->nOperations; i++) {
     switch (operations[i].type) {
       case OperationType::BARRIER:
@@ -317,10 +318,11 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       case OperationType::REDUCE_SEND_PACKET:
         dst = getBuffer(input, output, scratch, operations[i].dstBufferType);
         src = getBuffer(input, output, scratch, operations[i].srcBufferType);
-        handleReduceSendPacket<T, PacketType>(dst, operations[i].dstOffset, src, operations[i].srcOffset, smChannels,
+        tmp = getBuffer(input, output, scratch, operations[i].inputBufferType);
+        handleReduceSendPacket<T, PacketType>(dst, operations[i].dstOffset, src, operations[i].srcOffset, tmp,
+                                              operations[i].inputOffsets, operations[i].nInputs, smChannels,
                                               operations[i].outputChannelIndexes, operations[i].outputOffsets,
-                                              operations[i].inputOffsets, operations[i].nOutputs, operations[i].nInputs,
-                                              operations[i].size, flag);
+                                              operations[i].nOutputs, operations[i].size, flag);
         break;
       case OperationType::COPY_PACKET:
         dst = getBuffer(input, output, scratch, operations[i].dstBufferType);

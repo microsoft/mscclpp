@@ -235,6 +235,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
         // will have either srcs or i_cids
         if (op.contains("srcs")) {
           operation.nInputs = op["srcs"].size();
+          operation.inputBufferType = convertToBufferType(op["srcs"][0]["buff"]);
         }
         for (int i = 0; i < operation.nInputs; i++) {
           operation.inputOffsets[i] = this->chunkSize * (int)op["srcs"][i]["off"];
