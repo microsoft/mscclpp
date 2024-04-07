@@ -17,6 +17,11 @@ enum class DataType {
   FLOAT32,
 };
 
+enum class PacketType {
+  LL8,
+  LL16,
+};
+
 class ExecutionPlan {
  public:
   ExecutionPlan(std::string planPath);
@@ -37,7 +42,7 @@ class Executor {
   ~Executor();
 
   void execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, DataType dataType,
-               int nthreads, const ExecutionPlan& plan, cudaStream_t stream);
+               int nthreads, const ExecutionPlan& plan, cudaStream_t stream, PacketType packetType = PacketType::LL16);
 
  private:
   struct Impl;

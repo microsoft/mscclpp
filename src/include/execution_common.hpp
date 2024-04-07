@@ -27,13 +27,17 @@ enum class ChannelType : uint8_t {
 enum class OperationType : uint8_t {
   BARRIER,
   PUT,
+  PUT_PACKET,
   GET,
   COPY,
+  COPY_PACKET,
   SIGNAL,
   WAIT,
   FLUSH,
   REDUCE,
+  REDUCE_PACKET,
   REDUCE_SEND,
+  REDUCE_SEND_PACKET,
   READ_REDUCE_COPY,
   READ_REDUCE_COPY_SEND,
 };

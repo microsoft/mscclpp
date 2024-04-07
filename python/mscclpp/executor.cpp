@@ -18,6 +18,8 @@ void register_executor(nb::module_& m) {
       .value("float16", DataType::FLOAT16)
       .value("float32", DataType::FLOAT32);
 
+  nb::enum_<PacketType>(m, "PacketType").value("LL8", PacketType::LL8).value("LL16", PacketType::LL16);
+
   nb::class_<ExecutionPlan>(m, "ExecutionPlan").def(nb::init<std::string>(), nb::arg("planPath"));
 
   nb::class_<Executor>(m, "Executor")
@@ -25,10 +27,11 @@ void register_executor(nb::module_& m) {
       .def(
           "execute",
           [](Executor* self, int rank, uintptr_t sendbuff, uintptr_t recvBuff, size_t sendBuffSize, size_t recvBuffSize,
-             DataType dataType, int nthreads, const ExecutionPlan& plan, uintptr_t stream) {
+             DataType dataType, int nthreads, const ExecutionPlan& plan, uintptr_t stream, PacketType packetType) {
             self->execute(rank, reinterpret_cast<void*>(sendbuff), reinterpret_cast<void*>(recvBuff), sendBuffSize,
-                          recvBuffSize, dataType, nthreads, plan, (cudaStream_t)stream);
+                          recvBuffSize, dataType, nthreads, plan, (cudaStream_t)stream, packetType);
           },
           nb::arg("rank"), nb::arg("sendbuff"), nb::arg("recvBuff"), nb::arg("sendBuffSize"), nb::arg("recvBuffSize"),
-          nb::arg("dataType"), nb::arg("nthreads"), nb::arg("plan"), nb::arg("stream"));
+          nb::arg("dataType"), nb::arg("nthreads"), nb::arg("plan"), nb::arg("stream"),
+          nb::arg("packetType") = PacketType::LL16);
 }

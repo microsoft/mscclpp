@@ -760,6 +760,10 @@ DeviceHandle<std::remove_reference_t<T>> deviceHandle(T&& t) {
   return t.deviceHandle();
 }
 
+/// Packet value type.
+template <class T>
+using PacketValType = typename T::ValueType;
+
 }  // namespace mscclpp
 
 namespace std {

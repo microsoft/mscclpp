@@ -258,12 +258,24 @@ struct Executor::Impl {
   }
 
   void launchKernel(ExecutionContext& context, int rank, int nthreadsPerBlock, void* sendbuff, void* recvbuff,
-                    DataType dataType, cudaStream_t stream) {
+                    DataType dataType, cudaStream_t stream, PacketType packetType) {
+    static uint32_t flag = 0;
     int nthreadblocks = context.deviceExecutionPlans.size();
     size_t sharedMemSize = sizeof(DeviceExecutionPlan);
-    ExecutionKernel::launchKernel(
-        rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(), dataType,
-        (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), sharedMemSize, stream);
+    switch (packetType) {
+      case PacketType::LL16:
+        ExecutionKernel::launchKernel<LL16Packet>(
+            rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(), dataType,
+            (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), sharedMemSize, stream, ++flag);
+        break;
+      case PacketType::LL8:
+        ExecutionKernel::launchKernel<LL8Packet>(
+            rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(), dataType,
+            (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), sharedMemSize, stream, ++flag);
+        break;
+      default:
+        throw std::runtime_error("Invalid packet type");
+    }
   }
 };
 
@@ -271,10 +283,11 @@ Executor::Executor(std::shared_ptr<Communicator> comm, int nranksPerNode)
     : impl_(std::make_unique<Impl>(comm, nranksPerNode)) {}
 
 void Executor::execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
-                       DataType dataType, int nthreads, const ExecutionPlan& plan, cudaStream_t stream) {
+                       DataType dataType, int nthreads, const ExecutionPlan& plan, cudaStream_t stream,
+                       PacketType packetType) {
   ExecutionContext context =
       this->impl_->setupExecutionContext(rank, sendbuff, recvBuff, sendBuffSize, recvBuffSize, plan, stream);
-  this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvBuff, dataType, stream);
+  this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvBuff, dataType, stream, packetType);
 }
 
 Executor::~Executor() = default;

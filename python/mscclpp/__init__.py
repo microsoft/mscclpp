@@ -22,6 +22,7 @@ from ._mscclpp import (
     DataType,
     Executor,
     ExecutionPlan,
+    PacketType,
     version,
     is_nvls_supported,
 )
