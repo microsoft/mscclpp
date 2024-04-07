@@ -211,8 +211,8 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(uint32_t inputOffsetByBytes, DeviceHa
                                            uint8_t* dstChannelIndexes, uint32_t* dstOffsets, int nDstChannels,
                                            uint32_t size, uint32_t flag) {
   for (int index = 0; index < nDstChannels; ++index) {
-    smChannels[dstChannelIndexes[index]].putPackets<PacketType>(dstOffsets[index], inputOffsetByBytes, size,
-                                                                threadIdx.x, blockDim.x, flag);
+    smChannels[dstChannelIndexes[index]].putPackets<PacketType>(
+        dstOffsets[index] * sizeof(PacketType), inputOffsetByBytes, size, threadIdx.x, blockDim.x, flag);
   }
 }
 
@@ -223,14 +223,14 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* output, uint32_t outputOffs
                                                   uint32_t* srcOffsets, int nDstChannels, int nSrcs, size_t size,
                                                   uint32_t flag) {
   size_t nPackets = size * 2 / sizeof(PacketType);
-  uint32_t srcOffset = inputOffsetByBytes / sizeof(PacketValType<PacketType>);
-  uint32_t dstOffset = outputOffsetByBytes / sizeof(PacketValType<PacketType>);
+  const uint32_t srcOffset = inputOffsetByBytes / sizeof(PacketValType<PacketType>);
+  const uint32_t dstOffset = outputOffsetByBytes / sizeof(PacketValType<PacketType>);
   PacketValType<PacketType>* src = (PacketValType<PacketType>*)input + srcOffset;
   PacketValType<PacketType>* dst = (PacketValType<PacketType>*)output + dstOffset;
-  for (int idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
+  for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketValType<PacketType> data = {};
     for (int index = 0; index < nSrcs; ++index) {
-      PacketType* pkt = (PacketType*)input + srcOffsets[index] / sizeof(PacketType);
+      PacketType* pkt = (PacketType*)((char*)input + 2 * srcOffsets[index]);
       PacketValType<PacketType> val = pkt[idx].read(flag);
       data = add_vectors<T>(data, val);
     }
@@ -239,7 +239,8 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* output, uint32_t outputOffs
 
     PacketType pkt(data, flag);
     for (int index = 0; index < nDstChannels; ++index) {
-      smChannels[dstChannelIndexes[index]].write(dstOffsets[index] / sizeof(PacketValType<PacketType>) + idx, pkt);
+      size_t offset = (dstOffsets[index] * 2) / sizeof(PacketType);
+      smChannels[dstChannelIndexes[index]].write(offset + idx, pkt);
     }
   }
 }
@@ -247,8 +248,8 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* output, uint32_t outputOffs
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset, size_t size,
                                             uint32_t flag) {
-  PacketType* srcPackets = (PacketType*)src;
-  PacketValType<PacketType>* result = (PacketValType<PacketType>*)dst;
+  PacketType* srcPackets = (PacketType*)((char*)src + 2 * srcOffset);
+  PacketValType<PacketType>* result = (PacketValType<PacketType>*)((char*)dst + dstOffset);
   size_t nPackets = size * 2 / sizeof(PacketType);
   for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketValType<PacketType> data = srcPackets[idx].read(flag);

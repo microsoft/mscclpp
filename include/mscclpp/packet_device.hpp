@@ -110,8 +110,8 @@ union alignas(8) LL8Packet {
   MSCCLPP_DEVICE_INLINE LL8Packet() {}
 
   MSCCLPP_DEVICE_INLINE LL8Packet(uint32_t val, uint32_t flag) {
-    data = val;
-    flag = flag;
+    this->data = val;
+    this->flag = flag;
   }
 
   MSCCLPP_DEVICE_INLINE void write(uint32_t val, uint32_t flag) {

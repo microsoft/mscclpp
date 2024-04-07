@@ -62,6 +62,7 @@ struct ExecutionPlan::Impl {
   void setupOperations(const nlohmann::json& gpus);
 
   std::string planPath;
+  bool isUsingPacket;
   // operations for [rank][threadblock] = [operations]
   std::unordered_map<int, std::vector<std::vector<Operation>>> operations;
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;

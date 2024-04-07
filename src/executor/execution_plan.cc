@@ -69,7 +69,7 @@ auto convertToChannelType = [](const std::string& str) {
 namespace mscclpp {
 using json = nlohmann::json;
 
-ExecutionPlan::Impl::Impl(std::string planPath) : planPath(planPath) {}
+ExecutionPlan::Impl::Impl(std::string planPath) : planPath(planPath), isUsingPacket(false) {}
 
 std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, ChannelType channelType) const {
   auto pred = [channelType](const ChannelInfo& info) { return info.channelType == channelType; };
@@ -111,6 +111,10 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
   this->name = obj["name"];
+  std::string protocol = obj["protocol"];
+  if (protocol == "LL") {
+    this->isUsingPacket = true;
+  }
   auto gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {
