@@ -223,7 +223,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBy
                                                   uint32_t* outputOffsets, int nDstChannels, size_t size,
                                                   uint32_t flag) {
   size_t nPackets = size * 2 / sizeof(PacketType);
-  const uint32_t srcOffset = dstOffsetByBytes / sizeof(PacketValType<PacketType>);
+  const uint32_t srcOffset = srcOffsetByBytes / sizeof(PacketValType<PacketType>);
   const uint32_t dstOffset = dstOffsetByBytes / sizeof(PacketValType<PacketType>);
   PacketValType<PacketType>* srcPacketValue = (PacketValType<PacketType>*)src + srcOffset;
   PacketValType<PacketType>* dstPacketValue = (PacketValType<PacketType>*)dst + dstOffset;
