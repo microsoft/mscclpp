@@ -11,6 +11,7 @@ from mpi4py import MPI
 
 MSCCLPP_ROOT_PATH = "/root/mscclpp"
 
+
 def bench_time(niters: int, func):
     # capture cuda graph for niters of the kernel launch
     stream = cp.cuda.Stream(non_blocking=True)
@@ -34,6 +35,7 @@ def bench_time(niters: int, func):
 
     return cp.cuda.get_elapsed_time(start, end) / niters * 1000.0
 
+
 if __name__ == "__main__":
     shm_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
     N_GPUS_PER_NODE = shm_comm.size
@@ -42,7 +44,9 @@ if __name__ == "__main__":
     cp.cuda.Device(MPI.COMM_WORLD.rank % N_GPUS_PER_NODE).use()
     mscclpp_group = mscclpp_comm.CommGroup(MPI.COMM_WORLD)
     executor = Executor(mscclpp_group.communicator, N_GPUS_PER_NODE)
-    execution_plan = ExecutionPlan("allreduce_pairs", path.join(MSCCLPP_ROOT_PATH, "test", "execution-files", "allreduce.json"))
+    execution_plan = ExecutionPlan(
+        "allreduce_pairs", path.join(MSCCLPP_ROOT_PATH, "test", "execution-files", "allreduce.json")
+    )
 
     nelems = 1024 * 1024
     cp.random.seed(42)
@@ -69,17 +73,20 @@ if __name__ == "__main__":
     stream.synchronize()
     assert cp.allclose(sendbuf, expected, atol=1e-3 * MPI.COMM_WORLD.size)
 
-    execution_time = bench_time(1000, lambda stream: executor.execute(
-        MPI.COMM_WORLD.rank,
-        sendbuf.data.ptr,
-        sendbuf.data.ptr,
-        sendbuf.nbytes,
-        sendbuf.nbytes,
-        DataType.float16,
-        512,
-        execution_plan,
-        stream.ptr,
-    ))
+    execution_time = bench_time(
+        1000,
+        lambda stream: executor.execute(
+            MPI.COMM_WORLD.rank,
+            sendbuf.data.ptr,
+            sendbuf.data.ptr,
+            sendbuf.nbytes,
+            sendbuf.nbytes,
+            DataType.float16,
+            512,
+            execution_plan,
+            stream.ptr,
+        ),
+    )
     print(f"Execution time: {execution_time} us, data size: {sendbuf.nbytes} bytes")
     executor = None
     mscclpp_group = None
