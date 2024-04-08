@@ -46,7 +46,7 @@ struct ChannelInfo {
 
 struct ExecutionPlan::Impl {
  public:
-  Impl(std::string planPath);
+  Impl(const std::string name, const std::string planPath);
   ~Impl() = default;
 
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
@@ -61,7 +61,8 @@ struct ExecutionPlan::Impl {
   void setupChannels(const nlohmann::json& gpus);
   void setupOperations(const nlohmann::json& gpus);
 
-  std::string planPath;
+  const std::string name;
+  const std::string planPath;
   bool isUsingPacket;
   // operations for [rank][threadblock] = [operations]
   std::unordered_map<int, std::vector<std::vector<Operation>>> operations;
@@ -69,7 +70,6 @@ struct ExecutionPlan::Impl {
   // threadblockChannelMap[rank][threadblock] = [channelIndex]
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockSMChannelMap;
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockProxyChannelMap;
-  std::string name;
   std::unordered_map<int, uint32_t> inputChunks;
   std::unordered_map<int, uint32_t> outputChunks;
   std::unordered_map<int, uint32_t> scratchChunks;

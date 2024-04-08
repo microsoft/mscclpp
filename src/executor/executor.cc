@@ -78,7 +78,7 @@ struct Executor::Impl {
   ~Impl() = default;
 
   ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t sendBufferSize,
-                                         size_t recvBufferSize, const ExecutionPlan& plan, cudaStream_t stream) {
+                                         size_t recvBufferSize, const ExecutionPlan& plan) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendBufferSize, recvBufferSize, plan.impl_->name};
     if (this->contexts.find(key) != this->contexts.end()) {
       return this->contexts[key];
@@ -96,10 +96,8 @@ struct Executor::Impl {
     this->setupDeviceExecutionPlan(context, rank, plan);
     context.deviceExecutionPlansBuffer =
         allocExtSharedCuda<char>(context.deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan));
-    MSCCLPP_CUDATHROW(cudaMemcpyAsync(context.deviceExecutionPlansBuffer.get(), context.deviceExecutionPlans.data(),
-                                      context.deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan),
-                                      cudaMemcpyHostToDevice, stream));
-    MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+    memcpyCuda(context.deviceExecutionPlansBuffer.get(), (char*)context.deviceExecutionPlans.data(),
+               context.deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
     this->contexts.insert({key, context});
     return context;
   }
@@ -286,7 +284,7 @@ void Executor::execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuff
                        DataType dataType, int nthreads, const ExecutionPlan& plan, cudaStream_t stream,
                        PacketType packetType) {
   ExecutionContext context =
-      this->impl_->setupExecutionContext(rank, sendbuff, recvBuff, sendBuffSize, recvBuffSize, plan, stream);
+      this->impl_->setupExecutionContext(rank, sendbuff, recvBuff, sendBuffSize, recvBuffSize, plan);
   this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvBuff, dataType, stream, packetType);
 }
 

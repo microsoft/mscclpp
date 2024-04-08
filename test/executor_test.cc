@@ -34,7 +34,7 @@ int main() {
   CUDACHECK(cudaSetDevice(rank));
 
   std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(comm, 8 /*nranksPerNode*/);
-  mscclpp::ExecutionPlan plan(MSCCLPP_ROOT_PATH + "/test/execution-files/allreduce_packet.json");
+  mscclpp::ExecutionPlan plan("allreduce_pairs", MSCCLPP_ROOT_PATH + "/test/execution-files/allreduce.json");
   const int bufferSize = 1024 * 1024;
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
   mscclpp::CudaStreamWithFlags stream(cudaStreamNonBlocking);

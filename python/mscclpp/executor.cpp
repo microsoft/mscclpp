@@ -20,7 +20,8 @@ void register_executor(nb::module_& m) {
 
   nb::enum_<PacketType>(m, "PacketType").value("LL8", PacketType::LL8).value("LL16", PacketType::LL16);
 
-  nb::class_<ExecutionPlan>(m, "ExecutionPlan").def(nb::init<std::string>(), nb::arg("planPath"));
+  nb::class_<ExecutionPlan>(m, "ExecutionPlan")
+      .def(nb::init<const std::string, const std::string>(), nb::arg("name"), nb::arg("planPath"));
 
   nb::class_<Executor>(m, "Executor")
       .def(nb::init<std::shared_ptr<Communicator>, int>(), nb::arg("comm"), nb::arg("nranksPerNode"))

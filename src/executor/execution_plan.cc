@@ -77,7 +77,8 @@ auto convertToChannelType = [](const std::string& str) {
 namespace mscclpp {
 using json = nlohmann::json;
 
-ExecutionPlan::Impl::Impl(std::string planPath) : planPath(planPath), isUsingPacket(false) {}
+ExecutionPlan::Impl::Impl(const std::string name, const std::string planPath)
+    : name(name), planPath(planPath), isUsingPacket(false) {}
 
 std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, ChannelType channelType) const {
   auto pred = [channelType](const ChannelInfo& info) { return info.channelType == channelType; };
@@ -121,7 +122,9 @@ int ExecutionPlan::Impl::getThreadblockCount(int rank) const { return this->oper
 void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
-  this->name = obj["name"];
+  if (this->name != obj["name"]) {
+    throw std::runtime_error("Plan name does not match");
+  }
   std::string protocol = obj["protocol"];
   if (protocol == "LL") {
     this->isUsingPacket = true;
@@ -221,31 +224,31 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
         }
         if (op.contains("i_cids")) {
           operation.nInputs = op["i_cids"].size();
-        }
-        if (op.contains("o_cids")) {
-          operation.nOutputs = op["o_cids"].size();
-        }
-        for (int i = 0; i < operation.nInputs; i++) {
-          BufferType srcBufferType = convertToBufferType(op["i_buff"]["src"]);
-          BufferType dstBufferType = convertToBufferType(op["i_buff"]["dst"]);
-          operation.inputChannelIndexes[i] =
-              channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
-          operation.inputOffsets[i] = this->chunkSize * (int)op["i_cids"][i]["off"];
+          for (int i = 0; i < operation.nInputs; i++) {
+            BufferType srcBufferType = convertToBufferType(op["i_buff"]["src"]);
+            BufferType dstBufferType = convertToBufferType(op["i_buff"]["dst"]);
+            operation.inputChannelIndexes[i] =
+                channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
+            operation.inputOffsets[i] = this->chunkSize * (int)op["i_cids"][i]["off"];
+          }
         }
         // will have either srcs or i_cids
         if (op.contains("srcs")) {
           operation.nInputs = op["srcs"].size();
           operation.inputBufferType = convertToBufferType(op["srcs"][0]["buff"]);
+          for (int i = 0; i < operation.nInputs; i++) {
+            operation.inputOffsets[i] = this->chunkSize * (int)op["srcs"][i]["off"];
+          }
         }
-        for (int i = 0; i < operation.nInputs; i++) {
-          operation.inputOffsets[i] = this->chunkSize * (int)op["srcs"][i]["off"];
-        }
-        for (int i = 0; i < operation.nOutputs; i++) {
-          BufferType srcBufferType = convertToBufferType(op["o_buff"]["src"]);
-          BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
-          operation.outputChannelIndexes[i] =
-              channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["o_cids"][i]["id"]];
-          operation.outputOffsets[i] = this->chunkSize * (int)op["o_cids"][i]["off"];
+        if (op.contains("o_cids")) {
+          operation.nOutputs = op["o_cids"].size();
+          for (int i = 0; i < operation.nOutputs; i++) {
+            BufferType srcBufferType = convertToBufferType(op["o_buff"]["src"]);
+            BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
+            operation.outputChannelIndexes[i] =
+                channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["o_cids"][i]["id"]];
+            operation.outputOffsets[i] = this->chunkSize * (int)op["o_cids"][i]["off"];
+          }
         }
         if (op.contains("srcbuff")) {
           operation.srcBufferType = convertToBufferType(op["srcbuff"]);
@@ -269,6 +272,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
   }
 }
 
-ExecutionPlan::ExecutionPlan(std::string planPath) : impl_(std::make_shared<Impl>(planPath)) {}
+ExecutionPlan::ExecutionPlan(const std::string name, const std::string planPath)
+    : impl_(std::make_shared<Impl>(name, planPath)) {}
 
 }  // namespace mscclpp
