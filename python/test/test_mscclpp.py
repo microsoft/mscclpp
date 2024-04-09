@@ -12,7 +12,10 @@ import netifaces as ni
 import pytest
 
 from mscclpp import (
+    DataType,
     EndpointConfig,
+    ExecutionPlan,
+    Executor,
     Fifo,
     Host2DeviceSemaphore,
     Host2HostSemaphore,
@@ -25,7 +28,7 @@ from mscclpp import (
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, pack
 from ._cpp import _ext
-from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
+from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group, N_GPUS_PER_NODE
 
 ethernet_interface_name = "eth0"
 
@@ -590,3 +593,39 @@ def test_nvls(mpi_group: MpiGroup):
     kernel()
     cp.cuda.runtime.deviceSynchronize()
     group.barrier()
+
+
+@parametrize_mpi_groups(2)
+@pytest.mark.parametrize("filename", ["allreduce.json", "allreduce_packet.json"])
+def test_executor(mpi_group: MpiGroup, filename: str):
+    if all_ranks_on_the_same_node(mpi_group) is False:
+        pytest.skip("algo not support cross node")
+    project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    mscclpp_group = mscclpp_comm.CommGroup(mpi_group.comm)
+    executor = Executor(mscclpp_group.communicator, N_GPUS_PER_NODE)
+    execution_plan = ExecutionPlan("allreduce_pairs", os.path.join(project_dir, "test", "execution-files", filename))
+
+    nelems = 1024 * 1024
+    cp.random.seed(42)
+    buffer = cp.random.random(nelems).astype(cp.float16)
+    sub_arrays = cp.split(buffer, mpi_group.comm.size)
+    sendbuf = sub_arrays[mpi_group.comm.rank]
+    expected = cp.zeros_like(sendbuf)
+    for i in range(mpi_group.comm.size):
+        expected += sub_arrays[i]
+    mscclpp_group.barrier()
+
+    stream = cp.cuda.Stream(non_blocking=True)
+    executor.execute(
+        mpi_group.comm.rank,
+        sendbuf.data.ptr,
+        sendbuf.data.ptr,
+        sendbuf.nbytes,
+        sendbuf.nbytes,
+        DataType.float16,
+        512,
+        execution_plan,
+        stream.ptr,
+    )
+    stream.synchronize()
+    assert cp.allclose(sendbuf, expected, atol=1e-3 * mpi_group.comm.size)

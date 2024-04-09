@@ -53,25 +53,7 @@ if __name__ == "__main__":
     buffer = cp.random.random(nelems).astype(cp.float16)
     sub_arrays = cp.split(buffer, MPI.COMM_WORLD.size)
     sendbuf = sub_arrays[MPI.COMM_WORLD.rank]
-
-    expected = cp.zeros_like(sendbuf)
-    for i in range(MPI.COMM_WORLD.size):
-        expected += sub_arrays[i]
-
-    stream = cp.cuda.Stream(non_blocking=True)
-    executor.execute(
-        MPI.COMM_WORLD.rank,
-        sendbuf.data.ptr,
-        sendbuf.data.ptr,
-        sendbuf.nbytes,
-        sendbuf.nbytes,
-        DataType.float16,
-        512,
-        execution_plan,
-        stream.ptr,
-    )
-    stream.synchronize()
-    assert cp.allclose(sendbuf, expected, atol=1e-3 * MPI.COMM_WORLD.size)
+    mscclpp_group.barrier()
 
     execution_time = bench_time(
         1000,
