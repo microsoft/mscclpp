@@ -119,7 +119,7 @@ std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadbl
 
 int ExecutionPlan::Impl::getThreadblockCount(int rank) const { return this->operations.at(rank).size(); }
 
-void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize) {
+void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
   if (this->name != obj["name"]) {
@@ -139,14 +139,12 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize) {
   }
   this->setupChannels(gpus);
 
-  uint32_t maxInputChunks = 0;
-  for (const auto& [rank, chunks] : this->inputChunks) {
-    maxInputChunks = std::max(maxInputChunks, chunks);
-  }
-  this->chunkSize = inputSize / maxInputChunks;
+  this->chunkSize = inputSize / this->inputChunks[rank];
   this->setupOperations(gpus);
 }
 
+// Construct the channel info. Step 1. Flatten SM and PROXY channels into separate vectors.
+// Step 2. For each threadblock, construct a vector of channel indexes and keys.
 void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];
@@ -227,6 +225,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
           for (int i = 0; i < operation.nInputs; i++) {
             BufferType srcBufferType = convertToBufferType(op["i_buff"]["src"]);
             BufferType dstBufferType = convertToBufferType(op["i_buff"]["dst"]);
+            // Get the relevant channel index in rank channelInfos
             operation.inputChannelIndexes[i] =
                 channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
             operation.inputOffsets[i] = this->chunkSize * (int)op["i_cids"][i]["off"];

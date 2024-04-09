@@ -57,7 +57,7 @@ struct ExecutionPlan::Impl {
   std::vector<Operation> getOperations(int rank, int threadblock) const;
   int getThreadblockCount(int rank) const;
 
-  void loadExecutionPlan(size_t inputSize);
+  void loadExecutionPlan(int rank, size_t inputSize);
   void setupChannels(const nlohmann::json& gpus);
   void setupOperations(const nlohmann::json& gpus);
 
@@ -67,7 +67,7 @@ struct ExecutionPlan::Impl {
   // operations for [rank][threadblock] = [operations]
   std::unordered_map<int, std::vector<std::vector<Operation>>> operations;
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
-  // threadblockChannelMap[rank][threadblock] = [channelIndex]
+  // threadblockChannelMap[rank][threadblock] = [channelIndex, channelKey]
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockSMChannelMap;
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockProxyChannelMap;
   std::unordered_map<int, uint32_t> inputChunks;

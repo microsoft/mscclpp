@@ -83,7 +83,7 @@ struct Executor::Impl {
     if (this->contexts.find(key) != this->contexts.end()) {
       return this->contexts[key];
     }
-    plan.impl_->loadExecutionPlan(sendBufferSize);
+    plan.impl_->loadExecutionPlan(rank, sendBufferSize);
 
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize);
@@ -285,6 +285,7 @@ void Executor::execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuff
                        PacketType packetType) {
   ExecutionContext context =
       this->impl_->setupExecutionContext(rank, sendbuff, recvBuff, sendBuffSize, recvBuffSize, plan);
+  // TODO(binyli): need to flush proxy channel here this->impl_->proxyService->startProxy();
   this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvBuff, dataType, stream, packetType);
 }
 
