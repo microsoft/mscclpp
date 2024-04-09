@@ -3,7 +3,7 @@
 
 set(MSCCLPP_MAJOR "0")
 set(MSCCLPP_MINOR "4")
-set(MSCCLPP_PATCH "2")
+set(MSCCLPP_PATCH "3")
 
 set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})
 set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
@@ -101,7 +101,7 @@ find_package(Threads REQUIRED)
 
 add_library(mscclpp_obj OBJECT)
 target_include_directories(mscclpp_obj
-    PRIVATE
+    SYSTEM PRIVATE
     ${GPU_INCLUDE_DIRS}
     ${IBVERBS_INCLUDE_DIRS}
     ${NUMA_INCLUDE_DIRS})

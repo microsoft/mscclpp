@@ -38,7 +38,7 @@ def check_perf_result(perf_result: dict, baseline: dict, time_threshold: float, 
                 str(key),
                 value["time"],
                 baseline[key]["time"],
-                time_threshold,
+                threshold,
             )
             res = False
     return res
