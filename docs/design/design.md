@@ -47,12 +47,57 @@ Proxy service is a persistent service that resides in the CPU side. It functions
 
 ## Implementation
 
-The core of MSCCL++ is implemented in C++ and CUDA. We offer both C++ and Python APIs to initialize communication channels. For kernel-side interfaces, we provide a set of low-level device functions that can be called from a GPU kernel. The following sections will discuss the implementation details of MSCCL++.
+The core of MSCCL++ is implemented in C++ and CUDA. We offer both C++ and Python APIs for initializing communication channels. For interactions within the GPU kernel, we offer a collection of low-level device functions. Subsequent sections will delve into these interfaces and the methodology for transferring communication logic from the GPU to the CPU.
 
-### MSCCL++ programming model
-MSCCL++ offers two set of APIs. The first set is used to initialize communication channels and the second set is used to call communication methods from a GPU kernel.
+### Interfaces
+This section delivers a comprehensive overview of the MSCCL++ interfaces, encompassing both the setup and initialization of communication channels and the MSCCL++ kernel programming model.
+
+#### Communication setup and initialization APIs
+MSCCL++ provides APIs in both C++ and Python for establishing communication channels, with further information available in the [Initialization](../getting-started/tutorials/initialization.md) section. Presently, it supports two types of connections: `deviceIPC` for `NVLink/xGMI`, and `IB` for `InfiniBand`. Users are empowered to select the connection type that best suits their hardware infrastructure.
+
+#### MSCCL++ kernel programming model
+MSCCL++ offers one-sided communication methods directly callable from a GPU kernel, encompassing two primary API categories: data copy and synchronization. The data copy API features functions such as `put()`, `get()`, `read()`, and `write()`, while the synchronization API comprises `signal()`, `flush()`, and `wait()`. Demonstrated below, the basic utilization of the data copy API involves the put() method, which facilitates the transfer of 1KB of data from a local GPU to a remote GPU. This operation is executed within a kernel launched with a single block.
+```cpp
+// Running on rank 0
+__device__ void gpuKernel(mscclpp::SmChannelDeviceHandle* smChannel) {
+  smChannel[0].put(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x);
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    smChannel[0].signal();
+  }
+}
+
+// Running on rank 1
+__device__ void gpuKernel(mscclpp::SmChannelDeviceHandle* smChannel) {
+  if (threadIdx.x == 0) {
+    smChannel[0].wait();
+  }
+  __syncthreads();
+  // Data is ready to use
+}
+```
+
+Similar to the LL protocol offered by NCCL, MSCCL++ introduces a `Packet` structure designed to facilitate the transfer of both data and flags within a single instruction, proving particularly beneficial for applications where latency is a critical concern. The following code shows the basic usage of the `Packet` structure. The flag should be same for sender and receiver side.
+```cpp
+// Running on rank 0
+__device__ void gpuKernel(mscclpp::SmChannelDeviceHandle* smChans, int flag) {
+  smChans[0].putPackets(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x,
+                        /*flag=*/ flag);
+}
+
+// Running on rank 1
+__device__ void gpuKernel(mscclpp::SmChannelDeviceHandle* smChans, int flag) {
+  smChans[0].getPackets(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x,
+                        /*flag=*/ flag);
+  // Data is ready to use
+}
+```
 
 ### The mechanism for offloading communication logic from the GPU to the CPU
+
+As mentioned in the previous section, the offloading of communication logic from the GPU to the CPU is accomplished through the `Fifo` and `Trigger` mechanism.
+
+The accompanying figure details the structure of `Tigger`, employing three bits to denote the operation type: `data transfer`, `signal`, and `flush`. The remaining fields specify the precise data locations for both local and remote buffers.
 
 ```
 |-------------------|-------------------|-------------------|-----------------|-----------------|---------|-------------------|---------------|
@@ -60,6 +105,8 @@ MSCCL++ offers two set of APIs. The first set is used to initialize communicatio
 |-------------------|-------------------|-------------------|-----------------|-----------------|---------|-------------------|---------------|
 ```
 <center>The proxy trigger format</center>
+
+Page-locked memory is utilized for the `Fifo`, guaranteeing access by both the CPU and GPU. On the CPU side, a polling thread periodically checks the Fifo for new commands. Upon processing a command, it updates an incremented counter to signal to the GPU that the command has been executed. Users wishing to ensure a command has been processed can invoke `flush()`, which waits for the device-side counter to reflect this update.
 
 ## Use Cases
 
