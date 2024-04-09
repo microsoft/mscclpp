@@ -707,7 +707,7 @@ class Communicator {
   /// @param allRanks The ranks of all processes involved in the collective.
   /// @param config The configuration for the local endpoint.
   /// @return std::shared_ptr<NvlsConnection> A shared pointer to the NVLS connection.
-  std::shared_ptr<NvlsConnection> connctNvlsCollective(std::vector<int> allRanks, EndpointConfig config);
+  std::shared_ptr<NvlsConnection> connectNvlsCollective(std::vector<int> allRanks, EndpointConfig config);
 
   /// Get the remote rank a connection is connected to.
   ///
