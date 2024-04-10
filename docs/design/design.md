@@ -53,10 +53,11 @@ The core of MSCCL++ is implemented in C++ and CUDA. We offer both C++ and Python
 This section delivers a comprehensive overview of the MSCCL++ interfaces, encompassing both the setup and initialization of communication channels and the MSCCL++ kernel programming model.
 
 #### Communication setup and initialization APIs
-MSCCL++ provides APIs in both C++ and Python for establishing communication channels, with further information available in the [Initialization](../getting-started/tutorials/initialization.md) section. Presently, it supports two types of connections: `deviceIPC` for `NVLink/xGMI`, and `IB` for `InfiniBand`. Users are empowered to select the connection type that best suits their hardware infrastructure.
+MSCCL++ provides APIs in both C++ and Python for establishing communication channels, with further information available in the [Initialization](../getting-started/tutorials/initialization.md) section. Presently, it supports two types of transports: `cudaIPC` for `NVLink/xGMI`, and `IB` for `InfiniBand`. Users are empowered to select the connection type that best suits their hardware infrastructure.
 
 #### MSCCL++ kernel programming model
-MSCCL++ offers one-sided communication methods directly callable from a GPU kernel, encompassing two primary API categories: data copy and synchronization. The data copy API features functions such as `put()`, `get()`, `read()`, and `write()`, while the synchronization API comprises `signal()`, `flush()`, and `wait()`. Demonstrated below, the basic utilization of the data copy API involves the put() method, which facilitates the transfer of 1KB of data from a local GPU to a remote GPU. This operation is executed within a kernel launched with a single block.
+MSCCL++ offers one-sided communication methods directly callable from a GPU kernel, encompassing two primary API categories: data copy and synchronization. The data copy API features functions such as `put()`, `get()`, `read()`, and `write()`, while the synchronization API comprises `signal()`, `flush()`, and `wait()`. Demonstrated below, the basic utilization of the data copy API involves the `put()` method, which facilitates the transfer of 1KB of data from a local GPU to a remote GPU. Then send a signal to remote peer to notify the data is ready to use. To receive the data, the remote peer can call `wait()` method.
+This operation is executed within a kernel launched with a single block.
 ```cpp
 // Running on rank 0
 __device__ void gpuKernel(mscclpp::SmChannelDeviceHandle* smChannel) {
@@ -110,8 +111,47 @@ Page-locked memory is utilized for the `Fifo`, guaranteeing access by both the C
 
 ## Use Cases
 
+In this section, we will discuss several use cases that demonstrate the capabilities of MSCCL++.
+
 ### Overlapping communication with computation
+
+MSCCL++ enables the offloading of communication logic from the GPU to the CPU, facilitating the overlapping of communication and computation processes. The code snippet provided illustrates this overlapping technique. In the depicted scenario, the GPU emits a signal to the CPU indicating readiness for data transfer. Subsequently, while the GPU continues to execute computation tasks, the CPU initiates the data transfer to the designated target device.
+```cpp
+__device__ void gpuKernel(mscclpp::SimpleProxyChannelDeviceHandle* proxyChannel) {
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  // Send a trigger to the CPU
+  if (tid == 0) {
+    proxyChannel[0].putWithSignal(/*dstOffset*/ 0, /*srcOffset*/ 0, /*size*/ 1024);
+  }
+  // Continue computation
+  matrixMul()
+  // ...
+}
+```
 
 ### Fusion of communication and computation
 
+Traditional communication libraries enforce a separation between communication and computation, creating a bottleneck where communication must await the completion of computation, especially when data dependencies exist. In contrast, MSCCL++ leverages its low-level premitives to facilitate the seamless integration of communication with computation. By segmenting the computation into tiles, MSCCL++ enables the simultaneous pipelining of computation and communication tasks. This approach not only mitigates the communication delay by overlapping processes but also significantly improves throughput by leveraging the low-level API for fine-grained control over the hardware, ensuring optimal efficiency.
+
 ### Implementing customized collective communication algorithms
+
+MCSCL++ offers a low-level communication API, allowing users to design customized collective communication algorithms. The following code demonstrates how to implement a customized All2All algorithm using MSCCL++.
+```cpp
+using DeviceHandle = mscclpp::DeviceHandle<T>;
+__device__ void localAlltoall(DeviceHandle<mscclpp::SimpleProxyChannel>* proxyChans, int rank,
+                              int nRanksPerNode, size_t nElements) {
+  int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
+  for (int i = 1; i < nRanksPerNode; i++) {
+    DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = proxyChans[blockIdx.x];
+    if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank + i) % nRanksPerNode) {
+      proxyChan.putWithSignalAndFlush(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
+                                      nElements * sizeof(int));
+    }
+    // wait for the data from GPU (rank-i) % nranksPerNode to arrive
+    if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank - i + nRanksPerNode) % nRanksPerNode) {
+      proxyChan.wait();
+    }
+    deviceSyncer.sync(nRanksPerNode - 1);
+  }
+}
+```
