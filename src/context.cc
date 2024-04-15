@@ -49,13 +49,12 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpo
       throw mscclpp::Error("Local transport is IB but remote is not", ErrorCode::InvalidUsage);
     }
     conn = std::make_shared<IBConnection>(localEndpoint, remoteEndpoint, *this);
-  } else if(localEndpoint.transport() == Transport::Ethernet) {
+  } else if (localEndpoint.transport() == Transport::Ethernet) {
     if (remoteEndpoint.transport() != Transport::Ethernet) {
       throw mscclpp::Error("Local transport is Ethernet but remote is not", ErrorCode::InvalidUsage);
     }
     conn = std::make_shared<EthernetConnection>(localEndpoint, remoteEndpoint);
-  }
-  else {
+  } else {
     throw mscclpp::Error("Unsupported transport", ErrorCode::InternalError);
   }
 

@@ -48,11 +48,9 @@ void CommunicatorTestBase::connectMesh(bool useIpc, bool useIb, bool useEthernet
     if (i != gEnv->rank) {
       if ((rankToNode(i) == rankToNode(gEnv->rank)) && useIpc) {
         connectionFutures[i] = communicator->connectOnSetup(i, 0, mscclpp::Transport::CudaIpc);
-      } 
-      else if(useIb) {
+      } else if (useIb) {
         connectionFutures[i] = communicator->connectOnSetup(i, 0, ibTransport);
-      }
-      else if(useEthernet) {
+      } else if (useEthernet) {
         connectionFutures[i] = communicator->connectOnSetup(i, 0, mscclpp::Transport::Ethernet);
       }
     }
@@ -118,8 +116,8 @@ void CommunicatorTest::SetUp() {
     devicePtr[n] = mscclpp::allocSharedCuda<int>(deviceBufferSize / sizeof(int));
     registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, mscclpp::Transport::CudaIpc | ibTransport, 0, remoteRanks,
                         localMemory[n], remoteMemory[n]);
-    //registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, mscclpp::Transport::Ethernet, 0, remoteRanks,
-    //                    localMemory[n], remoteMemory[n]);               
+    // registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, mscclpp::Transport::Ethernet, 0, remoteRanks,
+    //                     localMemory[n], remoteMemory[n]);
   }
 }
 

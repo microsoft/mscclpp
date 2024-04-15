@@ -183,7 +183,8 @@ void IBConnection::flush(int64_t timeoutUsec) {
 
 // EthernetConnection
 
-EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint) : stopRcvMessages_(false), abortFlag_(0) {
+EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint)
+    : stopRcvMessages_(false), abortFlag_(0) {
   // Validating Transport Protocol
   if (localEndpoint.transport() != Transport::Ethernet || remoteEndpoint.transport() != Transport::Ethernet) {
     throw mscclpp::Error("Ethernet connection can only be made from Ethernet endpoints", ErrorCode::InvalidUsage);
@@ -201,7 +202,8 @@ EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEn
   });
 
   // Starting Connection
-  sendSocket_ = std::make_unique<Socket>(&(getImpl(remoteEndpoint)->socketAddress_), 0xdeadbeef, SocketTypeBootstrap, abortFlag_);
+  sendSocket_ =
+      std::make_unique<Socket>(&(getImpl(remoteEndpoint)->socketAddress_), 0xdeadbeef, SocketTypeBootstrap, abortFlag_);
   sendSocket_->connect();
 
   // Ensure the Connection was Established
@@ -213,7 +215,7 @@ EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEn
   INFO(MSCCLPP_NET, "Ethernet connection created");
 }
 
-EthernetConnection::~EthernetConnection(){
+EthernetConnection::~EthernetConnection() {
   sendSocket_->close();
   stopRcvMessages_ = true;
   rcvSocket_->close();
@@ -231,8 +233,8 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
   validateTransport(src, transport());
 
   // Initializing Variables
-  char* srcPtr = reinterpret_cast<char*>(src.data()) + srcOffset/sizeof(char);
-  char* dstPtr = reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset/sizeof(char);
+  char* srcPtr = reinterpret_cast<char*>(src.data()) + srcOffset / sizeof(char);
+  char* dstPtr = reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset / sizeof(char);
   uint64_t sendSize = 0;
 
   // Sending Info Data
@@ -240,9 +242,10 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
   sendSocket_->send(&size, sizeof(uint64_t));
 
   // Getting Data From GPU and Sending Data
-  while(sendSize < size){
-    uint64_t messageSize = std::min(sendBufferSize_, (size - sendSize)/sizeof(char)) * sizeof(char);
-    mscclpp::memcpyCuda<char>(sendBuffer_, (char*)srcPtr + (sendSize/sizeof(char)), messageSize, cudaMemcpyDeviceToHost);
+  while (sendSize < size) {
+    uint64_t messageSize = std::min(sendBufferSize_, (size - sendSize) / sizeof(char)) * sizeof(char);
+    mscclpp::memcpyCuda<char>(sendBuffer_, (char*)srcPtr + (sendSize / sizeof(char)), messageSize,
+                              cudaMemcpyDeviceToHost);
     sendSocket_->send(sendBuffer_, messageSize);
     sendSize += messageSize;
   }
@@ -264,17 +267,14 @@ void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset,
   sendSocket_->send(&dstPtr, sizeof(char*));
   sendSocket_->send(&size, sizeof(uint64_t));
   sendSocket_->send(src, size);
-  
+
   INFO(MSCCLPP_NET, "EthernetConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
        newValue);
 }
 
-void EthernetConnection::flush(int64_t timeoutUsec) {
+void EthernetConnection::flush(int64_t timeoutUsec) { INFO(MSCCLPP_NET, "EthernetConnection flushing connection"); }
 
-  INFO(MSCCLPP_NET, "EthernetConnection flushing connection");
-}
-
-void EthernetConnection::rcvMessages(){
+void EthernetConnection::rcvMessages() {
   // Receiving Messages Until Connection is Closed
   while (!stopRcvMessages_) {
     // Declarating Variables
@@ -285,20 +285,22 @@ void EthernetConnection::rcvMessages(){
     bool received = true;
 
     // Receiving Data Address
-    if(closed == 0) rcvSocket_->recvUntilEnd(&ptr, sizeof(char*), &closed);
+    if (closed == 0) rcvSocket_->recvUntilEnd(&ptr, sizeof(char*), &closed);
     received &= !closed;
-    
+
     // Receiving data size
-    if(closed == 0) rcvSocket_->recvUntilEnd(&size, sizeof(uint64_t), &closed);
+    if (closed == 0) rcvSocket_->recvUntilEnd(&size, sizeof(uint64_t), &closed);
     received &= !closed;
-    
+
     // Receiving Data and Copying Data yo GPU
-    while(rcvSize < size && closed == 0){
-      uint64_t messageSize = std::min(rcvBufferSize_, (size - rcvSize)/sizeof(char)) * sizeof(char);
+    while (rcvSize < size && closed == 0) {
+      uint64_t messageSize = std::min(rcvBufferSize_, (size - rcvSize) / sizeof(char)) * sizeof(char);
       rcvSocket_->recvUntilEnd(rcvBuffer_, messageSize, &closed);
       received &= !closed;
 
-      if(received) mscclpp::memcpyCuda<char>((char*)ptr + (rcvSize/sizeof(char)), rcvBuffer_, messageSize, cudaMemcpyHostToDevice);
+      if (received)
+        mscclpp::memcpyCuda<char>((char*)ptr + (rcvSize / sizeof(char)), rcvBuffer_, messageSize,
+                                  cudaMemcpyHostToDevice);
       rcvSize += messageSize;
     }
   }

@@ -543,7 +543,7 @@ void Socket::recv(void* ptr, int size) {
   socketWait(MSCCLPP_SOCKET_RECV, ptr, size, &offset);
 }
 
-void Socket::recvUntilEnd(void *ptr, int size, int* closed){
+void Socket::recvUntilEnd(void* ptr, int size, int* closed) {
   int offset = 0;
   *closed = 0;
   if (state_ != SocketStateReady) {

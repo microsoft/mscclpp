@@ -132,8 +132,9 @@ class ProxyChannelOneToOneTest : public CommunicatorTestBase {
   void SetUp() override;
   void TearDown() override;
 
-  void setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, bool useIPC, bool useIb, bool useEthernet,
-                            void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
+  void setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, bool useIPC, bool useIb,
+                            bool useEthernet, void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr,
+                            size_t recvBuffBytes = 0);
   void testPingPong(bool useIPC, bool useIB, bool useEthernet, bool waitWithPoll);
   void testPingPongPerf(bool useIPC, bool useIB, bool useEthernet, bool waitWithPoll);
   void testPacketPingPong(bool useIbOnly);
