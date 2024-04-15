@@ -309,5 +309,4 @@ TEST_F(CommunicatorTest, TestEthernetConnection) {
     }
   } while (!ready);
   communicator->bootstrap()->barrier();
-
 }

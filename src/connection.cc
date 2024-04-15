@@ -189,6 +189,10 @@ EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEn
     throw mscclpp::Error("Ethernet connection can only be made from Ethernet endpoints", ErrorCode::InvalidUsage);
   }
 
+  // Instanciating Buffers
+  sendBuffer_ = new char[sendBufferSize_];
+  rcvBuffer_ = new char[rcvBufferSize_];
+
   // Creating Thread to Accept the Connection
   auto parameter = (getImpl(localEndpoint)->socket_).get();
   std::thread t([this, parameter]() {
@@ -229,16 +233,19 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
   // Initalizing Variables
   char* srcPtr = reinterpret_cast<char*>(src.data()) + srcOffset/sizeof(char);
   char* dstPtr = reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset/sizeof(char);
-  char* data;
+  uint64_t sendSize = 0;
 
-  // Getting Data From GPU
-  data = (char*)malloc(size);
-  mscclpp::memcpyCuda<char>(data, (char*)srcPtr, size/sizeof(char), cudaMemcpyDeviceToHost);
-
-  // Sending Data
+  // Sending Info Data
   sendSocket_->send(&dstPtr, sizeof(char*));
   sendSocket_->send(&size, sizeof(uint64_t));
-  sendSocket_->send(data, size);
+
+  // Getting Data From GPU and Sending Data
+  while(sendSize < size){
+    uint64_t messageSize = std::min(sendBufferSize_, (size - sendSize)/sizeof(char)) * sizeof(char);
+    mscclpp::memcpyCuda<char>(sendBuffer_, (char*)srcPtr + (sendSize/sizeof(char)), messageSize, cudaMemcpyDeviceToHost);
+    sendSocket_->send(sendBuffer_, messageSize);
+    sendSize += messageSize;
+  }
 
   INFO(MSCCLPP_NET, "EthernetConnection write: from %p to %p, size %lu", srcPtr, dstPtr, size);
 }
@@ -272,8 +279,8 @@ void EthernetConnection::rcvMessages(){
   while (!stopRcvMessages_) {
     // Declarating Variables
     char* ptr;
-    char* buffer;
     uint64_t size;
+    uint64_t rcvSize = 0;
     int closed = 0;
     bool received = true;
 
@@ -285,13 +292,15 @@ void EthernetConnection::rcvMessages(){
     if(closed == 0) rcvSocket_->recvUntilEnd(&size, sizeof(uint64_t), &closed);
     received &= !closed;
     
-    // Receiving Data
-    buffer = (char*)malloc(size);
-    if(closed == 0) rcvSocket_->recvUntilEnd(buffer, size, &closed);
-    received &= !closed;
-    
-    // Copying Data to GPU
-    if(received) mscclpp::memcpyCuda<char>(ptr, buffer, size/sizeof(char), cudaMemcpyHostToDevice);
+    // Receiving Data and Copying Data yo GPU
+    while(rcvSize < size && closed == 0){
+      uint64_t messageSize = std::min(rcvBufferSize_, (size - rcvSize)/sizeof(char)) * sizeof(char);
+      rcvSocket_->recvUntilEnd(rcvBuffer_, messageSize, &closed);
+      received &= !closed;
+
+      if(received) mscclpp::memcpyCuda<char>((char*)ptr + (rcvSize/sizeof(char)), rcvBuffer_, messageSize, cudaMemcpyHostToDevice);
+      rcvSize += messageSize;
+    }
   }
 }
 

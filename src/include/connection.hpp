@@ -57,11 +57,14 @@ class IBConnection : public Connection {
 class EthernetConnection : public Connection {
   std::unique_ptr<Socket> sendSocket_;
   std::unique_ptr<Socket> rcvSocket_;
-  cudaStream_t stream_;
   std::thread threadRcvMessages_;
   bool stopRcvMessages_;
   volatile uint32_t* abortFlag_;
-  
+  static const uint64_t sendBufferSize_ = 256000000;
+  static const uint64_t rcvBufferSize_ = 256000000;
+  char *sendBuffer_; 
+  char *rcvBuffer_;
+
   public:
   EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint);
 
@@ -79,6 +82,8 @@ class EthernetConnection : public Connection {
 
   private:
   void rcvMessages();
+
+  void sendMessage();
 };
 
 }  // namespace mscclpp
