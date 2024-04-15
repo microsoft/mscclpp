@@ -62,10 +62,10 @@ class EthernetConnection : public Connection {
   volatile uint32_t* abortFlag_;
   const uint64_t sendBufferSize_ = 256000000;
   const uint64_t rcvBufferSize_ = 256000000;
-  char *sendBuffer_; 
-  char *rcvBuffer_;
+  char* sendBuffer_;
+  char* rcvBuffer_;
 
-  public:
+ public:
   EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint);
 
   ~EthernetConnection();
@@ -80,7 +80,7 @@ class EthernetConnection : public Connection {
 
   void flush(int64_t timeoutUsec) override;
 
-  private:
+ private:
   void rcvMessages();
 
   void sendMessage();

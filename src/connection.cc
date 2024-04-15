@@ -230,7 +230,7 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
   validateTransport(dst, remoteTransport());
   validateTransport(src, transport());
 
-  // Initalizing Variables
+  // Initializing Variables
   char* srcPtr = reinterpret_cast<char*>(src.data()) + srcOffset/sizeof(char);
   char* dstPtr = reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset/sizeof(char);
   uint64_t sendSize = 0;
@@ -254,7 +254,7 @@ void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset,
   // Validating Transport Protocol
   validateTransport(dst, remoteTransport());
 
-  // Initalizing Variables
+  // Initializing Variables
   uint64_t oldValue = *src;
   uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
   uint64_t size = sizeof(uint64_t);
