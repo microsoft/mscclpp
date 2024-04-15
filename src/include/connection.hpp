@@ -60,8 +60,8 @@ class EthernetConnection : public Connection {
   std::thread threadRcvMessages_;
   bool stopRcvMessages_;
   volatile uint32_t* abortFlag_;
-  static const uint64_t sendBufferSize_ = 256000000;
-  static const uint64_t rcvBufferSize_ = 256000000;
+  const uint64_t sendBufferSize_ = 256000000;
+  const uint64_t rcvBufferSize_ = 256000000;
   char *sendBuffer_; 
   char *rcvBuffer_;
 
