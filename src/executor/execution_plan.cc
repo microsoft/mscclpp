@@ -130,7 +130,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize) {
   if (protocol == "LL") {
     this->isUsingPacket = true;
   }
-  auto gpus = obj["gpus"];
+  const auto& gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];
