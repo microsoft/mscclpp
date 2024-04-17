@@ -272,7 +272,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
   }
 }
 
-ExecutionPlan::ExecutionPlan(const std::string name, const std::string planPath)
+ExecutionPlan::ExecutionPlan(const std::string& name, const std::string& planPath)
     : impl_(std::make_shared<Impl>(name, planPath)) {}
 
 }  // namespace mscclpp
