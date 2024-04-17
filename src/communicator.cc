@@ -105,8 +105,8 @@ MSCCLPP_API_CPP NonblockingFuture<std::shared_ptr<Connection>> Communicator::con
   return NonblockingFuture<std::shared_ptr<Connection>>(connector->connectionPromise_.get_future());
 }
 
-MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> Communicator::connctNvlsCollective(std::vector<int> allRanks,
-                                                                                   EndpointConfig config) {
+MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> Communicator::connectNvlsCollective(std::vector<int> allRanks,
+                                                                                    EndpointConfig config) {
   auto bootstrap = this->bootstrap();
   int rank = bootstrap->getRank();
   bool isRoot = false;

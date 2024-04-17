@@ -189,7 +189,7 @@ void register_core(nb::module_& m) {
       .def("recv_memory_on_setup", &Communicator::recvMemoryOnSetup, nb::arg("remoteRank"), nb::arg("tag"))
       .def("connect_on_setup", &Communicator::connectOnSetup, nb::arg("remoteRank"), nb::arg("tag"),
            nb::arg("localConfig"))
-      .def("connct_nvls_collective", &Communicator::connctNvlsCollective, nb::arg("allRanks"), nb::arg("config"))
+      .def("connct_nvls_collective", &Communicator::connectNvlsCollective, nb::arg("allRanks"), nb::arg("config"))
       .def("remote_rank_of", &Communicator::remoteRankOf)
       .def("tag_of", &Communicator::tagOf)
       .def("setup", &Communicator::setup);
