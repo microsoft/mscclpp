@@ -109,7 +109,8 @@ std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) c
 }
 size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize) const {
   if (this->isUsingPacket) {
-    return inputSize / this->inputChunks.at(rank) * this->scratchChunks.at(rank) * 2;
+    return inputSize / this->inputChunks.at(rank) * this->scratchChunks.at(rank) * 2 /* data + flag*/ *
+           2 /*double buffer*/;
   }
   return inputSize / this->inputChunks.at(rank) * this->scratchChunks.at(rank);
 }
