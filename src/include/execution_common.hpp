@@ -67,8 +67,8 @@ struct Operation {
   uint32_t size;
 };
 
-// total size = 1920 + 6400 + 4 + 4(padding) = 8324 bytes
-struct DeviceExecutionPlan {
+// total size = 1920 + 6400 + 4 + 4(padding) + 12(align) = 8336 bytes
+struct __attribute__((aligned(16))) DeviceExecutionPlan {
   uint8_t nSmChannels;                  // 1 bytes
   uint8_t nProxyChannels;               // 1 bytes
   uint16_t nOperations;                 // 2 bytes

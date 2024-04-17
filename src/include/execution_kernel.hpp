@@ -260,12 +260,12 @@ MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, uint32_t dstOf
 template <typename T, typename PacketType = LL16Packet>
 __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
                                 DeviceExecutionPlan* plan, uint32_t flag) {
-  extern __shared__ int sharedMem[];
+  extern __shared__ int4 sharedMem[];
   int bid = blockIdx.x;
   int tid = threadIdx.x;
   DeviceExecutionPlan* localPlan = plan + bid;
-  for (size_t i = tid; i < sizeof(DeviceExecutionPlan) / sizeof(int); i += blockDim.x) {
-    sharedMem[i] = ((int*)localPlan)[i];
+  for (size_t i = tid; i < sizeof(DeviceExecutionPlan) / sizeof(int4); i += blockDim.x) {
+    sharedMem[i] = ((int4*)localPlan)[i];
   }
 #if defined(MSCCLPP_DEVICE_HIP)
   __synclds();
