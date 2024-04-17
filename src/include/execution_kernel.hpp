@@ -272,63 +272,59 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
 #else   // !defined(MSCCLPP_DEVICE_HIP)
   __syncthreads();
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
+  localPlan = (DeviceExecutionPlan*)sharedMem;
+  int nOperations = localPlan->nOperations;
   Operation* operations = localPlan->operations;
   DeviceHandle<SmChannel>* smChannels = localPlan->channels.smChannels;
   DeviceHandle<SimpleProxyChannel>* proxyChannels = localPlan->channels.proxyChannels;
   T* src = nullptr;
   T* dst = nullptr;
   T* tmp = nullptr;
-  for (int i = 0; i < localPlan->nOperations; i++) {
-    switch (operations[i].type) {
+  for (int i = 0; i < nOperations; i++) {
+    Operation* op = &operations[i];
+    switch (op->type) {
       case OperationType::BARRIER:
         __syncthreads();
         break;
       case OperationType::SIGNAL:
-        handleSignal(tid, smChannels, proxyChannels, operations[i].outputChannelIndexes, operations[i].nOutputs,
-                     operations[i].channelType);
+        handleSignal(tid, smChannels, proxyChannels, op->outputChannelIndexes, op->nOutputs, op->channelType);
         break;
       case OperationType::WAIT:
-        handleWait(tid, smChannels, proxyChannels, operations[i].inputChannelIndexes, operations[i].nInputs,
-                   operations[i].channelType);
+        handleWait(tid, smChannels, proxyChannels, op->inputChannelIndexes, op->nInputs, op->channelType);
         break;
       case OperationType::GET:
-        handleGet(smChannels[operations[i].inputChannelIndexes[0]], operations[i].inputOffsets[0],
-                  operations[i].dstOffset, operations[i].size);
+        handleGet(smChannels[op->inputChannelIndexes[0]], op->inputOffsets[0], op->dstOffset, op->size);
         break;
       case OperationType::READ_REDUCE_COPY_SEND:
-        dst = getBuffer(input, output, scratch, operations[i].dstBufferType);
-        src = getBuffer(input, output, scratch, operations[i].srcBufferType);
-        handleReadReduceCopySend(dst, operations[i].dstOffset, src, operations[i].srcOffset, smChannels,
-                                 operations[i].outputChannelIndexes, operations[i].inputChannelIndexes,
-                                 operations[i].outputOffsets, operations[i].inputOffsets, operations[i].nOutputs,
-                                 operations[i].nInputs, operations[i].size);
+        dst = getBuffer(input, output, scratch, op->dstBufferType);
+        src = getBuffer(input, output, scratch, op->srcBufferType);
+        handleReadReduceCopySend(dst, op->dstOffset, src, op->srcOffset, smChannels, op->outputChannelIndexes,
+                                 op->inputChannelIndexes, op->outputOffsets, op->inputOffsets, op->nOutputs,
+                                 op->nInputs, op->size);
         break;
       case OperationType::READ_REDUCE_COPY:
-        dst = getBuffer(input, output, scratch, operations[i].dstBufferType);
-        src = getBuffer(input, output, scratch, operations[i].srcBufferType);
-        handleReadReduceCopySend(dst, operations[i].dstOffset, src, operations[i].srcOffset, smChannels,
-                                 operations[i].outputChannelIndexes, operations[i].inputChannelIndexes,
-                                 operations[i].outputOffsets, operations[i].inputOffsets, operations[i].nOutputs,
-                                 operations[i].nInputs, operations[i].size, false);
+        dst = getBuffer(input, output, scratch, op->dstBufferType);
+        src = getBuffer(input, output, scratch, op->srcBufferType);
+        handleReadReduceCopySend(dst, op->dstOffset, src, op->srcOffset, smChannels, op->outputChannelIndexes,
+                                 op->inputChannelIndexes, op->outputOffsets, op->inputOffsets, op->nOutputs,
+                                 op->nInputs, op->size, false);
         break;
       case OperationType::PUT_PACKET:
-        handlePutPacket<PacketType>(operations[i].srcOffset, smChannels, operations[i].outputChannelIndexes,
-                                    operations[i].outputOffsets, operations[i].nOutputs, operations[i].size, flag);
+        handlePutPacket<PacketType>(op->srcOffset, smChannels, op->outputChannelIndexes, op->outputOffsets,
+                                    op->nOutputs, op->size, flag);
         break;
       case OperationType::REDUCE_SEND_PACKET:
-        dst = getBuffer(input, output, scratch, operations[i].dstBufferType);
-        src = getBuffer(input, output, scratch, operations[i].srcBufferType);
-        tmp = getBuffer(input, output, scratch, operations[i].inputBufferType);
-        handleReduceSendPacket<T, PacketType>(dst, operations[i].dstOffset, src, operations[i].srcOffset, tmp,
-                                              operations[i].inputOffsets, operations[i].nInputs, smChannels,
-                                              operations[i].outputChannelIndexes, operations[i].outputOffsets,
-                                              operations[i].nOutputs, operations[i].size, flag);
+        dst = getBuffer(input, output, scratch, op->dstBufferType);
+        src = getBuffer(input, output, scratch, op->srcBufferType);
+        tmp = getBuffer(input, output, scratch, op->inputBufferType);
+        handleReduceSendPacket<T, PacketType>(dst, op->dstOffset, src, op->srcOffset, tmp, op->inputOffsets,
+                                              op->nInputs, smChannels, op->outputChannelIndexes, op->outputOffsets,
+                                              op->nOutputs, op->size, flag);
         break;
       case OperationType::COPY_PACKET:
-        dst = getBuffer(input, output, scratch, operations[i].dstBufferType);
-        src = getBuffer(input, output, scratch, operations[i].srcBufferType);
-        handleCopyPacket<PacketType>(dst, src, operations[i].dstOffset, operations[i].srcOffset, operations[i].size,
-                                     flag);
+        dst = getBuffer(input, output, scratch, op->dstBufferType);
+        src = getBuffer(input, output, scratch, op->srcBufferType);
+        handleCopyPacket<PacketType>(dst, src, op->dstOffset, op->srcOffset, op->size, flag);
         break;
       default:
         break;
