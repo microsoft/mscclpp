@@ -72,7 +72,8 @@ struct Executor::Impl {
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
 
-  Impl(std::shared_ptr<Communicator> comm, int nranksPerNode) : nranksPerNode(nranksPerNode), comm(comm) {
+  Impl(std::shared_ptr<Communicator> comm) : comm(comm) {
+    this->nranksPerNode = comm->bootstrap()->getNranksPerNode();
     this->proxyService = std::make_shared<ProxyService>();
   }
   ~Impl() = default;
@@ -279,8 +280,7 @@ struct Executor::Impl {
   }
 };
 
-Executor::Executor(std::shared_ptr<Communicator> comm, int nranksPerNode)
-    : impl_(std::make_unique<Impl>(comm, nranksPerNode)) {}
+Executor::Executor(std::shared_ptr<Communicator> comm) : impl_(std::make_unique<Impl>(comm)) {}
 
 void Executor::execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
                        DataType dataType, int nthreads, const ExecutionPlan& plan, cudaStream_t stream,

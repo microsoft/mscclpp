@@ -38,6 +38,7 @@ class Bootstrap {
   virtual ~Bootstrap() = default;
   virtual int getRank() = 0;
   virtual int getNranks() = 0;
+  virtual int getNranksPerNode() = 0;
   virtual void send(void* data, int size, int peer, int tag) = 0;
   virtual void recv(void* data, int size, int peer, int tag) = 0;
   virtual void allGather(void* allData, int size) = 0;
@@ -82,6 +83,9 @@ class TcpBootstrap : public Bootstrap {
 
   /// Return the total number of ranks.
   int getNranks() override;
+
+  /// Return the total number of ranks per node.
+  int getNranksPerNode() override;
 
   /// Send data to another process.
   ///

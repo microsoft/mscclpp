@@ -41,13 +41,9 @@ def bench_time(niters: int, ngraphIters: int, func):
 
 
 if __name__ == "__main__":
-    shm_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
-    N_GPUS_PER_NODE = shm_comm.size
-    shm_comm.Free()
-
-    cp.cuda.Device(MPI.COMM_WORLD.rank % N_GPUS_PER_NODE).use()
     mscclpp_group = mscclpp_comm.CommGroup(MPI.COMM_WORLD)
-    executor = Executor(mscclpp_group.communicator, N_GPUS_PER_NODE)
+    cp.cuda.Device(MPI.COMM_WORLD.rank % mscclpp_group.nranks_per_node).use()
+    executor = Executor(mscclpp_group.communicator)
     execution_plan = ExecutionPlan(
         "allreduce_pairs", path.join(MSCCLPP_ROOT_PATH, "test", "execution-files", "allreduce.json")
     )

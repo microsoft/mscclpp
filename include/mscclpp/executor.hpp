@@ -36,7 +36,7 @@ class ExecutionPlan {
 
 class Executor {
  public:
-  Executor(std::shared_ptr<Communicator> comm, int nranksPerNode);
+  Executor(std::shared_ptr<Communicator> comm);
   Executor(const Executor&) = delete;
   Executor& operator=(const Executor&) = delete;
   ~Executor();

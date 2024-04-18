@@ -81,6 +81,7 @@ class TcpBootstrap::Impl {
   UniqueId getUniqueId() const;
   int getRank();
   int getNranks();
+  int getNranksPerNode();
   void allGather(void* allData, int size);
   void send(void* data, int size, int peer, int tag);
   void recv(void* data, int size, int peer, int tag);
@@ -91,6 +92,7 @@ class TcpBootstrap::Impl {
   UniqueIdInternal uniqueId_;
   int rank_;
   int nRanks_;
+  int nRanksPerNode_;
   bool netInitialized;
   std::unique_ptr<Socket> listenSockRoot_;
   std::unique_ptr<Socket> listenSock_;
@@ -141,6 +143,7 @@ UniqueId TcpBootstrap::Impl::getUniqueId(const UniqueIdInternal& uniqueId) {
 TcpBootstrap::Impl::Impl(int rank, int nRanks)
     : rank_(rank),
       nRanks_(nRanks),
+      nRanksPerNode_(0),
       netInitialized(false),
       peerCommAddresses_(nRanks, SocketAddress()),
       barrierArr_(nRanks, 0),
@@ -418,6 +421,26 @@ void TcpBootstrap::Impl::establishConnections(int64_t timeoutSec) {
   TRACE(MSCCLPP_INIT, "rank %d nranks %d - DONE", rank_, nRanks_);
 }
 
+int TcpBootstrap::Impl::getNranksPerNode() {
+  if (nRanksPerNode_ > 0) return nRanksPerNode_;
+  int nRanksPerNode = 0;
+  bool useIpv4 = peerCommAddresses_[rank_].sa.sa_family == AF_INET;
+  for (int i = 0; i < nRanks_; i++) {
+    if (useIpv4) {
+      if (peerCommAddresses_[i].sin.sin_addr.s_addr == peerCommAddresses_[rank_].sin.sin_addr.s_addr) {
+        nRanksPerNode++;
+      }
+    } else {
+      if (std::memcmp(&(peerCommAddresses_[i].sin6.sin6_addr), &(peerCommAddresses_[rank_].sin6.sin6_addr),
+                      sizeof(in6_addr)) == 0) {
+        nRanksPerNode++;
+      }
+    }
+  }
+  nRanksPerNode_ = nRanksPerNode;
+  return nRanksPerNode_;
+}
+
 void TcpBootstrap::Impl::allGather(void* allData, int size) {
   char* data = static_cast<char*>(allData);
   int rank = rank_;
@@ -519,6 +542,8 @@ MSCCLPP_API_CPP UniqueId TcpBootstrap::getUniqueId() const { return pimpl_->getU
 MSCCLPP_API_CPP int TcpBootstrap::getRank() { return pimpl_->getRank(); }
 
 MSCCLPP_API_CPP int TcpBootstrap::getNranks() { return pimpl_->getNranks(); }
+
+MSCCLPP_API_CPP int TcpBootstrap::getNranksPerNode() { return pimpl_->getNranksPerNode(); }
 
 MSCCLPP_API_CPP void TcpBootstrap::send(void* data, int size, int peer, int tag) {
   pimpl_->send(data, size, peer, tag);

@@ -24,7 +24,7 @@ void register_executor(nb::module_& m) {
       .def(nb::init<const std::string, const std::string>(), nb::arg("name"), nb::arg("planPath"));
 
   nb::class_<Executor>(m, "Executor")
-      .def(nb::init<std::shared_ptr<Communicator>, int>(), nb::arg("comm"), nb::arg("nranksPerNode"))
+      .def(nb::init<std::shared_ptr<Communicator>>(), nb::arg("comm"))
       .def(
           "execute",
           [](Executor* self, int rank, uintptr_t sendbuff, uintptr_t recvBuff, size_t sendBuffSize, size_t recvBuffSize,

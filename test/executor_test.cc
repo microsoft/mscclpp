@@ -27,13 +27,13 @@ int main() {
     id = bootstrap->createUniqueId();
   }
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
-  bootstrap->initialize(id);
   // sleep 20s
   // std::this_thread::sleep_for(std::chrono::seconds(20));
+  bootstrap->initialize(id);
   auto comm = std::make_shared<mscclpp::Communicator>(bootstrap);
   CUDACHECK(cudaSetDevice(rank));
 
-  std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(comm, 8 /*nranksPerNode*/);
+  std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(comm);
   mscclpp::ExecutionPlan plan("allreduce_pairs", MSCCLPP_ROOT_PATH + "/test/execution-files/allreduce.json");
   const int bufferSize = 1024 * 1024;
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);

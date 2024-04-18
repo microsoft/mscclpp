@@ -28,7 +28,7 @@ from mscclpp import (
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, pack
 from ._cpp import _ext
-from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group, N_GPUS_PER_NODE
+from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
 ethernet_interface_name = "eth0"
 
@@ -602,7 +602,7 @@ def test_executor(mpi_group: MpiGroup, filename: str):
         pytest.skip("algo not support cross node")
     project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     mscclpp_group = mscclpp_comm.CommGroup(mpi_group.comm)
-    executor = Executor(mscclpp_group.communicator, N_GPUS_PER_NODE)
+    executor = Executor(mscclpp_group.communicator)
     execution_plan = ExecutionPlan("allreduce_pairs", os.path.join(project_dir, "test", "execution-files", filename))
 
     nelems = 1024 * 1024
