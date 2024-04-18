@@ -225,19 +225,19 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBy
                                                   uint32_t flag) {
   size_t nPackets = size * 2 / sizeof(PacketType);
   const size_t intputBaseOffset = flag & 0x1 ? 0 : inputBuffSize >> 1;
-  const uint32_t srcOffset = srcOffsetByBytes / sizeof(PacketValType<PacketType>);
-  const uint32_t dstOffset = dstOffsetByBytes / sizeof(PacketValType<PacketType>);
-  PacketValType<PacketType>* srcPacketValue = (PacketValType<PacketType>*)src + srcOffset;
-  PacketValType<PacketType>* dstPacketValue = (PacketValType<PacketType>*)dst + dstOffset;
+  const uint32_t srcOffset = srcOffsetByBytes / sizeof(PacketPayload<PacketType>);
+  const uint32_t dstOffset = dstOffsetByBytes / sizeof(PacketPayload<PacketType>);
+  PacketPayload<PacketType>* srcPacketPayload = (PacketPayload<PacketType>*)src + srcOffset;
+  PacketPayload<PacketType>* dstPacketPayload = (PacketPayload<PacketType>*)dst + dstOffset;
   for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
-    PacketValType<PacketType> data = {};
+    PacketPayload<PacketType> data = {};
     for (int index = 0; index < nSrcs; ++index) {
       PacketType* pkt = (PacketType*)((char*)inputBuff + intputBaseOffset + 2 * inputOffsets[index]);
-      PacketValType<PacketType> val = pkt[idx].read(flag);
+      PacketPayload<PacketType> val = pkt[idx].read(flag);
       data = add_vectors<T>(data, val);
     }
-    data = add_vectors<T>(data, srcPacketValue[idx]);
-    dstPacketValue[idx] = data;
+    data = add_vectors<T>(data, srcPacketPayload[idx]);
+    dstPacketPayload[idx] = data;
 
     PacketType pkt(data, flag);
     for (int index = 0; index < nDstChannels; ++index) {
@@ -252,10 +252,10 @@ MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, size_t srcSize
                                             uint32_t srcOffset, size_t size, uint32_t flag) {
   const size_t outputScratchBaseOffset = flag & 0x1 ? 0 : srcSize >> 1;
   PacketType* srcPackets = (PacketType*)((char*)src + outputScratchBaseOffset + 2 * srcOffset);
-  PacketValType<PacketType>* result = (PacketValType<PacketType>*)((char*)dst + dstOffset);
+  PacketPayload<PacketType>* result = (PacketPayload<PacketType>*)((char*)dst + dstOffset);
   size_t nPackets = size * 2 / sizeof(PacketType);
   for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
-    PacketValType<PacketType> data = srcPackets[idx].read(flag);
+    PacketPayload<PacketType> data = srcPackets[idx].read(flag);
     result[idx] = data;
   }
 }

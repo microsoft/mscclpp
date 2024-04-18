@@ -24,7 +24,7 @@ union alignas(16) LL16Packet {
     uint32_t data2;
     uint32_t flag2;
   };
-  using ValueType = uint2;
+  using Payload = uint2;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   ulonglong2 raw_;
@@ -104,7 +104,7 @@ union alignas(8) LL8Packet {
   };
   uint64_t raw_;
 
-  using ValueType = uint32_t;
+  using Payload = uint32_t;
 #if defined(MSCCLPP_DEVICE_COMPILE)
 
   MSCCLPP_DEVICE_INLINE LL8Packet() {}

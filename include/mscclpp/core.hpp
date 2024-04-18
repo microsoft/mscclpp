@@ -762,7 +762,7 @@ DeviceHandle<std::remove_reference_t<T>> deviceHandle(T&& t) {
 
 /// Packet value type.
 template <class T>
-using PacketValType = typename T::ValueType;
+using PacketPayload = typename T::Payload;
 
 }  // namespace mscclpp
 

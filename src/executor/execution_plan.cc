@@ -44,7 +44,7 @@ auto getOpType = [](const std::string& str) {
   } else if (str == "cpkt") {
     return mscclpp::OperationType::COPY_PACKET;
   } else {
-    throw std::runtime_error("Invalid operation type");
+    throw mscclpp::Error("Invalid operation type", mscclpp::ErrorCode::ExecutorError);
   }
 };
 
@@ -56,7 +56,7 @@ auto convertToBufferType = [](const std::string& str) {
   } else if (str == "s") {
     return mscclpp::BufferType::SCRATCH;
   } else {
-    throw std::runtime_error("Invalid buffer type");
+    throw mscclpp::Error("Invalid buffer type", mscclpp::ErrorCode::ExecutorError);
   }
 };
 
@@ -68,7 +68,7 @@ auto convertToChannelType = [](const std::string& str) {
   } else if (str == "none") {
     return mscclpp::ChannelType::NONE;
   } else {
-    throw std::runtime_error("Invalid channel type");
+    throw mscclpp::Error("Invalid channel type", mscclpp::ErrorCode::ExecutorError);
   }
 };
 
@@ -124,7 +124,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
   if (this->name != obj["name"]) {
-    throw std::runtime_error("Plan name does not match");
+    throw Error("Plan name does not match", ErrorCode::ExecutorError);
   }
   std::string protocol = obj["protocol"];
   if (protocol == "LL") {

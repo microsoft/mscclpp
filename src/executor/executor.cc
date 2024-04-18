@@ -142,7 +142,7 @@ struct Executor::Impl {
         case BufferType::SCRATCH:
           return std::make_pair((void*)context.scratchBuffer.get(), context.scratchBufferSize);
         default:
-          throw std::runtime_error("Invalid buffer type");
+          throw Error("Invalid buffer type", ErrorCode::ExecutorError);
       }
     };
     auto getConnectedPeers = [&](std::vector<ChannelInfo>& infos) {
@@ -206,7 +206,7 @@ struct Executor::Impl {
         case BufferType::SCRATCH:
           return (void*)context.scratchBuffer.get();
         default:
-          throw std::runtime_error("Invalid buffer type");
+          throw Error("Invalid buffer type", ErrorCode::ExecutorError);
       }
     };
     for (ChannelType channelType : channelTypes) {
@@ -274,7 +274,7 @@ struct Executor::Impl {
             sharedMemSize, stream, ++flag);
         break;
       default:
-        throw std::runtime_error("Invalid packet type");
+        throw Error("Invalid packet type", ErrorCode::ExecutorError);
     }
   }
 };
