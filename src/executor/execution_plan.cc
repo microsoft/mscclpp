@@ -130,7 +130,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize) {
   if (protocol == "LL") {
     this->isUsingPacket = true;
   }
-  auto gpus = obj["gpus"];
+  const auto& gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];
@@ -272,7 +272,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
   }
 }
 
-ExecutionPlan::ExecutionPlan(const std::string name, const std::string planPath)
+ExecutionPlan::ExecutionPlan(const std::string& name, const std::string& planPath)
     : impl_(std::make_shared<Impl>(name, planPath)) {}
 
 }  // namespace mscclpp
