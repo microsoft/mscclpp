@@ -51,6 +51,7 @@ class CommGroup:
         self.communicator = Communicator(self.bootstrap)
         self.my_rank = self.bootstrap.get_rank()
         self.nranks = self.bootstrap.get_n_ranks()
+        self.nranks_per_node = self.bootstrap.get_n_ranks_per_node()
 
     def barrier(self):
         self.bootstrap.barrier()

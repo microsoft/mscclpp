@@ -8,4 +8,5 @@ target_sources(mp_unit_tests PRIVATE
     communicator_tests.cu
     proxy_channel_tests.cu
     sm_channel_tests.cu
+    executor_tests.cc
 )

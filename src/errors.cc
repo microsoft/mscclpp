@@ -19,6 +19,10 @@ std::string errorToString(enum ErrorCode error) {
       return "InvalidUsage";
     case ErrorCode::Timeout:
       return "Timeout";
+    case ErrorCode::Aborted:
+      return "Aborted";
+    case ErrorCode::ExecutorError:
+      return "ExecutorError";
     default:
       return "UnknownError";
   }

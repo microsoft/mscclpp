@@ -20,6 +20,7 @@ extern void register_fifo(nb::module_& m);
 extern void register_semaphore(nb::module_& m);
 extern void register_utils(nb::module_& m);
 extern void register_numa(nb::module_& m);
+extern void register_executor(nb::module_& m);
 
 template <typename T>
 void def_nonblocking_future(nb::handle& m, const std::string& typestr) {
@@ -35,6 +36,7 @@ void register_core(nb::module_& m) {
   nb::class_<Bootstrap>(m, "Bootstrap")
       .def("get_rank", &Bootstrap::getRank)
       .def("get_n_ranks", &Bootstrap::getNranks)
+      .def("get_n_ranks_per_node", &Bootstrap::getNranksPerNode)
       .def(
           "send",
           [](Bootstrap* self, uintptr_t ptr, size_t size, int peer, int tag) {
@@ -204,4 +206,5 @@ NB_MODULE(_mscclpp, m) {
   register_utils(m);
   register_core(m);
   register_numa(m);
+  register_executor(m);
 }
