@@ -169,7 +169,7 @@
       "id": 1,
       "inputChunks": 4,
       "outputChunks": 0,
-      "scratchChunks": 6,
+      "scratchChunks": 8,
       "threadblocks": [
         {
           "id": 0,

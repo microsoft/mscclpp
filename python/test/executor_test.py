@@ -15,7 +15,7 @@ from mpi4py import MPI
 MSCCLPP_ROOT_PATH = "/root/mscclpp"
 
 
-def bench_time(niters: int, func):
+def bench_time(niters: int, ngraphIters: int, func):
     # capture cuda graph for niters of the kernel launch
     stream = cp.cuda.Stream(non_blocking=True)
     with stream:
@@ -32,11 +32,12 @@ def bench_time(niters: int, func):
     end = cp.cuda.Event()
 
     start.record(stream)
-    graph.launch(stream)
+    for _ in range(ngraphIters):
+        graph.launch(stream)
     end.record(stream)
     end.synchronize()
 
-    return cp.cuda.get_elapsed_time(start, end) / niters * 1000.0
+    return cp.cuda.get_elapsed_time(start, end) / niters * 1000.0 / ngraphIters
 
 
 if __name__ == "__main__":
@@ -59,7 +60,8 @@ if __name__ == "__main__":
     mscclpp_group.barrier()
 
     execution_time = bench_time(
-        1000,
+        100,
+        10,
         lambda stream: executor.execute(
             MPI.COMM_WORLD.rank,
             sendbuf.data.ptr,
@@ -72,6 +74,6 @@ if __name__ == "__main__":
             stream.ptr,
         ),
     )
-    print(f"Execution time: {execution_time} us, data size: {sendbuf.nbytes} bytes")
+    print(f"Rank: {MPI.COMM_WORLD.rank} Execution time: {execution_time} us, data size: {sendbuf.nbytes} bytes")
     executor = None
     mscclpp_group = None
