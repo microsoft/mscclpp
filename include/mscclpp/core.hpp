@@ -484,6 +484,11 @@ class NvlsConnection {
   };
 
   std::shared_ptr<DeviceMulticastPointer> allocateAndBindCuda(size_t size);
+
+  /// The \p handle to the allocation (its lifetime is managed by the caller)
+  /// and the \p size of the allocation.
+  std::shared_ptr<char> bindAllocatedCuda(CUmemGenericAllocationHandle memHandle, size_t size);
+
   size_t getMultiCastMinGranularity();
 
  private:
