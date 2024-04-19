@@ -8,6 +8,7 @@
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
+#include <mscclpp/gpu_data_types.hpp>
 
 #include "execution_common.hpp"
 
