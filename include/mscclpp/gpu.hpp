@@ -7,9 +7,10 @@
 #if defined(__HIP_PLATFORM_AMD__)
 
 // Temporal fix for rocm-6.0.0-12969
-#ifndef _HIP_INCLUDE_HIP_AMD_DETAIL_HIP_BF16_H_
+#include <hip/hip_version.h>
+#if (HIP_VERSION > 60012969)
 #include <hip/hip_bf16.h>
-#endif  // _HIP_INCLUDE_HIP_AMD_DETAIL_HIP_BF16_H_
+#endif  // (HIP_VERSION > 60012969)
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
