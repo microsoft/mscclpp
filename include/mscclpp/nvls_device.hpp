@@ -5,6 +5,7 @@
 #define MSCCLPP_NVLS_DEVICE_HPP_
 
 #include <mscclpp/gpu.hpp>
+#include <mscclpp/gpu_data_types.hpp>
 #include <type_traits>
 
 #include "device.hpp"
