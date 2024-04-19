@@ -128,35 +128,39 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
   return nullptr;
 }
 
-MSCCLPP_DEVICE_INLINE void handleSignal(int tid, DeviceHandle<SmChannel>* smChannels,
+MSCCLPP_DEVICE_INLINE void handleSignal(DeviceHandle<SmChannel>* smChannels,
                                         DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* channelIndex,
                                         int nChannels, ChannelType chType) {
-  if (tid < nChannels) {
-    if (chType == ChannelType::SM) {
-      smChannels[channelIndex[tid]].signal();
-    }
-    if (chType == ChannelType::PROXY) {
-      proxyChannels[channelIndex[tid]].signal();
-    }
+  int tid = threadIdx.x;
+  if (threadIdx.x < nChannels && chType == ChannelType::SM) {
+    smChannels[channelIndex[tid]].signal();
+    return;
+  }
+  if (threadIdx.x < nChannels && chType == ChannelType::PROXY) {
+      proxyChannels[channelIndex[threadIdx.x]].signal();
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleWait(int tid, DeviceHandle<SmChannel>* smChannels,
+MSCCLPP_DEVICE_INLINE void handleWait(DeviceHandle<SmChannel>* smChannels,
                                       DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* channelIndexes,
                                       int nChannels, ChannelType chType) {
-  if (tid < nChannels) {
-    if (chType == ChannelType::SM) {
-      smChannels[channelIndexes[tid]].wait();
-    }
-    if (chType == ChannelType::PROXY) {
-      proxyChannels[channelIndexes[tid]].wait();
-    }
+  int tid = threadIdx.x;
+  if (tid < nChannels && chType == ChannelType::SM) {
+    smChannels[channelIndexes[tid]].wait();
+    return;
+  }
+  if (tid < nChannels && chType == ChannelType::PROXY) {
+    proxyChannels[channelIndexes[tid]].wait();
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<SmChannel>& smChannel, uint32_t srcOffset, uint32_t dstOffset,
-                                     uint32_t size) {
-  smChannel.get(dstOffset, srcOffset, size, threadIdx.x, blockDim.x);
+MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<SmChannel>* smChannel, uint8_t* srcChannelIndexes,
+                                     uint32_t* dstOffsets, uint32_t* srcOffsets, int count, uint32_t size) {
+  for (int i = 0; i < count; i++) {
+    uint32_t dstOffset = dstOffsets[i];
+    uint32_t srcOffset = srcOffsets[i];
+    smChannel[srcChannelIndexes[i]].get(dstOffset, srcOffset, size, threadIdx.x, blockDim.x);
+  }
 }
 
 template <typename T>
@@ -286,11 +290,11 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
     if (op.type == OperationType::BARRIER) {
       __syncthreads();
     } else if (op.type == OperationType::SIGNAL) {
-      handleSignal(tid, smChannels, proxyChannels, op.outputChannelIndexes, op.nOutputs, op.channelType);
+      handleSignal(smChannels, proxyChannels, op.outputChannelIndexes, op.nOutputs, op.channelType);
     } else if (op.type == OperationType::WAIT) {
-      handleWait(tid, smChannels, proxyChannels, op.inputChannelIndexes, op.nInputs, op.channelType);
+      handleWait(smChannels, proxyChannels, op.inputChannelIndexes, op.nInputs, op.channelType);
     } else if (op.type == OperationType::GET) {
-      handleGet(smChannels[op.inputChannelIndexes[0]], op.inputOffsets[0], op.dstOffset, op.size);
+      handleGet(smChannels, op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nInputs, op.size);
     } else if (op.type == OperationType::READ_REDUCE_COPY_SEND) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);

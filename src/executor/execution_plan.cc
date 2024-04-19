@@ -250,6 +250,14 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
             operation.outputOffsets[i] = this->chunkSize * (int)op["o_cids"][i]["off"];
           }
         }
+        // will have either dsts or o_cids
+        if (op.contains("dsts")) {
+          operation.nOutputs = op["dsts"].size();
+          operation.outputBufferType = convertToBufferType(op["dsts"][0]["buff"]);
+          for (int i = 0; i < operation.nOutputs; i++) {
+            operation.outputOffsets[i] = this->chunkSize * (int)op["dsts"][i]["off"];
+          }
+        }
         if (op.contains("srcbuff")) {
           operation.srcBufferType = convertToBufferType(op["srcbuff"]);
         }
