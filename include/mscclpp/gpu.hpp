@@ -6,12 +6,6 @@
 
 #if defined(__HIP_PLATFORM_AMD__)
 
-// Temporal fix for rocm-6.0.0-12969
-#include <hip/hip_version.h>
-#if (HIP_VERSION > 60012969)
-#include <hip/hip_bf16.h>
-#endif  // (HIP_VERSION > 60012969)
-#include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
 using cudaError_t = hipError_t;
@@ -96,14 +90,7 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #else
 
 #include <cuda.h>
-#include <cuda_fp16.h>
 #include <cuda_runtime.h>
-#if (CUDART_VERSION >= 11000)
-#include <cuda_bf16.h>
-#endif
-#if (CUDART_VERSION >= 11080)
-#include <cuda_fp8.h>
-#endif
 
 #endif
 
