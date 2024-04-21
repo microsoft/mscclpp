@@ -132,12 +132,12 @@ MSCCLPP_DEVICE_INLINE void handleSignal(DeviceHandle<SmChannel>* smChannels,
                                         DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* channelIndex,
                                         int nChannels, ChannelType chType) {
   int tid = threadIdx.x;
-  if (threadIdx.x < nChannels && chType == ChannelType::SM) {
+  if (tid < nChannels && chType == ChannelType::SM) {
     smChannels[channelIndex[tid]].signal();
     return;
   }
-  if (threadIdx.x < nChannels && chType == ChannelType::PROXY) {
-      proxyChannels[channelIndex[threadIdx.x]].signal();
+  if (tid < nChannels && chType == ChannelType::PROXY) {
+    proxyChannels[channelIndex[threadIdx.x]].signal();
   }
 }
 
