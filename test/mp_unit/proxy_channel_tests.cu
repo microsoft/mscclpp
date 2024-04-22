@@ -151,14 +151,14 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWit
   }
 }
 
-void ProxyChannelOneToOneTest::testPingPong(bool useIPC, bool useIB, bool useEthernet, bool waitWithPoll) {
+void ProxyChannelOneToOneTest::testPingPong(PingPongTestParams params) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
   std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
-  setupMeshConnections(proxyChannels, useIPC, useIB, useEthernet, buff.get(), nElem * sizeof(int));
+  setupMeshConnections(proxyChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
 
   std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannelHandles;
   for (auto& ch : proxyChannels) proxyChannelHandles.push_back(ch.deviceHandle());
@@ -173,22 +173,22 @@ void ProxyChannelOneToOneTest::testPingPong(bool useIPC, bool useIB, bool useEth
 
   const int nTries = 1000;
 
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, waitWithPoll, nTries, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, params.waitWithPoll, nTries, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
 
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, waitWithPoll, nTries, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, params.waitWithPoll, nTries, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
 
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, waitWithPoll, nTries, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, params.waitWithPoll, nTries, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
 
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, waitWithPoll, nTries, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, params.waitWithPoll, nTries, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   EXPECT_EQ(*ret, 0);
@@ -196,14 +196,14 @@ void ProxyChannelOneToOneTest::testPingPong(bool useIPC, bool useIB, bool useEth
   proxyService->stopProxy();
 }
 
-void ProxyChannelOneToOneTest::testPingPongPerf(bool useIPC, bool useIB, bool useEthernet, bool waitWithPoll) {
+void ProxyChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
   std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
-  setupMeshConnections(proxyChannels, useIPC, useIB, useEthernet, buff.get(), nElem * sizeof(int));
+  setupMeshConnections(proxyChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
 
   std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannelHandles;
   for (auto& ch : proxyChannels) proxyChannelHandles.push_back(ch.deviceHandle());
@@ -221,14 +221,14 @@ void ProxyChannelOneToOneTest::testPingPongPerf(bool useIPC, bool useIB, bool us
   const int nTries = 1000;
 
   // Warm-up
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, waitWithPoll, nTries, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, params.waitWithPoll, nTries, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   communicator->bootstrap()->barrier();
 
   // Measure latency
   mscclpp::Timer timer;
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, waitWithPoll, nTries, ret.get());
+  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, params.waitWithPoll, nTries, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   communicator->bootstrap()->barrier();
@@ -240,21 +240,37 @@ void ProxyChannelOneToOneTest::testPingPongPerf(bool useIPC, bool useIB, bool us
   proxyService->stopProxy();
 }
 
-TEST_F(ProxyChannelOneToOneTest, PingPong) { testPingPong(true, true, false, false); }
+TEST_F(ProxyChannelOneToOneTest, PingPong) {
+  testPingPong(PingPongTestParams{.useIPC = true, .useIB = true, .useEthernet = false, .waitWithPoll = false});
+}
 
-TEST_F(ProxyChannelOneToOneTest, PingPongIb) { testPingPong(false, true, false, false); }
+TEST_F(ProxyChannelOneToOneTest, PingPongIb) {
+  testPingPong(PingPongTestParams{.useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false});
+}
 
-TEST_F(ProxyChannelOneToOneTest, PingPongEthernet) { testPingPong(false, false, true, false); }
+TEST_F(ProxyChannelOneToOneTest, PingPongEthernet) {
+  testPingPong(PingPongTestParams{.useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false});
+}
 
-TEST_F(ProxyChannelOneToOneTest, PingPongWithPoll) { testPingPong(true, true, false, true); }
+TEST_F(ProxyChannelOneToOneTest, PingPongWithPoll) {
+  testPingPong(PingPongTestParams{.useIPC = true, .useIB = true, .useEthernet = false, .waitWithPoll = true});
+}
 
-TEST_F(ProxyChannelOneToOneTest, PingPongIbWithPoll) { testPingPong(false, true, false, true); }
+TEST_F(ProxyChannelOneToOneTest, PingPongIbWithPoll) {
+  testPingPong(PingPongTestParams{.useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true});
+}
 
-TEST_F(ProxyChannelOneToOneTest, PingPongPerf) { testPingPongPerf(true, true, false, false); }
+TEST_F(ProxyChannelOneToOneTest, PingPongPerf) {
+  testPingPongPerf(PingPongTestParams{.useIPC = true, .useIB = true, .useEthernet = false, .waitWithPoll = false});
+}
 
-TEST_F(ProxyChannelOneToOneTest, PingPongPerfIb) { testPingPongPerf(false, true, false, false); }
+TEST_F(ProxyChannelOneToOneTest, PingPongPerfIb) {
+  testPingPongPerf(PingPongTestParams{.useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false});
+}
 
-TEST_F(ProxyChannelOneToOneTest, PingPongPerfEthernet) { testPingPongPerf(false, false, true, false); }
+TEST_F(ProxyChannelOneToOneTest, PingPongPerfEthernet) {
+  testPingPongPerf(PingPongTestParams{.useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false});
+}
 
 __device__ mscclpp::DeviceSyncer gChannelOneToOneTestProxyChansSyncer;
 

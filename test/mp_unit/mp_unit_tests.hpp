@@ -129,14 +129,21 @@ using DeviceHandle = mscclpp::DeviceHandle<T>;
 
 class ProxyChannelOneToOneTest : public CommunicatorTestBase {
  protected:
+  struct PingPongTestParams {
+    bool useIPC;
+    bool useIB;
+    bool useEthernet;
+    bool waitWithPoll;
+  };
+
   void SetUp() override;
   void TearDown() override;
 
   void setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, bool useIPC, bool useIb,
                             bool useEthernet, void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr,
                             size_t recvBuffBytes = 0);
-  void testPingPong(bool useIPC, bool useIB, bool useEthernet, bool waitWithPoll);
-  void testPingPongPerf(bool useIPC, bool useIB, bool useEthernet, bool waitWithPoll);
+  void testPingPong(PingPongTestParams params);
+  void testPingPongPerf(PingPongTestParams params);
   void testPacketPingPong(bool useIbOnly);
   void testPacketPingPongPerf(bool useIbOnly);
 

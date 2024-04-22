@@ -56,14 +56,13 @@ class IBConnection : public Connection {
 
 class EthernetConnection : public Connection {
   std::unique_ptr<Socket> sendSocket_;
-  std::unique_ptr<Socket> rcvSocket_;
-  std::thread threadRcvMessages_;
-  bool stopRcvMessages_;
+  std::unique_ptr<Socket> recvSocket_;
+  std::thread threadRecvMessages_;
   volatile uint32_t* abortFlag_;
   const uint64_t sendBufferSize_ = 256000000;
   const uint64_t rcvBufferSize_ = 256000000;
-  char* sendBuffer_;
-  char* rcvBuffer_;
+  std::vector<char> sendBuffer_;
+  std::vector<char> recvBuffer_;
 
  public:
   EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint);
@@ -81,7 +80,7 @@ class EthernetConnection : public Connection {
   void flush(int64_t timeoutUsec) override;
 
  private:
-  void rcvMessages();
+  void recvMessages();
 
   void sendMessage();
 };
