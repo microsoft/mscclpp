@@ -5,11 +5,8 @@
 #define MSCCLPP_NVLS_DEVICE_HPP_
 
 #include <mscclpp/gpu.hpp>
-#include <type_traits>
-
-#if defined(MSCCLPP_DEVICE_CUDA)
 #include <mscclpp/gpu_data_types.hpp>
-#endif  // defined(MSCCLPP_DEVICE_CUDA)
+#include <type_traits>
 
 #include "device.hpp"
 
