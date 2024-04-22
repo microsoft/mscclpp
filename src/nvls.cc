@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <mscclpp/core.hpp>
+#include <mscclpp/nvls.hpp>
 #include <mscclpp/utils.hpp>
 
+#include "api.h"
 #include "debug.h"
 #include "endpoint.hpp"
 
@@ -270,5 +272,44 @@ NvlsConnection::DeviceMulticastPointer::DeviceHandle NvlsConnection::DeviceMulti
 char* NvlsConnection::DeviceMulticastPointer::getDevicePtr() { return deviceMem_->devicePtr_; };
 
 size_t NvlsConnection::getMultiCastMinGranularity() { return pimpl_->getMinMcGran(); }
+
+MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> connectNvlsCollective(std::shared_ptr<Communicator> comm,
+                                                                      std::vector<int> allRanks, size_t bufferSize) {
+  auto bootstrap = comm->bootstrap();
+  int rank = bootstrap->getRank();
+  bool isRoot = false;
+  bool amongAllRanks = false;
+  int rootRank = allRanks[0];
+  for (auto nvlsRank : allRanks) {
+    if (nvlsRank == rank) amongAllRanks = true;
+    rootRank = std::min(rootRank, nvlsRank);
+  }
+  if (amongAllRanks == false) {
+    throw Error("rank is not among allRanks", ErrorCode::InvalidUsage);
+  }
+  if (rootRank == rank) isRoot = true;
+
+  std::shared_ptr<NvlsConnection> conn;
+  if (isRoot) {
+    conn = std::make_shared<NvlsConnection>(bufferSize, allRanks.size());
+    auto serialized = conn->serialize();
+    for (auto nvlsRank : allRanks) {
+      if (nvlsRank != rank) bootstrap->send(serialized, nvlsRank, 0);
+    }
+  } else {
+    std::vector<char> data;
+    bootstrap->recv(data, rootRank, 0);
+    conn = std::make_shared<NvlsConnection>(data);
+  }
+
+  // Now let's synchronize all ranks
+  bootstrap->groupBarrier(allRanks);
+  // now it is safe to add my device
+  conn->addDevice();
+
+  // sync here to make sure all ranks have added their devices
+  bootstrap->groupBarrier(allRanks);
+  return conn;
+}
 
 }  // namespace mscclpp
