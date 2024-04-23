@@ -57,7 +57,7 @@ struct ExecutionPlan::Impl {
   std::vector<Operation> getOperations(int rank, int threadblock) const;
   int getThreadblockCount(int rank) const;
 
-  void loadExecutionPlan(int rank, size_t inputSize);
+  void loadExecutionPlan(size_t inputSize);
   void setupChannels(const nlohmann::json& gpus);
   void setupOperations(const nlohmann::json& gpus);
 
@@ -73,7 +73,11 @@ struct ExecutionPlan::Impl {
   std::unordered_map<int, uint32_t> inputChunks;
   std::unordered_map<int, uint32_t> outputChunks;
   std::unordered_map<int, uint32_t> scratchChunks;
-  size_t chunkSize;
+  size_t inputSize;
+
+ private:
+  size_t getOffset(int rank, size_t inputSize, uint32_t chunkIndex, uint32_t alignment = 16) const;
+  size_t getNChunkSize(int rank, size_t inputSize, uint32_t nChunks, const std::vector<uint32_t> offsets) const;
 };
 
 }  // namespace mscclpp

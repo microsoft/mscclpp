@@ -120,7 +120,7 @@ std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadbl
 
 int ExecutionPlan::Impl::getThreadblockCount(int rank) const { return this->operations.at(rank).size(); }
 
-void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize) {
+void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
   if (this->name != obj["name"]) {
@@ -140,7 +140,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize) {
   }
   this->setupChannels(gpus);
 
-  this->chunkSize = inputSize / this->inputChunks[rank];
+  this->inputSize = inputSize;
   this->setupOperations(gpus);
 }
 
@@ -217,6 +217,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
       }
       for (const auto& op : threadblock["ops"]) {
         Operation operation = {};
+        std::vector<uint32_t> chunkIndexes;
         operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
         if (op.contains("ctype")) {
           operation.channelType = convertToChannelType(op["ctype"]);
@@ -229,7 +230,8 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
             // Get the relevant channel index in rank channelInfos
             operation.inputChannelIndexes[i] =
                 channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
-            operation.inputOffsets[i] = this->chunkSize * (int)op["i_cids"][i]["off"];
+            operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["i_cids"][i]["off"]);
+            chunkIndexes.push_back((uint32_t)op["i_cids"][i]["off"]);
           }
         }
         // will have either srcs or i_cids
@@ -237,7 +239,8 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
           operation.nInputs = op["srcs"].size();
           operation.inputBufferType = convertToBufferType(op["srcs"][0]["buff"]);
           for (int i = 0; i < operation.nInputs; i++) {
-            operation.inputOffsets[i] = this->chunkSize * (int)op["srcs"][i]["off"];
+            operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["srcs"][i]["off"]);
+            chunkIndexes.push_back((uint32_t)op["srcs"][i]["off"]);
           }
         }
         if (op.contains("o_cids")) {
@@ -247,7 +250,8 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
             BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
             operation.outputChannelIndexes[i] =
                 channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["o_cids"][i]["id"]];
-            operation.outputOffsets[i] = this->chunkSize * (int)op["o_cids"][i]["off"];
+            operation.outputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["o_cids"][i]["off"]);
+            chunkIndexes.push_back((uint32_t)op["o_cids"][i]["off"]);
           }
         }
         // will have either dsts or o_cids
@@ -255,29 +259,61 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
           operation.nOutputs = op["dsts"].size();
           operation.outputBufferType = convertToBufferType(op["dsts"][0]["buff"]);
           for (int i = 0; i < operation.nOutputs; i++) {
-            operation.outputOffsets[i] = this->chunkSize * (int)op["dsts"][i]["off"];
+            operation.outputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["dsts"][i]["off"]);
+            chunkIndexes.push_back((uint32_t)op["dsts"][i]["off"]);
           }
         }
         if (op.contains("srcbuff")) {
           operation.srcBufferType = convertToBufferType(op["srcbuff"]);
         }
         if (op.contains("srcoff")) {
-          operation.srcOffset = (int)op["srcoff"] * this->chunkSize;
+          operation.srcOffset = this->getOffset(rank, this->inputSize, (uint32_t)op["srcoff"]);
+          chunkIndexes.push_back((uint32_t)op["srcoff"]);
         }
         if (op.contains("dstbuff")) {
           operation.dstBufferType = convertToBufferType(op["dstbuff"]);
         }
         if (op.contains("dstoff")) {
-          operation.dstOffset = (int)op["dstoff"] * this->chunkSize;
+          operation.dstOffset = this->getOffset(rank, this->inputSize, (uint32_t)op["dstoff"]);
+          chunkIndexes.push_back((uint32_t)op["dstoff"]);
         }
         if (op.contains("cnt")) {
-          operation.size = this->chunkSize * (int)op["cnt"];
+          operation.size = this->getNChunkSize(rank, this->inputSize, (uint32_t)op["cnt"], chunkIndexes);
         }
         ops.push_back(operation);
       }
       this->operations[rank].push_back(ops);
     }
   }
+}
+
+size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, uint32_t chunkIndex, uint32_t alignment) const {
+  assert(inputSize % alignment == 0, "inputSize must be a multiple of alignment");
+
+  const int nGroups = 32; // TODO: fix it, depends on instance number and group size
+  uint32_t nInputChunks = this->inputChunks.at(rank);
+  uint32_t nelems = inputSize / (alignment * sizeof(uint8_t));
+  int nelemsPerGroup = nelems / nGroups;
+  uint32_t minNelems = nelems / nInputChunks;
+  uint32_t remainder = nelems % nelemsPerGroup;
+  uint32_t offset =
+      chunkIndex * minNelems + (chunkIndex % nelemsPerGroup < remainder ? chunkIndex % nelemsPerGroup : remainder);
+  return offset * alignment;
+}
+
+size_t ExecutionPlan::Impl::getNChunkSize(int rank, size_t inputSize, uint32_t nChunks,
+                                          const std::vector<uint32_t> chunkIndexes) const {
+  size_t nChunkSize = 0;
+  for (uint32_t index : chunkIndexes) {
+    uint32_t beginOff = getOffset(rank, inputSize, index);
+    uint32_t endOff = getOffset(rank, inputSize, index + nChunks);
+    if (nChunkSize == 0) {
+      nChunkSize = endOff - beginOff;
+    } else if (nChunkSize != endOff - beginOff) {
+      throw Error("Inconsistent chunk size", ErrorCode::ExecutorError);
+    }
+  }
+  return nChunkSize;
 }
 
 ExecutionPlan::ExecutionPlan(const std::string& name, const std::string& planPath)
