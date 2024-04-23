@@ -3,6 +3,7 @@
 
 #include "execution_plan.hpp"
 
+#include <cassert>
 #include <fstream>
 #include <set>
 
@@ -288,16 +289,19 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
 }
 
 size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, uint32_t chunkIndex, uint32_t alignment) const {
-  assert(inputSize % alignment == 0, "inputSize must be a multiple of alignment");
+  assert(inputSize % alignment == 0 && "inputSize must be a multiple of alignment");
 
-  const int nGroups = 32; // TODO: fix it, depends on instance number and group size
+  const int nGroups = 32;  // TODO: fix it, depends on instance number and group size
   uint32_t nInputChunks = this->inputChunks.at(rank);
   uint32_t nelems = inputSize / (alignment * sizeof(uint8_t));
   int nelemsPerGroup = nelems / nGroups;
-  uint32_t minNelems = nelems / nInputChunks;
-  uint32_t remainder = nelems % nelemsPerGroup;
-  uint32_t offset =
-      chunkIndex * minNelems + (chunkIndex % nelemsPerGroup < remainder ? chunkIndex % nelemsPerGroup : remainder);
+  int nChunksPerGroup = nInputChunks / nGroups;
+  uint32_t minNelems = nelemsPerGroup / nChunksPerGroup;
+  uint32_t remainder = nelemsPerGroup % nelemsPerGroup;
+  uint32_t groupIdx = chunkIndex / nChunksPerGroup;
+  uint32_t chunkIndexInGroup = chunkIndex % nChunksPerGroup;
+  uint32_t offset = groupIdx * nelemsPerGroup + chunkIndexInGroup * minNelems +
+                    (chunkIndexInGroup % nelemsPerGroup < remainder ? chunkIndexInGroup % nelemsPerGroup : remainder);
   return offset * alignment;
 }
 
