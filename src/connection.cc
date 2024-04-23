@@ -201,8 +201,8 @@ EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEn
   });
 
   // Starting Connection
-  sendSocket_ =
-      std::make_unique<Socket>(&(getImpl(remoteEndpoint)->socketAddress_), 0xdeadbeef, SocketTypeBootstrap, abortFlag_);
+  sendSocket_ = std::make_unique<Socket>(&(getImpl(remoteEndpoint)->socketAddress_), MSCCLPP_SOCKET_MAGIC,
+                                         SocketTypeBootstrap, abortFlag_);
   sendSocket_->connect();
 
   // Ensure the Connection was Established
@@ -233,19 +233,27 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
   // Initializing Variables
   char* srcPtr = reinterpret_cast<char*>(src.data()) + srcOffset / sizeof(char);
   char* dstPtr = reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset / sizeof(char);
-  uint64_t sendSize = 0;
+  uint64_t sentDataSize = 0;
+  uint64_t headerSize = 0;
 
-  // Sending Info Data
-  sendSocket_->send(&dstPtr, sizeof(char*));
-  sendSocket_->send(&size, sizeof(uint64_t));
+  // Copying Meta Data to Send Buffer
+  char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
+  std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + headerSize / sizeof(char));
+  headerSize += sizeof(dstPtr);
+  char* sizeBytes = reinterpret_cast<char*>(&size);
+  std::copy(sizeBytes, sizeBytes + sizeof(size), sendBuffer_.data() + headerSize / sizeof(char));
+  headerSize += sizeof(size);
 
-  // Getting Data From GPU and Sending Data
-  while (sendSize < size) {
-    uint64_t messageSize = std::min(sendBufferSize_, (size - sendSize) / sizeof(char)) * sizeof(char);
-    mscclpp::memcpyCuda<char>(sendBuffer_.data(), (char*)srcPtr + (sendSize / sizeof(char)), messageSize,
-                              cudaMemcpyDeviceToHost);
+  // Getting Data From GPU and Sending Message
+  while (sentDataSize < size) {
+    uint64_t dataSize =
+        std::min(sendBufferSize_ - headerSize / sizeof(char), (size - sentDataSize) / sizeof(char)) * sizeof(char);
+    uint64_t messageSize = dataSize + headerSize;
+    mscclpp::memcpyCuda<char>(sendBuffer_.data() + headerSize / sizeof(char),
+                              (char*)srcPtr + (sentDataSize / sizeof(char)), dataSize, cudaMemcpyDeviceToHost);
     sendSocket_->send(sendBuffer_.data(), messageSize);
-    sendSize += messageSize;
+    sentDataSize += messageSize;
+    headerSize = 0;
   }
 
   INFO(MSCCLPP_NET, "EthernetConnection write: from %p to %p, size %lu", srcPtr, dstPtr, size);
@@ -258,13 +266,23 @@ void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset,
   // Initializing Variables
   uint64_t oldValue = *src;
   uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
-  uint64_t size = sizeof(uint64_t);
+  uint64_t dataSize = sizeof(uint64_t);
+  uint64_t messageSize = 0;
   *src = newValue;
 
-  // Sending Data
-  sendSocket_->send(&dstPtr, sizeof(char*));
-  sendSocket_->send(&size, sizeof(uint64_t));
-  sendSocket_->send(src, size);
+  // Copying Data to Send Buffer
+  char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
+  std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + messageSize / sizeof(char));
+  messageSize += sizeof(dstPtr);
+  char* sizeBytes = reinterpret_cast<char*>(&dataSize);
+  std::copy(sizeBytes, sizeBytes + sizeof(dataSize), sendBuffer_.data() + messageSize / sizeof(char));
+  messageSize += sizeof(dataSize);
+  char* dataBytes = reinterpret_cast<char*>(src);
+  std::copy(dataBytes, dataBytes + dataSize, sendBuffer_.data() + messageSize / sizeof(char));
+  messageSize += dataSize;
+
+  // Sending Message
+  sendSocket_->send(sendBuffer_.data(), messageSize);
 
   INFO(MSCCLPP_NET, "EthernetConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
        newValue);

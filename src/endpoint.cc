@@ -23,7 +23,7 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
     if (ret <= 0) throw Error("NET/Socket", ErrorCode::InternalError);
 
     // Starting Server Socket
-    socket_ = std::make_unique<Socket>(&socketAddress_, 0xdeadbeef, SocketTypeBootstrap, abortFlag_);
+    socket_ = std::make_unique<Socket>(&socketAddress_, MSCCLPP_SOCKET_MAGIC, SocketTypeBootstrap, abortFlag_);
     socket_->bindAndListen();
     socketAddress_ = socket_->getAddr();
   }
