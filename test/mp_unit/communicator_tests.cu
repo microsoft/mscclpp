@@ -99,7 +99,7 @@ void CommunicatorTest::SetUp() {
 
   ASSERT_EQ((deviceBufferSize / sizeof(int)) % gEnv->worldSize, 0);
 
-  connectMesh(false, false, true);
+  connectMesh(true, true, false);
 
   devicePtr.resize(numBuffers);
   localMemory.resize(numBuffers);
@@ -114,10 +114,8 @@ void CommunicatorTest::SetUp() {
 
   for (size_t n = 0; n < numBuffers; n++) {
     devicePtr[n] = mscclpp::allocSharedCuda<int>(deviceBufferSize / sizeof(int));
-    //registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, mscclpp::Transport::CudaIpc | ibTransport, 0, remoteRanks,
-    //                    localMemory[n], remoteMemory[n]);
-    registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, mscclpp::Transport::Ethernet, 0, remoteRanks,
-                         localMemory[n], remoteMemory[n]);
+    registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, mscclpp::Transport::CudaIpc | ibTransport, 0, remoteRanks,
+                        localMemory[n], remoteMemory[n]);
   }
 }
 
@@ -284,27 +282,5 @@ TEST_F(CommunicatorTest, WriteWithHostSemaphores) {
   }
 
   ASSERT_TRUE(testWriteCorrectness());
-  communicator->bootstrap()->barrier();
-}
-
-TEST_F(CommunicatorTest, TestEthernetConnection) {
-  if (gEnv->rank >= numRanksToUse) return;
-
-  deviceBufferInit();
-  communicator->bootstrap()->barrier();
-
-  writeToRemote(deviceBufferSize / sizeof(int) / gEnv->worldSize);
-  communicator->bootstrap()->barrier();
-
-  // polling until it becomes ready
-  bool ready = false;
-  int niter = 0;
-  do {
-    ready = testWriteCorrectness();
-    niter++;
-    if (niter == 10000) {
-      FAIL() << "Polling is stuck.";
-    }
-  } while (!ready);
   communicator->bootstrap()->barrier();
 }
