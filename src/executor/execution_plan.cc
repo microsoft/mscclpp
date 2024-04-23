@@ -138,6 +138,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize) {
     this->inputChunks[rank] = gpu["inputChunks"];
     this->outputChunks[rank] = gpu["outputChunks"];
     this->scratchChunks[rank] = gpu["scratchChunks"];
+    this->chunkGroups[rank] = gpu["chunkGroups"];
   }
   this->setupChannels(gpus);
 
@@ -291,7 +292,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
 size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, uint32_t chunkIndex, uint32_t alignment) const {
   assert(inputSize % alignment == 0 && "inputSize must be a multiple of alignment");
 
-  const int nGroups = 32;  // TODO: fix it, depends on instance number and group size
+  const int nGroups = this->chunkGroups.at(rank);
   uint32_t nInputChunks = this->inputChunks.at(rank);
   uint32_t nelems = inputSize / (alignment * sizeof(uint8_t));
   int nelemsPerGroup = nelems / nGroups;

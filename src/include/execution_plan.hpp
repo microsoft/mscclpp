@@ -73,6 +73,7 @@ struct ExecutionPlan::Impl {
   std::unordered_map<int, uint32_t> inputChunks;
   std::unordered_map<int, uint32_t> outputChunks;
   std::unordered_map<int, uint32_t> scratchChunks;
+  std::unordered_map<int, uint32_t> chunkGroups;
   size_t inputSize;
 
  private:

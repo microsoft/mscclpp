@@ -9,6 +9,7 @@
       "inputChunks": 8,
       "outputChunks": 0,
       "scratchChunks": 0,
+      "chunkGroups": 4,
       "threadblocks": [
         {
           "id": 0,
@@ -526,6 +527,7 @@
       "inputChunks": 8,
       "outputChunks": 0,
       "scratchChunks": 0,
+      "chunkGroups": 4,
       "threadblocks": [
         {
           "id": 0,
