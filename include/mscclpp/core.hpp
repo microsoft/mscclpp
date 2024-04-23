@@ -15,7 +15,6 @@
 #include <memory>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_utils.hpp>
-#include <mscclpp/nvls_device.hpp>
 #include <string>
 #include <vector>
 
@@ -455,63 +454,18 @@ class Connection {
   static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
 };
 
-class NvlsConnection {
- public:
-  NvlsConnection(size_t bufferSize, int numDevices);
-  NvlsConnection(const std::vector<char>& data);
-  NvlsConnection() = delete;
-  std::vector<char> serialize();
-
-  // Everyone needs to synchronize after creating a NVLS connection before adding devices
-  void addDevice();
-  void addDevice(int cudaDeviceId);
-
-  struct DeviceMulticastPointer {
-   private:
-    std::shared_ptr<PhysicalCudaMemory<char>> deviceMem_;
-    std::shared_ptr<char> mcPtr_;
-    size_t bufferSize_;
-
-   public:
-    using DeviceHandle = DeviceMulticastPointerDeviceHandle;
-    DeviceMulticastPointer(std::shared_ptr<PhysicalCudaMemory<char>> deviceMem, std::shared_ptr<char> mcPtr,
-                           size_t bufferSize)
-        : deviceMem_(deviceMem), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
-    DeviceHandle deviceHandle();
-    char* getDevicePtr();
-
-    friend class NvlsConnection;
-  };
-
-  std::shared_ptr<DeviceMulticastPointer> allocateAndBindCuda(size_t size);
-
-  /// The \p handle to the allocation (its lifetime is managed by the caller)
-  /// and the \p size of the allocation.
-  std::shared_ptr<char> bindAllocatedCuda(CUmemGenericAllocationHandle memHandle, size_t size);
-
-  size_t getMultiCastMinGranularity();
-
- private:
-  class Impl;
-  std::shared_ptr<Impl> pimpl_;
-};
-
 /// Used to configure an endpoint.
 struct EndpointConfig {
   static const int DefaultMaxCqSize = 1024;
   static const int DefaultMaxCqPollNum = 1;
   static const int DefaultMaxSendWr = 8192;
   static const int DefaultMaxWrPerSend = 64;
-  // the recommended buffer size for NVLS, returned by cuMulticastGetGranularity
-  static const int DefaultNvlsBufferSize = (1 << 29);
 
   Transport transport;
   int ibMaxCqSize = DefaultMaxCqSize;
   int ibMaxCqPollNum = DefaultMaxCqPollNum;
   int ibMaxSendWr = DefaultMaxSendWr;
   int ibMaxWrPerSend = DefaultMaxWrPerSend;
-
-  size_t nvlsBufferSize = DefaultNvlsBufferSize;
 
   /// Default constructor. Sets transport to Transport::Unknown.
   EndpointConfig() : transport(Transport::Unknown) {}
@@ -520,11 +474,6 @@ struct EndpointConfig {
   ///
   /// @param transport The transport to use.
   EndpointConfig(Transport transport) : transport(transport) {}
-
-  /// Constructor for NVLS explicitly
-  /// @param transport must be either NvlsRoot or NvlsNonRoot
-  /// @param nvlsBufferSize is the buffer to be alloced on each device
-  EndpointConfig(Transport transport, size_t nvlsBufferSize) : transport(transport), nvlsBufferSize(nvlsBufferSize) {}
 };
 
 /// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
@@ -707,16 +656,6 @@ class Communicator {
   /// @return NonblockingFuture<NonblockingFuture<std::shared_ptr<Connection>>> A non-blocking future of shared pointer
   /// to the connection.
   NonblockingFuture<std::shared_ptr<Connection>> connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig);
-
-  /// Connect to NVLS on setup.
-  ///
-  /// This function used to connect to NVLS on setup. NVLS collective using multicast operations to send/recv data.
-  /// Here we need to put all involved ranks into the collective group.
-  ///
-  /// @param allRanks The ranks of all processes involved in the collective.
-  /// @param config The configuration for the local endpoint.
-  /// @return std::shared_ptr<NvlsConnection> A shared pointer to the NVLS connection.
-  std::shared_ptr<NvlsConnection> connectNvlsCollective(std::vector<int> allRanks, EndpointConfig config);
 
   /// Get the remote rank a connection is connected to.
   ///
