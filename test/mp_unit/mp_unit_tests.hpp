@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <mscclpp/core.hpp>
+#include <mscclpp/executor.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
@@ -163,4 +164,11 @@ class SmChannelOneToOneTest : public CommunicatorTestBase {
   std::unordered_map<int, std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
 };
 
+class ExecutorTest : public MultiProcessTest {
+ protected:
+  void SetUp() override;
+  void TearDown() override;
+
+  std::shared_ptr<mscclpp::Executor> executor;
+};
 #endif  // MSCCLPP_MP_UNIT_TESTS_HPP_

@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <mscclpp/core.hpp>
+#include <mscclpp/nvls.hpp>
 #include <mscclpp/utils.hpp>
 
+#include "api.h"
 #include "debug.h"
 #include "endpoint.hpp"
 
@@ -29,7 +31,7 @@ class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection:
   void addDevice(int cudaDeviceId);
   size_t allocateBuffer(size_t size);
   void freeBuffer(size_t offset, size_t size) noexcept;
-  std::shared_ptr<char> bindMemory(std::shared_ptr<PhysicalCudaMemory<char>> physicalMem, size_t devBuffSize);
+  std::shared_ptr<char> bindMemory(CUmemGenericAllocationHandle memHandle, size_t devBuffSize);
 
  private:
   friend class NvlsConnection;
@@ -185,11 +187,9 @@ void NvlsConnection::Impl::freeBuffer(size_t offset, size_t size) noexcept {
   }
 }
 
-std::shared_ptr<char> NvlsConnection::Impl::bindMemory(std::shared_ptr<PhysicalCudaMemory<char>> physicalMem,
-                                                       size_t devBuffSize) {
+std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUmemGenericAllocationHandle memHandle, size_t devBuffSize) {
   size_t offset = allocateBuffer(devBuffSize);
-  MSCCLPP_CUTHROW(
-      cuMulticastBindMem(mcHandle_, offset /*mcOffset*/, physicalMem->memHandle_, 0 /*memOffset*/, devBuffSize, 0));
+  MSCCLPP_CUTHROW(cuMulticastBindMem(mcHandle_, offset /*mcOffset*/, memHandle, 0 /*memOffset*/, devBuffSize, 0));
 
   char* mcPtr;
 
@@ -227,7 +227,7 @@ class NvlsConnection::Impl {
   std::vector<char> serialize() { throw notSupportedError; }
   size_t allocateBuffer(size_t) { throw notSupportedError; }
   void freeBuffer(size_t, size_t) { throw notSupportedError; }
-  std::shared_ptr<char> bindMemory(std::shared_ptr<PhysicalCudaMemory<char>>, size_t) { throw notSupportedError; }
+  std::shared_ptr<char> bindMemory(CUmemGenericAllocationHandle, size_t) { throw notSupportedError; }
   void addDevice(int) { throw notSupportedError; }
   size_t getMinMcGran() { throw notSupportedError; }
 
@@ -253,8 +253,12 @@ std::vector<char> NvlsConnection::serialize() { return pimpl_->serialize(); }
 
 std::shared_ptr<NvlsConnection::DeviceMulticastPointer> NvlsConnection::allocateAndBindCuda(size_t size) {
   auto mem = allocSharedPhysicalCuda<char>(size, pimpl_->getMinMcGran());
-  auto mcPtr = pimpl_->bindMemory(mem, size);
+  auto mcPtr = pimpl_->bindMemory(mem->memHandle_, size);
   return std::make_shared<DeviceMulticastPointer>(mem, mcPtr, size);
+}
+
+std::shared_ptr<char> NvlsConnection::bindAllocatedCuda(CUmemGenericAllocationHandle memHandle, size_t size) {
+  return pimpl_->bindMemory(memHandle, size);
 }
 
 NvlsConnection::DeviceMulticastPointer::DeviceHandle NvlsConnection::DeviceMulticastPointer::deviceHandle() {
@@ -268,5 +272,44 @@ NvlsConnection::DeviceMulticastPointer::DeviceHandle NvlsConnection::DeviceMulti
 char* NvlsConnection::DeviceMulticastPointer::getDevicePtr() { return deviceMem_->devicePtr_; };
 
 size_t NvlsConnection::getMultiCastMinGranularity() { return pimpl_->getMinMcGran(); }
+
+MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> connectNvlsCollective(std::shared_ptr<Communicator> comm,
+                                                                      std::vector<int> allRanks, size_t bufferSize) {
+  auto bootstrap = comm->bootstrap();
+  int rank = bootstrap->getRank();
+  bool isRoot = false;
+  bool amongAllRanks = false;
+  int rootRank = allRanks[0];
+  for (auto nvlsRank : allRanks) {
+    if (nvlsRank == rank) amongAllRanks = true;
+    rootRank = std::min(rootRank, nvlsRank);
+  }
+  if (amongAllRanks == false) {
+    throw Error("rank is not among allRanks", ErrorCode::InvalidUsage);
+  }
+  if (rootRank == rank) isRoot = true;
+
+  std::shared_ptr<NvlsConnection> conn;
+  if (isRoot) {
+    conn = std::make_shared<NvlsConnection>(bufferSize, allRanks.size());
+    auto serialized = conn->serialize();
+    for (auto nvlsRank : allRanks) {
+      if (nvlsRank != rank) bootstrap->send(serialized, nvlsRank, 0);
+    }
+  } else {
+    std::vector<char> data;
+    bootstrap->recv(data, rootRank, 0);
+    conn = std::make_shared<NvlsConnection>(data);
+  }
+
+  // Now let's synchronize all ranks
+  bootstrap->groupBarrier(allRanks);
+  // now it is safe to add my device
+  conn->addDevice();
+
+  // sync here to make sure all ranks have added their devices
+  bootstrap->groupBarrier(allRanks);
+  return conn;
+}
 
 }  // namespace mscclpp

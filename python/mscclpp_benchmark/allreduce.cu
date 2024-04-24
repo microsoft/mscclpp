@@ -816,8 +816,8 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 
   for (int idx = my_st + my_offset; idx < my_en; idx += my_step) {
     uint4 val;
-    nvlsPtrs.multimemLoad(val, mc_ptr + idx);
-    nvlsPtrs.multimemStore(val, mc_ptr + idx);
+    DeviceMulticastPointerDeviceHandle::multimemLoad(val, mc_ptr + idx);
+    DeviceMulticastPointerDeviceHandle::multimemStore(val, mc_ptr + idx);
   }
 
   deviceSyncer.sync(gridDim.x);
