@@ -303,7 +303,7 @@ size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, uint32_t chunk
   uint32_t chunkIndexInGroup = chunkIndex % nChunksPerGroup;
   uint32_t offset = groupIdx * nelemsPerGroup + chunkIndexInGroup * minNelems +
                     (chunkIndexInGroup % nelemsPerGroup < remainder ? chunkIndexInGroup % nelemsPerGroup : remainder);
-  return offset * alignment;
+  return static_cast<size_t>(offset) * alignment;
 }
 
 size_t ExecutionPlan::Impl::getNChunkSize(int rank, size_t inputSize, uint32_t nChunks,
