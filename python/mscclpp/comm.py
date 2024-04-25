@@ -51,6 +51,7 @@ class CommGroup:
         self.communicator = Communicator(self.bootstrap)
         self.my_rank = self.bootstrap.get_rank()
         self.nranks = self.bootstrap.get_n_ranks()
+        self.nranks_per_node = self.bootstrap.get_n_ranks_per_node()
 
     def barrier(self):
         self.bootstrap.barrier()
@@ -97,7 +98,7 @@ class CommGroup:
             else:
                 endpoint = endpoints
             if endpoint.transport == Transport.Nvls:
-                return self.communicator.connct_nvls_collective(all_ranks, endpoint)
+                return connect_nvls_collective(self.communicator, all_ranks)
             else:
                 connections[rank] = self.communicator.connect_on_setup(rank, 0, endpoint)
         self.communicator.setup()
