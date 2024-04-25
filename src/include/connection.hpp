@@ -65,7 +65,8 @@ class EthernetConnection : public Connection {
   std::vector<char> recvBuffer_;
 
  public:
-  EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, uint64_t sendBufferSize = 256 * 1024 * 1024, uint64_t recvBufferSize = 256 * 1024 * 1024);
+  EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, uint64_t sendBufferSize = 256 * 1024 * 1024,
+                     uint64_t recvBufferSize = 256 * 1024 * 1024);
 
   ~EthernetConnection();
 
