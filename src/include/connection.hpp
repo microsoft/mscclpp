@@ -59,13 +59,13 @@ class EthernetConnection : public Connection {
   std::unique_ptr<Socket> recvSocket_;
   std::thread threadRecvMessages_;
   volatile uint32_t* abortFlag_;
-  const uint64_t sendBufferSize_ = 256000000;
-  const uint64_t rcvBufferSize_ = 256000000;
+  const uint64_t sendBufferSize_;
+  const uint64_t recvBufferSize_;
   std::vector<char> sendBuffer_;
   std::vector<char> recvBuffer_;
 
  public:
-  EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint);
+  EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, uint64_t sendBufferSize = 256 * 1024 * 1024, uint64_t recvBufferSize = 256 * 1024 * 1024);
 
   ~EthernetConnection();
 

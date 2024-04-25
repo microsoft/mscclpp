@@ -183,7 +183,7 @@ void IBConnection::flush(int64_t timeoutUsec) {
 
 // EthernetConnection
 
-EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint) : abortFlag_(0) {
+EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, uint64_t sendBufferSize, uint64_t recvBufferSize ) : abortFlag_(0), sendBufferSize_(sendBufferSize), recvBufferSize_(recvBufferSize) {
   // Validating Transport Protocol
   if (localEndpoint.transport() != Transport::Ethernet || remoteEndpoint.transport() != Transport::Ethernet) {
     throw mscclpp::Error("Ethernet connection can only be made from Ethernet endpoints", ErrorCode::InvalidUsage);
@@ -191,7 +191,7 @@ EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEn
 
   // Instanciating Buffers
   sendBuffer_.resize(sendBufferSize_);
-  recvBuffer_.resize(rcvBufferSize_);
+  recvBuffer_.resize(recvBufferSize_);
 
   // Creating Thread to Accept the Connection
   auto parameter = (getImpl(localEndpoint)->socket_).get();
@@ -311,7 +311,7 @@ void EthernetConnection::recvMessages() {
     // Receiving Data and Copying Data yo GPU
     recvSize = 0;
     while (recvSize < size && closed == 0) {
-      uint64_t messageSize = std::min(rcvBufferSize_, (size - recvSize) / sizeof(char)) * sizeof(char);
+      uint64_t messageSize = std::min(recvBufferSize_, (size - recvSize) / sizeof(char)) * sizeof(char);
       recvSocket_->recvUntilEnd(recvBuffer_.data(), messageSize, &closed);
       received &= !closed;
 
