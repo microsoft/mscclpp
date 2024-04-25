@@ -93,7 +93,7 @@ class CommunicatorTestBase : public MultiProcessTest {
   void TearDown() override;
 
   void setNumRanksToUse(int num);
-  void connectMesh(bool useIbOnly = false);
+  void connectMesh(bool useIpc = true, bool useIb = true, bool useEthernet = false);
 
   // Register a local memory and receive corresponding remote memories
   void registerMemoryPairs(void* buff, size_t buffSize, mscclpp::TransportFlags transport, int tag,
@@ -130,13 +130,21 @@ using DeviceHandle = mscclpp::DeviceHandle<T>;
 
 class ProxyChannelOneToOneTest : public CommunicatorTestBase {
  protected:
+  struct PingPongTestParams {
+    bool useIPC;
+    bool useIB;
+    bool useEthernet;
+    bool waitWithPoll;
+  };
+
   void SetUp() override;
   void TearDown() override;
 
-  void setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, bool useIbOnly, void* sendBuff,
-                            size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
-  void testPingPong(bool useIbOnly, bool waitWithPoll);
-  void testPingPongPerf(bool useIbOnly, bool waitWithPoll);
+  void setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels, bool useIPC, bool useIb,
+                            bool useEthernet, void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr,
+                            size_t recvBuffBytes = 0);
+  void testPingPong(PingPongTestParams params);
+  void testPingPongPerf(PingPongTestParams params);
   void testPacketPingPong(bool useIbOnly);
   void testPacketPingPongPerf(bool useIbOnly);
 

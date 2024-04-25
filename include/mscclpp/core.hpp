@@ -130,25 +130,26 @@ class TcpBootstrap : public Bootstrap {
 
 /// Enumerates the available transport types.
 enum class Transport {
-  Unknown,       // Unknown transport type.
-  CudaIpc,       // CUDA IPC transport type.
-  Nvls,          // NVLS transport type.
-  IB0,           // InfiniBand device 0 transport type.
-  IB1,           // InfiniBand device 1 transport type.
-  IB2,           // InfiniBand device 2 transport type.
-  IB3,           // InfiniBand device 3 transport type.
-  IB4,           // InfiniBand device 4 transport type.
-  IB5,           // InfiniBand device 5 transport type.
-  IB6,           // InfiniBand device 6 transport type.
-  IB7,           // InfiniBand device 7 transport type.
-  NumTransports  // The number of transports.
+  Unknown,        // Unknown transport type.
+  CudaIpc,        // CUDA IPC transport type.
+  Nvls,           // NVLS transport type.
+  IB0,            // InfiniBand device 0 transport type.
+  IB1,            // InfiniBand device 1 transport type.
+  IB2,            // InfiniBand device 2 transport type.
+  IB3,            // InfiniBand device 3 transport type.
+  IB4,            // InfiniBand device 4 transport type.
+  IB5,            // InfiniBand device 5 transport type.
+  IB6,            // InfiniBand device 6 transport type.
+  IB7,            // InfiniBand device 7 transport type.
+  Ethernet,       // Ethernet transport type.
+  NumTransports,  // The number of transports.
 };
 
-const std::string TransportNames[] = {"UNK", "IPC", "NVLS", "IB0", "IB1", "IB2",
-                                      "IB3", "IB4", "IB5",  "IB6", "IB7", "NUM"};
+const std::string TransportNames[] = {"UNK", "IPC", "NVLS", "IB0", "IB1", "IB2", "IB3",
+                                      "IB4", "IB5", "IB6",  "IB7", "ETH", "NUM"};
 
 namespace detail {
-const size_t TransportFlagsSize = 11;
+const size_t TransportFlagsSize = 12;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
               "TransportFlagsSize must match the number of transports");
 /// Bitset for storing transport flags.
@@ -335,6 +336,11 @@ class RegisteredMemory {
   ///
   /// @return A pointer to the memory block.
   void* data() const;
+
+  /// Get a pointer to the original memory block.
+  ///
+  /// @return A pointer to the original memory block.
+  void* originalDataPtr() const;
 
   /// Get the size of the memory block.
   ///
