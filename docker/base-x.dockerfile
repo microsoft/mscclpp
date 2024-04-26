@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=nvidia/cuda:12.1.1-devel-ubuntu20.04
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 LABEL maintainer="MSCCL++"

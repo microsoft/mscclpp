@@ -10,14 +10,13 @@ jobs:
   strategy:
     matrix:
       cuda11:
-        containerImage: mscclpp.azurecr.io/mscclpp:base-dev-cuda11.8
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
-        containerImage: mscclpp.azurecr.io/mscclpp:base-dev-cuda12.2
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2
   pool:
     vmImage: ubuntu-latest
   container:
     image: $[ variables['containerImage'] ]
-    endpoint: mscclpp-acr
 
   variables:
     hostName: "mscclit-vmss:50000"
