@@ -10,13 +10,17 @@ jobs:
   strategy:
     matrix:
       cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
+        containerImage: mscclpp.azurecr.io/mscclpp:base-dev-cuda11.8
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2
+        containerImage: mscclpp.azurecr.io/mscclpp:base-dev-cuda12.2
   pool:
     vmImage: ubuntu-latest
   container:
     image: $[ variables['containerImage'] ]
+    endpoint: msccl-it
+
+  variables:
+    hostName: "mscclit-vmss:50000"
 
   steps:
   - task: Bash@3
@@ -57,6 +61,15 @@ jobs:
         az vmss start --name mscclit-vmss --resource-group msccl-IT
 
   - task: Bash@3
+    name: UpdateHostFile
+    displayName: Update host file
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        echo "$(MSCCLPP-VMSS-IP) mscclit-vmss" | sudo tee -a /etc/hosts
+
+  - task: Bash@3
     name: DeployTestEnv
     displayName: Deploy Test Env
     inputs:
@@ -76,10 +89,10 @@ jobs:
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         rm -rf output/*
         mkdir -p output
-        touch output/mscclit-000000
-        tail -f output/mscclit-000000 &
+        touch output/mscclit-vmss
+        tail -f output/mscclit-vmss &
         CHILD_PID=$!
-        parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        parallel-ssh -t 0 -H $(hostName) -l azureuser -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test'
         kill $CHILD_PID
 
@@ -95,10 +108,10 @@ jobs:
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         rm -rf output/*
         mkdir -p output
-        touch output/mscclit-000000
-        tail -f output/mscclit-000000 &
+        touch output/mscclit-vmss
+        tail -f output/mscclit-vmss &
         CHILD_PID=$!
-        parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        parallel-ssh -t 0 -H $(hostName) -l azureuser -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh mp-ut'
         kill $CHILD_PID
 
@@ -114,10 +127,10 @@ jobs:
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         rm -rf output/*
         mkdir -p output
-        touch output/mscclit-000000
-        tail -f output/mscclit-000000 &
+        touch output/mscclit-vmss
+        tail -f output/mscclit-vmss &
         CHILD_PID=$!
-        parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        parallel-ssh -t 0 -H $(hostName) -l azureuser -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh pytests'
         kill $CHILD_PID
 
@@ -133,10 +146,10 @@ jobs:
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         rm -rf output/*
         mkdir -p output
-        touch output/mscclit-000000
-        tail -f output/mscclit-000000 &
+        touch output/mscclit-vmss
+        tail -f output/mscclit-vmss &
         CHILD_PID=$!
-        parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        parallel-ssh -t 0 -H $(hostName) -l azureuser -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark'
         kill $CHILD_PID
 
