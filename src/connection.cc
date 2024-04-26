@@ -290,7 +290,7 @@ void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset,
        newValue);
 }
 
-void EthernetConnection::flush(int64_t timeoutUsec) { INFO(MSCCLPP_NET, "EthernetConnection flushing connection"); }
+void EthernetConnection::flush(int64_t) { INFO(MSCCLPP_NET, "EthernetConnection flushing connection"); }
 
 void EthernetConnection::recvMessages() {
   // Declarating Variables
