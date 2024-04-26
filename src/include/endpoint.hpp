@@ -8,6 +8,9 @@
 #include <vector>
 
 #include "ib.hpp"
+#include "socket.h"
+
+#define MAX_IF_NAME_SIZE 16
 
 namespace mscclpp {
 
@@ -22,6 +25,12 @@ struct Endpoint::Impl {
   bool ibLocal_;
   IbQp* ibQp_;
   IbQpInfo ibQpInfo_;
+
+  // The following are only used for Ethernet and are undefined for other transports.
+  std::unique_ptr<Socket> socket_;
+  SocketAddress socketAddress_;
+  volatile uint32_t* abortFlag_;
+  char netIfName_[MAX_IF_NAME_SIZE + 1];
 };
 
 }  // namespace mscclpp

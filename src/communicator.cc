@@ -105,45 +105,6 @@ MSCCLPP_API_CPP NonblockingFuture<std::shared_ptr<Connection>> Communicator::con
   return NonblockingFuture<std::shared_ptr<Connection>>(connector->connectionPromise_.get_future());
 }
 
-MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> Communicator::connectNvlsCollective(std::vector<int> allRanks,
-                                                                                    EndpointConfig config) {
-  auto bootstrap = this->bootstrap();
-  int rank = bootstrap->getRank();
-  bool isRoot = false;
-  bool amongAllRanks = false;
-  int rootRank = allRanks[0];
-  for (auto nvlsRank : allRanks) {
-    if (nvlsRank == rank) amongAllRanks = true;
-    rootRank = std::min(rootRank, nvlsRank);
-  }
-  if (amongAllRanks == false) {
-    throw Error("rank is not among allRanks", ErrorCode::InvalidUsage);
-  }
-  if (rootRank == rank) isRoot = true;
-
-  std::shared_ptr<NvlsConnection> conn;
-  if (isRoot) {
-    conn = std::make_shared<NvlsConnection>(config.nvlsBufferSize, allRanks.size());
-    auto serialized = conn->serialize();
-    for (auto nvlsRank : allRanks) {
-      if (nvlsRank != rank) bootstrap->send(serialized, nvlsRank, 0);
-    }
-  } else {
-    std::vector<char> data;
-    bootstrap->recv(data, rootRank, 0);
-    conn = std::make_shared<NvlsConnection>(data);
-  }
-
-  // Now let's synchronize all ranks
-  bootstrap->groupBarrier(allRanks);
-  // now it is safe to add my device
-  conn->addDevice();
-
-  // sync here to make sure all ranks have added their devices
-  bootstrap->groupBarrier(allRanks);
-  return conn;
-}
-
 MSCCLPP_API_CPP int Communicator::remoteRankOf(const Connection& connection) {
   return pimpl_->connectionInfos_.at(&connection).remoteRank;
 }

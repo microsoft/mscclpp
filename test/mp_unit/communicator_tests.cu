@@ -42,14 +42,16 @@ void CommunicatorTestBase::TearDown() {
 
 void CommunicatorTestBase::setNumRanksToUse(int num) { numRanksToUse = num; }
 
-void CommunicatorTestBase::connectMesh(bool useIbOnly) {
+void CommunicatorTestBase::connectMesh(bool useIpc, bool useIb, bool useEthernet) {
   std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures(numRanksToUse);
   for (int i = 0; i < numRanksToUse; i++) {
     if (i != gEnv->rank) {
-      if ((rankToNode(i) == rankToNode(gEnv->rank)) && !useIbOnly) {
+      if ((rankToNode(i) == rankToNode(gEnv->rank)) && useIpc) {
         connectionFutures[i] = communicator->connectOnSetup(i, 0, mscclpp::Transport::CudaIpc);
-      } else {
+      } else if (useIb) {
         connectionFutures[i] = communicator->connectOnSetup(i, 0, ibTransport);
+      } else if (useEthernet) {
+        connectionFutures[i] = communicator->connectOnSetup(i, 0, mscclpp::Transport::Ethernet);
       }
     }
   }
@@ -97,7 +99,7 @@ void CommunicatorTest::SetUp() {
 
   ASSERT_EQ((deviceBufferSize / sizeof(int)) % gEnv->worldSize, 0);
 
-  connectMesh();
+  connectMesh(true, true, false);
 
   devicePtr.resize(numBuffers);
   localMemory.resize(numBuffers);
