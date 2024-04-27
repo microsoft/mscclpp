@@ -8,7 +8,7 @@ variables:
   hostName: "mscclit-vmss:50000"
 
 jobs:
-- job: MultiNodesTest-cuda11
+- job: MultiNodesTestCuda11
   displayName: Multi nodes test cuda11
   pool:
     vmImage: ubuntu-latest
@@ -20,7 +20,7 @@ jobs:
     parameters:
       hostName: ${{ variables.hostName }}
 
-- job: MultiNodesTest-cuda12
+- job: MultiNodesTestCuda12
   displayName: Multi nodes test cuda12
   dependsOn: MultiNodesTest-cuda11 # Make sure the vmss not be used by multiple jobs
   pool:
