@@ -34,7 +34,7 @@ jobs:
     name: SshKeyFile
     displayName: Download key file
     inputs:
-      secureFile: ssh.key
+      secureFile: mscclpp-ssh.key
 
   - task: Bash@3
     name: InstallPackages
