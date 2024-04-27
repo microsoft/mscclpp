@@ -22,7 +22,7 @@ jobs:
 
 - job: MultiNodesTestCuda12
   displayName: Multi nodes test cuda12
-  dependsOn: MultiNodesTest-cuda11 # Make sure the vmss not be used by multiple jobs
+  dependsOn: MultiNodesTestCuda11 # Make sure the vmss not be used by multiple jobs
   pool:
     vmImage: ubuntu-latest
   container:
