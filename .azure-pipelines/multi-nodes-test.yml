@@ -45,6 +45,7 @@ jobs:
         sudo apt-get update -y
         sudo apt-get install pssh -y
         curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
   - task: AzureCLI@2
     name: StartVMSS
     displayName: Start VMSS
@@ -54,6 +55,7 @@ jobs:
       scriptLocation: inlineScript
       inlineScript: |
         az vmss start --name mscclit-vmss --resource-group msccl-IT
+
   - task: Bash@3
     name: DeployTestEnv
     displayName: Deploy Test Env
@@ -99,6 +101,7 @@ jobs:
         parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh mp-ut'
         kill $CHILD_PID
+
   - task: Bash@3
     name: RunMultiNodePythonTests
     displayName: Run multi-nodes python tests
@@ -117,6 +120,7 @@ jobs:
         parallel-ssh -t 0 -H mscclit-000000 -l azureuser -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh pytests'
         kill $CHILD_PID
+
   - task: Bash@3
     name: RunMultiNodePythonBenchmark
     displayName: Run multi-nodes python benchmark
