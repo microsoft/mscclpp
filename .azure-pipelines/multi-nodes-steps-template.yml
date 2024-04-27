@@ -45,7 +45,7 @@ steps:
       set -e
       echo "$(MSCCLPP-VMSS-IP) mscclit-vmss" | sudo tee -a /etc/hosts
 
-# - task: Bash@3
+- task: Bash@3
   name: DeployTestEnv
   displayName: Deploy Test Env
   inputs:
