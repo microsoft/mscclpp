@@ -4,161 +4,31 @@ trigger:
 # Do not run multi-nodes-test for PR, we can trigger it manually
 pr: none
 
+variables:
+  hostName: "mscclit-vmss:50000"
+
 jobs:
-- job: MultiNodesTest
-  displayName: Multi nodes test
-  strategy:
-    matrix:
-      cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
-      cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2
+- job: MultiNodesTest-cuda11
+  displayName: Multi nodes test cuda11
   pool:
     vmImage: ubuntu-latest
   container:
-    image: $[ variables['containerImage'] ]
-
-  variables:
-    hostName: "mscclit-vmss:50000"
+    image: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
 
   steps:
-  - task: Bash@3
-    name: Build
-    displayName: Build
-    inputs:
-      targetType: 'inline'
-      script: |
-        mkdir build && cd build
-        cmake -DCMAKE_BUILD_TYPE=Release -DBYPASS_GPU_CHECK=ON -DUSE_CUDA=ON ..
-        make -j
-      workingDirectory: '$(System.DefaultWorkingDirectory)'
+  - template: multi-nodes-steps-template.yml
+    parameters:
+      hostName: ${{ variables.hostName }}
 
-  - task: DownloadSecureFile@1
-    name: SshKeyFile
-    displayName: Download key file
-    inputs:
-      secureFile: mscclpp-ssh.key
+- job: MultiNodesTest-cuda12
+  displayName: Multi nodes test cuda12
+  dependsOn: MultiNodesTest-cuda11 # Make sure the vmss not be used by multiple jobs
+  pool:
+    vmImage: ubuntu-latest
+  container:
+    image: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2
 
-  - task: Bash@3
-    name: InstallPackages
-    displayName: Install Packages
-    inputs:
-      targetType: 'inline'
-      script: |
-        sudo apt-get update -y
-        sudo apt-get install pssh -y
-        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-
-  - task: AzureCLI@2
-    name: StartVMSS
-    displayName: Start VMSS
-    inputs:
-      azureSubscription: msccl-it
-      scriptType: bash
-      scriptLocation: inlineScript
-      inlineScript: |
-        az vmss start --name mscclit-vmss --resource-group msccl-IT
-
-  - task: Bash@3
-    name: UpdateHostFile
-    displayName: Update host file
-    inputs:
-      targetType: 'inline'
-      script: |
-        set -e
-        echo "$(MSCCLPP-VMSS-IP) mscclit-vmss" | sudo tee -a /etc/hosts
-
-  - task: Bash@3
-    name: DeployTestEnv
-    displayName: Deploy Test Env
-    inputs:
-      targetType: filePath
-      filePath: test/deploy/deploy.sh
-      workingDirectory: '$(System.DefaultWorkingDirectory)'
-
-  - task: Bash@3
-    name: RunMscclppTest
-    displayName: Run multi-nodes mscclpp-test
-    inputs:
-      targetType: 'inline'
-      script: |
-        set -e
-        HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
-        SSH_OPTION="StrictHostKeyChecking=no"
-        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        rm -rf output/*
-        mkdir -p output
-        touch output/mscclit-vmss
-        tail -f output/mscclit-vmss &
-        CHILD_PID=$!
-        parallel-ssh -t 0 -H $(hostName) -l azureuser -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test'
-        kill $CHILD_PID
-
-  - task: Bash@3
-    name: RunMultiNodeUnitTest
-    displayName: Run multi-nodes unit tests
-    inputs:
-      targetType: 'inline'
-      script: |
-        set -e
-        HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
-        SSH_OPTION="StrictHostKeyChecking=no"
-        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        rm -rf output/*
-        mkdir -p output
-        touch output/mscclit-vmss
-        tail -f output/mscclit-vmss &
-        CHILD_PID=$!
-        parallel-ssh -t 0 -H $(hostName) -l azureuser -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh mp-ut'
-        kill $CHILD_PID
-
-  - task: Bash@3
-    name: RunMultiNodePythonTests
-    displayName: Run multi-nodes python tests
-    inputs:
-      targetType: 'inline'
-      script: |
-        set -e
-        HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
-        SSH_OPTION="StrictHostKeyChecking=no"
-        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        rm -rf output/*
-        mkdir -p output
-        touch output/mscclit-vmss
-        tail -f output/mscclit-vmss &
-        CHILD_PID=$!
-        parallel-ssh -t 0 -H $(hostName) -l azureuser -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh pytests'
-        kill $CHILD_PID
-
-  - task: Bash@3
-    name: RunMultiNodePythonBenchmark
-    displayName: Run multi-nodes python benchmark
-    inputs:
-      targetType: 'inline'
-      script: |
-        set -e
-        HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile
-        SSH_OPTION="StrictHostKeyChecking=no"
-        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        rm -rf output/*
-        mkdir -p output
-        touch output/mscclit-vmss
-        tail -f output/mscclit-vmss &
-        CHILD_PID=$!
-        parallel-ssh -t 0 -H $(hostName) -l azureuser -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION -o output 'sudo docker exec -t mscclpp-test bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark'
-        kill $CHILD_PID
-
-  - task: AzureCLI@2
-    name: StopVMSS
-    displayName: Deallocate VMSS
-    condition: always()
-    inputs:
-      azureSubscription: msccl-it
-      scriptType: bash
-      scriptLocation: inlineScript
-      inlineScript: |
-        az vmss deallocate  --name mscclit-vmss --resource-group msccl-IT
+  steps:
+  - template: multi-nodes-steps-template.yml
+    parameters:
+      hostName: ${{ variables.hostName }}
