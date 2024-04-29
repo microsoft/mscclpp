@@ -19,7 +19,7 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
   } else if (transport_ == Transport::Ethernet) {
     // Configuring Ethernet Interfaces
     abortFlag_ = 0;
-    int ret = FindInterfaces(netIfName_, &socketAddress_, MAX_IF_NAME_SIZE, 1, "");
+    int ret = FindInterfaces(netIfName_, &socketAddress_, MAX_IF_NAME_SIZE, 1);
     if (ret <= 0) throw Error("NET/Socket", ErrorCode::InternalError);
 
     // Starting Server Socket
