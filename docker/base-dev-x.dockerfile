@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.1
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 LABEL maintainer="MSCCL++"
