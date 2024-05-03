@@ -84,7 +84,7 @@ struct Executor::Impl {
     if (this->contexts.find(key) != this->contexts.end()) {
       return this->contexts[key];
     }
-    plan.impl_->loadExecutionPlan(rank, sendBufferSize);
+    plan.impl_->loadExecutionPlan(sendBufferSize);
 
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize);

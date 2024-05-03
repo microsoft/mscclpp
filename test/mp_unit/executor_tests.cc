@@ -24,10 +24,8 @@ void ExecutorTest::SetUp() {
   MSCCLPP_CUDATHROW(cudaSetDevice(rankToLocalRank(gEnv->rank)));
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   mscclpp::UniqueId id;
-  if (gEnv->rank < gEnv->worldSize) {
-    bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
-    if (gEnv->rank == 0) id = bootstrap->createUniqueId();
-  }
+  bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
+  if (gEnv->rank == 0) id = bootstrap->createUniqueId();
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
   bootstrap->initialize(id);
   std::shared_ptr<mscclpp::Communicator> communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
