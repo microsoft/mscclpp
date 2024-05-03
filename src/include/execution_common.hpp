@@ -59,7 +59,10 @@ struct Operation {
     uint8_t inputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
     BufferType inputBufferType;
   };
-  uint8_t outputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
+  union {
+    uint8_t outputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
+    BufferType outputBufferType;
+  };
   uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
   uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
   uint32_t srcOffset;
