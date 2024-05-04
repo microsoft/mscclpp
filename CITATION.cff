@@ -1,11 +1,14 @@
 cff-version: 1.2.0
 title: "MSCCL++: A GPU-driven communication stack for scalable AI applications"
-version: 0.4.3
+version: 0.5.0
 message: >-
   If you use this project in your research, please cite it as below.
 authors:
   - given-names: Peng
     family-names: Cheng
+    affiliation: Microsoft Research
+  - given-names: Roshan
+    family-names: Dathathri
     affiliation: Microsoft Research
   - given-names: Changho
     family-names: Hwang
