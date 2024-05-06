@@ -54,8 +54,7 @@ void mscclppsDebugPerRankLogHandler(const char* msg) {
     int rankInt = std::stoi(rank) + 1;
 
     if (mscclppDebugFiles.find(rankInt) == mscclppDebugFiles.end()) {
-      const char* fileName = (filePath + rank).c_str();
-      FILE* file = fopen(fileName, "w");
+      FILE* file = fopen((filePath + rank).c_str(), "w");
       if (file != nullptr) {
         setbuf(file, nullptr);
         mscclppDebugFiles.emplace(rankInt, file);
