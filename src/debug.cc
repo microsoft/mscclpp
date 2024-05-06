@@ -14,14 +14,14 @@
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/utils.hpp>
 #include <string>
-#include <vector>
 #include <unordered_map>
+#include <vector>
 
 int mscclppDebugLevel = -1;
 static int pid = -1;
 static std::string hostname;
 thread_local int mscclppDebugNoWarn = 0;
-char mscclppLastError[1024] = "";          // Global string for the last error in human readable form
+char mscclppLastError[1024] = "";  // Global string for the last error in human readable form
 std::string filePath = "logs";
 uint64_t mscclppDebugMask = MSCCLPP_INIT;  // Default debug sub-system mask is INIT
 std::unordered_map<int, FILE*> mscclppDebugFiles = {{0, stdout}};
@@ -34,26 +34,26 @@ static __thread int tid = -1;
 void mscclppDebugDefaultLogHandler(const char* msg) { fwrite(msg, 1, strlen(msg), mscclppDebugFiles[0]); }
 
 std::vector<std::string> split(const std::string& input, const std::string& delimiter) {
-    std::vector<std::string> tokens;
-    size_t pos = 0, prevPos = 0;
+  std::vector<std::string> tokens;
+  size_t pos = 0, prevPos = 0;
 
-    while ((pos = input.find(delimiter, prevPos)) != std::string::npos) {
-        tokens.push_back(input.substr(prevPos, pos - prevPos));
-        prevPos = pos + delimiter.length();
-    }
+  while ((pos = input.find(delimiter, prevPos)) != std::string::npos) {
+    tokens.push_back(input.substr(prevPos, pos - prevPos));
+    prevPos = pos + delimiter.length();
+  }
 
-    if (prevPos < input.length()) tokens.push_back(input.substr(prevPos));
+  if (prevPos < input.length()) tokens.push_back(input.substr(prevPos));
 
-    return tokens;
+  return tokens;
 }
 
-void mscclppsDebugPerRankLogHandler(const char* msg) { 
+void mscclppsDebugPerRankLogHandler(const char* msg) {
   std::string msgString(msg);
-  if(msgString.find("rank: ") != std::string::npos){
+  if (msgString.find("rank: ") != std::string::npos) {
     std::string rank = split(split(msgString, "rank: ")[1], ",")[0];
-    int rankInt = std::stoi(rank) + 1; 
-    
-    if(mscclppDebugFiles.find(rankInt) == mscclppDebugFiles.end()){
+    int rankInt = std::stoi(rank) + 1;
+
+    if (mscclppDebugFiles.find(rankInt) == mscclppDebugFiles.end()) {
       const char* fileName = (filePath + rank).c_str();
       FILE* file = fopen(fileName, "w");
       if (file != nullptr) {
@@ -62,8 +62,7 @@ void mscclppsDebugPerRankLogHandler(const char* msg) {
       }
     }
     fwrite(msg, 1, strlen(msg), mscclppDebugFiles[rankInt]);
-  }
-  else{
+  } else {
     fwrite(msg, 1, strlen(msg), mscclppDebugFiles[0]);
   }
 }
@@ -187,7 +186,8 @@ void mscclppDebugInit() {
 
   const char* mscclppDebugFilePerRankEnv = getenv("MSCCLPP_DEBUG_FILE_PER_RANK");
   if (mscclppDebugLogHandler == NULL) mscclppDebugLogHandler = mscclppDebugDefaultLogHandler;
-  if(mscclppDebugFilePerRankEnv != NULL && strcasecmp(mscclppDebugFilePerRankEnv, "TRUE") == 0) mscclppDebugLogHandler = mscclppsDebugPerRankLogHandler;
+  if (mscclppDebugFilePerRankEnv != NULL && strcasecmp(mscclppDebugFilePerRankEnv, "TRUE") == 0)
+    mscclppDebugLogHandler = mscclppsDebugPerRankLogHandler;
 
   mscclppEpoch = std::chrono::steady_clock::now();
   __atomic_store_n(&mscclppDebugLevel, tempNcclDebugLevel, __ATOMIC_RELEASE);
