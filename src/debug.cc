@@ -229,10 +229,11 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
   auto now = std::chrono::system_clock::now();
   auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
   if (level == MSCCLPP_LOG_WARN) {
-    len = snprintf(buffer, sizeof(buffer), "%ld:%s:%d:%d [%d] %s:%d MSCCLPP WARN ", millis, hostname.c_str(), pid, tid, cudaDev,
-                   filefunc, line);
+    len = snprintf(buffer, sizeof(buffer), "%ld:%s:%d:%d [%d] %s:%d MSCCLPP WARN ", millis, hostname.c_str(), pid, tid,
+                   cudaDev, filefunc, line);
   } else if (level == MSCCLPP_LOG_INFO) {
-    len = snprintf(buffer, sizeof(buffer), "%ld:%s:%d:%d [%d] MSCCLPP INFO ", millis, hostname.c_str(), pid, tid, cudaDev);
+    len = snprintf(buffer, sizeof(buffer), "%ld:%s:%d:%d [%d] MSCCLPP INFO ", millis, hostname.c_str(), pid, tid,
+                   cudaDev);
   } else if (level == MSCCLPP_LOG_TRACE && flags == MSCCLPP_CALL) {
     len = snprintf(buffer, sizeof(buffer), "%ld:%s:%d:%d MSCCLPP CALL ", millis, hostname.c_str(), pid, tid);
   } else if (level == MSCCLPP_LOG_TRACE) {
