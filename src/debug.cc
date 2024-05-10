@@ -226,13 +226,15 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
 
   char buffer[1024];
   size_t len = 0;
+  auto now = std::chrono::system_clock::now();
+  auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
   if (level == MSCCLPP_LOG_WARN) {
-    len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] %s:%d MSCCLPP WARN ", hostname.c_str(), pid, tid, cudaDev,
+    len = snprintf(buffer, sizeof(buffer), "%ld:%s:%d:%d [%d] %s:%d MSCCLPP WARN ", millis, hostname.c_str(), pid, tid, cudaDev,
                    filefunc, line);
   } else if (level == MSCCLPP_LOG_INFO) {
-    len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] MSCCLPP INFO ", hostname.c_str(), pid, tid, cudaDev);
+    len = snprintf(buffer, sizeof(buffer), "%ld:%s:%d:%d [%d] MSCCLPP INFO ", millis, hostname.c_str(), pid, tid, cudaDev);
   } else if (level == MSCCLPP_LOG_TRACE && flags == MSCCLPP_CALL) {
-    len = snprintf(buffer, sizeof(buffer), "%s:%d:%d MSCCLPP CALL ", hostname.c_str(), pid, tid);
+    len = snprintf(buffer, sizeof(buffer), "%ld:%s:%d:%d MSCCLPP CALL ", millis, hostname.c_str(), pid, tid);
   } else if (level == MSCCLPP_LOG_TRACE) {
     auto delta = std::chrono::steady_clock::now() - mscclppEpoch;
     double timestamp = std::chrono::duration_cast<std::chrono::duration<double>>(delta).count() * 1000;
