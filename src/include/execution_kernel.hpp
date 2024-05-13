@@ -5,7 +5,6 @@
 #define MSCCLPP_EXECUTION_KERNEL_HPP_
 
 #include <mscclpp/executor.hpp>
-#include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
@@ -13,6 +12,8 @@
 #include "execution_common.hpp"
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
+#include <mscclpp/gpu_data_types.hpp>
+
 #if defined(MSCCLPP_DEVICE_HIP)
 #define __synclds() asm volatile("s_waitcnt lgkmcnt(0) \n s_barrier");
 #endif  // defined(MSCCLPP_DEVICE_HIP)

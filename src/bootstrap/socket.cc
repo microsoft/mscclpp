@@ -543,6 +543,38 @@ void Socket::recv(void* ptr, int size) {
   socketWait(MSCCLPP_SOCKET_RECV, ptr, size, &offset);
 }
 
+void Socket::recvUntilEnd(void* ptr, int size, int* closed) {
+  int offset = 0;
+  *closed = 0;
+  if (state_ != SocketStateReady) {
+    std::stringstream ss;
+    ss << "socket state (" << state_ << ") is not ready in recvUntilEnd";
+    throw Error(ss.str(), ErrorCode::InternalError);
+  }
+
+  int bytes = 0;
+  char* data = (char*)ptr;
+
+  do {
+    bytes = ::recv(fd_, data + (offset), size - (offset), 0);
+    if (bytes == 0) {
+      *closed = 1;
+      return;
+    }
+    if (bytes == -1) {
+      if (errno != EINTR && errno != EWOULDBLOCK && errno != EAGAIN && state_ != SocketStateClosed) {
+        throw SysError("recv until end failed", errno);
+      } else {
+        bytes = 0;
+      }
+    }
+    (offset) += bytes;
+    if (abortFlag_ && *abortFlag_ != 0) {
+      throw Error("aborted", ErrorCode::Aborted);
+    }
+  } while (bytes > 0 && (offset) < size);
+}
+
 void Socket::close() {
   if (fd_ >= 0) ::close(fd_);
   state_ = SocketStateClosed;

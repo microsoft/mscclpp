@@ -50,7 +50,9 @@ class Kernel:
             ],
             dtype=np.uint64,
         )
-        cuda_stream = stream.ptr if stream else 0
+        cuda_stream = 0
+        if stream:
+            cuda_stream = stream.ptr if isinstance(stream, cp.cuda.Stream) else stream.cuda_stream
         cp.cuda.driver.launchKernel(
             self._kernel, nblocks, 1, 1, nthreads, 1, 1, shared, cuda_stream, 0, config.ctypes.data
         )

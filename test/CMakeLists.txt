@@ -29,7 +29,7 @@ configure_file(run_mpi_test.sh.in run_mpi_test.sh)
 
 include(CTest)
 include(FetchContent)
-FetchContent_Declare(googletest URL https://github.com/google/googletest/archive/b796f7d44681514f58a683a3a71ff17c94edb0c1.zip)
+FetchContent_Declare(googletest URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip)
 option(INSTALL_GTEST OFF)
 FetchContent_MakeAvailable(googletest)
 include(GoogleTest)
