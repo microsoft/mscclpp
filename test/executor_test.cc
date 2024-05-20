@@ -17,6 +17,43 @@ std::string getExecutablePath() {
 }
 }  // namespace
 
+double parseSize(const char* value) {
+  std::string valueStr(value);
+  std::istringstream iss(valueStr);
+  long long int units;
+  double size;
+  char size_lit = 0;
+
+  if (iss >> size) {
+    iss >> std::ws;  // eat whitespace
+    iss >> size_lit;
+  } else {
+    return -1.0;
+  }
+
+  if (size_lit != 0 && !std::isspace(size_lit)) {
+    switch (size_lit) {
+      case 'G':
+      case 'g':
+        units = 1024 * 1024 * 1024;
+        break;
+      case 'M':
+      case 'm':
+        units = 1024 * 1024;
+        break;
+      case 'K':
+      case 'k':
+        units = 1024;
+        break;
+      default:
+        return -1.0;
+    };
+  } else {
+    units = 1;
+  }
+  return size * units;
+}
+
 double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::shared_ptr<mscclpp::Executor> executor,
                  const mscclpp::ExecutionPlan& plan, std::shared_ptr<char> sendbuff, size_t bufferSize, int niters,
                  int ngrapthIters) {
@@ -47,13 +84,20 @@ double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::s
   return deltaSec;
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+  if (argc != 2) {
+    std::cerr << "Usage: " << argv[0] << " <buffer size>" << std::endl;
+    return 1;
+  }
+
   int rank;
   int worldSize;
   MPI_Init(NULL, NULL);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
   MSCCLPP_CUDATHROW(cudaSetDevice(rank));
+
+  const size_t bufferSize = parseSize(argv[1]);
 
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   mscclpp::UniqueId id;
@@ -69,10 +113,9 @@ int main() {
   std::filesystem::path executionFilesPath =
       path.parent_path().parent_path().parent_path() / "test/execution-files/allreduce5.json";
   mscclpp::ExecutionPlan plan("allreduce_mi300", executionFilesPath.string());
-  const int bufferSize = 1024 * 1024 * 1024;
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
   double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, 200, 20);
-  std::cout << "Rank " << rank << " delta micro second: " << deltaSec * 1.e6 << std::endl;
+  std::cout << "Rank " << rank << ": " << bufferSize << " bytes " << deltaSec * 1.e6 << " us" << std::endl;
   MPI_Finalize();
   return 0;
 }
