@@ -17,8 +17,8 @@
 extern "C" __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
                                          const char *__function);
 #else   // !defined(MSCCLPP_DEVICE_HIP)
-extern "C" __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
-                                         const char *__function) __THROW;
+extern "C" __host__ __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
+                                                  const char *__function) __THROW;
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
 #endif  // NDEBUG
 
