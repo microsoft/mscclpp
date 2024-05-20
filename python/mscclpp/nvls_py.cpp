@@ -33,6 +33,7 @@ void register_nvls(nb::module_& m) {
       .def("allocate_bind_memory", &NvlsConnection::allocateAndBindCuda)
       .def("get_multicast_min_granularity", &NvlsConnection::getMultiCastMinGranularity);
 
+  // TODO: NvlsConnection::DefaultNvlsBufferSize is not exposed to Python when compiled with hipcc
   m.def("connect_nvls_collective", &connectNvlsCollective, nb::arg("communicator"), nb::arg("allRanks"),
-        nb::arg("bufferSize") = NvlsConnection::DefaultNvlsBufferSize);
+        nb::arg("bufferSize") = (1 << 29));
 }
