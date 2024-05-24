@@ -63,7 +63,7 @@ double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::s
   mscclpp::Timer timer;
   MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
   for (int i = 0; i < niters; i++) {
-    executor->execute(rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16, 512,
+    executor->execute(rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16, 1024,
                       plan, stream, mscclpp::PacketType::LL8);
   }
   MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
@@ -112,7 +112,7 @@ int main(int argc, char* argv[]) {
   std::filesystem::path path = executablePath;
   std::filesystem::path executionFilesPath =
       path.parent_path().parent_path().parent_path() / "test/execution-files/allreduce5.json";
-  mscclpp::ExecutionPlan plan("allreduce_mi300", executionFilesPath.string());
+  mscclpp::ExecutionPlan plan("allreduce_mi300_packet", executionFilesPath.string());
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
   double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, 200, 20);
   std::cout << "Rank " << rank << ": " << bufferSize << " bytes " << deltaSec * 1.e6 << " us" << std::endl;
