@@ -6,6 +6,10 @@
 #include <mscclpp/executor.hpp>
 #include <mscclpp/utils.hpp>
 
+#if defined(ENABLE_NPKIT)
+#include <mscclpp/npkit/npkit.hpp>
+#endif
+
 namespace {
 std::string getExecutablePath() {
   char result[PATH_MAX];
@@ -108,6 +112,10 @@ int main(int argc, char* argv[]) {
   std::shared_ptr<mscclpp::Communicator> communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
   std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(communicator);
 
+#if defined(ENABLE_NPKIT)
+  NpKit::Init(rank);
+#endif
+
   std::string executablePath = getExecutablePath();
   std::filesystem::path path = executablePath;
   std::filesystem::path executionFilesPath =
@@ -115,6 +123,17 @@ int main(int argc, char* argv[]) {
   mscclpp::ExecutionPlan plan("allreduce_mi300_packet", executionFilesPath.string());
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
   double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, 200, 20);
+
+#if defined(ENABLE_NPKIT)
+  const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
+  if (npkitDumpDir == nullptr) {
+    WARN("NPKIT_DUMP_DIR is empty");
+  } else {
+    NpKit::Dump(npkitDumpDir);
+  }
+  NpKit::Shutdown();
+#endif
+
   std::cout << "Rank " << rank << ": " << bufferSize << " bytes " << deltaSec * 1.e6 << " us" << std::endl;
   MPI_Finalize();
   return 0;

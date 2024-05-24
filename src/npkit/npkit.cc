@@ -1,13 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "npkit.h"
-
-#include <unistd.h>
-
 #include <chrono>
 #include <fstream>
+#include <unistd.h>
+
 #include <mscclpp/gpu.hpp>
+#include <mscclpp/npkit/npkit.hpp>
 
 uint64_t NpKit::rank_ = 0;
 
@@ -16,8 +15,21 @@ std::vector<std::unique_ptr<NpKitEvent[]>> NpKit::cpu_event_buffers_;
 
 mscclpp::UniqueCudaPtr<NpKitEventCollectContext> NpKit::gpu_collect_contexts_;
 std::unique_ptr<NpKitEventCollectContext[]> NpKit::cpu_collect_contexts_;
-uint64_t NpKit::cpu_base_system_timestamp_ = 0;
-uint64_t NpKit::cpu_base_steady_timestamp_ = 0;
+
+std::unique_ptr<uint64_t> NpKit::cpu_timestamp_;
+std::unique_ptr<std::thread> NpKit::cpu_timestamp_update_thread_;
+volatile bool NpKit::cpu_timestamp_update_thread_should_stop_ = false;
+
+void NpKit::CpuTimestampUpdateThread() {
+  uint64_t init_system_clock = std::chrono::system_clock::now().time_since_epoch().count();
+  uint64_t init_steady_clock = std::chrono::steady_clock::now().time_since_epoch().count();
+  uint64_t curr_steady_clock = 0;
+  volatile uint64_t* volatile_cpu_timestamp_ = cpu_timestamp_.get();
+  while (!cpu_timestamp_update_thread_should_stop_) {
+    curr_steady_clock = std::chrono::steady_clock::now().time_since_epoch().count();
+    *volatile_cpu_timestamp_ = init_system_clock + (curr_steady_clock - init_steady_clock);
+  }
+}
 
 void NpKit::Init(int rank) {
   uint64_t i = 0;
@@ -41,8 +53,32 @@ void NpKit::Init(int rank) {
   }
 
   // Init timestamp
-  cpu_base_system_timestamp_ = std::chrono::system_clock::now().time_since_epoch().count();
-  cpu_base_steady_timestamp_ = std::chrono::steady_clock::now().time_since_epoch().count();
+  cpu_timestamp_ = std::make_unique<uint64_t>();
+  volatile uint64_t* volatile_cpu_timestamp = cpu_timestamp_.get();
+  *volatile_cpu_timestamp = std::chrono::system_clock::now().time_since_epoch().count();
+  cpu_timestamp_update_thread_should_stop_ = false;
+  cpu_timestamp_update_thread_ = std::make_unique<std::thread>(CpuTimestampUpdateThread);
+}
+
+static int GetGpuClockRateInKhz() {
+  int dev_id;
+#if defined(__HIP_PLATFORM_AMD__)
+  hipDeviceProp_t dev_prop;
+  char gcn_arch[256];
+  MSCCLPP_CUDATHROW(hipGetDevice(&dev_id));
+  MSCCLPP_CUDATHROW(hipGetDeviceProperties(&dev_prop, dev_id));
+  char *gcnArchNameToken = strtok(dev_prop.gcnArchName, ":");
+  strcpy(gcn_arch, gcnArchNameToken);
+  if (strncmp("gfx94", gcn_arch, 5) == 0)
+    return 100000;
+  else
+    return 25000;
+#else
+  cudaDeviceProp dev_prop;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&dev_id));
+  MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&dev_prop, dev_id));
+  return dev_prop.clockRate;
+#endif
 }
 
 void NpKit::Dump(const std::string& dump_dir) {
@@ -98,17 +134,17 @@ void NpKit::Dump(const std::string& dump_dir) {
   dump_file_path = dump_dir;
   dump_file_path += "/gpu_clock_rate_rank_";
   dump_file_path += std::to_string(rank_);
-  cudaDeviceProp dev_prop;
-  int dev;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&dev));
-  MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&dev_prop, dev));
-  std::string clock_rate_str = std::to_string(dev_prop.clockRate);
+  std::string clock_rate_str = std::to_string(GetGpuClockRateInKhz());
   auto gpu_clock_rate_file = std::fstream(dump_file_path, std::ios::out);
   gpu_clock_rate_file.write(clock_rate_str.c_str(), clock_rate_str.length());
   gpu_clock_rate_file.close();
 }
 
 void NpKit::Shutdown() {
+  // Stop CPU timestamp updating thread
+  cpu_timestamp_update_thread_should_stop_ = true;
+  cpu_timestamp_update_thread_->join();
+
   // Free CPU event data structures
   cpu_event_buffers_.clear();
   cpu_collect_contexts_.reset();
@@ -116,6 +152,10 @@ void NpKit::Shutdown() {
   // Free GPU event data structures
   gpu_event_buffers_.clear();
   gpu_collect_contexts_.reset();
+
+  // Free timestamp
+  cpu_timestamp_update_thread_.reset();
+  cpu_timestamp_.reset();
 }
 
 NpKitEventCollectContext* NpKit::GetGpuEventCollectContexts() { return gpu_collect_contexts_.get(); }
@@ -132,7 +172,4 @@ void NpKit::CollectCpuEvent(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t
   }
 }
 
-uint64_t NpKit::GetCpuTimestamp() {
-  uint64_t cpu_curr_steady_timestamp_ = std::chrono::steady_clock::now().time_since_epoch().count();
-  return cpu_base_steady_timestamp_ + (cpu_curr_steady_timestamp_ - cpu_base_steady_timestamp_);
-}
+uint64_t* NpKit::GetCpuTimestamp() { return cpu_timestamp_.get(); }

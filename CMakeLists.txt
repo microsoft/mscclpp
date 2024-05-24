@@ -120,7 +120,7 @@ if(ENABLE_TRACE)
     target_compile_definitions(mscclpp_obj PRIVATE ENABLE_TRACE)
 endif()
 if(USE_NPKIT)
-    target_compile_definitions(mscclpp_obj PRIVATE ENABLE_NPKIT)
+    target_compile_definitions(mscclpp_obj PRIVATE ${NPKIT_FLAGS})
 endif()
 
 # libmscclpp

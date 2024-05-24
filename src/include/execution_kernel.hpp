@@ -331,7 +331,12 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
 
 template <typename T, typename PacketType = LL16Packet>
 __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
-                                size_t scratchSize, DeviceExecutionPlan* plan, uint32_t flag) {
+                                size_t scratchSize, DeviceExecutionPlan* plan, uint32_t flag
+#if defined(ENABLE_NPKIT)
+                                , NpKitEventCollectContext* npKitEventCollectContexts, uint64_t* cpuTimestamp) {
+#else
+                                ) {
+#endif
   extern __shared__ int4 sharedMem[];
   int bid = blockIdx.x;
   int tid = threadIdx.x;
@@ -344,6 +349,25 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
 #else   // !defined(MSCCLPP_DEVICE_HIP)
   __syncthreads();
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
+
+#if defined(ENABLE_NPKIT)
+  int npKitCtxIdx = bid;
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
+  if (tid == 0) {
+    NpKit::CollectGpuEvent(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0, *cpuTimestamp,
+      npKitEventCollectContexts + npKitCtxIdx);
+  }
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_GPU)
+  if (tid == 0) {
+    NpKit::CollectGpuEvent(NPKIT_EVENT_TIME_SYNC_GPU, 0, 0, NPKIT_GET_GPU_TIMESTAMP(),
+      npKitEventCollectContexts + npKitCtxIdx);
+  }
+#endif
+
   localPlan = (DeviceExecutionPlan*)sharedMem;
   int nOperations = localPlan->nOperations;
   Operation* operations = localPlan->operations;
@@ -409,19 +433,39 @@ class ExecutionKernel {
     switch (dataType) {
       case DataType::INT32:
         executionKernel<int32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, plan, flag);
+            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, plan, flag
+#if defined(ENABLE_NPKIT)
+            , NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+            );
+#endif
         break;
       case DataType::UINT32:
         executionKernel<uint32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, plan, flag);
+            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, plan, flag
+#if defined(ENABLE_NPKIT)
+            , NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+            );
+#endif
         break;
       case DataType::FLOAT16:
         executionKernel<half, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, plan, flag);
+            rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, plan, flag
+#if defined(ENABLE_NPKIT)
+            , NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+            );
+#endif
         break;
       case DataType::FLOAT32:
         executionKernel<float, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, plan, flag);
+            rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, plan, flag
+#if defined(ENABLE_NPKIT)
+            , NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+            );
+#endif
         break;
     }
   }

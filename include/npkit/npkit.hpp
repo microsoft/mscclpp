@@ -4,18 +4,24 @@
 #ifndef NPKIT_H_
 #define NPKIT_H_
 
-#include <mscclpp/gpu_utils.hpp>
 #include <string>
 #include <vector>
 
-#include "npkit_event.h"
-#include "npkit_struct.h"
+#include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/npkit/npkit_event.h>
+#include <mscclpp/npkit/npkit_struct.h>
+
+#if defined(__HIP_PLATFORM_AMD__)
+#define NPKIT_GET_GPU_TIMESTAMP wall_clock64
+#else
+#define NPKIT_GET_GPU_TIMESTAMP clock64
+#endif
 
 class NpKit {
  public:
-  static const uint64_t kNumGpuEventBuffers = 512;
+  static const uint64_t kNumGpuEventBuffers = 1024;
 
-  static const uint64_t kNumCpuEventBuffers = 32;
+  static const uint64_t kNumCpuEventBuffers = 64;
 
   static void Init(int rank);
 
@@ -25,7 +31,6 @@ class NpKit {
 
   static NpKitEventCollectContext* GetGpuEventCollectContexts();
 
-#ifdef __CUDACC__
   static inline __device__ void CollectGpuEvent(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp,
                                                 NpKitEventCollectContext* ctx) {
     uint64_t event_buffer_head = ctx->event_buffer_head;
@@ -38,17 +43,18 @@ class NpKit {
       ctx->event_buffer_head++;
     }
   }
-#endif  // __CUDACC__
 
   static void CollectCpuEvent(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp, int channel_id);
 
-  static uint64_t GetCpuTimestamp();
+  static uint64_t* GetCpuTimestamp();
 
  private:
-  // 64K * 512 * 16B = 512MB per GPU
+  static void CpuTimestampUpdateThread();
+
+  // 64K * 1024 * 16B = 1GB per GPU
   static const uint64_t kMaxNumGpuEventsPerBuffer = 1ULL << 16;
 
-  // 64K * 2 (send/recv) * (512/32) = 2M, 2M * 32 * 16B = 1GB per CPU
+  // 64K * 2 (send/recv) * (1024/64) = 2M, 2M * 64 * 16B = 2GB per CPU
   static const uint64_t kMaxNumCpuEventsPerBuffer = 1ULL << 21;
 
   static std::vector<mscclpp::UniqueCudaPtr<NpKitEvent>> gpu_event_buffers_;
@@ -57,10 +63,11 @@ class NpKit {
   static mscclpp::UniqueCudaPtr<NpKitEventCollectContext> gpu_collect_contexts_;
   static std::unique_ptr<NpKitEventCollectContext[]> cpu_collect_contexts_;
 
-  static uint64_t cpu_base_system_timestamp_;
-  static uint64_t cpu_base_steady_timestamp_;
-
   static uint64_t rank_;
+
+  static std::unique_ptr<uint64_t> cpu_timestamp_;
+  static std::unique_ptr<std::thread> cpu_timestamp_update_thread_;
+  static volatile bool cpu_timestamp_update_thread_should_stop_;
 };
 
 #endif
