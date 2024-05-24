@@ -112,7 +112,7 @@ uint64_t getHostHash(void) {
 uint64_t computePidHash(void) {
   char pname[1024];
   // Start off with our pid ($$)
-  snprintf(pname, sizeof(pname), "%ld", (long)getpid());
+  std::snprintf(pname, sizeof(pname), "%ld", (long)getpid());
   int plen = strlen(pname);
   int len = readlink("/proc/self/ns/pid", pname + plen, sizeof(pname) - 1 - plen);
   if (len < 0) len = 0;
