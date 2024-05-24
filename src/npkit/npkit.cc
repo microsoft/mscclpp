@@ -16,7 +16,7 @@ std::vector<std::unique_ptr<NpKitEvent[]>> NpKit::cpu_event_buffers_;
 mscclpp::UniqueCudaPtr<NpKitEventCollectContext> NpKit::gpu_collect_contexts_;
 std::unique_ptr<NpKitEventCollectContext[]> NpKit::cpu_collect_contexts_;
 
-std::unique_ptr<uint64_t> NpKit::cpu_timestamp_;
+mscclpp::UniqueCudaHostPtr<uint64_t> NpKit::cpu_timestamp_;
 std::unique_ptr<std::thread> NpKit::cpu_timestamp_update_thread_;
 volatile bool NpKit::cpu_timestamp_update_thread_should_stop_ = false;
 
@@ -32,32 +32,34 @@ void NpKit::CpuTimestampUpdateThread() {
 }
 
 void NpKit::Init(int rank) {
+#if defined(ENABLE_NPKIT)
   uint64_t i = 0;
   NpKitEventCollectContext ctx;
   ctx.event_buffer_head = 0;
   rank_ = rank;
 
   // Init event data structures
-  gpu_collect_contexts_ = mscclpp::allocUniqueCuda<NpKitEventCollectContext>(kNumGpuEventBuffers);
-  for (i = 0; i < kNumGpuEventBuffers; i++) {
+  gpu_collect_contexts_ = mscclpp::allocUniqueCuda<NpKitEventCollectContext>(NpKit::kNumGpuEventBuffers);
+  for (i = 0; i < NpKit::kNumGpuEventBuffers; i++) {
     gpu_event_buffers_.emplace_back(mscclpp::allocUniqueCuda<NpKitEvent>(kMaxNumGpuEventsPerBuffer));
     ctx.event_buffer = gpu_event_buffers_[i].get();
     mscclpp::memcpyCuda(gpu_collect_contexts_.get() + i, &ctx, 1);
   }
 
-  cpu_collect_contexts_ = std::make_unique<NpKitEventCollectContext[]>(kNumCpuEventBuffers);
-  for (i = 0; i < kNumCpuEventBuffers; i++) {
+  cpu_collect_contexts_ = std::make_unique<NpKitEventCollectContext[]>(NpKit::kNumCpuEventBuffers);
+  for (i = 0; i < NpKit::kNumCpuEventBuffers; i++) {
     cpu_event_buffers_.emplace_back(std::make_unique<NpKitEvent[]>(kMaxNumCpuEventsPerBuffer));
     ctx.event_buffer = cpu_event_buffers_[i].get();
     cpu_collect_contexts_[i] = ctx;
   }
 
   // Init timestamp
-  cpu_timestamp_ = std::make_unique<uint64_t>();
+  cpu_timestamp_ = mscclpp::makeUniqueCudaHost<uint64_t>();
   volatile uint64_t* volatile_cpu_timestamp = cpu_timestamp_.get();
   *volatile_cpu_timestamp = std::chrono::system_clock::now().time_since_epoch().count();
   cpu_timestamp_update_thread_should_stop_ = false;
   cpu_timestamp_update_thread_ = std::make_unique<std::thread>(CpuTimestampUpdateThread);
+#endif
 }
 
 static int GetGpuClockRateInKhz() {
@@ -82,11 +84,12 @@ static int GetGpuClockRateInKhz() {
 }
 
 void NpKit::Dump(const std::string& dump_dir) {
+#if defined(ENABLE_NPKIT)
   uint64_t i = 0;
   std::string dump_file_path;
 
   // Dump CPU events
-  for (i = 0; i < kNumCpuEventBuffers; i++) {
+  for (i = 0; i < NpKit::kNumCpuEventBuffers; i++) {
     dump_file_path = dump_dir;
     dump_file_path += "/cpu_events_rank_";
     dump_file_path += std::to_string(rank_);
@@ -116,7 +119,7 @@ void NpKit::Dump(const std::string& dump_dir) {
   clock_period_den_file.close();
 
   // Dump GPU events, reuse CPU struct
-  for (i = 0; i < kNumGpuEventBuffers; i++) {
+  for (i = 0; i < NpKit::kNumGpuEventBuffers; i++) {
     dump_file_path = dump_dir;
     dump_file_path += "/gpu_events_rank_";
     dump_file_path += std::to_string(rank_);
@@ -138,9 +141,11 @@ void NpKit::Dump(const std::string& dump_dir) {
   auto gpu_clock_rate_file = std::fstream(dump_file_path, std::ios::out);
   gpu_clock_rate_file.write(clock_rate_str.c_str(), clock_rate_str.length());
   gpu_clock_rate_file.close();
+#endif
 }
 
 void NpKit::Shutdown() {
+#if defined(ENABLE_NPKIT)
   // Stop CPU timestamp updating thread
   cpu_timestamp_update_thread_should_stop_ = true;
   cpu_timestamp_update_thread_->join();
@@ -156,6 +161,7 @@ void NpKit::Shutdown() {
   // Free timestamp
   cpu_timestamp_update_thread_.reset();
   cpu_timestamp_.reset();
+#endif
 }
 
 NpKitEventCollectContext* NpKit::GetGpuEventCollectContexts() { return gpu_collect_contexts_.get(); }

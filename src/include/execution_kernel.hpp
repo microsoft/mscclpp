@@ -18,6 +18,10 @@
 #define __synclds() asm volatile("s_waitcnt lgkmcnt(0) \n s_barrier");
 #endif  // defined(MSCCLPP_DEVICE_HIP)
 
+#if defined(ENABLE_NPKIT)
+#include <mscclpp/npkit/npkit.hpp>
+#endif
+
 namespace {
 template <typename To, typename From>
 MSCCLPP_DEVICE_INLINE To bit_cast(const From& src) {
@@ -376,6 +380,14 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
 
   for (int i = 0; i < nOperations; i++) {
     Operation& op = operations[i];
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_BASE_ENTRY)
+  if (tid == 0) {
+    NpKit::CollectGpuEvent(NPKIT_EVENT_EXECUTOR_BASE_ENTRY + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),
+      npKitEventCollectContexts + npKitCtxIdx);
+  }
+#endif
+
     if (op.type == OperationType::BARRIER) {
       __syncthreads();
     } else if (op.type == OperationType::SIGNAL) {
@@ -419,6 +431,14 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, smChannels, op.outputChannelIndexes,
                        op.outputOffsets, op.nOutputs, op.size);
     }
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_BASE_EXIT)
+  if (tid == 0) {
+    NpKit::CollectGpuEvent(NPKIT_EVENT_EXECUTOR_BASE_EXIT + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),
+      npKitEventCollectContexts + npKitCtxIdx);
+  }
+#endif
+
   }
 }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)

@@ -4,11 +4,8 @@
 #include <filesystem>
 #include <iostream>
 #include <mscclpp/executor.hpp>
-#include <mscclpp/utils.hpp>
-
-#if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.hpp>
-#endif
+#include <mscclpp/utils.hpp>
 
 namespace {
 std::string getExecutablePath() {
@@ -89,8 +86,8 @@ double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::s
 }
 
 int main(int argc, char* argv[]) {
-  if (argc != 2) {
-    std::cerr << "Usage: " << argv[0] << " <buffer size>" << std::endl;
+  if (argc != 3) {
+    std::cerr << "Usage: " << argv[0] << " <buffer size> <enable npkit>" << std::endl;
     return 1;
   }
 
@@ -102,6 +99,7 @@ int main(int argc, char* argv[]) {
   MSCCLPP_CUDATHROW(cudaSetDevice(rank));
 
   const size_t bufferSize = parseSize(argv[1]);
+  const int enableNpKit = std::stoi(argv[2]);
 
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   mscclpp::UniqueId id;
@@ -112,9 +110,9 @@ int main(int argc, char* argv[]) {
   std::shared_ptr<mscclpp::Communicator> communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
   std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(communicator);
 
-#if defined(ENABLE_NPKIT)
-  NpKit::Init(rank);
-#endif
+  if (enableNpKit) {
+    NpKit::Init(rank);
+  }
 
   std::string executablePath = getExecutablePath();
   std::filesystem::path path = executablePath;
@@ -122,17 +120,17 @@ int main(int argc, char* argv[]) {
       path.parent_path().parent_path().parent_path() / "test/execution-files/allreduce5.json";
   mscclpp::ExecutionPlan plan("allreduce_mi300_packet", executionFilesPath.string());
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
-  double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, 200, 20);
+  double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, 10, 1);
 
-#if defined(ENABLE_NPKIT)
-  const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
-  if (npkitDumpDir == nullptr) {
-    WARN("NPKIT_DUMP_DIR is empty");
-  } else {
-    NpKit::Dump(npkitDumpDir);
+  if (enableNpKit) {
+    const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
+    if (npkitDumpDir == nullptr) {
+      std::cerr << "NPKIT_DUMP_DIR is empty" << std::endl;
+    } else {
+      NpKit::Dump(npkitDumpDir);
+    }
+    NpKit::Shutdown();
   }
-  NpKit::Shutdown();
-#endif
 
   std::cout << "Rank " << rank << ": " << bufferSize << " bytes " << deltaSec * 1.e6 << " us" << std::endl;
   MPI_Finalize();

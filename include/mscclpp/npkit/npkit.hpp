@@ -8,8 +8,8 @@
 #include <vector>
 
 #include <mscclpp/gpu_utils.hpp>
-#include <mscclpp/npkit/npkit_event.h>
-#include <mscclpp/npkit/npkit_struct.h>
+#include <mscclpp/npkit/npkit_event.hpp>
+#include <mscclpp/npkit/npkit_struct.hpp>
 
 #if defined(__HIP_PLATFORM_AMD__)
 #define NPKIT_GET_GPU_TIMESTAMP wall_clock64
@@ -65,7 +65,7 @@ class NpKit {
 
   static uint64_t rank_;
 
-  static std::unique_ptr<uint64_t> cpu_timestamp_;
+  static mscclpp::UniqueCudaHostPtr<uint64_t> cpu_timestamp_;
   static std::unique_ptr<std::thread> cpu_timestamp_update_thread_;
   static volatile bool cpu_timestamp_update_thread_should_stop_;
 };
