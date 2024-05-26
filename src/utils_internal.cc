@@ -7,10 +7,8 @@
 
 #include <cstring>
 #include <fstream>
-#include <iomanip>
 #include <memory>
 #include <mscclpp/errors.hpp>
-#include <sstream>
 #include <string>
 
 #include "debug.h"
@@ -31,7 +29,6 @@ static bool matchPort(const int port1, const int port2) {
 }
 
 namespace mscclpp {
-
 std::string int64ToBusId(int64_t id) {
   char busId[20];
   std::snprintf(busId, sizeof(busId), "%04lx:%02lx:%02lx.%01lx", (id) >> 20, (id & 0xff000) >> 12, (id & 0xff0) >> 4,
