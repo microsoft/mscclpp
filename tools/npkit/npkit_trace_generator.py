@@ -38,7 +38,7 @@ def parse_npkit_event_header(npkit_event_header_path):
                 if len(fields) == 3:
                     event_type = fields[1]
                     event_id = int(fields[2], 0)
-                    if lines[line_idx].startswith('#define NPKIT_EVENT_EXECUTOR_BASE'):
+                    if lines[line_idx].startswith('#define NPKIT_EVENT_EXECUTOR_OP_BASE'):
                         for executor_op in executor_op_to_offset:
                             real_event_id = event_id + executor_op_to_offset[executor_op]
                             if 'ENTRY' in lines[line_idx]:
