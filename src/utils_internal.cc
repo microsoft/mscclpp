@@ -33,12 +33,10 @@ static bool matchPort(const int port1, const int port2) {
 namespace mscclpp {
 
 std::string int64ToBusId(int64_t id) {
-  std::ostringstream oss;
-  oss << std::hex << std::setfill('0') << std::setw(4) << (id >> 20) << ":";
-  oss << std::setw(2) << ((id & 0xff000) >> 12) << ":";
-  oss << std::setw(2) << ((id & 0xff0) >> 4) << ".";
-  oss << std::setw(1) << (id & 0xf);
-  return oss.str();
+  char busId[20];
+  std::snprintf(busId, sizeof(busId), "%04lx:%02lx:%02lx.%01lx", (id) >> 20, (id & 0xff000) >> 12, (id & 0xff0) >> 4,
+                (id & 0xf));
+  return std::string(busId);
 }
 
 int64_t busIdToInt64(const std::string busId) {
@@ -117,7 +115,7 @@ uint64_t getHostHash(void) {
 uint64_t computePidHash(void) {
   char pname[1024];
   // Start off with our pid ($$)
-  sprintf(pname, "%ld", (long)getpid());
+  std::snprintf(pname, sizeof(pname), "%ld", (long)getpid());
   int plen = strlen(pname);
   int len = readlink("/proc/self/ns/pid", pname + plen, sizeof(pname) - 1 - plen);
   if (len < 0) len = 0;
