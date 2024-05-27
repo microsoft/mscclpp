@@ -8,6 +8,8 @@
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/npkit/npkit.hpp>
 
+#include "debug.h"
+
 uint64_t NpKit::rank_ = 0;
 
 std::vector<mscclpp::UniqueCudaPtr<NpKitEvent>> NpKit::gpu_event_buffers_;
@@ -59,9 +61,12 @@ void NpKit::Init(int rank) {
   *volatile_cpu_timestamp = std::chrono::system_clock::now().time_since_epoch().count();
   cpu_timestamp_update_thread_should_stop_ = false;
   cpu_timestamp_update_thread_ = std::make_unique<std::thread>(CpuTimestampUpdateThread);
+#else
+  WARN("NpKit::Init(%d) : MSCCLpp library was not built with NPKit enabled.", rank);
 #endif
 }
 
+#if defined(ENABLE_NPKIT)
 static int GetGpuClockRateInKhz() {
   int dev_id;
 #if defined(__HIP_PLATFORM_AMD__)
@@ -82,6 +87,7 @@ static int GetGpuClockRateInKhz() {
   return dev_prop.clockRate;
 #endif
 }
+#endif
 
 void NpKit::Dump(const std::string& dump_dir) {
 #if defined(ENABLE_NPKIT)
@@ -141,6 +147,8 @@ void NpKit::Dump(const std::string& dump_dir) {
   auto gpu_clock_rate_file = std::fstream(dump_file_path, std::ios::out);
   gpu_clock_rate_file.write(clock_rate_str.c_str(), clock_rate_str.length());
   gpu_clock_rate_file.close();
+#else
+  WARN("NpKit::Dump(%s) : MSCCLpp library was not built with NPKit enabled.", dump_dir.c_str());
 #endif
 }
 
