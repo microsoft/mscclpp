@@ -367,40 +367,33 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   DeviceHandle<SimpleProxyChannel>* proxyChannels = localPlan->channels.proxyChannels;
 
 #if defined(ENABLE_NPKIT)
-  int npKitCtxIdx = bid;
+  NpKitEvent* event_buffer = (NpKitEvent *)((char *)sharedMem + sizeof(DeviceExecutionPlan));
+  uint64_t event_buffer_head = 0;
 #endif
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
-  if (tid == 0) {
-    NpKit::CollectGpuEvent(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0, *cpuTimestamp,
-      npKitEventCollectContexts + npKitCtxIdx);
-  }
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0, *cpuTimestamp,
+    event_buffer, &event_buffer_head);
 #endif
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_GPU)
-  if (tid == 0) {
-    NpKit::CollectGpuEvent(NPKIT_EVENT_TIME_SYNC_GPU, 0, 0, NPKIT_GET_GPU_TIMESTAMP(),
-      npKitEventCollectContexts + npKitCtxIdx);
-  }
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_TIME_SYNC_GPU, 0, 0, NPKIT_GET_GPU_TIMESTAMP(),
+    event_buffer, &event_buffer_head);
 #endif
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT)
-  if (tid == 0) {
-    NpKit::CollectGpuEvent(NPKIT_EVENT_EXECUTOR_INIT_ENTRY, 0, 0, npkit_timestamp_entry,
-      npKitEventCollectContexts + npKitCtxIdx);
-    NpKit::CollectGpuEvent(NPKIT_EVENT_EXECUTOR_INIT_EXIT, 0, 0, NPKIT_GET_GPU_TIMESTAMP(),
-      npKitEventCollectContexts + npKitCtxIdx);
-  }
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_INIT_ENTRY, 0, 0, npkit_timestamp_entry,
+    event_buffer, &event_buffer_head);
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_INIT_EXIT, 0, 0, NPKIT_GET_GPU_TIMESTAMP(),
+    event_buffer, &event_buffer_head);
 #endif
 
   for (int i = 0; i < nOperations; i++) {
     Operation& op = operations[i];
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY)
-  if (tid == 0) {
-    NpKit::CollectGpuEvent(NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),
-      npKitEventCollectContexts + npKitCtxIdx);
-  }
+    NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),
+      event_buffer, &event_buffer_head);
 #endif
 
     if (op.type == OperationType::BARRIER) {
@@ -448,13 +441,29 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
     }
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT)
-  if (tid == 0) {
-    NpKit::CollectGpuEvent(NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),
-      npKitEventCollectContexts + npKitCtxIdx);
-  }
+    NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),
+      event_buffer, &event_buffer_head);
 #endif
 
   }
+
+#if defined(ENABLE_NPKIT)
+#if defined(MSCCLPP_DEVICE_HIP)
+  __synclds();
+#else   // !defined(MSCCLPP_DEVICE_HIP)
+  __syncthreads();
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
+  NpKitEventCollectContext* npKitCtx = npKitEventCollectContexts + bid;
+  NpKitEvent* global_event_buffer = npKitCtx->event_buffer;
+  uint64_t global_event_buffer_head = npKitCtx->event_buffer_head;
+  for (size_t i = tid; i < event_buffer_head * sizeof(NpKitEvent) / sizeof(int4); i += blockDim.x) {
+    ((int4*)(global_event_buffer + global_event_buffer_head))[i] = ((int4*)event_buffer)[i];
+  }
+  if (tid == 0) {
+    npKitCtx->event_buffer_head += event_buffer_head;
+  }
+#endif
+
 }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 

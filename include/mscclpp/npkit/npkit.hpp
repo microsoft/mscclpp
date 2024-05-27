@@ -17,6 +17,8 @@
 #define NPKIT_GET_GPU_TIMESTAMP clock64
 #endif
 
+#define NPKIT_SHM_NUM_EVENTS 64
+
 class NpKit {
  public:
   static const uint64_t kNumGpuEventBuffers = 1024;
@@ -31,16 +33,17 @@ class NpKit {
 
   static NpKitEventCollectContext* GetGpuEventCollectContexts();
 
-  static inline __device__ void CollectGpuEvent(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp,
-                                                NpKitEventCollectContext* ctx) {
-    uint64_t event_buffer_head = ctx->event_buffer_head;
-    if (event_buffer_head < kMaxNumGpuEventsPerBuffer) {
-      NpKitEvent& event = ctx->event_buffer[event_buffer_head];
-      event.fields.type = type;
-      event.fields.size = size;
-      event.fields.rsvd = rsvd;
-      event.fields.timestamp = timestamp;
-      ctx->event_buffer_head++;
+  static inline __device__ void CollectGpuEventShm(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp,
+                                                   NpKitEvent* event_buffer, uint64_t* event_buffer_head) {
+    if (*event_buffer_head < NPKIT_SHM_NUM_EVENTS) {
+      if (threadIdx.x == 0) {
+        NpKitEvent& event = event_buffer[*event_buffer_head];
+        event.fields.type = type;
+        event.fields.size = size;
+        event.fields.rsvd = rsvd;
+        event.fields.timestamp = timestamp;
+      }
+      (*event_buffer_head)++;
     }
   }
 
