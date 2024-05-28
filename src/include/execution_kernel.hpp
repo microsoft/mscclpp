@@ -234,13 +234,13 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* output, uint32_t outputOf
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handlePutPacket(uint32_t inputOffsetByBytes, size_t scratchSize,
-                                           DeviceHandle<SmChannel>* smChannels, uint8_t* dstChannelIndexes,
-                                           uint32_t* dstOffsets, int nDstChannels, uint32_t size, uint32_t flag) {
+MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<SmChannel>* smChannels,
+                                           uint8_t* dstChannelIndexes, uint32_t* dstOffsets, uint32_t* srcOffsets,
+                                           int nDstChannels, uint32_t size, uint32_t flag) {
   const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
   for (int index = 0; index < nDstChannels; ++index) {
-    smChannels[dstChannelIndexes[index]].putPackets<PacketType>(
-        scratchBaseOffset + dstOffsets[index] * 2, inputOffsetByBytes, size, threadIdx.x, blockDim.x, flag);
+    smChannels[dstChannelIndexes[index]].putPackets<PacketType>(scratchBaseOffset + dstOffsets[index] * 2,
+                                                                srcOffsets[index], size, threadIdx.x, blockDim.x, flag);
   }
 }
 
@@ -376,7 +376,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                                op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
                                op.size, false);
     } else if (op.type == OperationType::PUT_PACKET) {
-      handlePutPacket<PacketType>(op.srcOffset, scratchSize, smChannels, op.outputChannelIndexes, op.outputOffsets,
+      handlePutPacket<PacketType>(scratchSize, smChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
                                   op.nOutputs, op.size, flag);
     } else if (op.type == OperationType::REDUCE_SEND_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
