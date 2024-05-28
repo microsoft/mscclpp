@@ -6,6 +6,7 @@ from mscclpp import (
     DataType,
     Executor,
     ExecutionPlan,
+    PacketType,
 )
 import mscclpp.comm as mscclpp_comm
 
@@ -45,10 +46,10 @@ if __name__ == "__main__":
     cp.cuda.Device(MPI.COMM_WORLD.rank % mscclpp_group.nranks_per_node).use()
     executor = Executor(mscclpp_group.communicator)
     execution_plan = ExecutionPlan(
-        "allreduce_mi300", path.join(MSCCLPP_ROOT_PATH, "test", "execution-files", "allreduce5.json")
+        "allreduce_pairs", path.join(MSCCLPP_ROOT_PATH, "test", "execution-files", "allreduce4.json")
     )
 
-    nelems = 1024 * 1024 * 200
+    nelems = 1024 * 8
     cp.random.seed(42)
     buffer = cp.random.random(nelems).astype(cp.float16)
     sub_arrays = cp.split(buffer, MPI.COMM_WORLD.size)
@@ -65,9 +66,10 @@ if __name__ == "__main__":
         sendbuf.nbytes,
         sendbuf.nbytes,
         DataType.float16,
-        512,
+        1024,
         execution_plan,
         stream.ptr,
+        PacketType.LL8
     )
     # check correctness
     stream = cp.cuda.Stream(non_blocking=True)
@@ -75,6 +77,7 @@ if __name__ == "__main__":
     stream.synchronize()
     assert cp.allclose(sendbuf, expected, atol=1e-2 * mscclpp_group.nranks)
 
+    mscclpp_group.barrier()
     execution_time = bench_time(
         100,
         10,
