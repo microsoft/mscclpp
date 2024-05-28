@@ -17,7 +17,7 @@ class NvlsConnection {
   std::vector<char> serialize();
 
   // the recommended buffer size for NVLS, returned by cuMulticastGetGranularity
-  static const int DefaultNvlsBufferSize = (1 << 29);
+  static const int DefaultNvlsBufferSize;
 
   // Everyone needs to synchronize after creating a NVLS connection before adding devices
   void addDevice();
