@@ -295,6 +295,8 @@ size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, uint32_t chunk
   const int nGroups = this->chunkGroups.at(rank);
   uint32_t nInputChunks = this->inputChunks.at(rank);
   uint32_t nelems = inputSize / (alignment * sizeof(uint8_t));
+
+  assert(nelems % nGroups == 0 && "inputSize must be a multiple of nGroups");
   int nelemsPerGroup = nelems / nGroups;
   int nChunksPerGroup = nInputChunks / nGroups;
   uint32_t minNelems = nelemsPerGroup / nChunksPerGroup;
