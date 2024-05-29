@@ -236,6 +236,8 @@ class NvlsConnection::Impl {
 };
 #endif  // !(USE_NVLS)
 
+const int NvlsConnection::DefaultNvlsBufferSize = (1 << 29);
+
 NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices)
     : pimpl_(std::make_shared<Impl>(bufferSize, numDevices)) {}
 

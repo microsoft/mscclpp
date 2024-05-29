@@ -15,24 +15,6 @@
           "id": 0,
           "ops": [
             {
-              "name": "ppkt",
-              "o_buff": {
-                "src": "i",
-                "dst": "s"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 0
-                }
-              ],
-              "src": 0,
-              "srcbuff": "i",
-              "srcoff": 2,
-              "ctype": "sm",
-              "cnt": 1
-            },
-            {
               "name": "rspkt",
               "o_buff": {
                 "src": "i",
@@ -57,17 +39,6 @@
               "dstbuff": "i",
               "dstoff": 0,
               "ctype": "sm",
-              "cnt": 1
-            },
-            {
-              "name": "cpkt",
-              "src": 0,
-              "srcbuff": "s",
-              "srcoff": 6,
-              "dst": 0,
-              "dstbuff": "i",
-              "dstoff": 2,
-              "ctype": "none",
               "cnt": 1
             }
           ],
@@ -94,14 +65,17 @@
               "o_cids": [
                 {
                   "id": 0,
-                  "off": 1
+                  "off": 0
                 }
               ],
-              "src": 0,
-              "srcbuff": "i",
-              "srcoff": 3,
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 2
+                }
+              ],
               "ctype": "sm",
-              "cnt": 1
+              "cnt": 2
             },
             {
               "name": "rspkt",
@@ -134,12 +108,12 @@
               "name": "cpkt",
               "src": 0,
               "srcbuff": "s",
-              "srcoff": 7,
+              "srcoff": 6,
               "dst": 0,
               "dstbuff": "i",
-              "dstoff": 3,
+              "dstoff": 2,
               "ctype": "none",
-              "cnt": 1
+              "cnt": 2
             }
           ],
           "channels": [
@@ -188,11 +162,14 @@
                   "off": 2
                 }
               ],
-              "src": 1,
-              "srcbuff": "i",
-              "srcoff": 0,
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 0
+                }
+              ],
               "ctype": "sm",
-              "cnt": 1
+              "cnt": 2
             },
             {
               "name": "rspkt",
@@ -230,7 +207,7 @@
               "dstbuff": "i",
               "dstoff": 0,
               "ctype": "none",
-              "cnt": 1
+              "cnt": 2
             }
           ],
           "channels": [
@@ -247,24 +224,6 @@
         {
           "id": 1,
           "ops": [
-            {
-              "name": "ppkt",
-              "o_buff": {
-                "src": "i",
-                "dst": "s"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 3
-                }
-              ],
-              "src": 1,
-              "srcbuff": "i",
-              "srcoff": 1,
-              "ctype": "sm",
-              "cnt": 1
-            },
             {
               "name": "rspkt",
               "o_buff": {
@@ -290,17 +249,6 @@
               "dstbuff": "i",
               "dstoff": 3,
               "ctype": "sm",
-              "cnt": 1
-            },
-            {
-              "name": "cpkt",
-              "src": 1,
-              "srcbuff": "s",
-              "srcoff": 5,
-              "dst": 1,
-              "dstbuff": "i",
-              "dstoff": 1,
-              "ctype": "none",
               "cnt": 1
             }
           ],
