@@ -1,10 +1,10 @@
 #include <mpi.h>
 #include <unistd.h>
 
-#include <filesystem>
 #include <iostream>
 #include <mscclpp/executor.hpp>
 #include <mscclpp/utils.hpp>
+#include <sstream>
 
 namespace {
 std::string getExecutablePath() {
@@ -115,7 +115,6 @@ int main(int argc, char* argv[]) {
   std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(communicator);
 
   std::string executablePath = getExecutablePath();
-  std::filesystem::path path = executablePath;
   mscclpp::ExecutionPlan plan(executionPlanName, executionPlanPath);
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
