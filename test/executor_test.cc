@@ -6,17 +6,6 @@
 #include <mscclpp/utils.hpp>
 #include <sstream>
 
-namespace {
-std::string getExecutablePath() {
-  char result[PATH_MAX];
-  ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
-  if (count == -1) {
-    throw std::runtime_error("Failed to get executable path");
-  }
-  return std::string(result, count);
-}
-}  // namespace
-
 double parseSize(const char* value) {
   std::string valueStr(value);
   std::istringstream iss(valueStr);
@@ -114,7 +103,6 @@ int main(int argc, char* argv[]) {
   std::shared_ptr<mscclpp::Communicator> communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
   std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(communicator);
 
-  std::string executablePath = getExecutablePath();
   mscclpp::ExecutionPlan plan(executionPlanName, executionPlanPath);
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
