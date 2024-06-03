@@ -327,6 +327,17 @@ size_t ExecutionPlan::Impl::getNChunkSize(int rank, size_t inputSize, uint32_t n
   return nChunkSize;
 }
 
+void ExecutionPlan::Impl::reset() {
+  this->operations.clear();
+  this->channelInfos.clear();
+  this->threadblockSMChannelMap.clear();
+  this->threadblockProxyChannelMap.clear();
+  this->inputChunks.clear();
+  this->outputChunks.clear();
+  this->scratchChunks.clear();
+  this->chunkGroups.clear();
+}
+
 ExecutionPlan::ExecutionPlan(const std::string& name, const std::string& planPath)
     : impl_(std::make_shared<Impl>(name, planPath)) {}
 
