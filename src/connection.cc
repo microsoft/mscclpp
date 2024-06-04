@@ -3,6 +3,9 @@
 
 #include "connection.hpp"
 
+#if defined(ENABLE_NPKIT)
+#include <mscclpp/npkit/npkit.hpp>
+#endif
 #include <mscclpp/utils.hpp>
 #include <sstream>
 #include <thread>
@@ -10,7 +13,6 @@
 #include "debug.h"
 #include "endpoint.hpp"
 #include "infiniband/verbs.h"
-#include "npkit/npkit.h"
 
 namespace mscclpp {
 

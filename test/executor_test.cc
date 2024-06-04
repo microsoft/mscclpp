@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <mscclpp/executor.hpp>
+#include <mscclpp/npkit/npkit.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
 
@@ -74,11 +75,14 @@ double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::s
 }
 
 int main(int argc, char* argv[]) {
-  if (argc != 5) {
+  if (argc != 8) {
     std::cerr << "Usage: " << argv[0] << " <buffer size>"
               << " <execution plan name>"
               << " <execution plan path>"
-              << " <nthreads per block>" << std::endl;
+              << " <nthreads per block>"
+              << " <number of iterations>"
+              << " <number of graph iterations>"
+              << " <enable npkit>" << std::endl;
     return 1;
   }
 
@@ -93,6 +97,9 @@ int main(int argc, char* argv[]) {
   const std::string executionPlanName = argv[2];
   const std::string executionPlanPath = argv[3];
   const int nthreadsPerBlock = std::stoi(argv[4]);
+  const int niters = std::stoi(argv[5]);
+  const int ngraphIters = std::stoi(argv[6]);
+  const int enableNpKit = std::stoi(argv[7]);
 
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   mscclpp::UniqueId id;
@@ -103,11 +110,26 @@ int main(int argc, char* argv[]) {
   std::shared_ptr<mscclpp::Communicator> communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
   std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(communicator);
 
+  if (enableNpKit) {
+    NpKit::Init(rank);
+  }
+
   mscclpp::ExecutionPlan plan(executionPlanName, executionPlanPath);
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
   MSCCLPP_CUDATHROW(cudaMemcpy(sendbuff.get(), dataHost.data(), bufferSize, cudaMemcpyHostToDevice));
-  double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, nthreadsPerBlock, 200, 20);
+  double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, nthreadsPerBlock, niters, ngraphIters);
+
+  if (enableNpKit) {
+    const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
+    if (npkitDumpDir == nullptr) {
+      std::cerr << "NPKIT_DUMP_DIR is empty" << std::endl;
+    } else {
+      NpKit::Dump(npkitDumpDir);
+    }
+    NpKit::Shutdown();
+  }
+
   std::cout << "Rank " << rank << ": " << bufferSize << " bytes " << deltaSec * 1.e6 << " us" << std::endl;
   MPI_Finalize();
   return 0;

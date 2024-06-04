@@ -2,6 +2,9 @@
 // Licensed under the MIT license.
 
 #include <mscclpp/executor.hpp>
+#if defined(ENABLE_NPKIT)
+#include <mscclpp/npkit/npkit.hpp>
+#endif
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <set>
@@ -260,7 +263,11 @@ struct Executor::Impl {
                     DataType dataType, cudaStream_t stream, PacketType packetType) {
     static uint32_t flag = 0;
     int nthreadblocks = context.deviceExecutionPlans.size();
+#if defined(ENABLE_NPKIT)
+    size_t sharedMemSize = sizeof(DeviceExecutionPlan) + NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
+#else
     size_t sharedMemSize = sizeof(DeviceExecutionPlan);
+#endif
     switch (packetType) {
       case PacketType::LL16:
         ExecutionKernel::launchKernel<LL16Packet>(

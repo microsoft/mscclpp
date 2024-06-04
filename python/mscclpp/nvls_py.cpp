@@ -34,5 +34,9 @@ void register_nvls(nb::module_& m) {
       .def("get_multicast_min_granularity", &NvlsConnection::getMultiCastMinGranularity);
 
   m.def("connect_nvls_collective", &connectNvlsCollective, nb::arg("communicator"), nb::arg("allRanks"),
+#if (USE_NVLS)
         nb::arg("bufferSize") = NvlsConnection::DefaultNvlsBufferSize);
+#else
+        nb::arg("bufferSize") = 0);
+#endif
 }
