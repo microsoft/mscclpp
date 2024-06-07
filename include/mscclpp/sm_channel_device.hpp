@@ -65,6 +65,7 @@ struct SmChannelDeviceHandle {
   /// @param v The value to be written.
   template <typename T>
   MSCCLPP_DEVICE_INLINE void write(uint64_t index, const T& v) {
+    //printf("Writing in %p\n", reinterpret_cast<T*>(dst_) + index);
     *(reinterpret_cast<T*>(dst_) + index) = v;
   }
 
@@ -138,8 +139,10 @@ struct SmChannelDeviceHandle {
   template <int Alignment = 16, bool CopyRemainder = true>
   MSCCLPP_DEVICE_INLINE void put(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
                                  uint32_t numThreads) {
+    //if(threadIdx.x == 0) printf("Putting using smChannel: [%p - %d] [%p - %d] %d (Begin: %p %p) (End: %p %p)\n",
+    // (char*)src_, originOffset, (char*)dst_, targetOffset, originBytes, (char*)src_ + originOffset, (char*)dst_ + targetOffset, (char*)src_ + originOffset + originBytes, (char*)dst_ + targetOffset + originBytes);
     copy<Alignment, CopyRemainder>((char*)dst_ + targetOffset, (char*)src_ + originOffset, originBytes, threadId,
-                                   numThreads);
+                                  numThreads);
   }
 
   /// Copy data from the remote memory (target) to the local memory (origin).

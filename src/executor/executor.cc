@@ -78,23 +78,27 @@ struct Executor::Impl {
   }
   ~Impl() = default;
 
-  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t sendBufferSize,
+  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t messageSize, size_t sendBufferSize,
                                          size_t recvBufferSize, const ExecutionPlan& plan) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendBufferSize, recvBufferSize, plan.impl_->name};
     if (this->contexts.find(key) != this->contexts.end()) {
       return this->contexts[key];
     }
     plan.impl_->reset();
-    plan.impl_->loadExecutionPlan(sendBufferSize);
+    plan.impl_->loadExecutionPlan(messageSize);
 
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize);
     std::shared_ptr<char> scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
     context.scratchBuffer = scratchBuffer;
     context.scratchBufferSize = scratchBufferSize;
+    //printf("setupExecutionContext %d: %d\n", rank, scratchBufferSize);
     this->setupConnections(context, rank, plan);
+    //printf("Trying to Setup Registered Memories\n");
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
+    //printf("Trying to Setup Channels\n");
     this->setupChannels(context, sendbuff, recvbuff, sendBufferSize, rank, plan);
+    //printf("Trying to Setup Device Execution Plan\n");
     this->setupDeviceExecutionPlan(context, rank, plan);
     context.deviceExecutionPlansBuffer =
         allocExtSharedCuda<char>(context.deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan));
@@ -163,6 +167,7 @@ struct Executor::Impl {
       TransportFlags transportFlags = getTransportFlags(channelInfos, rank);
       RegisteredMemory memory =
           this->comm->registerMemory(getBufferInfo(bufferType).first, getBufferInfo(bufferType).second, transportFlags);
+      //printf("Creating Registered Memory %d %d: %p %p %d \n", rank, (int)bufferType, memory.originalDataPtr(), memory.data(), memory.size());
       std::vector<int> connectedPeers = getConnectedPeers(channelInfos);
       std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
       for (int peer : connectedPeers) {
@@ -172,6 +177,7 @@ struct Executor::Impl {
       comm->setup();
       for (size_t i = 0; i < remoteRegMemoryFutures.size(); i++) {
         context.registeredMemories[{bufferType, connectedPeers[i]}] = std::move(remoteRegMemoryFutures[i].get());
+        //printf("Getting Registered Memory %d %d %d: %p %p %d \n", rank, connectedPeers[i], (int)bufferType, context.registeredMemories[{bufferType, connectedPeers[i]}].originalDataPtr(), context.registeredMemories[{bufferType, connectedPeers[i]}].data(), context.registeredMemories[{bufferType, connectedPeers[i]}].size());
       }
     }
   }
@@ -211,6 +217,8 @@ struct Executor::Impl {
           throw Error("Invalid buffer type", ErrorCode::ExecutorError);
       }
     };
+
+    std::set<std::pair<int, int>> smChannelSet;
     for (ChannelType channelType : channelTypes) {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(rank, channelType);
       int index = 0;
@@ -220,6 +228,12 @@ struct Executor::Impl {
         RegisteredMemory localMemory = this->comm->registerMemory(src, sendBufferSize, transport);
         for (int peer : info.connectedPeers) {
           if (channelType == ChannelType::SM) {
+            //if(smChannelSet.find({rank, peer}) == smChannelSet.end()) {
+            /* printf("Creating Channel rank: %d - srcBuffType: %d - dstBuffType: %d - peer: %d - index: %d channelType: %d: %p %p %d (End: %p %p)\n",
+             rank, (int)info.srcBufferType, (int)info.dstBufferType, peer, index, (int)channelType, src, context.registeredMemories[{info.dstBufferType, peer}].data(),
+             context.registeredMemories[{info.dstBufferType, peer}].size(), (char*)src + context.registeredMemories[{info.dstBufferType, peer}].size(), (char*)context.registeredMemories[{info.dstBufferType, peer}].data() + context.registeredMemories[{info.dstBufferType, peer}].size());
+            smChannelSet.insert({rank, peer}); */
+            //}
             context.smChannels.emplace_back(context.smSemaphores[index++],
                                             context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
           } else if (channelType == ChannelType::PROXY) {
@@ -257,7 +271,7 @@ struct Executor::Impl {
     context.deviceExecutionPlans = std::move(deviceExecutionPlans);
   }
 
-  void launchKernel(ExecutionContext& context, int rank, int nthreadsPerBlock, void* sendbuff, void* recvbuff,
+  void launchKernel(ExecutionContext& context, int rank, int nthreadsPerBlock, void* sendbuff, void* recvbuff, size_t contsSrcOffset, size_t constDstOffset,
                     DataType dataType, cudaStream_t stream, PacketType packetType) {
     static uint32_t flag = 0;
     int nthreadblocks = context.deviceExecutionPlans.size();
@@ -265,13 +279,13 @@ struct Executor::Impl {
     switch (packetType) {
       case PacketType::LL16:
         ExecutionKernel::launchKernel<LL16Packet>(
-            rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
+            rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(), contsSrcOffset, constDstOffset,
             context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(),
             sharedMemSize, stream, ++flag);
         break;
       case PacketType::LL8:
         ExecutionKernel::launchKernel<LL8Packet>(
-            rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
+            rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(), contsSrcOffset, constDstOffset,
             context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(),
             sharedMemSize, stream, ++flag);
         break;
@@ -283,13 +297,31 @@ struct Executor::Impl {
 
 Executor::Executor(std::shared_ptr<Communicator> comm) : impl_(std::make_unique<Impl>(comm)) {}
 
-void Executor::execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
+void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuffSize, size_t recvBuffSize,
                        DataType dataType, int nthreads, const ExecutionPlan& plan, cudaStream_t stream,
                        PacketType packetType) {
+  
+  size_t sendBytes, recvBytes;
+  hipDeviceptr_t sendBasePtr, recvBasePtr;
+  MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (hipDeviceptr_t)sendbuff));
+  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (hipDeviceptr_t)recvbuff));
+  size_t offsetIn = (char*)sendbuff - (char*)sendBasePtr;
+  size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
+
+  //printf("Executor - rank: %d, sendbuff: %p, recvbuff: %p, stream: %p, sendBasePtr: %p, sendBytes: %lu, recvBasePtr: %p, recvBytes: %lu, offsetIn: %lu, offsetOut: %lu\n",
+  // rank, sendbuff, recvbuff, stream, (void*)sendBasePtr, sendBytes, (void*)recvBasePtr, recvBytes, offsetIn, offsetOut);
+
+  /* if(offsetIn != 0 || offsetOut != 0) {
+    return;
+  } */
+
   ExecutionContext context =
-      this->impl_->setupExecutionContext(rank, sendbuff, recvBuff, sendBuffSize, recvBuffSize, plan);
+      this->impl_->setupExecutionContext(rank, sendbuff, recvbuff, sendBuffSize, sendBuffSize, recvBuffSize, plan);
+  /* ExecutionContext context =
+      this->impl_->setupExecutionContext(rank, sendBasePtr, recvBasePtr, sendBuffSize, sendBytes, recvBytes, plan); */
+  //printf("Setup Finalized\n");
   // TODO(binyli): need to flush proxy channel here this->impl_->proxyService->startProxy();
-  this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvBuff, dataType, stream, packetType);
+  this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvbuff, 0, 0, dataType, stream, packetType);
 }
 
 Executor::~Executor() = default;
