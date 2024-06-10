@@ -452,9 +452,13 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
     } else if (op.type == OperationType::REDUCE_SEND) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      T* tmp = getBuffer(input, output, scratch, op.inputBufferType);auto inputOffsets = op.inputOffsets;
-
+      T* tmp = getBuffer(input, output, scratch, op.inputBufferType);
+      
+      auto inputOffsets = op.inputOffsets;
       auto outputOffsets = op.outputOffsets;
+      if(op.inputBufferType != BufferType::SCRATCH)
+        for(int i = 0; i < op.nInputs; i++)
+          inputOffsets[i] += constOffsetIn;
       if(op.outputBufferType != BufferType::SCRATCH)
         for(int i = 0; i < op.nOutputs; i++)
           outputOffsets[i] += constOffsetOut;
