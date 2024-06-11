@@ -4,13 +4,12 @@
 #ifndef NPKIT_H_
 #define NPKIT_H_
 
-#include <string>
-#include <thread>
-#include <vector>
-
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/npkit/npkit_event.hpp>
 #include <mscclpp/npkit/npkit_struct.hpp>
+#include <string>
+#include <thread>
+#include <vector>
 
 #if defined(__HIP_PLATFORM_AMD__)
 #define NPKIT_GET_GPU_TIMESTAMP wall_clock64

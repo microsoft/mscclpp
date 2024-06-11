@@ -76,8 +76,12 @@ double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::s
 
 int main(int argc, char* argv[]) {
   if (argc != 8) {
-    std::cerr << "Usage: " << argv[0] << " <buffer size>" << " <execution plan name>" << " <execution plan path>"
-              << " <nthreads per block>" << " <number of iterations>" << " <number of graph iterations>"
+    std::cerr << "Usage: " << argv[0] << " <buffer size>"
+              << " <execution plan name>"
+              << " <execution plan path>"
+              << " <nthreads per block>"
+              << " <number of iterations>"
+              << " <number of graph iterations>"
               << " <enable npkit>" << std::endl;
     return 1;
   }
