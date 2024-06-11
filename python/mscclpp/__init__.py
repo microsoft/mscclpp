@@ -25,6 +25,7 @@ from ._mscclpp import (
     PacketType,
     version,
     is_nvls_supported,
+    npkit,
 )
 
 __version__ = version()

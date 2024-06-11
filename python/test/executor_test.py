@@ -7,6 +7,7 @@ from mscclpp import (
     Executor,
     ExecutionPlan,
     PacketType,
+    npkit,
 )
 import mscclpp.comm as mscclpp_comm
 
@@ -87,6 +88,9 @@ def main(
     mscclpp_group = mscclpp_comm.CommGroup(MPI.COMM_WORLD)
     cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
     executor = Executor(mscclpp_group.communicator)
+    npkit_dump_dir = os.getenv('NPKIT_DUMP_DIR')
+    if npkit_dump_dir is not None:
+        npkit.init(mscclpp_group.my_rank)
     execution_plan = ExecutionPlan(execution_paln_name, execution_plan_path)
 
     cp.random.seed(seed)
@@ -119,6 +123,9 @@ def main(
 
     mscclpp_group.barrier()
     execution_time = bench_time(100, 10, executor_func)
+    if npkit_dump_dir is not None:
+        npkit.dump(npkit_dump_dir)
+        npkit.shutdown()
     print(
         f"Rank: {MPI.COMM_WORLD.rank} Execution time: {execution_time} us, "
         f"data size: {sendbuf.nbytes} bytes data type: {dtype().dtype.name} "

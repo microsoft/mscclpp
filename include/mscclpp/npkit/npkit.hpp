@@ -4,6 +4,7 @@
 #ifndef NPKIT_H_
 #define NPKIT_H_
 
+#include <mscclpp/device.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/npkit/npkit_event.hpp>
 #include <mscclpp/npkit/npkit_struct.hpp>

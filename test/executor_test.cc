@@ -75,14 +75,13 @@ double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::s
 }
 
 int main(int argc, char* argv[]) {
-  if (argc != 8) {
+  if (argc != 7) {
     std::cerr << "Usage: " << argv[0] << " <buffer size>"
               << " <execution plan name>"
               << " <execution plan path>"
               << " <nthreads per block>"
               << " <number of iterations>"
-              << " <number of graph iterations>"
-              << " <enable npkit>" << std::endl;
+              << " <number of graph iterations>" << std::endl;
     return 1;
   }
 
@@ -99,7 +98,7 @@ int main(int argc, char* argv[]) {
   const int nthreadsPerBlock = std::stoi(argv[4]);
   const int niters = std::stoi(argv[5]);
   const int ngraphIters = std::stoi(argv[6]);
-  const int enableNpKit = std::stoi(argv[7]);
+  const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
 
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   mscclpp::UniqueId id;
@@ -110,7 +109,7 @@ int main(int argc, char* argv[]) {
   std::shared_ptr<mscclpp::Communicator> communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
   std::shared_ptr<mscclpp::Executor> executor = std::make_shared<mscclpp::Executor>(communicator);
 
-  if (enableNpKit) {
+  if (npkitDumpDir != nullptr) {
     NpKit::Init(rank);
   }
 
@@ -121,13 +120,8 @@ int main(int argc, char* argv[]) {
   double deltaSec =
       benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, nthreadsPerBlock, niters, ngraphIters);
 
-  if (enableNpKit) {
-    const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
-    if (npkitDumpDir == nullptr) {
-      std::cerr << "NPKIT_DUMP_DIR is empty" << std::endl;
-    } else {
-      NpKit::Dump(npkitDumpDir);
-    }
+  if (npkitDumpDir != nullptr) {
+    NpKit::Dump(npkitDumpDir);
     NpKit::Shutdown();
   }
 
