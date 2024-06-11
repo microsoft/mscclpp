@@ -2,9 +2,6 @@
 // Licensed under the MIT license.
 
 #include <mscclpp/executor.hpp>
-#if defined(ENABLE_NPKIT)
-#include <mscclpp/npkit/npkit.hpp>
-#endif
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <set>
