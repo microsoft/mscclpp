@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <chrono>
-#include <fstream>
 #include <unistd.h>
 
+#include <chrono>
+#include <fstream>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/npkit/npkit.hpp>
 
@@ -74,7 +74,7 @@ static int GetGpuClockRateInKhz() {
   char gcn_arch[256];
   MSCCLPP_CUDATHROW(hipGetDevice(&dev_id));
   MSCCLPP_CUDATHROW(hipGetDeviceProperties(&dev_prop, dev_id));
-  char *gcnArchNameToken = strtok(dev_prop.gcnArchName, ":");
+  char* gcnArchNameToken = strtok(dev_prop.gcnArchName, ":");
   strcpy(gcn_arch, gcnArchNameToken);
   if (strncmp("gfx94", gcn_arch, 5) == 0)
     return 100000;

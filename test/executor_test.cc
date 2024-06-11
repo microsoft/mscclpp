@@ -76,12 +76,8 @@ double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::s
 
 int main(int argc, char* argv[]) {
   if (argc != 8) {
-    std::cerr << "Usage: " << argv[0] << " <buffer size>"
-              << " <execution plan name>"
-              << " <execution plan path>"
-              << " <nthreads per block>"
-              << " <number of iterations>"
-              << " <number of graph iterations>"
+    std::cerr << "Usage: " << argv[0] << " <buffer size>" << " <execution plan name>" << " <execution plan path>"
+              << " <nthreads per block>" << " <number of iterations>" << " <number of graph iterations>"
               << " <enable npkit>" << std::endl;
     return 1;
   }
@@ -118,7 +114,8 @@ int main(int argc, char* argv[]) {
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
   MSCCLPP_CUDATHROW(cudaMemcpy(sendbuff.get(), dataHost.data(), bufferSize, cudaMemcpyHostToDevice));
-  double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, nthreadsPerBlock, niters, ngraphIters);
+  double deltaSec =
+      benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, nthreadsPerBlock, niters, ngraphIters);
 
   if (enableNpKit) {
     const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
