@@ -44,6 +44,8 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::REDUCE_SEND_PACKET;
   } else if (str == "cpkt") {
     return mscclpp::OperationType::COPY_PACKET;
+  } else if (str == "rpkt") {
+    return mscclpp::OperationType::REDUCE_PACKET;
   } else {
     throw mscclpp::Error("Invalid operation type", mscclpp::ErrorCode::ExecutorError);
   }
