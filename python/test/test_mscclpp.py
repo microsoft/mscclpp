@@ -604,7 +604,7 @@ def test_executor(mpi_group: MpiGroup, filename: str):
     project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     mscclpp_group = mscclpp_comm.CommGroup(mpi_group.comm)
     executor = Executor(mscclpp_group.communicator)
-    npkit_dump_dir = os.getenv('NPKIT_DUMP_DIR')
+    npkit_dump_dir = os.getenv("NPKIT_DUMP_DIR")
     if npkit_dump_dir is not None:
         npkit.init(mscclpp_group.my_rank)
     execution_plan = ExecutionPlan("allreduce_pairs", os.path.join(project_dir, "test", "execution-files", filename))
