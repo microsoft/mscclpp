@@ -5,6 +5,9 @@
 #define MSCCLPP_EXECUTION_KERNEL_HPP_
 
 #include <mscclpp/executor.hpp>
+#if defined(ENABLE_NPKIT)
+#include <mscclpp/npkit/npkit.hpp>
+#endif
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
@@ -17,10 +20,6 @@
 #if defined(MSCCLPP_DEVICE_HIP)
 #define __synclds() asm volatile("s_waitcnt lgkmcnt(0) \n s_barrier");
 #endif  // defined(MSCCLPP_DEVICE_HIP)
-
-#if defined(ENABLE_NPKIT)
-#include <mscclpp/npkit/npkit.hpp>
-#endif
 
 namespace {
 template <typename To, typename From>
