@@ -1,7 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.h>
+#endif
 
 #include "execution_kernel.hpp"
 

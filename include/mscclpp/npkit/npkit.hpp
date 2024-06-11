@@ -5,6 +5,7 @@
 #define NPKIT_H_
 
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <mscclpp/gpu_utils.hpp>
@@ -33,6 +34,7 @@ class NpKit {
 
   static NpKitEventCollectContext* GetGpuEventCollectContexts();
 
+#if defined(MSCCLPP_DEVICE_COMPILE)
   static inline __device__ void CollectGpuEventShm(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp,
                                                    NpKitEvent* event_buffer, uint64_t* event_buffer_head) {
     if (*event_buffer_head < NPKIT_SHM_NUM_EVENTS) {
@@ -46,6 +48,7 @@ class NpKit {
       (*event_buffer_head)++;
     }
   }
+#endif
 
   static void CollectCpuEvent(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp, int channel_id);
 
