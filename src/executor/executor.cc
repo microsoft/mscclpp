@@ -84,6 +84,7 @@ struct Executor::Impl {
     if (this->contexts.find(key) != this->contexts.end()) {
       return this->contexts[key];
     }
+    plan.impl_->reset();
     plan.impl_->loadExecutionPlan(sendBufferSize);
 
     ExecutionContext context;

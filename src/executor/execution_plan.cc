@@ -44,6 +44,8 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::REDUCE_SEND_PACKET;
   } else if (str == "cpkt") {
     return mscclpp::OperationType::COPY_PACKET;
+  } else if (str == "rpkt") {
+    return mscclpp::OperationType::REDUCE_PACKET;
   } else {
     throw mscclpp::Error("Invalid operation type", mscclpp::ErrorCode::ExecutorError);
   }
@@ -304,7 +306,7 @@ size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, uint32_t chunk
   int nelemsPerGroup = nelems / nGroups;
   int nChunksPerGroup = nInputChunks / nGroups;
   uint32_t minNelems = nelemsPerGroup / nChunksPerGroup;
-  uint32_t remainder = nelemsPerGroup % nelemsPerGroup;
+  uint32_t remainder = nelemsPerGroup % nChunksPerGroup;
   uint32_t groupIdx = chunkIndex / nChunksPerGroup;
   uint32_t chunkIndexInGroup = chunkIndex % nChunksPerGroup;
   uint32_t offset = groupIdx * nelemsPerGroup + chunkIndexInGroup * minNelems +
@@ -325,6 +327,17 @@ size_t ExecutionPlan::Impl::getNChunkSize(int rank, size_t inputSize, uint32_t n
     }
   }
   return nChunkSize;
+}
+
+void ExecutionPlan::Impl::reset() {
+  this->operations.clear();
+  this->channelInfos.clear();
+  this->threadblockSMChannelMap.clear();
+  this->threadblockProxyChannelMap.clear();
+  this->inputChunks.clear();
+  this->outputChunks.clear();
+  this->scratchChunks.clear();
+  this->chunkGroups.clear();
 }
 
 ExecutionPlan::ExecutionPlan(const std::string& name, const std::string& planPath)
