@@ -35,8 +35,8 @@ class NpKit {
   static NpKitEventCollectContext* GetGpuEventCollectContexts();
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  static inline __device__ void CollectGpuEventShm(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp,
-                                                   NpKitEvent* event_buffer, uint64_t* event_buffer_head) {
+  static MSCCLPP_DEVICE_INLINE void CollectGpuEventShm(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp,
+                                                       NpKitEvent* event_buffer, uint64_t* event_buffer_head) {
     if (*event_buffer_head < NPKIT_SHM_NUM_EVENTS) {
       if (threadIdx.x == 0) {
         NpKitEvent& event = event_buffer[*event_buffer_head];
@@ -46,6 +46,24 @@ class NpKit {
         event.fields.timestamp = timestamp;
       }
       (*event_buffer_head)++;
+    }
+  }
+
+  static MSCCLPP_DEVICE_INLINE void StoreGpuEventShm(NpKitEventCollectContext* npKitEventCollectContexts,
+                                                     uint64_t event_buffer_head) {
+#if defined(MSCCLPP_DEVICE_HIP)
+    __synclds();
+#else   // !defined(MSCCLPP_DEVICE_HIP)
+    __syncthreads();
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
+    NpKitEventCollectContext* npKitCtx = npKitEventCollectContexts + blockIdx.x;
+    NpKitEvent* global_event_buffer = npKitCtx->event_buffer;
+    uint64_t global_event_buffer_head = npKitCtx->event_buffer_head;
+    for (size_t i = threadIdx.x; i < event_buffer_head * sizeof(NpKitEvent) / sizeof(int4); i += blockDim.x) {
+      ((int4*)(global_event_buffer + global_event_buffer_head))[i] = ((int4*)event_buffer)[i];
+    }
+    if (threadIdx.x == 0) {
+      npKitCtx->event_buffer_head += event_buffer_head;
     }
   }
 #endif

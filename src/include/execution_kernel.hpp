@@ -346,12 +346,15 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   extern __shared__ int4 sharedMem[];
   int bid = blockIdx.x;
   int tid = threadIdx.x;
-#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY) && \
-    defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT)
+#if defined(ENABLE_NPKIT)
+  NpKitEvent* event_buffer = (NpKitEvent*)((char*)sharedMem + sizeof(DeviceExecutionPlan));
+  uint64_t event_buffer_head = 0;
+#if defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT)
   uint64_t npkit_timestamp_entry = 0;
   if (tid == 0) {
     npkit_timestamp_entry = NPKIT_GET_GPU_TIMESTAMP();
   }
+#endif
 #endif
   DeviceExecutionPlan* localPlan = plan + bid;
   for (size_t i = tid; i < sizeof(DeviceExecutionPlan) / sizeof(int4); i += blockDim.x) {
@@ -368,11 +371,6 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   Operation* operations = localPlan->operations;
   DeviceHandle<SmChannel>* smChannels = localPlan->channels.smChannels;
   DeviceHandle<SimpleProxyChannel>* proxyChannels = localPlan->channels.proxyChannels;
-
-#if defined(ENABLE_NPKIT)
-  NpKitEvent* event_buffer = (NpKitEvent*)((char*)sharedMem + sizeof(DeviceExecutionPlan));
-  uint64_t event_buffer_head = 0;
-#endif
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
   NpKit::CollectGpuEventShm(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0, *cpuTimestamp, event_buffer, &event_buffer_head);
@@ -456,20 +454,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   }
 
 #if defined(ENABLE_NPKIT)
-#if defined(MSCCLPP_DEVICE_HIP)
-  __synclds();
-#else   // !defined(MSCCLPP_DEVICE_HIP)
-  __syncthreads();
-#endif  // !defined(MSCCLPP_DEVICE_HIP)
-  NpKitEventCollectContext* npKitCtx = npKitEventCollectContexts + bid;
-  NpKitEvent* global_event_buffer = npKitCtx->event_buffer;
-  uint64_t global_event_buffer_head = npKitCtx->event_buffer_head;
-  for (size_t i = tid; i < event_buffer_head * sizeof(NpKitEvent) / sizeof(int4); i += blockDim.x) {
-    ((int4*)(global_event_buffer + global_event_buffer_head))[i] = ((int4*)event_buffer)[i];
-  }
-  if (tid == 0) {
-    npKitCtx->event_buffer_head += event_buffer_head;
-  }
+  NpKit::StoreGpuEventShm(npKitEventCollectContexts, event_buffer_head);
 #endif
 }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
