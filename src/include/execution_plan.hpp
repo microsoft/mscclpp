@@ -61,6 +61,8 @@ struct ExecutionPlan::Impl {
   void setupChannels(const nlohmann::json& gpus);
   void setupOperations(const nlohmann::json& gpus);
 
+  void reset();
+
   const std::string name;
   const std::string planPath;
   bool isUsingPacket;
