@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
 
 #include <mscclpp/npkit/npkit.hpp>
 
