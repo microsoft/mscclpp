@@ -283,6 +283,7 @@ MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, size_t srcSize
   PacketPayload<PacketType>* result = (PacketPayload<PacketType>*)((char*)dst + dstOffset);
   size_t nPackets = size * 2 / sizeof(PacketType);
   for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
+    //if(idx == 0) printf("Copying packet %p %d\n", srcPackets, idx);
     PacketPayload<PacketType> data = srcPackets[idx].read(flag);
     result[idx] = data;
   }
@@ -364,12 +365,12 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       auto inputOffsets = op.inputOffsets;
       auto outputOffsets = op.outputOffsets;
       
-      if(op.inputBufferType != BufferType::SCRATCH)
-        for(int i = 0; i < op.nInputs; i++)
+      for(int i = 0; i < op.nInputs; i++)
+        if(op.outputChannelIndexes[i] == 0)
           inputOffsets[i] += constOffsetIn;
 
-      if(op.outputBufferType != BufferType::SCRATCH)
-        for(int i = 0; i < op.nOutputs; i++)
+      for(int i = 0; i < op.nOutputs; i++)
+        if(op.outputChannelIndexes[i] == 0)
           outputOffsets[i] += constOffsetOut;
 
       if(threadIdx.x == 0){
@@ -380,16 +381,16 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       }
       handlePut(smChannels, proxyChannels, op.outputChannelIndexes, outputOffsets, inputOffsets, op.nOutputs,
                 op.size, op.channelType);
-    }  else if (op.type == OperationType::GET) {
+    }   else if (op.type == OperationType::GET) {
       auto inputOffsets = op.inputOffsets;
       auto outputOffsets = op.outputOffsets;
       
-      if(op.inputBufferType != BufferType::SCRATCH)
-        for(int i = 0; i < op.nInputs; i++)
+      for(int i = 0; i < op.nInputs; i++)
+        if(op.inputChannelIndexes[i] == 0)
           inputOffsets[i] += constOffsetIn;
 
-      if(op.outputBufferType != BufferType::SCRATCH)
-        for(int i = 0; i < op.nOutputs; i++)
+      for(int i = 0; i < op.nInputs; i++)
+        if(op.inputChannelIndexes[i] == 0)
           outputOffsets[i] += constOffsetOut;
 
       handleGet(smChannels, op.inputChannelIndexes, outputOffsets, inputOffsets, op.nInputs, op.size);
@@ -399,12 +400,12 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       auto inputOffsets = op.inputOffsets;
       auto outputOffsets = op.outputOffsets;
       
-      if(op.inputBufferType != BufferType::SCRATCH)
-        for(int i = 0; i < op.nInputs; i++)
+      for(int i = 0; i < op.nInputs; i++)
+        if(op.inputChannelIndexes[i] == 0)
           inputOffsets[i] += constOffsetIn;
 
-      if(op.outputBufferType != BufferType::SCRATCH)
-        for(int i = 0; i < op.nOutputs; i++)
+      for(int i = 0; i < op.nOutputs; i++)
+        if(op.outputChannelIndexes[i] == 0)
           outputOffsets[i] += constOffsetOut;
 
       handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, smChannels, op.outputChannelIndexes,
@@ -416,56 +417,60 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       auto inputOffsets = op.inputOffsets;
       auto outputOffsets = op.outputOffsets;
       
-      if(op.inputBufferType != BufferType::SCRATCH)
-        for(int i = 0; i < op.nInputs; i++)
+      for(int i = 0; i < op.nInputs; i++)
+        if(op.inputChannelIndexes[i] == 0)
           inputOffsets[i] += constOffsetIn;
-      if(op.outputBufferType != BufferType::SCRATCH)
-        for(int i = 0; i < op.nOutputs; i++)
+
+      for(int i = 0; i < op.nOutputs; i++)
+        if(op.outputChannelIndexes[i] == 0)
           outputOffsets[i] += constOffsetOut;
 
       handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, smChannels, op.outputChannelIndexes,
                                op.inputChannelIndexes, outputOffsets, inputOffsets, op.nOutputs, op.nInputs,
                                op.size, false);
     } else if (op.type == OperationType::PUT_PACKET) {
-      handlePutPacket<PacketType>(scratchSize, smChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
+      auto inputOffsets = op.inputOffsets;
+      auto outputOffsets = op.outputOffsets;
+      
+      for(int i = 0; i < op.nOutputs; i++)
+        if(op.inputChannelIndexes[i] == 0)
+          inputOffsets[i] += constOffsetIn;
+
+      for(int i = 0; i < op.nOutputs; i++)
+        if(op.outputChannelIndexes[i] == 0)
+          outputOffsets[i] += constOffsetOut;
+
+      handlePutPacket<PacketType>(scratchSize, smChannels, op.outputChannelIndexes, outputOffsets, inputOffsets,
                                   op.nOutputs, op.size, flag);
     } else if (op.type == OperationType::REDUCE_SEND_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      auto inputOffsets = op.inputOffsets;
       auto outputOffsets = op.outputOffsets;
       
-      if(op.inputBufferType != BufferType::SCRATCH)
-        for(int i = 0; i < op.nInputs; i++)
-          inputOffsets[i] += constOffsetIn;
-      if(op.outputBufferType != BufferType::SCRATCH)
-        for(int i = 0; i < op.nOutputs; i++)
+      for(int i = 0; i < op.nOutputs; i++)
+        if(op.outputChannelIndexes[i] == 0)
           outputOffsets[i] += constOffsetOut;
 
-      handleReduceSendPacket<T, PacketType>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize, inputOffsets,
+      handleReduceSendPacket<T, PacketType>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize, op.inputOffsets,
                                             op.nInputs, smChannels, op.outputChannelIndexes, outputOffsets,
                                             op.nOutputs, op.size, flag);
-    } else if (op.type == OperationType::COPY_PACKET) {
+    }  else if (op.type == OperationType::COPY_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       handleCopyPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);
-    } else if (op.type == OperationType::REDUCE_SEND) {
+    }  else if (op.type == OperationType::REDUCE_SEND) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       T* tmp = getBuffer(input, output, scratch, op.inputBufferType);
-      
-      auto inputOffsets = op.inputOffsets;
       auto outputOffsets = op.outputOffsets;
-      if(op.inputBufferType != BufferType::SCRATCH)
-        for(int i = 0; i < op.nInputs; i++)
-          inputOffsets[i] += constOffsetIn;
-      if(op.outputBufferType != BufferType::SCRATCH)
-        for(int i = 0; i < op.nOutputs; i++)
+      
+      for(int i = 0; i < op.nOutputs; i++)
+        if(op.outputChannelIndexes[i] == 0)
           outputOffsets[i] += constOffsetOut;
 
-      handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, inputOffsets, smChannels, op.outputChannelIndexes,
+      handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, smChannels, op.outputChannelIndexes,
                        outputOffsets, op.nOutputs, op.size);
-    } 
+    }  
   }
 }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
