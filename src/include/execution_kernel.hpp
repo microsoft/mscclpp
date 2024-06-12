@@ -365,7 +365,6 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
 #else   // !defined(MSCCLPP_DEVICE_HIP)
   __syncthreads();
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
-
   localPlan = (DeviceExecutionPlan*)sharedMem;
   int nOperations = localPlan->nOperations;
   Operation* operations = localPlan->operations;
