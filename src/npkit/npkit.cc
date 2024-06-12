@@ -62,7 +62,7 @@ void NpKit::Init(int rank) {
   cpu_timestamp_update_thread_should_stop_ = false;
   cpu_timestamp_update_thread_ = std::make_unique<std::thread>(CpuTimestampUpdateThread);
 #else
-  WARN("NpKit::Init(%d) : MSCCLpp library was not built with NPKit enabled.", rank);
+  WARN("NpKit::Init(%d) : MSCCLPP library was not built with NPKit enabled.", rank);
 #endif
 }
 
@@ -70,10 +70,10 @@ void NpKit::Init(int rank) {
 static int GetGpuClockRateInKhz() {
   int dev_id;
 #if defined(__HIP_PLATFORM_AMD__)
-  hipDeviceProp_t dev_prop;
+  cudaDeviceProp_t dev_prop;
   char gcn_arch[256];
-  MSCCLPP_CUDATHROW(hipGetDevice(&dev_id));
-  MSCCLPP_CUDATHROW(hipGetDeviceProperties(&dev_prop, dev_id));
+  MSCCLPP_CUDATHROW(cudaGetDevice(&dev_id));
+  MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&dev_prop, dev_id));
   char* gcnArchNameToken = strtok(dev_prop.gcnArchName, ":");
   strcpy(gcn_arch, gcnArchNameToken);
   if (strncmp("gfx94", gcn_arch, 5) == 0)
@@ -148,7 +148,7 @@ void NpKit::Dump(const std::string& dump_dir) {
   gpu_clock_rate_file.write(clock_rate_str.c_str(), clock_rate_str.length());
   gpu_clock_rate_file.close();
 #else
-  WARN("NpKit::Dump(%s) : MSCCLpp library was not built with NPKit enabled.", dump_dir.c_str());
+  WARN("NpKit::Dump(%s) : MSCCLPP library was not built with NPKit enabled.", dump_dir.c_str());
 #endif
 }
 
