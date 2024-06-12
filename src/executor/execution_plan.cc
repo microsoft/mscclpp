@@ -306,7 +306,7 @@ size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, uint32_t chunk
   int nelemsPerGroup = nelems / nGroups;
   int nChunksPerGroup = nInputChunks / nGroups;
   uint32_t minNelems = nelemsPerGroup / nChunksPerGroup;
-  uint32_t remainder = nelemsPerGroup % nelemsPerGroup;
+  uint32_t remainder = nelemsPerGroup % nChunksPerGroup;
   uint32_t groupIdx = chunkIndex / nChunksPerGroup;
   uint32_t chunkIndexInGroup = chunkIndex % nChunksPerGroup;
   uint32_t offset = groupIdx * nelemsPerGroup + chunkIndexInGroup * minNelems +
