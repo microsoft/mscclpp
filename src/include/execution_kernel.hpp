@@ -257,20 +257,26 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBy
   const uint32_t dstOffset = dstOffsetByBytes / sizeof(PacketPayload<PacketType>);
   PacketPayload<PacketType>* srcPacketPayload = (PacketPayload<PacketType>*)src + srcOffset;
   PacketPayload<PacketType>* dstPacketPayload = (PacketPayload<PacketType>*)dst + dstOffset;
+  if(threadIdx.x == 0) printf("osso\n");
   for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketPayload<PacketType> data = {};
     for (int index = 0; index < nSrcs; ++index) {
       PacketType* pkt = (PacketType*)((char*)inputBuff + intputBaseOffset + 2 * inputOffsets[index]);
+      if(threadIdx.x == 0) printf("aiai: %p - %p\n", inputBuff, (char*)inputBuff + intputBaseOffset + 2 * inputOffsets[index]);
       PacketPayload<PacketType> val = pkt[idx].read(flag);
+      if(threadIdx.x == 0) printf("vamo la: %p - %p\n", inputBuff, (char*)inputBuff + intputBaseOffset + 2 * inputOffsets[index]);
       data = add_vectors<T>(data, val);
     }
     data = add_vectors<T>(data, srcPacketPayload[idx]);
     dstPacketPayload[idx] = data;
 
+    if(threadIdx.x == 0) printf("Trying writing packet\n");
     PacketType pkt(data, flag);
     for (int index = 0; index < nDstChannels; ++index) {
       size_t offset = (intputBaseOffset + outputOffsets[index] * 2) / sizeof(PacketType);
+      if(threadIdx.x == 0) printf("Writing packet %d\n", offset + idx);
       smChannels[outputChannelIndexes[index]].write(offset + idx, pkt);
+      if(threadIdx.x == 0) printf("Writed\n");
     }
   }
 }
@@ -310,7 +316,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
     dst4[dstOffset4 + idx] = tmp;
     for (int index = 0; index < nOutChannels; ++index) {
       size_t offset = outputOffsets[index] / sizeof(int4);
-      /* if(threadIdx.x == 0)  printf("smChannelsIdx: %d  offset: %d\n", outputChannelIndexes[index], offset + idx);*/
+      if(threadIdx.x == 0)  printf("smChannelsIdx: %d  offset: %d\n", outputChannelIndexes[index], offset + idx);
       smChannels[outputChannelIndexes[index]].write<int4>(offset + idx, tmp);
     }
   }
@@ -327,6 +333,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
     dst[idx] = tmp;
     for (int index = 0; index < nOutChannels; ++index) {
       size_t offset = outputOffsets[index] / sizeof(T);
+      if(threadIdx.x == 0)  printf("smChannelsIdx: %d  offset: %d\n", outputChannelIndexes[index], offset + idx);
       smChannels[outputChannelIndexes[index]].write<T>(offset + idx, tmp);
     }
   }
@@ -445,32 +452,23 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
     } else if (op.type == OperationType::REDUCE_SEND_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      auto outputOffsets = op.outputOffsets;
-      
-      for(int i = 0; i < op.nOutputs; i++)
-        if(op.outputChannelIndexes[i] == 0)
-          outputOffsets[i] += constOffsetOut;
 
       handleReduceSendPacket<T, PacketType>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize, op.inputOffsets,
-                                            op.nInputs, smChannels, op.outputChannelIndexes, outputOffsets,
+                                            op.nInputs, smChannels, op.outputChannelIndexes, op.outputOffsets,
                                             op.nOutputs, op.size, flag);
-    }  else if (op.type == OperationType::COPY_PACKET) {
+    } else if (op.type == OperationType::COPY_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       handleCopyPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);
-    }  else if (op.type == OperationType::REDUCE_SEND) {
+    } else if (op.type == OperationType::REDUCE_SEND) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       T* tmp = getBuffer(input, output, scratch, op.inputBufferType);
-      auto outputOffsets = op.outputOffsets;
-      
-      for(int i = 0; i < op.nOutputs; i++)
-        if(op.outputChannelIndexes[i] == 0)
-          outputOffsets[i] += constOffsetOut;
 
+      printf("REDUCE_SEND\n");
       handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, smChannels, op.outputChannelIndexes,
-                       outputOffsets, op.nOutputs, op.size);
-    }  
+                       op.outputOffsets, op.nOutputs, op.size);
+    } 
   }
 }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
