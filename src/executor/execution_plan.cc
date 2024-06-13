@@ -223,6 +223,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
         Operation operation = {};
         std::vector<uint32_t> chunkIndexes;
         operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
+        //printf("OperationName: %s\n", *op["name"]);
         if (op.contains("ctype")) {
           operation.channelType = convertToChannelType(op["ctype"]);
         }

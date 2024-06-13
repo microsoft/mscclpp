@@ -26,21 +26,21 @@ enum class ChannelType : uint8_t {
 };
 
 enum class OperationType : uint8_t {
-  BARRIER,
-  PUT,
-  PUT_PACKET,
-  GET,
-  COPY,
-  COPY_PACKET,
-  SIGNAL,
-  WAIT,
-  FLUSH,
-  REDUCE,
-  REDUCE_PACKET,
-  REDUCE_SEND,
-  REDUCE_SEND_PACKET,
-  READ_REDUCE_COPY,
-  READ_REDUCE_COPY_SEND,
+  BARRIER, //0
+  PUT, //1
+  PUT_PACKET, //2
+  GET, //3
+  COPY, //4
+  COPY_PACKET, //5
+  SIGNAL, //6
+  WAIT, //7
+  FLUSH, //8
+  REDUCE, //9
+  REDUCE_PACKET, //10
+  REDUCE_SEND, //11
+  REDUCE_SEND_PACKET, //12
+  READ_REDUCE_COPY, //13
+  READ_REDUCE_COPY_SEND, //14
 };
 
 struct Channels {

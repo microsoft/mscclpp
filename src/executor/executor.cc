@@ -87,7 +87,6 @@ struct Executor::Impl {
     plan.impl_->reset();
     plan.impl_->loadExecutionPlan(messageSize);
 
-
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize);
     std::shared_ptr<char> scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
@@ -237,7 +236,7 @@ struct Executor::Impl {
             printf("Creating Channel rank: %d - srcBuffType: %d - dstBuffType: %d - peer: %d - index: %d channelType: %d: %p %p %d (End: %p %p)\n",
              rank, (int)info.srcBufferType, (int)info.dstBufferType, peer, index, (int)channelType, src, context.registeredMemories[{info.dstBufferType, peer}].data(),
              context.registeredMemories[{info.dstBufferType, peer}].size(), (char*)src + context.registeredMemories[{info.dstBufferType, peer}].size(), (char*)context.registeredMemories[{info.dstBufferType, peer}].data() + context.registeredMemories[{info.dstBufferType, peer}].size());
-            //smChannelSet.insert({rank, peer});
+            smChannelSet.insert({rank, peer});
             //}
             context.smChannels.emplace_back(context.smSemaphores[index++],
                                             context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
@@ -313,8 +312,8 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   size_t offsetIn = (char*)sendbuff - (char*)sendBasePtr;
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
 
-  printf("Executor - rank: %d, sendbuff: %p, recvbuff: %p, stream: %p, sendBasePtr: %p, sendBytes: %lu, recvBasePtr: %p, recvBytes: %lu, offsetIn: %lu, offsetOut: %lu\n",
-   rank, sendbuff, recvbuff, stream, (void*)sendBasePtr, sendBytes, (void*)recvBasePtr, recvBytes, offsetIn, offsetOut);
+  //printf("Executor - rank: %d, sendbuff: %p, recvbuff: %p, stream: %p, sendBasePtr: %p, sendBytes: %lu, recvBasePtr: %p, recvBytes: %lu, offsetIn: %lu, offsetOut: %lu\n",
+  // rank, sendbuff, recvbuff, stream, (void*)sendBasePtr, sendBytes, (void*)recvBasePtr, recvBytes, offsetIn, offsetOut);
 
   /* if(offsetIn != 0 || offsetOut != 0) {
     return;
