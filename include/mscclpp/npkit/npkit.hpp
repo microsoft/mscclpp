@@ -50,7 +50,7 @@ class NpKit {
   }
 
   static MSCCLPP_DEVICE_INLINE void StoreGpuEventShm(NpKitEventCollectContext* npKitEventCollectContexts,
-                                                     uint64_t event_buffer_head) {
+                                                     NpKitEvent* event_buffer, uint64_t event_buffer_head) {
 #if defined(MSCCLPP_DEVICE_HIP)
     __synclds();
 #else   // !defined(MSCCLPP_DEVICE_HIP)

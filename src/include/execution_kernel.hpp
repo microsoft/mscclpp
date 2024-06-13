@@ -453,7 +453,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   }
 
 #if defined(ENABLE_NPKIT)
-  NpKit::StoreGpuEventShm(npKitEventCollectContexts, event_buffer_head);
+  NpKit::StoreGpuEventShm(npKitEventCollectContexts, event_buffer, event_buffer_head);
 #endif
 }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
