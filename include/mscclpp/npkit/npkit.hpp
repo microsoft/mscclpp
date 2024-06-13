@@ -51,11 +51,7 @@ class NpKit {
 
   static MSCCLPP_DEVICE_INLINE void StoreGpuEventShm(NpKitEventCollectContext* npKitEventCollectContexts,
                                                      NpKitEvent* event_buffer, uint64_t event_buffer_head) {
-#if defined(MSCCLPP_DEVICE_HIP)
-    __synclds();
-#else   // !defined(MSCCLPP_DEVICE_HIP)
-    __syncthreads();
-#endif  // !defined(MSCCLPP_DEVICE_HIP)
+    __syncshm();
     NpKitEventCollectContext* npKitCtx = npKitEventCollectContexts + blockIdx.x;
     NpKitEvent* global_event_buffer = npKitCtx->event_buffer;
     uint64_t global_event_buffer_head = npKitCtx->event_buffer_head;
