@@ -87,6 +87,7 @@ struct Executor::Impl {
     plan.impl_->reset();
     plan.impl_->loadExecutionPlan(messageSize);
 
+
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize);
     std::shared_ptr<char> scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);

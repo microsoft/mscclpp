@@ -245,7 +245,7 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<SmCh
   }
 }
 
-template <typename T, typename PacketType>
+template <typename T, typename PacketType, bool SendToRemote = true>
 MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBytes, T* src, uint32_t srcOffsetByBytes,
                                                   T* inputBuff, size_t inputBuffSize, uint32_t* inputOffsets, int nSrcs,
                                                   DeviceHandle<SmChannel>* smChannels, uint8_t* outputChannelIndexes,
@@ -270,13 +270,12 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBy
     data = add_vectors<T>(data, srcPacketPayload[idx]);
     dstPacketPayload[idx] = data;
 
-    if(threadIdx.x == 0) printf("Trying writing packet\n");
-    PacketType pkt(data, flag);
-    for (int index = 0; index < nDstChannels; ++index) {
-      size_t offset = (intputBaseOffset + outputOffsets[index] * 2) / sizeof(PacketType);
-      if(threadIdx.x == 0) printf("Writing packet %d\n", offset + idx);
-      smChannels[outputChannelIndexes[index]].write(offset + idx, pkt);
-      if(threadIdx.x == 0) printf("Writed\n");
+    if (SendToRemote) {
+      PacketType pkt(data, flag);
+      for (int index = 0; index < nDstChannels; ++index) {
+        size_t offset = (intputBaseOffset + outputOffsets[index] * 2) / sizeof(PacketType);
+        smChannels[outputChannelIndexes[index]].write(offset + idx, pkt);
+      }
     }
   }
 }
@@ -456,6 +455,12 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       handleReduceSendPacket<T, PacketType>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize, op.inputOffsets,
                                             op.nInputs, smChannels, op.outputChannelIndexes, op.outputOffsets,
                                             op.nOutputs, op.size, flag);
+    } else if (op.type == OperationType::REDUCE_PACKET) {
+      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
+      T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      handleReduceSendPacket<T, PacketType, false>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize,
+                                                   op.inputOffsets, op.nInputs, smChannels, op.outputChannelIndexes,
+                                                   op.outputOffsets, op.nOutputs, op.size, flag);
     } else if (op.type == OperationType::COPY_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
