@@ -17,10 +17,6 @@
 #if defined(MSCCLPP_DEVICE_COMPILE)
 #include <mscclpp/gpu_data_types.hpp>
 
-#if defined(MSCCLPP_DEVICE_HIP)
-#define __synclds() asm volatile("s_waitcnt lgkmcnt(0) \n s_barrier");
-#endif  // defined(MSCCLPP_DEVICE_HIP)
-
 namespace {
 template <typename To, typename From>
 MSCCLPP_DEVICE_INLINE To bit_cast(const From& src) {
@@ -360,11 +356,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   for (size_t i = tid; i < sizeof(DeviceExecutionPlan) / sizeof(int4); i += blockDim.x) {
     sharedMem[i] = ((int4*)localPlan)[i];
   }
-#if defined(MSCCLPP_DEVICE_HIP)
-  __synclds();
-#else   // !defined(MSCCLPP_DEVICE_HIP)
-  __syncthreads();
-#endif  // !defined(MSCCLPP_DEVICE_HIP)
+  __syncshm();
   localPlan = (DeviceExecutionPlan*)sharedMem;
   int nOperations = localPlan->nOperations;
   Operation* operations = localPlan->operations;

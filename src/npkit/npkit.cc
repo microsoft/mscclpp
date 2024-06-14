@@ -70,7 +70,7 @@ void NpKit::Init(int rank) {
 static int GetGpuClockRateInKhz() {
   int dev_id;
 #if defined(__HIP_PLATFORM_AMD__)
-  cudaDeviceProp_t dev_prop;
+  cudaDeviceProp dev_prop;
   char gcn_arch[256];
   MSCCLPP_CUDATHROW(cudaGetDevice(&dev_id));
   MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&dev_prop, dev_id));
