@@ -102,4 +102,11 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define USE_NVLS 0
 #endif  // !defined(__HIP_PLATFORM_AMD__)
 
+// GPU sync threads
+#if defined(__HIP_PLATFORM_AMD__)
+#define __syncshm() asm volatile("s_waitcnt lgkmcnt(0) \n s_barrier");
+#else
+#define __syncshm() __syncthreads();
+#endif
+
 #endif  // MSCCLPP_GPU_HPP_
