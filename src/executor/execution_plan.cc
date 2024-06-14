@@ -144,6 +144,33 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize) {
   }
   this->setupChannels(gpus);
 
+  //printf("Loading Execution Plan: %d\n", inputSize);
+  this->inputSize = inputSize;
+  this->setupOperations(gpus);
+}
+
+void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize) {
+  std::ifstream file(this->planPath);
+  json obj = json::parse(file);
+  if (this->name != obj["name"]) {
+    throw Error("Plan name does not match", ErrorCode::ExecutorError);
+  }
+  std::string protocol = obj["protocol"];
+  if (protocol == "LL") {
+    this->isUsingPacket = true;
+  }
+  const auto& gpus = obj["gpus"];
+
+  for (const auto& gpu : gpus) {
+    int rank = gpu["id"];
+    this->inputChunks[rank] = gpu["inputChunks"];
+    this->outputChunks[rank] = gpu["outputChunks"];
+    this->scratchChunks[rank] = gpu["scratchChunks"];
+    this->chunkGroups[rank] = gpu["chunkGroups"];
+  }
+  //this->setupChannels(gpus);
+
+  //printf("Light Loading Execution Plan: %d\n", inputSize);
   this->inputSize = inputSize;
   this->setupOperations(gpus);
 }
@@ -223,7 +250,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
         Operation operation = {};
         std::vector<uint32_t> chunkIndexes;
         operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
-        //printf("OperationName: %s\n", *op["name"]);
+        //printf("OperationName: %s\n", op["name"].c_str());
         if (op.contains("ctype")) {
           operation.channelType = convertToChannelType(op["ctype"]);
         }
@@ -238,6 +265,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
             operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["i_cids"][i]["off"]);
             chunkIndexes.push_back((uint32_t)op["i_cids"][i]["off"]);
           }
+          //printf("i_cids offset: %d\n", this->getOffset(rank, this->inputSize, (uint32_t)op["i_cids"][0]["off"]));
         }
         // will have either srcs or i_cids
         if (op.contains("srcs")) {
@@ -247,6 +275,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
             operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["srcs"][i]["off"]);
             chunkIndexes.push_back((uint32_t)op["srcs"][i]["off"]);
           }
+          //printf("srcs offset: %d\n", this->getOffset(rank, this->inputSize, (uint32_t)op["srcs"][0]["off"]));
         }
         if (op.contains("o_cids")) {
           operation.nOutputs = op["o_cids"].size();
@@ -258,6 +287,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
             operation.outputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["o_cids"][i]["off"]);
             chunkIndexes.push_back((uint32_t)op["o_cids"][i]["off"]);
           }
+          //printf("o_cids offset: %d\n", this->getOffset(rank, this->inputSize, (uint32_t)op["o_cids"][0]["off"]));
         }
         // will have either dsts or o_cids
         if (op.contains("dsts")) {
@@ -267,6 +297,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
             operation.outputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["dsts"][i]["off"]);
             chunkIndexes.push_back((uint32_t)op["dsts"][i]["off"]);
           }
+          //printf("dsts offset: %d\n", this->getOffset(rank, this->inputSize, (uint32_t)op["dsts"][0]["off"]));
         }
         if (op.contains("srcbuff")) {
           operation.srcBufferType = convertToBufferType(op["srcbuff"]);
@@ -341,6 +372,10 @@ void ExecutionPlan::Impl::reset() {
   this->outputChunks.clear();
   this->scratchChunks.clear();
   this->chunkGroups.clear();
+}
+
+void ExecutionPlan::Impl::lightReset() {
+  this->operations.clear();
 }
 
 ExecutionPlan::ExecutionPlan(const std::string& name, const std::string& planPath)

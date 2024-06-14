@@ -219,7 +219,7 @@ struct SmChannelDeviceHandle {
   template <typename PacketType = LL16Packet>
   MSCCLPP_DEVICE_INLINE void putPackets(uint64_t targetOffset, uint64_t originOffset, uint64_t originBytes,
                                         uint32_t threadId, uint32_t numThreads, uint32_t flag) {                                 
-    if(threadIdx.x == 0) printf("PuttingPacket: %p %p\n", (char *)src_ + originOffset, (char *)dst_ + targetOffset);
+    //if(threadIdx.x == 0) printf("PuttingPacket: %p %p\n", (char *)src_ + originOffset, (char *)dst_ + targetOffset);
     mscclpp::putPackets<PacketType>(dst_, targetOffset, src_, originOffset, originBytes, threadId, numThreads, flag);
   }
 

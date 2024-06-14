@@ -446,8 +446,9 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       /* for(int i = 0; i < op.nOutputs; i++)
         if(op.outputChannelIndexes[i] == 0)
           outputOffsets[i] += constOffsetOut;  */
-
-      handlePutPacket<PacketType>(scratchSize, smChannels, op.outputChannelIndexes, op.outputOffsets, inputOffsets,
+      
+      //printf("handlePutPackage: %d\n", op.inputOffsets[0]);
+      handlePutPacket<PacketType>(scratchSize, smChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
                                   op.nOutputs, op.size, flag);
 
       /* for(int i = 0; i < op.nOutputs; i++)

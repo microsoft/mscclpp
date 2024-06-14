@@ -82,15 +82,24 @@ struct Executor::Impl {
                                          size_t recvBufferSize, const ExecutionPlan& plan) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendBufferSize, recvBufferSize, plan.impl_->name};
     if (this->contexts.find(key) != this->contexts.end()) {
+      plan.impl_->lightReset();
+      plan.impl_->lightLoadExecutionPlan(messageSize);
+      this->setupDeviceExecutionPlan(this->contexts[key], rank, plan);
+      //cudaFree(this->contexts[key].deviceExecutionPlansBuffer.get());
+      this->contexts[key].deviceExecutionPlansBuffer =
+        allocExtSharedCuda<char>(this->contexts[key].deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan));
+    memcpyCuda(this->contexts[key].deviceExecutionPlansBuffer.get(), (char*)this->contexts[key].deviceExecutionPlans.data(),
+               this->contexts[key].deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
       return this->contexts[key];
     }
+
     plan.impl_->reset();
     plan.impl_->loadExecutionPlan(messageSize);
 
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize);
     std::shared_ptr<char> scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
-    printf("Creating Context Scratch Buffer: %p %d\n", scratchBuffer.get(), scratchBufferSize);
+    //printf("Creating Context Scratch Buffer: %p %d\n", scratchBuffer.get(), scratchBufferSize);
     context.scratchBuffer = scratchBuffer;
     context.scratchBufferSize = scratchBufferSize;
     //printf("setupExecutionContext %d: %d\n", rank, scratchBufferSize);
@@ -168,7 +177,7 @@ struct Executor::Impl {
       TransportFlags transportFlags = getTransportFlags(channelInfos, rank);
       RegisteredMemory memory =
           this->comm->registerMemory(getBufferInfo(bufferType).first, getBufferInfo(bufferType).second, transportFlags);
-      printf("Creating Registered Memory %d %d: %p %p %d \n", rank, (int)bufferType, memory.originalDataPtr(), memory.data(), memory.size());
+      //printf("Creating Registered Memory %d %d: %p %p %d \n", rank, (int)bufferType, memory.originalDataPtr(), memory.data(), memory.size());
       std::vector<int> connectedPeers = getConnectedPeers(channelInfos);
       std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
       for (int peer : connectedPeers) {
@@ -178,14 +187,14 @@ struct Executor::Impl {
       comm->setup();
       for (size_t i = 0; i < remoteRegMemoryFutures.size(); i++) {
         context.registeredMemories[{bufferType, connectedPeers[i]}] = std::move(remoteRegMemoryFutures[i].get());
-        printf("Getting Registered Memory %d %d %d: %p %p %d \n", rank, connectedPeers[i], (int)bufferType, context.registeredMemories[{bufferType, connectedPeers[i]}].originalDataPtr(), context.registeredMemories[{bufferType, connectedPeers[i]}].data(), context.registeredMemories[{bufferType, connectedPeers[i]}].size());
+        //printf("Getting Registered Memory %d %d %d: %p %p %d \n", rank, connectedPeers[i], (int)bufferType, context.registeredMemories[{bufferType, connectedPeers[i]}].originalDataPtr(), context.registeredMemories[{bufferType, connectedPeers[i]}].data(), context.registeredMemories[{bufferType, connectedPeers[i]}].size());
       }
     }
   }
 
   void setupChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize, int rank,
                      const ExecutionPlan& plan) {
-    printf("Setupping Channels: %d %p %p\n", rank, sendbuff, recvbuff);
+    //printf("Setupping Channels: %d %p %p\n", rank, sendbuff, recvbuff);
     const auto channelTypes = {ChannelType::SM, ChannelType::PROXY};
     std::vector<std::shared_ptr<SmDevice2DeviceSemaphore>> smSemaphores;
     std::vector<mscclpp::SemaphoreId> proxySemaphores;
@@ -227,15 +236,15 @@ struct Executor::Impl {
       for (ChannelInfo& info : channelInfos) {
         void* src = getBuffer(info.srcBufferType);
         TransportFlags transport = context.registeredMemories.begin()->second.transports();
-        printf("Before Creation Local Registered Memory %d %d: %p\n", rank, (int)info.srcBufferType, src);
+        //printf("Before Creation Local Registered Memory %d %d: %p\n", rank, (int)info.srcBufferType, src);
         RegisteredMemory localMemory = this->comm->registerMemory(src, sendBufferSize, transport);
-        printf("Creating Local Registered Memory %d %d: %p %p %d \n", rank, (int)info.srcBufferType, localMemory.originalDataPtr(), localMemory.data(), localMemory.size());
+        //printf("Creating Local Registered Memory %d %d: %p %p %d \n", rank, (int)info.srcBufferType, localMemory.originalDataPtr(), localMemory.data(), localMemory.size());
         for (int peer : info.connectedPeers) {
           if (channelType == ChannelType::SM) {
             //if(smChannelSet.find({rank, peer}) == smChannelSet.end()) {
-            printf("Creating Channel rank: %d - srcBuffType: %d - dstBuffType: %d - peer: %d - index: %d channelType: %d: %p %p %d (End: %p %p)\n",
-             rank, (int)info.srcBufferType, (int)info.dstBufferType, peer, index, (int)channelType, src, context.registeredMemories[{info.dstBufferType, peer}].data(),
-             context.registeredMemories[{info.dstBufferType, peer}].size(), (char*)src + context.registeredMemories[{info.dstBufferType, peer}].size(), (char*)context.registeredMemories[{info.dstBufferType, peer}].data() + context.registeredMemories[{info.dstBufferType, peer}].size());
+            //printf("Creating Channel rank: %d - srcBuffType: %d - dstBuffType: %d - peer: %d - index: %d channelType: %d: %p %p %d (End: %p %p)\n",
+            // rank, (int)info.srcBufferType, (int)info.dstBufferType, peer, index, (int)channelType, src, context.registeredMemories[{info.dstBufferType, peer}].data(),
+            // context.registeredMemories[{info.dstBufferType, peer}].size(), (char*)src + context.registeredMemories[{info.dstBufferType, peer}].size(), (char*)context.registeredMemories[{info.dstBufferType, peer}].data() + context.registeredMemories[{info.dstBufferType, peer}].size());
             smChannelSet.insert({rank, peer});
             //}
             context.smChannels.emplace_back(context.smSemaphores[index++],
@@ -320,10 +329,10 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   } */
 
   //printf("Setupping\n");
-  /* ExecutionContext context =
-      this->impl_->setupExecutionContext(rank, sendbuff, recvbuff, sendBuffSize, sendBuffSize, recvBuffSize, plan); */
   ExecutionContext context =
-      this->impl_->setupExecutionContext(rank, sendBasePtr, recvBasePtr, sendBuffSize, sendBytes, recvBytes, plan);
+      this->impl_->setupExecutionContext(rank, sendbuff, recvbuff, sendBuffSize, sendBuffSize, recvBuffSize, plan);
+  /* ExecutionContext context =
+      this->impl_->setupExecutionContext(rank, sendBasePtr, recvBasePtr, sendBuffSize, sendBytes, recvBytes, plan); */
   //printf("Setup Finalized\n");
   // TODO(binyli): need to flush proxy channel here this->impl_->proxyService->startProxy();
   this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvbuff, offsetIn, offsetOut, dataType, stream, packetType);

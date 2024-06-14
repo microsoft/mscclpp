@@ -372,6 +372,7 @@ template <class T>
 void memcpyCuda(T* dst, const T* src, size_t count, cudaMemcpyKind kind = cudaMemcpyDefault) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   CudaStreamWithFlags stream(cudaStreamNonBlocking);
+  //printf("cudaMemcpyAsync: %p, %p, %d\n", src, dst, count * sizeof(T));
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, count * sizeof(T), kind, stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 }
