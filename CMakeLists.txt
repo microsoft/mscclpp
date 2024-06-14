@@ -15,7 +15,6 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Options
 option(ENABLE_TRACE "Enable tracing" OFF)
-option(USE_NPKIT "Use NPKIT" ON)
 option(BUILD_TESTS "Build tests" ON)
 option(BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(USE_CUDA "Use NVIDIA/CUDA." OFF)
@@ -119,8 +118,8 @@ endif()
 if(ENABLE_TRACE)
     target_compile_definitions(mscclpp_obj PRIVATE ENABLE_TRACE)
 endif()
-if(USE_NPKIT)
-    target_compile_definitions(mscclpp_obj PRIVATE ENABLE_NPKIT)
+if(NPKIT_FLAGS)
+    target_compile_definitions(mscclpp_obj PRIVATE ${NPKIT_FLAGS})
 endif()
 
 # libmscclpp
