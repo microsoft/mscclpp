@@ -245,7 +245,7 @@ struct Executor::Impl {
             //printf("Creating Channel rank: %d - srcBuffType: %d - dstBuffType: %d - peer: %d - index: %d channelType: %d: %p %p %d (End: %p %p)\n",
             // rank, (int)info.srcBufferType, (int)info.dstBufferType, peer, index, (int)channelType, src, context.registeredMemories[{info.dstBufferType, peer}].data(),
             // context.registeredMemories[{info.dstBufferType, peer}].size(), (char*)src + context.registeredMemories[{info.dstBufferType, peer}].size(), (char*)context.registeredMemories[{info.dstBufferType, peer}].data() + context.registeredMemories[{info.dstBufferType, peer}].size());
-            smChannelSet.insert({rank, peer});
+            //smChannelSet.insert({rank, peer});
             //}
             context.smChannels.emplace_back(context.smSemaphores[index++],
                                             context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
@@ -329,10 +329,10 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   } */
 
   //printf("Setupping\n");
-  ExecutionContext context =
-      this->impl_->setupExecutionContext(rank, sendbuff, recvbuff, sendBuffSize, sendBuffSize, recvBuffSize, plan);
   /* ExecutionContext context =
-      this->impl_->setupExecutionContext(rank, sendBasePtr, recvBasePtr, sendBuffSize, sendBytes, recvBytes, plan); */
+      this->impl_->setupExecutionContext(rank, sendbuff, recvbuff, sendBuffSize, sendBuffSize, recvBuffSize, plan); */
+  ExecutionContext context =
+      this->impl_->setupExecutionContext(rank, sendBasePtr, recvBasePtr, sendBuffSize, sendBytes, recvBytes, plan);
   //printf("Setup Finalized\n");
   // TODO(binyli): need to flush proxy channel here this->impl_->proxyService->startProxy();
   this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvbuff, offsetIn, offsetOut, dataType, stream, packetType);

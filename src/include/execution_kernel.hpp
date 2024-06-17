@@ -369,51 +369,54 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
     } else if (op.type == OperationType::WAIT) {
       handleWait(smChannels, proxyChannels, op.inputChannelIndexes, op.nInputs, op.channelType);
     } else if (op.type == OperationType::PUT) {
-      auto inputOffsets = op.inputOffsets;
-      auto outputOffsets = op.outputOffsets;
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
       
-      for(int i = 0; i < op.nInputs; i++)
-        if(op.outputChannelIndexes[i] == 0)
+      for(int i = 0; i < op.nOutputs; i++) {
+        inputOffsets[i] = op.inputOffsets[i];
+        if(op.outputChannelSrcMemoryType[i] != BufferType::SCRATCH)
           inputOffsets[i] += constOffsetIn;
-
-      for(int i = 0; i < op.nOutputs; i++)
-        if(op.outputChannelIndexes[i] == 0)
-          outputOffsets[i] += constOffsetOut;
-
-      if(threadIdx.x == 0){
-        //printf("HandlePut: %d %d %d %d\n", (int)op.inputBufferType, (int)op.outputBufferType , (int)op.srcBufferType, (int)op.dstBufferType);
-        for (int i = 0; i < op.nOutputs; i++) {
-          //printf("ChannelIdx: %d\n", op.outputChannelIndexes[i]);
-        }
       }
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
+
       handlePut(smChannels, proxyChannels, op.outputChannelIndexes, outputOffsets, inputOffsets, op.nOutputs,
                 op.size, op.channelType);
     }   else if (op.type == OperationType::GET) {
-      auto inputOffsets = op.inputOffsets;
-      auto outputOffsets = op.outputOffsets;
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
       
-      for(int i = 0; i < op.nInputs; i++)
-        if(op.inputChannelIndexes[i] == 0)
+      for(int i = 0; i < op.nInputs; i++) {
+        inputOffsets[i] = op.inputOffsets[i];
+        if(op.inputChannelSrcMemoryType[i] != BufferType::SCRATCH)
           inputOffsets[i] += constOffsetIn;
-
-      for(int i = 0; i < op.nInputs; i++)
-        if(op.inputChannelIndexes[i] == 0)
+      }
+      for(int i = 0; i < op.nInputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.inputChannelDstMemoryType[i] != BufferType::SCRATCH)
           outputOffsets[i] += constOffsetOut;
+      }
 
       handleGet(smChannels, op.inputChannelIndexes, outputOffsets, inputOffsets, op.nInputs, op.size);
     } else if (op.type == OperationType::READ_REDUCE_COPY_SEND) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      auto inputOffsets = op.inputOffsets;
-      auto outputOffsets = op.outputOffsets;
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
       
-      for(int i = 0; i < op.nInputs; i++)
-        if(op.inputChannelIndexes[i] == 0)
+      for(int i = 0; i < op.nInputs; i++) {
+        inputOffsets[i] = op.inputOffsets[i];
+        if(op.inputChannelSrcMemoryType[i] != BufferType::SCRATCH)
           inputOffsets[i] += constOffsetIn;
-
-      for(int i = 0; i < op.nOutputs; i++)
-        if(op.outputChannelIndexes[i] == 0)
+      }
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
           outputOffsets[i] += constOffsetOut;
+      }
 
       handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, smChannels, op.outputChannelIndexes,
                                op.inputChannelIndexes, outputOffsets, inputOffsets, op.nOutputs, op.nInputs,
@@ -421,53 +424,70 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
     } else if (op.type == OperationType::READ_REDUCE_COPY) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      auto inputOffsets = op.inputOffsets;
-      auto outputOffsets = op.outputOffsets;
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
       
-      for(int i = 0; i < op.nInputs; i++)
-        if(op.inputChannelIndexes[i] == 0)
+      for(int i = 0; i < op.nInputs; i++) {
+        inputOffsets[i] = op.inputOffsets[i];
+        if(op.inputChannelSrcMemoryType[i] != BufferType::SCRATCH)
           inputOffsets[i] += constOffsetIn;
-
-      for(int i = 0; i < op.nOutputs; i++)
-        if(op.outputChannelIndexes[i] == 0)
+      }
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
           outputOffsets[i] += constOffsetOut;
+      }
 
       handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, smChannels, op.outputChannelIndexes,
                                op.inputChannelIndexes, outputOffsets, inputOffsets, op.nOutputs, op.nInputs,
                                op.size, false);
     } else if (op.type == OperationType::PUT_PACKET) {
       uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
-      //auto outputOffsets = op.outputOffsets;
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
       
-      for(int i = 0; i < op.nOutputs; i++)
-        //if(op.inputChannelIndexes[i] == 0)
-          inputOffsets[i] = op.inputOffsets[i] + constOffsetIn;
+      for(int i = 0; i < op.nOutputs; i++) {
+        inputOffsets[i] = op.inputOffsets[i];
+        if(op.outputChannelSrcMemoryType[i] != BufferType::SCRATCH)
+          inputOffsets[i] += constOffsetIn;
+      }
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+          if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
 
-      /* for(int i = 0; i < op.nOutputs; i++)
-        if(op.outputChannelIndexes[i] == 0)
-          outputOffsets[i] += constOffsetOut;  */
-      
-      //printf("handlePutPackage: %d\n", op.inputOffsets[0]);
-      handlePutPacket<PacketType>(scratchSize, smChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
+
+      //if(threadIdx.x == 0) printf("PUT_PACKET: %d %d %d %d\n", (int)op.outputChannelSrcMemoryType[0], (int)op.outputChannelDstMemoryType[0], inputOffsets[0], outputOffsets[0]);
+      handlePutPacket<PacketType>(scratchSize, smChannels, op.outputChannelIndexes, outputOffsets, inputOffsets,
                                   op.nOutputs, op.size, flag);
-
-      /* for(int i = 0; i < op.nOutputs; i++)
-        if(op.outputChannelIndexes[i] == 0)
-          outputOffsets[i] -= constOffsetOut; */
-
     } else if (op.type == OperationType::REDUCE_SEND_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
 
       handleReduceSendPacket<T, PacketType>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize, op.inputOffsets,
-                                            op.nInputs, smChannels, op.outputChannelIndexes, op.outputOffsets,
+                                            op.nInputs, smChannels, op.outputChannelIndexes, outputOffsets,
                                             op.nOutputs, op.size, flag);
     } else if (op.type == OperationType::REDUCE_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
+
       handleReduceSendPacket<T, PacketType, false>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize,
                                                    op.inputOffsets, op.nInputs, smChannels, op.outputChannelIndexes,
-                                                   op.outputOffsets, op.nOutputs, op.size, flag);
+                                                   outputOffsets, op.nOutputs, op.size, flag);
     } else if (op.type == OperationType::COPY_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
@@ -476,8 +496,16 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       T* tmp = getBuffer(input, output, scratch, op.inputBufferType);
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
+
       handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, smChannels, op.outputChannelIndexes,
-                       op.outputOffsets, op.nOutputs, op.size);
+                       outputOffsets, op.nOutputs, op.size);
     } 
   }
 }

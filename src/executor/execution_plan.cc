@@ -257,11 +257,11 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
         if (op.contains("i_cids")) {
           operation.nInputs = op["i_cids"].size();
           for (int i = 0; i < operation.nInputs; i++) {
-            BufferType srcBufferType = convertToBufferType(op["i_buff"]["src"]);
-            BufferType dstBufferType = convertToBufferType(op["i_buff"]["dst"]);
             // Get the relevant channel index in rank channelInfos
+            operation.inputChannelSrcMemoryType[i] = convertToBufferType(op["i_buff"]["src"]);
+            operation.inputChannelDstMemoryType[i] = convertToBufferType(op["i_buff"]["dst"]);
             operation.inputChannelIndexes[i] =
-                channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
+                channelIndexes[{operation.inputChannelSrcMemoryType[i], operation.inputChannelDstMemoryType[i], operation.channelType}][op["i_cids"][i]["id"]];
             operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["i_cids"][i]["off"]);
             chunkIndexes.push_back((uint32_t)op["i_cids"][i]["off"]);
           }
@@ -280,14 +280,13 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
         if (op.contains("o_cids")) {
           operation.nOutputs = op["o_cids"].size();
           for (int i = 0; i < operation.nOutputs; i++) {
-            BufferType srcBufferType = convertToBufferType(op["o_buff"]["src"]);
-            BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
+            operation.outputChannelSrcMemoryType[i] = convertToBufferType(op["o_buff"]["src"]);
+            operation.outputChannelDstMemoryType[i] = convertToBufferType(op["o_buff"]["dst"]);
             operation.outputChannelIndexes[i] =
-                channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["o_cids"][i]["id"]];
+                channelIndexes[{operation.outputChannelSrcMemoryType[i], operation.outputChannelDstMemoryType[i], operation.channelType}][op["o_cids"][i]["id"]];
             operation.outputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["o_cids"][i]["off"]);
             chunkIndexes.push_back((uint32_t)op["o_cids"][i]["off"]);
           }
-          //printf("o_cids offset: %d\n", this->getOffset(rank, this->inputSize, (uint32_t)op["o_cids"][0]["off"]));
         }
         // will have either dsts or o_cids
         if (op.contains("dsts")) {
