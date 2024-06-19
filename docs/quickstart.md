@@ -70,7 +70,7 @@ $ CXX=/path/to/hipcc python -m pip install .
 Our base image installs all prerequisites for MSCCL++.
 
 ```bash
-$ docker pull ghcr.io/microsoft/mscclpp/mscclpp:base-cuda12.3
+$ docker pull ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.3
 ```
 
 See all available images [here](https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp).
@@ -106,7 +106,7 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.
 ```bash
 # Choose `requirements_*.txt` according to your CUDA/ROCm version.
 $ python3 -m pip install -r ./python/requirements_cuda12.txt
-$ mpirun -tag-output -np 8 python3 ./python/benchmark/allreduce_bench.py
+$ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
 ```
 
 ### C++ Benchmark (mscclpp-test)
