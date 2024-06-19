@@ -26,7 +26,7 @@ struct DeviceMulticastPointerDeviceHandle {
 
 #if defined(MSCCLPP_DEVICE_CUDA)
   template <int NElemPerThread = 4, typename TValue = float4, typename T = float>
-  MSCCLPP_DEVICE_INLINE static void multimemLoad(TValue& val, T* ptr) {
+  MSCCLPP_DEVICE_INLINE static void multimemLoadReduce(TValue& val, T* ptr) {
     static_assert(NElemPerThread == 4, "Only support NElemPerThread == 4");
     if constexpr (std::is_same<T, float>::value) {
       asm("multimem.ld_reduce.relaxed.sys.global.add.v4.f32 {%0,%1,%2,%3}, [%4];"
@@ -53,6 +53,22 @@ struct DeviceMulticastPointerDeviceHandle {
     } else if constexpr (std::is_same<T, __half2>::value) {
       asm volatile("multimem.st.relaxed.sys.global.v4.f16x2 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x), "r"(val.y),
                    "r"(val.z), "r"(val.w)
+                   : "memory");
+    } else {
+      static_assert(dependentFalse<T>, "Not supported type");
+    }
+  };
+
+  template <int NElemPerThread = 4, typename TValue, typename T>
+  MSCCLPP_DEVICE_INLINE static void multimemStoreReduce(const TValue& val, T* ptr) {
+    static_assert(NElemPerThread == 4, "Only support NElemPerThread == 4");
+    if constexpr (std::is_same<T, float>::value) {
+      asm volatile("multimem.red.relaxed.sys.global.add.v4.f32 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x), "r"(val.y),
+                   "r"(val.z), "r"(val.w)
+                   : "memory");
+    } else if constexpr (std::is_same<T, half2>::value) {
+      asm volatile("multimem.red.relaxed.sys.global.add.v4.f16x2 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x),
+                   "r"(val.y), "r"(val.z), "r"(val.w)
                    : "memory");
     } else {
       static_assert(dependentFalse<T>, "Not supported type");
