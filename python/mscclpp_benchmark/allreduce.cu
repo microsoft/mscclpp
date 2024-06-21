@@ -791,8 +791,8 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 // Barrier among all devices followed by a memory fence
 // Should be called by all threads on all devices
 // Assumes \p num_threads_per_block >= \p num_ranks
-__device__ void barrier(mscclpp::SmDevice2DeviceSemaphoreDeviceHandle* semaphores, int thread_id, int block_id,
-                        int num_threads_per_block, int num_blocks, int num_ranks) {
+__forceinline__ __device__ void barrier(mscclpp::SmDevice2DeviceSemaphoreDeviceHandle* semaphores, int thread_id,
+                                        int block_id, int num_blocks, int num_ranks) {
   // wait for every device
   if (block_id == 0) {
     // 1 less than the num_ranks because there is no semaphore for self
@@ -820,7 +820,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   // start with a barrier to ensure all devices have written their values
   // to their own memory (that is part of the multicast memory)
   // before reading them in this kernel
-  barrier(semaphores, tid, bid, num_threads_per_block, num_blocks, nranks);
+  barrier(semaphores, tid, bid, num_blocks, nranks);
 
   int my_st = ((int64_t)nelem * (int64_t)my_rank) / (int64_t)nranks;
   int my_en = ((int64_t)nelem * (int64_t)(my_rank + 1)) / (int64_t)nranks;
@@ -837,6 +837,6 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   // end with a barrier to ensure all devices can now read their values
   // from their own memory (that is part of the multicast memory)
   // after writing them in this kernel
-  barrier(semaphores, tid, bid, num_threads_per_block, num_blocks, nranks);
+  barrier(semaphores, tid, bid, num_blocks, nranks);
 }
 #endif
