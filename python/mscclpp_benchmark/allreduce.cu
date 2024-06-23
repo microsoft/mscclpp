@@ -814,7 +814,6 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   float* mc_ptr = (float*)nvlsPtrs.mcPtr;
   int tid = threadIdx.x;
   int bid = blockIdx.x;
-  int num_threads_per_block = blockDim.x;
   int num_blocks = gridDim.x;
 
   // start with a barrier to ensure all devices have written their values
