@@ -222,6 +222,7 @@ def run_benchmark(
 
     return memory.nbytes, mscclpp_algBw, nccl_algBw, speed_up
 
+
 def is_valid(ip):
     """
     Check if the IP address is valid for connecting to other devices.
@@ -229,6 +230,7 @@ def is_valid(ip):
     """
     ip_obj = ipaddress.ip_address(ip)
     return not (ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast)
+
 
 def get_netinterface_info():
     """
@@ -239,11 +241,12 @@ def get_netinterface_info():
         addresses = ni.ifaddresses(interface)
         if ni.AF_INET in addresses:
             for addr in addresses[ni.AF_INET]:
-                ip_address = addr['addr']
+                ip_address = addr["addr"]
                 if is_valid(ip_address):
                     print(f"Selected Interface: {interface}, IP Address: {ip_address}")
                     return interface, ip_address
     return None, None
+
 
 if __name__ == "__main__":
     shm_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
