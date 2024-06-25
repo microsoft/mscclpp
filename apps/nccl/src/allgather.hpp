@@ -14,7 +14,7 @@
 
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
-    allgather6(void* sendbuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, size_t rank,
+    allgather6(void* sendbuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, size_t channelOutOffset, size_t rank,
                [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
   const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
   const size_t lid = tid % WARP_SIZE;
@@ -53,10 +53,10 @@ __global__ void __launch_bounds__(1024, 1)
       char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
       char* buff = reinterpret_cast<char*>(sendbuff);
       const size_t offsetWithinRank = (wid / nPeer) * unitBytesPerWarp;
-      smChans[peerIdx].copy<16, false>(src + offset, buff + offsetWithinRank, unitBytesPerWarp, lid, WARP_SIZE);
-      smChans[peerIdx].copy<16, false>(dst + offset, buff + offsetWithinRank, unitBytesPerWarp, lid, WARP_SIZE);
+      smChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid, WARP_SIZE);
+      smChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid, WARP_SIZE);
     } else {
-      smChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+      smChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
     }
   }
 
@@ -69,10 +69,10 @@ __global__ void __launch_bounds__(1024, 1)
       char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
       char* buff = reinterpret_cast<char*>(sendbuff);
       const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
-      smChans[peerIdx].copy<16, false>(src + offset, buff + offsetWithinRank, unitBytesPerWarp, lid, WARP_SIZE);
-      smChans[peerIdx].copy<16, false>(dst + offset, buff + offsetWithinRank, unitBytesPerWarp, lid, WARP_SIZE);
+      smChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid, WARP_SIZE);
+      smChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid, WARP_SIZE);
     } else {
-      smChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+      smChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
     }
   }
 
@@ -89,10 +89,10 @@ __global__ void __launch_bounds__(1024, 1)
         char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
         char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
         char* buff = reinterpret_cast<char*>(sendbuff);
-        smChans[peerIdx].copy<16, true>(src + offset, buff + offsetWithinRank, remainBytes, lid, WARP_SIZE);
-        smChans[peerIdx].copy<16, true>(dst + offset, buff + offsetWithinRank, remainBytes, lid, WARP_SIZE);
+        smChans[peerIdx].copy<16, true>(src + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid, WARP_SIZE);
+        smChans[peerIdx].copy<16, true>(dst + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid, WARP_SIZE);
       } else {
-        smChans[peerIdx].put<16, true>(offset, remainBytes, lid, WARP_SIZE);
+        smChans[peerIdx].put<16, true>(offset + channelOutOffset, remainBytes, lid, WARP_SIZE);
       }
     }
   }
@@ -100,9 +100,9 @@ __global__ void __launch_bounds__(1024, 1)
 
 template <bool IsOutOfPlace, typename T>
 cudaError_t allgather(T* buff, [[maybe_unused]] T* scratch, [[maybe_unused]] T* resultBuff,
-                      mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, int rank, int nRanksPerNode, int worldSize,
+                      mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, size_t channelOutOffset, int rank, int nRanksPerNode, int worldSize,
                       size_t nelems, cudaStream_t stream) {
-  allgather6<IsOutOfPlace><<<28, 1024, 0, stream>>>((void*)buff, smChannels, rank, worldSize, nRanksPerNode,
+  allgather6<IsOutOfPlace><<<28, 1024, 0, stream>>>((void*)buff, smChannels, channelOutOffset, rank, worldSize, nRanksPerNode,
                                                     nelems * sizeof(T) / sizeof(int));
   return cudaGetLastError();
 }
