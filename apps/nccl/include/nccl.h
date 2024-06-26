@@ -1,9 +1,6 @@
-/*************************************************************************
- * Copyright (c) 2015-2021, NVIDIA CORPORATION. All rights reserved.
- * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
- *
- * See LICENSE.txt for license information
- ************************************************************************/
+// Copyright (c) 2015-2021, NVIDIA CORPORATION. All rights reserved.
+// Modifications Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #ifndef NCCL_H_
 #define NCCL_H_
