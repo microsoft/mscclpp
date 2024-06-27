@@ -1,14 +1,46 @@
-# NCCL Interfaces of MSCCL++
+## NCCL Over MSCCL++
 
-Compile
+### Limitations
 
-```bash
-CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_APPS_NCCL=ON ..
-make -j
-```
+Current NCCL over MSCCL++ has a few limitations.
 
-Run rccl-tests
+* We do not cover all APIs yet. See the [API Support Table](#api-support-table) for details.
+* Multi-node communication is not supported yet.
+* Currently, collective communication functions may not work correctly if the buffer address is differed from that of previous function calls while sharing the same base address (returned by [cuMemGetAddressRange](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g64fee5711274a2a0573a789c94d8299b)) with the previous address. This is because the current implementation performs zero-copy communication over user buffers, and it is difficult to efficiently inform all ranks if the buffer address dynamically changes.
 
-```bash
-mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/apps/nccl/libmscclpp_nccl.so -x HIP_FORCE_DEV_KERNARG=1 -x HSA_ENABLE_IPC_MODE_LEGACY=1 -x MSCCLPP_DEBUG=WARN -x MSCCLPP_DEBUG_SUBSYS=ALL -x NCCL_DEBUG=WARN ./build/all_reduce_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
-```
+### API Support Table
+
+The table below lists all NCCL APIs (v2.21). We may cover more APIs in the future.
+
+| API Name                 | Supported |
+| :----------------------- | :-------: |
+| ncclGetLastError         | X         |
+| ncclGetErrorString       | O         |
+| ncclGetVersion           | O         |
+| ncclGetUniqueId          | O         |
+| ncclCommInitRank         | O         |
+| ncclCommInitAll          | X         |
+| ncclCommInitRankConfig   | X         |
+| ncclCommSplit            | X         |
+| ncclCommFinalize         | O         |
+| ncclCommDestroy          | O         |
+| ncclCommAbort            | X         |
+| ncclCommGetAsyncError    | O         |
+| ncclCommCount            | O         |
+| ncclCommCuDevice         | O         |
+| ncclCommUserRank         | O         |
+| ncclCommRegister         | X         |
+| ncclCommDeregister       | X         |
+| ncclMemAlloc             | X         |
+| ncclMemFree              | X         |
+| ncclAllReduce            | O         |
+| ncclBroadcast            | X         |
+| ncclReduce               | X         |
+| ncclAllGather            | O         |
+| ncclReduceScatter        | X         |
+| ncclGroupStart           | O         |
+| ncclGroupEnd             | O         |
+| ncclSend                 | X         |
+| ncclRecv                 | X         |
+| ncclRedOpCreatePreMulSum | X         |
+| ncclRedOpDestroy         | X         |

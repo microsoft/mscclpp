@@ -5,7 +5,7 @@
 * Azure SKUs
     * [ND_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/nda100-v4-series)
     * [NDm_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series)
-    * ND_H100_v5
+    * [ND_H100_v5](https://learn.microsoft.com/en-us/azure/virtual-machines/nd-h100-v5-series)
     * [NC_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/nc-a100-v4-series) (TBD)
 * Non-Azure Systems
     * NVIDIA A100 GPUs + CUDA >= 11.8
@@ -84,7 +84,7 @@ $ make -j unit_tests
 $ ./test/unit_tests
 ```
 
-For thorough testing of MSCCL++ features, we need to use `mp_unit_tests` that require at least two GPUs on the system. `mp_unit_tests` also requires MPI to be installed on the system. For example, the following commands run `mp_unit_tests` with two processes (two GPUs). The number of GPUs can be changed by changing the number of processes.
+For thorough testing of MSCCL++ features, we need to use `mp_unit_tests` that require at least two GPUs on the system. `mp_unit_tests` also requires MPI to be installed on the system. For example, the following commands compile and run `mp_unit_tests` with two processes (two GPUs). The number of GPUs can be changed by changing the number of processes.
 
 ```bash
 $ make -j mp_unit_tests
@@ -147,3 +147,20 @@ USAGE: allreduce_test_perf
         [-o, --output_file <output file name>]
         [-h,--help]
 ```
+
+## NCCL over MSCCL++
+
+We implement [NCCL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api.html) APIs using MSCCL++. How to use:
+
+1. [Build MSCCL++ from source](#build-from-source).
+2. Replace your `libnccl.so` library with `libmscclpp_nccl.so`, which is compiled under `./build/apps/nccl/` directory.
+
+For example, you can run [nccl-tests](https://github.com/NVIDIA/nccl-tests) using `libmscclpp_nccl.so` as follows, where `MSCCLPP_BUILD` is your MSCCL++ build directory.
+
+```bash
+mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/apps/nccl/libmscclpp_nccl.so ./build/all_reduce_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
+```
+
+If MSCCL++ is built on AMD platforms, `libmscclpp_nccl.so` would replace the [RCCL](https://github.com/ROCm/rccl) library (i.e., `librccl.so`).
+
+See limitations of the current NCCL over MSCCL++ from [here](../apps/nccl/README.md#limitations).
