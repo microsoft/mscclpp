@@ -14,6 +14,12 @@
 
 #if defined(__HIP_PLATFORM_AMD__)
 #define NPKIT_GET_GPU_TIMESTAMP wall_clock64
+#define NPKIT_MAX_NUM_GPU_THREADBLOCKS 64
+#define NPKIT_CPU_TIMESTAMP_SLOT_SIZE 128
+#define NPKIT_LOAD_CPU_TIMESTAMP_PER_BLOCK(buf, blk) *(buf + NPKIT_CPU_TIMESTAMP_SLOT_SIZE * blk / sizeof(uint64_t))
+#define NPKIT_STORE_CPU_TIMESTAMP_PER_BLOCK(buf, val, blk) \
+  *reinterpret_cast<volatile uint64_t*>(buf + NPKIT_CPU_TIMESTAMP_SLOT_SIZE * blk / sizeof(uint64_t)) = val
+
 #else
 #define NPKIT_GET_GPU_TIMESTAMP clock64
 #endif
@@ -85,7 +91,11 @@ class NpKit {
 
   static uint64_t rank_;
 
+#if defined(__HIP_PLATFORM_AMD__)
+  static mscclpp::UniqueCudaHostPtr<uint64_t[]> cpu_timestamp_;
+#else
   static mscclpp::UniqueCudaHostPtr<uint64_t> cpu_timestamp_;
+#endif
   static std::unique_ptr<std::thread> cpu_timestamp_update_thread_;
   static volatile bool cpu_timestamp_update_thread_should_stop_;
 };

@@ -18,7 +18,11 @@ std::vector<std::unique_ptr<NpKitEvent[]>> NpKit::cpu_event_buffers_;
 mscclpp::UniqueCudaPtr<NpKitEventCollectContext> NpKit::gpu_collect_contexts_;
 std::unique_ptr<NpKitEventCollectContext[]> NpKit::cpu_collect_contexts_;
 
+#if defined(__HIP_PLATFORM_AMD__)
+mscclpp::UniqueCudaHostPtr<uint64_t[]> NpKit::cpu_timestamp_;
+#else
 mscclpp::UniqueCudaHostPtr<uint64_t> NpKit::cpu_timestamp_;
+#endif
 std::unique_ptr<std::thread> NpKit::cpu_timestamp_update_thread_;
 volatile bool NpKit::cpu_timestamp_update_thread_should_stop_ = false;
 
@@ -26,10 +30,18 @@ void NpKit::CpuTimestampUpdateThread() {
   uint64_t init_system_clock = std::chrono::system_clock::now().time_since_epoch().count();
   uint64_t init_steady_clock = std::chrono::steady_clock::now().time_since_epoch().count();
   uint64_t curr_steady_clock = 0;
-  volatile uint64_t* volatile_cpu_timestamp_ = cpu_timestamp_.get();
   while (!cpu_timestamp_update_thread_should_stop_) {
+#if defined(__HIP_PLATFORM_AMD__)
+    for (int i = 0; i < NPKIT_MAX_NUM_GPU_THREADBLOCKS; i++) {
+      curr_steady_clock = std::chrono::steady_clock::now().time_since_epoch().count();
+      NPKIT_STORE_CPU_TIMESTAMP_PER_BLOCK(cpu_timestamp_.get(),
+                                          init_system_clock + (curr_steady_clock - init_steady_clock), i);
+    }
+#else
     curr_steady_clock = std::chrono::steady_clock::now().time_since_epoch().count();
+    volatile uint64_t* volatile_cpu_timestamp_ = cpu_timestamp_.get();
     *volatile_cpu_timestamp_ = init_system_clock + (curr_steady_clock - init_steady_clock);
+#endif
   }
 }
 
@@ -55,10 +67,20 @@ void NpKit::Init(int rank) {
     cpu_collect_contexts_[i] = ctx;
   }
 
+#if defined(__HIP_PLATFORM_AMD__)
+  // Init timestamp. Allocates MAXCHANNELS*128 bytes buffer for GPU
+  cpu_timestamp_ = mscclpp::makeUniqueCudaHost<uint64_t[]>(NPKIT_MAX_NUM_GPU_THREADBLOCKS *
+                                                           NPKIT_CPU_TIMESTAMP_SLOT_SIZE / sizeof(uint64_t));
+  for (int i = 0; i < NPKIT_MAX_NUM_GPU_THREADBLOCKS; i++) {
+    NPKIT_STORE_CPU_TIMESTAMP_PER_BLOCK(cpu_timestamp_.get(),
+                                        std::chrono::system_clock::now().time_since_epoch().count(), i);
+  }
+#else
   // Init timestamp
   cpu_timestamp_ = mscclpp::makeUniqueCudaHost<uint64_t>();
   volatile uint64_t* volatile_cpu_timestamp = cpu_timestamp_.get();
   *volatile_cpu_timestamp = std::chrono::system_clock::now().time_since_epoch().count();
+#endif
   cpu_timestamp_update_thread_should_stop_ = false;
   cpu_timestamp_update_thread_ = std::make_unique<std::thread>(CpuTimestampUpdateThread);
 #else

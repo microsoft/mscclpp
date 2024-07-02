@@ -262,6 +262,14 @@ struct Executor::Impl {
     static uint32_t flag = 0;
     int nthreadblocks = context.deviceExecutionPlans.size();
 #if defined(ENABLE_NPKIT)
+#if defined(__HIP_PLATFORM_AMD__)
+    if (nthreadblocks > NPKIT_MAX_NUM_GPU_THREADBLOCKS) {
+      throw Error("Executor plan launching " + std::to_string(nthreadblocks) +
+                      " thread blocks, exceeding NPKit support (" + std::to_string(NPKIT_MAX_NUM_GPU_THREADBLOCKS) +
+                      ")",
+                  ErrorCode::ExecutorError);
+    }
+#endif
     size_t sharedMemSize = sizeof(DeviceExecutionPlan) + NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
 #else
     size_t sharedMemSize = sizeof(DeviceExecutionPlan);
