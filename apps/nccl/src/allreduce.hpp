@@ -142,11 +142,13 @@ __global__ void __launch_bounds__(32, 1)
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   const int peerIdx = blockIdx.x / nBlocksPerPeer;
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
+  // Double buffering
+  size_t scratchBaseOffset = (flag & 1) ? 0 : 4 * worldSize * nelems * sizeof(mscclpp::LL8Packet);
   size_t srcOffset = channelDataOffset;
-  size_t scratchOffset = rank * nelems * sizeof(mscclpp::LL8Packet);
+  size_t scratchOffset = scratchBaseOffset + rank * nelems * sizeof(mscclpp::LL8Packet);
   uint32_t* src = (uint32_t*)((char*)buff);
   uint32_t* dst = (uint32_t*)((char*)resultBuff);
-  uint32_t* scrt = (uint32_t*)((char*)scratch);
+  void* scratchBuff = (void*)((char*)scratch + scratchBaseOffset);
 
   __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> channels[NRANKS_PER_NODE - 1];
   const int lid = tid % WARP_SIZE;
@@ -164,7 +166,7 @@ __global__ void __launch_bounds__(32, 1)
     uint32_t data = 0;
     for (int index = 0; index < nPeers; index++) {
       const int remoteRank = index < rank ? index : index + 1;
-      mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)scratch + remoteRank * nelems;
+      mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)scratchBuff + remoteRank * nelems;
       uint32_t val = dstPkt[idx].read(flag, -1);
       data = add_vectors<T>(val, data);
     }
