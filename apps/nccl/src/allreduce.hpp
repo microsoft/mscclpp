@@ -131,7 +131,7 @@ __forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem) {
 
 template <typename T>
 __global__ void __launch_bounds__(32, 1)
-    allreduceSmallSize2B(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, size_t channelDataOffset, int rank,
+    allreduceSmallSize(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, size_t channelDataOffset, int rank,
                int nRanksPerNode, int worldSize, size_t nelems, uint32_t flag) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
@@ -147,9 +147,11 @@ __global__ void __launch_bounds__(32, 1)
   size_t scratchBaseOffset = (flag & 1) ? 0 : 4 * worldSize * nelems * sizeof(mscclpp::LL8Packet);
   size_t srcOffset = channelDataOffset;
   size_t scratchOffset = scratchBaseOffset + rank * nelems * sizeof(mscclpp::LL8Packet);
-  short* src = (short*)((char*)buff);
-  short* dst = (short*)((char*)resultBuff);
   void* scratchBuff = (void*)((char*)scratch + scratchBaseOffset);
+  uint16_t* src16 = (uint16_t*)((char*)buff);
+  uint16_t* dst16 = (uint16_t*)((char*)resultBuff);
+  uint32_t* src32 = (uint32_t*)((char*)buff);
+  uint32_t* dst32 = (uint32_t*)((char*)resultBuff);
 
   __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> channels[NRANKS_PER_NODE - 1];
   const int lid = tid % WARP_SIZE;
@@ -164,62 +166,29 @@ __global__ void __launch_bounds__(32, 1)
 
   // step 2: Reduce Data
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < orgNelems; idx += blockDim.x * gridDim.x) {
-    short data = 0;
-    int intIdx = idx * sizeof(T) / sizeof(int);
-    for (int index = 0; index < nPeers; index++) {
-      const int remoteRank = index < rank ? index : index + 1;
-      mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)scratchBuff + remoteRank * nelems;
-      short val = idx % 2 == 1 ? (dstPkt[intIdx].read(flag, -1) >> 16) & 0xFFFF : dstPkt[intIdx].read(flag, -1) & 0xFFFF;
-      data = add_vectors<T>(val, data);
+    if(sizeof(T) == 2){
+      uint16_t data = 0;
+      int intIdx = idx * sizeof(T) / sizeof(int);
+      for (int index = 0; index < nPeers; index++) {
+        const int remoteRank = index < rank ? index : index + 1;
+        mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)scratchBuff + remoteRank * nelems;
+        uint16_t val = idx % 2 == 1 ? (dstPkt[intIdx].read(flag, -1) >> 16) & 0xFFFF : dstPkt[intIdx].read(flag, -1) & 0xFFFF;
+        data = add_vectors<T>(val, data);
+      }
+      data = add_vectors<T>(data, src16[idx]);
+      dst16[idx] = data;
     }
-    data = add_vectors<T>(data, src[idx]);
-    dst[idx] = data;
-  }
-}
-
-template <typename T>
-__global__ void __launch_bounds__(32, 1)
-    allreduceSmallSize(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, size_t channelDataOffset, int rank,
-               int nRanksPerNode, int worldSize, size_t nelems, uint32_t flag) {
-  // This version of allreduce only works for single nodes
-  if (worldSize != nRanksPerNode) return;
-  nelems = nelems / (sizeof(int) / sizeof(T));
-  const int nPeers = nRanksPerNode - 1;
-  const int nBlocksPerPeer = gridDim.x / nPeers;
-  const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
-  const int tid = threadIdx.x + localBlockIdx * blockDim.x;
-  const int peerIdx = blockIdx.x / nBlocksPerPeer;
-  const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
-  // Double buffering
-  size_t scratchBaseOffset = (flag & 1) ? 0 : 4 * worldSize * nelems * sizeof(mscclpp::LL8Packet);
-  size_t srcOffset = channelDataOffset;
-  size_t scratchOffset = scratchBaseOffset + rank * nelems * sizeof(mscclpp::LL8Packet);
-  uint32_t* src = (uint32_t*)((char*)buff);
-  uint32_t* dst = (uint32_t*)((char*)resultBuff);
-  void* scratchBuff = (void*)((char*)scratch + scratchBaseOffset);
-
-  __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> channels[NRANKS_PER_NODE - 1];
-  const int lid = tid % WARP_SIZE;
-  if (lid < nPeers) {
-    channels[lid] = smChannels[lid];
-  }
-  __syncwarp();
-
-  // step 1: write data to each peer's scratch buffer
-  channels[peerIdx].putPackets<mscclpp::LL8Packet>(scratchOffset, srcOffset, nelems * sizeof(uint32_t), tid,
-                                                          blockDim.x * nBlocksPerPeer, flag);
-
-  // step 2: Reduce Data
-  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nelems; idx += blockDim.x * gridDim.x) {
-    uint32_t data = 0;
-    for (int index = 0; index < nPeers; index++) {
-      const int remoteRank = index < rank ? index : index + 1;
-      mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)scratchBuff + remoteRank * nelems;
-      uint32_t val = dstPkt[idx].read(flag, -1);
-      data = add_vectors<T>(val, data);
+    else{
+      uint32_t data = 0;
+      for (int index = 0; index < nPeers; index++) {
+        const int remoteRank = index < rank ? index : index + 1;
+        mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)scratchBuff + remoteRank * nelems;
+        uint32_t val = dstPkt[idx].read(flag, -1);
+        data = add_vectors<T>(val, data);
+      }
+      data = add_vectors<T>(data, src32[idx]);
+      dst32[idx] = data;
     }
-    data = add_vectors<T>(data, src[idx]);
-    dst[idx] = data;
   }
 }
 
@@ -415,13 +384,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                       int worldSize, size_t nelems, cudaStream_t stream) {
   static uint32_t flag = 1;
 
-  if(sizeof(T) * nelems == 2) {
-    int nBlocks = 7;
-    int nThreadsPerBlock = 32;
-    allreduceSmallSize2B<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset, rank, nRanksPerNode,
-                                                         worldSize, nelems, flag++);
-  }
-  else if(sizeof(T) * nelems < worldSize * sizeof(int)) {
+  if(sizeof(T) * nelems < worldSize * sizeof(int)) {
     int nBlocks = 7;
     int nThreadsPerBlock = 32;
     allreduceSmallSize<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset, rank, nRanksPerNode,
