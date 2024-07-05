@@ -131,9 +131,9 @@ __forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem) {
 
 template <typename T>
 __global__ void __launch_bounds__(32, 1)
-    allreduceSmallSize(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-                       size_t channelDataOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems,
-                       uint32_t flag) {
+    allreduceAllToAll(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
+                      size_t channelDataOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems,
+                      uint32_t flag) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
   if (sizeof(T) == 2) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
@@ -375,8 +375,8 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
     int nBlocks = 7;
     int nThreadsPerBlock = 32;
-    allreduceSmallSize<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset,
-                                                                 rank, nRanksPerNode, worldSize, nelems, flag++);
+    allreduceAllToAll<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset,
+                                                                rank, nRanksPerNode, worldSize, nelems, flag++);
   } else if (sizeof(T) * nelems <= (1 << 20)) {
     int nBlocks = 28;
     int nThreadsPerBlock = 1024;
