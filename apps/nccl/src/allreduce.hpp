@@ -143,11 +143,9 @@ __global__ void __launch_bounds__(32, 1)
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   const int peerIdx = blockIdx.x / nBlocksPerPeer;
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
-  // Double buffering
-  size_t scratchBaseOffset = (flag & 1) ? 0 : 4 * worldSize * nelems * sizeof(mscclpp::LL8Packet);
   size_t srcOffset = channelDataOffset;
-  size_t scratchOffset = scratchBaseOffset + rank * nelems * sizeof(mscclpp::LL8Packet);
-  void* scratchBuff = (void*)((char*)scratch + scratchBaseOffset);
+  size_t scratchOffset = +rank * nelems * sizeof(mscclpp::LL8Packet);
+  void* scratchBuff = (void*)((char*)scratch);
   uint32_t* src = (uint32_t*)((char*)buff);
   uint32_t* dst = (uint32_t*)((char*)resultBuff);
 
@@ -193,10 +191,8 @@ __global__ void __launch_bounds__(1024, 1)
   const int peerIdx = blockIdx.x / nBlocksPerPeer;
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
-  // double buffering
-  size_t scratchBaseOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LL8Packet);
-  void* scratchBuff = (void*)((char*)scratch + scratchBaseOffset);
-  size_t scratchOffset = scratchBaseOffset + rank * nPktsPerRank * sizeof(mscclpp::LL8Packet);
+  void* scratchBuff = (void*)((char*)scratch);
+  size_t scratchOffset = rank * nPktsPerRank * sizeof(mscclpp::LL8Packet);
   size_t scratchResultOffset =
       (flag & 1) ? 2 * nPkts * sizeof(mscclpp::LL8Packet) : 3 * nPkts * sizeof(mscclpp::LL8Packet);
   size_t srcOffset = remoteRank * nelemsPerRank * sizeof(int) + channelDataOffset;
