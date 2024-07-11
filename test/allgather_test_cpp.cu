@@ -28,6 +28,12 @@ static int nranksPerNode = 8;
     }                                                                                   \
   } while (false)
 
+#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
+#define WARP_SIZE 64
+#else
+#define WARP_SIZE 32
+#endif
+
 // Measure current time in second.
 static double getTime(void) {
   struct timespec tspec;
@@ -47,14 +53,14 @@ __device__ void allgather0(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, 
 
   // this thread's role is a sender role
   // put your data asynchronously
-  if ((threadIdx.x % 32) == 0) proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+  if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
   // make sure everyone is put their data before some thread randomly blocks everyone else in signal
   __syncthreads();
   // push with flag and sync to make sure the data is received
-  if ((threadIdx.x % 32) == 0) proxyChan.flush();
+  if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.flush();
 
   // this thread's role is a receiver role. wait on the semaphore to make sure the data is ready
-  if ((threadIdx.x % 32) == 0) proxyChan.wait();
+  if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.wait();
 }
 
 __device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, int rank, int nranksPerNode,
@@ -68,17 +74,17 @@ __device__ void localAllGather(DeviceHandle<mscclpp::SimpleProxyChannel> proxyCh
   for (int i = 1; i < nranksPerNode; i++) {
     if ((remoteRank % nranksPerNode) == ((rank + i) % nranksPerNode)) {
       // put your data to GPU (rank+i) % nranksPerNode and signal in one call
-      if ((threadIdx.x % 32) == 0) proxyChan.putWithSignal(offset, size);
+      if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.putWithSignal(offset, size);
     }
     // wait for the data from GPU (rank-i) % nranksPerNode to arrive
     if ((remoteRank % nranksPerNode) == ((rank - i + nranksPerNode) % nranksPerNode)) {
-      if ((threadIdx.x % 32) == 0) proxyChan.wait();
+      if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.wait();
     }
 #if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
     // NOTE: we actually need a group barrier here for better performance, but __syncthreads() is still correct.
     __syncthreads();
 #else
-    asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nranksPerNode - 1) * 32) : "memory");
+    asm volatile("bar.sync %0, %1;" ::"r"(11), "r"((nranksPerNode - 1) * WARP_SIZE) : "memory");
 #endif
   }
 }
@@ -88,7 +94,7 @@ __device__ void allgather1(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, 
   localAllGather(proxyChan, rank, nranksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
   if (remoteRank / nranksPerNode == rank / nranksPerNode)
-    if ((threadIdx.x % 32) == 0) proxyChan.flush();
+    if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.flush();
 }
 
 __device__ void allgather2(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, int rank, int world_size,
@@ -114,10 +120,10 @@ __device__ void allgather2(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, 
   // cross-node exchange
   if (remoteRank % nranksPerNode == rank % nranksPerNode) {
     // opposite side
-    if ((threadIdx.x % 32) == 0)
+    if ((threadIdx.x % WARP_SIZE) == 0)
       proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
                               (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
-    if ((threadIdx.x % 32) == 0) proxyChan.wait();
+    if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.wait();
   }
 
   __syncthreads();
@@ -133,10 +139,10 @@ __device__ void allgather2(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, 
   // cross-node exchange
   if (remoteRank % nranksPerNode == rank % nranksPerNode) {
     // opposite side
-    if ((threadIdx.x % 32) == 0)
+    if ((threadIdx.x % WARP_SIZE) == 0)
       proxyChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
                               nelemsPerGPU / pipelineSize * sizeof(int));
-    if ((threadIdx.x % 32) == 0) proxyChan.wait();
+    if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.wait();
   }
 
   __syncthreads();
@@ -150,13 +156,13 @@ __device__ void allgather2(DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan, 
   }
 
   if (remoteRank / nranksPerNode == rank / nranksPerNode || remoteRank % nranksPerNode == rank % nranksPerNode) {
-    if ((threadIdx.x % 32) == 0) proxyChan.flush();
+    if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.flush();
   }
 }
 
 __global__ void kernel(int rank, int world_size, int nranksPerNode, size_t nelemsPerGPU, int kernel) {
   // find the mapping between remoteRank and proxyChans
-  int warpId = threadIdx.x / 32;
+  int warpId = threadIdx.x / WARP_SIZE;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
   // Each warp is responsible for one of the remote ranks
   DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[warpId];
@@ -411,7 +417,7 @@ int main(int argc, const char* argv[]) {
     cudaStream_t stream;
     CUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     CUDACHECK(cudaDeviceSynchronize());
-    kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
+    kernel<<<1, WARP_SIZE * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
     CUDACHECK(cudaDeviceSynchronize());
     CUDACHECK(cudaMemcpy(data_h, data_d, dataSize, cudaMemcpyDeviceToHost));
 
@@ -433,7 +439,7 @@ int main(int argc, const char* argv[]) {
     CUDACHECK(cudaStreamSynchronize(stream));
     bootstrap->allGather(tmp, sizeof(int));
     for (int i = 0; i < iterwithoutcudagraph; ++i) {
-      kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
+      kernel<<<1, WARP_SIZE * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
     }
     CUDACHECK(cudaStreamSynchronize(stream));
     bootstrap->allGather(tmp, sizeof(int));
@@ -445,7 +451,7 @@ int main(int argc, const char* argv[]) {
     cudaGraphExec_t instance;
     CUDACHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
     for (int i = 0; i < cudagraphiter; ++i) {
-      kernel<<<1, 32 * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
+      kernel<<<1, WARP_SIZE * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
     }
     CUDACHECK(cudaStreamEndCapture(stream, &graph));
     CUDACHECK(cudaGraphInstantiate(&instance, graph, NULL, NULL, 0));
