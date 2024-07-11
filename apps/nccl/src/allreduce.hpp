@@ -142,7 +142,6 @@ __global__ void __launch_bounds__(32, 1)
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   const int peerIdx = blockIdx.x / nBlocksPerPeer;
-  const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
   // Double buffering
   size_t scratchBaseOffset = (flag & 1) ? 0 : 4 * worldSize * nelems * sizeof(mscclpp::LL8Packet);
   size_t srcOffset = channelDataOffset;
@@ -163,7 +162,7 @@ __global__ void __launch_bounds__(32, 1)
                                                    blockDim.x * nBlocksPerPeer, flag);
 
   // step 2: Reduce Data
-  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nelems; idx += blockDim.x * gridDim.x) {
+  for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nelems; idx += blockDim.x * gridDim.x) {
     uint32_t data = 0;
     for (int index = 0; index < nPeers; index++) {
       const int remoteRank = index < rank ? index : index + 1;
