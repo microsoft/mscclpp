@@ -2,8 +2,8 @@
 # Licensed under the MIT license.
 
 set(MSCCLPP_MAJOR "0")
-set(MSCCLPP_MINOR "4")
-set(MSCCLPP_PATCH "0")
+set(MSCCLPP_MINOR "5")
+set(MSCCLPP_PATCH "1")
 
 set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})
 set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
@@ -15,13 +15,12 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Options
 option(ENABLE_TRACE "Enable tracing" OFF)
-option(USE_NPKIT "Use NPKIT" ON)
 option(BUILD_TESTS "Build tests" ON)
 option(BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
+option(BUILD_APPS_NCCL "Build NCCL interfaces" ON)
 option(USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(USE_ROCM "Use AMD/ROCm." OFF)
 option(BYPASS_GPU_CHECK "Bypass GPU check." OFF)
-option(BYPASS_PEERMEM_CHECK "Bypass checking nvidia_peermem" OFF)
 
 if(BYPASS_GPU_CHECK)
     if(USE_CUDA)
@@ -81,24 +80,14 @@ if(USE_CUDA)
 
     set(GPU_LIBRARIES CUDA::cudart CUDA::cuda_driver)
     set(GPU_INCLUDE_DIRS ${CUDAToolkit_INCLUDE_DIRS})
-
-    # Find if nvidia_peermem is installed and loaded
-    if(NOT BYPASS_PEERMEM_CHECK)
-        execute_process(COMMAND sh -c "lsmod | grep nvidia_peermem"
-                        RESULT_VARIABLE lsmod_result
-                        OUTPUT_VARIABLE lsmod_output)
-        if(NOT lsmod_result EQUAL 0)
-            message(FATAL_ERROR "nvidia_peermem is not installed or not loaded.")
-        endif()
-    endif()
 else()
     set(CMAKE_HIP_STANDARD 17)
     set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -Wall -Wextra")
-    project(mscclpp LANGUAGES CXX HIP)
+    project(mscclpp LANGUAGES CXX)
 
     set(CMAKE_HIP_ARCHITECTURES gfx90a gfx941 gfx942)
 
-    set(GPU_LIBRARIES hip::host)
+    set(GPU_LIBRARIES hip::device)
     set(GPU_INCLUDE_DIRS ${hip_INCLUDE_DIRS})
 endif()
 
@@ -110,13 +99,17 @@ find_package(IBVerbs REQUIRED)
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)
 
+include(FetchContent)
+FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_MakeAvailable(json)
+
 add_library(mscclpp_obj OBJECT)
 target_include_directories(mscclpp_obj
-    PRIVATE
+    SYSTEM PRIVATE
     ${GPU_INCLUDE_DIRS}
     ${IBVERBS_INCLUDE_DIRS}
     ${NUMA_INCLUDE_DIRS})
-target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} Threads::Threads)
+target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} nlohmann_json::nlohmann_json Threads::Threads)
 set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 if(USE_CUDA)
     target_compile_definitions(mscclpp_obj PRIVATE USE_CUDA)
@@ -126,8 +119,8 @@ endif()
 if(ENABLE_TRACE)
     target_compile_definitions(mscclpp_obj PRIVATE ENABLE_TRACE)
 endif()
-if(USE_NPKIT)
-    target_compile_definitions(mscclpp_obj PRIVATE ENABLE_NPKIT)
+if(NPKIT_FLAGS)
+    target_compile_definitions(mscclpp_obj PRIVATE ${NPKIT_FLAGS})
 endif()
 
 # libmscclpp
@@ -141,12 +134,16 @@ set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVER
 add_subdirectory(include)
 add_subdirectory(src)
 
+if("${INSTALL_PREFIX}" STREQUAL "")
+    set(INSTALL_PREFIX "./")
+endif()
+
 install(TARGETS mscclpp_obj
-    FILE_SET HEADERS DESTINATION include)
+    FILE_SET HEADERS DESTINATION ${INSTALL_PREFIX}/include)
 install(TARGETS mscclpp
-    LIBRARY DESTINATION lib)
+    LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
 install(TARGETS mscclpp_static
-    ARCHIVE DESTINATION lib)
+    ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
 
 # Tests
 if(BUILD_TESTS)
@@ -157,4 +154,9 @@ endif()
 # Python bindings
 if(BUILD_PYTHON_BINDINGS)
     add_subdirectory(python)
+endif()
+
+# NCCL interfaces
+if(BUILD_APPS_NCCL)
+    add_subdirectory(apps/nccl)
 endif()

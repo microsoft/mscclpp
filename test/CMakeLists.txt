@@ -5,12 +5,12 @@ find_package(MPI)
 
 set(TEST_LIBS_COMMON mscclpp ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} Threads::Threads)
 set(TEST_LIBS_GTEST GTest::gtest_main GTest::gmock_main)
-set(TEST_INC_COMMON PRIVATE ${PROJECT_SOURCE_DIR}/include ${GPU_INCLUDE_DIRS})
+set(TEST_INC_COMMON PRIVATE ${PROJECT_SOURCE_DIR}/include SYSTEM PRIVATE ${GPU_INCLUDE_DIRS})
 set(TEST_INC_INTERNAL PRIVATE ${PROJECT_SOURCE_DIR}/src/include)
 
 if(USE_ROCM)
     file(GLOB_RECURSE CU_SOURCES CONFIGURE_DEPENDS *.cu)
-    set_source_files_properties(${CU_SOURCES} PROPERTIES LANGUAGE HIP)
+    set_source_files_properties(${CU_SOURCES} PROPERTIES LANGUAGE CXX)
 endif()
 
 function(add_test_executable name sources)
@@ -23,12 +23,14 @@ endfunction()
 
 add_test_executable(allgather_test_cpp allgather_test_cpp.cu)
 add_test_executable(allgather_test_host_offloading allgather_test_host_offloading.cu)
+add_test_executable(nvls_test nvls_test.cu)
+add_test_executable(executor_test executor_test.cc)
 
 configure_file(run_mpi_test.sh.in run_mpi_test.sh)
 
 include(CTest)
 include(FetchContent)
-FetchContent_Declare(googletest URL https://github.com/google/googletest/archive/b796f7d44681514f58a683a3a71ff17c94edb0c1.zip)
+FetchContent_Declare(googletest URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip)
 option(INSTALL_GTEST OFF)
 FetchContent_MakeAvailable(googletest)
 include(GoogleTest)

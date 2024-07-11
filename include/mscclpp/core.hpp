@@ -5,14 +5,16 @@
 #define MSCCLPP_CORE_HPP_
 
 #define MSCCLPP_MAJOR 0
-#define MSCCLPP_MINOR 4
-#define MSCCLPP_PATCH 0
+#define MSCCLPP_MINOR 5
+#define MSCCLPP_PATCH 1
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
 #include <array>
 #include <bitset>
 #include <future>
 #include <memory>
+#include <mscclpp/gpu.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <string>
 #include <vector>
 
@@ -35,11 +37,13 @@ class Bootstrap {
   virtual ~Bootstrap() = default;
   virtual int getRank() = 0;
   virtual int getNranks() = 0;
+  virtual int getNranksPerNode() = 0;
   virtual void send(void* data, int size, int peer, int tag) = 0;
   virtual void recv(void* data, int size, int peer, int tag) = 0;
   virtual void allGather(void* allData, int size) = 0;
   virtual void barrier() = 0;
 
+  void groupBarrier(const std::vector<int>& ranks);
   void send(const std::vector<char>& data, int peer, int tag);
   void recv(std::vector<char>& data, int peer, int tag);
 };
@@ -47,6 +51,10 @@ class Bootstrap {
 /// A native implementation of the bootstrap using TCP sockets.
 class TcpBootstrap : public Bootstrap {
  public:
+  /// Create a random unique ID.
+  /// @return The created unique ID.
+  static UniqueId createUniqueId();
+
   /// Constructor.
   /// @param rank The rank of the process.
   /// @param nRanks The total number of ranks.
@@ -54,10 +62,6 @@ class TcpBootstrap : public Bootstrap {
 
   /// Destructor.
   ~TcpBootstrap();
-
-  /// Create a random unique ID and store it in the @ref TcpBootstrap.
-  /// @return The created unique ID.
-  UniqueId createUniqueId();
 
   /// Return the unique ID stored in the @ref TcpBootstrap.
   /// @return The unique ID stored in the @ref TcpBootstrap.
@@ -78,6 +82,9 @@ class TcpBootstrap : public Bootstrap {
 
   /// Return the total number of ranks.
   int getNranks() override;
+
+  /// Return the total number of ranks per node.
+  int getNranksPerNode() override;
 
   /// Send data to another process.
   ///
@@ -123,23 +130,26 @@ class TcpBootstrap : public Bootstrap {
 
 /// Enumerates the available transport types.
 enum class Transport {
-  Unknown,       // Unknown transport type.
-  CudaIpc,       // CUDA IPC transport type.
-  IB0,           // InfiniBand device 0 transport type.
-  IB1,           // InfiniBand device 1 transport type.
-  IB2,           // InfiniBand device 2 transport type.
-  IB3,           // InfiniBand device 3 transport type.
-  IB4,           // InfiniBand device 4 transport type.
-  IB5,           // InfiniBand device 5 transport type.
-  IB6,           // InfiniBand device 6 transport type.
-  IB7,           // InfiniBand device 7 transport type.
-  NumTransports  // The number of transports.
+  Unknown,        // Unknown transport type.
+  CudaIpc,        // CUDA IPC transport type.
+  Nvls,           // NVLS transport type.
+  IB0,            // InfiniBand device 0 transport type.
+  IB1,            // InfiniBand device 1 transport type.
+  IB2,            // InfiniBand device 2 transport type.
+  IB3,            // InfiniBand device 3 transport type.
+  IB4,            // InfiniBand device 4 transport type.
+  IB5,            // InfiniBand device 5 transport type.
+  IB6,            // InfiniBand device 6 transport type.
+  IB7,            // InfiniBand device 7 transport type.
+  Ethernet,       // Ethernet transport type.
+  NumTransports,  // The number of transports.
 };
 
-const std::string TransportNames[] = {"UNK", "IPC", "IB0", "IB1", "IB2", "IB3", "IB4", "IB5", "IB6", "IB7", "NUM"};
+const std::string TransportNames[] = {"UNK", "IPC", "NVLS", "IB0", "IB1", "IB2", "IB3",
+                                      "IB4", "IB5", "IB6",  "IB7", "ETH", "NUM"};
 
 namespace detail {
-const size_t TransportFlagsSize = 10;
+const size_t TransportFlagsSize = 12;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
               "TransportFlagsSize must match the number of transports");
 /// Bitset for storing transport flags.
@@ -326,6 +336,11 @@ class RegisteredMemory {
   ///
   /// @return A pointer to the memory block.
   void* data() const;
+
+  /// Get a pointer to the original memory block.
+  ///
+  /// @return A pointer to the original memory block.
+  void* originalDataPtr() const;
 
   /// Get the size of the memory block.
   ///
@@ -698,6 +713,10 @@ template <typename T>
 DeviceHandle<std::remove_reference_t<T>> deviceHandle(T&& t) {
   return t.deviceHandle();
 }
+
+/// Packet value type.
+template <class T>
+using PacketPayload = typename T::Payload;
 
 }  // namespace mscclpp
 

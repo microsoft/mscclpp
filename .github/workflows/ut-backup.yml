@@ -49,5 +49,4 @@ jobs:
       - name: PyTests
         run: |
           set -e
-          cd build && make pylib-copy
-          mpirun --allow-run-as-root -tag-output -np 8 $(which pytest) ../python/test/test_mscclpp.py -x
+          mpirun --allow-run-as-root -tag-output -np 8 $(which pytest) ./python/test/test_mscclpp.py -x

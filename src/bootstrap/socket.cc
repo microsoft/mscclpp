@@ -390,7 +390,7 @@ Socket::Socket(const SocketAddress* addr, uint64_t magic, enum SocketType type, 
 
 Socket::~Socket() { close(); }
 
-void Socket::listen() {
+void Socket::bind() {
   if (fd_ == -1) {
     throw Error("file descriptor is -1", ErrorCode::InvalidUsage);
   }
@@ -433,7 +433,11 @@ void Socket::listen() {
   if (::getsockname(fd_, &addr_.sa, &size) != 0) {
     throw SysError("getsockname failed", errno);
   }
+  state_ = SocketStateBound;
+}
 
+void Socket::bindAndListen() {
+  bind();
 #ifdef ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
   TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Listening on socket %s", SocketToString(&addr_, line));
@@ -537,6 +541,38 @@ void Socket::recv(void* ptr, int size) {
     throw Error(ss.str(), ErrorCode::InternalError);
   }
   socketWait(MSCCLPP_SOCKET_RECV, ptr, size, &offset);
+}
+
+void Socket::recvUntilEnd(void* ptr, int size, int* closed) {
+  int offset = 0;
+  *closed = 0;
+  if (state_ != SocketStateReady) {
+    std::stringstream ss;
+    ss << "socket state (" << state_ << ") is not ready in recvUntilEnd";
+    throw Error(ss.str(), ErrorCode::InternalError);
+  }
+
+  int bytes = 0;
+  char* data = (char*)ptr;
+
+  do {
+    bytes = ::recv(fd_, data + (offset), size - (offset), 0);
+    if (bytes == 0) {
+      *closed = 1;
+      return;
+    }
+    if (bytes == -1) {
+      if (errno != EINTR && errno != EWOULDBLOCK && errno != EAGAIN && state_ != SocketStateClosed) {
+        throw SysError("recv until end failed", errno);
+      } else {
+        bytes = 0;
+      }
+    }
+    (offset) += bytes;
+    if (abortFlag_ && *abortFlag_ != 0) {
+      throw Error("aborted", ErrorCode::Aborted);
+    }
+  } while (bytes > 0 && (offset) < size);
 }
 
 void Socket::close() {

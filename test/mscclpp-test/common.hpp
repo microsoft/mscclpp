@@ -118,7 +118,7 @@ class BaseTestEngine {
                             SetupChannelFunc setupChannel = nullptr);
   void setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels, void* inputBuff, size_t inputBuffBytes,
                             void* outputBuff = nullptr, size_t outputBuffBytes = 0,
-                            ChannelSemantic semantic = ChannelSemantic::PUT);
+                            ChannelSemantic semantic = ChannelSemantic::PUT, size_t nChannelPerConnection = 1);
   void setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels,
                             std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>>& proxyChannels, void* inputBuff,
                             size_t inputBuffBytes, void* putPacketBuff = nullptr, size_t putPacketBuffBytes = 0,
