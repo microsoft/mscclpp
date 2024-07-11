@@ -46,7 +46,9 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpo
 #if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
     pimpl_->ipcStreams_.emplace_back(std::make_shared<CudaStreamWithFlags>(cudaStreamNonBlocking));
 #else
-    if (pimpl_->ipcStreams_.empty()) pimpl_->ipcStreams_.emplace_back(std::make_shared<CudaStreamWithFlags>(cudaStreamNonBlocking));
+    if (pimpl_->ipcStreams_.empty()) {
+      pimpl_->ipcStreams_.emplace_back(std::make_shared<CudaStreamWithFlags>(cudaStreamNonBlocking));
+    }
 #endif
     conn = std::make_shared<CudaIpcConnection>(localEndpoint, remoteEndpoint, *(pimpl_->ipcStreams_.back()));
   } else if (AllIBTransports.has(localEndpoint.transport())) {
