@@ -96,15 +96,18 @@ void register_core(nb::module_& m) {
       .def("any", &TransportFlags::any)
       .def("all", &TransportFlags::all)
       .def("count", &TransportFlags::count)
-      .def(nb::self |= nb::self)
       .def(nb::self | nb::self)
       .def(nb::self | Transport())
-      .def(nb::self &= nb::self)
       .def(nb::self & nb::self)
       .def(nb::self & Transport())
-      .def(nb::self ^= nb::self)
       .def(nb::self ^ nb::self)
       .def(nb::self ^ Transport())
+      .def(
+          "__ior__", [](TransportFlags& lhs, const TransportFlags& rhs) { return lhs |= rhs; }, nb::is_operator())
+      .def(
+          "__iand__", [](TransportFlags& lhs, const TransportFlags& rhs) { return lhs &= rhs; }, nb::is_operator())
+      .def(
+          "__ixor__", [](TransportFlags& lhs, const TransportFlags& rhs) { return lhs ^= rhs; }, nb::is_operator())
       .def(~nb::self)
       .def(nb::self == nb::self)
       .def(nb::self != nb::self);
