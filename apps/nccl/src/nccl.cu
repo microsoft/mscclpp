@@ -6,6 +6,7 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <mscclpp/sm_channel_device.hpp>
+#include <mscclpp/executor.hpp>
 #include <unordered_map>
 #include <vector>
 
@@ -56,6 +57,8 @@ struct ncclComm {
   std::shared_ptr<mscclpp::Communicator> comm;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
   std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
+  std::shared_ptr<mscclpp::Executor> executor;
+  std::shared_ptr<mscclpp::ExecutionPlan> allReduceMI300SmPlan, allReduceMI300PacketPlan, allReduceMI300PacketSmallSizePlan;
 
   std::unordered_map<channelKey, ChannelInfo> channelInInfos;
   std::unordered_map<channelKey, ChannelInfo> channelOutInfos;
@@ -210,6 +213,16 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->remoteScratchRegMemories =
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
 
+  // Creating Execution Plan Files
+  if(rank == 0){
+    std::system(("python3 /root/mscclpp/apps/nccl/test/algos/allreduce_mi300_sm_mscclpp.py " + std::to_string(nranks) + " 8 > /root/mscclpp/apps/nccl/test/execution-files/allreducesm.json").c_str());
+    std::system(("python3 /root/mscclpp/apps/nccl/test/algos/allreduce_mi300_packet.py " + std::to_string(nranks) + " 8 > /root/mscclpp/apps/nccl/test/execution-files/allreducepacket.json").c_str());
+    std::system(("python3 /root/mscclpp/apps/nccl/test/algos/allreduce_mi300_packet.py " + std::to_string(nranks) + " 1 > /root/azure-mscclpp/nccl/test/execution-files/allreducepacket_smallsize.json").c_str());
+  }
+  commPtr->allReduceMI300SmPlan = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce_mi300", "/root/mscclpp/apps/nccl/test/execution-files/allreducesm.json"));
+  commPtr->allReduceMI300PacketPlan = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce_mi300_packet", "/root/mscclpp/apps/nccl/test/execution-files/allreducepacket.json"));
+  commPtr->allReduceMI300PacketSmallSizePlan = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce_mi300_packet", "/root/mscclpp/apps/nccl/test/execution-files/allreducepacket_smallsize.json"));
+
   *comm = commPtr;
   return ncclSuccess;
 }
@@ -327,6 +340,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   if (sendbuff == nullptr || recvbuff == nullptr || count == 0 || ncclTypeSize(datatype) == 0 || comm == nullptr) return ncclInvalidArgument;
 
   // Declarating variables
+  size_t bytes = count * ncclTypeSize(datatype);
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)sendbuff));
@@ -339,58 +353,29 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels = nullptr;
   mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels = nullptr;
 
-  // Creating the channels
-  if(count * ncclTypeSize(datatype) <= (1 << 20)) {
-    auto sendIt = comm->channelScratchInfos.find(sendKey);
-    if (sendIt == comm->channelScratchInfos.end()) {
-      std::vector<mscclpp::SmChannel> channels = setupSmChannels(comm, comm->remoteScratchRegMemories, const_cast<void *>((void*)sendBasePtr));
-      ChannelInfo channelInfo{channels, setupSmChannelDeviceHandles(channels)};
-      sendIt = comm->channelScratchInfos.emplace(sendKey, channelInfo).first;
-    }
-    smChannels = sendIt->second.smChannelDeviceHandles.get();
-  }
-  else {
-    std::vector<mscclpp::RegisteredMemory> remoteMemories;
-
-    auto sendIt = comm->channelInInfos.find(sendKey);
-    if (sendIt == comm->channelInInfos.end()) {
-      std::vector<mscclpp::SmChannel> channels = setupSmChannels(comm, comm->remoteScratchRegMemories, const_cast<void *>((void*)sendBasePtr));
-      ChannelInfo channelInfo{channels, setupSmChannelDeviceHandles(channels)};
-      sendIt = comm->channelInInfos.emplace(sendKey, channelInfo).first;
-    }
-
-    auto recvIt = comm->channelOutInfos.find(recvKey);
-    if (recvIt == comm->channelOutInfos.end()) {
-      remoteMemories =
-          setupRemoteMemories(comm->comm, rank, (void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
-      std::vector<mscclpp::SmChannel> outChannels = setupSmChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
-      ChannelInfo channelInfo{outChannels, setupSmChannelDeviceHandles(outChannels)};
-      recvIt = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
-    }
-
-    smChannels = sendIt->second.smChannelDeviceHandles.get();
-    smOutChannels = recvIt->second.smChannelDeviceHandles.get();
-  }
+  std::shared_ptr<mscclpp::ExecutionPlan> plan;
+  if(bytes <= 4 * (1 << 10)) plan = comm->allReduceMI300PacketSmallSizePlan;
+  else if(bytes <= (1 << 20)) plan = comm->allReduceMI300PacketPlan;
+  else plan = comm->allReduceMI300SmPlan;
 
   switch (datatype) {
     case ncclFloat16:
-      CUDACHECK(allreduce((half*)sendbuff, (half*)comm->scratchBuff.get(), (half*)recvbuff, smChannels, smOutChannels, offsetIn, offsetOut,
-                          rank, NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream));
+      comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT16, 32,
+                      *plan, stream, mscclpp::PacketType::LL8);
       break;
     case ncclFloat32:
-      CUDACHECK(allreduce((float*)sendbuff, (float*)comm->scratchBuff.get(), (float*)recvbuff, smChannels,
-                          smOutChannels, offsetIn, offsetOut, comm->comm->bootstrap()->getRank(), NRANKS_PER_NODE,
-                          comm->comm->bootstrap()->getNranks(), count, stream));
+      comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT32, 32,
+                      *plan, stream, mscclpp::PacketType::LL8);
       break;
     case ncclInt32:
     case ncclUint32:
-      CUDACHECK(allreduce((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, smChannels, smOutChannels, offsetIn, offsetOut,
-                          comm->comm->bootstrap()->getRank(), NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(),
-                          count, stream));
+      comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, bytes, bytes, mscclpp::DataType::UINT32, 32,
+                      *plan, stream, mscclpp::PacketType::LL8);
       break;
     default:
       return ncclInvalidArgument;
   }
+
   return ncclSuccess;
 }
 
