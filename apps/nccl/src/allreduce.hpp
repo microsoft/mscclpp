@@ -132,8 +132,8 @@ __forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem) {
 template <typename T>
 __global__ void __launch_bounds__(32, 1)
     allreduceAllToAll(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-                      size_t channelDataOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems,
-                      uint32_t flag) {
+                      size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
+                      size_t nelems, uint32_t flag) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
   if (sizeof(T) == 2) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
@@ -142,11 +142,9 @@ __global__ void __launch_bounds__(32, 1)
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   const int peerIdx = blockIdx.x / nBlocksPerPeer;
-  // Double buffering
-  size_t scratchBaseOffset = (flag & 1) ? 0 : 4 * worldSize * nelems * sizeof(mscclpp::LL8Packet);
   size_t srcOffset = channelDataOffset;
-  size_t scratchOffset = scratchBaseOffset + rank * nelems * sizeof(mscclpp::LL8Packet);
-  void* scratchBuff = (void*)((char*)scratch + scratchBaseOffset);
+  size_t scratchOffset = channelScratchOffset + rank * nelems * sizeof(mscclpp::LL8Packet);
+  void* scratchBuff = (void*)((char*)scratch + channelScratchOffset);
   uint32_t* src = (uint32_t*)((char*)buff);
   uint32_t* dst = (uint32_t*)((char*)resultBuff);
 
@@ -178,7 +176,8 @@ __global__ void __launch_bounds__(32, 1)
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-               size_t channelDataOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems, uint32_t flag) {
+               size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
+               size_t nelems, uint32_t flag) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
   nelems = nelems / (sizeof(int) / sizeof(T));
@@ -192,12 +191,9 @@ __global__ void __launch_bounds__(1024, 1)
   const int peerIdx = blockIdx.x / nBlocksPerPeer;
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
-  // double buffering
-  size_t scratchBaseOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LL8Packet);
-  void* scratchBuff = (void*)((char*)scratch + scratchBaseOffset);
-  size_t scratchOffset = scratchBaseOffset + rank * nPktsPerRank * sizeof(mscclpp::LL8Packet);
-  size_t scratchResultOffset =
-      (flag & 1) ? 2 * nPkts * sizeof(mscclpp::LL8Packet) : 3 * nPkts * sizeof(mscclpp::LL8Packet);
+  void* scratchBuff = (void*)((char*)scratch + channelScratchOffset);
+  size_t scratchOffset = channelScratchOffset + rank * nPktsPerRank * sizeof(mscclpp::LL8Packet);
+  size_t scratchResultOffset = channelScratchOffset + 2 * nPkts * sizeof(mscclpp::LL8Packet);
   size_t srcOffset = remoteRank * nelemsPerRank * sizeof(int) + channelDataOffset;
   uint32_t* src = (uint32_t*)((char*)buff + rank * nelemsPerRank * sizeof(int));
   uint32_t* dst = (uint32_t*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
@@ -246,8 +242,8 @@ __global__ void __launch_bounds__(1024, 1)
 template <typename T>
 __global__ void __launch_bounds__(512, 1)
     allreduce8(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-               mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, size_t channelOutDataOffset, int rank,
-               int nRanksPerNode, int worldSize, size_t nelems) {
+               mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, size_t channelOutDataOffset,
+               size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
   const int nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
   // assume (nelems * sizeof(T)) is divisible by (16 * worldSize)
@@ -257,7 +253,7 @@ __global__ void __launch_bounds__(512, 1)
   auto smOutChans = smOutChannels + chanOffset;
 
   int4* buff4 = reinterpret_cast<int4*>(buff);
-  int4* scratch4 = reinterpret_cast<int4*>(scratch);
+  int4* scratch4 = reinterpret_cast<int4*>((char*)scratch + channelScratchOffset);
   int4* resultBuff4 = reinterpret_cast<int4*>(resultBuff);
 
   // Distribute `nInt4PerRank` across all blocks with the unit size `unitNInt4`
@@ -278,6 +274,7 @@ __global__ void __launch_bounds__(512, 1)
   const size_t chunkSizePerRank = nNeededBlocks * nInt4PerChunk;
   const size_t blockOffset = nInt4PerChunk * blockIdx.x;
   const size_t scratchChunkRankOffset = chunkSizePerRank * rank;
+  const size_t scratchBaseOffsetInt4 = channelScratchOffset / sizeof(int4);
 
   __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> channels[NRANKS_PER_NODE - 1];
   __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> outChannels[NRANKS_PER_NODE - 1];
@@ -301,7 +298,7 @@ __global__ void __launch_bounds__(512, 1)
         const int peerIdx = (i + blockIdx.x) % nPeer;
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = buff4[nInt4PerRank * remoteRank + idx + offsetOfThisBlock];
-        channels[peerIdx].write(scratchChunkRankOffset + blockOffset + idx, val);
+        channels[peerIdx].write(scratchBaseOffsetInt4 + scratchChunkRankOffset + blockOffset + idx, val);
       }
     }
 
@@ -338,7 +335,7 @@ __global__ void __launch_bounds__(512, 1)
         const int peerIdx = (i + blockIdx.x) % nPeer;
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = buff4[nInt4PerRank * remoteRank + idx + offsetOfThisBlock];
-        channels[peerIdx].write(scratchChunkRankOffset + blockOffset + idx, val);
+        channels[peerIdx].write(scratchBaseOffsetInt4 + scratchChunkRankOffset + blockOffset + idx, val);
       }
     }
 
@@ -367,15 +364,16 @@ __global__ void __launch_bounds__(512, 1)
 template <typename T>
 cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
                       mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, size_t channelInOffset,
-                      size_t channelOutOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems,
-                      cudaStream_t stream) {
+                      size_t channelOutOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
+                      size_t nelems, cudaStream_t stream) {
   static uint32_t flag = 1;
 
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
     int nBlocks = 7;
     int nThreadsPerBlock = 32;
     allreduceAllToAll<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset,
-                                                                rank, nRanksPerNode, worldSize, nelems, flag++);
+                                                                channelScratchOffset, rank, nRanksPerNode, worldSize,
+                                                                nelems, flag++);
   } else if (sizeof(T) * nelems <= (1 << 20)) {
     int nBlocks = 28;
     int nThreadsPerBlock = 1024;
@@ -383,13 +381,15 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
       nBlocks = 56;
       nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
     }
-    allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset, rank,
-                                                         nRanksPerNode, worldSize, nelems, flag++);
+    allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset,
+                                                         channelScratchOffset, rank, nRanksPerNode, worldSize, nelems,
+                                                         flag++);
   } else {
     int nBlocks = 35;
     int nThreadsPerBlock = 512;
     allreduce8<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, smOutChannels,
-                                                         channelOutOffset, rank, nRanksPerNode, worldSize, nelems);
+                                                         channelOutOffset, channelScratchOffset, rank, nRanksPerNode,
+                                                         worldSize, nelems);
   }
 
   return cudaGetLastError();
