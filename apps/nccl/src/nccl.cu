@@ -56,7 +56,7 @@ struct ChannelInfo {
 struct ncclComm {
   std::shared_ptr<mscclpp::Communicator> comm;
   std::shared_ptr<mscclpp::Executor> executor;
-  std::shared_ptr<mscclpp::ExecutionPlan> allReduceMI300SmPlan, allReduceMI300PacketPlan, allReduceMI300PacketSmallSizePlan;
+  std::shared_ptr<mscclpp::ExecutionPlan> allReduceMI300SmPlanIP, allReduceMI300PacketPlanIP, allReduceMI300PacketSmallSizePlanIP;
 };
 
 static size_t ncclTypeSize(ncclDataType_t type) {
@@ -132,9 +132,9 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   ncclComm* commPtr = new ncclComm();
   commPtr->comm = mscclppComm;
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
-  commPtr->allReduceMI300SmPlan = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce_mi300", "/root/mscclpp/apps/nccl/test/execution-files/allreducesm.json"));
-  commPtr->allReduceMI300PacketPlan = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce_mi300_packet", "/root/mscclpp/apps/nccl/test/execution-files/allreducepacket.json"));
-  commPtr->allReduceMI300PacketSmallSizePlan = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce_mi300_packet", "/root/mscclpp/apps/nccl/test/execution-files/allreducepacket_smallsize.json"));
+  commPtr->allReduceMI300SmPlanIP = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce_mi300", "/root/mscclpp/apps/nccl/test/execution-files/allreducesm.json"));
+  commPtr->allReduceMI300PacketPlanIP = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce_mi300_packet", "/root/mscclpp/apps/nccl/test/execution-files/allreducepacket.json"));
+  commPtr->allReduceMI300PacketSmallSizePlanIP = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce_mi300_packet", "/root/mscclpp/apps/nccl/test/execution-files/allreducepacket_smallsize.json"));
 
   *comm = commPtr;
   return ncclSuccess;
@@ -257,9 +257,9 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   int rank = comm->comm->bootstrap()->getRank();
 
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
-  if(bytes <= 4 * (1 << 10)) plan = comm->allReduceMI300PacketSmallSizePlan;
-  else if(bytes <= (1 << 20)) plan = comm->allReduceMI300PacketPlan;
-  else plan = comm->allReduceMI300SmPlan;
+  if(bytes <= 4 * (1 << 10)) plan = sendbuff == recvbuff ? comm->allReduceMI300PacketSmallSizePlanIP : nullptr;
+  else if(bytes <= (1 << 20)) plan = sendbuff == recvbuff ? comm->allReduceMI300PacketPlanIP : nullptr;
+  else plan = sendbuff == recvbuff ? comm->allReduceMI300SmPlanIP : nullptr;
 
   switch (datatype) {
     case ncclFloat16:
