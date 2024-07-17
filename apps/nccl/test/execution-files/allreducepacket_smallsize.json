@@ -1,0 +1,8536 @@
+{
+  "name": "allreduce_packet",
+  "colletive": "allreduce",
+  "protocol": "LL",
+  "inplace": true,
+  "gpus": [
+    {
+      "id": 0,
+      "inputChunks": 64,
+      "outputChunks": 0,
+      "scratchChunks": 128,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 64
+                },
+                {
+                  "id": 1,
+                  "off": 64
+                },
+                {
+                  "id": 2,
+                  "off": 64
+                },
+                {
+                  "id": 3,
+                  "off": 64
+                },
+                {
+                  "id": 4,
+                  "off": 64
+                },
+                {
+                  "id": 5,
+                  "off": 64
+                },
+                {
+                  "id": 6,
+                  "off": 64
+                }
+              ],
+              "src": 0,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 8
+                },
+                {
+                  "buff": "s",
+                  "off": 16
+                },
+                {
+                  "buff": "s",
+                  "off": 24
+                },
+                {
+                  "buff": "s",
+                  "off": 32
+                },
+                {
+                  "buff": "s",
+                  "off": 40
+                },
+                {
+                  "buff": "s",
+                  "off": 48
+                },
+                {
+                  "buff": "s",
+                  "off": 56
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 0,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 0,
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 0
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 8
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 65
+                },
+                {
+                  "id": 1,
+                  "off": 65
+                },
+                {
+                  "id": 2,
+                  "off": 65
+                },
+                {
+                  "id": 3,
+                  "off": 65
+                },
+                {
+                  "id": 4,
+                  "off": 65
+                },
+                {
+                  "id": 5,
+                  "off": 65
+                },
+                {
+                  "id": 6,
+                  "off": 65
+                }
+              ],
+              "src": 0,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 9
+                },
+                {
+                  "buff": "s",
+                  "off": 17
+                },
+                {
+                  "buff": "s",
+                  "off": 25
+                },
+                {
+                  "buff": "s",
+                  "off": 33
+                },
+                {
+                  "buff": "s",
+                  "off": 41
+                },
+                {
+                  "buff": "s",
+                  "off": 49
+                },
+                {
+                  "buff": "s",
+                  "off": 57
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 1,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 1,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 0,
+              "srcbuff": "s",
+              "srcoff": 72,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 8,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 1,
+                  "off": 0
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 16
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 66
+                },
+                {
+                  "id": 1,
+                  "off": 66
+                },
+                {
+                  "id": 2,
+                  "off": 66
+                },
+                {
+                  "id": 3,
+                  "off": 66
+                },
+                {
+                  "id": 4,
+                  "off": 66
+                },
+                {
+                  "id": 5,
+                  "off": 66
+                },
+                {
+                  "id": 6,
+                  "off": 66
+                }
+              ],
+              "src": 0,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 10
+                },
+                {
+                  "buff": "s",
+                  "off": 18
+                },
+                {
+                  "buff": "s",
+                  "off": 26
+                },
+                {
+                  "buff": "s",
+                  "off": 34
+                },
+                {
+                  "buff": "s",
+                  "off": 42
+                },
+                {
+                  "buff": "s",
+                  "off": 50
+                },
+                {
+                  "buff": "s",
+                  "off": 58
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 2,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 2,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 0,
+              "srcbuff": "s",
+              "srcoff": 80,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 16,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 2,
+                  "off": 0
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 24
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 67
+                },
+                {
+                  "id": 1,
+                  "off": 67
+                },
+                {
+                  "id": 2,
+                  "off": 67
+                },
+                {
+                  "id": 3,
+                  "off": 67
+                },
+                {
+                  "id": 4,
+                  "off": 67
+                },
+                {
+                  "id": 5,
+                  "off": 67
+                },
+                {
+                  "id": 6,
+                  "off": 67
+                }
+              ],
+              "src": 0,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 11
+                },
+                {
+                  "buff": "s",
+                  "off": 19
+                },
+                {
+                  "buff": "s",
+                  "off": 27
+                },
+                {
+                  "buff": "s",
+                  "off": 35
+                },
+                {
+                  "buff": "s",
+                  "off": 43
+                },
+                {
+                  "buff": "s",
+                  "off": 51
+                },
+                {
+                  "buff": "s",
+                  "off": 59
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 3,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 3,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 0,
+              "srcbuff": "s",
+              "srcoff": 88,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 24,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27
+              ]
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 3,
+                  "off": 0
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 32
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 68
+                },
+                {
+                  "id": 1,
+                  "off": 68
+                },
+                {
+                  "id": 2,
+                  "off": 68
+                },
+                {
+                  "id": 3,
+                  "off": 68
+                },
+                {
+                  "id": 4,
+                  "off": 68
+                },
+                {
+                  "id": 5,
+                  "off": 68
+                },
+                {
+                  "id": 6,
+                  "off": 68
+                }
+              ],
+              "src": 0,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 12
+                },
+                {
+                  "buff": "s",
+                  "off": 20
+                },
+                {
+                  "buff": "s",
+                  "off": 28
+                },
+                {
+                  "buff": "s",
+                  "off": 36
+                },
+                {
+                  "buff": "s",
+                  "off": 44
+                },
+                {
+                  "buff": "s",
+                  "off": 52
+                },
+                {
+                  "buff": "s",
+                  "off": 60
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 4,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 4,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 0,
+              "srcbuff": "s",
+              "srcoff": 96,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 32,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34
+              ]
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 4,
+                  "off": 0
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 40
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 69
+                },
+                {
+                  "id": 1,
+                  "off": 69
+                },
+                {
+                  "id": 2,
+                  "off": 69
+                },
+                {
+                  "id": 3,
+                  "off": 69
+                },
+                {
+                  "id": 4,
+                  "off": 69
+                },
+                {
+                  "id": 5,
+                  "off": 69
+                },
+                {
+                  "id": 6,
+                  "off": 69
+                }
+              ],
+              "src": 0,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 13
+                },
+                {
+                  "buff": "s",
+                  "off": 21
+                },
+                {
+                  "buff": "s",
+                  "off": 29
+                },
+                {
+                  "buff": "s",
+                  "off": 37
+                },
+                {
+                  "buff": "s",
+                  "off": 45
+                },
+                {
+                  "buff": "s",
+                  "off": 53
+                },
+                {
+                  "buff": "s",
+                  "off": 61
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 5,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 5,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 0,
+              "srcbuff": "s",
+              "srcoff": 104,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 40,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41
+              ]
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 5,
+                  "off": 0
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 48
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 70
+                },
+                {
+                  "id": 1,
+                  "off": 70
+                },
+                {
+                  "id": 2,
+                  "off": 70
+                },
+                {
+                  "id": 3,
+                  "off": 70
+                },
+                {
+                  "id": 4,
+                  "off": 70
+                },
+                {
+                  "id": 5,
+                  "off": 70
+                },
+                {
+                  "id": 6,
+                  "off": 70
+                }
+              ],
+              "src": 0,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 14
+                },
+                {
+                  "buff": "s",
+                  "off": 22
+                },
+                {
+                  "buff": "s",
+                  "off": 30
+                },
+                {
+                  "buff": "s",
+                  "off": 38
+                },
+                {
+                  "buff": "s",
+                  "off": 46
+                },
+                {
+                  "buff": "s",
+                  "off": 54
+                },
+                {
+                  "buff": "s",
+                  "off": 62
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 6,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 6,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 0,
+              "srcbuff": "s",
+              "srcoff": 112,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 48,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48
+              ]
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 6,
+                  "off": 0
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 56
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 71
+                },
+                {
+                  "id": 1,
+                  "off": 71
+                },
+                {
+                  "id": 2,
+                  "off": 71
+                },
+                {
+                  "id": 3,
+                  "off": 71
+                },
+                {
+                  "id": 4,
+                  "off": 71
+                },
+                {
+                  "id": 5,
+                  "off": 71
+                },
+                {
+                  "id": 6,
+                  "off": 71
+                }
+              ],
+              "src": 0,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 15
+                },
+                {
+                  "buff": "s",
+                  "off": 23
+                },
+                {
+                  "buff": "s",
+                  "off": 31
+                },
+                {
+                  "buff": "s",
+                  "off": 39
+                },
+                {
+                  "buff": "s",
+                  "off": 47
+                },
+                {
+                  "buff": "s",
+                  "off": 55
+                },
+                {
+                  "buff": "s",
+                  "off": 63
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 7,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 7,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 0,
+              "srcbuff": "s",
+              "srcoff": 120,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 56,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                49,
+                50,
+                51,
+                52,
+                53,
+                54,
+                55
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "s",
+          "type": "sm",
+          "connectedTo": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "inputChunks": 64,
+      "outputChunks": 0,
+      "scratchChunks": 128,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 8
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 0
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 72
+                },
+                {
+                  "id": 1,
+                  "off": 72
+                },
+                {
+                  "id": 2,
+                  "off": 72
+                },
+                {
+                  "id": 3,
+                  "off": 72
+                },
+                {
+                  "id": 4,
+                  "off": 72
+                },
+                {
+                  "id": 5,
+                  "off": 72
+                },
+                {
+                  "id": 6,
+                  "off": 72
+                }
+              ],
+              "src": 1,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 0
+                },
+                {
+                  "buff": "s",
+                  "off": 16
+                },
+                {
+                  "buff": "s",
+                  "off": 24
+                },
+                {
+                  "buff": "s",
+                  "off": 32
+                },
+                {
+                  "buff": "s",
+                  "off": 40
+                },
+                {
+                  "buff": "s",
+                  "off": 48
+                },
+                {
+                  "buff": "s",
+                  "off": 56
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 8,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 8,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 1,
+              "srcbuff": "s",
+              "srcoff": 64,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 0,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 73
+                },
+                {
+                  "id": 1,
+                  "off": 73
+                },
+                {
+                  "id": 2,
+                  "off": 73
+                },
+                {
+                  "id": 3,
+                  "off": 73
+                },
+                {
+                  "id": 4,
+                  "off": 73
+                },
+                {
+                  "id": 5,
+                  "off": 73
+                },
+                {
+                  "id": 6,
+                  "off": 73
+                }
+              ],
+              "src": 1,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 1
+                },
+                {
+                  "buff": "s",
+                  "off": 17
+                },
+                {
+                  "buff": "s",
+                  "off": 25
+                },
+                {
+                  "buff": "s",
+                  "off": 33
+                },
+                {
+                  "buff": "s",
+                  "off": 41
+                },
+                {
+                  "buff": "s",
+                  "off": 49
+                },
+                {
+                  "buff": "s",
+                  "off": 57
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 9,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 9,
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 1,
+                  "off": 8
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 16
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 74
+                },
+                {
+                  "id": 1,
+                  "off": 74
+                },
+                {
+                  "id": 2,
+                  "off": 74
+                },
+                {
+                  "id": 3,
+                  "off": 74
+                },
+                {
+                  "id": 4,
+                  "off": 74
+                },
+                {
+                  "id": 5,
+                  "off": 74
+                },
+                {
+                  "id": 6,
+                  "off": 74
+                }
+              ],
+              "src": 1,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 2
+                },
+                {
+                  "buff": "s",
+                  "off": 18
+                },
+                {
+                  "buff": "s",
+                  "off": 26
+                },
+                {
+                  "buff": "s",
+                  "off": 34
+                },
+                {
+                  "buff": "s",
+                  "off": 42
+                },
+                {
+                  "buff": "s",
+                  "off": 50
+                },
+                {
+                  "buff": "s",
+                  "off": 58
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 10,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 10,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 1,
+              "srcbuff": "s",
+              "srcoff": 80,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 16,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 2,
+                  "off": 8
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 24
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 75
+                },
+                {
+                  "id": 1,
+                  "off": 75
+                },
+                {
+                  "id": 2,
+                  "off": 75
+                },
+                {
+                  "id": 3,
+                  "off": 75
+                },
+                {
+                  "id": 4,
+                  "off": 75
+                },
+                {
+                  "id": 5,
+                  "off": 75
+                },
+                {
+                  "id": 6,
+                  "off": 75
+                }
+              ],
+              "src": 1,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 3
+                },
+                {
+                  "buff": "s",
+                  "off": 19
+                },
+                {
+                  "buff": "s",
+                  "off": 27
+                },
+                {
+                  "buff": "s",
+                  "off": 35
+                },
+                {
+                  "buff": "s",
+                  "off": 43
+                },
+                {
+                  "buff": "s",
+                  "off": 51
+                },
+                {
+                  "buff": "s",
+                  "off": 59
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 11,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 11,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 1,
+              "srcbuff": "s",
+              "srcoff": 88,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 24,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27
+              ]
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 3,
+                  "off": 8
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 32
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 76
+                },
+                {
+                  "id": 1,
+                  "off": 76
+                },
+                {
+                  "id": 2,
+                  "off": 76
+                },
+                {
+                  "id": 3,
+                  "off": 76
+                },
+                {
+                  "id": 4,
+                  "off": 76
+                },
+                {
+                  "id": 5,
+                  "off": 76
+                },
+                {
+                  "id": 6,
+                  "off": 76
+                }
+              ],
+              "src": 1,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 4
+                },
+                {
+                  "buff": "s",
+                  "off": 20
+                },
+                {
+                  "buff": "s",
+                  "off": 28
+                },
+                {
+                  "buff": "s",
+                  "off": 36
+                },
+                {
+                  "buff": "s",
+                  "off": 44
+                },
+                {
+                  "buff": "s",
+                  "off": 52
+                },
+                {
+                  "buff": "s",
+                  "off": 60
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 12,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 12,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 1,
+              "srcbuff": "s",
+              "srcoff": 96,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 32,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34
+              ]
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 4,
+                  "off": 8
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 40
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 77
+                },
+                {
+                  "id": 1,
+                  "off": 77
+                },
+                {
+                  "id": 2,
+                  "off": 77
+                },
+                {
+                  "id": 3,
+                  "off": 77
+                },
+                {
+                  "id": 4,
+                  "off": 77
+                },
+                {
+                  "id": 5,
+                  "off": 77
+                },
+                {
+                  "id": 6,
+                  "off": 77
+                }
+              ],
+              "src": 1,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 5
+                },
+                {
+                  "buff": "s",
+                  "off": 21
+                },
+                {
+                  "buff": "s",
+                  "off": 29
+                },
+                {
+                  "buff": "s",
+                  "off": 37
+                },
+                {
+                  "buff": "s",
+                  "off": 45
+                },
+                {
+                  "buff": "s",
+                  "off": 53
+                },
+                {
+                  "buff": "s",
+                  "off": 61
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 13,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 13,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 1,
+              "srcbuff": "s",
+              "srcoff": 104,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 40,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41
+              ]
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 5,
+                  "off": 8
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 48
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 78
+                },
+                {
+                  "id": 1,
+                  "off": 78
+                },
+                {
+                  "id": 2,
+                  "off": 78
+                },
+                {
+                  "id": 3,
+                  "off": 78
+                },
+                {
+                  "id": 4,
+                  "off": 78
+                },
+                {
+                  "id": 5,
+                  "off": 78
+                },
+                {
+                  "id": 6,
+                  "off": 78
+                }
+              ],
+              "src": 1,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 6
+                },
+                {
+                  "buff": "s",
+                  "off": 22
+                },
+                {
+                  "buff": "s",
+                  "off": 30
+                },
+                {
+                  "buff": "s",
+                  "off": 38
+                },
+                {
+                  "buff": "s",
+                  "off": 46
+                },
+                {
+                  "buff": "s",
+                  "off": 54
+                },
+                {
+                  "buff": "s",
+                  "off": 62
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 14,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 14,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 1,
+              "srcbuff": "s",
+              "srcoff": 112,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 48,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48
+              ]
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 6,
+                  "off": 8
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 56
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 79
+                },
+                {
+                  "id": 1,
+                  "off": 79
+                },
+                {
+                  "id": 2,
+                  "off": 79
+                },
+                {
+                  "id": 3,
+                  "off": 79
+                },
+                {
+                  "id": 4,
+                  "off": 79
+                },
+                {
+                  "id": 5,
+                  "off": 79
+                },
+                {
+                  "id": 6,
+                  "off": 79
+                }
+              ],
+              "src": 1,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 7
+                },
+                {
+                  "buff": "s",
+                  "off": 23
+                },
+                {
+                  "buff": "s",
+                  "off": 31
+                },
+                {
+                  "buff": "s",
+                  "off": 39
+                },
+                {
+                  "buff": "s",
+                  "off": 47
+                },
+                {
+                  "buff": "s",
+                  "off": 55
+                },
+                {
+                  "buff": "s",
+                  "off": 63
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 15,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 15,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 1,
+              "srcbuff": "s",
+              "srcoff": 120,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 56,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                49,
+                50,
+                51,
+                52,
+                53,
+                54,
+                55
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "s",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "inputChunks": 64,
+      "outputChunks": 0,
+      "scratchChunks": 128,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 16
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 0
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 80
+                },
+                {
+                  "id": 1,
+                  "off": 80
+                },
+                {
+                  "id": 2,
+                  "off": 80
+                },
+                {
+                  "id": 3,
+                  "off": 80
+                },
+                {
+                  "id": 4,
+                  "off": 80
+                },
+                {
+                  "id": 5,
+                  "off": 80
+                },
+                {
+                  "id": 6,
+                  "off": 80
+                }
+              ],
+              "src": 2,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 0
+                },
+                {
+                  "buff": "s",
+                  "off": 8
+                },
+                {
+                  "buff": "s",
+                  "off": 24
+                },
+                {
+                  "buff": "s",
+                  "off": 32
+                },
+                {
+                  "buff": "s",
+                  "off": 40
+                },
+                {
+                  "buff": "s",
+                  "off": 48
+                },
+                {
+                  "buff": "s",
+                  "off": 56
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 16,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 16,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 2,
+              "srcbuff": "s",
+              "srcoff": 64,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 0,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 1,
+                  "off": 16
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 8
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 81
+                },
+                {
+                  "id": 1,
+                  "off": 81
+                },
+                {
+                  "id": 2,
+                  "off": 81
+                },
+                {
+                  "id": 3,
+                  "off": 81
+                },
+                {
+                  "id": 4,
+                  "off": 81
+                },
+                {
+                  "id": 5,
+                  "off": 81
+                },
+                {
+                  "id": 6,
+                  "off": 81
+                }
+              ],
+              "src": 2,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 1
+                },
+                {
+                  "buff": "s",
+                  "off": 9
+                },
+                {
+                  "buff": "s",
+                  "off": 25
+                },
+                {
+                  "buff": "s",
+                  "off": 33
+                },
+                {
+                  "buff": "s",
+                  "off": 41
+                },
+                {
+                  "buff": "s",
+                  "off": 49
+                },
+                {
+                  "buff": "s",
+                  "off": 57
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 17,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 17,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 2,
+              "srcbuff": "s",
+              "srcoff": 72,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 8,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 82
+                },
+                {
+                  "id": 1,
+                  "off": 82
+                },
+                {
+                  "id": 2,
+                  "off": 82
+                },
+                {
+                  "id": 3,
+                  "off": 82
+                },
+                {
+                  "id": 4,
+                  "off": 82
+                },
+                {
+                  "id": 5,
+                  "off": 82
+                },
+                {
+                  "id": 6,
+                  "off": 82
+                }
+              ],
+              "src": 2,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 2
+                },
+                {
+                  "buff": "s",
+                  "off": 10
+                },
+                {
+                  "buff": "s",
+                  "off": 26
+                },
+                {
+                  "buff": "s",
+                  "off": 34
+                },
+                {
+                  "buff": "s",
+                  "off": 42
+                },
+                {
+                  "buff": "s",
+                  "off": 50
+                },
+                {
+                  "buff": "s",
+                  "off": 58
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 18,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 18,
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 2,
+                  "off": 16
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 24
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 83
+                },
+                {
+                  "id": 1,
+                  "off": 83
+                },
+                {
+                  "id": 2,
+                  "off": 83
+                },
+                {
+                  "id": 3,
+                  "off": 83
+                },
+                {
+                  "id": 4,
+                  "off": 83
+                },
+                {
+                  "id": 5,
+                  "off": 83
+                },
+                {
+                  "id": 6,
+                  "off": 83
+                }
+              ],
+              "src": 2,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 3
+                },
+                {
+                  "buff": "s",
+                  "off": 11
+                },
+                {
+                  "buff": "s",
+                  "off": 27
+                },
+                {
+                  "buff": "s",
+                  "off": 35
+                },
+                {
+                  "buff": "s",
+                  "off": 43
+                },
+                {
+                  "buff": "s",
+                  "off": 51
+                },
+                {
+                  "buff": "s",
+                  "off": 59
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 19,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 19,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 2,
+              "srcbuff": "s",
+              "srcoff": 88,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 24,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27
+              ]
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 3,
+                  "off": 16
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 32
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 84
+                },
+                {
+                  "id": 1,
+                  "off": 84
+                },
+                {
+                  "id": 2,
+                  "off": 84
+                },
+                {
+                  "id": 3,
+                  "off": 84
+                },
+                {
+                  "id": 4,
+                  "off": 84
+                },
+                {
+                  "id": 5,
+                  "off": 84
+                },
+                {
+                  "id": 6,
+                  "off": 84
+                }
+              ],
+              "src": 2,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 4
+                },
+                {
+                  "buff": "s",
+                  "off": 12
+                },
+                {
+                  "buff": "s",
+                  "off": 28
+                },
+                {
+                  "buff": "s",
+                  "off": 36
+                },
+                {
+                  "buff": "s",
+                  "off": 44
+                },
+                {
+                  "buff": "s",
+                  "off": 52
+                },
+                {
+                  "buff": "s",
+                  "off": 60
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 20,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 20,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 2,
+              "srcbuff": "s",
+              "srcoff": 96,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 32,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34
+              ]
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 4,
+                  "off": 16
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 40
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 85
+                },
+                {
+                  "id": 1,
+                  "off": 85
+                },
+                {
+                  "id": 2,
+                  "off": 85
+                },
+                {
+                  "id": 3,
+                  "off": 85
+                },
+                {
+                  "id": 4,
+                  "off": 85
+                },
+                {
+                  "id": 5,
+                  "off": 85
+                },
+                {
+                  "id": 6,
+                  "off": 85
+                }
+              ],
+              "src": 2,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 5
+                },
+                {
+                  "buff": "s",
+                  "off": 13
+                },
+                {
+                  "buff": "s",
+                  "off": 29
+                },
+                {
+                  "buff": "s",
+                  "off": 37
+                },
+                {
+                  "buff": "s",
+                  "off": 45
+                },
+                {
+                  "buff": "s",
+                  "off": 53
+                },
+                {
+                  "buff": "s",
+                  "off": 61
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 21,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 21,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 2,
+              "srcbuff": "s",
+              "srcoff": 104,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 40,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41
+              ]
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 5,
+                  "off": 16
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 48
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 86
+                },
+                {
+                  "id": 1,
+                  "off": 86
+                },
+                {
+                  "id": 2,
+                  "off": 86
+                },
+                {
+                  "id": 3,
+                  "off": 86
+                },
+                {
+                  "id": 4,
+                  "off": 86
+                },
+                {
+                  "id": 5,
+                  "off": 86
+                },
+                {
+                  "id": 6,
+                  "off": 86
+                }
+              ],
+              "src": 2,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 6
+                },
+                {
+                  "buff": "s",
+                  "off": 14
+                },
+                {
+                  "buff": "s",
+                  "off": 30
+                },
+                {
+                  "buff": "s",
+                  "off": 38
+                },
+                {
+                  "buff": "s",
+                  "off": 46
+                },
+                {
+                  "buff": "s",
+                  "off": 54
+                },
+                {
+                  "buff": "s",
+                  "off": 62
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 22,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 22,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 2,
+              "srcbuff": "s",
+              "srcoff": 112,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 48,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48
+              ]
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 6,
+                  "off": 16
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 56
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 87
+                },
+                {
+                  "id": 1,
+                  "off": 87
+                },
+                {
+                  "id": 2,
+                  "off": 87
+                },
+                {
+                  "id": 3,
+                  "off": 87
+                },
+                {
+                  "id": 4,
+                  "off": 87
+                },
+                {
+                  "id": 5,
+                  "off": 87
+                },
+                {
+                  "id": 6,
+                  "off": 87
+                }
+              ],
+              "src": 2,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 7
+                },
+                {
+                  "buff": "s",
+                  "off": 15
+                },
+                {
+                  "buff": "s",
+                  "off": 31
+                },
+                {
+                  "buff": "s",
+                  "off": 39
+                },
+                {
+                  "buff": "s",
+                  "off": 47
+                },
+                {
+                  "buff": "s",
+                  "off": 55
+                },
+                {
+                  "buff": "s",
+                  "off": 63
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 23,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 23,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 2,
+              "srcbuff": "s",
+              "srcoff": 120,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 56,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                49,
+                50,
+                51,
+                52,
+                53,
+                54,
+                55
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "s",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "inputChunks": 64,
+      "outputChunks": 0,
+      "scratchChunks": 128,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 24
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 0
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 88
+                },
+                {
+                  "id": 1,
+                  "off": 88
+                },
+                {
+                  "id": 2,
+                  "off": 88
+                },
+                {
+                  "id": 3,
+                  "off": 88
+                },
+                {
+                  "id": 4,
+                  "off": 88
+                },
+                {
+                  "id": 5,
+                  "off": 88
+                },
+                {
+                  "id": 6,
+                  "off": 88
+                }
+              ],
+              "src": 3,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 0
+                },
+                {
+                  "buff": "s",
+                  "off": 8
+                },
+                {
+                  "buff": "s",
+                  "off": 16
+                },
+                {
+                  "buff": "s",
+                  "off": 32
+                },
+                {
+                  "buff": "s",
+                  "off": 40
+                },
+                {
+                  "buff": "s",
+                  "off": 48
+                },
+                {
+                  "buff": "s",
+                  "off": 56
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 24,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 24,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 3,
+              "srcbuff": "s",
+              "srcoff": 64,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 0,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 1,
+                  "off": 24
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 8
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 89
+                },
+                {
+                  "id": 1,
+                  "off": 89
+                },
+                {
+                  "id": 2,
+                  "off": 89
+                },
+                {
+                  "id": 3,
+                  "off": 89
+                },
+                {
+                  "id": 4,
+                  "off": 89
+                },
+                {
+                  "id": 5,
+                  "off": 89
+                },
+                {
+                  "id": 6,
+                  "off": 89
+                }
+              ],
+              "src": 3,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 1
+                },
+                {
+                  "buff": "s",
+                  "off": 9
+                },
+                {
+                  "buff": "s",
+                  "off": 17
+                },
+                {
+                  "buff": "s",
+                  "off": 33
+                },
+                {
+                  "buff": "s",
+                  "off": 41
+                },
+                {
+                  "buff": "s",
+                  "off": 49
+                },
+                {
+                  "buff": "s",
+                  "off": 57
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 25,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 25,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 3,
+              "srcbuff": "s",
+              "srcoff": 72,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 8,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 2,
+                  "off": 24
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 16
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 90
+                },
+                {
+                  "id": 1,
+                  "off": 90
+                },
+                {
+                  "id": 2,
+                  "off": 90
+                },
+                {
+                  "id": 3,
+                  "off": 90
+                },
+                {
+                  "id": 4,
+                  "off": 90
+                },
+                {
+                  "id": 5,
+                  "off": 90
+                },
+                {
+                  "id": 6,
+                  "off": 90
+                }
+              ],
+              "src": 3,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 2
+                },
+                {
+                  "buff": "s",
+                  "off": 10
+                },
+                {
+                  "buff": "s",
+                  "off": 18
+                },
+                {
+                  "buff": "s",
+                  "off": 34
+                },
+                {
+                  "buff": "s",
+                  "off": 42
+                },
+                {
+                  "buff": "s",
+                  "off": 50
+                },
+                {
+                  "buff": "s",
+                  "off": 58
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 26,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 26,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 3,
+              "srcbuff": "s",
+              "srcoff": 80,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 16,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 91
+                },
+                {
+                  "id": 1,
+                  "off": 91
+                },
+                {
+                  "id": 2,
+                  "off": 91
+                },
+                {
+                  "id": 3,
+                  "off": 91
+                },
+                {
+                  "id": 4,
+                  "off": 91
+                },
+                {
+                  "id": 5,
+                  "off": 91
+                },
+                {
+                  "id": 6,
+                  "off": 91
+                }
+              ],
+              "src": 3,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 3
+                },
+                {
+                  "buff": "s",
+                  "off": 11
+                },
+                {
+                  "buff": "s",
+                  "off": 19
+                },
+                {
+                  "buff": "s",
+                  "off": 35
+                },
+                {
+                  "buff": "s",
+                  "off": 43
+                },
+                {
+                  "buff": "s",
+                  "off": 51
+                },
+                {
+                  "buff": "s",
+                  "off": 59
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 27,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 27,
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27
+              ]
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 3,
+                  "off": 24
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 32
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 92
+                },
+                {
+                  "id": 1,
+                  "off": 92
+                },
+                {
+                  "id": 2,
+                  "off": 92
+                },
+                {
+                  "id": 3,
+                  "off": 92
+                },
+                {
+                  "id": 4,
+                  "off": 92
+                },
+                {
+                  "id": 5,
+                  "off": 92
+                },
+                {
+                  "id": 6,
+                  "off": 92
+                }
+              ],
+              "src": 3,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 4
+                },
+                {
+                  "buff": "s",
+                  "off": 12
+                },
+                {
+                  "buff": "s",
+                  "off": 20
+                },
+                {
+                  "buff": "s",
+                  "off": 36
+                },
+                {
+                  "buff": "s",
+                  "off": 44
+                },
+                {
+                  "buff": "s",
+                  "off": 52
+                },
+                {
+                  "buff": "s",
+                  "off": 60
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 28,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 28,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 3,
+              "srcbuff": "s",
+              "srcoff": 96,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 32,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34
+              ]
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 4,
+                  "off": 24
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 40
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 93
+                },
+                {
+                  "id": 1,
+                  "off": 93
+                },
+                {
+                  "id": 2,
+                  "off": 93
+                },
+                {
+                  "id": 3,
+                  "off": 93
+                },
+                {
+                  "id": 4,
+                  "off": 93
+                },
+                {
+                  "id": 5,
+                  "off": 93
+                },
+                {
+                  "id": 6,
+                  "off": 93
+                }
+              ],
+              "src": 3,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 5
+                },
+                {
+                  "buff": "s",
+                  "off": 13
+                },
+                {
+                  "buff": "s",
+                  "off": 21
+                },
+                {
+                  "buff": "s",
+                  "off": 37
+                },
+                {
+                  "buff": "s",
+                  "off": 45
+                },
+                {
+                  "buff": "s",
+                  "off": 53
+                },
+                {
+                  "buff": "s",
+                  "off": 61
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 29,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 29,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 3,
+              "srcbuff": "s",
+              "srcoff": 104,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 40,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41
+              ]
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 5,
+                  "off": 24
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 48
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 94
+                },
+                {
+                  "id": 1,
+                  "off": 94
+                },
+                {
+                  "id": 2,
+                  "off": 94
+                },
+                {
+                  "id": 3,
+                  "off": 94
+                },
+                {
+                  "id": 4,
+                  "off": 94
+                },
+                {
+                  "id": 5,
+                  "off": 94
+                },
+                {
+                  "id": 6,
+                  "off": 94
+                }
+              ],
+              "src": 3,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 6
+                },
+                {
+                  "buff": "s",
+                  "off": 14
+                },
+                {
+                  "buff": "s",
+                  "off": 22
+                },
+                {
+                  "buff": "s",
+                  "off": 38
+                },
+                {
+                  "buff": "s",
+                  "off": 46
+                },
+                {
+                  "buff": "s",
+                  "off": 54
+                },
+                {
+                  "buff": "s",
+                  "off": 62
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 30,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 30,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 3,
+              "srcbuff": "s",
+              "srcoff": 112,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 48,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48
+              ]
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 6,
+                  "off": 24
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 56
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 95
+                },
+                {
+                  "id": 1,
+                  "off": 95
+                },
+                {
+                  "id": 2,
+                  "off": 95
+                },
+                {
+                  "id": 3,
+                  "off": 95
+                },
+                {
+                  "id": 4,
+                  "off": 95
+                },
+                {
+                  "id": 5,
+                  "off": 95
+                },
+                {
+                  "id": 6,
+                  "off": 95
+                }
+              ],
+              "src": 3,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 7
+                },
+                {
+                  "buff": "s",
+                  "off": 15
+                },
+                {
+                  "buff": "s",
+                  "off": 23
+                },
+                {
+                  "buff": "s",
+                  "off": 39
+                },
+                {
+                  "buff": "s",
+                  "off": 47
+                },
+                {
+                  "buff": "s",
+                  "off": 55
+                },
+                {
+                  "buff": "s",
+                  "off": 63
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 31,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 31,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 3,
+              "srcbuff": "s",
+              "srcoff": 120,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 56,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                49,
+                50,
+                51,
+                52,
+                53,
+                54,
+                55
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "s",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            7
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "inputChunks": 64,
+      "outputChunks": 0,
+      "scratchChunks": 128,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 32
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 0
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 96
+                },
+                {
+                  "id": 1,
+                  "off": 96
+                },
+                {
+                  "id": 2,
+                  "off": 96
+                },
+                {
+                  "id": 3,
+                  "off": 96
+                },
+                {
+                  "id": 4,
+                  "off": 96
+                },
+                {
+                  "id": 5,
+                  "off": 96
+                },
+                {
+                  "id": 6,
+                  "off": 96
+                }
+              ],
+              "src": 4,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 0
+                },
+                {
+                  "buff": "s",
+                  "off": 8
+                },
+                {
+                  "buff": "s",
+                  "off": 16
+                },
+                {
+                  "buff": "s",
+                  "off": 24
+                },
+                {
+                  "buff": "s",
+                  "off": 40
+                },
+                {
+                  "buff": "s",
+                  "off": 48
+                },
+                {
+                  "buff": "s",
+                  "off": 56
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 32,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 32,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 4,
+              "srcbuff": "s",
+              "srcoff": 64,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 0,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 1,
+                  "off": 32
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 8
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 97
+                },
+                {
+                  "id": 1,
+                  "off": 97
+                },
+                {
+                  "id": 2,
+                  "off": 97
+                },
+                {
+                  "id": 3,
+                  "off": 97
+                },
+                {
+                  "id": 4,
+                  "off": 97
+                },
+                {
+                  "id": 5,
+                  "off": 97
+                },
+                {
+                  "id": 6,
+                  "off": 97
+                }
+              ],
+              "src": 4,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 1
+                },
+                {
+                  "buff": "s",
+                  "off": 9
+                },
+                {
+                  "buff": "s",
+                  "off": 17
+                },
+                {
+                  "buff": "s",
+                  "off": 25
+                },
+                {
+                  "buff": "s",
+                  "off": 41
+                },
+                {
+                  "buff": "s",
+                  "off": 49
+                },
+                {
+                  "buff": "s",
+                  "off": 57
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 33,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 33,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 4,
+              "srcbuff": "s",
+              "srcoff": 72,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 8,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 2,
+                  "off": 32
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 16
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 98
+                },
+                {
+                  "id": 1,
+                  "off": 98
+                },
+                {
+                  "id": 2,
+                  "off": 98
+                },
+                {
+                  "id": 3,
+                  "off": 98
+                },
+                {
+                  "id": 4,
+                  "off": 98
+                },
+                {
+                  "id": 5,
+                  "off": 98
+                },
+                {
+                  "id": 6,
+                  "off": 98
+                }
+              ],
+              "src": 4,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 2
+                },
+                {
+                  "buff": "s",
+                  "off": 10
+                },
+                {
+                  "buff": "s",
+                  "off": 18
+                },
+                {
+                  "buff": "s",
+                  "off": 26
+                },
+                {
+                  "buff": "s",
+                  "off": 42
+                },
+                {
+                  "buff": "s",
+                  "off": 50
+                },
+                {
+                  "buff": "s",
+                  "off": 58
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 34,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 34,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 4,
+              "srcbuff": "s",
+              "srcoff": 80,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 16,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 3,
+                  "off": 32
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 24
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 99
+                },
+                {
+                  "id": 1,
+                  "off": 99
+                },
+                {
+                  "id": 2,
+                  "off": 99
+                },
+                {
+                  "id": 3,
+                  "off": 99
+                },
+                {
+                  "id": 4,
+                  "off": 99
+                },
+                {
+                  "id": 5,
+                  "off": 99
+                },
+                {
+                  "id": 6,
+                  "off": 99
+                }
+              ],
+              "src": 4,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 3
+                },
+                {
+                  "buff": "s",
+                  "off": 11
+                },
+                {
+                  "buff": "s",
+                  "off": 19
+                },
+                {
+                  "buff": "s",
+                  "off": 27
+                },
+                {
+                  "buff": "s",
+                  "off": 43
+                },
+                {
+                  "buff": "s",
+                  "off": 51
+                },
+                {
+                  "buff": "s",
+                  "off": 59
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 35,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 35,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 4,
+              "srcbuff": "s",
+              "srcoff": 88,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 24,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27
+              ]
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "ops": [
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 100
+                },
+                {
+                  "id": 1,
+                  "off": 100
+                },
+                {
+                  "id": 2,
+                  "off": 100
+                },
+                {
+                  "id": 3,
+                  "off": 100
+                },
+                {
+                  "id": 4,
+                  "off": 100
+                },
+                {
+                  "id": 5,
+                  "off": 100
+                },
+                {
+                  "id": 6,
+                  "off": 100
+                }
+              ],
+              "src": 4,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 4
+                },
+                {
+                  "buff": "s",
+                  "off": 12
+                },
+                {
+                  "buff": "s",
+                  "off": 20
+                },
+                {
+                  "buff": "s",
+                  "off": 28
+                },
+                {
+                  "buff": "s",
+                  "off": 44
+                },
+                {
+                  "buff": "s",
+                  "off": 52
+                },
+                {
+                  "buff": "s",
+                  "off": 60
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 36,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 36,
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34
+              ]
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 4,
+                  "off": 32
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 40
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 101
+                },
+                {
+                  "id": 1,
+                  "off": 101
+                },
+                {
+                  "id": 2,
+                  "off": 101
+                },
+                {
+                  "id": 3,
+                  "off": 101
+                },
+                {
+                  "id": 4,
+                  "off": 101
+                },
+                {
+                  "id": 5,
+                  "off": 101
+                },
+                {
+                  "id": 6,
+                  "off": 101
+                }
+              ],
+              "src": 4,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 5
+                },
+                {
+                  "buff": "s",
+                  "off": 13
+                },
+                {
+                  "buff": "s",
+                  "off": 21
+                },
+                {
+                  "buff": "s",
+                  "off": 29
+                },
+                {
+                  "buff": "s",
+                  "off": 45
+                },
+                {
+                  "buff": "s",
+                  "off": 53
+                },
+                {
+                  "buff": "s",
+                  "off": 61
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 37,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 37,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 4,
+              "srcbuff": "s",
+              "srcoff": 104,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 40,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41
+              ]
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 5,
+                  "off": 32
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 48
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 102
+                },
+                {
+                  "id": 1,
+                  "off": 102
+                },
+                {
+                  "id": 2,
+                  "off": 102
+                },
+                {
+                  "id": 3,
+                  "off": 102
+                },
+                {
+                  "id": 4,
+                  "off": 102
+                },
+                {
+                  "id": 5,
+                  "off": 102
+                },
+                {
+                  "id": 6,
+                  "off": 102
+                }
+              ],
+              "src": 4,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 6
+                },
+                {
+                  "buff": "s",
+                  "off": 14
+                },
+                {
+                  "buff": "s",
+                  "off": 22
+                },
+                {
+                  "buff": "s",
+                  "off": 30
+                },
+                {
+                  "buff": "s",
+                  "off": 46
+                },
+                {
+                  "buff": "s",
+                  "off": 54
+                },
+                {
+                  "buff": "s",
+                  "off": 62
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 38,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 38,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 4,
+              "srcbuff": "s",
+              "srcoff": 112,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 48,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48
+              ]
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 6,
+                  "off": 32
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 56
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 103
+                },
+                {
+                  "id": 1,
+                  "off": 103
+                },
+                {
+                  "id": 2,
+                  "off": 103
+                },
+                {
+                  "id": 3,
+                  "off": 103
+                },
+                {
+                  "id": 4,
+                  "off": 103
+                },
+                {
+                  "id": 5,
+                  "off": 103
+                },
+                {
+                  "id": 6,
+                  "off": 103
+                }
+              ],
+              "src": 4,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 7
+                },
+                {
+                  "buff": "s",
+                  "off": 15
+                },
+                {
+                  "buff": "s",
+                  "off": 23
+                },
+                {
+                  "buff": "s",
+                  "off": 31
+                },
+                {
+                  "buff": "s",
+                  "off": 47
+                },
+                {
+                  "buff": "s",
+                  "off": 55
+                },
+                {
+                  "buff": "s",
+                  "off": 63
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 39,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 39,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 4,
+              "srcbuff": "s",
+              "srcoff": 120,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 56,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                49,
+                50,
+                51,
+                52,
+                53,
+                54,
+                55
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "s",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            5,
+            6,
+            7
+          ]
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "inputChunks": 64,
+      "outputChunks": 0,
+      "scratchChunks": 128,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 40
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 0
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 104
+                },
+                {
+                  "id": 1,
+                  "off": 104
+                },
+                {
+                  "id": 2,
+                  "off": 104
+                },
+                {
+                  "id": 3,
+                  "off": 104
+                },
+                {
+                  "id": 4,
+                  "off": 104
+                },
+                {
+                  "id": 5,
+                  "off": 104
+                },
+                {
+                  "id": 6,
+                  "off": 104
+                }
+              ],
+              "src": 5,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 0
+                },
+                {
+                  "buff": "s",
+                  "off": 8
+                },
+                {
+                  "buff": "s",
+                  "off": 16
+                },
+                {
+                  "buff": "s",
+                  "off": 24
+                },
+                {
+                  "buff": "s",
+                  "off": 32
+                },
+                {
+                  "buff": "s",
+                  "off": 48
+                },
+                {
+                  "buff": "s",
+                  "off": 56
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 40,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 40,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 5,
+              "srcbuff": "s",
+              "srcoff": 64,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 0,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 1,
+                  "off": 40
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 8
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 105
+                },
+                {
+                  "id": 1,
+                  "off": 105
+                },
+                {
+                  "id": 2,
+                  "off": 105
+                },
+                {
+                  "id": 3,
+                  "off": 105
+                },
+                {
+                  "id": 4,
+                  "off": 105
+                },
+                {
+                  "id": 5,
+                  "off": 105
+                },
+                {
+                  "id": 6,
+                  "off": 105
+                }
+              ],
+              "src": 5,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 1
+                },
+                {
+                  "buff": "s",
+                  "off": 9
+                },
+                {
+                  "buff": "s",
+                  "off": 17
+                },
+                {
+                  "buff": "s",
+                  "off": 25
+                },
+                {
+                  "buff": "s",
+                  "off": 33
+                },
+                {
+                  "buff": "s",
+                  "off": 49
+                },
+                {
+                  "buff": "s",
+                  "off": 57
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 41,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 41,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 5,
+              "srcbuff": "s",
+              "srcoff": 72,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 8,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 2,
+                  "off": 40
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 16
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 106
+                },
+                {
+                  "id": 1,
+                  "off": 106
+                },
+                {
+                  "id": 2,
+                  "off": 106
+                },
+                {
+                  "id": 3,
+                  "off": 106
+                },
+                {
+                  "id": 4,
+                  "off": 106
+                },
+                {
+                  "id": 5,
+                  "off": 106
+                },
+                {
+                  "id": 6,
+                  "off": 106
+                }
+              ],
+              "src": 5,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 2
+                },
+                {
+                  "buff": "s",
+                  "off": 10
+                },
+                {
+                  "buff": "s",
+                  "off": 18
+                },
+                {
+                  "buff": "s",
+                  "off": 26
+                },
+                {
+                  "buff": "s",
+                  "off": 34
+                },
+                {
+                  "buff": "s",
+                  "off": 50
+                },
+                {
+                  "buff": "s",
+                  "off": 58
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 42,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 42,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 5,
+              "srcbuff": "s",
+              "srcoff": 80,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 16,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 3,
+                  "off": 40
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 24
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 107
+                },
+                {
+                  "id": 1,
+                  "off": 107
+                },
+                {
+                  "id": 2,
+                  "off": 107
+                },
+                {
+                  "id": 3,
+                  "off": 107
+                },
+                {
+                  "id": 4,
+                  "off": 107
+                },
+                {
+                  "id": 5,
+                  "off": 107
+                },
+                {
+                  "id": 6,
+                  "off": 107
+                }
+              ],
+              "src": 5,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 3
+                },
+                {
+                  "buff": "s",
+                  "off": 11
+                },
+                {
+                  "buff": "s",
+                  "off": 19
+                },
+                {
+                  "buff": "s",
+                  "off": 27
+                },
+                {
+                  "buff": "s",
+                  "off": 35
+                },
+                {
+                  "buff": "s",
+                  "off": 51
+                },
+                {
+                  "buff": "s",
+                  "off": 59
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 43,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 43,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 5,
+              "srcbuff": "s",
+              "srcoff": 88,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 24,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27
+              ]
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 4,
+                  "off": 40
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 32
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 108
+                },
+                {
+                  "id": 1,
+                  "off": 108
+                },
+                {
+                  "id": 2,
+                  "off": 108
+                },
+                {
+                  "id": 3,
+                  "off": 108
+                },
+                {
+                  "id": 4,
+                  "off": 108
+                },
+                {
+                  "id": 5,
+                  "off": 108
+                },
+                {
+                  "id": 6,
+                  "off": 108
+                }
+              ],
+              "src": 5,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 4
+                },
+                {
+                  "buff": "s",
+                  "off": 12
+                },
+                {
+                  "buff": "s",
+                  "off": 20
+                },
+                {
+                  "buff": "s",
+                  "off": 28
+                },
+                {
+                  "buff": "s",
+                  "off": 36
+                },
+                {
+                  "buff": "s",
+                  "off": 52
+                },
+                {
+                  "buff": "s",
+                  "off": 60
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 44,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 44,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 5,
+              "srcbuff": "s",
+              "srcoff": 96,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 32,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34
+              ]
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "ops": [
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 109
+                },
+                {
+                  "id": 1,
+                  "off": 109
+                },
+                {
+                  "id": 2,
+                  "off": 109
+                },
+                {
+                  "id": 3,
+                  "off": 109
+                },
+                {
+                  "id": 4,
+                  "off": 109
+                },
+                {
+                  "id": 5,
+                  "off": 109
+                },
+                {
+                  "id": 6,
+                  "off": 109
+                }
+              ],
+              "src": 5,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 5
+                },
+                {
+                  "buff": "s",
+                  "off": 13
+                },
+                {
+                  "buff": "s",
+                  "off": 21
+                },
+                {
+                  "buff": "s",
+                  "off": 29
+                },
+                {
+                  "buff": "s",
+                  "off": 37
+                },
+                {
+                  "buff": "s",
+                  "off": 53
+                },
+                {
+                  "buff": "s",
+                  "off": 61
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 45,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 45,
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41
+              ]
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 5,
+                  "off": 40
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 48
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 110
+                },
+                {
+                  "id": 1,
+                  "off": 110
+                },
+                {
+                  "id": 2,
+                  "off": 110
+                },
+                {
+                  "id": 3,
+                  "off": 110
+                },
+                {
+                  "id": 4,
+                  "off": 110
+                },
+                {
+                  "id": 5,
+                  "off": 110
+                },
+                {
+                  "id": 6,
+                  "off": 110
+                }
+              ],
+              "src": 5,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 6
+                },
+                {
+                  "buff": "s",
+                  "off": 14
+                },
+                {
+                  "buff": "s",
+                  "off": 22
+                },
+                {
+                  "buff": "s",
+                  "off": 30
+                },
+                {
+                  "buff": "s",
+                  "off": 38
+                },
+                {
+                  "buff": "s",
+                  "off": 54
+                },
+                {
+                  "buff": "s",
+                  "off": 62
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 46,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 46,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 5,
+              "srcbuff": "s",
+              "srcoff": 112,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 48,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48
+              ]
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 6,
+                  "off": 40
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 56
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 111
+                },
+                {
+                  "id": 1,
+                  "off": 111
+                },
+                {
+                  "id": 2,
+                  "off": 111
+                },
+                {
+                  "id": 3,
+                  "off": 111
+                },
+                {
+                  "id": 4,
+                  "off": 111
+                },
+                {
+                  "id": 5,
+                  "off": 111
+                },
+                {
+                  "id": 6,
+                  "off": 111
+                }
+              ],
+              "src": 5,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 7
+                },
+                {
+                  "buff": "s",
+                  "off": 15
+                },
+                {
+                  "buff": "s",
+                  "off": 23
+                },
+                {
+                  "buff": "s",
+                  "off": 31
+                },
+                {
+                  "buff": "s",
+                  "off": 39
+                },
+                {
+                  "buff": "s",
+                  "off": 55
+                },
+                {
+                  "buff": "s",
+                  "off": 63
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 47,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 47,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 5,
+              "srcbuff": "s",
+              "srcoff": 120,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 56,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                49,
+                50,
+                51,
+                52,
+                53,
+                54,
+                55
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "s",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            6,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            6,
+            7
+          ]
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "inputChunks": 64,
+      "outputChunks": 0,
+      "scratchChunks": 128,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 48
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 0
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 112
+                },
+                {
+                  "id": 1,
+                  "off": 112
+                },
+                {
+                  "id": 2,
+                  "off": 112
+                },
+                {
+                  "id": 3,
+                  "off": 112
+                },
+                {
+                  "id": 4,
+                  "off": 112
+                },
+                {
+                  "id": 5,
+                  "off": 112
+                },
+                {
+                  "id": 6,
+                  "off": 112
+                }
+              ],
+              "src": 6,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 0
+                },
+                {
+                  "buff": "s",
+                  "off": 8
+                },
+                {
+                  "buff": "s",
+                  "off": 16
+                },
+                {
+                  "buff": "s",
+                  "off": 24
+                },
+                {
+                  "buff": "s",
+                  "off": 32
+                },
+                {
+                  "buff": "s",
+                  "off": 40
+                },
+                {
+                  "buff": "s",
+                  "off": 56
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 48,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 48,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 6,
+              "srcbuff": "s",
+              "srcoff": 64,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 0,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 1,
+                  "off": 48
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 8
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 113
+                },
+                {
+                  "id": 1,
+                  "off": 113
+                },
+                {
+                  "id": 2,
+                  "off": 113
+                },
+                {
+                  "id": 3,
+                  "off": 113
+                },
+                {
+                  "id": 4,
+                  "off": 113
+                },
+                {
+                  "id": 5,
+                  "off": 113
+                },
+                {
+                  "id": 6,
+                  "off": 113
+                }
+              ],
+              "src": 6,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 1
+                },
+                {
+                  "buff": "s",
+                  "off": 9
+                },
+                {
+                  "buff": "s",
+                  "off": 17
+                },
+                {
+                  "buff": "s",
+                  "off": 25
+                },
+                {
+                  "buff": "s",
+                  "off": 33
+                },
+                {
+                  "buff": "s",
+                  "off": 41
+                },
+                {
+                  "buff": "s",
+                  "off": 57
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 49,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 49,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 6,
+              "srcbuff": "s",
+              "srcoff": 72,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 8,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 2,
+                  "off": 48
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 16
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 114
+                },
+                {
+                  "id": 1,
+                  "off": 114
+                },
+                {
+                  "id": 2,
+                  "off": 114
+                },
+                {
+                  "id": 3,
+                  "off": 114
+                },
+                {
+                  "id": 4,
+                  "off": 114
+                },
+                {
+                  "id": 5,
+                  "off": 114
+                },
+                {
+                  "id": 6,
+                  "off": 114
+                }
+              ],
+              "src": 6,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 2
+                },
+                {
+                  "buff": "s",
+                  "off": 10
+                },
+                {
+                  "buff": "s",
+                  "off": 18
+                },
+                {
+                  "buff": "s",
+                  "off": 26
+                },
+                {
+                  "buff": "s",
+                  "off": 34
+                },
+                {
+                  "buff": "s",
+                  "off": 42
+                },
+                {
+                  "buff": "s",
+                  "off": 58
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 50,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 50,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 6,
+              "srcbuff": "s",
+              "srcoff": 80,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 16,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 3,
+                  "off": 48
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 24
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 115
+                },
+                {
+                  "id": 1,
+                  "off": 115
+                },
+                {
+                  "id": 2,
+                  "off": 115
+                },
+                {
+                  "id": 3,
+                  "off": 115
+                },
+                {
+                  "id": 4,
+                  "off": 115
+                },
+                {
+                  "id": 5,
+                  "off": 115
+                },
+                {
+                  "id": 6,
+                  "off": 115
+                }
+              ],
+              "src": 6,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 3
+                },
+                {
+                  "buff": "s",
+                  "off": 11
+                },
+                {
+                  "buff": "s",
+                  "off": 19
+                },
+                {
+                  "buff": "s",
+                  "off": 27
+                },
+                {
+                  "buff": "s",
+                  "off": 35
+                },
+                {
+                  "buff": "s",
+                  "off": 43
+                },
+                {
+                  "buff": "s",
+                  "off": 59
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 51,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 51,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 6,
+              "srcbuff": "s",
+              "srcoff": 88,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 24,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27
+              ]
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 4,
+                  "off": 48
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 32
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 116
+                },
+                {
+                  "id": 1,
+                  "off": 116
+                },
+                {
+                  "id": 2,
+                  "off": 116
+                },
+                {
+                  "id": 3,
+                  "off": 116
+                },
+                {
+                  "id": 4,
+                  "off": 116
+                },
+                {
+                  "id": 5,
+                  "off": 116
+                },
+                {
+                  "id": 6,
+                  "off": 116
+                }
+              ],
+              "src": 6,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 4
+                },
+                {
+                  "buff": "s",
+                  "off": 12
+                },
+                {
+                  "buff": "s",
+                  "off": 20
+                },
+                {
+                  "buff": "s",
+                  "off": 28
+                },
+                {
+                  "buff": "s",
+                  "off": 36
+                },
+                {
+                  "buff": "s",
+                  "off": 44
+                },
+                {
+                  "buff": "s",
+                  "off": 60
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 52,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 52,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 6,
+              "srcbuff": "s",
+              "srcoff": 96,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 32,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34
+              ]
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 5,
+                  "off": 48
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 40
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 117
+                },
+                {
+                  "id": 1,
+                  "off": 117
+                },
+                {
+                  "id": 2,
+                  "off": 117
+                },
+                {
+                  "id": 3,
+                  "off": 117
+                },
+                {
+                  "id": 4,
+                  "off": 117
+                },
+                {
+                  "id": 5,
+                  "off": 117
+                },
+                {
+                  "id": 6,
+                  "off": 117
+                }
+              ],
+              "src": 6,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 5
+                },
+                {
+                  "buff": "s",
+                  "off": 13
+                },
+                {
+                  "buff": "s",
+                  "off": 21
+                },
+                {
+                  "buff": "s",
+                  "off": 29
+                },
+                {
+                  "buff": "s",
+                  "off": 37
+                },
+                {
+                  "buff": "s",
+                  "off": 45
+                },
+                {
+                  "buff": "s",
+                  "off": 61
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 53,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 53,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 6,
+              "srcbuff": "s",
+              "srcoff": 104,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 40,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41
+              ]
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "ops": [
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 118
+                },
+                {
+                  "id": 1,
+                  "off": 118
+                },
+                {
+                  "id": 2,
+                  "off": 118
+                },
+                {
+                  "id": 3,
+                  "off": 118
+                },
+                {
+                  "id": 4,
+                  "off": 118
+                },
+                {
+                  "id": 5,
+                  "off": 118
+                },
+                {
+                  "id": 6,
+                  "off": 118
+                }
+              ],
+              "src": 6,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 6
+                },
+                {
+                  "buff": "s",
+                  "off": 14
+                },
+                {
+                  "buff": "s",
+                  "off": 22
+                },
+                {
+                  "buff": "s",
+                  "off": 30
+                },
+                {
+                  "buff": "s",
+                  "off": 38
+                },
+                {
+                  "buff": "s",
+                  "off": 46
+                },
+                {
+                  "buff": "s",
+                  "off": 62
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 54,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 54,
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48
+              ]
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 6,
+                  "off": 48
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 56
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 119
+                },
+                {
+                  "id": 1,
+                  "off": 119
+                },
+                {
+                  "id": 2,
+                  "off": 119
+                },
+                {
+                  "id": 3,
+                  "off": 119
+                },
+                {
+                  "id": 4,
+                  "off": 119
+                },
+                {
+                  "id": 5,
+                  "off": 119
+                },
+                {
+                  "id": 6,
+                  "off": 119
+                }
+              ],
+              "src": 6,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 7
+                },
+                {
+                  "buff": "s",
+                  "off": 15
+                },
+                {
+                  "buff": "s",
+                  "off": 23
+                },
+                {
+                  "buff": "s",
+                  "off": 31
+                },
+                {
+                  "buff": "s",
+                  "off": 39
+                },
+                {
+                  "buff": "s",
+                  "off": 47
+                },
+                {
+                  "buff": "s",
+                  "off": 63
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 55,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 55,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 6,
+              "srcbuff": "s",
+              "srcoff": 120,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 56,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                49,
+                50,
+                51,
+                52,
+                53,
+                54,
+                55
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "s",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            7
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "inputChunks": 64,
+      "outputChunks": 0,
+      "scratchChunks": 128,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 56
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 0
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 120
+                },
+                {
+                  "id": 1,
+                  "off": 120
+                },
+                {
+                  "id": 2,
+                  "off": 120
+                },
+                {
+                  "id": 3,
+                  "off": 120
+                },
+                {
+                  "id": 4,
+                  "off": 120
+                },
+                {
+                  "id": 5,
+                  "off": 120
+                },
+                {
+                  "id": 6,
+                  "off": 120
+                }
+              ],
+              "src": 7,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 0
+                },
+                {
+                  "buff": "s",
+                  "off": 8
+                },
+                {
+                  "buff": "s",
+                  "off": 16
+                },
+                {
+                  "buff": "s",
+                  "off": 24
+                },
+                {
+                  "buff": "s",
+                  "off": 32
+                },
+                {
+                  "buff": "s",
+                  "off": 40
+                },
+                {
+                  "buff": "s",
+                  "off": 48
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 56,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 56,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 7,
+              "srcbuff": "s",
+              "srcoff": 64,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 0,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 1,
+                  "off": 56
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 8
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 121
+                },
+                {
+                  "id": 1,
+                  "off": 121
+                },
+                {
+                  "id": 2,
+                  "off": 121
+                },
+                {
+                  "id": 3,
+                  "off": 121
+                },
+                {
+                  "id": 4,
+                  "off": 121
+                },
+                {
+                  "id": 5,
+                  "off": 121
+                },
+                {
+                  "id": 6,
+                  "off": 121
+                }
+              ],
+              "src": 7,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 1
+                },
+                {
+                  "buff": "s",
+                  "off": 9
+                },
+                {
+                  "buff": "s",
+                  "off": 17
+                },
+                {
+                  "buff": "s",
+                  "off": 25
+                },
+                {
+                  "buff": "s",
+                  "off": 33
+                },
+                {
+                  "buff": "s",
+                  "off": 41
+                },
+                {
+                  "buff": "s",
+                  "off": 49
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 57,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 57,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 7,
+              "srcbuff": "s",
+              "srcoff": 72,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 8,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 2,
+                  "off": 56
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 16
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 122
+                },
+                {
+                  "id": 1,
+                  "off": 122
+                },
+                {
+                  "id": 2,
+                  "off": 122
+                },
+                {
+                  "id": 3,
+                  "off": 122
+                },
+                {
+                  "id": 4,
+                  "off": 122
+                },
+                {
+                  "id": 5,
+                  "off": 122
+                },
+                {
+                  "id": 6,
+                  "off": 122
+                }
+              ],
+              "src": 7,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 2
+                },
+                {
+                  "buff": "s",
+                  "off": 10
+                },
+                {
+                  "buff": "s",
+                  "off": 18
+                },
+                {
+                  "buff": "s",
+                  "off": 26
+                },
+                {
+                  "buff": "s",
+                  "off": 34
+                },
+                {
+                  "buff": "s",
+                  "off": 42
+                },
+                {
+                  "buff": "s",
+                  "off": 50
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 58,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 58,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 7,
+              "srcbuff": "s",
+              "srcoff": 80,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 16,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 3,
+                  "off": 56
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 24
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 123
+                },
+                {
+                  "id": 1,
+                  "off": 123
+                },
+                {
+                  "id": 2,
+                  "off": 123
+                },
+                {
+                  "id": 3,
+                  "off": 123
+                },
+                {
+                  "id": 4,
+                  "off": 123
+                },
+                {
+                  "id": 5,
+                  "off": 123
+                },
+                {
+                  "id": 6,
+                  "off": 123
+                }
+              ],
+              "src": 7,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 3
+                },
+                {
+                  "buff": "s",
+                  "off": 11
+                },
+                {
+                  "buff": "s",
+                  "off": 19
+                },
+                {
+                  "buff": "s",
+                  "off": 27
+                },
+                {
+                  "buff": "s",
+                  "off": 35
+                },
+                {
+                  "buff": "s",
+                  "off": 43
+                },
+                {
+                  "buff": "s",
+                  "off": 51
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 59,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 59,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 7,
+              "srcbuff": "s",
+              "srcoff": 88,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 24,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27
+              ]
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 4,
+                  "off": 56
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 32
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 124
+                },
+                {
+                  "id": 1,
+                  "off": 124
+                },
+                {
+                  "id": 2,
+                  "off": 124
+                },
+                {
+                  "id": 3,
+                  "off": 124
+                },
+                {
+                  "id": 4,
+                  "off": 124
+                },
+                {
+                  "id": 5,
+                  "off": 124
+                },
+                {
+                  "id": 6,
+                  "off": 124
+                }
+              ],
+              "src": 7,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 4
+                },
+                {
+                  "buff": "s",
+                  "off": 12
+                },
+                {
+                  "buff": "s",
+                  "off": 20
+                },
+                {
+                  "buff": "s",
+                  "off": 28
+                },
+                {
+                  "buff": "s",
+                  "off": 36
+                },
+                {
+                  "buff": "s",
+                  "off": 44
+                },
+                {
+                  "buff": "s",
+                  "off": 52
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 60,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 60,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 7,
+              "srcbuff": "s",
+              "srcoff": 96,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 32,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34
+              ]
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 5,
+                  "off": 56
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 40
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 125
+                },
+                {
+                  "id": 1,
+                  "off": 125
+                },
+                {
+                  "id": 2,
+                  "off": 125
+                },
+                {
+                  "id": 3,
+                  "off": 125
+                },
+                {
+                  "id": 4,
+                  "off": 125
+                },
+                {
+                  "id": 5,
+                  "off": 125
+                },
+                {
+                  "id": 6,
+                  "off": 125
+                }
+              ],
+              "src": 7,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 5
+                },
+                {
+                  "buff": "s",
+                  "off": 13
+                },
+                {
+                  "buff": "s",
+                  "off": 21
+                },
+                {
+                  "buff": "s",
+                  "off": 29
+                },
+                {
+                  "buff": "s",
+                  "off": 37
+                },
+                {
+                  "buff": "s",
+                  "off": 45
+                },
+                {
+                  "buff": "s",
+                  "off": 53
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 61,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 61,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 7,
+              "srcbuff": "s",
+              "srcoff": 104,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 40,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41
+              ]
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 6,
+                  "off": 56
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 48
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 8
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 126
+                },
+                {
+                  "id": 1,
+                  "off": 126
+                },
+                {
+                  "id": 2,
+                  "off": 126
+                },
+                {
+                  "id": 3,
+                  "off": 126
+                },
+                {
+                  "id": 4,
+                  "off": 126
+                },
+                {
+                  "id": 5,
+                  "off": 126
+                },
+                {
+                  "id": 6,
+                  "off": 126
+                }
+              ],
+              "src": 7,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 6
+                },
+                {
+                  "buff": "s",
+                  "off": 14
+                },
+                {
+                  "buff": "s",
+                  "off": 22
+                },
+                {
+                  "buff": "s",
+                  "off": 30
+                },
+                {
+                  "buff": "s",
+                  "off": 38
+                },
+                {
+                  "buff": "s",
+                  "off": 46
+                },
+                {
+                  "buff": "s",
+                  "off": 54
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 62,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 62,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 7,
+              "srcbuff": "s",
+              "srcoff": 112,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 48,
+              "ctype": "none",
+              "cnt": 8
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48
+              ]
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "ops": [
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 127
+                },
+                {
+                  "id": 1,
+                  "off": 127
+                },
+                {
+                  "id": 2,
+                  "off": 127
+                },
+                {
+                  "id": 3,
+                  "off": 127
+                },
+                {
+                  "id": 4,
+                  "off": 127
+                },
+                {
+                  "id": 5,
+                  "off": 127
+                },
+                {
+                  "id": 6,
+                  "off": 127
+                }
+              ],
+              "src": 7,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 7
+                },
+                {
+                  "buff": "s",
+                  "off": 15
+                },
+                {
+                  "buff": "s",
+                  "off": 23
+                },
+                {
+                  "buff": "s",
+                  "off": 31
+                },
+                {
+                  "buff": "s",
+                  "off": 39
+                },
+                {
+                  "buff": "s",
+                  "off": 47
+                },
+                {
+                  "buff": "s",
+                  "off": 55
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 63,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 63,
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                49,
+                50,
+                51,
+                52,
+                53,
+                54,
+                55
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "s",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ]
+        }
+      ]
+    }
+  ]
+}
