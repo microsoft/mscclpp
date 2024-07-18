@@ -4,9 +4,9 @@
 #include <algorithm>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/executor.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <mscclpp/sm_channel_device.hpp>
-#include <mscclpp/executor.hpp>
 #include <unordered_map>
 #include <vector>
 
@@ -56,7 +56,8 @@ struct ncclComm {
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
   std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
   std::shared_ptr<mscclpp::Executor> executor;
-  std::shared_ptr<mscclpp::ExecutionPlan> allReducePacketIPPlan, allReducePacketOPPlan, allReduceIPPlan, allReduceOPPlan;
+  std::shared_ptr<mscclpp::ExecutionPlan> allReducePacketIPPlan, allReducePacketOPPlan, allReduceIPPlan,
+      allReduceOPPlan;
 
   std::unordered_map<channelKey, ChannelInfo> channelInInfos;
   std::unordered_map<channelKey, ChannelInfo> channelOutInfos;
@@ -155,7 +156,7 @@ static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> setupSmChannel
 }
 
 static ncclResult_t ncclAllReduceOld(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
-                                    ncclRedOp_t, ncclComm_t comm, cudaStream_t stream) {
+                                     ncclRedOp_t, ncclComm_t comm, cudaStream_t stream) {
   // Checking if the parameters are valids
   if (sendbuff == nullptr || recvbuff == nullptr || count == 0 || ncclTypeSize(datatype) == 0 || comm == nullptr)
     return ncclInvalidArgument;
@@ -295,12 +296,20 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->remoteScratchRegMemories =
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
-  
-  if(getenv("ALLREDUCEPKT_IP_JSON_FILE")) commPtr->allReducePacketIPPlan = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce_packet", getenv("ALLREDUCEPKT_IP_JSON_FILE")));
-  if(getenv("ALLREDUCEPKT_OP_JSON_FILE")) commPtr->allReducePacketOPPlan = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce_packet", getenv("ALLREDUCEPKT_OP_JSON_FILE")));
-  if(getenv("ALLREDUCE_IP_JSON_FILE")) commPtr->allReduceIPPlan = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce", getenv("ALLREDUCE_IP_JSON_FILE")));
-  if(getenv("ALLREDUCE_OP_JSON_FILE")) commPtr->allReduceOPPlan = std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce", getenv("ALLREDUCE_OP_JSON_FILE")));
-  
+
+  if (getenv("ALLREDUCEPKT_IP_JSON_FILE"))
+    commPtr->allReducePacketIPPlan = std::make_shared<mscclpp::ExecutionPlan>(
+        mscclpp::ExecutionPlan("allreduce_packet", getenv("ALLREDUCEPKT_IP_JSON_FILE")));
+  if (getenv("ALLREDUCEPKT_OP_JSON_FILE"))
+    commPtr->allReducePacketOPPlan = std::make_shared<mscclpp::ExecutionPlan>(
+        mscclpp::ExecutionPlan("allreduce_packet", getenv("ALLREDUCEPKT_OP_JSON_FILE")));
+  if (getenv("ALLREDUCE_IP_JSON_FILE"))
+    commPtr->allReduceIPPlan =
+        std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce", getenv("ALLREDUCE_IP_JSON_FILE")));
+  if (getenv("ALLREDUCE_OP_JSON_FILE"))
+    commPtr->allReduceOPPlan =
+        std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce", getenv("ALLREDUCE_OP_JSON_FILE")));
+
   *comm = commPtr;
   return ncclSuccess;
 }
@@ -420,28 +429,29 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   int rank = comm->comm->bootstrap()->getRank();
 
   if (bytes <= 16 * (1 << 10)) {
-     return ncclAllReduceOld(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
-  }
-  else{
+    return ncclAllReduceOld(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
+  } else {
     std::shared_ptr<mscclpp::ExecutionPlan> plan;
-    if(bytes <= (1 << 20)) plan = (sendbuff == recvbuff) ? comm->allReducePacketIPPlan : comm->allReducePacketOPPlan;
-    else plan = (sendbuff == recvbuff) ? comm->allReduceIPPlan : comm->allReduceOPPlan;
+    if (bytes <= (1 << 20))
+      plan = (sendbuff == recvbuff) ? comm->allReducePacketIPPlan : comm->allReducePacketOPPlan;
+    else
+      plan = (sendbuff == recvbuff) ? comm->allReduceIPPlan : comm->allReduceOPPlan;
 
-    if(plan == nullptr) return ncclAllReduceOld(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
+    if (plan == nullptr) return ncclAllReduceOld(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
 
     switch (datatype) {
       case ncclFloat16:
         comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT16, 1024,
-                        *plan, stream, mscclpp::PacketType::LL8);
+                                *plan, stream, mscclpp::PacketType::LL8);
         break;
       case ncclFloat32:
-        comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT32, 1024,
-                        *plan, stream, mscclpp::PacketType::LL8);
+        comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT32,
+                                1024, *plan, stream, mscclpp::PacketType::LL8);
         break;
       case ncclInt32:
       case ncclUint32:
         comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, bytes, bytes, mscclpp::DataType::UINT32, 1024,
-                        *plan, stream, mscclpp::PacketType::LL8);
+                                *plan, stream, mscclpp::PacketType::LL8);
         break;
       default:
         return ncclInvalidArgument;
@@ -493,7 +503,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     CUDACHECK(allgather<true>((int*)sendbuff, (int*)nullptr, (int*)recvbuff, smChannels, offsetOut, rank,
                               NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
   }
-  
+
   return ncclSuccess;
 }
 

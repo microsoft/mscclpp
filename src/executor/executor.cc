@@ -78,17 +78,18 @@ struct Executor::Impl {
   }
   ~Impl() = default;
 
-  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t messageSize, size_t sendBufferSize,
-                                         size_t recvBufferSize, const ExecutionPlan& plan) {
+  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t messageSize,
+                                         size_t sendBufferSize, size_t recvBufferSize, const ExecutionPlan& plan) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendBufferSize, recvBufferSize, plan.impl_->name};
     if (this->contexts.find(key) != this->contexts.end()) {
       plan.impl_->operationsReset();
       plan.impl_->lightLoadExecutionPlan(messageSize);
       this->setupDeviceExecutionPlan(this->contexts[key], rank, plan);
       this->contexts[key].deviceExecutionPlansBuffer =
-        allocExtSharedCuda<char>(this->contexts[key].deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan));
-      memcpyCuda(this->contexts[key].deviceExecutionPlansBuffer.get(), (char*)this->contexts[key].deviceExecutionPlans.data(),
-               this->contexts[key].deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
+          allocExtSharedCuda<char>(this->contexts[key].deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan));
+      memcpyCuda(this->contexts[key].deviceExecutionPlansBuffer.get(),
+                 (char*)this->contexts[key].deviceExecutionPlans.data(),
+                 this->contexts[key].deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
       return this->contexts[key];
     }
 
@@ -265,8 +266,9 @@ struct Executor::Impl {
     context.deviceExecutionPlans = std::move(deviceExecutionPlans);
   }
 
-  void launchKernel(ExecutionContext& context, int rank, int nthreadsPerBlock, void* sendbuff, void* recvbuff, size_t contsSrcOffset, size_t constDstOffset,
-                    DataType dataType, cudaStream_t stream, PacketType packetType) {
+  void launchKernel(ExecutionContext& context, int rank, int nthreadsPerBlock, void* sendbuff, void* recvbuff,
+                    size_t contsSrcOffset, size_t constDstOffset, DataType dataType, cudaStream_t stream,
+                    PacketType packetType) {
     static uint32_t flag = 0;
     int nthreadblocks = context.deviceExecutionPlans.size();
 #if defined(ENABLE_NPKIT)
@@ -285,15 +287,15 @@ struct Executor::Impl {
     switch (packetType) {
       case PacketType::LL16:
         ExecutionKernel::launchKernel<LL16Packet>(
-            rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(), contsSrcOffset, constDstOffset,
-            context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(),
-            sharedMemSize, stream, ++flag);
+            rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
+            contsSrcOffset, constDstOffset, context.scratchBufferSize, dataType,
+            (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), sharedMemSize, stream, ++flag);
         break;
       case PacketType::LL8:
         ExecutionKernel::launchKernel<LL8Packet>(
-            rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(), contsSrcOffset, constDstOffset,
-            context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(),
-            sharedMemSize, stream, ++flag);
+            rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
+            contsSrcOffset, constDstOffset, context.scratchBufferSize, dataType,
+            (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), sharedMemSize, stream, ++flag);
         break;
       default:
         throw Error("Invalid packet type", ErrorCode::ExecutorError);
@@ -306,18 +308,18 @@ Executor::Executor(std::shared_ptr<Communicator> comm) : impl_(std::make_unique<
 void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuffSize, size_t recvBuffSize,
                        DataType dataType, int nthreads, const ExecutionPlan& plan, cudaStream_t stream,
                        PacketType packetType) {
-  
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)sendbuff));
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)recvbuff));
   size_t offsetIn = (char*)sendbuff - (char*)sendBasePtr;
-  size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;                      
+  size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
 
-  ExecutionContext context =
-      this->impl_->setupExecutionContext(rank, (void *)sendBasePtr, (void *)recvBasePtr, sendBuffSize, sendBytes, recvBytes, plan);
+  ExecutionContext context = this->impl_->setupExecutionContext(rank, (void*)sendBasePtr, (void*)recvBasePtr,
+                                                                sendBuffSize, sendBytes, recvBytes, plan);
   // TODO(binyli): need to flush proxy channel here this->impl_->proxyService->startProxy();
-  this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvbuff, offsetIn, offsetOut, dataType, stream, packetType);
+  this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvbuff, offsetIn, offsetOut, dataType, stream,
+                            packetType);
 }
 
 Executor::~Executor() = default;

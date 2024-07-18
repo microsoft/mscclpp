@@ -167,7 +167,7 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize) {
     this->scratchChunks[rank] = gpu["scratchChunks"];
     this->chunkGroups[rank] = gpu["chunkGroups"];
   }
-  
+
   this->inputSize = inputSize;
   this->setupOperations(gpus);
 }
@@ -257,7 +257,8 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
             operation.inputChannelDstMemoryType[i] = convertToBufferType(op["i_buff"]["dst"]);
             // Get the relevant channel index in rank channelInfos
             operation.inputChannelIndexes[i] =
-                channelIndexes[{operation.inputChannelSrcMemoryType[i], operation.inputChannelDstMemoryType[i], operation.channelType}][op["i_cids"][i]["id"]];
+                channelIndexes[{operation.inputChannelSrcMemoryType[i], operation.inputChannelDstMemoryType[i],
+                                operation.channelType}][op["i_cids"][i]["id"]];
             operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["i_cids"][i]["off"]);
             chunkIndexes.push_back((uint32_t)op["i_cids"][i]["off"]);
           }
@@ -277,7 +278,8 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus) {
             operation.outputChannelSrcMemoryType[i] = convertToBufferType(op["o_buff"]["src"]);
             operation.outputChannelDstMemoryType[i] = convertToBufferType(op["o_buff"]["dst"]);
             operation.outputChannelIndexes[i] =
-                channelIndexes[{operation.outputChannelSrcMemoryType[i], operation.outputChannelDstMemoryType[i], operation.channelType}][op["o_cids"][i]["id"]];
+                channelIndexes[{operation.outputChannelSrcMemoryType[i], operation.outputChannelDstMemoryType[i],
+                                operation.channelType}][op["o_cids"][i]["id"]];
             operation.outputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["o_cids"][i]["off"]);
             chunkIndexes.push_back((uint32_t)op["o_cids"][i]["off"]);
           }
@@ -364,9 +366,7 @@ void ExecutionPlan::Impl::reset() {
   this->chunkGroups.clear();
 }
 
-void ExecutionPlan::Impl::operationsReset() {
-  this->operations.clear();
-}
+void ExecutionPlan::Impl::operationsReset() { this->operations.clear(); }
 
 ExecutionPlan::ExecutionPlan(const std::string& name, const std::string& planPath)
     : impl_(std::make_shared<Impl>(name, planPath)) {}
