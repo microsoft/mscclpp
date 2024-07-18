@@ -331,7 +331,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
 }
 
 template <typename T, typename PacketType = LL16Packet>
-__global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
+__global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch, size_t constOffsetIn, size_t constOffsetOut,
                                 size_t scratchSize, DeviceExecutionPlan* plan, uint32_t flag
 #if defined(ENABLE_NPKIT)
                                 ,
@@ -400,37 +400,123 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
     } else if (op.type == OperationType::WAIT) {
       handleWait(smChannels, proxyChannels, op.inputChannelIndexes, op.nInputs, op.channelType);
     } else if (op.type == OperationType::PUT) {
-      handlePut(smChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs,
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+      
+      for(int i = 0; i < op.nOutputs; i++) {
+        inputOffsets[i] = op.inputOffsets[i];
+        if(op.outputChannelSrcMemoryType[i] != BufferType::SCRATCH)
+          inputOffsets[i] += constOffsetIn;
+      }
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
+
+      handlePut(smChannels, proxyChannels, op.outputChannelIndexes, outputOffsets, inputOffsets, op.nOutputs,
                 op.size, op.channelType);
     } else if (op.type == OperationType::GET) {
-      handleGet(smChannels, op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nInputs, op.size);
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+      
+      for(int i = 0; i < op.nInputs; i++) {
+        inputOffsets[i] = op.inputOffsets[i];
+        if(op.inputChannelSrcMemoryType[i] != BufferType::SCRATCH)
+          inputOffsets[i] += constOffsetIn;
+      }
+      for(int i = 0; i < op.nInputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.inputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
+
+      handleGet(smChannels, op.inputChannelIndexes, outputOffsets, inputOffsets, op.nInputs, op.size);
     } else if (op.type == OperationType::READ_REDUCE_COPY_SEND) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+      
+      for(int i = 0; i < op.nInputs; i++) {
+        inputOffsets[i] = op.inputOffsets[i];
+        if(op.inputChannelSrcMemoryType[i] != BufferType::SCRATCH)
+          inputOffsets[i] += constOffsetIn;
+      }
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
+
       handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, smChannels, op.outputChannelIndexes,
-                               op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
+                               op.inputChannelIndexes, outputOffsets, inputOffsets, op.nOutputs, op.nInputs,
                                op.size);
     } else if (op.type == OperationType::READ_REDUCE_COPY) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+      
+      for(int i = 0; i < op.nInputs; i++) {
+        inputOffsets[i] = op.inputOffsets[i];
+        if(op.inputChannelSrcMemoryType[i] != BufferType::SCRATCH)
+          inputOffsets[i] += constOffsetIn;
+      }
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
+
       handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, smChannels, op.outputChannelIndexes,
-                               op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
+                               op.inputChannelIndexes, outputOffsets, inputOffsets, op.nOutputs, op.nInputs,
                                op.size, false);
     } else if (op.type == OperationType::PUT_PACKET) {
-      handlePutPacket<PacketType>(scratchSize, smChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+      
+      for(int i = 0; i < op.nOutputs; i++) {
+        inputOffsets[i] = op.inputOffsets[i];
+        if(op.outputChannelSrcMemoryType[i] != BufferType::SCRATCH)
+          inputOffsets[i] += constOffsetIn;
+      }
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+          if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
+
+      handlePutPacket<PacketType>(scratchSize, smChannels, op.outputChannelIndexes, outputOffsets, inputOffsets,
                                   op.nOutputs, op.size, flag);
     } else if (op.type == OperationType::REDUCE_SEND_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
+
       handleReduceSendPacket<T, PacketType>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize, op.inputOffsets,
-                                            op.nInputs, smChannels, op.outputChannelIndexes, op.outputOffsets,
+                                            op.nInputs, smChannels, op.outputChannelIndexes, outputOffsets,
                                             op.nOutputs, op.size, flag);
     } else if (op.type == OperationType::REDUCE_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
+
       handleReduceSendPacket<T, PacketType, false>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize,
                                                    op.inputOffsets, op.nInputs, smChannels, op.outputChannelIndexes,
-                                                   op.outputOffsets, op.nOutputs, op.size, flag);
+                                                   outputOffsets, op.nOutputs, op.size, flag);
     } else if (op.type == OperationType::COPY_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
@@ -439,8 +525,16 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       T* tmp = getBuffer(input, output, scratch, op.inputBufferType);
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+
+      for(int i = 0; i < op.nOutputs; i++) {
+        outputOffsets[i] = op.outputOffsets[i];
+        if(op.outputChannelDstMemoryType[i] != BufferType::SCRATCH)
+          outputOffsets[i] += constOffsetOut;
+      }
+
       handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, smChannels, op.outputChannelIndexes,
-                       op.outputOffsets, op.nOutputs, op.size);
+                       outputOffsets, op.nOutputs, op.size);
     }
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT)
@@ -459,13 +553,13 @@ class ExecutionKernel {
  public:
 #if defined(MSCCLPP_DEVICE_HIP)
   template <typename PacketType>
-  static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
+  static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch, size_t constOffsetIn, size_t constOffsetOut,
                            size_t scratchSize, DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize,
                            cudaStream_t stream, uint32_t flag = 0) {
     switch (dataType) {
       case DataType::INT32:
         executionKernel<int32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, plan, flag
+            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, constOffsetIn, constOffsetOut, scratchSize, plan, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -475,7 +569,7 @@ class ExecutionKernel {
         break;
       case DataType::UINT32:
         executionKernel<uint32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, plan, flag
+            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, constOffsetIn, constOffsetOut, scratchSize, plan, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -485,7 +579,7 @@ class ExecutionKernel {
         break;
       case DataType::FLOAT16:
         executionKernel<half, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, plan, flag
+            rank, (half*)src, (half*)dst, (half*)scratch, constOffsetIn, constOffsetOut, scratchSize, plan, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -495,7 +589,7 @@ class ExecutionKernel {
         break;
       case DataType::FLOAT32:
         executionKernel<float, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, plan, flag
+            rank, (float*)src, (float*)dst, (float*)scratch, constOffsetIn, constOffsetOut, scratchSize, plan, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -507,7 +601,7 @@ class ExecutionKernel {
   }
 #else   // !defined(MSCCLPP_DEVICE_HIP)
   template <typename PacketType>
-  static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
+  static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch, size_t constOffsetIn, size_t constOffsetOut,
                            size_t scratchSize, DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize,
                            cudaStream_t stream, uint32_t flag = 0);
 #endif  // !defined(MSCCLPP_DEVICE_HIP)

@@ -58,10 +58,12 @@ struct ExecutionPlan::Impl {
   int getThreadblockCount(int rank) const;
 
   void loadExecutionPlan(size_t inputSize);
+  void lightLoadExecutionPlan(size_t inputSize);
   void setupChannels(const nlohmann::json& gpus);
   void setupOperations(const nlohmann::json& gpus);
 
   void reset();
+  void operationsReset();
 
   const std::string name;
   const std::string planPath;
