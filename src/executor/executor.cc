@@ -308,16 +308,14 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
                        PacketType packetType) {
   
   size_t sendBytes, recvBytes;
-  hipDeviceptr_t sendBasePtr, recvBasePtr;
-  MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (hipDeviceptr_t)sendbuff));
-  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (hipDeviceptr_t)recvbuff));
+  CUdeviceptr sendBasePtr, recvBasePtr;
+  MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)sendbuff));
+  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)recvbuff));
   size_t offsetIn = (char*)sendbuff - (char*)sendBasePtr;
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;                      
 
-  //printf("Execute: sendbuff = %p, recvbuff = %p , sendBuffSize = %p, ")
-
   ExecutionContext context =
-      this->impl_->setupExecutionContext(rank, sendBasePtr, recvBasePtr, sendBuffSize, sendBytes, recvBytes, plan);
+      this->impl_->setupExecutionContext(rank, (void *)sendBasePtr, (void *)recvBasePtr, sendBuffSize, sendBytes, recvBytes, plan);
   // TODO(binyli): need to flush proxy channel here this->impl_->proxyService->startProxy();
   this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvbuff, offsetIn, offsetOut, dataType, stream, packetType);
 }
