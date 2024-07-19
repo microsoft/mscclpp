@@ -257,9 +257,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
             BufferType dstBufferType = convertToBufferType(op["i_buff"]["dst"]);
             // Get the relevant channel index in rank channelInfos
             operation.inputChannelIndexes[i] =
-                channelIndexes[{srcBufferType, dstBufferType,
-                                operation.channelType}][op["i_cids"][i]["id"]];
-            operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["i_cids"][i]["off"]) + (srcBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
+                channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
+            operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["i_cids"][i]["off"]) +
+                                        (srcBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
             chunkIndexes.push_back((uint32_t)op["i_cids"][i]["off"]);
           }
         }
@@ -268,7 +268,8 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
           operation.nInputs = op["srcs"].size();
           operation.inputBufferType = convertToBufferType(op["srcs"][0]["buff"]);
           for (int i = 0; i < operation.nInputs; i++) {
-            operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["srcs"][i]["off"]) + (operation.inputBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
+            operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["srcs"][i]["off"]) +
+                                        (operation.inputBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
             chunkIndexes.push_back((uint32_t)op["srcs"][i]["off"]);
           }
         }
@@ -278,9 +279,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
             BufferType srcBufferType = convertToBufferType(op["o_buff"]["src"]);
             BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
             operation.outputChannelIndexes[i] =
-                channelIndexes[{srcBufferType, dstBufferType,
-                                operation.channelType}][op["o_cids"][i]["id"]];
-            operation.outputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["o_cids"][i]["off"]) + (dstBufferType != BufferType::SCRATCH ? constDstOffset : 0);
+                channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["o_cids"][i]["id"]];
+            operation.outputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["o_cids"][i]["off"]) +
+                                         (dstBufferType != BufferType::SCRATCH ? constDstOffset : 0);
             chunkIndexes.push_back((uint32_t)op["o_cids"][i]["off"]);
           }
         }
@@ -289,7 +290,8 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
           operation.nOutputs = op["dsts"].size();
           operation.outputBufferType = convertToBufferType(op["dsts"][0]["buff"]);
           for (int i = 0; i < operation.nOutputs; i++) {
-            operation.outputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["dsts"][i]["off"]) + (operation.outputBufferType != BufferType::SCRATCH ? constDstOffset : 0);
+            operation.outputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["dsts"][i]["off"]) +
+                                         (operation.outputBufferType != BufferType::SCRATCH ? constDstOffset : 0);
             chunkIndexes.push_back((uint32_t)op["dsts"][i]["off"]);
           }
         }
