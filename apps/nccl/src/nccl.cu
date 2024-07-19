@@ -428,7 +428,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   size_t bytes = count * ncclTypeSize(datatype);
   int rank = comm->comm->bootstrap()->getRank();
 
-  if (bytes <= 16 * (1 << 10)) {
+  if (bytes < 16 * (1 << 10)) {
     return ncclAllReduceOld(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
   } else {
     std::shared_ptr<mscclpp::ExecutionPlan> plan;

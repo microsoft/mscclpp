@@ -78,12 +78,12 @@ struct Executor::Impl {
   }
   ~Impl() = default;
 
-  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t messageSize,
+  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t messageSize, size_t contsSrcOffset, size_t constDstOffset,
                                          size_t sendBufferSize, size_t recvBufferSize, const ExecutionPlan& plan) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendBufferSize, recvBufferSize, plan.impl_->name};
     if (this->contexts.find(key) != this->contexts.end()) {
       plan.impl_->operationsReset();
-      plan.impl_->lightLoadExecutionPlan(messageSize);
+      plan.impl_->lightLoadExecutionPlan(messageSize, contsSrcOffset, constDstOffset);
       this->setupDeviceExecutionPlan(this->contexts[key], rank, plan);
       this->contexts[key].deviceExecutionPlansBuffer =
           allocExtSharedCuda<char>(this->contexts[key].deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan));
@@ -94,7 +94,7 @@ struct Executor::Impl {
     }
 
     plan.impl_->reset();
-    plan.impl_->loadExecutionPlan(sendBufferSize);
+    plan.impl_->loadExecutionPlan(sendBufferSize, contsSrcOffset, constDstOffset);
 
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize);
@@ -267,7 +267,7 @@ struct Executor::Impl {
   }
 
   void launchKernel(ExecutionContext& context, int rank, int nthreadsPerBlock, void* sendbuff, void* recvbuff,
-                    size_t contsSrcOffset, size_t constDstOffset, DataType dataType, cudaStream_t stream,
+                    DataType dataType, cudaStream_t stream,
                     PacketType packetType) {
     static uint32_t flag = 0;
     int nthreadblocks = context.deviceExecutionPlans.size();
@@ -288,13 +288,13 @@ struct Executor::Impl {
       case PacketType::LL16:
         ExecutionKernel::launchKernel<LL16Packet>(
             rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
-            contsSrcOffset, constDstOffset, context.scratchBufferSize, dataType,
+            context.scratchBufferSize, dataType,
             (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), sharedMemSize, stream, ++flag);
         break;
       case PacketType::LL8:
         ExecutionKernel::launchKernel<LL8Packet>(
             rank, nthreadblocks, nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
-            contsSrcOffset, constDstOffset, context.scratchBufferSize, dataType,
+            context.scratchBufferSize, dataType,
             (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(), sharedMemSize, stream, ++flag);
         break;
       default:
@@ -316,9 +316,9 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
 
   ExecutionContext context = this->impl_->setupExecutionContext(rank, (void*)sendBasePtr, (void*)recvBasePtr,
-                                                                sendBuffSize, sendBytes, recvBytes, plan);
+                                                                sendBuffSize, offsetIn, offsetOut, sendBytes, recvBytes, plan);
   // TODO(binyli): need to flush proxy channel here this->impl_->proxyService->startProxy();
-  this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvbuff, offsetIn, offsetOut, dataType, stream,
+  this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvbuff, dataType, stream,
                             packetType);
 }
 
