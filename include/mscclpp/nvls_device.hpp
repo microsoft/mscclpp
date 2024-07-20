@@ -25,51 +25,71 @@ struct DeviceMulticastPointerDeviceHandle {
   size_t bufferSize;
 
 #if defined(MSCCLPP_DEVICE_CUDA)
-  template <int NElemPerThread = 4, typename TValue = float4, typename T = float>
+  template <typename TValue = float4, typename T = float>
   MSCCLPP_DEVICE_INLINE static void multimemLoadReduce(TValue& val, T* ptr) {
-    static_assert(NElemPerThread == 4, "Only support NElemPerThread == 4");
-    if constexpr (std::is_same<T, float>::value) {
+    if constexpr (std::is_same<TValue, float4>::value && std::is_same<T, float>::value) {
       asm("multimem.ld_reduce.relaxed.sys.global.add.v4.f32 {%0,%1,%2,%3}, [%4];"
           : "=r"(val.x), "=r"(val.y), "=r"(val.z), "=r"(val.w)
           : "l"(ptr)
           : "memory");
-    } else if constexpr (std::is_same<T, __half2>::value) {
+    } else if constexpr (std::is_same<TValue, uint4>::value && std::is_same<T, __half2>::value) {
       asm("multimem.ld_reduce.relaxed.sys.global.add.v4.f16x2 {%0,%1,%2,%3}, [%4];"
           : "=r"(val.x), "=r"(val.y), "=r"(val.z), "=r"(val.w)
           : "l"(ptr)
           : "memory");
+    } else if constexpr (std::is_same<TValue, uint2>::value && std::is_same<T, __half2>::value) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.v2.f16x2 {%0,%1}, [%2];"
+          : "=r"(val.x), "=r"(val.y)
+          : "l"(ptr)
+          : "memory");
+    } else if constexpr (std::is_same<TValue, uint1>::value && std::is_same<T, __half2>::value) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.f16x2 {%0}, [%1];" : "=r"(val.x) : "l"(ptr) : "memory");
+    } else if constexpr (std::is_same<TValue, uint1>::value && std::is_same<T, __half>::value) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.f16 {%0}, [%1];" : "=r"(val.x) : "l"(ptr) : "memory");
     } else {
       static_assert(dependentFalse<T>, "Not supported type");
     }
   };
 
-  template <int NElemPerThread = 4, typename TValue, typename T>
+  template <typename TValue, typename T>
   MSCCLPP_DEVICE_INLINE static void multimemStore(const TValue& val, T* ptr) {
-    static_assert(NElemPerThread == 4, "Only support NElemPerThread == 4");
-    if constexpr (std::is_same<T, float>::value) {
+    if constexpr (std::is_same<TValue, float4>::value && std::is_same<T, float>::value) {
       asm volatile("multimem.st.relaxed.sys.global.v4.f32 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x), "r"(val.y),
                    "r"(val.z), "r"(val.w)
                    : "memory");
-    } else if constexpr (std::is_same<T, __half2>::value) {
+    } else if constexpr (std::is_same<TValue, uint4>::value && std::is_same<T, __half2>::value) {
       asm volatile("multimem.st.relaxed.sys.global.v4.f16x2 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x), "r"(val.y),
                    "r"(val.z), "r"(val.w)
                    : "memory");
+    } else if constexpr (std::is_same<TValue, uint2>::value && std::is_same<T, __half2>::value) {
+      asm volatile("multimem.st.relaxed.sys.global.v2.f16x2 [%0], {%1,%2};" ::"l"(ptr), "r"(val.x), "r"(val.y)
+                   : "memory");
+    } else if constexpr (std::is_same<TValue, uint1>::value && std::is_same<T, __half2>::value) {
+      asm volatile("multimem.st.relaxed.sys.global.f16x2 [%0], {%1};" ::"l"(ptr), "r"(val.x) : "memory");
+    } else if constexpr (std::is_same<TValue, uint1>::value && std::is_same<T, __half>::value) {
+      asm volatile("multimem.st.relaxed.sys.global.f16 [%0], {%1};" ::"l"(ptr), "r"(val.x) : "memory");
     } else {
       static_assert(dependentFalse<T>, "Not supported type");
     }
   };
 
-  template <int NElemPerThread = 4, typename TValue, typename T>
+  template <typename TValue, typename T>
   MSCCLPP_DEVICE_INLINE static void multimemStoreReduce(const TValue& val, T* ptr) {
-    static_assert(NElemPerThread == 4, "Only support NElemPerThread == 4");
-    if constexpr (std::is_same<T, float>::value) {
+    if constexpr (std::is_same<TValue, float4>::value && std::is_same<T, float>::value) {
       asm volatile("multimem.red.relaxed.sys.global.add.v4.f32 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x), "r"(val.y),
                    "r"(val.z), "r"(val.w)
                    : "memory");
-    } else if constexpr (std::is_same<T, half2>::value) {
+    } else if constexpr (std::is_same<TValue, uint4>::value && std::is_same<T, __half2>::value) {
       asm volatile("multimem.red.relaxed.sys.global.add.v4.f16x2 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x),
                    "r"(val.y), "r"(val.z), "r"(val.w)
                    : "memory");
+    } else if constexpr (std::is_same<TValue, uint2>::value && std::is_same<T, __half2>::value) {
+      asm volatile("multimem.red.relaxed.sys.global.add.v2.f16x2 [%0], {%1,%2};" ::"l"(ptr), "r"(val.x), "r"(val.y)
+                   : "memory");
+    } else if constexpr (std::is_same<TValue, uint1>::value && std::is_same<T, __half2>::value) {
+      asm volatile("multimem.red.relaxed.sys.global.add.f16x2 [%0], {%1};" ::"l"(ptr), "r"(val.x) : "memory");
+    } else if constexpr (std::is_same<TValue, uint1>::value && std::is_same<T, __half>::value) {
+      asm volatile("multimem.red.relaxed.sys.global.add.f16 [%0], {%1};" ::"l"(ptr), "r"(val.x) : "memory");
     } else {
       static_assert(dependentFalse<T>, "Not supported type");
     }
