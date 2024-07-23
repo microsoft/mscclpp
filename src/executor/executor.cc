@@ -95,7 +95,7 @@ struct Executor::Impl {
     }
 
     plan.impl_->reset();
-    plan.impl_->loadExecutionPlan(sendBufferSize, contsSrcOffset, constDstOffset);
+    plan.impl_->loadExecutionPlan(messageSize, contsSrcOffset, constDstOffset);
 
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize);
@@ -182,6 +182,12 @@ struct Executor::Impl {
       comm->setup();
       for (size_t i = 0; i < remoteRegMemoryFutures.size(); i++) {
         context.registeredMemories[{bufferType, connectedPeers[i]}] = std::move(remoteRegMemoryFutures[i].get());
+        CUdeviceptr myRegBaseAdr, peerRegBaseAdr;
+        MSCCLPP_CUTHROW(cuMemGetAddressRange(&myRegBaseAdr, nullptr, (CUdeviceptr)(char*)memory.data()));
+        MSCCLPP_CUTHROW(cuMemGetAddressRange(&peerRegBaseAdr, nullptr, (CUdeviceptr)(char*)context.registeredMemories[{bufferType, connectedPeers[i]}].data()));
+        size_t myRegOffset = (char*)memory.data() - (char*)myRegBaseAdr;
+        size_t peerRegOffset = (char*)context.registeredMemories[{bufferType, connectedPeers[i]}].data() - (char*)peerRegBaseAdr;
+        if (myRegOffset != peerRegOffset) throw Error("Divergent data offset between peers", ErrorCode::ExecutorError);
       }
     }
   }
