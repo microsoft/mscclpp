@@ -616,7 +616,7 @@ def test_executor(mpi_group: MpiGroup, filename: str):
     nelems_per_rank = int(nelems / mpi_group.comm.size)
     sendbuf = cp.empty(nelems_per_rank).astype(cp.float16)
     for i in range(nelems_per_rank):
-       sendbuf[i] = sub_arrays[mpi_group.comm.rank][i]
+        sendbuf[i] = sub_arrays[mpi_group.comm.rank][i]
     expected = cp.zeros_like(sendbuf)
     for i in range(mpi_group.comm.size):
         expected += sub_arrays[i]
