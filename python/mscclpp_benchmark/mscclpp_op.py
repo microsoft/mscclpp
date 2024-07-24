@@ -3,7 +3,7 @@ import cupy as cp
 import ctypes
 from mscclpp import Transport, ProxyService, SmDevice2DeviceSemaphore
 import mscclpp.comm as mscclpp_comm
-from mscclpp.utils import KernelBuilder, pack
+from mscclpp.utils import KernelBuilder, is_torch_tensor, pack
 
 
 IB_TRANSPORTS = [
@@ -18,6 +18,17 @@ IB_TRANSPORTS = [
 ]
 
 
+def type_to_str_torch(dtype):
+    import torch
+    if dtype == torch.float16:
+        return "__half"
+    elif dtype == torch.float32:
+        return "float"
+    elif dtype == torch.int32:
+        return "int"
+    else:
+        raise RuntimeError(f"Unknown data type {dtype}")
+
 def type_to_str(dtype):
     if dtype == cp.float16:
         return "__half"
@@ -28,6 +39,16 @@ def type_to_str(dtype):
     else:
         raise RuntimeError("Unknown data type")
 
+def torch_to_cupy_type(dtype):
+    import torch
+    if dtype == torch.float16:
+        return cp.float16
+    elif dtype == torch.float32:
+        return cp.float32
+    elif dtype == torch.int32:
+        return cp.int32
+    else:
+        raise RuntimeError(f"Unknown data type {dtype}")
 
 class MscclppAllReduce1:
     def __init__(
@@ -46,7 +67,7 @@ class MscclppAllReduce1:
         self.group.barrier()
         # create a connection for each remote neighbor
         self.connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
-        type_str = type_to_str(memory.dtype)
+        type_str = type_to_str_torch(memory.dtype) if is_torch_tensor(memory) else type_to_str(memory.dtype)
 
         # create a sm_channel for each remote neighbor
         self.sm_channels = self.group.make_sm_channels(self.memory, self.connections)
@@ -74,13 +95,14 @@ class MscclppAllReduce1:
         self.nblocks = nblocks
         self.block_size = block_size
         self.read_only = read_only
+        mem_size = self.memory.numel() if is_torch_tensor(self.memory) else self.memory.size
         self.params = b""
         self.params += pack(
             self.device_handles_cp,
             self.memory,
             self.group.my_rank,
             self.group.nranks,
-            ctypes.c_size_t(self.memory.size),
+            ctypes.c_size_t(mem_size),
             self.read_only,
         )
 
@@ -113,9 +135,11 @@ class MscclppAllReduce2:
         self.group.barrier()
         # create a connection for each remote neighbor
         self.connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
-        type_str = type_to_str(memory.dtype)
+        type_str = type_to_str_torch(memory.dtype) if is_torch_tensor(memory) else type_to_str(memory.dtype)
+        cp_dtype = torch_to_cupy_type(memory.dtype) if is_torch_tensor(memory) else memory.dtype
 
-        self.scratch = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
+        mem_size = self.memory.numel() if is_torch_tensor(self.memory) else self.memory.size
+        self.scratch = cp.zeros(mem_size * 8, dtype=cp_dtype)
         # create a sm_channel for each remote neighbor
         self.sm_channels = self.group.make_sm_channels_with_scratch(self.memory, self.scratch, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -138,6 +162,7 @@ class MscclppAllReduce2:
     def set_params(self, nblocks, block_size):
         self.nblocks = nblocks
         self.block_size = block_size
+        mem_size = self.memory.numel() if is_torch_tensor(self.memory) else self.memory.size
 
         self.params = b""
         self.params += pack(
@@ -147,7 +172,7 @@ class MscclppAllReduce2:
             self.memory_out,
             self.group.my_rank,
             self.group.nranks,
-            ctypes.c_size_t(self.memory.size),
+            ctypes.c_size_t(mem_size),
         )
 
     def auto_tune(self):
@@ -176,10 +201,13 @@ class MscclppAllReduce3:
         self.group.barrier()
         # create a connection for each remote neighbor
         self.connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
-        type_str = type_to_str(memory.dtype)
+        type_str = type_to_str_torch(memory.dtype) if is_torch_tensor(memory) else type_to_str(memory.dtype)
+        cp_dtype = torch_to_cupy_type(memory.dtype) if is_torch_tensor(memory) else memory.dtype
+
 
         self.proxy_service = proxy_service
-        self.scratch = cp.zeros(self.memory.size, dtype=self.memory.dtype)
+        mem_size = self.memory.numel() if is_torch_tensor(self.memory) else self.memory.size
+        self.scratch = cp.zeros(mem_size, dtype=cp_dtype)
 
         # create a sm_channel for each remote neighbor
         self.fst_round_proxy_chans = self.group.make_proxy_channels_with_scratch(
@@ -208,6 +236,7 @@ class MscclppAllReduce3:
     def set_params(self, nblocks, block_size):
         self.nblocks = nblocks
         self.block_size = block_size
+        mem_size = self.memory.numel() if is_torch_tensor(self.memory) else self.memory.size
         self.params = b""
         self.params += pack(
             self.fst_device_handles_cp,
@@ -216,7 +245,7 @@ class MscclppAllReduce3:
             self.scratch,
             self.group.my_rank,
             self.group.nranks,
-            ctypes.c_size_t(self.memory.size),
+            ctypes.c_size_t(mem_size),
         )
 
     def auto_tune(self):
@@ -256,10 +285,12 @@ class MscclppAllReduce4:
         self.group.barrier()
         # create a connection for each remote neighbor
         self.connections = self.group.make_connection(remote_nghrs, transports)
-        type_str = type_to_str(memory.dtype)
+        type_str = type_to_str_torch(memory.dtype) if is_torch_tensor(memory) else type_to_str(memory.dtype)
+        cp_dtype = torch_to_cupy_type(memory.dtype) if is_torch_tensor(memory) else memory.dtype
 
         self.proxy_service = proxy_service
-        self.scratch = cp.zeros(self.memory.size, dtype=self.memory.dtype)
+        mem_size = self.memory.numel() if is_torch_tensor(self.memory) else self.memory.size
+        self.scratch = cp.zeros(mem_size, dtype=cp_dtype)
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         # create a sm_channel for each remote neighbor
         self.sm_channels = self.group.make_sm_channels(self.memory, same_node_connections)
@@ -303,6 +334,7 @@ class MscclppAllReduce4:
         self.nblocks = nblocks
         self.block_size = block_size
         self.pipeline_depth = pipeline_depth
+        mem_size = self.memory.numel() if is_torch_tensor(self.memory) else self.memory.size
 
         self.params = b""
         self.params += pack(
@@ -315,7 +347,7 @@ class MscclppAllReduce4:
             self.nranks_per_node,
             self.group.nranks,
             bytes(4),  # padding for memory alignment
-            ctypes.c_size_t(self.memory.size),
+            ctypes.c_size_t(mem_size),
             self.pipeline_depth,
         )
 
@@ -359,11 +391,13 @@ class MscclppAllReduce5:
         self.group.barrier()
         # create a connection for each remote neighbor
         self.connections = self.group.make_connection(remote_nghrs, transports)
-        type_str = type_to_str(memory.dtype)
+        type_str = type_to_str_torch(memory.dtype) if is_torch_tensor(memory) else type_to_str(memory.dtype)
+        cp_dtype = torch_to_cupy_type(memory.dtype) if is_torch_tensor(memory) else memory.dtype
 
         self.proxy_service = proxy_service
-        self.scratch = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
-        self.put_buff = cp.zeros(self.memory.size * 8 // nranks_per_node, dtype=self.memory.dtype)
+        mem_size = self.memory.numel() if is_torch_tensor(self.memory) else self.memory.size
+        self.scratch = cp.zeros(mem_size * 8, dtype=cp_dtype)
+        self.put_buff = cp.zeros(mem_size * 8 // nranks_per_node, dtype=cp_dtype)
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         across_node_connections = {rank: conn for rank, conn in self.connections.items() if not in_same_node(rank)}
         # create a sm_channel for each remote neighbor
@@ -395,6 +429,7 @@ class MscclppAllReduce5:
     def set_params(self, nblocks, block_size):
         self.nblocks = nblocks
         self.block_size = block_size
+        mem_size = self.memory.numel() if is_torch_tensor(self.memory) else self.memory.size
 
         self.params = b""
         self.params += pack(
@@ -408,7 +443,7 @@ class MscclppAllReduce5:
             self.nranks_per_node,
             self.group.nranks,
             bytes(4),  # padding for memory alignment
-            ctypes.c_size_t(self.memory.size),
+            ctypes.c_size_t(mem_size),
         )
 
     def auto_tune(self):
@@ -480,6 +515,7 @@ class MscclppAllReduce6:
     def set_params(self, nblocks, block_size):
         self.nblocks = nblocks
         self.block_size = block_size
+        mem_size = self.memory.numel() if is_torch_tensor(self.memory) else self.memory.size
         self.params = b""
         self.params += pack(
             self.device_handles_cp,
@@ -487,7 +523,7 @@ class MscclppAllReduce6:
             self.memory,
             self.group.my_rank,
             self.group.nranks,
-            ctypes.c_size_t(self.memory.size),
+            ctypes.c_size_t(mem_size),
         )
 
     def auto_tune(self):
