@@ -10,7 +10,6 @@
 #include <sstream>
 #include <unordered_map>
 #include <vector>
-#include <sstream>
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
