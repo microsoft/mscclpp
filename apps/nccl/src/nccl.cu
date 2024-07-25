@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <iostream>
 #include <algorithm>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
@@ -9,6 +10,7 @@
 #include <mscclpp/sm_channel_device.hpp>
 #include <unordered_map>
 #include <vector>
+#include <sstream>
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
