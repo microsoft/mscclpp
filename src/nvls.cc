@@ -232,7 +232,8 @@ class NvlsConnection::Impl {
   size_t getMinMcGran() { throw notSupportedError; }
 
  private:
-  Error notSupportedError = Error("NVLS is not supported on this CUDA version", ErrorCode::InvalidUsage);
+  Error notSupportedError =
+      Error("NVLS is not supported on this CUDA version (< 12.1) or kernel version (< 5.6.0)", ErrorCode::InvalidUsage);
 };
 #endif  // !(USE_NVLS)
 
