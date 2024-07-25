@@ -65,6 +65,7 @@ struct ncclComm {
   std::shared_ptr<char> scratchBuff;
   std::vector<mscclpp::RegisteredMemory> remoteScratchRegMemories;
 
+  size_t smallMessageSizeBoundary, largeMessageSizeBoundary;
   uint32_t numScratchBuff;
   uint32_t buffFlag;
 };
@@ -99,6 +100,43 @@ static size_t ncclTypeSize(ncclDataType_t type) {
       return 0;
   }
   return 0;
+}
+
+double parseSize(const char* value) {
+  std::string valueStr(value);
+  std::istringstream iss(valueStr);
+  long long int units;
+  double size;
+  char size_lit = 0;
+
+  if (iss >> size) {
+    iss >> std::ws;  // eat whitespace
+    iss >> size_lit;
+  } else {
+    return -1.0;
+  }
+
+  if (size_lit != 0 && !std::isspace(size_lit)) {
+    switch (size_lit) {
+      case 'G':
+      case 'g':
+        units = 1024 * 1024 * 1024;
+        break;
+      case 'M':
+      case 'm':
+        units = 1024 * 1024;
+        break;
+      case 'K':
+      case 'k':
+        units = 1024;
+        break;
+      default:
+        return -1.0;
+    };
+  } else {
+    units = 1;
+  }
+  return size * units;
 }
 
 static mscclpp::Transport getTransport(int, int) {
@@ -155,8 +193,8 @@ static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> setupSmChannel
   return ptr;
 }
 
-static ncclResult_t ncclAllReduceOld(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
-                                     ncclRedOp_t, ncclComm_t comm, cudaStream_t stream) {
+static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
+                                          ncclRedOp_t, ncclComm_t comm, cudaStream_t stream) {
   // Checking if the parameters are valids
   if (sendbuff == nullptr || recvbuff == nullptr || count == 0 || ncclTypeSize(datatype) == 0 || comm == nullptr)
     return ncclInvalidArgument;
@@ -309,6 +347,16 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   if (getenv("ALLREDUCE_OP_JSON_FILE"))
     commPtr->allReduceOPPlan =
         std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce", getenv("ALLREDUCE_OP_JSON_FILE")));
+  if (getenv("ALLREDUCE_SMALL_MSG_BOUNDARY"))
+    commPtr->smallMessageSizeBoundary = parseSize(getenv("ALLREDUCE_SMALL_MSG_BOUNDARY"));
+  else
+    commPtr->smallMessageSizeBoundary = 16 * (1 << 10);
+  if (getenv("ALLREDUCE_LARGE_MSG_BOUNDARY"))
+    commPtr->largeMessageSizeBoundary = parseSize(getenv("ALLREDUCE_LARGE_MSG_BOUNDARY"));
+  else
+    commPtr->largeMessageSizeBoundary = 1 << 20;
+
+  if (commPtr->smallMessageSizeBoundary > commPtr->largeMessageSizeBoundary) return ncclInvalidArgument;
 
   *comm = commPtr;
   return ncclSuccess;
@@ -428,16 +476,17 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   size_t bytes = count * ncclTypeSize(datatype);
   int rank = comm->comm->bootstrap()->getRank();
 
-  if (bytes < 16 * (1 << 10)) {
-    return ncclAllReduceOld(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
+  if (bytes < comm->smallMessageSizeBoundary) {
+    return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
   } else {
     std::shared_ptr<mscclpp::ExecutionPlan> plan;
-    if (bytes <= (1 << 20))
+    if (bytes <= comm->largeMessageSizeBoundary)
       plan = (sendbuff == recvbuff) ? comm->allReducePacketIPPlan : comm->allReducePacketOPPlan;
     else
       plan = (sendbuff == recvbuff) ? comm->allReduceIPPlan : comm->allReduceOPPlan;
 
-    if (plan == nullptr) return ncclAllReduceOld(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
+    if (plan == nullptr)
+      return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
 
     switch (datatype) {
       case ncclFloat16:
