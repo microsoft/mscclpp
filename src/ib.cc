@@ -43,7 +43,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   }
   uintptr_t addr = reinterpret_cast<uintptr_t>(buff) & -pageSize;
   std::size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;
-  this->mr = IBVerbs::ibv_reg_mr(pd, reinterpret_cast<void*>(addr), pages * pageSize,
+  this->mr = IBVerbs::ibv_reg_mr2(pd, reinterpret_cast<void*>(addr), pages * pageSize,
                         IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                             IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
   if (this->mr == nullptr) {

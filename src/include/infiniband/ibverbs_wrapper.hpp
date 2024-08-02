@@ -123,7 +123,7 @@ struct IBVerbs {
     }
 
     // Static method to register a memory region
-    static struct ibv_mr* ibv_reg_mr(struct ibv_pd* pd, void* addr, size_t length, int access) {
+    static struct ibv_mr* ibv_reg_mr2(struct ibv_pd* pd, void* addr, size_t length, int access) {
         if (ibv_reg_mr_lib) {
             return ibv_reg_mr(pd, addr, length, access);
         }
@@ -178,7 +178,7 @@ struct IBVerbs {
         return -1;
     }
 
-    static int ibv_query_port(struct ibv_context *context, uint8_t port_num, struct _compat_ibv_port_attr *port_attr){
+    static int ibv_query_port(struct ibv_context *context, uint8_t port_num, struct ibv_port_attr *port_attr){
         if (ibv_query_port_lib) {
             return ibv_query_port_lib(context, port_num, port_attr);
         }
@@ -215,7 +215,7 @@ private:
     typedef int (*ibv_modify_qp_t)(struct ibv_qp*, struct ibv_qp_attr*, int);
     typedef int (*ibv_post_send_t)(struct ibv_qp*, struct ibv_send_wr*, struct ibv_send_wr**);
     typedef int (*ibv_poll_cq_t)(struct ibv_cq*, int, struct ibv_wc*);
-    typedef int (*ibv_query_port_t)(struct ibv_context*, uint8_t, struct _compat_ibv_port_attr*);
+    typedef int (*ibv_query_port_t)(struct ibv_context*, uint8_t, struct ibv_port_attr*);
 
     static ibv_get_device_list_t ibv_get_device_list_lib;
     static ibv_free_device_list_t ibv_free_device_list_lib;
