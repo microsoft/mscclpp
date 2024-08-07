@@ -6,6 +6,7 @@ struct IBVerbs {
     // Static method to initialize the library
     static bool initialize() {
         handle = dlopen("libibverbs.so", RTLD_LAZY);
+        printf("handle ibverbs: %p\n", handle);
         if (!handle) {
             std::cerr << "Failed to load libibverbs: " << dlerror() << std::endl;
             return false;
@@ -30,10 +31,11 @@ struct IBVerbs {
         ibv_post_send_lib = (ibv_post_send_t)dlsym(handle, "ibv_post_send");
         ibv_poll_cq_lib = (ibv_poll_cq_t)dlsym(handle, "ibv_poll_cq");
         ibv_query_port_lib = (ibv_query_port_t)dlsym(handle, "ibv_query_port");
+        ibv_reg_mr_iova2_lib = (ibv_reg_mr_iova2_t)dlsym(handle, "ibv_reg_mr_iova2");
 
         if (!ibv_get_device_list_lib || !ibv_free_device_list_lib || !ibv_alloc_pd_lib || !ibv_dealloc_pd_lib ||
             !ibv_open_device_lib || !ibv_close_device_lib || !ibv_query_device_lib || !ibv_create_cq_lib || !ibv_create_qp_lib ||
-            !ibv_destroy_cq_lib || !ibv_reg_mr_lib || !ibv_dereg_mr_lib || !ibv_query_gid_lib ||
+            !ibv_destroy_cq_lib || !ibv_reg_mr_lib || !ibv_dereg_mr_lib || !ibv_query_gid_lib || ! ibv_reg_mr_iova2_lib ||
             !ibv_modify_qp_lib || !ibv_destroy_qp_lib || !ibv_post_send_lib || !ibv_poll_cq_lib || !ibv_query_port_lib) {
             std::cerr << "Failed to load one or more functions: " << dlerror() << std::endl;
             dlclose(handle);
@@ -125,7 +127,7 @@ struct IBVerbs {
     // Static method to register a memory region
     static struct ibv_mr* ibv_reg_mr2(struct ibv_pd* pd, void* addr, size_t length, int access) {
         if (ibv_reg_mr_lib) {
-            return ibv_reg_mr(pd, addr, length, access);
+            return ibv_reg_mr_lib(pd, addr, length, access);
         }
         return nullptr;
     }
@@ -178,11 +180,18 @@ struct IBVerbs {
         return -1;
     }
 
-    static int ibv_query_port(struct ibv_context *context, uint8_t port_num, struct ibv_port_attr *port_attr){
+    static int ibv_query_port_w(struct ibv_context *context, uint8_t port_num, struct ibv_port_attr *port_attr){
         if (ibv_query_port_lib) {
             return ibv_query_port_lib(context, port_num, port_attr);
         }
         return -1;
+    }
+
+    static struct ibv_mr* ibv_reg_mr_iova2_w(struct ibv_pd *pd, void *addr, size_t length, uint64_t iova, unsigned int access){
+        if (ibv_reg_mr_iova2_lib) {
+            return ibv_reg_mr_iova2_lib(pd, addr, length, iova, access);
+        }
+        return nullptr;
     }
 
     // Static method to clean up
@@ -216,6 +225,7 @@ private:
     typedef int (*ibv_post_send_t)(struct ibv_qp*, struct ibv_send_wr*, struct ibv_send_wr**);
     typedef int (*ibv_poll_cq_t)(struct ibv_cq*, int, struct ibv_wc*);
     typedef int (*ibv_query_port_t)(struct ibv_context*, uint8_t, struct ibv_port_attr*);
+    typedef struct ibv_mr* (*ibv_reg_mr_iova2_t)(struct ibv_pd *pd, void *addr, size_t length, uint64_t iova, unsigned int access);
 
     static ibv_get_device_list_t ibv_get_device_list_lib;
     static ibv_free_device_list_t ibv_free_device_list_lib;
@@ -235,6 +245,7 @@ private:
     static ibv_post_send_t ibv_post_send_lib;
     static ibv_poll_cq_t ibv_poll_cq_lib;
     static ibv_query_port_t ibv_query_port_lib;
+    static ibv_reg_mr_iova2_t ibv_reg_mr_iova2_lib;
 };
 
 // Initialize static members
@@ -257,6 +268,7 @@ IBVerbs::ibv_destroy_qp_t IBVerbs::ibv_destroy_qp_lib = nullptr;
 IBVerbs::ibv_post_send_t IBVerbs::ibv_post_send_lib = nullptr;
 IBVerbs::ibv_poll_cq_t IBVerbs::ibv_poll_cq_lib = nullptr;
 IBVerbs::ibv_query_port_t IBVerbs::ibv_query_port_lib = nullptr;
+IBVerbs::ibv_reg_mr_iova2_t IBVerbs::ibv_reg_mr_iova2_lib = nullptr;
 
 /* // Example usage
 int main() {

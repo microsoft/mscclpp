@@ -97,7 +97,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   }
 
   struct ibv_port_attr portAttr;
-  if (ibv_query_port(ctx, port, &portAttr) != 0) {
+  if (IBVerbs::ibv_query_port_w(ctx, port, &portAttr) != 0) {
     std::stringstream err;
     err << "ibv_query_port failed (errno " << errno << ")";
     throw mscclpp::IbError(err.str(), errno);
@@ -308,7 +308,7 @@ IbCtx::IbCtx(const std::string& devName) : devName(devName) {
       break;
     }
   }
-  ibv_free_device_list(devices);
+  IBVerbs::ibv_free_device_list(devices);
   if (this->ctx == nullptr) {
     std::stringstream err;
     err << "ibv_open_device failed (errno " << errno << ", device name << " << devName << ")";
@@ -329,13 +329,13 @@ IbCtx::~IbCtx() {
     IBVerbs::ibv_dealloc_pd(this->pd);
   }
   if (this->ctx != nullptr) {
-    ibv_close_device(this->ctx);
+    IBVerbs::ibv_close_device(this->ctx);
   }
 }
 
 bool IbCtx::isPortUsable(int port) const {
   struct ibv_port_attr portAttr;
-  if (IBVerbs::ibv_query_port(this->ctx, port, &portAttr) != 0) {
+  if (IBVerbs::ibv_query_port_w(this->ctx, port, &portAttr) != 0) {
     std::stringstream err;
     err << "ibv_query_port failed (errno " << errno << ", port << " << port << ")";
     throw mscclpp::IbError(err.str(), errno);

@@ -2498,7 +2498,7 @@ struct ibv_mr *ibv_reg_mr_iova2(struct ibv_pd *pd, void *addr, size_t length,
 struct ibv_mr *ibv_reg_mr(struct ibv_pd *pd, void *addr, size_t length,
 			  int access);
 /* use new ibv_reg_mr version only if access flags that require it are used */
-__attribute__((__always_inline__)) static inline struct ibv_mr *
+/* __attribute__((__always_inline__)) static inline struct ibv_mr *
 __ibv_reg_mr(struct ibv_pd *pd, void *addr, size_t length, unsigned int access,
 	     int is_access_const)
 {
@@ -2507,7 +2507,7 @@ __ibv_reg_mr(struct ibv_pd *pd, void *addr, size_t length, unsigned int access,
 	else
 		return ibv_reg_mr_iova2(pd, addr, length, (uintptr_t)addr,
 					access);
-}
+} */
 
 #define ibv_reg_mr(pd, addr, length, access)                                   \
 	__ibv_reg_mr(pd, addr, length, access,                                 \
@@ -2521,7 +2521,7 @@ __ibv_reg_mr(struct ibv_pd *pd, void *addr, size_t length, unsigned int access,
 struct ibv_mr *ibv_reg_mr_iova(struct ibv_pd *pd, void *addr, size_t length,
 			       uint64_t iova, int access);
 /* use new ibv_reg_mr version only if access flags that require it are used */
-__attribute__((__always_inline__)) static inline struct ibv_mr *
+/*__attribute__((__always_inline__)) static inline struct ibv_mr *
 __ibv_reg_mr_iova(struct ibv_pd *pd, void *addr, size_t length, uint64_t iova,
 		  unsigned int access, int is_access_const)
 {
@@ -2529,7 +2529,7 @@ __ibv_reg_mr_iova(struct ibv_pd *pd, void *addr, size_t length, uint64_t iova,
 		return ibv_reg_mr_iova(pd, addr, length, iova, access);
 	else
 		return ibv_reg_mr_iova2(pd, addr, length, iova, access);
-}
+} */
 
 #define ibv_reg_mr_iova(pd, addr, length, iova, access)                        \
 	__ibv_reg_mr_iova(pd, addr, length, iova, access,                      \
