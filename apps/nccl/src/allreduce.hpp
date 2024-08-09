@@ -7,12 +7,12 @@
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
-#include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <mscclpp/sm_channel_device.hpp>
 
 #include "common.hpp"
+#include "gpu_data_types.hpp"
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
@@ -38,6 +38,11 @@ __forceinline__ __device__ __half2 add_elements(__half2 a, __half2 b) {
   return __hadd2(a, b);
 }
 
+template <>
+__forceinline__ __device__ __bfloat162 add_elements(__bfloat162 a, __bfloat162 b) {
+  return __hadd2(a, b);
+}
+
 template <typename T>
 __forceinline__ __device__ int4 add_vectors_helper(int4 a, int4 b) {
   int4 ret;
@@ -58,6 +63,11 @@ __forceinline__ __device__ int4 add_vectors<__half>(int4 a, int4 b) {
   return add_vectors_helper<__half2>(a, b);
 }
 
+template <>
+__forceinline__ __device__ int4 add_vectors<__bfloat16>(int4 a, int4 b) {
+  return add_vectors_helper<__bfloat162>(a, b);
+}
+
 template <typename T>
 __forceinline__ __device__ uint2 add_vectors_helper(uint2 a, uint2 b) {
   uint2 ret;
@@ -76,6 +86,11 @@ __forceinline__ __device__ uint2 add_vectors<__half>(uint2 a, uint2 b) {
   return add_vectors_helper<__half2>(a, b);
 }
 
+template <>
+__forceinline__ __device__ uint2 add_vectors<__bfloat16>(uint2 a, uint2 b) {
+  return add_vectors_helper<__bfloat162>(a, b);
+}
+
 template <typename T>
 __forceinline__ __device__ int add_vectors_helper(int a, int b) {
   return bit_cast<int, T>(add_elements(bit_cast<T, int>(a), bit_cast<T, int>(b)));
@@ -91,6 +106,11 @@ __forceinline__ __device__ int add_vectors<__half>(int a, int b) {
   return add_vectors_helper<__half2>(a, b);
 }
 
+template <>
+__forceinline__ __device__ int add_vectors<__bfloat16>(int a, int b) {
+  return add_vectors_helper<__bfloat162>(a, b);
+}
+
 template <typename T>
 __forceinline__ __device__ uint32_t add_vectors_helper(uint32_t a, uint32_t b) {
   return bit_cast<uint32_t, T>(add_elements(bit_cast<T, uint32_t>(a), bit_cast<T, uint32_t>(b)));
@@ -104,6 +124,11 @@ __forceinline__ __device__ uint32_t add_vectors(uint32_t a, uint32_t b) {
 template <>
 __forceinline__ __device__ uint32_t add_vectors<__half>(uint32_t a, uint32_t b) {
   return add_vectors_helper<__half2>(a, b);
+}
+
+template <>
+__forceinline__ __device__ uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
+  return add_vectors_helper<__bfloat162>(a, b);
 }
 
 template <typename T>
