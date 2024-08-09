@@ -1,6 +1,6 @@
 #include <iostream>
 #include <dlfcn.h>
-#include "infiniband/verbs.h"
+#include <infiniband/verbs.h>
 
 struct IBVerbs {
     // Static method to initialize the library

@@ -2,8 +2,7 @@
 // Licensed under the MIT license.
 
 #include "ib.hpp"
-#include "infiniband/ibverbs_wrapper.hpp"
-#include "infiniband/verbs.h"
+#include <infiniband/ibverbs_wrapper.hpp>
 #include <malloc.h>
 #include <unistd.h>
 

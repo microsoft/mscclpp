@@ -12,7 +12,7 @@
 
 #include "debug.h"
 #include "endpoint.hpp"
-#include "infiniband/verbs.h"
+#include <infiniband/verbs.h>
 
 namespace mscclpp {
 
