@@ -95,11 +95,7 @@ endif()
 include(${PROJECT_SOURCE_DIR}/cmake/AddFormatTargets.cmake)
 
 # Find ibverbs and libnuma
-
-set(IBVERBS_LIBRARIES "")
-set(IBVERBS_INCLUDE_DIRS "")
-
-find_package(IBVerbs)
+find_package(IBVerbs REQUIRED)
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)
 
