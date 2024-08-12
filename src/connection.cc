@@ -6,13 +6,14 @@
 #if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.hpp>
 #endif
+#include <infiniband/verbs.h>
+
 #include <mscclpp/utils.hpp>
 #include <sstream>
 #include <thread>
 
 #include "debug.h"
 #include "endpoint.hpp"
-#include <infiniband/verbs.h>
 
 namespace mscclpp {
 
