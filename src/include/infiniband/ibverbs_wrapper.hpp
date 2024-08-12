@@ -5,6 +5,10 @@
 struct IBVerbs {
     // Static method to initialize the library
     static bool initialize() {
+        printf("Initializing libibverbs\n");
+        if(initialized) return true;
+        initialized = true;
+
         handle = dlopen("libibverbs.so", RTLD_NOW);
         if (!handle) {
             std::cerr << "Failed to load libibverbs: " << dlerror() << std::endl;
@@ -236,6 +240,8 @@ private:
     static ibv_destroy_qp_t ibv_destroy_qp_lib;
     static ibv_query_port_t ibv_query_port_lib;
     static ibv_reg_mr_iova2_t ibv_reg_mr_iova2_lib;
+    
+    static bool initialized;
 };
 
 // Initialize static members
@@ -257,3 +263,5 @@ IBVerbs::ibv_modify_qp_t IBVerbs::ibv_modify_qp_lib = nullptr;
 IBVerbs::ibv_destroy_qp_t IBVerbs::ibv_destroy_qp_lib = nullptr;
 IBVerbs::ibv_query_port_t IBVerbs::ibv_query_port_lib = nullptr;
 IBVerbs::ibv_reg_mr_iova2_t IBVerbs::ibv_reg_mr_iova2_lib = nullptr;
+
+bool IBVerbs::initialized = false;

@@ -7,10 +7,8 @@
 #include <mscclpp/semaphore.hpp>
 
 #include "mp_unit_tests.hpp"
-#include "infiniband/ibverbs_wrapper.hpp"
 
 void CommunicatorTestBase::SetUp() {
-  IBVerbs::initialize();
   MultiProcessTest::SetUp();
 
   if (numRanksToUse == -1) {

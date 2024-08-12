@@ -33,6 +33,7 @@ static bool checkNvPeerMemLoaded() {
 namespace mscclpp {
 
 IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
+  IBVerbs::initialize();
   if (size == 0) {
     throw std::invalid_argument("invalid size: " + std::to_string(size));
   }
@@ -69,6 +70,7 @@ uint32_t IbMr::getLkey() const { return this->mr->lkey; }
 IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr,
            int maxWrPerSend)
     : numSignaledPostedItems(0), numSignaledStagedItems(0), maxCqPollNum(maxCqPollNum), maxWrPerSend(maxWrPerSend) {
+  IBVerbs::initialize();
   this->cq = IBVerbs::ibv_create_cq(ctx, maxCqSize, nullptr, nullptr, 0);
   if (this->cq == nullptr) {
     std::stringstream err;
@@ -294,6 +296,7 @@ const ibv_wc* IbQp::getWc(int idx) const { return &this->wcs[idx]; }
 int IbQp::getNumCqItems() const { return this->numSignaledPostedItems; }
 
 IbCtx::IbCtx(const std::string& devName) : devName(devName) {
+  IBVerbs::initialize();
 #if !defined(__HIP_PLATFORM_AMD__)
   if (!checkNvPeerMemLoaded()) {
     throw mscclpp::Error("nvidia_peermem kernel module is not loaded", ErrorCode::InternalError);
@@ -380,12 +383,14 @@ const IbMr* IbCtx::registerMr(void* buff, std::size_t size) {
 const std::string& IbCtx::getDevName() const { return this->devName; }
 
 MSCCLPP_API_CPP int getIBDeviceCount() {
+  IBVerbs::initialize();
   int num;
   IBVerbs::ibv_get_device_list(&num);
   return num;
 }
 
 std::string getHcaDevices(int deviceIndex) {
+  IBVerbs::initialize();
   const char* envValue = std::getenv("MSCCLPP_HCA_DEVICES");
   if (envValue) {
     std::vector<std::string> devices;
@@ -405,6 +410,7 @@ std::string getHcaDevices(int deviceIndex) {
 }
 
 MSCCLPP_API_CPP std::string getIBDeviceName(Transport ibTransport) {
+  IBVerbs::initialize();
   int ibTransportIndex;
   switch (ibTransport) {  // TODO: get rid of this ugly switch
     case Transport::IB0:
@@ -450,6 +456,7 @@ MSCCLPP_API_CPP std::string getIBDeviceName(Transport ibTransport) {
 }
 
 MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string& ibDeviceName) {
+  IBVerbs::initialize();
   int num;
   struct ibv_device** devices = IBVerbs::ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
