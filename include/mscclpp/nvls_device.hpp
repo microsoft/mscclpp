@@ -8,7 +8,7 @@
 #include <type_traits>
 
 #if defined(MSCCLPP_DEVICE_CUDA)
-#include <mscclpp/gpu_data_types.hpp>
+#include <cuda_fp16.h>
 #endif  // defined(MSCCLPP_DEVICE_CUDA)
 
 #include "device.hpp"

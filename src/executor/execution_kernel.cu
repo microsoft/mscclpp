@@ -51,6 +51,16 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
       );
 #endif
       break;
+    case DataType::BFLOAT16:
+      executionKernel<__bfloat16><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+          rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchSize, plan, flag
+#if defined(ENABLE_NPKIT)
+          ,
+          NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+      );
+#endif
+      break;
   }
 }
 
