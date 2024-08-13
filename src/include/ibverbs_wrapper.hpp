@@ -2,7 +2,6 @@
 #include <infiniband/verbs.h>
 
 #include <iostream>
-
 #include <mscclpp/errors.hpp>
 
 namespace mscclpp {
@@ -40,7 +39,8 @@ struct IBVerbs {
         !ibv_open_device_lib || !ibv_close_device_lib || !ibv_query_device_lib || !ibv_create_cq_lib ||
         !ibv_create_qp_lib || !ibv_destroy_cq_lib || !ibv_reg_mr_lib || !ibv_dereg_mr_lib || !ibv_query_gid_lib ||
         !ibv_reg_mr_iova2_lib || !ibv_modify_qp_lib || !ibv_destroy_qp_lib || !ibv_query_port_lib) {
-      throw mscclpp::IbError("Failed to load one or more function in the ibibverbs library: " + std::string(dlerror()), errno);
+      throw mscclpp::IbError("Failed to load one or more function in the ibibverbs library: " + std::string(dlerror()),
+                             errno);
       dlclose(handle);
       return false;
     }
@@ -51,7 +51,6 @@ struct IBVerbs {
  public:
   // Static method to get the device list
   static struct ibv_device** ibv_get_device_list(int* num_devices) {
-    //if (!initialized) initialize();
     if (ibv_get_device_list_lib) {
       return ibv_get_device_list_lib(num_devices);
     }
@@ -60,7 +59,6 @@ struct IBVerbs {
 
   // Static method to free the device list
   static void ibv_free_device_list(struct ibv_device** list) {
-    //if (!initialized) initialize();
     if (ibv_free_device_list_lib) {
       ibv_free_device_list_lib(list);
     }
@@ -68,7 +66,6 @@ struct IBVerbs {
 
   // Static method to allocate a protection domain
   static struct ibv_pd* ibv_alloc_pd(struct ibv_context* context) {
-    //if (!initialized) initialize();
     if (ibv_alloc_pd_lib) {
       return ibv_alloc_pd_lib(context);
     }
@@ -77,7 +74,6 @@ struct IBVerbs {
 
   // Static method to deallocate a protection domain
   static int ibv_dealloc_pd(struct ibv_pd* pd) {
-    //if (!initialized) initialize();
     if (ibv_dealloc_pd_lib) {
       return ibv_dealloc_pd_lib(pd);
     }
@@ -86,7 +82,6 @@ struct IBVerbs {
 
   // Static method to open a device
   static struct ibv_context* ibv_open_device(struct ibv_device* device) {
-    //if (!initialized) initialize();
     if (ibv_open_device_lib) {
       return ibv_open_device_lib(device);
     }
@@ -95,7 +90,6 @@ struct IBVerbs {
 
   // Static method to close a device
   static int ibv_close_device(struct ibv_context* context) {
-    //if (!initialized) initialize();
     if (ibv_close_device_lib) {
       return ibv_close_device_lib(context);
     }
@@ -104,7 +98,6 @@ struct IBVerbs {
 
   // Static method to query a device
   static int ibv_query_device(struct ibv_context* context, struct ibv_device_attr* device_attr) {
-    //if (!initialized) initialize();
     if (ibv_query_device_lib) {
       return ibv_query_device_lib(context, device_attr);
     }
@@ -114,7 +107,6 @@ struct IBVerbs {
   // Static method to create a completion queue
   static struct ibv_cq* ibv_create_cq(struct ibv_context* context, int cqe, void* cq_context,
                                       struct ibv_comp_channel* channel, int comp_vector) {
-    //if (!initialized) initialize();
     if (ibv_create_cq_lib) {
       return ibv_create_cq_lib(context, cqe, cq_context, channel, comp_vector);
     }
@@ -123,7 +115,6 @@ struct IBVerbs {
 
   // Static method to create a queue pair
   static struct ibv_qp* ibv_create_qp(struct ibv_pd* pd, struct ibv_qp_init_attr* qp_init_attr) {
-    //if (!initialized) initialize();
     if (ibv_create_qp_lib) {
       return ibv_create_qp_lib(pd, qp_init_attr);
     }
@@ -132,7 +123,6 @@ struct IBVerbs {
 
   // Static method to destroy a completion queue
   static int ibv_destroy_cq(struct ibv_cq* cq) {
-    //if (!initialized) initialize();
     if (ibv_destroy_cq_lib) {
       return ibv_destroy_cq_lib(cq);
     }
@@ -141,7 +131,6 @@ struct IBVerbs {
 
   // Static method to register a memory region
   static struct ibv_mr* ibv_reg_mr2(struct ibv_pd* pd, void* addr, size_t length, int access) {
-    //if (!initialized) initialize();
     if (ibv_reg_mr_lib) {
       return ibv_reg_mr_lib(pd, addr, length, access);
     }
@@ -150,7 +139,6 @@ struct IBVerbs {
 
   // Static method to deregister a memory region
   static int ibv_dereg_mr(struct ibv_mr* mr) {
-    //if (!initialized) initialize();
     if (ibv_dereg_mr_lib) {
       return ibv_dereg_mr_lib(mr);
     }
@@ -159,7 +147,6 @@ struct IBVerbs {
 
   // Static method to query a GID
   static int ibv_query_gid(struct ibv_context* context, uint8_t port_num, int index, union ibv_gid* gid) {
-    //if (!initialized) initialize();
     if (ibv_query_gid_lib) {
       return ibv_query_gid_lib(context, port_num, index, gid);
     }
@@ -168,7 +155,6 @@ struct IBVerbs {
 
   // Static method to modify a queue pair
   static int ibv_modify_qp(struct ibv_qp* qp, struct ibv_qp_attr* attr, int attr_mask) {
-    //if (!initialized) initialize();
     if (ibv_modify_qp_lib) {
       return ibv_modify_qp_lib(qp, attr, attr_mask);
     }
@@ -177,7 +163,6 @@ struct IBVerbs {
 
   // Static method to destroy a queue pair
   static int ibv_destroy_qp(struct ibv_qp* qp) {
-    //if (!initialized) initialize();
     if (ibv_destroy_qp_lib) {
       return ibv_destroy_qp_lib(qp);
     }
@@ -185,17 +170,14 @@ struct IBVerbs {
   }
 
   static inline int ibv_post_send(struct ibv_qp* qp, struct ibv_send_wr* wr, struct ibv_send_wr** bad_wr) {
-    //if (!initialized) initialize();
     return qp->context->ops.post_send(qp, wr, bad_wr);
   }
 
   static inline int ibv_poll_cq(struct ibv_cq* cq, int num_entries, struct ibv_wc* wc) {
-    //if (initialized) initialize();
     return cq->context->ops.poll_cq(cq, num_entries, wc);
   }
 
   static int ibv_query_port_w(struct ibv_context* context, uint8_t port_num, struct ibv_port_attr* port_attr) {
-    //if (!initialized) initialize();
     if (ibv_query_port_lib) {
       return ibv_query_port_lib(context, port_num, port_attr);
     }
@@ -204,7 +186,6 @@ struct IBVerbs {
 
   static struct ibv_mr* ibv_reg_mr_iova2_w(struct ibv_pd* pd, void* addr, size_t length, uint64_t iova,
                                            unsigned int access) {
-    //if (!initialized) initialize();
     if (ibv_reg_mr_iova2_lib) {
       return ibv_reg_mr_iova2_lib(pd, addr, length, iova, access);
     }
@@ -220,12 +201,9 @@ struct IBVerbs {
   }
 
  private:
-
   // Declarating Initializer
   struct Initializer {
-    Initializer() {
-      IBVerbs::initialize();
-    }
+    Initializer() { IBVerbs::initialize(); }
   };
 
   // Handle for the dynamic library
@@ -293,5 +271,4 @@ IBVerbs::ibv_query_port_t IBVerbs::ibv_query_port_lib = nullptr;
 IBVerbs::ibv_reg_mr_iova2_t IBVerbs::ibv_reg_mr_iova2_lib = nullptr;
 
 IBVerbs::Initializer IBVerbs::initializer;
-
 }  // namespace mscclpp
