@@ -262,6 +262,11 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
                           smOutChannels, offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(),
                           NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream));
       break;
+    case ncclBfloat16:
+      CUDACHECK(allreduce((__bfloat16*)sendbuff, (__bfloat16*)comm->scratchBuff.get(), (__bfloat16*)recvbuff,
+                          smChannels, smOutChannels, offsetIn, offsetOut, offsetScratch, rank, NRANKS_PER_NODE,
+                          comm->comm->bootstrap()->getNranks(), count, stream));
+      break;
     case ncclInt32:
     case ncclUint32:
       CUDACHECK(allreduce((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, smChannels, smOutChannels,
@@ -497,6 +502,10 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
       case ncclFloat32:
         comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT32,
                                 1024, *plan, stream, mscclpp::PacketType::LL8);
+        break;
+      case ncclBfloat16:
+        comm->executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, bytes, bytes,
+                                mscclpp::DataType::BFLOAT16, 1024, *plan, stream, mscclpp::PacketType::LL8);
         break;
       case ncclInt32:
       case ncclUint32:
