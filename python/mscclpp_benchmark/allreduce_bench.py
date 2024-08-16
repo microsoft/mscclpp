@@ -175,7 +175,7 @@ def run_benchmark(
                 MscclppAllReduce1(mscclpp_group, memory),
                 MscclppAllReduce3(mscclpp_group, memory, proxy_service),
             ]
-            if is_nvls_supported():
+            if is_nvls_supported() and (data_type == cp.float32 or data_type == cp.float16):
                 mscclpp_algos.append(MscclppAllReduce6(mscclpp_group, nelem, data_type))
     else:
         if memory.nbytes < 2**22:

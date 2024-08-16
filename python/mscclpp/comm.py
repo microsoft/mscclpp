@@ -8,6 +8,7 @@ import cupy as cp
 from ._mscclpp import (
     Communicator,
     Connection,
+    connect_nvls_collective,
     EndpointConfig,
     Host2DeviceSemaphore,
     Host2HostSemaphore,
