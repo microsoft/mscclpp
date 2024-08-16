@@ -8,7 +8,7 @@
 
 #include <cstring>
 #include <fstream>
-#include <ibverbs_wrapper.hpp>
+#include "infiniband/ibverbs_wrapper.hpp"
 #include <mscclpp/core.hpp>
 #include <mscclpp/fifo.hpp>
 #include <sstream>

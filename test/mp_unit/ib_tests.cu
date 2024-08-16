@@ -5,7 +5,7 @@
 
 #include <mscclpp/gpu_utils.hpp>
 
-#include "infiniband/verbs.h"
+#include "infiniband/ibverbs_wrapper.hpp"
 #include "mp_unit_tests.hpp"
 
 void IbTestBase::SetUp() {

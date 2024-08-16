@@ -2,7 +2,12 @@
 #define MSCCLPP_IBVERBS_WRAPPER_HPP_
 
 #include <dlfcn.h>
+
+#ifdef IBVERBS_FOUND
+#include "verbs.h"
+#else
 #include <infiniband/verbs.h>
+#endif
 
 #include <iostream>
 #include <mscclpp/errors.hpp>
