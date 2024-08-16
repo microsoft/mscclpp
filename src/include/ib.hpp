@@ -55,6 +55,10 @@ struct IbQpInfo {
   bool is_grh;
 };
 
+enum class WsStatus {
+  Success,
+};
+
 class IbQp {
  public:
   ~IbQp();
@@ -71,7 +75,7 @@ class IbQp {
   int pollCq();
 
   IbQpInfo& getInfo();
-  const ibv_wc* getWc(int idx) const;
+  int getWcStatus(int idx) const;
   int getNumCqItems() const;
 
  private:

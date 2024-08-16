@@ -290,7 +290,7 @@ int IbQp::pollCq() {
 
 IbQpInfo& IbQp::getInfo() { return this->info; }
 
-const ibv_wc* IbQp::getWc(int idx) const { return &this->wcs[idx]; }
+int IbQp::getWcStatus(int idx) const { return this->wcs[idx].status; }
 
 int IbQp::getNumCqItems() const { return this->numSignaledPostedItems; }
 
