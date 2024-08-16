@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cc *.cu)
-if(not IBVERBS_FOUND)
+if(NOT IBVERBS_FOUND)
     list(FILTER SOURCES EXCLUDE REGEX "ib.cc")
 endif()
 target_sources(mscclpp_obj PRIVATE ${SOURCES})
