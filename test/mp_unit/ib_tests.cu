@@ -5,7 +5,6 @@
 
 #include <mscclpp/gpu_utils.hpp>
 
-#include "infiniband/verbs.h"
 #include "mp_unit_tests.hpp"
 
 void IbTestBase::SetUp() {
@@ -99,7 +98,7 @@ TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
         ASSERT_GE(wcNum, 0);
         for (int i = 0; i < wcNum; ++i) {
           int status = qp->getWcStatus(i);
-          EXPECT_EQ(status, mscclpp::WsStatus::Success);
+          EXPECT_EQ(status, static_cast<int>(mscclpp::WsStatus::Success));
           waiting = false;
           break;
         }
@@ -273,7 +272,7 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
         }
         ASSERT_EQ(wcNum, 1);
         int status = qp->getWcStatus(0);
-        ASSERT_EQ(status, mscclpp::WsStatus::Success);
+        ASSERT_EQ(status, static_cast<int>(mscclpp::WsStatus::Success));
       }
 
       // Get the result from the receiver
@@ -320,7 +319,7 @@ TEST_F(IbPeerToPeerTest, SimpleAtomicAdd) {
         ASSERT_GE(wcNum, 0);
         for (int i = 0; i < wcNum; ++i) {
           int status = qp->getWcStatus(i);
-          EXPECT_EQ(status, mscclpp::WsStatus::Success);
+          EXPECT_EQ(status, static_cast<int>(mscclpp::WsStatus::Success));
           waiting = false;
           break;
         }

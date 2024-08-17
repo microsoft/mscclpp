@@ -8,14 +8,17 @@
 
 #include <cstring>
 #include <fstream>
-#include <ibverbs_wrapper.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/fifo.hpp>
 #include <sstream>
 #include <string>
 
 #include "api.h"
+#include "context.hpp"
 #include "debug.h"
+#if defined(USE_IBVERBS)
+#include "ibverbs_wrapper.hpp"
+#endif  // defined(USE_IBVERBS)
 
 #if !defined(__HIP_PLATFORM_AMD__)
 
@@ -32,6 +35,8 @@ static bool checkNvPeerMemLoaded() {
 #endif  // !defined(__HIP_PLATFORM_AMD__)
 
 namespace mscclpp {
+
+#if defined(USE_IBVERBS)
 
 IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   if (size == 0) {
@@ -133,9 +138,9 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   }
   this->qp = _qp;
   this->wrn = 0;
-  this->wrs = std::make_unique<ibv_send_wr[]>(maxWrPerSend);
-  this->sges = std::make_unique<ibv_sge[]>(maxWrPerSend);
-  this->wcs = std::make_unique<ibv_wc[]>(maxCqPollNum);
+  this->wrs = std::make_shared<std::vector<ibv_send_wr>>(maxWrPerSend);
+  this->sges = std::make_shared<std::vector<ibv_sge>>(maxWrPerSend);
+  this->wcs = std::make_shared<std::vector<ibv_wc>>(maxCqPollNum);
 }
 
 IbQp::~IbQp() {
@@ -204,13 +209,13 @@ IbQp::WrInfo IbQp::getNewWrInfo() {
   }
   int wrn = this->wrn;
 
-  ibv_send_wr* wr_ = &this->wrs[wrn];
-  ibv_sge* sge_ = &this->sges[wrn];
+  ibv_send_wr* wr_ = &this->wrs->data()[wrn];
+  ibv_sge* sge_ = &this->sges->data()[wrn];
   wr_->sg_list = sge_;
   wr_->num_sge = 1;
   wr_->next = nullptr;
   if (wrn > 0) {
-    this->wrs[wrn - 1].next = wr_;
+    (*this->wrs)[wrn - 1].next = wr_;
   }
   this->wrn++;
   return IbQp::WrInfo{wr_, sge_};
@@ -265,7 +270,7 @@ void IbQp::postSend() {
     return;
   }
   struct ibv_send_wr* bad_wr;
-  int ret = IBVerbs::ibv_post_send(this->qp, this->wrs.get(), &bad_wr);
+  int ret = IBVerbs::ibv_post_send(this->qp, this->wrs->data(), &bad_wr);
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_post_send failed (errno " << errno << ")";
@@ -281,16 +286,14 @@ void IbQp::postSend() {
 }
 
 int IbQp::pollCq() {
-  int wcNum = IBVerbs::ibv_poll_cq(this->cq, this->maxCqPollNum, this->wcs.get());
+  int wcNum = IBVerbs::ibv_poll_cq(this->cq, this->maxCqPollNum, this->wcs->data());
   if (wcNum > 0) {
     this->numSignaledPostedItems -= wcNum;
   }
   return wcNum;
 }
 
-IbQpInfo& IbQp::getInfo() { return this->info; }
-
-int IbQp::getWcStatus(int idx) const { return this->wcs[idx].status; }
+int IbQp::getWcStatus(int idx) const { return (*this->wcs)[idx].status; }
 
 int IbQp::getNumCqItems() const { return this->numSignaledPostedItems; }
 
@@ -377,8 +380,6 @@ const IbMr* IbCtx::registerMr(void* buff, std::size_t size) {
   mrs.emplace_back(new IbMr(this->pd, buff, size));
   return mrs.back().get();
 }
-
-const std::string& IbCtx::getDevName() const { return this->devName; }
 
 MSCCLPP_API_CPP int getIBDeviceCount() {
   int num;
@@ -479,5 +480,15 @@ MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string& ibDevice
   }
   throw std::invalid_argument("IB device not found");
 }
+
+#else  // !defined(USE_IBVERBS)
+
+MSCCLPP_API_CPP int getIBDeviceCount() { return 0; }
+
+MSCCLPP_API_CPP std::string getIBDeviceName(Transport) { return ""; }
+
+MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string&) { return Transport::Unknown; }
+
+#endif  // !defined(USE_IBVERBS)
 
 }  // namespace mscclpp
