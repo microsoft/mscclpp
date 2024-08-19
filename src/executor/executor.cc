@@ -140,6 +140,7 @@ struct Executor::Impl {
             if (!inSameNode(rank, peer, this->nranksPerNode)) {
               flags |= IBs[rank % this->nranksPerNode];
             }
+            else flags |= Transport::CudaIpc;
           }
         }
       }
@@ -328,6 +329,7 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   ExecutionContext context = this->impl_->setupExecutionContext(
       rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, offsetIn, offsetOut, sendBytes, recvBytes, plan);
   // TODO(binyli): need to flush proxy channel here this->impl_->proxyService->startProxy();
+  this->impl_->proxyService->startProxy();
   this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvbuff, dataType, stream, packetType);
 }
 
