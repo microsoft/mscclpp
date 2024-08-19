@@ -3,7 +3,11 @@
 
 find_package(MPI)
 
-set(TEST_LIBS_COMMON mscclpp ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} Threads::Threads)
+if(IBVERBS_FOUND)
+    set(TEST_LIBS_COMMON mscclpp ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} Threads::Threads)
+else()
+    set(TEST_LIBS_COMMON mscclpp ${GPU_LIBRARIES} ${NUMA_LIBRARIES} Threads::Threads)
+endif()
 set(TEST_LIBS_GTEST GTest::gtest_main GTest::gmock_main)
 set(TEST_INC_COMMON PRIVATE ${PROJECT_SOURCE_DIR}/include SYSTEM PRIVATE ${GPU_INCLUDE_DIRS})
 set(TEST_INC_INTERNAL PRIVATE ${PROJECT_SOURCE_DIR}/src/include)

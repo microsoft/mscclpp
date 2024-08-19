@@ -8,7 +8,6 @@
 
 #include <cstring>
 #include <fstream>
-#include "infiniband/ibverbs_wrapper.hpp"
 #include <mscclpp/core.hpp>
 #include <mscclpp/fifo.hpp>
 #include <sstream>
@@ -16,6 +15,7 @@
 
 #include "api.h"
 #include "debug.h"
+#include "infiniband/ibverbs_wrapper.hpp"
 
 #if !defined(__HIP_PLATFORM_AMD__)
 
