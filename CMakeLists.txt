@@ -112,7 +112,7 @@ target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} nlo
 if(IBVERBS_FOUND)
     target_include_directories(mscclpp_obj SYSTEM PRIVATE ${IBVERBS_INCLUDE_DIRS})
     target_link_libraries(mscclpp_obj PRIVATE ${IBVERBS_LIBRARIES})
-    target_compile_definitions(mscclpp_obj PRIVATE USE_IBVERBS)
+    target_compile_definitions(mscclpp_obj PUBLIC USE_IBVERBS)
 endif()
 set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 if(USE_CUDA)
