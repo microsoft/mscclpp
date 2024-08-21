@@ -788,7 +788,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 
-// Barrier among all devices followed by a memory fence
+// Barrier among all devices
 // Should be called by all threads on all devices
 // Assumes \p num_threads_per_block >= \p num_ranks
 __forceinline__ __device__ void barrier(mscclpp::SmDevice2DeviceSemaphoreDeviceHandle* semaphores, int thread_id,
@@ -806,36 +806,78 @@ __forceinline__ __device__ void barrier(mscclpp::SmDevice2DeviceSemaphoreDeviceH
   deviceSyncer.sync(num_blocks);
 }
 
-extern "C" __global__ void __launch_bounds__(1024, 1)
-    allreduce6(mscclpp::SmDevice2DeviceSemaphoreDeviceHandle* semaphores,
-               mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs, TYPE* buff, int my_rank, int nranks,
-               size_t nelem) {
-  float* dev_ptr = (float*)nvlsPtrs.devicePtr;
-  float* mc_ptr = (float*)nvlsPtrs.mcPtr;
+// Assumes \p kVecSize is 1, 2, 4, or 8 (default 8)
+template <typename DataType = float, int kVecSize = 8>
+MSCCLPP_DEVICE_INLINE void allreduce6_helper(mscclpp::SmDevice2DeviceSemaphoreDeviceHandle* semaphores,
+                                             mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs, int my_rank,
+                                             int num_ranks, size_t num_elements) {
+  DataType* mc_ptr = (DataType*)nvlsPtrs.mcPtr;
   int tid = threadIdx.x;
   int bid = blockIdx.x;
+  int num_threads_per_block = blockDim.x;
   int num_blocks = gridDim.x;
 
   // start with a barrier to ensure all devices have written their values
   // to their own memory (that is part of the multicast memory)
   // before reading them in this kernel
-  barrier(semaphores, tid, bid, num_blocks, nranks);
+  barrier(semaphores, tid, bid, num_blocks, num_ranks);
 
-  int my_st = ((int64_t)nelem * (int64_t)my_rank) / (int64_t)nranks;
-  int my_en = ((int64_t)nelem * (int64_t)(my_rank + 1)) / (int64_t)nranks;
+  // every device loads, reduces, and stores a partition of the multicast memory
+  int rank_start = ((int64_t)num_elements * (int64_t)my_rank) / (int64_t)num_ranks;
+  int rank_end = ((int64_t)num_elements * (int64_t)(my_rank + 1)) / (int64_t)num_ranks;
 
-  int my_offset = (tid + bid * blockDim.x) * 4;
-  int my_step = blockDim.x * gridDim.x * 4;
+  int thread_offset = (bid * num_threads_per_block + tid) * kVecSize;
+  int thread_step = (num_threads_per_block * num_blocks) * kVecSize;  // number of threads * vector size
 
-  for (int idx = my_st + my_offset; idx < my_en; idx += my_step) {
-    uint4 val;  // fits 8 cutlass::half_t elements; i.e., 4 half2 elements
-    mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, mc_ptr + idx);
-    mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, mc_ptr + idx);
+  for (int idx = rank_start + thread_offset; idx < rank_end; idx += thread_step) {
+    if constexpr (std::is_same_v<DataType, float> && (kVecSize == 4)) {
+      uint4 val;  // fits 4 float elements
+      mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (float*)(mc_ptr + idx));
+      mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (float*)(mc_ptr + idx));
+    } else if constexpr (std::is_same_v<DataType, float> && (kVecSize == 2)) {
+      uint2 val;  // fits 2 float elements
+      mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (float*)(mc_ptr + idx));
+      mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (float*)(mc_ptr + idx));
+    } else if constexpr (std::is_same_v<DataType, float> && (kVecSize == 1)) {
+      uint1 val;  // fits 1 float element
+      mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (float*)(mc_ptr + idx));
+      mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (float*)(mc_ptr + idx));
+    } else if constexpr (std::is_same_v<DataType, __half> && (kVecSize == 8)) {
+      uint4 val;  // fits 8 cutlass::half_t elements; i.e., 4 half2 elements
+      mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (half2*)(mc_ptr + idx));
+      mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (half2*)(mc_ptr + idx));
+    } else if constexpr (std::is_same_v<DataType, __half> && (kVecSize == 4)) {
+      uint2 val;  // fits 4 cutlass::half_t elements; i.e., 2 half2 elements
+      mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (half2*)(mc_ptr + idx));
+      mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (half2*)(mc_ptr + idx));
+    } else if constexpr (std::is_same_v<DataType, __half> && (kVecSize == 2)) {
+      uint1 val;  // fits 2 cutlass::half_t elements; i.e., 1 half2 element
+      mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (half2*)(mc_ptr + idx));
+      mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (half2*)(mc_ptr + idx));
+    } else {
+      // not supported: cannot use static_assert because of the way TYPE is handled in this file
+      assert(false);  // Unsupported data type and vector size combination
+    }
   }
 
   // end with a barrier to ensure all devices can now read their values
   // from their own memory (that is part of the multicast memory)
   // after writing them in this kernel
-  barrier(semaphores, tid, bid, num_blocks, nranks);
+  barrier(semaphores, tid, bid, num_blocks, num_ranks);
+}
+
+extern "C" __global__ void __launch_bounds__(1024, 1)
+    allreduce6(mscclpp::SmDevice2DeviceSemaphoreDeviceHandle* semaphores,
+               mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs, int my_rank, int num_ranks, size_t num_elements,
+               size_t vector_size) {
+  if (vector_size == 8) {
+    allreduce6_helper<TYPE, 8>(semaphores, nvlsPtrs, my_rank, num_ranks, num_elements);
+  } else if (vector_size == 4) {
+    allreduce6_helper<TYPE, 4>(semaphores, nvlsPtrs, my_rank, num_ranks, num_elements);
+  } else if (vector_size == 2) {
+    allreduce6_helper<TYPE, 2>(semaphores, nvlsPtrs, my_rank, num_ranks, num_elements);
+  } else {
+    allreduce6_helper<TYPE, 1>(semaphores, nvlsPtrs, my_rank, num_ranks, num_elements);
+  }
 }
 #endif
