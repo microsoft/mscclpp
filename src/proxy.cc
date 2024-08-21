@@ -33,7 +33,9 @@ MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, std::function<void()> threadI
   pimpl = std::make_unique<Impl>(handler, threadInit, fifoSize);
 }
 
-MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, size_t fifoSize) : Proxy(handler, [] {}, fifoSize) {}
+MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, size_t fifoSize)
+    : Proxy(
+          handler, [] {}, fifoSize) {}
 
 MSCCLPP_API_CPP Proxy::~Proxy() {
   if (pimpl) {

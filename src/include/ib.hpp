@@ -121,7 +121,7 @@ class IbCtx {
   const IbMr* registerMr(void* buff, std::size_t size);
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
-  ~IbCtx() {};
+  ~IbCtx() {}
 
   IbQp* createQp([[maybe_unused]] int maxCqSize, [[maybe_unused]] int maxCqPollNum, [[maybe_unused]] int maxSendWr,
                  [[maybe_unused]] int maxRecvWr, [[maybe_unused]] int maxWrPerSend, [[maybe_unused]] int port = -1) {
