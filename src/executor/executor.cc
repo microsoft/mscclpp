@@ -68,12 +68,14 @@ struct ExecutionContext {
 
 struct Executor::Impl {
   int nranksPerNode;
+  int nranks;
   std::shared_ptr<Communicator> comm;
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
 
   Impl(std::shared_ptr<Communicator> comm) : comm(comm) {
     this->nranksPerNode = comm->bootstrap()->getNranksPerNode();
+    this->nranks = comm->bootstrap()->getNranks();
     this->proxyService = std::make_shared<ProxyService>();
   }
   ~Impl() = default;
@@ -169,7 +171,7 @@ struct Executor::Impl {
 
     std::vector<BufferType> bufferTypes = plan.impl_->getConnectedBufferTypes(rank);
     for (BufferType bufferType : bufferTypes) {
-      std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(rank, bufferType);
+      std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfosByDstRank(rank, bufferType);
       TransportFlags transportFlags = getTransportFlags(channelInfos, rank);
       RegisteredMemory memory =
           this->comm->registerMemory(getBufferInfo(bufferType).first, getBufferInfo(bufferType).second, transportFlags);
@@ -177,6 +179,10 @@ struct Executor::Impl {
       std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
       for (int peer : connectedPeers) {
         comm->sendMemoryOnSetup(memory, peer, 0);
+      }
+      channelInfos = plan.impl_->getChannelInfos(rank, bufferType);
+      connectedPeers = getConnectedPeers(channelInfos);
+      for (int peer : connectedPeers) {
         remoteRegMemoryFutures.push_back(comm->recvMemoryOnSetup(peer, 0));
       }
       comm->setup();
@@ -201,19 +207,24 @@ struct Executor::Impl {
     const auto channelTypes = {ChannelType::SM, ChannelType::PROXY};
     std::vector<std::shared_ptr<SmDevice2DeviceSemaphore>> smSemaphores;
     std::vector<mscclpp::SemaphoreId> proxySemaphores;
-    for (ChannelType channelType : channelTypes) {
-      std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(rank, channelType);
+    auto processChannelInfos = [&](std::vector<ChannelInfo>& channelInfos) {
       for (ChannelInfo& info : channelInfos) {
         for (int peer : info.connectedPeers) {
-          if (channelType == ChannelType::SM) {
+          if (info.channelType == ChannelType::SM) {
             smSemaphores.push_back(
                 std::make_shared<SmDevice2DeviceSemaphore>(*this->comm, context.connections.at(peer)));
-          } else if (channelType == ChannelType::PROXY) {
+          } else if (info.channelType == ChannelType::PROXY) {
             proxySemaphores.push_back(
                 this->proxyService->buildAndAddSemaphore(*this->comm, context.connections.at(peer)));
           }
         }
       }
+    };
+    for (ChannelType channelType : channelTypes) {
+      std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(rank, channelType);
+      processChannelInfos(channelInfos);
+      channelInfos = plan.impl_->getUnpairedChannelInfos(rank, nranks, channelType);
+      processChannelInfos(channelInfos);
     }
     this->comm->setup();
     context.smSemaphores = std::move(smSemaphores);
@@ -315,9 +326,9 @@ struct Executor::Impl {
 
 Executor::Executor(std::shared_ptr<Communicator> comm) : impl_(std::make_unique<Impl>(comm)) {}
 
-void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuffSize, size_t recvBuffSize,
-                       DataType dataType, int nthreads, const ExecutionPlan& plan, cudaStream_t stream,
-                       PacketType packetType) {
+void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuffSize,
+                       [[maybe_unused]] size_t recvBuffSize, DataType dataType, int nthreads, const ExecutionPlan& plan,
+                       cudaStream_t stream, PacketType packetType) {
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)sendbuff));
