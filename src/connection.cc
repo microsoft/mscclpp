@@ -6,13 +6,13 @@
 #if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.hpp>
 #endif
+
 #include <mscclpp/utils.hpp>
 #include <sstream>
 #include <thread>
 
 #include "debug.h"
 #include "endpoint.hpp"
-#include "infiniband/verbs.h"
 
 namespace mscclpp {
 
@@ -173,9 +173,9 @@ void IBConnection::flush(int64_t timeoutUsec) {
       }
     }
     for (int i = 0; i < wcNum; ++i) {
-      const ibv_wc* wc = qp->getWc(i);
-      if (wc->status != IBV_WC_SUCCESS) {
-        throw mscclpp::IbError("a work item failed: status " + std::to_string(wc->status), wc->status);
+      int status = qp->getWcStatus(i);
+      if (status != static_cast<int>(WsStatus::Success)) {
+        throw mscclpp::IbError("a work item failed: status " + std::to_string(status), status);
       }
     }
   }

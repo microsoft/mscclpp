@@ -15,7 +15,7 @@
 #include "execution_common.hpp"
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-#include <mscclpp/gpu_data_types.hpp>
+#include "gpu_data_types.hpp"
 
 namespace {
 template <typename To, typename From>
@@ -60,6 +60,11 @@ MSCCLPP_DEVICE_INLINE int4 add_vectors<__half>(int4 a, int4 b) {
   return add_vectors_helper<__half2>(a, b);
 }
 
+template <>
+MSCCLPP_DEVICE_INLINE int4 add_vectors<__bfloat16>(int4 a, int4 b) {
+  return add_vectors_helper<__bfloat162>(a, b);
+}
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper(uint2 a, uint2 b) {
   uint2 ret;
@@ -78,6 +83,11 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__half>(uint2 a,
   return add_vectors_helper<__half2>(a, b);
 }
 
+template <>
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__bfloat16>(uint2 a, uint2 b) {
+  return add_vectors_helper<__bfloat162>(a, b);
+}
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE int add_vectors_helper(int a, int b) {
   return bit_cast<int, T>(add_elements(bit_cast<T, int>(a), bit_cast<T, int>(b)));
@@ -93,6 +103,11 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__half>(int a, int
   return add_vectors_helper<__half2>(a, b);
 }
 
+template <>
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__bfloat16>(int a, int b) {
+  return add_vectors_helper<__bfloat162>(a, b);
+}
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE uint32_t add_vectors_helper(uint32_t a, uint32_t b) {
   return bit_cast<uint32_t, T>(add_elements(bit_cast<T, uint32_t>(a), bit_cast<T, uint32_t>(b)));
@@ -106,6 +121,11 @@ MSCCLPP_DEVICE_INLINE uint32_t add_vectors(uint32_t a, uint32_t b) {
 template <>
 MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__half>(uint32_t a, uint32_t b) {
   return add_vectors_helper<__half2>(a, b);
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
+  return add_vectors_helper<__bfloat162>(a, b);
 }
 
 }  // namespace
@@ -413,6 +433,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
     } else if (op.type == OperationType::READ_REDUCE_COPY) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
+
       handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, smChannels, op.outputChannelIndexes,
                                op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
                                op.size, false);
@@ -496,6 +517,16 @@ class ExecutionKernel {
       case DataType::FLOAT32:
         executionKernel<float, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, plan, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
+        break;
+      case DataType::BFLOAT16:
+        executionKernel<__bfloat16, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchSize, plan, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());

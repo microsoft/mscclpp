@@ -10,6 +10,7 @@ from mscclpp import (
     npkit,
 )
 import mscclpp.comm as mscclpp_comm
+import os
 
 import cupy as cp
 from mpi4py import MPI

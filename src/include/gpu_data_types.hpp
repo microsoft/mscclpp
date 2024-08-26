@@ -9,6 +9,10 @@
 #include <hip/hip_bf16.h>
 #include <hip/hip_fp16.h>
 
+using __bfloat16 = __hip_bfloat16;
+using __bfloat162 = __hip_bfloat162;
+#define __CUDA_BF16_TYPES_EXIST__
+
 #else
 
 #include <cuda_fp16.h>
@@ -18,6 +22,9 @@
 #if (CUDART_VERSION >= 11080)
 #include <cuda_fp8.h>
 #endif
+
+using __bfloat16 = __nv_bfloat16;
+using __bfloat162 = __nv_bfloat162;
 
 #endif
 
