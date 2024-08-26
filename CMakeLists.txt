@@ -95,7 +95,7 @@ endif()
 include(${PROJECT_SOURCE_DIR}/cmake/AddFormatTargets.cmake)
 
 # Find ibverbs and libnuma
-find_package(IBVerbs REQUIRED)
+find_package(IBVerbs)
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -107,9 +107,13 @@ add_library(mscclpp_obj OBJECT)
 target_include_directories(mscclpp_obj
     SYSTEM PRIVATE
     ${GPU_INCLUDE_DIRS}
-    ${IBVERBS_INCLUDE_DIRS}
     ${NUMA_INCLUDE_DIRS})
-target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} nlohmann_json::nlohmann_json Threads::Threads)
+target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} nlohmann_json::nlohmann_json Threads::Threads)
+if(IBVERBS_FOUND)
+    target_include_directories(mscclpp_obj SYSTEM PRIVATE ${IBVERBS_INCLUDE_DIRS})
+    target_link_libraries(mscclpp_obj PRIVATE ${IBVERBS_LIBRARIES})
+    target_compile_definitions(mscclpp_obj PUBLIC USE_IBVERBS)
+endif()
 set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 if(USE_CUDA)
     target_compile_definitions(mscclpp_obj PRIVATE USE_CUDA)
