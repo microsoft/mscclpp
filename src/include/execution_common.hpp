@@ -32,6 +32,7 @@ enum class OperationType : uint8_t {
   GET,
   COPY,
   COPY_PACKET,
+  COPY_TO_PACKET,
   SIGNAL,
   WAIT,
   FLUSH,
