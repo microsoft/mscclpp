@@ -208,7 +208,7 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t contsS
 // Step 2. For each threadblock, construct a vector of channel indexes and keys.
 void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   using mapKey = std::tuple<int, BufferType, BufferType, ChannelType>;
-  std::map<mapKey, std::vector<int>> chanConnectedFromMap;
+  std::map<mapKey, std::vector<int>> chanConnectedPeersMap;
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];
     std::vector<ChannelInfo> channelInfos;
@@ -219,7 +219,7 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
       info.channelType = convertToChannelType(channel["type"]);
       for (const auto& peer : channel["connectedTo"]) {
         info.connectedPeers.push_back(peer);
-        chanConnectedFromMap[{peer, info.srcBufferType, info.dstBufferType, info.channelType}].push_back(rank);
+        chanConnectedPeersMap[{peer, info.srcBufferType, info.dstBufferType, info.channelType}].push_back(rank);
         this->channelCountMap[{rank, info.channelType}][peer]++;
       }
       channelInfos.push_back(info);
@@ -227,7 +227,7 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
     this->channelInfos[rank] = channelInfos;
   }
 
-  for (const auto& [key, connectedFrom] : chanConnectedFromMap) {
+  for (const auto& [key, connectedFrom] : chanConnectedPeersMap) {
     auto [peer, srcBufferType, dstBufferType, channelType] = key;
     ChannelInfo info;
     info.srcBufferType = srcBufferType;
