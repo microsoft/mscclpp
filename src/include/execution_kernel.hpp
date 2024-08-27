@@ -310,7 +310,7 @@ MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, size_t srcSize
 
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handleCopyToPacket(void* dst, void* src, size_t srcSize, uint32_t dstOffset,
-                                            uint32_t srcOffset, size_t size, uint32_t flag) {
+                                              uint32_t srcOffset, size_t size, uint32_t flag) {
   mscclpp::putPackets<PacketType>(dst, dstOffset, src, srcOffset, size, threadIdx.x, blockDim.x, flag);
 }
 
@@ -462,7 +462,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       handleCopyPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);
-    } else if (op.type == OperationType::COPY_PACKET_DATA) {
+    } else if (op.type == OperationType::COPY_TO_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       handleCopyPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);

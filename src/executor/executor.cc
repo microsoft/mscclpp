@@ -139,8 +139,8 @@ struct Executor::Impl {
           for (int peer : info.connectedPeers) {
             if (!inSameNode(rank, peer, this->nranksPerNode)) {
               flags |= IBs[rank % this->nranksPerNode];
-            }
-            else flags |= Transport::CudaIpc;
+            } else
+              flags |= Transport::CudaIpc;
           }
         }
       }
