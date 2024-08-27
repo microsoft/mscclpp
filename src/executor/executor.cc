@@ -54,6 +54,7 @@ static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Trans
 namespace mscclpp {
 
 struct ExecutionContext {
+  std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<int, std::shared_ptr<Connection>> connections;
   std::unordered_map<std::pair<BufferType, int>, mscclpp::RegisteredMemory> registeredMemories;
   std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
@@ -69,13 +70,9 @@ struct ExecutionContext {
 struct Executor::Impl {
   int nranksPerNode;
   std::shared_ptr<Communicator> comm;
-  std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
 
-  Impl(std::shared_ptr<Communicator> comm) : comm(comm) {
-    this->nranksPerNode = comm->bootstrap()->getNranksPerNode();
-    this->proxyService = std::make_shared<ProxyService>();
-  }
+  Impl(std::shared_ptr<Communicator> comm) : comm(comm) { this->nranksPerNode = comm->bootstrap()->getNranksPerNode(); }
   ~Impl() = default;
 
   ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t messageSize,
@@ -102,6 +99,7 @@ struct Executor::Impl {
     std::shared_ptr<char> scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
     context.scratchBuffer = scratchBuffer;
     context.scratchBufferSize = scratchBufferSize;
+    context.proxyService = std::make_shared<ProxyService>();
     this->setupConnections(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
     this->setupChannels(context, sendbuff, recvbuff, sendBufferSize, rank, plan);
@@ -110,6 +108,7 @@ struct Executor::Impl {
         allocExtSharedCuda<char>(context.deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan));
     memcpyCuda(context.deviceExecutionPlansBuffer.get(), (char*)context.deviceExecutionPlans.data(),
                context.deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
+    context.proxyService->startProxy();
     this->contexts.insert({key, context});
     return context;
   }
@@ -211,7 +210,7 @@ struct Executor::Impl {
                 std::make_shared<SmDevice2DeviceSemaphore>(*this->comm, context.connections.at(peer)));
           } else if (channelType == ChannelType::PROXY) {
             proxySemaphores.push_back(
-                this->proxyService->buildAndAddSemaphore(*this->comm, context.connections.at(peer)));
+                context.proxyService->buildAndAddSemaphore(*this->comm, context.connections.at(peer)));
           }
         }
       }
@@ -245,9 +244,9 @@ struct Executor::Impl {
                                             context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
           } else if (channelType == ChannelType::PROXY) {
             context.proxyChannels.emplace_back(
-                this->proxyService->proxyChannel(context.proxySemaphores[index++]),
-                this->proxyService->addMemory(context.registeredMemories[{info.dstBufferType, peer}]),
-                this->proxyService->addMemory(localMemory));
+                context.proxyService->proxyChannel(context.proxySemaphores[index++]),
+                context.proxyService->addMemory(context.registeredMemories[{info.dstBufferType, peer}]),
+                context.proxyService->addMemory(localMemory));
           }
         }
       }
@@ -329,7 +328,6 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   ExecutionContext context = this->impl_->setupExecutionContext(
       rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, offsetIn, offsetOut, sendBytes, recvBytes, plan);
   // TODO(binyli): need to flush proxy channel here
-  this->impl_->proxyService->startProxy();
   this->impl_->launchKernel(context, rank, nthreads, sendbuff, recvbuff, dataType, stream, packetType);
 }
 
