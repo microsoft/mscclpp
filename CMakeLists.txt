@@ -108,7 +108,7 @@ target_include_directories(mscclpp_obj
     SYSTEM PRIVATE
     ${GPU_INCLUDE_DIRS}
     ${NUMA_INCLUDE_DIRS})
-target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} nlohmann_json::nlohmann_json Threads::Threads)
+target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} nlohmann_json::nlohmann_json Threads::Threads dl)
 if(IBVERBS_FOUND)
     target_include_directories(mscclpp_obj SYSTEM PRIVATE ${IBVERBS_INCLUDE_DIRS})
     target_link_libraries(mscclpp_obj PRIVATE ${IBVERBS_LIBRARIES})
