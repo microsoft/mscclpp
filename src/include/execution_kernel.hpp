@@ -269,8 +269,8 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<SmCh
       return;
     }
     // For proxy channel, we assume src and dst are in packet format
-    uint32_t dstOffset = dstOffsets[tid] << 1 + scratchBaseOffset;
-    uint32_t srcOffset = srcOffsets[tid] << 1 + scratchBaseOffset;
+    uint32_t dstOffset = (dstOffsets[tid] << 1) + scratchBaseOffset;
+    uint32_t srcOffset = (srcOffsets[tid] << 1) + scratchBaseOffset;
     proxyChannels[dstChannelIndexes[tid]].put(dstOffset, srcOffset, size << 1);
   }
 }
