@@ -225,12 +225,11 @@ struct Executor::Impl {
     for (ChannelType channelType : channelTypes) {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(rank, channelType);
       processChannelInfos(channelInfos);
-      // In current implementation, to construct semaphore, we need to use two-way communication.
-      // Such as to construct a semaphore from rank 0 to rank 1, we need to have rank 0 send a message to rank 1
-      // and rank 1 send a message to rank 0.
-      // If in the algorithm, it only needs one-way semaphores, we need to find the unpaired channels and construct
-      // them via two way communication. In the future, we may need to change the implementation to construct semaphore
-      // via one-way communication.
+      // Current semaphore construction requires two-way communication, e.g., to construct a semaphore signaling from
+      // rank 0 to rank 1, both rank 0 and rank 1 need to send a message to each other. This PR fixes an executor bug
+      // that fails to conduct two-way communication for constructing such one-way semaphores, and instead hangs
+      // during the semaphore construction. In the future, we may need to change the implementation to construct
+      // semaphore via one-way communication.
       channelInfos = plan.impl_->getUnpairedChannelInfos(rank, nranks, channelType);
       processChannelInfos(channelInfos);
     }
