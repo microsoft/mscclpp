@@ -16,7 +16,7 @@ jobs:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2
 
   pool:
-    name: mscclpp
+    name: mscclpp-rocm
   container:
     image: $[ variables['containerImage'] ]
     options: --privileged --ipc=host --net=host --security-opt seccomp=unconfined --group-add video --ulimit memlock=-1:-1
