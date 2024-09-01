@@ -13,13 +13,13 @@ jobs:
   strategy:
     matrix:
       rocm6.2:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2
 
   pool:
     name: mscclpp
   container:
     image: $[ variables['containerImage'] ]
-    options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
+    options: --privileged --ipc=host --net=host --security-opt seccomp=unconfined --group-add video --ulimit memlock=-1:-1
 
   steps:
   - task: Bash@3
@@ -29,8 +29,19 @@ jobs:
       targetType: 'inline'
       script: |
         mkdir build && cd build
-        HIPCC=/opt/rocm/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DBYPASS_GPU_CHECK=ON -DUSE_CUDA=ON ..
+        CXX=/opt/rocm/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DBYPASS_GPU_CHECK=ON -DUSE_ROCM=ON ..
         make -j
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: InstallRcclTest
+    displayName: Install rccl-test
+    inputs:
+      targetType: 'inline'
+      script: |
+        git clone https://github.com/ROCm/rccl-tests.git
+        cd rccl-tests
+        make MPI=1 MPI_HOME=/usr/local/mpi HIP_HOME=/opt/rocm -j
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -41,11 +52,6 @@ jobs:
       script: |
         set -e
         export PATH=/usr/local/mpi/bin:$PATH
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 4 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 12M -e 48M -i 3145728 2 -k 5 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 24K -e 768K -i 24576 -k 6 -w 100 -n 100 -o output.jsonl
+        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN -x LD_PRELOAD="$(pwd)/build/apps/nccl/libmscclpp_nccl.so" \
+          -x ALLREDUCE_SMALL_MSG_BOUNDARY=32K -x ALLREDUCE_LARGE_MSG_BOUNDARY=1M ./rccl-test/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 100
       workingDirectory: '$(System.DefaultWorkingDirectory)'

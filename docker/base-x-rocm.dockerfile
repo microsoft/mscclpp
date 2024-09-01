@@ -6,7 +6,7 @@ LABEL org.opencontainers.image.source https://github.com/microsoft/mscclpp
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN rm -rf /opt/nvidia
+USER root
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
