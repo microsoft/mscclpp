@@ -50,6 +50,14 @@ RUN cd /tmp && \
     cd .. && \
     rm -rf /tmp/openmpi-${OPENMPI_VERSION}*
 
+ENV RCCL_VERSION=rocm-6.2.0
+RUN cd /tmp && \
+    git clone --branch ${RCCL_VERSION} --depth 1  https://github.com/ROCm/rccl.git && \
+    cd rccl && \
+    ./install.sh --prefix=/opt/rocm --amdgpu_targets gfx942 && \
+    cd .. && \
+    rm -rf /tmp/rccl
+
 ARG EXTRA_LD_PATH=/opt/rocm/lib
 ENV PATH="/usr/local/mpi/bin:${PATH}" \
     LD_LIBRARY_PATH="/usr/local/mpi/lib:${EXTRA_LD_PATH}:${LD_LIBRARY_PATH}"
