@@ -19,7 +19,7 @@ jobs:
     name: mscclpp-rocm
   container:
     image: $[ variables['containerImage'] ]
-    options: --privileged --ipc=host --net=host --security-opt seccomp=unconfined --group-add video --ulimit memlock=-1:-1
+    options: --privileged --ipc=host --security-opt seccomp=unconfined --group-add video --ulimit memlock=-1:-1
 
   steps:
   - task: Bash@3
