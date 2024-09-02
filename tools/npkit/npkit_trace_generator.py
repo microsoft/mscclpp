@@ -17,6 +17,7 @@ def parse_npkit_event_header(npkit_event_header_path):
         "GET",
         "COPY",
         "COPY_PACKET",
+        "TRANSFORM_TO_PACKET",
         "SIGNAL",
         "WAIT",
         "FLUSH",
