@@ -111,7 +111,7 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.
 
 ### Python Benchmark
 
-[Install the MSCCL++ Python package](https://github.com/microsoft/mscclpp/blob/chhwang/docs/docs/quickstart.md#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
+[Install the MSCCL++ Python package](#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
 
 ```bash
 # Choose `requirements_*.txt` according to your CUDA/ROCm version.
