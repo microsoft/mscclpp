@@ -37,7 +37,10 @@ struct hash<mscclpp::ChannelKey> {
 template <>
 struct hash<std::pair<int, mscclpp::ChannelType>> {
   std::size_t operator()(const std::pair<int, mscclpp::ChannelType>& key) const {
-    return std::hash<int>()(key.first) ^ std::hash<int>()(static_cast<int>(key.second));
+    std::size_t h1 = std::hash<int>()(key.first);
+    std::size_t h2 = std::hash<int>()(static_cast<int>(key.second));
+    // Refer hash_combine from boost
+    return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
   }
 };
 }  // namespace std
