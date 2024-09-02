@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Working with Python API &mdash; mscclpp v0.5.2 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js?v=0dc63f2a"></script>
+        <script src="../../_static/doctools.js?v=888ff710"></script>
+        <script src="../../_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="MSCCL++ Design Document" href="../../design/design.html" />
+    <link rel="prev" title="Customize the Proxy Service" href="customized-proxy-service.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            mscclpp
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quick Start</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">Tutorials</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="initialization.html">Commnunication initialize with mscclpp API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="proxy-channel.html">Offload commnunication to CPU with ProxyChannel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sm-channel.html">Using SmChannel for Intra-Node Communication</a></li>
+<li class="toctree-l2"><a class="reference internal" href="packet-api.html">Packet API for latency sensitive applications</a></li>
+<li class="toctree-l2"><a class="reference internal" href="customized-proxy-service.html">Customize the Proxy Service</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Working with Python API</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#setup-channel-with-python-api">Setup Channel with Python API</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#launch-kernel-with-python-api">Launch Kernel with Python API</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Design</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../design/design.html">MSCCL++ Design Document</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../performance/performance-ndmv4.html">NDmv4 Performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">C++ API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../api/index.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">mscclpp</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">Tutorials</a></li>
+      <li class="breadcrumb-item active">Working with Python API</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/getting-started/tutorials/python-api.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="working-with-python-api">
+<h1>Working with Python API<a class="headerlink" href="#working-with-python-api" title="Permalink to this heading"></a></h1>
+<p>We provide Python API which help to initialze and setup the channel easily.
+In this tutorial, you will write a simple program to initialize communication between eight GPUs using MSCCL++ Python API.</p>
+<section id="setup-channel-with-python-api">
+<h2>Setup Channel with Python API<a class="headerlink" href="#setup-channel-with-python-api" title="Permalink to this heading"></a></h2>
+<p>We will setup a mesh topology with eight GPUs. Each GPU will be connected to its neighbors. The following code shows how to initialize communication with MSCCL++ Python API.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">mpi4py</span> <span class="kn">import</span> <span class="n">MPI</span>
+<span class="kn">import</span> <span class="nn">cupy</span> <span class="k">as</span> <span class="nn">cp</span>
+
+<span class="kn">from</span> <span class="nn">mscclpp</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">ProxyService</span><span class="p">,</span>
+    <span class="n">Transport</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">import</span> <span class="nn">mscclpp.comm</span> <span class="k">as</span> <span class="nn">mscclpp_comm</span>
+
+<span class="k">def</span> <span class="nf">create_connection</span><span class="p">(</span><span class="n">group</span><span class="p">:</span> <span class="n">mscclpp_comm</span><span class="o">.</span><span class="n">CommGroup</span><span class="p">,</span> <span class="n">transport</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+    <span class="n">remote_nghrs</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">nranks</span><span class="p">))</span>
+    <span class="n">remote_nghrs</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">my_rank</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">transport</span> <span class="o">==</span> <span class="s2">&quot;NVLink&quot;</span><span class="p">:</span>
+        <span class="n">tran</span> <span class="o">=</span> <span class="n">Transport</span><span class="o">.</span><span class="n">CudaIpc</span>
+    <span class="k">elif</span> <span class="n">transport</span> <span class="o">==</span> <span class="s2">&quot;IB&quot;</span><span class="p">:</span>
+        <span class="n">tran</span> <span class="o">=</span> <span class="n">group</span><span class="o">.</span><span class="n">my_ib_device</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">my_rank</span> <span class="o">%</span> <span class="mi">8</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="kc">False</span>
+    <span class="n">connections</span> <span class="o">=</span> <span class="n">group</span><span class="o">.</span><span class="n">make_connection</span><span class="p">(</span><span class="n">remote_nghrs</span><span class="p">,</span> <span class="n">tran</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">connections</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">mscclpp_group</span> <span class="o">=</span> <span class="n">mscclpp_comm</span><span class="o">.</span><span class="n">CommGroup</span><span class="p">(</span><span class="n">MPI</span><span class="o">.</span><span class="n">COMM_WORLD</span><span class="p">)</span>
+    <span class="n">connections</span> <span class="o">=</span> <span class="n">create_connection</span><span class="p">(</span><span class="n">mscclpp_group</span><span class="p">,</span> <span class="s2">&quot;NVLink&quot;</span><span class="p">)</span>
+    <span class="n">nelems</span> <span class="o">=</span> <span class="mi">1024</span>
+    <span class="n">memory</span> <span class="o">=</span> <span class="n">cp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">nelem</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">cp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="n">proxy_service</span> <span class="o">=</span> <span class="n">ProxyService</span><span class="p">()</span>
+    <span class="n">simple_channels</span> <span class="o">=</span> <span class="n">group</span><span class="o">.</span><span class="n">make_proxy_channels</span><span class="p">(</span><span class="n">proxy_service</span><span class="p">,</span> <span class="n">memory</span><span class="p">,</span> <span class="n">connections</span><span class="p">)</span>
+    <span class="n">proxy_service</span><span class="o">.</span><span class="n">start_proxy</span><span class="p">()</span>
+    <span class="n">mscclpp_group</span><span class="o">.</span><span class="n">barrier</span><span class="p">()</span>
+    <span class="n">launch_kernel</span><span class="p">(</span><span class="n">mscclpp_group</span><span class="o">.</span><span class="n">my_rank</span><span class="p">,</span> <span class="n">mscclpp_group</span><span class="o">.</span><span class="n">nranks</span><span class="p">,</span> <span class="n">simple_channels</span><span class="p">,</span> <span class="n">memory</span><span class="p">)</span>
+    <span class="n">cp</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">deviceSynchronize</span><span class="p">()</span>
+    <span class="n">mscclpp_group</span><span class="o">.</span><span class="n">barrier</span><span class="p">()</span>
+</pre></div>
+</div>
+<section id="launch-kernel-with-python-api">
+<h3>Launch Kernel with Python API<a class="headerlink" href="#launch-kernel-with-python-api" title="Permalink to this heading"></a></h3>
+<p>We provide some Python utils to help you launch kernel via python. Here is a exampl.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">mscclpp.utils</span> <span class="kn">import</span> <span class="n">KernelBuilder</span><span class="p">,</span> <span class="n">pack</span>
+
+<span class="k">def</span> <span class="nf">launch_kernel</span><span class="p">(</span><span class="n">my_rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">nranks</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">simple_channels</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">SimpleProxyChannel</span><span class="p">],</span> <span class="n">memory</span><span class="p">:</span> <span class="n">cp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">):</span>
+    <span class="n">file_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">))</span>
+    <span class="n">kernel</span> <span class="o">=</span> <span class="n">KernelBuilder</span><span class="p">(</span><span class="n">file</span><span class="o">=</span><span class="s2">&quot;test.cu&quot;</span><span class="p">,</span> <span class="n">kernel_name</span><span class="o">=</span><span class="s2">&quot;test&quot;</span><span class="p">,</span> <span class="n">file_dir</span><span class="o">=</span><span class="n">file_dir</span><span class="p">)</span><span class="o">.</span><span class="n">get_compiled_kernel</span><span class="p">()</span>
+    <span class="n">params</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;&quot;</span>
+    <span class="n">first_arg</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">simple_channels</span><span class="o">.</span><span class="n">values</span><span class="p">()))</span>
+    <span class="n">size_of_channels</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">first_arg</span><span class="o">.</span><span class="n">device_handle</span><span class="p">()</span><span class="o">.</span><span class="n">raw</span><span class="p">)</span>
+    <span class="n">device_handles</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">rank</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">nranks</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">rank</span> <span class="o">==</span> <span class="n">my_rank</span><span class="p">:</span>
+            <span class="n">device_handles</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="nb">bytes</span><span class="p">(</span><span class="n">size_of_channels</span><span class="p">)</span>
+            <span class="p">)</span>  <span class="c1"># just zeros for semaphores that do not exist</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">device_handles</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">simple_channels</span><span class="p">[</span><span class="n">rank</span><span class="p">]</span><span class="o">.</span><span class="n">device_handle</span><span class="p">()</span><span class="o">.</span><span class="n">raw</span><span class="p">)</span>
+    <span class="c1"># keep a reference to the device handles so that they don&#39;t get garbage collected</span>
+    <span class="n">d_channels</span> <span class="o">=</span> <span class="n">cp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="nb">memoryview</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">device_handles</span><span class="p">)),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">cp</span><span class="o">.</span><span class="n">uint8</span><span class="p">)</span>
+    <span class="n">params</span> <span class="o">=</span> <span class="n">pack</span><span class="p">(</span><span class="n">d_channels</span><span class="p">,</span> <span class="n">my_rank</span><span class="p">,</span> <span class="n">nranks</span><span class="p">,</span> <span class="n">memory</span><span class="o">.</span><span class="n">size</span><span class="p">)</span>
+
+    <span class="n">nblocks</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">nthreads</span> <span class="o">=</span> <span class="mi">512</span>
+    <span class="n">kernel</span><span class="o">.</span><span class="n">launch_kernel</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="n">nblocks</span><span class="p">,</span> <span class="n">nthreads</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The test kernel is defined in <code class="docutils literal notranslate"><span class="pre">test.cu</span></code> as follows:</p>
+<div class="highlight-cuda notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;mscclpp/packet_device.hpp&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;mscclpp/proxy_channel_device.hpp&gt;</span>
+
+<span class="c1">// be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing</span>
+<span class="k">extern</span><span class="w"> </span><span class="s">&quot;C&quot;</span><span class="w"> </span><span class="kr">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">__launch_bounds__</span><span class="p">(</span><span class="mi">1024</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
+<span class="w">    </span><span class="n">simple_proxy_channel</span><span class="p">(</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">SimpleProxyChannelDeviceHandle</span><span class="o">*</span><span class="w"> </span><span class="n">channels</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">my_rank</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">nranks</span><span class="p">,</span>
+<span class="w">                         </span><span class="kt">int</span><span class="w"> </span><span class="n">num_elements</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">tid</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">nthreads</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">blockDim</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">size_per_rank</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">num_elements</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">int</span><span class="p">))</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">nranks</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">my_offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">size_per_rank</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">my_rank</span><span class="p">;</span>
+<span class="w">    </span><span class="nf">__syncthreads</span><span class="p">();</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">tid</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">nranks</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">tid</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">my_rank</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">channels</span><span class="p">[</span><span class="n">tid</span><span class="p">].</span><span class="n">putWithSignalAndFlush</span><span class="p">(</span><span class="n">my_offset</span><span class="p">,</span><span class="w"> </span><span class="n">my_offset</span><span class="p">,</span><span class="w"> </span><span class="n">size_per_rank</span><span class="p">);</span>
+<span class="w">      </span><span class="n">channels</span><span class="p">[</span><span class="n">tid</span><span class="p">].</span><span class="n">wait</span><span class="p">();</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="customized-proxy-service.html" class="btn btn-neutral float-left" title="Customize the Proxy Service" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="../../design/design.html" class="btn btn-neutral float-right" title="MSCCL++ Design Document" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, MSCCL++ Team.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

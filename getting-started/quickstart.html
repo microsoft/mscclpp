@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quick Start &mdash; mscclpp v0.5.2 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js?v=0dc63f2a"></script>
+        <script src="../_static/doctools.js?v=888ff710"></script>
+        <script src="../_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Tutorials" href="tutorials/index.html" />
+    <link rel="prev" title="Welcome to MSCCL++’s documentation!" href="../index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            mscclpp
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Quick Start</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#prerequisites">Prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#build-with-docker-images">Build with Docker Images</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#build-from-source">Build from Source</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#install-from-source-libraries-and-headers">Install from Source (Libraries and Headers)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#install-from-source-python-module">Install from Source (Python Module)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#docker-images">Docker Images</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#unit-tests">Unit Tests</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#performance-benchmark">Performance Benchmark</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#python-benchmark">Python Benchmark</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#c-benchmark-mscclpp-test">C++ Benchmark (mscclpp-test)</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#nccl-over-msccl">NCCL over MSCCL++</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/index.html">Tutorials</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Design</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../design/design.html">MSCCL++ Design Document</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../performance/performance-ndmv4.html">NDmv4 Performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">C++ API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../api/index.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">mscclpp</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Quick Start</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/getting-started/quickstart.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="quick-start">
+<h1>Quick Start<a class="headerlink" href="#quick-start" title="Permalink to this heading"></a></h1>
+<section id="prerequisites">
+<h2>Prerequisites<a class="headerlink" href="#prerequisites" title="Permalink to this heading"></a></h2>
+<ul>
+<li><p>Azure SKUs</p>
+<ul class="simple">
+<li><p><a class="reference external" href="https://learn.microsoft.com/en-us/azure/virtual-machines/nda100-v4-series">ND_A100_v4</a></p></li>
+<li><p><a class="reference external" href="https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series">NDm_A100_v4</a></p></li>
+<li><p><a class="reference external" href="https://learn.microsoft.com/en-us/azure/virtual-machines/nd-h100-v5-series">ND_H100_v5</a></p></li>
+<li><p><a class="reference external" href="https://learn.microsoft.com/en-us/azure/virtual-machines/nc-a100-v4-series">NC_A100_v4</a> (TBD)</p></li>
+</ul>
+</li>
+<li><p>Non-Azure Systems</p>
+<ul class="simple">
+<li><p>NVIDIA A100 GPUs + CUDA &gt;= 11.8</p></li>
+<li><p>NVIDIA H100 GPUs + CUDA &gt;= 12.0</p></li>
+<li><p>AMD MI250X GPUs + ROCm &gt;= 5.7</p></li>
+<li><p>AMD MI300X GPUs + ROCm &gt;= 6.0</p></li>
+</ul>
+</li>
+<li><p>OS: tested over Ubuntu 18.04 and 20.04</p></li>
+<li><p>Libraries: <a class="reference external" href="https://github.com/numactl/numactl">libnuma</a>, MPI (optional)</p></li>
+<li><p>Others</p>
+<ul>
+<li><p>For NVIDIA platforms, <code class="docutils literal notranslate"><span class="pre">nvidia_peermem</span></code> driver should be loaded on all nodes. Check it via:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">lsmod</span> <span class="o">|</span> <span class="n">grep</span> <span class="n">nvidia_peermem</span>
+</pre></div>
+</div>
+</li>
+</ul>
+</li>
+</ul>
+</section>
+<section id="build-with-docker-images">
+<h2>Build with Docker Images<a class="headerlink" href="#build-with-docker-images" title="Permalink to this heading"></a></h2>
+<p>We provide docker images which package all prerequisites for MSCCL++. You can setup your dev environment with the following command.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>--privileged<span class="w"> </span>--net<span class="o">=</span>host<span class="w"> </span>--ipc<span class="o">=</span>host<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2<span class="w"> </span>mscclpp-dev<span class="w"> </span>bash
+</pre></div>
+</div>
+<p>See all available images <a class="reference external" href="https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp">here</a>.</p>
+</section>
+<section id="build-from-source">
+<h2>Build from Source<a class="headerlink" href="#build-from-source" title="Permalink to this heading"></a></h2>
+<p>CMake 3.25 or later is required.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/microsoft/mscclpp.git
+$<span class="w"> </span>mkdir<span class="w"> </span>-p<span class="w"> </span>mscclpp/build<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>mscclpp/build
+</pre></div>
+</div>
+<p>For NVIDIA platforms, build MSCCL++ as follows.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># For NVIDIA platforms</span>
+$<span class="w"> </span>cmake<span class="w"> </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span>..
+$<span class="w"> </span>make<span class="w"> </span>-j
+</pre></div>
+</div>
+<p>For AMD platforms, use HIPCC instead of the default C++ compiler. Replace <code class="docutils literal notranslate"><span class="pre">/path/to/hipcc</span></code> from the command below into the your HIPCC path.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># For AMD platforms</span>
+$<span class="w"> </span><span class="nv">CXX</span><span class="o">=</span>/path/to/hipcc<span class="w"> </span>cmake<span class="w"> </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span>..
+$<span class="w"> </span>make<span class="w"> </span>-j
+</pre></div>
+</div>
+</section>
+<section id="install-from-source-libraries-and-headers">
+<h2>Install from Source (Libraries and Headers)<a class="headerlink" href="#install-from-source-libraries-and-headers" title="Permalink to this heading"></a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Install the generated headers and binaries to /usr/local/mscclpp</span>
+$<span class="w"> </span>cmake<span class="w"> </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span>-DCMAKE_INSTALL_PREFIX<span class="o">=</span>/usr/local/mscclpp<span class="w"> </span>-DBUILD_PYTHON_BINDINGS<span class="o">=</span>OFF<span class="w"> </span>..
+$<span class="w"> </span>make<span class="w"> </span>-j<span class="w"> </span>mscclpp<span class="w"> </span>mscclpp_static
+$<span class="w"> </span>sudo<span class="w"> </span>make<span class="w"> </span>install/fast
+</pre></div>
+</div>
+</section>
+<section id="install-from-source-python-module">
+<h2>Install from Source (Python Module)<a class="headerlink" href="#install-from-source-python-module" title="Permalink to this heading"></a></h2>
+<p>Python 3.8 or later is required.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># For NVIDIA platforms</span>
+$<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>.
+<span class="c1"># For AMD platforms</span>
+$<span class="w"> </span><span class="nv">CXX</span><span class="o">=</span>/path/to/hipcc<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>.
+</pre></div>
+</div>
+</section>
+<section id="docker-images">
+<h2>Docker Images<a class="headerlink" href="#docker-images" title="Permalink to this heading"></a></h2>
+<p>Our base image installs all prerequisites for MSCCL++.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.3
+</pre></div>
+</div>
+<p>See all available images <a class="reference external" href="https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp">here</a>.</p>
+</section>
+<section id="unit-tests">
+<h2>Unit Tests<a class="headerlink" href="#unit-tests" title="Permalink to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">unit_tests</span></code> require one GPU on the system. It only tests operation of basic components.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>make<span class="w"> </span>-j<span class="w"> </span>unit_tests
+$<span class="w"> </span>./test/unit_tests
+</pre></div>
+</div>
+<p>For thorough testing of MSCCL++ features, we need to use <code class="docutils literal notranslate"><span class="pre">mp_unit_tests</span></code> that require at least two GPUs on the system. <code class="docutils literal notranslate"><span class="pre">mp_unit_tests</span></code> also requires MPI to be installed on the system. For example, the following commands compile and run <code class="docutils literal notranslate"><span class="pre">mp_unit_tests</span></code> with two processes (two GPUs). The number of GPUs can be changed by changing the number of processes.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>make<span class="w"> </span>-j<span class="w"> </span>mp_unit_tests
+$<span class="w"> </span>mpirun<span class="w"> </span>-np<span class="w"> </span><span class="m">2</span><span class="w"> </span>./test/mp_unit_tests
+</pre></div>
+</div>
+<p>To run <code class="docutils literal notranslate"><span class="pre">mp_unit_tests</span></code> with more than two nodes, you need to specify the <code class="docutils literal notranslate"><span class="pre">-ip_port</span></code> argument that is accessible from all nodes. For example:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>mpirun<span class="w"> </span>-np<span class="w"> </span><span class="m">16</span><span class="w"> </span>-npernode<span class="w"> </span><span class="m">8</span><span class="w"> </span>-hostfile<span class="w"> </span>hostfile<span class="w"> </span>./test/mp_unit_tests<span class="w"> </span>-ip_port<span class="w"> </span><span class="m">10</span>.0.0.5:50000
+</pre></div>
+</div>
+</section>
+<section id="performance-benchmark">
+<h2>Performance Benchmark<a class="headerlink" href="#performance-benchmark" title="Permalink to this heading"></a></h2>
+<section id="python-benchmark">
+<h3>Python Benchmark<a class="headerlink" href="#python-benchmark" title="Permalink to this heading"></a></h3>
+<p><a class="reference internal" href="#install-from-source-python-module"><span class="xref myst">Install the MSCCL++ Python package</span></a> and run our Python AllReduce benchmark as follows. It requires MPI on the system.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Choose `requirements_*.txt` according to your CUDA/ROCm version.</span>
+$<span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>./python/requirements_cuda12.txt
+$<span class="w"> </span>mpirun<span class="w"> </span>-tag-output<span class="w"> </span>-np<span class="w"> </span><span class="m">8</span><span class="w"> </span>python3<span class="w"> </span>./python/mscclpp_benchmark/allreduce_bench.py
+</pre></div>
+</div>
+</section>
+<section id="c-benchmark-mscclpp-test">
+<h3>C++ Benchmark (mscclpp-test)<a class="headerlink" href="#c-benchmark-mscclpp-test" title="Permalink to this heading"></a></h3>
+<p><em>NOTE: mscclpp-test will be retired soon and will be maintained only as an example of C++ implementation. If you want to get the latest performance numbers, please use the Python benchmark instead.</em></p>
+<p>mscclpp-test is a set of C++ performance benchmarks. It requires MPI on the system, and the path should be provided via <code class="docutils literal notranslate"><span class="pre">MPI_HOME</span></code> environment variable to the CMake build system.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nv">MPI_HOME</span><span class="o">=</span>/path/to/mpi<span class="w"> </span>cmake<span class="w"> </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span>..
+$<span class="w"> </span>make<span class="w"> </span>-j<span class="w"> </span>allgather_test_perf<span class="w"> </span>allreduce_test_perf
+</pre></div>
+</div>
+<p>For example, the following command runs the <code class="docutils literal notranslate"><span class="pre">allreduce5</span></code> algorithm with 8 GPUs starting from 3MB to 48MB messages, by doubling the message size in between. You can try different algorithms by changing the <code class="docutils literal notranslate"><span class="pre">-k</span> <span class="pre">5</span></code> option to another value (e.g., <code class="docutils literal notranslate"><span class="pre">-k</span> <span class="pre">3</span></code> runs <code class="docutils literal notranslate"><span class="pre">allreduce3</span></code>). Check all algorithms from the code: <a class="reference external" href="https://github.com/microsoft/mscclpp/blob/main/test/mscclpp-test/allreduce_test.cu">allreduce_test.cu</a> and <a class="reference external" href="https://github.com/microsoft/mscclpp/blob/main/test/mscclpp-test/allgather_test.cu">allgather_test.cu</a>.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>mpirun<span class="w"> </span>--bind-to<span class="w"> </span>numa<span class="w"> </span>-np<span class="w"> </span><span class="m">8</span><span class="w"> </span>./test/mscclpp-test/allreduce_test_perf<span class="w"> </span>-b<span class="w"> </span>3m<span class="w"> </span>-e<span class="w"> </span>48m<span class="w"> </span>-G<span class="w"> </span><span class="m">100</span><span class="w"> </span>-n<span class="w"> </span><span class="m">100</span><span class="w"> </span>-w<span class="w"> </span><span class="m">20</span><span class="w"> </span>-f<span class="w"> </span><span class="m">2</span><span class="w"> </span>-k<span class="w"> </span><span class="m">5</span>
+</pre></div>
+</div>
+<p><em>NOTE: a few algorithms set a condition on the total data size, such as to be a multiple of 3. If the condition is unmet, the command will throw a regarding error.</em></p>
+<p>Check the help message for more details.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>./test/mscclpp-test/allreduce_test_perf<span class="w"> </span>--help
+USAGE:<span class="w"> </span>allreduce_test_perf
+<span class="w">        </span><span class="o">[</span>-b,--minbytes<span class="w"> </span>&lt;min<span class="w"> </span>size<span class="w"> </span><span class="k">in</span><span class="w"> </span>bytes&gt;<span class="o">]</span>
+<span class="w">        </span><span class="o">[</span>-e,--maxbytes<span class="w"> </span>&lt;max<span class="w"> </span>size<span class="w"> </span><span class="k">in</span><span class="w"> </span>bytes&gt;<span class="o">]</span>
+<span class="w">        </span><span class="o">[</span>-i,--stepbytes<span class="w"> </span>&lt;increment<span class="w"> </span>size&gt;<span class="o">]</span>
+<span class="w">        </span><span class="o">[</span>-f,--stepfactor<span class="w"> </span>&lt;increment<span class="w"> </span>factor&gt;<span class="o">]</span>
+<span class="w">        </span><span class="o">[</span>-n,--iters<span class="w"> </span>&lt;iteration<span class="w"> </span>count&gt;<span class="o">]</span>
+<span class="w">        </span><span class="o">[</span>-w,--warmup_iters<span class="w"> </span>&lt;warmup<span class="w"> </span>iteration<span class="w"> </span>count&gt;<span class="o">]</span>
+<span class="w">        </span><span class="o">[</span>-c,--check<span class="w"> </span>&lt;<span class="m">0</span>/1&gt;<span class="o">]</span>
+<span class="w">        </span><span class="o">[</span>-T,--timeout<span class="w"> </span>&lt;<span class="nb">time</span><span class="w"> </span><span class="k">in</span><span class="w"> </span>seconds&gt;<span class="o">]</span>
+<span class="w">        </span><span class="o">[</span>-G,--cudagraph<span class="w"> </span>&lt;num<span class="w"> </span>graph<span class="w"> </span>launches&gt;<span class="o">]</span>
+<span class="w">        </span><span class="o">[</span>-a,--average<span class="w"> </span>&lt;<span class="m">0</span>/1/2/3&gt;<span class="w"> </span>report<span class="w"> </span>average<span class="w"> </span>iteration<span class="w"> </span><span class="nb">time</span><span class="w"> </span>&lt;<span class="nv">0</span><span class="o">=</span>RANK0/1<span class="o">=</span>AVG/2<span class="o">=</span>MIN/3<span class="o">=</span>MAX&gt;<span class="o">]</span>
+<span class="w">        </span><span class="o">[</span>-k,--kernel_num<span class="w"> </span>&lt;kernel<span class="w"> </span>number<span class="w"> </span>of<span class="w"> </span>commnication<span class="w"> </span>primitive&gt;<span class="o">]</span>
+<span class="w">        </span><span class="o">[</span>-o,<span class="w"> </span>--output_file<span class="w"> </span>&lt;output<span class="w"> </span>file<span class="w"> </span>name&gt;<span class="o">]</span>
+<span class="w">        </span><span class="o">[</span>-h,--help<span class="o">]</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="nccl-over-msccl">
+<h2>NCCL over MSCCL++<a class="headerlink" href="#nccl-over-msccl" title="Permalink to this heading"></a></h2>
+<p>We implement <a class="reference external" href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api.html">NCCL</a> APIs using MSCCL++. How to use:</p>
+<ol class="arabic simple">
+<li><p><a class="reference internal" href="#build-from-source"><span class="xref myst">Build MSCCL++ from source</span></a>.</p></li>
+<li><p>Replace your <code class="docutils literal notranslate"><span class="pre">libnccl.so</span></code> library with <code class="docutils literal notranslate"><span class="pre">libmscclpp_nccl.so</span></code>, which is compiled under <code class="docutils literal notranslate"><span class="pre">./build/apps/nccl/</span></code> directory.</p></li>
+</ol>
+<p>For example, you can run <a class="reference external" href="https://github.com/NVIDIA/nccl-tests">nccl-tests</a> using <code class="docutils literal notranslate"><span class="pre">libmscclpp_nccl.so</span></code> as follows, where <code class="docutils literal notranslate"><span class="pre">MSCCLPP_BUILD</span></code> is your MSCCL++ build directory.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mpirun<span class="w"> </span>-np<span class="w"> </span><span class="m">8</span><span class="w"> </span>--bind-to<span class="w"> </span>numa<span class="w"> </span>--allow-run-as-root<span class="w"> </span>-x<span class="w"> </span><span class="nv">LD_PRELOAD</span><span class="o">=</span><span class="nv">$MSCCLPP_BUILD</span>/apps/nccl/libmscclpp_nccl.so<span class="w"> </span>./build/all_reduce_perf<span class="w"> </span>-b<span class="w"> </span>1K<span class="w"> </span>-e<span class="w"> </span>256M<span class="w"> </span>-f<span class="w"> </span><span class="m">2</span><span class="w"> </span>-d<span class="w"> </span>half<span class="w"> </span>-G<span class="w"> </span><span class="m">20</span><span class="w"> </span>-w<span class="w"> </span><span class="m">10</span><span class="w"> </span>-n<span class="w"> </span><span class="m">50</span>
+</pre></div>
+</div>
+<p>If MSCCL++ is built on AMD platforms, <code class="docutils literal notranslate"><span class="pre">libmscclpp_nccl.so</span></code> would replace the <a class="reference external" href="https://github.com/ROCm/rccl">RCCL</a> library (i.e., <code class="docutils literal notranslate"><span class="pre">librccl.so</span></code>).</p>
+<p>See limitations of the current NCCL over MSCCL++ from <a class="reference internal" href="#../apps/nccl/README.md#limitations"><span class="xref myst">here</span></a>.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="../index.html" class="btn btn-neutral float-left" title="Welcome to MSCCL++’s documentation!" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="tutorials/index.html" class="btn btn-neutral float-right" title="Tutorials" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, MSCCL++ Team.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

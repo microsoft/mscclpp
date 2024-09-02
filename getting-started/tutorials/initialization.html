@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Commnunication initialize with mscclpp API &mdash; mscclpp v0.5.2 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js?v=0dc63f2a"></script>
+        <script src="../../_static/doctools.js?v=888ff710"></script>
+        <script src="../../_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Offload commnunication to CPU with ProxyChannel" href="proxy-channel.html" />
+    <link rel="prev" title="Tutorials" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            mscclpp
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quick Start</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">Tutorials</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Commnunication initialize with mscclpp API</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#prerequisites">Prerequisites</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#initialize-communication-with-c-api">Initialize Communication with C++ API</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="proxy-channel.html">Offload commnunication to CPU with ProxyChannel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sm-channel.html">Using SmChannel for Intra-Node Communication</a></li>
+<li class="toctree-l2"><a class="reference internal" href="packet-api.html">Packet API for latency sensitive applications</a></li>
+<li class="toctree-l2"><a class="reference internal" href="customized-proxy-service.html">Customize the Proxy Service</a></li>
+<li class="toctree-l2"><a class="reference internal" href="python-api.html">Working with Python API</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Design</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../design/design.html">MSCCL++ Design Document</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../performance/performance-ndmv4.html">NDmv4 Performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">C++ API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../api/index.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">mscclpp</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">Tutorials</a></li>
+      <li class="breadcrumb-item active">Commnunication initialize with mscclpp API</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/getting-started/tutorials/initialization.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="commnunication-initialize-with-mscclpp-api">
+<h1>Commnunication initialize with mscclpp API<a class="headerlink" href="#commnunication-initialize-with-mscclpp-api" title="Permalink to this heading"></a></h1>
+<p>In this tutorial, you will write a simple program to initialize communication between eight GPUs using MSCCL++ C++ API. You will also learn how to use the Python API to initialize communication.</p>
+<section id="prerequisites">
+<h2>Prerequisites<a class="headerlink" href="#prerequisites" title="Permalink to this heading"></a></h2>
+<p>A system with eight GPUs is required to run this tutorial.</p>
+<p>Also make sure that you have installed MSCCL++ on your system. If not, please follow the <a class="reference internal" href="../quickstart.html"><span class="std std-doc">quick start</span></a>.</p>
+</section>
+<section id="initialize-communication-with-c-api">
+<h2>Initialize Communication with C++ API<a class="headerlink" href="#initialize-communication-with-c-api" title="Permalink to this heading"></a></h2>
+<p>We will setup a mesh topology with eight GPUs. Each GPU will be connected to its neighbors. The following code shows how to initialize communication with MSCCL++ C++ API.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;mscclpp/core.hpp&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;mscclpp/gpu_utils.hpp&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;mscclpp/proxy_channel.hpp&gt;</span>
+
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;memory&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;string&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;vector&gt;</span>
+
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">class</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="k">using</span><span class="w"> </span><span class="n">DeviceHandle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">mscclpp</span><span class="o">::</span><span class="n">DeviceHandle</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="n">__constant__</span><span class="w"> </span><span class="n">DeviceHandle</span><span class="o">&lt;</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">SimpleProxyChannel</span><span class="o">&gt;</span><span class="w"> </span><span class="n">constProxyChans</span><span class="p">[</span><span class="mi">8</span><span class="p">];</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">setupMeshTopology</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">rank</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">worldsize</span><span class="p">,</span><span class="w"> </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">data</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">dataSize</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">ip_port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;10.0.0.4:50000&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">bootstrap</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_shared</span><span class="o">&lt;</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">TcpBootstrap</span><span class="o">&gt;</span><span class="p">(</span><span class="n">rank</span><span class="p">,</span><span class="w"> </span><span class="n">worldsize</span><span class="p">);</span>
+<span class="w">  </span><span class="n">bootstrap</span><span class="o">-&gt;</span><span class="n">initialize</span><span class="p">(</span><span class="n">ip_port</span><span class="p">);</span>
+<span class="w">  </span><span class="n">mscclpp</span><span class="o">::</span><span class="n">Communicator</span><span class="w"> </span><span class="n">comm</span><span class="p">(</span><span class="n">bootstrap</span><span class="p">);</span>
+<span class="w">  </span><span class="n">mscclpp</span><span class="o">::</span><span class="n">ProxyService</span><span class="w"> </span><span class="n">proxyService</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">SemaphoreId</span><span class="o">&gt;</span><span class="w"> </span><span class="n">semaphoreIds</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">RegisteredMemory</span><span class="o">&gt;</span><span class="w"> </span><span class="n">localMemories</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">NonblockingFuture</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">Connection</span><span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">connections</span><span class="p">(</span><span class="n">world_size</span><span class="p">);</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">NonblockingFuture</span><span class="o">&lt;</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">RegisteredMemory</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">remoteMemories</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">world_size</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">r</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">r</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">rank</span><span class="p">)</span><span class="w"> </span><span class="k">continue</span><span class="p">;</span>
+<span class="w">    </span><span class="n">mscclpp</span><span class="o">::</span><span class="n">Transport</span><span class="w"> </span><span class="n">transport</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">mscclpp</span><span class="o">::</span><span class="n">Transport</span><span class="o">::</span><span class="n">CudaIpc</span><span class="p">;</span>
+<span class="w">    </span><span class="c1">// Connect with all other ranks</span>
+<span class="w">    </span><span class="n">connections</span><span class="p">[</span><span class="n">r</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">comm</span><span class="p">.</span><span class="n">connectOnSetup</span><span class="p">(</span><span class="n">r</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">transport</span><span class="p">);</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">memory</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">comm</span><span class="p">.</span><span class="n">registerMemory</span><span class="p">(</span><span class="n">data</span><span class="p">,</span><span class="w"> </span><span class="n">dataSize</span><span class="p">,</span><span class="w"> </span><span class="n">mscclpp</span><span class="o">::</span><span class="n">Transport</span><span class="o">::</span><span class="n">CudaIpc</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">ibTransport</span><span class="p">);</span>
+<span class="w">    </span><span class="n">localMemories</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">memory</span><span class="p">);</span>
+<span class="w">    </span><span class="n">comm</span><span class="p">.</span><span class="n">sendMemoryOnSetup</span><span class="p">(</span><span class="n">memory</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">    </span><span class="n">remoteMemories</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">comm</span><span class="p">.</span><span class="n">recvMemoryOnSetup</span><span class="p">(</span><span class="n">r</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">));</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">comm</span><span class="p">.</span><span class="n">setup</span><span class="p">();</span>
+
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">world_size</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">r</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">r</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">rank</span><span class="p">)</span><span class="w"> </span><span class="k">continue</span><span class="p">;</span>
+<span class="w">    </span><span class="n">semaphoreIds</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">proxyService</span><span class="p">.</span><span class="n">buildAndAddSemaphore</span><span class="p">(</span><span class="n">comm</span><span class="p">,</span><span class="w"> </span><span class="n">connections</span><span class="p">[</span><span class="n">r</span><span class="p">].</span><span class="n">get</span><span class="p">()));</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">comm</span><span class="p">.</span><span class="n">setup</span><span class="p">();</span>
+
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">DeviceHandle</span><span class="o">&lt;</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">SimpleProxyChannel</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">proxyChannels</span><span class="p">;</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">semaphoreIds</span><span class="p">.</span><span class="n">size</span><span class="p">();</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">proxyChannels</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">deviceHandle</span><span class="p">(</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">SimpleProxyChannel</span><span class="p">(</span>
+<span class="w">        </span><span class="n">proxyService</span><span class="p">.</span><span class="n">proxyChannel</span><span class="p">(</span><span class="n">semaphoreIds</span><span class="p">[</span><span class="n">i</span><span class="p">]),</span><span class="w"> </span><span class="n">proxyService</span><span class="p">.</span><span class="n">addMemory</span><span class="p">(</span><span class="n">remoteMemories</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">get</span><span class="p">()),</span>
+<span class="w">        </span><span class="n">proxyService</span><span class="p">.</span><span class="n">addMemory</span><span class="p">(</span><span class="n">localMemories</span><span class="p">[</span><span class="n">i</span><span class="p">]))));</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">proxyChannels</span><span class="p">.</span><span class="n">size</span><span class="p">()</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">constProxyChans</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">DeviceHandle</span><span class="o">&lt;</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">SimpleProxyChannel</span><span class="o">&gt;</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">runtime_error</span><span class="p">(</span><span class="s">&quot;unexpected error&quot;</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="n">CUDACHECK</span><span class="p">(</span><span class="n">cudaMemcpyToSymbol</span><span class="p">(</span><span class="n">constProxyChans</span><span class="p">,</span><span class="w"> </span><span class="n">proxyChannels</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span>
+<span class="w">                              </span><span class="k">sizeof</span><span class="p">(</span><span class="n">DeviceHandle</span><span class="o">&lt;</span><span class="n">mscclpp</span><span class="o">::</span><span class="n">SimpleProxyChannel</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">proxyChannels</span><span class="p">.</span><span class="n">size</span><span class="p">()));</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="index.html" class="btn btn-neutral float-left" title="Tutorials" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="proxy-channel.html" class="btn btn-neutral float-right" title="Offload commnunication to CPU with ProxyChannel" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, MSCCL++ Team.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
