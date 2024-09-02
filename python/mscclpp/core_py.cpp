@@ -22,6 +22,7 @@ extern void register_utils(nb::module_& m);
 extern void register_numa(nb::module_& m);
 extern void register_nvls(nb::module_& m);
 extern void register_executor(nb::module_& m);
+extern void register_npkit(nb::module_& m);
 
 template <typename T>
 void def_nonblocking_future(nb::handle& m, const std::string& typestr) {
@@ -95,15 +96,18 @@ void register_core(nb::module_& m) {
       .def("any", &TransportFlags::any)
       .def("all", &TransportFlags::all)
       .def("count", &TransportFlags::count)
-      .def(nb::self |= nb::self)
       .def(nb::self | nb::self)
       .def(nb::self | Transport())
-      .def(nb::self &= nb::self)
       .def(nb::self & nb::self)
       .def(nb::self & Transport())
-      .def(nb::self ^= nb::self)
       .def(nb::self ^ nb::self)
       .def(nb::self ^ Transport())
+      .def(
+          "__ior__", [](TransportFlags& lhs, const TransportFlags& rhs) { return lhs |= rhs; }, nb::is_operator())
+      .def(
+          "__iand__", [](TransportFlags& lhs, const TransportFlags& rhs) { return lhs &= rhs; }, nb::is_operator())
+      .def(
+          "__ixor__", [](TransportFlags& lhs, const TransportFlags& rhs) { return lhs ^= rhs; }, nb::is_operator())
       .def(~nb::self)
       .def(nb::self == nb::self)
       .def(nb::self != nb::self);
@@ -189,4 +193,5 @@ NB_MODULE(_mscclpp, m) {
   register_numa(m);
   register_nvls(m);
   register_executor(m);
+  register_npkit(m);
 }

@@ -5,6 +5,9 @@
 #define MSCCLPP_EXECUTION_KERNEL_HPP_
 
 #include <mscclpp/executor.hpp>
+#if defined(ENABLE_NPKIT)
+#include <mscclpp/npkit/npkit.hpp>
+#endif
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
@@ -12,11 +15,7 @@
 #include "execution_common.hpp"
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-#include <mscclpp/gpu_data_types.hpp>
-
-#if defined(MSCCLPP_DEVICE_HIP)
-#define __synclds() asm volatile("s_waitcnt lgkmcnt(0) \n s_barrier");
-#endif  // defined(MSCCLPP_DEVICE_HIP)
+#include "gpu_data_types.hpp"
 
 namespace {
 template <typename To, typename From>
@@ -61,6 +60,11 @@ MSCCLPP_DEVICE_INLINE int4 add_vectors<__half>(int4 a, int4 b) {
   return add_vectors_helper<__half2>(a, b);
 }
 
+template <>
+MSCCLPP_DEVICE_INLINE int4 add_vectors<__bfloat16>(int4 a, int4 b) {
+  return add_vectors_helper<__bfloat162>(a, b);
+}
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper(uint2 a, uint2 b) {
   uint2 ret;
@@ -79,6 +83,11 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__half>(uint2 a,
   return add_vectors_helper<__half2>(a, b);
 }
 
+template <>
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__bfloat16>(uint2 a, uint2 b) {
+  return add_vectors_helper<__bfloat162>(a, b);
+}
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE int add_vectors_helper(int a, int b) {
   return bit_cast<int, T>(add_elements(bit_cast<T, int>(a), bit_cast<T, int>(b)));
@@ -94,6 +103,11 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__half>(int a, int
   return add_vectors_helper<__half2>(a, b);
 }
 
+template <>
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__bfloat16>(int a, int b) {
+  return add_vectors_helper<__bfloat162>(a, b);
+}
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE uint32_t add_vectors_helper(uint32_t a, uint32_t b) {
   return bit_cast<uint32_t, T>(add_elements(bit_cast<T, uint32_t>(a), bit_cast<T, uint32_t>(b)));
@@ -107,6 +121,11 @@ MSCCLPP_DEVICE_INLINE uint32_t add_vectors(uint32_t a, uint32_t b) {
 template <>
 MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__half>(uint32_t a, uint32_t b) {
   return add_vectors_helper<__half2>(a, b);
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
+  return add_vectors_helper<__bfloat162>(a, b);
 }
 
 }  // namespace
@@ -178,10 +197,9 @@ MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<SmChannel>* smChannel,
     return;
   }
   if (chType == ChannelType::PROXY) {
-    for (int i = 0; i < count; i++) {
-      uint32_t dstOffset = dstOffsets[i];
-      uint32_t srcOffset = srcOffsets[i];
-      proxyChannels[dstChannelIndexes[i]].put(dstOffset, srcOffset, size);
+    int tid = threadIdx.x;
+    if (tid < count) {
+      proxyChannels[dstChannelIndexes[tid]].put(dstOffsets[tid], srcOffsets[tid], size);
     }
   }
 }
@@ -234,17 +252,30 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* output, uint32_t outputOf
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handlePutPacket(uint32_t inputOffsetByBytes, size_t scratchSize,
-                                           DeviceHandle<SmChannel>* smChannels, uint8_t* dstChannelIndexes,
-                                           uint32_t* dstOffsets, int nDstChannels, uint32_t size, uint32_t flag) {
+MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<SmChannel>* smChannels,
+                                           DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
+                                           uint32_t* dstOffsets, uint32_t* srcOffsets, int nDstChannels, uint32_t size,
+                                           ChannelType chType, uint32_t flag) {
   const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
-  for (int index = 0; index < nDstChannels; ++index) {
-    smChannels[dstChannelIndexes[index]].putPackets<PacketType>(
-        scratchBaseOffset + dstOffsets[index] * 2, inputOffsetByBytes, size, threadIdx.x, blockDim.x, flag);
+  if (chType == ChannelType::SM) {
+    for (int index = 0; index < nDstChannels; ++index) {
+      smChannels[dstChannelIndexes[index]].putPackets<PacketType>(
+          scratchBaseOffset + dstOffsets[index] * 2, srcOffsets[index], size, threadIdx.x, blockDim.x, flag);
+    }
+  }
+  if (chType == ChannelType::PROXY) {
+    int tid = threadIdx.x;
+    if (tid >= nDstChannels) {
+      return;
+    }
+    // For proxy channel, we assume src and dst are in packet format
+    uint32_t dstOffset = (dstOffsets[tid] << 1) + scratchBaseOffset;
+    uint32_t srcOffset = (srcOffsets[tid] << 1) + scratchBaseOffset;
+    proxyChannels[dstChannelIndexes[tid]].put(dstOffset, srcOffset, size << 1);
   }
 }
 
-template <typename T, typename PacketType>
+template <typename T, typename PacketType, bool SendToRemote = true>
 MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBytes, T* src, uint32_t srcOffsetByBytes,
                                                   T* inputBuff, size_t inputBuffSize, uint32_t* inputOffsets, int nSrcs,
                                                   DeviceHandle<SmChannel>* smChannels, uint8_t* outputChannelIndexes,
@@ -266,10 +297,12 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBy
     data = add_vectors<T>(data, srcPacketPayload[idx]);
     dstPacketPayload[idx] = data;
 
-    PacketType pkt(data, flag);
-    for (int index = 0; index < nDstChannels; ++index) {
-      size_t offset = (intputBaseOffset + outputOffsets[index] * 2) / sizeof(PacketType);
-      smChannels[outputChannelIndexes[index]].write(offset + idx, pkt);
+    if (SendToRemote) {
+      PacketType pkt(data, flag);
+      for (int index = 0; index < nDstChannels; ++index) {
+        size_t offset = (intputBaseOffset + outputOffsets[index] * 2) / sizeof(PacketType);
+        smChannels[outputChannelIndexes[index]].write(offset + idx, pkt);
+      }
     }
   }
 }
@@ -277,14 +310,22 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBy
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, size_t srcSize, uint32_t dstOffset,
                                             uint32_t srcOffset, size_t size, uint32_t flag) {
-  const size_t outputScratchBaseOffset = flag & 0x1 ? 0 : srcSize >> 1;
-  PacketType* srcPackets = (PacketType*)((char*)src + outputScratchBaseOffset + 2 * srcOffset);
+  const size_t inputScratchBaseOffset = flag & 0x1 ? 0 : srcSize >> 1;
+  PacketType* srcPackets = (PacketType*)((char*)src + inputScratchBaseOffset + 2 * srcOffset);
   PacketPayload<PacketType>* result = (PacketPayload<PacketType>*)((char*)dst + dstOffset);
   size_t nPackets = size * 2 / sizeof(PacketType);
   for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketPayload<PacketType> data = srcPackets[idx].read(flag);
     result[idx] = data;
   }
+}
+
+template <typename PacketType>
+MSCCLPP_DEVICE_INLINE void handleTransformToPacket(void* dst, void* src, size_t dstSize, uint32_t dstOffset,
+                                                   uint32_t srcOffset, size_t size, uint32_t flag) {
+  const size_t outputScratchBaseOffset = flag & 0x1 ? 0 : dstSize >> 1;
+  dstOffset = dstOffset * 2 + outputScratchBaseOffset;
+  mscclpp::putPackets<PacketType>(dst, dstOffset, src, srcOffset, size, threadIdx.x, blockDim.x, flag);
 }
 
 template <typename T>
@@ -331,27 +372,67 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
 
 template <typename T, typename PacketType = LL16Packet>
 __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
-                                size_t scratchSize, DeviceExecutionPlan* plan, uint32_t flag) {
+                                size_t scratchSize, DeviceExecutionPlan* plan, uint32_t flag
+#if defined(ENABLE_NPKIT)
+                                ,
+                                NpKitEventCollectContext* npKitEventCollectContexts, uint64_t* cpuTimestamp) {
+#else
+) {
+#endif
   extern __shared__ int4 sharedMem[];
   int bid = blockIdx.x;
   int tid = threadIdx.x;
+#if defined(ENABLE_NPKIT)
+  NpKitEvent* event_buffer = (NpKitEvent*)((char*)sharedMem + sizeof(DeviceExecutionPlan));
+  uint64_t event_buffer_head = 0;
+#if defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT)
+  uint64_t npkit_timestamp_entry = 0;
+  if (tid == 0) {
+    npkit_timestamp_entry = NPKIT_GET_GPU_TIMESTAMP();
+  }
+#endif
+#endif
   DeviceExecutionPlan* localPlan = plan + bid;
   for (size_t i = tid; i < sizeof(DeviceExecutionPlan) / sizeof(int4); i += blockDim.x) {
     sharedMem[i] = ((int4*)localPlan)[i];
   }
-#if defined(MSCCLPP_DEVICE_HIP)
-  __synclds();
-#else   // !defined(MSCCLPP_DEVICE_HIP)
-  __syncthreads();
-#endif  // !defined(MSCCLPP_DEVICE_HIP)
+  __syncshm();
   localPlan = (DeviceExecutionPlan*)sharedMem;
   int nOperations = localPlan->nOperations;
   Operation* operations = localPlan->operations;
   DeviceHandle<SmChannel>* smChannels = localPlan->channels.smChannels;
   DeviceHandle<SimpleProxyChannel>* proxyChannels = localPlan->channels.proxyChannels;
 
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
+#if defined(MSCCLPP_DEVICE_HIP)
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0, NPKIT_LOAD_CPU_TIMESTAMP_PER_BLOCK(cpuTimestamp, bid),
+#else
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0, *cpuTimestamp,
+#endif
+                            event_buffer, &event_buffer_head);
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_GPU)
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_TIME_SYNC_GPU, 0, 0, NPKIT_GET_GPU_TIMESTAMP(), event_buffer,
+                            &event_buffer_head);
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY) && \
+    defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT)
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_INIT_ENTRY, 0, 0, npkit_timestamp_entry, event_buffer,
+                            &event_buffer_head);
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_INIT_EXIT, 0, 0, NPKIT_GET_GPU_TIMESTAMP(), event_buffer,
+                            &event_buffer_head);
+#endif
+
   for (int i = 0; i < nOperations; i++) {
     Operation& op = operations[i];
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY)
+    NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),
+                              event_buffer, &event_buffer_head);
+#endif
+
     if (op.type == OperationType::BARRIER) {
       __syncthreads();
     } else if (op.type == OperationType::SIGNAL) {
@@ -372,22 +453,33 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
     } else if (op.type == OperationType::READ_REDUCE_COPY) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
+
       handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, smChannels, op.outputChannelIndexes,
                                op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
                                op.size, false);
     } else if (op.type == OperationType::PUT_PACKET) {
-      handlePutPacket<PacketType>(op.srcOffset, scratchSize, smChannels, op.outputChannelIndexes, op.outputOffsets,
-                                  op.nOutputs, op.size, flag);
+      handlePutPacket<PacketType>(scratchSize, smChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets,
+                                  op.inputOffsets, op.nOutputs, op.size, op.channelType, flag);
     } else if (op.type == OperationType::REDUCE_SEND_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       handleReduceSendPacket<T, PacketType>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize, op.inputOffsets,
                                             op.nInputs, smChannels, op.outputChannelIndexes, op.outputOffsets,
                                             op.nOutputs, op.size, flag);
+    } else if (op.type == OperationType::REDUCE_PACKET) {
+      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
+      T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      handleReduceSendPacket<T, PacketType, false>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize,
+                                                   op.inputOffsets, op.nInputs, smChannels, op.outputChannelIndexes,
+                                                   op.outputOffsets, op.nOutputs, op.size, flag);
     } else if (op.type == OperationType::COPY_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       handleCopyPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);
+    } else if (op.type == OperationType::TRANSFORM_TO_PACKET) {
+      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
+      T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      handleTransformToPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);
     } else if (op.type == OperationType::REDUCE_SEND) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
@@ -395,7 +487,16 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, smChannels, op.outputChannelIndexes,
                        op.outputOffsets, op.nOutputs, op.size);
     }
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT)
+    NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),
+                              event_buffer, &event_buffer_head);
+#endif
   }
+
+#if defined(ENABLE_NPKIT)
+  NpKit::StoreGpuEventShm(npKitEventCollectContexts, event_buffer, event_buffer_head);
+#endif
 }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
@@ -409,19 +510,53 @@ class ExecutionKernel {
     switch (dataType) {
       case DataType::INT32:
         executionKernel<int32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, plan, flag);
+            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, plan, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
         break;
       case DataType::UINT32:
         executionKernel<uint32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, plan, flag);
+            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, plan, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
         break;
       case DataType::FLOAT16:
         executionKernel<half, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, plan, flag);
+            rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, plan, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
         break;
       case DataType::FLOAT32:
         executionKernel<float, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, plan, flag);
+            rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, plan, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
+        break;
+      case DataType::BFLOAT16:
+        executionKernel<__bfloat16, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchSize, plan, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
         break;
     }
   }

@@ -468,7 +468,16 @@ class MscclppAllReduce6:
         self.device_handles_cp = cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8)
         self.nvls_handle = self.nvls_mem_handle.device_handle().raw
 
-        self.set_params(nblocks, block_size)
+        if self.memory.dtype != cp.float16 and self.memory.dtype != cp.float32:
+            raise RuntimeError("Unsupported data type")
+
+        if self.memory.dtype == cp.float16:
+            vector_size = 8
+        elif self.memory.dtype == cp.float32:
+            vector_size = 4
+        else:
+            vector_size = 1
+        self.set_params(nblocks, block_size, vector_size)
 
     def get_memory(self):
         return self.memory
@@ -477,23 +486,31 @@ class MscclppAllReduce6:
         self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
         return self.memory
 
-    def set_params(self, nblocks, block_size):
+    def set_params(self, nblocks, block_size, vector_size):
         self.nblocks = nblocks
         self.block_size = block_size
+        self.vector_size = vector_size
         self.params = b""
         self.params += pack(
             self.device_handles_cp,
             self.nvls_handle,
-            self.memory,
             self.group.my_rank,
             self.group.nranks,
             ctypes.c_size_t(self.memory.size),
+            self.vector_size,
         )
 
     def auto_tune(self):
         nblocks_to_try = [8, 12, 16, 24, 32, 48, 64, 72, 96, 108]
         block_size_to_try = [256, 512, 1024]
+        if self.memory.dtype == cp.float16:
+            vector_size_to_try = [8, 4, 2]
+        elif self.memory.dtype == cp.float32:
+            vector_size_to_try = [4, 2, 1]
+        else:
+            vector_size_to_try = [1]
         for nblocks in nblocks_to_try:
             for block_size in block_size_to_try:
-                self.set_params(nblocks, block_size)
-                yield nblocks, block_size
+                for vector_size in vector_size_to_try:
+                    self.set_params(nblocks, block_size, vector_size)
+                    yield nblocks, block_size, vector_size

@@ -232,9 +232,12 @@ class NvlsConnection::Impl {
   size_t getMinMcGran() { throw notSupportedError; }
 
  private:
-  Error notSupportedError = Error("NVLS is not supported on this CUDA version", ErrorCode::InvalidUsage);
+  Error notSupportedError =
+      Error("NVLS is not supported on this CUDA version (< 12.1) or kernel version (< 5.6.0)", ErrorCode::InvalidUsage);
 };
 #endif  // !(USE_NVLS)
+
+const int NvlsConnection::DefaultNvlsBufferSize = (1 << 29);
 
 NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices)
     : pimpl_(std::make_shared<Impl>(bufferSize, numDevices)) {}

@@ -15,6 +15,7 @@ enum class DataType {
   UINT32,
   FLOAT16,
   FLOAT32,
+  BFLOAT16,
 };
 
 enum class PacketType {

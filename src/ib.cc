@@ -3,7 +3,6 @@
 
 #include "ib.hpp"
 
-#include <infiniband/verbs.h>
 #include <malloc.h>
 #include <unistd.h>
 
@@ -15,7 +14,11 @@
 #include <string>
 
 #include "api.h"
+#include "context.hpp"
 #include "debug.h"
+#if defined(USE_IBVERBS)
+#include "ibverbs_wrapper.hpp"
+#endif  // defined(USE_IBVERBS)
 
 #if !defined(__HIP_PLATFORM_AMD__)
 
@@ -33,6 +36,8 @@ static bool checkNvPeerMemLoaded() {
 
 namespace mscclpp {
 
+#if defined(USE_IBVERBS)
+
 IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   if (size == 0) {
     throw std::invalid_argument("invalid size: " + std::to_string(size));
@@ -43,9 +48,9 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   }
   uintptr_t addr = reinterpret_cast<uintptr_t>(buff) & -pageSize;
   std::size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;
-  this->mr = ibv_reg_mr(pd, reinterpret_cast<void*>(addr), pages * pageSize,
-                        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
-                            IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
+  this->mr = IBVerbs::ibv_reg_mr2(pd, reinterpret_cast<void*>(addr), pages * pageSize,
+                                  IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
+                                      IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
   if (this->mr == nullptr) {
     std::stringstream err;
     err << "ibv_reg_mr failed (errno " << errno << ")";
@@ -54,7 +59,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   this->size = pages * pageSize;
 }
 
-IbMr::~IbMr() { ibv_dereg_mr(this->mr); }
+IbMr::~IbMr() { IBVerbs::ibv_dereg_mr(this->mr); }
 
 IbMrInfo IbMr::getInfo() const {
   IbMrInfo info;
@@ -70,7 +75,7 @@ uint32_t IbMr::getLkey() const { return this->mr->lkey; }
 IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr,
            int maxWrPerSend)
     : numSignaledPostedItems(0), numSignaledStagedItems(0), maxCqPollNum(maxCqPollNum), maxWrPerSend(maxWrPerSend) {
-  this->cq = ibv_create_cq(ctx, maxCqSize, nullptr, nullptr, 0);
+  this->cq = IBVerbs::ibv_create_cq(ctx, maxCqSize, nullptr, nullptr, 0);
   if (this->cq == nullptr) {
     std::stringstream err;
     err << "ibv_create_cq failed (errno " << errno << ")";
@@ -89,7 +94,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   qpInitAttr.cap.max_recv_sge = 1;
   qpInitAttr.cap.max_inline_data = 0;
 
-  struct ibv_qp* _qp = ibv_create_qp(pd, &qpInitAttr);
+  struct ibv_qp* _qp = IBVerbs::ibv_create_qp(pd, &qpInitAttr);
   if (_qp == nullptr) {
     std::stringstream err;
     err << "ibv_create_qp failed (errno " << errno << ")";
@@ -97,7 +102,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   }
 
   struct ibv_port_attr portAttr;
-  if (ibv_query_port(ctx, port, &portAttr) != 0) {
+  if (IBVerbs::ibv_query_port_w(ctx, port, &portAttr) != 0) {
     std::stringstream err;
     err << "ibv_query_port failed (errno " << errno << ")";
     throw mscclpp::IbError(err.str(), errno);
@@ -111,7 +116,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
 
   if (portAttr.link_layer != IBV_LINK_LAYER_INFINIBAND || this->info.is_grh) {
     union ibv_gid gid;
-    if (ibv_query_gid(ctx, port, 0, &gid) != 0) {
+    if (IBVerbs::ibv_query_gid(ctx, port, 0, &gid) != 0) {
       std::stringstream err;
       err << "ibv_query_gid failed (errno " << errno << ")";
       throw mscclpp::IbError(err.str(), errno);
@@ -126,21 +131,21 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   qpAttr.pkey_index = 0;
   qpAttr.port_num = port;
   qpAttr.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC;
-  if (ibv_modify_qp(_qp, &qpAttr, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS) != 0) {
+  if (IBVerbs::ibv_modify_qp(_qp, &qpAttr, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS) != 0) {
     std::stringstream err;
     err << "ibv_modify_qp failed (errno " << errno << ")";
     throw mscclpp::IbError(err.str(), errno);
   }
   this->qp = _qp;
   this->wrn = 0;
-  this->wrs = std::make_unique<ibv_send_wr[]>(maxWrPerSend);
-  this->sges = std::make_unique<ibv_sge[]>(maxWrPerSend);
-  this->wcs = std::make_unique<ibv_wc[]>(maxCqPollNum);
+  this->wrs = std::make_shared<std::vector<ibv_send_wr>>(maxWrPerSend);
+  this->sges = std::make_shared<std::vector<ibv_sge>>(maxWrPerSend);
+  this->wcs = std::make_shared<std::vector<ibv_wc>>(maxCqPollNum);
 }
 
 IbQp::~IbQp() {
-  ibv_destroy_qp(this->qp);
-  ibv_destroy_cq(this->cq);
+  IBVerbs::ibv_destroy_qp(this->qp);
+  IBVerbs::ibv_destroy_cq(this->cq);
 }
 
 void IbQp::rtr(const IbQpInfo& info) {
@@ -167,9 +172,9 @@ void IbQp::rtr(const IbQpInfo& info) {
   qp_attr.ah_attr.sl = 0;
   qp_attr.ah_attr.src_path_bits = 0;
   qp_attr.ah_attr.port_num = info.port;
-  int ret = ibv_modify_qp(this->qp, &qp_attr,
-                          IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
-                              IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
+  int ret = IBVerbs::ibv_modify_qp(this->qp, &qp_attr,
+                                   IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
+                                       IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_modify_qp failed (errno " << errno << ")";
@@ -186,7 +191,7 @@ void IbQp::rts() {
   qp_attr.rnr_retry = 7;
   qp_attr.sq_psn = 0;
   qp_attr.max_rd_atomic = 1;
-  int ret = ibv_modify_qp(
+  int ret = IBVerbs::ibv_modify_qp(
       this->qp, &qp_attr,
       IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC);
   if (ret != 0) {
@@ -204,13 +209,13 @@ IbQp::WrInfo IbQp::getNewWrInfo() {
   }
   int wrn = this->wrn;
 
-  ibv_send_wr* wr_ = &this->wrs[wrn];
-  ibv_sge* sge_ = &this->sges[wrn];
+  ibv_send_wr* wr_ = &this->wrs->data()[wrn];
+  ibv_sge* sge_ = &this->sges->data()[wrn];
   wr_->sg_list = sge_;
   wr_->num_sge = 1;
   wr_->next = nullptr;
   if (wrn > 0) {
-    this->wrs[wrn - 1].next = wr_;
+    (*this->wrs)[wrn - 1].next = wr_;
   }
   this->wrn++;
   return IbQp::WrInfo{wr_, sge_};
@@ -265,7 +270,7 @@ void IbQp::postSend() {
     return;
   }
   struct ibv_send_wr* bad_wr;
-  int ret = ibv_post_send(this->qp, this->wrs.get(), &bad_wr);
+  int ret = IBVerbs::ibv_post_send(this->qp, this->wrs->data(), &bad_wr);
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_post_send failed (errno " << errno << ")";
@@ -281,16 +286,14 @@ void IbQp::postSend() {
 }
 
 int IbQp::pollCq() {
-  int wcNum = ibv_poll_cq(this->cq, this->maxCqPollNum, this->wcs.get());
+  int wcNum = IBVerbs::ibv_poll_cq(this->cq, this->maxCqPollNum, this->wcs->data());
   if (wcNum > 0) {
     this->numSignaledPostedItems -= wcNum;
   }
   return wcNum;
 }
 
-IbQpInfo& IbQp::getInfo() { return this->info; }
-
-const ibv_wc* IbQp::getWc(int idx) const { return &this->wcs[idx]; }
+int IbQp::getWcStatus(int idx) const { return (*this->wcs)[idx].status; }
 
 int IbQp::getNumCqItems() const { return this->numSignaledPostedItems; }
 
@@ -301,20 +304,20 @@ IbCtx::IbCtx(const std::string& devName) : devName(devName) {
   }
 #endif  // !defined(__HIP_PLATFORM_AMD__)
   int num;
-  struct ibv_device** devices = ibv_get_device_list(&num);
+  struct ibv_device** devices = IBVerbs::ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
     if (std::string(devices[i]->name) == devName) {
-      this->ctx = ibv_open_device(devices[i]);
+      this->ctx = IBVerbs::ibv_open_device(devices[i]);
       break;
     }
   }
-  ibv_free_device_list(devices);
+  IBVerbs::ibv_free_device_list(devices);
   if (this->ctx == nullptr) {
     std::stringstream err;
     err << "ibv_open_device failed (errno " << errno << ", device name << " << devName << ")";
     throw mscclpp::IbError(err.str(), errno);
   }
-  this->pd = ibv_alloc_pd(this->ctx);
+  this->pd = IBVerbs::ibv_alloc_pd(this->ctx);
   if (this->pd == nullptr) {
     std::stringstream err;
     err << "ibv_alloc_pd failed (errno " << errno << ")";
@@ -326,16 +329,16 @@ IbCtx::~IbCtx() {
   this->mrs.clear();
   this->qps.clear();
   if (this->pd != nullptr) {
-    ibv_dealloc_pd(this->pd);
+    IBVerbs::ibv_dealloc_pd(this->pd);
   }
   if (this->ctx != nullptr) {
-    ibv_close_device(this->ctx);
+    IBVerbs::ibv_close_device(this->ctx);
   }
 }
 
 bool IbCtx::isPortUsable(int port) const {
   struct ibv_port_attr portAttr;
-  if (ibv_query_port(this->ctx, port, &portAttr) != 0) {
+  if (IBVerbs::ibv_query_port_w(this->ctx, port, &portAttr) != 0) {
     std::stringstream err;
     err << "ibv_query_port failed (errno " << errno << ", port << " << port << ")";
     throw mscclpp::IbError(err.str(), errno);
@@ -346,7 +349,7 @@ bool IbCtx::isPortUsable(int port) const {
 
 int IbCtx::getAnyActivePort() const {
   struct ibv_device_attr devAttr;
-  if (ibv_query_device(this->ctx, &devAttr) != 0) {
+  if (IBVerbs::ibv_query_device(this->ctx, &devAttr) != 0) {
     std::stringstream err;
     err << "ibv_query_device failed (errno " << errno << ")";
     throw mscclpp::IbError(err.str(), errno);
@@ -378,11 +381,9 @@ const IbMr* IbCtx::registerMr(void* buff, std::size_t size) {
   return mrs.back().get();
 }
 
-const std::string& IbCtx::getDevName() const { return this->devName; }
-
 MSCCLPP_API_CPP int getIBDeviceCount() {
   int num;
-  ibv_get_device_list(&num);
+  IBVerbs::ibv_get_device_list(&num);
   return num;
 }
 
@@ -441,7 +442,7 @@ MSCCLPP_API_CPP std::string getIBDeviceName(Transport ibTransport) {
   }
 
   int num;
-  struct ibv_device** devices = ibv_get_device_list(&num);
+  struct ibv_device** devices = IBVerbs::ibv_get_device_list(&num);
   if (ibTransportIndex >= num) {
     std::stringstream ss;
     ss << "IB transport out of range: " << ibTransportIndex << " >= " << num;
@@ -452,7 +453,7 @@ MSCCLPP_API_CPP std::string getIBDeviceName(Transport ibTransport) {
 
 MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string& ibDeviceName) {
   int num;
-  struct ibv_device** devices = ibv_get_device_list(&num);
+  struct ibv_device** devices = IBVerbs::ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
     if (ibDeviceName == devices[i]->name) {
       switch (i) {  // TODO: get rid of this ugly switch
@@ -479,5 +480,15 @@ MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string& ibDevice
   }
   throw std::invalid_argument("IB device not found");
 }
+
+#else  // !defined(USE_IBVERBS)
+
+MSCCLPP_API_CPP int getIBDeviceCount() { return 0; }
+
+MSCCLPP_API_CPP std::string getIBDeviceName(Transport) { return ""; }
+
+MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string&) { return Transport::Unknown; }
+
+#endif  // !defined(USE_IBVERBS)
 
 }  // namespace mscclpp

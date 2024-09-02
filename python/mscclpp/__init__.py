@@ -6,6 +6,7 @@ import os as _os
 from ._mscclpp import (
     Communicator,
     Connection,
+    connect_nvls_collective,
     EndpointConfig,
     Fifo,
     Host2DeviceSemaphore,
@@ -25,6 +26,7 @@ from ._mscclpp import (
     PacketType,
     version,
     is_nvls_supported,
+    npkit,
 )
 
 __version__ = version()

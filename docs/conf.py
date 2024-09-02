@@ -7,9 +7,9 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = "mscclpp"
-copyright = "2023, MSCCL++ Team"
+copyright = "2024, MSCCL++ Team"
 author = "MSCCL++ Team"
-release = "v0.4.3"
+release = "v0.5.2"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

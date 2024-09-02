@@ -2,12 +2,35 @@
 # Licensed under the MIT License.
 
 import argparse
-import json
 import os
+import json
+
+from queue import Queue
 
 
 def parse_npkit_event_header(npkit_event_header_path):
     npkit_event_def = {"id_to_type": {}, "type_to_id": {}}
+    executor_ops = [
+        "BARRIER",
+        "PUT",
+        "PUT_PACKET",
+        "GET",
+        "COPY",
+        "COPY_PACKET",
+        "TRANSFORM_TO_PACKET",
+        "SIGNAL",
+        "WAIT",
+        "FLUSH",
+        "REDUCE",
+        "REDUCE_PACKET",
+        "REDUCE_SEND",
+        "REDUCE_SEND_PACKET",
+        "READ_REDUCE_COPY",
+        "READ_REDUCE_COPY_SEND",
+    ]
+    executor_op_to_offset = {}
+    for executor_op in executor_ops:
+        executor_op_to_offset[executor_op] = len(executor_op_to_offset)
     with open(npkit_event_header_path, "r") as f:
         lines = [x.strip() for x in f.readlines() if len(x.strip()) != 0]
         line_idx = 0
@@ -17,21 +40,20 @@ def parse_npkit_event_header(npkit_event_header_path):
                 if len(fields) == 3:
                     event_type = fields[1]
                     event_id = int(fields[2], 0)
-                    npkit_event_def["type_to_id"][event_type] = event_id
-                    npkit_event_def["id_to_type"][event_id] = event_type
+                    if lines[line_idx].startswith("#define NPKIT_EVENT_EXECUTOR_OP_BASE"):
+                        for executor_op in executor_op_to_offset:
+                            real_event_id = event_id + executor_op_to_offset[executor_op]
+                            if "ENTRY" in lines[line_idx]:
+                                event_type = "NPKIT_EVENT_EXECUTOR_%s_ENTRY" % executor_op
+                            elif "EXIT" in lines[line_idx]:
+                                event_type = "NPKIT_EVENT_EXECUTOR_%s_EXIT" % executor_op
+                            npkit_event_def["type_to_id"][event_type] = real_event_id
+                            npkit_event_def["id_to_type"][real_event_id] = event_type
+                    else:
+                        npkit_event_def["type_to_id"][event_type] = event_id
+                        npkit_event_def["id_to_type"][event_id] = event_type
             line_idx += 1
     return npkit_event_def
-
-
-def trim_event_name(event_type):
-    list_event_type_name = event_type.split("_")
-    if "NPKIT" in list_event_type_name:
-        list_event_type_name.remove("NPKIT")
-    if "EVENT" in list_event_type_name:
-        list_event_type_name.remove("EVENT")
-    if "ENTRY" in list_event_type_name:
-        list_event_type_name.remove("ENTRY")
-    return "_".join(list_event_type_name)
 
 
 def parse_gpu_clock_scale(gpu_clock_file_path):
@@ -103,7 +125,7 @@ def parse_gpu_event_file(npkit_dump_dir, npkit_event_def, rank, buf_idx, gpu_clo
                         event_type_to_seq[event_type] = 0
                     gpu_events[-1].update(
                         {
-                            "name": trim_event_name(event_type),
+                            "name": event_type,
                             "cat": "GPU",
                             "args": {
                                 "rank": rank,
@@ -116,12 +138,11 @@ def parse_gpu_event_file(npkit_dump_dir, npkit_event_def, rank, buf_idx, gpu_clo
                     )
                     event_type_to_seq[event_type] += 1
                 else:
-                    gpu_events[-1]["args"] = {
-                        "size": parsed_gpu_event["size"],
-                        "rsvd": parsed_gpu_event["rsvd"],
-                    }
+                    gpu_events[-1]["args"] = {"size": parsed_gpu_event["size"], "rsvd": parsed_gpu_event["rsvd"]}
                     delta_time = gpu_events[-1]["ts"] - gpu_events[-2]["ts"]
-                    gpu_events[-1]["args"]["bw (GB/s)"] = gpu_events[-1]["args"]["size"] / delta_time / 1e3
+                    gpu_events[-1]["args"]["bw (GB/s)"] = (
+                        0.0 if delta_time == 0.0 else gpu_events[-1]["args"]["size"] / delta_time / 1e3
+                    )
             raw_content_idx += raw_event_size
     return gpu_events
 
@@ -133,7 +154,7 @@ def parse_cpu_event_file(npkit_dump_dir, npkit_event_def, rank, channel, cpu_clo
     event_type_to_seq = {}
 
     fiber_is_usable = []
-    fiber_open_info = []
+    fiber_open_ts = []
     slot_to_fiber_id = {}
     channel_shift = 1000
 
@@ -156,17 +177,16 @@ def parse_cpu_event_file(npkit_dump_dir, npkit_event_def, rank, channel, cpu_clo
                     fiber_id += 1
                 if fiber_id == len(fiber_is_usable):
                     fiber_is_usable.append(True)
-                    fiber_open_info.append({"ts": 0.0, "size": 0})
+                    fiber_open_ts.append(0.0)
                 slot_to_fiber_id[slot] = fiber_id
-                fiber_open_info[fiber_id]["ts"] = cpu_events[-1]["ts"]
-                fiber_open_info[fiber_id]["size"] = parsed_cpu_event["size"]
+                fiber_open_ts[fiber_id] = cpu_events[-1]["ts"]
                 fiber_is_usable[fiber_id] = False
 
                 if event_type not in event_type_to_seq:
                     event_type_to_seq[event_type] = 0
                 cpu_events[-1].update(
                     {
-                        "name": trim_event_name(event_type),
+                        "name": event_type,
                         "cat": "CPU",
                         "args": {
                             "rank": rank,
@@ -182,16 +202,14 @@ def parse_cpu_event_file(npkit_dump_dir, npkit_event_def, rank, channel, cpu_clo
                 # Close fiber event
                 fiber_id = slot_to_fiber_id[slot]
                 slot_to_fiber_id.pop(slot)
-                last_ts = fiber_open_info[fiber_id]["ts"]
-                last_size = fiber_open_info[fiber_id]["size"]
+                last_ts = fiber_open_ts[fiber_id]
                 fiber_is_usable[fiber_id] = True
 
                 delta_time = max(0.001, cpu_events[-1]["ts"] - last_ts)
-                cpu_events[-1]["args"] = {
-                    "size_1": parsed_cpu_event["size"],
-                    "size": max(last_size, parsed_cpu_event["size"]),
-                }
-                cpu_events[-1]["args"]["bw (GB/s)"] = cpu_events[-1]["args"]["size"] / delta_time / 1e3
+                cpu_events[-1]["args"] = {"size": parsed_cpu_event["size"]}
+                cpu_events[-1]["args"]["bw (GB/s)"] = (
+                    0.0 if delta_time == 0.0 else cpu_events[-1]["args"]["size"] / delta_time / 1e3
+                )
 
             cpu_events[-1]["tid"] = fiber_id + (channel + 1) * channel_shift
 
@@ -239,12 +257,7 @@ def convert_npkit_dump_to_trace(npkit_dump_dir, output_dir, npkit_event_def):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--npkit_dump_dir", type=str, required=True, help="NPKit dump directory.")
-    parser.add_argument(
-        "--npkit_event_header_path",
-        type=str,
-        required=True,
-        help="Path to npkit_event.h.",
-    )
+    parser.add_argument("--npkit_event_header_path", type=str, required=True, help="Path to npkit_event.h.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to output directory.")
     args = parser.parse_args()
 

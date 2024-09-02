@@ -2,8 +2,8 @@
 # Licensed under the MIT license.
 
 set(MSCCLPP_MAJOR "0")
-set(MSCCLPP_MINOR "4")
-set(MSCCLPP_PATCH "3")
+set(MSCCLPP_MINOR "5")
+set(MSCCLPP_PATCH "2")
 
 set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})
 set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
@@ -15,9 +15,9 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Options
 option(ENABLE_TRACE "Enable tracing" OFF)
-option(USE_NPKIT "Use NPKIT" ON)
 option(BUILD_TESTS "Build tests" ON)
 option(BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
+option(BUILD_APPS_NCCL "Build NCCL interfaces" ON)
 option(USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(USE_ROCM "Use AMD/ROCm." OFF)
 option(BYPASS_GPU_CHECK "Bypass GPU check." OFF)
@@ -95,7 +95,7 @@ endif()
 include(${PROJECT_SOURCE_DIR}/cmake/AddFormatTargets.cmake)
 
 # Find ibverbs and libnuma
-find_package(IBVerbs REQUIRED)
+find_package(IBVerbs)
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -107,9 +107,13 @@ add_library(mscclpp_obj OBJECT)
 target_include_directories(mscclpp_obj
     SYSTEM PRIVATE
     ${GPU_INCLUDE_DIRS}
-    ${IBVERBS_INCLUDE_DIRS}
     ${NUMA_INCLUDE_DIRS})
-target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} ${IBVERBS_LIBRARIES} nlohmann_json::nlohmann_json Threads::Threads)
+target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} nlohmann_json::nlohmann_json Threads::Threads)
+if(IBVERBS_FOUND)
+    target_include_directories(mscclpp_obj SYSTEM PRIVATE ${IBVERBS_INCLUDE_DIRS})
+    target_link_libraries(mscclpp_obj PRIVATE ${IBVERBS_LIBRARIES})
+    target_compile_definitions(mscclpp_obj PUBLIC USE_IBVERBS)
+endif()
 set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 if(USE_CUDA)
     target_compile_definitions(mscclpp_obj PRIVATE USE_CUDA)
@@ -119,8 +123,8 @@ endif()
 if(ENABLE_TRACE)
     target_compile_definitions(mscclpp_obj PRIVATE ENABLE_TRACE)
 endif()
-if(USE_NPKIT)
-    target_compile_definitions(mscclpp_obj PRIVATE ENABLE_NPKIT)
+if(NPKIT_FLAGS)
+    target_compile_definitions(mscclpp_obj PRIVATE ${NPKIT_FLAGS})
 endif()
 
 # libmscclpp
@@ -154,4 +158,9 @@ endif()
 # Python bindings
 if(BUILD_PYTHON_BINDINGS)
     add_subdirectory(python)
+endif()
+
+# NCCL interfaces
+if(BUILD_APPS_NCCL)
+    add_subdirectory(apps/nccl)
 endif()
