@@ -14,6 +14,7 @@ constexpr int MAX_CHANNEL_PER_OPERATION = 8;
 constexpr int MAX_OPERATION = 64;
 
 enum class BufferType : uint8_t {
+  NONE,
   INPUT,
   OUTPUT,
   SCRATCH,
