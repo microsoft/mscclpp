@@ -33,6 +33,16 @@ struct hash<mscclpp::ChannelKey> {
            std::hash<int>()(static_cast<int>(key.dstBufferType)) ^ std::hash<int>()(static_cast<int>(key.channelType));
   }
 };
+
+template <>
+struct hash<std::pair<int, mscclpp::ChannelType>> {
+  std::size_t operator()(const std::pair<int, mscclpp::ChannelType>& key) const {
+    std::size_t h1 = std::hash<int>()(key.first);
+    std::size_t h2 = std::hash<int>()(static_cast<int>(key.second));
+    // Refer hash_combine from boost
+    return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+  }
+};
 }  // namespace std
 
 namespace mscclpp {
@@ -51,6 +61,8 @@ struct ExecutionPlan::Impl {
 
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
   std::vector<ChannelInfo> getChannelInfos(int rank, BufferType bufferType) const;
+  std::vector<ChannelInfo> getChannelInfosByDstRank(int rank, BufferType bufferType) const;
+  std::vector<ChannelInfo> getUnpairedChannelInfos(int rank, int worldSize, ChannelType channelType);
   std::vector<int> getConnectedPeers(int rank) const;
   std::vector<BufferType> getConnectedBufferTypes(int rank) const;
   size_t getScratchBufferSize(int rank, size_t inputSize) const;
@@ -71,6 +83,8 @@ struct ExecutionPlan::Impl {
   // operations for [rank][threadblock] = [operations]
   std::unordered_map<int, std::vector<std::vector<Operation>>> operations;
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
+  std::unordered_map<int, std::vector<ChannelInfo>> channelInfosByDstRank;
+  std::unordered_map<std::pair<int, ChannelType>, std::unordered_map<int, int>> channelCountMap;
   // threadblockChannelMap[rank][threadblock] = [channelIndex, channelKey]
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockSMChannelMap;
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockProxyChannelMap;
