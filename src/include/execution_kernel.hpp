@@ -207,10 +207,9 @@ MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<SmChannel>* smChannel,
     return;
   }
   if (chType == ChannelType::PROXY) {
-    for (int i = 0; i < count; i++) {
-      uint32_t dstOffset = dstOffsets[i];
-      uint32_t srcOffset = srcOffsets[i];
-      proxyChannels[dstChannelIndexes[i]].put(dstOffset, srcOffset, size);
+    int tid = threadIdx.x;
+    if (tid < count) {
+      proxyChannels[dstChannelIndexes[tid]].put(dstOffsets[tid], srcOffsets[tid], size);
     }
   }
 }
@@ -264,12 +263,25 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* output, uint32_t outputOf
 
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<SmChannel>* smChannels,
-                                           uint8_t* dstChannelIndexes, uint32_t* dstOffsets, uint32_t* srcOffsets,
-                                           int nDstChannels, uint32_t size, uint32_t flag) {
+                                           DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
+                                           uint32_t* dstOffsets, uint32_t* srcOffsets, int nDstChannels, uint32_t size,
+                                           ChannelType chType, uint32_t flag) {
   const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
-  for (int index = 0; index < nDstChannels; ++index) {
-    smChannels[dstChannelIndexes[index]].putPackets<PacketType>(scratchBaseOffset + dstOffsets[index] * 2,
-                                                                srcOffsets[index], size, threadIdx.x, blockDim.x, flag);
+  if (chType == ChannelType::SM) {
+    for (int index = 0; index < nDstChannels; ++index) {
+      smChannels[dstChannelIndexes[index]].putPackets<PacketType>(
+          scratchBaseOffset + dstOffsets[index] * 2, srcOffsets[index], size, threadIdx.x, blockDim.x, flag);
+    }
+  }
+  if (chType == ChannelType::PROXY) {
+    int tid = threadIdx.x;
+    if (tid >= nDstChannels) {
+      return;
+    }
+    // For proxy channel, we assume src and dst are in packet format
+    uint32_t dstOffset = (dstOffsets[tid] << 1) + scratchBaseOffset;
+    uint32_t srcOffset = (srcOffsets[tid] << 1) + scratchBaseOffset;
+    proxyChannels[dstChannelIndexes[tid]].put(dstOffset, srcOffset, size << 1);
   }
 }
 
@@ -308,8 +320,8 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBy
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, size_t srcSize, uint32_t dstOffset,
                                             uint32_t srcOffset, size_t size, uint32_t flag) {
-  const size_t outputScratchBaseOffset = flag & 0x1 ? 0 : srcSize >> 1;
-  PacketType* srcPackets = (PacketType*)((char*)src + outputScratchBaseOffset + 2 * srcOffset);
+  const size_t inputScratchBaseOffset = flag & 0x1 ? 0 : srcSize >> 1;
+  PacketType* srcPackets = (PacketType*)((char*)src + inputScratchBaseOffset + 2 * srcOffset);
   PacketPayload<PacketType>* result = (PacketPayload<PacketType>*)((char*)dst + dstOffset);
   size_t nPackets = size * 2 / sizeof(PacketType);
   for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
@@ -319,8 +331,10 @@ MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, size_t srcSize
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleCopyToPacket(void* dst, void* src, size_t srcSize, uint32_t dstOffset,
-                                              uint32_t srcOffset, size_t size, uint32_t flag) {
+MSCCLPP_DEVICE_INLINE void handleTransformToPacket(void* dst, void* src, size_t dstSize, uint32_t dstOffset,
+                                                   uint32_t srcOffset, size_t size, uint32_t flag) {
+  const size_t outputScratchBaseOffset = flag & 0x1 ? 0 : dstSize >> 1;
+  dstOffset = dstOffset * 2 + outputScratchBaseOffset;
   mscclpp::putPackets<PacketType>(dst, dstOffset, src, srcOffset, size, threadIdx.x, blockDim.x, flag);
 }
 
@@ -454,8 +468,8 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                                op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
                                op.size, false);
     } else if (op.type == OperationType::PUT_PACKET) {
-      handlePutPacket<PacketType>(scratchSize, smChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
-                                  op.nOutputs, op.size, flag);
+      handlePutPacket<PacketType>(scratchSize, smChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets,
+                                  op.inputOffsets, op.nOutputs, op.size, op.channelType, flag);
     } else if (op.type == OperationType::REDUCE_SEND_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
@@ -472,10 +486,10 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       handleCopyPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);
-    } else if (op.type == OperationType::COPY_TO_PACKET) {
+    } else if (op.type == OperationType::TRANSFORM_TO_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      handleCopyPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);
+      handleTransformToPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);
     } else if (op.type == OperationType::REDUCE_SEND) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
