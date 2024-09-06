@@ -95,9 +95,41 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, BufferTy
   return filter(this->channelInfos.at(rank), pred);
 }
 
+std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfosByDstRank(int rank, BufferType bufferType) const {
+  auto pred = [rank, bufferType](const ChannelInfo& info) { return info.dstBufferType == bufferType; };
+  return filter(this->channelInfosByDstRank.at(rank), pred);
+}
+
+std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int rank, int worldSize,
+                                                                      ChannelType channelType) {
+  std::vector<ChannelInfo> unpaired;
+  for (int peer = 0; peer < worldSize; peer++) {
+    if (peer == rank) {
+      continue;
+    }
+    if (this->channelCountMap[{rank, channelType}][peer] < this->channelCountMap[{peer, channelType}][rank]) {
+      int count = this->channelCountMap[{peer, channelType}][rank] - this->channelCountMap[{rank, channelType}][peer];
+      for (int i = 0; i < count; i++) {
+        ChannelInfo info;
+        info.srcBufferType = BufferType::NONE;
+        info.dstBufferType = BufferType::NONE;
+        info.channelType = channelType;
+        info.connectedPeers.push_back(peer);
+        unpaired.push_back(info);
+      }
+    }
+  }
+  return unpaired;
+}
+
 std::vector<int> ExecutionPlan::Impl::getConnectedPeers(int rank) const {
   std::set<int> peers;
   for (const auto& info : this->channelInfos.at(rank)) {
+    for (int peer : info.connectedPeers) {
+      peers.insert(peer);
+    }
+  }
+  for (const auto& info : this->channelInfosByDstRank.at(rank)) {
     for (int peer : info.connectedPeers) {
       peers.insert(peer);
     }
@@ -177,6 +209,8 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t contsS
 // Construct the channel info. Step 1. Flatten SM and PROXY channels into separate vectors.
 // Step 2. For each threadblock, construct a vector of channel indexes and keys.
 void ExecutionPlan::Impl::setupChannels(const json& gpus) {
+  using mapKey = std::tuple<int, BufferType, BufferType, ChannelType>;
+  std::map<mapKey, std::vector<int>> chanConnectedPeersMap;
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];
     std::vector<ChannelInfo> channelInfos;
@@ -187,10 +221,22 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
       info.channelType = convertToChannelType(channel["type"]);
       for (const auto& peer : channel["connectedTo"]) {
         info.connectedPeers.push_back(peer);
+        chanConnectedPeersMap[{peer, info.srcBufferType, info.dstBufferType, info.channelType}].push_back(rank);
+        this->channelCountMap[{rank, info.channelType}][peer]++;
       }
       channelInfos.push_back(info);
     }
     this->channelInfos[rank] = channelInfos;
+  }
+
+  for (const auto& [key, connectedFrom] : chanConnectedPeersMap) {
+    auto [peer, srcBufferType, dstBufferType, channelType] = key;
+    ChannelInfo info;
+    info.srcBufferType = srcBufferType;
+    info.dstBufferType = dstBufferType;
+    info.channelType = channelType;
+    info.connectedPeers = connectedFrom;
+    this->channelInfosByDstRank[peer].push_back(info);
   }
 
   // setup threadblockChannelMap
