@@ -5,6 +5,7 @@ LABEL maintainer="MSCCL++"
 LABEL org.opencontainers.image.source https://github.com/microsoft/mscclpp
 
 ENV DEBIAN_FRONTEND=noninteractive
+USER root
 
 RUN rm -rf /opt/nvidia
 

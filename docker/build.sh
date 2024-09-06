@@ -38,21 +38,23 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 cd ${SCRIPT_DIR}/..
 
+docker build -t ${GHCR}-common:base-${TARGET} \
+    -f docker/base-x.dockerfile \
+    --build-arg BASE_IMAGE=${baseImageTable[${TARGET}]} \
+    --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
+    --build-arg TARGET=${TARGET} .
+
 if [[ ${TARGET} == rocm* ]]; then
     echo "Building ROCm base image..."
     docker build -t ${GHCR}:base-${TARGET} \
         -f docker/base-x-rocm.dockerfile \
-        --build-arg BASE_IMAGE=${baseImageTable[${TARGET}]} \
+        --build-arg BASE_IMAGE=${GHCR}-common:base-${TARGET} \
         --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
         --build-arg TARGET=${TARGET} \
         --build-arg ARCH="gfx942" .
 else
     echo "Building CUDA base image..."
-    docker build -t ${GHCR}:base-${TARGET} \
-        -f docker/base-x.dockerfile \
-        --build-arg BASE_IMAGE=${baseImageTable[${TARGET}]} \
-        --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
-        --build-arg TARGET=${TARGET} .
+    docker tag ${GHCR}-common:base-${TARGET} ${GHCR}:base-${TARGET}
 fi
 
 docker build -t ${GHCR}:base-dev-${TARGET} \

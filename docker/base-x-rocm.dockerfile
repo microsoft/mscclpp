@@ -5,7 +5,6 @@ LABEL maintainer="MSCCL++"
 LABEL org.opencontainers.image.source https://github.com/microsoft/mscclpp
 
 ENV DEBIAN_FRONTEND=noninteractive
-USER root
 
 ENV RCCL_VERSION=rocm-6.2.0
 ARG ARCH=gfx942
