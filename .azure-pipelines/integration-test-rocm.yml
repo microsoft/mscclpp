@@ -28,6 +28,7 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
+        sleep 1d
         mkdir build && cd build
         CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DBYPASS_GPU_CHECK=ON -DUSE_ROCM=ON ..
         make -j
