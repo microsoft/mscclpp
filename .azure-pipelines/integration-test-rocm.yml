@@ -56,8 +56,8 @@ jobs:
       pip3 install .
 
   - task: Bash@3
-    name: GenerateExectionFile
-    displayName: Generate execution file
+    name: GenerateExectionFiles
+    displayName: Generate execution files
     inputs:
      targetType: 'inline'
      script: |
