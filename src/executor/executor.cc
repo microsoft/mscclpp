@@ -190,21 +190,11 @@ struct Executor::Impl {
       comm->setup();
       for (size_t i = 0; i < remoteRegMemoryFutures.size(); i++) {
         context.registeredMemories[{bufferType, connectedPeers[i]}] = std::move(remoteRegMemoryFutures[i].get());
-        // CUdeviceptr myRegBaseAdr, peerRegBaseAdr;
-        // size_t temp;
-        // MSCCLPP_CUTHROW(cuMemGetAddressRange(&myRegBaseAdr, &temp, (CUdeviceptr)(char*)memory.data()));
-        // MSCCLPP_CUTHROW(cuMemGetAddressRange(
-        //     &peerRegBaseAdr, &temp,
-        //     (CUdeviceptr)(char*)context.registeredMemories[{bufferType, connectedPeers[i]}].data()));
-        // size_t myRegOffset = (char*)memory.data() - (char*)myRegBaseAdr;
-        // size_t peerRegOffset =
-        //     (char*)context.registeredMemories[{bufferType, connectedPeers[i]}].data() - (char*)peerRegBaseAdr;
-        // if (myRegOffset != peerRegOffset) throw Error("Divergent data offset between peers", ErrorCode::ExecutorError);
       }
     }
   }
 
-  void setupChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize, int rank,
+  void setupChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize, size_t recvBufferSize, int rank,
                      const ExecutionPlan& plan) {
     const auto channelTypes = {ChannelType::SM, ChannelType::PROXY};
     std::vector<std::shared_ptr<SmDevice2DeviceSemaphore>> smSemaphores;
@@ -265,13 +255,27 @@ struct Executor::Impl {
           throw Error("Invalid buffer type", ErrorCode::ExecutorError);
       }
     };
+    auto getBufferSize = [&](BufferType type) {
+      switch (type) {
+        case BufferType::INPUT:
+          return sendBufferSize;
+        case BufferType::OUTPUT:
+          return recvBufferSize;
+        case BufferType::SCRATCH:
+          return context.scratchBufferSize;
+        default:
+          throw Error("Invalid buffer type", ErrorCode::ExecutorError);
+      }
+    };
+
     for (ChannelType channelType : channelTypes) {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(rank, channelType);
       int index = 0;
       for (ChannelInfo& info : channelInfos) {
         void* src = getBuffer(info.srcBufferType);
+        size_t bufferSize = getBufferSize(info.srcBufferType);
         TransportFlags transport = getTransportFlags(channelInfos, rank);
-        RegisteredMemory localMemory = this->comm->registerMemory(src, sendBufferSize, transport);
+        RegisteredMemory localMemory = this->comm->registerMemory(src, bufferSize, transport);
         for (int peer : info.connectedPeers) {
           if (channelType == ChannelType::SM) {
             context.smChannels.emplace_back(context.smSemaphores[index++],
