@@ -219,6 +219,22 @@ struct Executor::Impl {
     context.smSemaphores = std::move(smSemaphores);
     context.proxySemaphores = std::move(proxySemaphores);
 
+    auto getTransportFlags = [&](std::vector<ChannelInfo>& infos, int rank) {
+      TransportFlags flags;
+      for (ChannelInfo& info : infos) {
+        if (info.channelType == ChannelType::SM) {
+          flags |= Transport::CudaIpc;
+        } else if (info.channelType == ChannelType::PROXY) {
+          for (int peer : info.connectedPeers) {
+            if (!inSameNode(rank, peer, this->nranksPerNode)) {
+              flags |= IBs[rank % this->nranksPerNode];
+            } else
+              flags |= Transport::CudaIpc;
+          }
+        }
+      }
+      return flags;
+    };
     auto getBuffer = [&](BufferType type) {
       switch (type) {
         case BufferType::INPUT:
@@ -236,7 +252,7 @@ struct Executor::Impl {
       int index = 0;
       for (ChannelInfo& info : channelInfos) {
         void* src = getBuffer(info.srcBufferType);
-        TransportFlags transport = context.registeredMemories.begin()->second.transports();
+        TransportFlags transport = getTransportFlags(channelInfos, rank);
         RegisteredMemory localMemory = this->comm->registerMemory(src, sendBufferSize, transport);
         for (int peer : info.connectedPeers) {
           if (channelType == ChannelType::SM) {
