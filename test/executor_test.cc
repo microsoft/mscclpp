@@ -60,15 +60,16 @@ mscclpp::PacketType parsePacketType(const char* value) {
 }
 
 double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::shared_ptr<mscclpp::Executor> executor,
-                 const mscclpp::ExecutionPlan& plan, std::shared_ptr<char> sendbuff, std::shared_ptr<char> recvbuff, size_t bufferSize,
-                 int nthreadsPerBlock, int niters, int ngrapthIters, mscclpp::PacketType packetType) {
+                 const mscclpp::ExecutionPlan& plan, std::shared_ptr<char> sendbuff, std::shared_ptr<char> recvbuff,
+                 size_t sendBufferSize, size_t recvBufferSize, int nthreadsPerBlock, int niters, int ngrapthIters,
+                 mscclpp::PacketType packetType) {
   mscclpp::CudaStreamWithFlags stream(cudaStreamNonBlocking);
   cudaGraph_t graph;
   cudaGraphExec_t graphExec;
   mscclpp::Timer timer;
   MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
   for (int i = 0; i < niters; i++) {
-    executor->execute(rank, sendbuff.get(), recvbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16,
+    executor->execute(rank, sendbuff.get(), recvbuff.get(), sendBufferSize, recvBufferSize, mscclpp::DataType::FLOAT16,
                       nthreadsPerBlock, plan, stream, packetType);
   }
   MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
@@ -107,7 +108,7 @@ int main(int argc, char* argv[]) {
   MPI_Init(NULL, NULL);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
-  
+
   rankToDebug = rank;
 
   // Get the local rank
@@ -150,21 +151,21 @@ int main(int argc, char* argv[]) {
   std::shared_ptr<char> recvbuff = mscclpp::allocExtSharedCuda<char>(worldSize * bufferSize);
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
   MSCCLPP_CUDATHROW(cudaMemcpy(sendbuff.get(), dataHost.data(), bufferSize, cudaMemcpyHostToDevice));
-  double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, recvbuff, bufferSize, nthreadsPerBlock, niters,
-                              ngraphIters, packetType);
+  double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, recvbuff, bufferSize, worldSize * bufferSize,
+                              nthreadsPerBlock, niters, ngraphIters, packetType);
 
   char* recvHost = (char*)malloc(worldSize * bufferSize);
   MSCCLPP_CUDATHROW(cudaMemcpy(recvHost, recvbuff.get(), worldSize * bufferSize, cudaMemcpyDeviceToHost));
 
   /* cudaDeviceSynchronize();
-  std::cout << "Result: " << std::endl; 
+  std::cout << "Result: " << std::endl;
   for(int i = 0; i < worldSize * bufferSize / sizeof(int); i++){
     int want = -1;
     memcpy(&want, recvHost + i*4, 4);
     std::cout << rank << " " << i << ": " << want << std::endl;
   }
   std::cout << std::endl; */
-  
+
   //std::cout << std::flush;
 
   if (npkitDumpDir != nullptr) {

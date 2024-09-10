@@ -169,6 +169,7 @@ MSCCLPP_DEVICE_INLINE void handleSignal(DeviceHandle<SmChannel>* smChannels,
   }
   if (tid < nChannels && chType == ChannelType::PROXY) {
     proxyChannels[channelIndex[threadIdx.x]].signal();
+    // proxyChannels[channelIndex[threadIdx.x]].flush();
   }
 }
 
@@ -214,13 +215,10 @@ MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<SmChannel>* smChannel,
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset,
-                                            uint32_t srcOffset, size_t size) {
+MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
   char* srcData = (char*)src + srcOffset;
   char* dstData = (char*)dst + dstOffset;
-  for (size_t idx = threadIdx.x; idx < size; idx += blockDim.x) {
-    dstData[idx] = srcData[idx];
-  }
+  Element::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
 }
 
 template <typename T>
