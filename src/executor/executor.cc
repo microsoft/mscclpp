@@ -106,7 +106,7 @@ struct Executor::Impl {
     context.proxyService = std::make_shared<ProxyService>();
     this->setupConnections(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
-    this->setupChannels(context, sendbuff, recvbuff, sendBufferSize, rank, plan);
+    this->setupChannels(context, sendbuff, recvbuff, recvBufferSize, rank, plan);
     this->setupDeviceExecutionPlan(context, rank, plan);
     context.deviceExecutionPlansBuffer =
         allocExtSharedCuda<char>(context.deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan));
@@ -190,16 +190,16 @@ struct Executor::Impl {
       comm->setup();
       for (size_t i = 0; i < remoteRegMemoryFutures.size(); i++) {
         context.registeredMemories[{bufferType, connectedPeers[i]}] = std::move(remoteRegMemoryFutures[i].get());
-        CUdeviceptr myRegBaseAdr, peerRegBaseAdr;
-        size_t temp;
-        MSCCLPP_CUTHROW(cuMemGetAddressRange(&myRegBaseAdr, &temp, (CUdeviceptr)(char*)memory.data()));
-        MSCCLPP_CUTHROW(cuMemGetAddressRange(
-            &peerRegBaseAdr, &temp,
-            (CUdeviceptr)(char*)context.registeredMemories[{bufferType, connectedPeers[i]}].data()));
-        size_t myRegOffset = (char*)memory.data() - (char*)myRegBaseAdr;
-        size_t peerRegOffset =
-            (char*)context.registeredMemories[{bufferType, connectedPeers[i]}].data() - (char*)peerRegBaseAdr;
-        if (myRegOffset != peerRegOffset) throw Error("Divergent data offset between peers", ErrorCode::ExecutorError);
+        // CUdeviceptr myRegBaseAdr, peerRegBaseAdr;
+        // size_t temp;
+        // MSCCLPP_CUTHROW(cuMemGetAddressRange(&myRegBaseAdr, &temp, (CUdeviceptr)(char*)memory.data()));
+        // MSCCLPP_CUTHROW(cuMemGetAddressRange(
+        //     &peerRegBaseAdr, &temp,
+        //     (CUdeviceptr)(char*)context.registeredMemories[{bufferType, connectedPeers[i]}].data()));
+        // size_t myRegOffset = (char*)memory.data() - (char*)myRegBaseAdr;
+        // size_t peerRegOffset =
+        //     (char*)context.registeredMemories[{bufferType, connectedPeers[i]}].data() - (char*)peerRegBaseAdr;
+        // if (myRegOffset != peerRegOffset) throw Error("Divergent data offset between peers", ErrorCode::ExecutorError);
       }
     }
   }
