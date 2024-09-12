@@ -31,6 +31,8 @@ enum class OperationType : uint8_t {
   BARRIER,
   PUT,
   PUT_PACKET,
+  PUT_WITH_SIGNAL,
+  PUT_WITH_SIGNAL_AND_FLUSH,
   GET,
   COPY,
   COPY_PACKET,
