@@ -100,20 +100,20 @@ def main(
         nelems = size // cp.dtype(dtype).itemsize
         buffer = cp.random.random(nelems * mscclpp_group.nranks).astype(dtype)
         sub_arrays = cp.split(buffer, MPI.COMM_WORLD.size)
-        sendbuf = cp.zeros_like(sub_arrays[MPI.COMM_WORLD.rank])
+        sendbuf = cp.zeros(nelems)
         for i in range(nelems):
             sendbuf[i] = sub_arrays[MPI.COMM_WORLD.rank][i]
-        recvbuf = cp.zeros_like(buffer)
+        recvbuf = cp.zeros(nelems * mscclpp_group.nranks)
         expected = buffer
     else:
         cp.random.seed(seed)
         nelems = size // cp.dtype(dtype).itemsize
         buffer = cp.random.random(nelems * mscclpp_group.nranks).astype(dtype)
         sub_arrays = cp.split(buffer, MPI.COMM_WORLD.size)
-        sendbuf = cp.zeros_like(sub_arrays[MPI.COMM_WORLD.rank])
+        sendbuf = cp.zeros(nelems)
         for i in range(nelems):
             sendbuf[i] = sub_arrays[MPI.COMM_WORLD.rank][i]
-        recvbuf = cp.zeros_like(sendbuf)
+        recvbuf = cp.zeros(nelems * mscclpp_group.nranks)
         expected = cp.zeros_like(sendbuf)
         for i in range(mscclpp_group.nranks):
             expected += sub_arrays[i]
