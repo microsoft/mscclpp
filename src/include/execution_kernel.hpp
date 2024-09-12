@@ -395,6 +395,12 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
   }
 }
 
+MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
+  char* srcData = (char*)src + srcOffset;
+  char* dstData = (char*)dst + dstOffset;
+  Element::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
+}
+
 template <typename T, typename PacketType = LL16Packet>
 __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
                                 size_t scratchSize, DeviceExecutionPlan* plan, uint32_t flag
@@ -477,6 +483,10 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                              op.nOutputs, op.size, op.channelType);
     } else if (op.type == OperationType::GET) {
       handleGet(smChannels, op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nInputs, op.size);
+    } else if (op.type == OperationType::COPY) {
+      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
+      T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      handleCopy(dst, src, op.dstOffset, op.srcOffset, op.size);
     } else if (op.type == OperationType::READ_REDUCE_COPY_SEND) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
