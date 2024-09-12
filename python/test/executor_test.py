@@ -98,23 +98,25 @@ def main(
     if "allgather" in execution_plan_name:
         cp.random.seed(seed)
         nelems = size // cp.dtype(dtype).itemsize
-        buffer = cp.random.random(nelems * mscclpp_group.nranks).astype(dtype)
+        buffer = cp.empty(nelems * mscclpp_group.nranks, dtype=dtype)
+        buffer[:] = cp.random.random(nelems * mscclpp_group.nranks, dtype=cp.float32).astype(dtype)
         sub_arrays = cp.split(buffer, MPI.COMM_WORLD.size)
-        sendbuf = cp.zeros(nelems)
+        sendbuf = cp.zeros(nelems, dtype=dtype)
         for i in range(nelems):
             sendbuf[i] = sub_arrays[MPI.COMM_WORLD.rank][i]
-        recvbuf = cp.zeros(nelems * mscclpp_group.nranks)
+        recvbuf = cp.zeros(nelems * mscclpp_group.nranks, dtype=dtype)
         expected = buffer
     else:
         cp.random.seed(seed)
         nelems = size // cp.dtype(dtype).itemsize
-        buffer = cp.random.random(nelems * mscclpp_group.nranks).astype(dtype)
+        buffer = cp.empty(nelems * mscclpp_group.nranks, dtype=dtype)
+        buffer[:] = cp.random.random(nelems * mscclpp_group.nranks, dtype=cp.float32).astype(dtype)
         sub_arrays = cp.split(buffer, MPI.COMM_WORLD.size)
-        sendbuf = cp.zeros(nelems)
+        sendbuf = cp.zeros(nelems, dtype=dtype)
         for i in range(nelems):
             sendbuf[i] = sub_arrays[MPI.COMM_WORLD.rank][i]
-        recvbuf = cp.zeros(nelems * mscclpp_group.nranks)
-        expected = cp.zeros_like(sendbuf)
+        recvbuf = cp.zeros(nelems * mscclpp_group.nranks, dtype=dtype)
+        expected = cp.zeros_like(sendbuf, dtype=dtype)
         for i in range(mscclpp_group.nranks):
             expected += sub_arrays[i]
     mscclpp_group.barrier()
@@ -139,7 +141,7 @@ def main(
     assert cp.allclose(sendbuf if in_place else recvbuf, expected, atol=1e-2 * mscclpp_group.nranks)
 
     mscclpp_group.barrier()
-    execution_time = bench_time(100, 10, executor_func)
+    execution_time = bench_time(1, 1, executor_func)
     if npkit_dump_dir is not None:
         npkit.dump(npkit_dump_dir)
         npkit.shutdown()
