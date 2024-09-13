@@ -194,8 +194,8 @@ struct Executor::Impl {
     }
   }
 
-  void setupChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize, size_t recvBufferSize, int rank,
-                     const ExecutionPlan& plan) {
+  void setupChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
+                     size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
     const auto channelTypes = {ChannelType::SM, ChannelType::PROXY};
     std::vector<std::shared_ptr<SmDevice2DeviceSemaphore>> smSemaphores;
     std::vector<mscclpp::SemaphoreId> proxySemaphores;

@@ -169,7 +169,6 @@ MSCCLPP_DEVICE_INLINE void handleSignal(DeviceHandle<SmChannel>* smChannels,
   }
   if (tid < nChannels && chType == ChannelType::PROXY) {
     proxyChannels[channelIndex[threadIdx.x]].signal();
-    // proxyChannels[channelIndex[threadIdx.x]].flush();
   }
 }
 
