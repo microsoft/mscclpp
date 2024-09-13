@@ -59,7 +59,7 @@ TEST_F(ExecutorTest, TwoNodesAllreduce) {
   const int bufferSize = 1024 * 1024;
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
   mscclpp::CudaStreamWithFlags stream(cudaStreamNonBlocking);
-  executor->execute(gEnv->rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16, 512,
+  executor->execute(gEnv->rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16,
                     plan, stream);
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 }

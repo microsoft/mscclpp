@@ -43,7 +43,7 @@ class Executor {
   ~Executor();
 
   void execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, DataType dataType,
-               int nthreads, const ExecutionPlan& plan, cudaStream_t stream, PacketType packetType = PacketType::LL16);
+               const ExecutionPlan& plan, cudaStream_t stream, PacketType packetType = PacketType::LL16);
 
  private:
   struct Impl;
