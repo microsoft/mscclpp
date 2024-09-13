@@ -115,7 +115,7 @@ def main(
         sendbuf = cp.zeros(nelems, dtype=dtype)
         for i in range(nelems):
             sendbuf[i] = sub_arrays[MPI.COMM_WORLD.rank][i]
-        recvbuf = cp.zeros(nelems * mscclpp_group.nranks, dtype=dtype)
+        recvbuf = cp.zeros(nelems, dtype=dtype)
         expected = cp.zeros_like(sendbuf, dtype=dtype)
         for i in range(mscclpp_group.nranks):
             expected += sub_arrays[i]
@@ -137,6 +137,9 @@ def main(
     stream = cp.cuda.Stream(non_blocking=True)
     executor_func(stream)
     stream.synchronize()
+
+    #for i in range(nelems * mscclpp_group.nranks):
+    #    print(f"Rank: {MPI.COMM_WORLD.rank} recvbuf[{i}]: {recvbuf[i]} expected[{i}]: {expected[i]}")
 
     assert cp.allclose(sendbuf if in_place else recvbuf, expected, atol=1e-2 * mscclpp_group.nranks)
 
