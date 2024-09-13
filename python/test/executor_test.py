@@ -138,13 +138,10 @@ def main(
     executor_func(stream)
     stream.synchronize()
 
-    #for i in range(nelems * mscclpp_group.nranks):
-    #    print(f"Rank: {MPI.COMM_WORLD.rank} recvbuf[{i}]: {recvbuf[i]} expected[{i}]: {expected[i]}")
-
     assert cp.allclose(sendbuf if in_place else recvbuf, expected, atol=1e-2 * mscclpp_group.nranks)
 
     mscclpp_group.barrier()
-    execution_time = bench_time(1, 1, executor_func)
+    execution_time = bench_time(100, 10, executor_func)
     if npkit_dump_dir is not None:
         npkit.dump(npkit_dump_dir)
         npkit.shutdown()

@@ -7,10 +7,6 @@
 #include <mscclpp/utils.hpp>
 #include <sstream>
 
-#include "debug.h"
-
-int rankToDebug;
-
 double parseSize(const char* value) {
   std::string valueStr(value);
   std::istringstream iss(valueStr);
@@ -60,16 +56,15 @@ mscclpp::PacketType parsePacketType(const char* value) {
 }
 
 double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::shared_ptr<mscclpp::Executor> executor,
-                 const mscclpp::ExecutionPlan& plan, std::shared_ptr<char> sendbuff, std::shared_ptr<char> recvbuff,
-                 size_t sendBufferSize, size_t recvBufferSize, int nthreadsPerBlock, int niters, int ngrapthIters,
-                 mscclpp::PacketType packetType) {
+                 const mscclpp::ExecutionPlan& plan, std::shared_ptr<char> sendbuff, size_t bufferSize,
+                 int nthreadsPerBlock, int niters, int ngrapthIters, mscclpp::PacketType packetType) {
   mscclpp::CudaStreamWithFlags stream(cudaStreamNonBlocking);
   cudaGraph_t graph;
   cudaGraphExec_t graphExec;
   mscclpp::Timer timer;
   MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
   for (int i = 0; i < niters; i++) {
-    executor->execute(rank, sendbuff.get(), recvbuff.get(), sendBufferSize, recvBufferSize, mscclpp::DataType::FLOAT16,
+    executor->execute(rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16,
                       nthreadsPerBlock, plan, stream, packetType);
   }
   MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
@@ -104,22 +99,10 @@ int main(int argc, char* argv[]) {
 
   int rank;
   int worldSize;
-  int localRank;
   MPI_Init(NULL, NULL);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
-
-  rankToDebug = rank;
-
-  // Get the local rank
-  MPI_Comm localComm;
-  MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &localComm);
-  MPI_Comm_rank(localComm, &localRank);
-
-  printf("Global Rank %d/%d, Local Rank %d\n", rank, worldSize, localRank);
-
-  // Set the CUDA device using the local rank
-  MSCCLPP_CUDATHROW(cudaSetDevice(localRank));
+  MSCCLPP_CUDATHROW(cudaSetDevice(rank));
 
   const size_t bufferSize = parseSize(argv[1]);
   const std::string executionPlanName = argv[2];
@@ -148,25 +131,10 @@ int main(int argc, char* argv[]) {
 
   mscclpp::ExecutionPlan plan(executionPlanName, executionPlanPath);
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
-  std::shared_ptr<char> recvbuff = mscclpp::allocExtSharedCuda<char>(worldSize * bufferSize);
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
   MSCCLPP_CUDATHROW(cudaMemcpy(sendbuff.get(), dataHost.data(), bufferSize, cudaMemcpyHostToDevice));
-  double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, recvbuff, bufferSize, worldSize * bufferSize,
-                              nthreadsPerBlock, niters, ngraphIters, packetType);
-
-  char* recvHost = (char*)malloc(worldSize * bufferSize);
-  MSCCLPP_CUDATHROW(cudaMemcpy(recvHost, recvbuff.get(), worldSize * bufferSize, cudaMemcpyDeviceToHost));
-
-  /* cudaDeviceSynchronize();
-  std::cout << "Result: " << std::endl;
-  for(int i = 0; i < worldSize * bufferSize / sizeof(int); i++){
-    int want = -1;
-    memcpy(&want, recvHost + i*4, 4);
-    std::cout << rank << " " << i << ": " << want << std::endl;
-  }
-  std::cout << std::endl; */
-
-  //std::cout << std::flush;
+  double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, nthreadsPerBlock, niters,
+                              ngraphIters, packetType);
 
   if (npkitDumpDir != nullptr) {
     NpKit::Dump(npkitDumpDir);

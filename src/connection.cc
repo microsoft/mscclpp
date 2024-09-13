@@ -20,7 +20,7 @@ void validateTransport(RegisteredMemory mem, Transport transport, uint64_t offse
   if (!mem.transports().has(transport)) {
     throw Error("RegisteredMemory does not support this transport", ErrorCode::InvalidUsage);
   }
-  if(offset + size > mem.size()) {
+  if (offset + size > mem.size()) {
     throw Error("RegisteredMemory out of bounds", ErrorCode::InvalidUsage);
   }
 }
