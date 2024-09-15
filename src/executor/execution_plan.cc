@@ -20,6 +20,10 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::BARRIER;
   } else if (str == "put") {
     return mscclpp::OperationType::PUT;
+  } else if (str == "pws") {
+    return mscclpp::OperationType::PUT_WITH_SIGNAL;
+  } else if (str == "pwsf") {
+    return mscclpp::OperationType::PUT_WITH_SIGNAL_AND_FLUSH;
   } else if (str == "get") {
     return mscclpp::OperationType::GET;
   } else if (str == "copy") {

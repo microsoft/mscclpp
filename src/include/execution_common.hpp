@@ -44,6 +44,8 @@ enum class OperationType : uint8_t {
   REDUCE_SEND_PACKET,
   READ_REDUCE_COPY,
   READ_REDUCE_COPY_SEND,
+  PUT_WITH_SIGNAL,
+  PUT_WITH_SIGNAL_AND_FLUSH,
 };
 
 struct Channels {
