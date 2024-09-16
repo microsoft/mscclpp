@@ -229,12 +229,6 @@ MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<SmChannel>* smChannel,
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
-  char* srcData = (char*)src + srcOffset;
-  char* dstData = (char*)dst + dstOffset;
-  Element::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
-}
-
 template <typename T>
 MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* output, uint32_t outputOffsetByBytes, T* input,
                                                     uint32_t inputOffsetByBytes, DeviceHandle<SmChannel>* smChannels,
