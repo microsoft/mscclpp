@@ -185,6 +185,14 @@ MSCCLPP_DEVICE_INLINE void handleWait(DeviceHandle<SmChannel>* smChannels,
   }
 }
 
+MSCCLPP_DEVICE_INLINE void handleFlush(DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* channelIndexes,
+                                       int nChannels) {
+  int tid = threadIdx.x;
+  if (tid < nChannels) {
+    proxyChannels[channelIndexes[tid]].flush();
+  }
+}
+
 MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<SmChannel>* smChannel, uint8_t* srcChannelIndexes,
                                      uint32_t* dstOffsets, uint32_t* srcOffsets, int count, uint32_t size) {
   for (int i = 0; i < count; i++) {
@@ -194,6 +202,7 @@ MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<SmChannel>* smChannel, uint8_t
   }
 }
 
+template <bool PutWithSignal = false, bool PutWithSignalAndFlush = false>
 MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<SmChannel>* smChannel,
                                      DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
                                      uint32_t* dstOffsets, uint32_t* srcOffsets, int count, uint32_t size,
@@ -209,7 +218,13 @@ MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<SmChannel>* smChannel,
   if (chType == ChannelType::PROXY) {
     int tid = threadIdx.x;
     if (tid < count) {
-      proxyChannels[dstChannelIndexes[tid]].put(dstOffsets[tid], srcOffsets[tid], size);
+      if constexpr (PutWithSignal) {
+        proxyChannels[dstChannelIndexes[tid]].putWithSignal(dstOffsets[tid], srcOffsets[tid], size);
+      } else if constexpr (PutWithSignalAndFlush) {
+        proxyChannels[dstChannelIndexes[tid]].putWithSignalAndFlush(dstOffsets[tid], srcOffsets[tid], size);
+      } else {
+        proxyChannels[dstChannelIndexes[tid]].put(dstOffsets[tid], srcOffsets[tid], size);
+      }
     }
   }
 }
@@ -386,6 +401,12 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
   }
 }
 
+MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
+  char* srcData = (char*)src + srcOffset;
+  char* dstData = (char*)dst + dstOffset;
+  Element::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
+}
+
 template <typename T, typename PacketType = LL16Packet>
 __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
                                 size_t scratchSize, DeviceExecutionPlan* plan, uint32_t flag
@@ -455,9 +476,17 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       handleSignal(smChannels, proxyChannels, op.outputChannelIndexes, op.nOutputs, op.channelType);
     } else if (op.type == OperationType::WAIT) {
       handleWait(smChannels, proxyChannels, op.inputChannelIndexes, op.nInputs, op.channelType);
+    } else if (op.type == OperationType::FLUSH) {
+      handleFlush(proxyChannels, op.outputChannelIndexes, op.nOutputs);
     } else if (op.type == OperationType::PUT) {
       handlePut(smChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs,
                 op.size, op.channelType);
+    } else if (op.type == OperationType::PUT_WITH_SIGNAL) {
+      handlePut<true>(smChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
+                      op.nOutputs, op.size, op.channelType);
+    } else if (op.type == OperationType::PUT_WITH_SIGNAL_AND_FLUSH) {
+      handlePut<false, true>(smChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
+                             op.nOutputs, op.size, op.channelType);
     } else if (op.type == OperationType::GET) {
       handleGet(smChannels, op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nInputs, op.size);
     } else if (op.type == OperationType::COPY) {
