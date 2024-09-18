@@ -83,7 +83,7 @@ def main(
     size: int,
     dtype: cp.dtype = cp.float16,
     packet_type: PacketType = PacketType.LL16,
-    seed: int = 42,
+    seed: int = 42 + MPI.COMM_WORLD.rank,
 ):
     mscclpp_group = mscclpp_comm.CommGroup(MPI.COMM_WORLD)
     cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
@@ -95,12 +95,9 @@ def main(
 
     cp.random.seed(seed)
     nelems = size // cp.dtype(dtype).itemsize
-    buffer = cp.random.random(nelems * mscclpp_group.nranks).astype(dtype)
-    sub_arrays = cp.split(buffer, MPI.COMM_WORLD.size)
-    sendbuf = sub_arrays[MPI.COMM_WORLD.rank]
-    expected = cp.zeros_like(sendbuf)
-    for i in range(mscclpp_group.nranks):
-        expected += sub_arrays[i]
+    sendbuf = cp.random.random(nelems).astype(dtype)
+    expected = cp.asnumpy(sendbuf)
+    expected = MPI.COMM_WORLD.allreduce(expected, op=MPI.SUM)
     mscclpp_group.barrier()
 
     executor_func = lambda stream: executor.execute(

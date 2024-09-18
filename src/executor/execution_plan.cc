@@ -173,7 +173,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t contsSrcOff
   if (protocol == "LL") {
     this->isUsingPacket = true;
   }
-  this->nThreadsPerBlock = obj.value("nThreadsPerBlock", 1024);
+  this->nThreadsPerBlock = obj.value("num_threads_per_block", 1024);
   const auto& gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {

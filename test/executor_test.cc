@@ -86,11 +86,10 @@ double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::s
 }
 
 int main(int argc, char* argv[]) {
-  if (argc != 7 && argc != 8) {
+  if (argc != 6 && argc != 7) {
     std::cerr << "Usage: " << argv[0] << " <buffer size>"
               << " <execution plan name>"
               << " <execution plan path>"
-              << " <nthreads per block>"
               << " <number of iterations>"
               << " <number of graph iterations>"
               << " (optional) <packet type>" << std::endl;
