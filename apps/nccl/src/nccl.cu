@@ -488,29 +488,30 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     std::shared_ptr<mscclpp::ExecutionPlan> plan;
     if (bytes <= comm->largeMessageSizeBoundary)
       plan = (sendbuff == recvbuff) ? comm->allReducePacketIPPlan : comm->allReducePacketOPPlan;
-    else
+    else {
       plan = (sendbuff == recvbuff) ? comm->allReduceIPPlan : comm->allReduceOPPlan;
+    }
 
     if (plan == nullptr)
       return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
 
     switch (datatype) {
       case ncclFloat16:
-        comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT16, 1024,
-                                *plan, stream, mscclpp::PacketType::LL8);
+        comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT16, *plan,
+                                stream, mscclpp::PacketType::LL8);
         break;
       case ncclFloat32:
         comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT32,
-                                1024, *plan, stream, mscclpp::PacketType::LL8);
+                                *plan, stream, mscclpp::PacketType::LL8);
         break;
       case ncclBfloat16:
         comm->executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, bytes, bytes,
-                                mscclpp::DataType::BFLOAT16, 1024, *plan, stream, mscclpp::PacketType::LL8);
+                                mscclpp::DataType::BFLOAT16, *plan, stream, mscclpp::PacketType::LL8);
         break;
       case ncclInt32:
       case ncclUint32:
-        comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, bytes, bytes, mscclpp::DataType::UINT32, 1024,
-                                *plan, stream, mscclpp::PacketType::LL8);
+        comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, bytes, bytes, mscclpp::DataType::UINT32, *plan,
+                                stream, mscclpp::PacketType::LL8);
         break;
       default:
         return ncclInvalidArgument;

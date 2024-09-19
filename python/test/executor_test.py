@@ -85,7 +85,7 @@ def main(
     in_place: bool = True,
     dtype: cp.dtype = cp.float16,
     packet_type: PacketType = PacketType.LL16,
-    seed: int = 42,
+    seed: int = 42 + MPI.COMM_WORLD.rank,
 ):
     mscclpp_group = mscclpp_comm.CommGroup(MPI.COMM_WORLD)
     cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
@@ -109,16 +109,9 @@ def main(
     else:
         cp.random.seed(seed)
         nelems = size // cp.dtype(dtype).itemsize
-        buffer = cp.empty(nelems * mscclpp_group.nranks, dtype=dtype)
-        buffer[:] = cp.random.random(nelems * mscclpp_group.nranks, dtype=cp.float32).astype(dtype)
-        sub_arrays = cp.split(buffer, MPI.COMM_WORLD.size)
-        sendbuf = cp.zeros(nelems, dtype=dtype)
-        for i in range(nelems):
-            sendbuf[i] = sub_arrays[MPI.COMM_WORLD.rank][i]
-        recvbuf = cp.zeros(nelems, dtype=dtype)
-        expected = cp.zeros_like(sendbuf, dtype=dtype)
-        for i in range(mscclpp_group.nranks):
-            expected += sub_arrays[i]
+        sendbuf = cp.random.random(nelems).astype(dtype)
+        expected = cp.asnumpy(sendbuf)
+        expected = MPI.COMM_WORLD.allreduce(expected, op=MPI.SUM)
     mscclpp_group.barrier()
 
     executor_func = lambda stream: executor.execute(
@@ -128,7 +121,6 @@ def main(
         sendbuf.nbytes,
         sendbuf.nbytes if in_place else recvbuf.nbytes,
         dtype_to_mscclpp_dtype(dtype),
-        nthreads_per_block,
         execution_plan,
         stream.ptr,
         packet_type,
@@ -148,7 +140,7 @@ def main(
     print(
         f"Rank: {MPI.COMM_WORLD.rank} Execution time: {execution_time} us, "
         f"data size: {sendbuf.nbytes} bytes data type: {dtype().dtype.name} "
-        f"packet type: {packet_type} nthreads_per_block: {nthreads_per_block}"
+        f"packet type: {packet_type}"
     )
     executor = None
     mscclpp_group = None
