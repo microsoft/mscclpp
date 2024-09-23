@@ -119,6 +119,23 @@ struct Executor::Impl {
     return context;
   }
 
+  TransportFlags getTransportFlags(std::vector<ChannelInfo>& infos, int rank) {
+    TransportFlags flags;
+    for (ChannelInfo& info : infos) {
+      if (info.channelType == ChannelType::SM) {
+        flags |= Transport::CudaIpc;
+      } else if (info.channelType == ChannelType::PROXY) {
+        for (int peer : info.connectedPeers) {
+          if (!inSameNode(rank, peer, this->nranksPerNode)) {
+            flags |= IBs[rank % this->nranksPerNode];
+          } else
+            flags |= Transport::CudaIpc;
+        }
+      }
+    }
+    return flags;
+  };
+
   void setupConnections(ExecutionContext& context, int rank, const ExecutionPlan& plan) {
     std::vector<int> connectedPeers = plan.impl_->getConnectedPeers(rank);
     std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
@@ -135,22 +152,6 @@ struct Executor::Impl {
 
   void setupRegisteredMemories(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
                                size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
-    auto getTransportFlags = [&](std::vector<ChannelInfo>& infos, int rank) {
-      TransportFlags flags;
-      for (ChannelInfo& info : infos) {
-        if (info.channelType == ChannelType::SM) {
-          flags |= Transport::CudaIpc;
-        } else if (info.channelType == ChannelType::PROXY) {
-          for (int peer : info.connectedPeers) {
-            if (!inSameNode(rank, peer, this->nranksPerNode)) {
-              flags |= IBs[rank % this->nranksPerNode];
-            } else
-              flags |= Transport::CudaIpc;
-          }
-        }
-      }
-      return flags;
-    };
     auto getBufferInfo = [&](BufferType type) {
       switch (type) {
         case BufferType::INPUT:
@@ -229,22 +230,6 @@ struct Executor::Impl {
     context.smSemaphores = std::move(smSemaphores);
     context.proxySemaphores = std::move(proxySemaphores);
 
-    auto getTransportFlags = [&](std::vector<ChannelInfo>& infos, int rank) {
-      TransportFlags flags;
-      for (ChannelInfo& info : infos) {
-        if (info.channelType == ChannelType::SM) {
-          flags |= Transport::CudaIpc;
-        } else if (info.channelType == ChannelType::PROXY) {
-          for (int peer : info.connectedPeers) {
-            if (!inSameNode(rank, peer, this->nranksPerNode)) {
-              flags |= IBs[rank % this->nranksPerNode];
-            } else
-              flags |= Transport::CudaIpc;
-          }
-        }
-      }
-      return flags;
-    };
     auto getBuffer = [&](BufferType type) {
       switch (type) {
         case BufferType::INPUT:

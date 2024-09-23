@@ -81,11 +81,10 @@ def main(
     execution_plan_name: str,
     execution_plan_path: str,
     size: int,
-    nthreads_per_block: int,
     in_place: bool = True,
     dtype: cp.dtype = cp.float16,
     packet_type: PacketType = PacketType.LL16,
-    seed: int = 42 + MPI.COMM_WORLD.rank,
+    seed: int = 42,
 ):
     mscclpp_group = mscclpp_comm.CommGroup(MPI.COMM_WORLD)
     cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
@@ -151,7 +150,6 @@ if __name__ == "__main__":
     parser.add_argument("-n", "--execution_plan_name", type=str, required=True)
     parser.add_argument("-path", "--execution_plan_path", type=str, required=True)
     parser.add_argument("--size", type=str, required=True)
-    parser.add_argument("--nthreads_per_block", type=int, required=True)
     parser.add_argument("--in_place", type=str, default="true", help="Choose from true, false")
     parser.add_argument("--dtype", type=str, default="float16", help="Choose from float16, float32, int32")
     parser.add_argument("--packet_type", type=str, default="LL16", help="Choose from LL8, LL16")
@@ -168,7 +166,6 @@ if __name__ == "__main__":
         args.execution_plan_name,
         args.execution_plan_path,
         buffer_size,
-        args.nthreads_per_block,
         args.in_place.lower() == "true",
         dtype,
         packet_type,
