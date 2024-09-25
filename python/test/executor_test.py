@@ -142,7 +142,7 @@ def main(
     assert cp.allclose(determine_result_buf(sendbuf, recvbuf, in_place, execution_plan_name), expected, atol=1e-2 * mscclpp_group.nranks)
 
     mscclpp_group.barrier()
-    execution_time = bench_time(100, 10, executor_func)
+    execution_time = bench_time(10, 10, executor_func)
     if npkit_dump_dir is not None:
         npkit.dump(npkit_dump_dir)
         npkit.shutdown()
