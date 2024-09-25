@@ -20,6 +20,16 @@
         lsmod | grep nvidia_peermem
         ```
 
+## Build with Docker Images
+
+We provide docker images which package all prerequisites for MSCCL++. You can setup your dev environment with the following command.
+
+```bash
+$ docker run -it --privileged --net=host --ipc=host --gpus all ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2 mscclpp-dev bash
+```
+
+See all available images [here](https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp).
+
 ## Build from Source
 
 CMake 3.25 or later is required.
@@ -101,7 +111,7 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.
 
 ### Python Benchmark
 
-[Install the MSCCL++ Python package](https://github.com/microsoft/mscclpp/blob/chhwang/docs/docs/quickstart.md#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
+[Install the MSCCL++ Python package](#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
 
 ```bash
 # Choose `requirements_*.txt` according to your CUDA/ROCm version.
