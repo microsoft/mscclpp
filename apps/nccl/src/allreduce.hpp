@@ -432,6 +432,10 @@ __global__ void __launch_bounds__(512, 1)
       }
     }
   }
+  if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
+    outChannels[threadIdx.x].signal();
+    outChannels[threadIdx.x].wait();
+  }
 }
 
 template <typename T>
