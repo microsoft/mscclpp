@@ -35,29 +35,33 @@ __forceinline__ __device__ T clip(T val) {
 
 template <>
 __forceinline__ __device__ __half clip(__half val) {
-  val = __hmin(val, bit_cast<__half, unsigned short>(0x7bff));
   val = __hmax(val, bit_cast<__half, unsigned short>(0xfbff));
+  val = __hmin(val, bit_cast<__half, unsigned short>(0x7bff));
   return val;
 }
 
 template <>
 __forceinline__ __device__ __half2 clip(__half2 val) {
-  val.x = clip(val.x);
-  val.y = clip(val.y);
+  val.x = __hmax(val.x, bit_cast<__half, unsigned short>(0xfbff));
+  val.x = __hmin(val.x, bit_cast<__half, unsigned short>(0x7bff));
+  val.y = __hmax(val.y, bit_cast<__half, unsigned short>(0xfbff));
+  val.y = __hmin(val.y, bit_cast<__half, unsigned short>(0x7bff));
   return val;
 }
 
 template <>
 __forceinline__ __device__ __bfloat16 clip(__bfloat16 val) {
-  val = __hmin(val, bit_cast<__bfloat16, unsigned short>(0x7f80));
   val = __hmax(val, bit_cast<__bfloat16, unsigned short>(0xff80));
+  val = __hmin(val, bit_cast<__bfloat16, unsigned short>(0x7f80));
   return val;
 }
 
 template <>
 __forceinline__ __device__ __bfloat162 clip(__bfloat162 val) {
-  val.x = clip(val.x);
-  val.y = clip(val.y);
+  val.x = __hmax(val.x, bit_cast<__bfloat16, unsigned short>(0xff80));
+  val.x = __hmin(val.x, bit_cast<__bfloat16, unsigned short>(0x7f80));
+  val.y = __hmax(val.y, bit_cast<__bfloat16, unsigned short>(0xff80));
+  val.y = __hmin(val.y, bit_cast<__bfloat16, unsigned short>(0x7f80));
   return val;
 }
 
@@ -186,6 +190,17 @@ template <typename T>
 __forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem) {
   vectorSum(dst, src, nElem, blockIdx.x, gridDim.x);
 }
+
+// template <typename T>
+// __global__ void __launch_bounds__(32, 1)
+//     test(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
+//                       size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
+//                       size_t nelems, uint32_t flag) {
+//   // add 0.1f to all elements
+//   for (size_t i = threadIdx.x + blockIdx.x * gridDim.x; i < nelems; i += blockDim.x * gridDim.x) {
+//     buff[i] = add_elements<T>(buff[i], T(0.1f));
+//   }
+// }
 
 template <typename T>
 __global__ void __launch_bounds__(32, 1)
@@ -426,6 +441,10 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                       size_t nelems, cudaStream_t stream) {
   static uint32_t flag = 1;
 
+  // test<<<7, 32, 0, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset,
+  //                                                             channelScratchOffset, rank, nRanksPerNode, worldSize,
+  //                                                             nelems, flag++);
+
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
     int nBlocks = 7;
     int nThreadsPerBlock = 32;
@@ -433,12 +452,12 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                                                                 channelScratchOffset, rank, nRanksPerNode, worldSize,
                                                                 nelems, flag++);
   } else if (sizeof(T) * nelems <= (1 << 20)) {
-    int nBlocks = 28;
-    int nThreadsPerBlock = 1024;
-    if (nelems >= 8192) {
-      nBlocks = 56;
-      nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
-    }
+    int nBlocks = 7;
+    int nThreadsPerBlock = 64 * 7;
+    // if (nelems >= 8192) {
+    //   nBlocks = 56;
+    //   nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
+    // }
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset,
                                                          channelScratchOffset, rank, nRanksPerNode, worldSize, nelems,
                                                          flag++);
