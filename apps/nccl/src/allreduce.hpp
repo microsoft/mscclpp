@@ -35,17 +35,17 @@ __forceinline__ __device__ T clip(T val) {
 
 template <>
 __forceinline__ __device__ __half clip(__half val) {
-  val = __hmax(val, bit_cast<__half, unsigned short>(0xfbff));
   val = __hmin(val, bit_cast<__half, unsigned short>(0x7bff));
+  val = __hmax(val, bit_cast<__half, unsigned short>(0xfbff));
   return val;
 }
 
 template <>
 __forceinline__ __device__ __half2 clip(__half2 val) {
-  val.x = __hmax(val.x, bit_cast<__half, unsigned short>(0xfbff));
   val.x = __hmin(val.x, bit_cast<__half, unsigned short>(0x7bff));
-  val.y = __hmax(val.y, bit_cast<__half, unsigned short>(0xfbff));
+  val.x = __hmax(val.x, bit_cast<__half, unsigned short>(0xfbff));
   val.y = __hmin(val.y, bit_cast<__half, unsigned short>(0x7bff));
+  val.y = __hmax(val.y, bit_cast<__half, unsigned short>(0xfbff));
   return val;
 }
 
