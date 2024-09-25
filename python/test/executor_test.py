@@ -150,7 +150,7 @@ if __name__ == "__main__":
     parser.add_argument("-n", "--execution_plan_name", type=str, required=True)
     parser.add_argument("-path", "--execution_plan_path", type=str, required=True)
     parser.add_argument("--size", type=str, required=True)
-    parser.add_argument("--in_place", type=str, default="true", help="Choose from true, false")
+    parser.add_argument("--in_place", action='store_true', help='flag to define an in-place operation')
     parser.add_argument("--dtype", type=str, default="float16", help="Choose from float16, float32, int32")
     parser.add_argument("--packet_type", type=str, default="LL16", help="Choose from LL8, LL16")
     parser.add_argument("--seed", type=int, default=42)
@@ -166,7 +166,7 @@ if __name__ == "__main__":
         args.execution_plan_name,
         args.execution_plan_path,
         buffer_size,
-        args.in_place.lower() == "true",
+        args.in_place,
         dtype,
         packet_type,
         args.seed,
