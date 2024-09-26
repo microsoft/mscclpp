@@ -35,17 +35,19 @@ __forceinline__ __device__ T clip(T val) {
 
 template <>
 __forceinline__ __device__ __half clip(__half val) {
-  val = __hmin(val, bit_cast<__half, unsigned short>(0x7bff));
   val = __hmax(val, bit_cast<__half, unsigned short>(0xfbff));
+  val = __hmin(val, bit_cast<__half, unsigned short>(0x7bff));
+
   return val;
 }
 
 template <>
 __forceinline__ __device__ __half2 clip(__half2 val) {
-  val.x = __hmin(val.x, bit_cast<__half, unsigned short>(0x7bff));
   val.x = __hmax(val.x, bit_cast<__half, unsigned short>(0xfbff));
-  val.y = __hmin(val.y, bit_cast<__half, unsigned short>(0x7bff));
+  val.x = __hmin(val.x, bit_cast<__half, unsigned short>(0x7bff));
+  
   val.y = __hmax(val.y, bit_cast<__half, unsigned short>(0xfbff));
+  val.y = __hmin(val.y, bit_cast<__half, unsigned short>(0x7bff));
   return val;
 }
 
@@ -255,9 +257,9 @@ __global__ void __launch_bounds__(1024, 1)
   if (worldSize != nRanksPerNode) return;
   nelems = nelems / (sizeof(int) / sizeof(T));
   const int nPeers = nRanksPerNode - 1;
-  const size_t nPkts = nelems;
+  const size_t nPkts = nelems/2;
   const int nelemsPerRank = nelems / worldSize;
-  const int nPktsPerRank = nelemsPerRank;
+  const int nPktsPerRank = nelemsPerRank/2;
   // thread block & channel info
   const int nBlocksPerPeer = gridDim.x / nPeers;
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
@@ -265,11 +267,12 @@ __global__ void __launch_bounds__(1024, 1)
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   void* scratchBuff = (void*)((char*)scratch + channelScratchOffset);
-  size_t scratchOffset = channelScratchOffset + rank * nPktsPerRank * sizeof(mscclpp::LL8Packet);
-  size_t scratchResultOffset = channelScratchOffset + 2 * nPkts * sizeof(mscclpp::LL8Packet);
+  size_t scratchOffset = channelScratchOffset + rank * nPktsPerRank * sizeof(mscclpp::LLPacket);
+  size_t scratchResultOffset = channelScratchOffset + 2 * nPkts * sizeof(mscclpp::LLPacket);
   size_t srcOffset = remoteRank * nelemsPerRank * sizeof(int) + channelDataOffset;
-  uint32_t* src = (uint32_t*)((char*)buff + rank * nelemsPerRank * sizeof(int));
-  uint32_t* dst = (uint32_t*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
+
+  uint2* src = (uint2*)((char*)buff + rank * nelemsPerRank * sizeof(int));
+  uint2* dst = (uint2*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
 
   // Put channels into shared memory, read channel info from global memory is unexpectable slow.
   __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> channels[NRANKS_PER_NODE - 1];
@@ -280,35 +283,47 @@ __global__ void __launch_bounds__(1024, 1)
   __syncwarp();
 
   // step 1: write to scratch buffer
-  channels[peerIdx].putPackets<mscclpp::LL8Packet>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
+  channels[peerIdx].putPackets<mscclpp::LLPacket>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
                                                    blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
-    uint32_t data = 0;
+    //uint32_t data = 0;
+    uint2 data = make_uint2(0, 0);
     for (int index = 0; index < nPeers; index++) {
       const int remoteRank = index < rank ? index : index + 1;
-      mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)scratchBuff + remoteRank * nPktsPerRank;
-      uint32_t val = dstPkt[idx].read(flag, -1);
-      data = add_vectors<T>(val, data);
+      mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
+      //uint32_t val = dstPkt[idx].read(flag, -1);
+      uint2 val = dstPkt[idx].read(flag);
+      //data = add_vectors<T>(val, data);
+      data.x = add_vectors<T>(val.x, data.x);
+      data.y = add_vectors<T>(val.y, data.y); 
     }
-    data = add_vectors<T>(data, src[idx]);
-    dst[idx] = data;
+    data.x = add_vectors<T>(data.x, src[idx].x);
+    data.y = add_vectors<T>(data.y, src[idx].y);	
 
-    mscclpp::LL8Packet packet;
-    packet.data = data;
-    packet.flag = flag;
-    size_t offset = scratchResultOffset / sizeof(mscclpp::LL8Packet) + (idx + rank * nPktsPerRank);
+    dst[idx].x = data.x;
+    dst[idx].y = data.y;
+
+    mscclpp::LLPacket packet;
+    /*packet.data = data;
+    packet.flag = flag;*/
+    packet.data1 = data.x;
+    packet.flag1 = flag;
+    packet.data2 = data.y;
+    packet.flag2 = flag;
+    size_t offset = scratchResultOffset / sizeof(mscclpp::LLPacket) + (idx + rank * nPktsPerRank);
     for (int index = 0; index < nPeers; index++) {
       channels[index].write(offset, packet);
     }
   }
   // step 3: get data result from scratch buffer
-  mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)((char*)scratch + scratchResultOffset);
+  mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)scratch + scratchResultOffset);
   const int dstOffset = remoteRank * nPktsPerRank;
-  uint32_t* result = (uint32_t*)((char*)resultBuff + remoteRank * nelemsPerRank * sizeof(int));
+  uint2* result = (uint2*)((char*)resultBuff + remoteRank * nelemsPerRank * sizeof(int));
   for (int idx = threadIdx.x + localBlockIdx * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * nBlocksPerPeer) {
-    uint32_t data = dstPkt[idx + dstOffset].read(flag, -1);
-    result[idx] = data;
+    uint2 data = dstPkt[idx + dstOffset].read(flag, -1);
+    result[idx].x = data.x;
+    result[idx].y = data.y;
   }
 }
 
