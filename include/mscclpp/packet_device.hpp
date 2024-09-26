@@ -49,8 +49,10 @@ union alignas(16) LL16Packet {
 #else  // !defined(MSCCLPP_DEVICE_CUDA)
     uint4 reg = make_uint4(val1, flag, val2, flag);
     ulonglong2* p = reinterpret_cast<ulonglong2*>(&reg);
-    atomicStore(&(raw_.x), p->x, memoryOrderRelaxed);
-    atomicStore(&(raw_.y), p->y, memoryOrderRelaxed);
+    /*atomicStore(&(raw_.x), p->x, memoryOrderRelaxed);
+    atomicStore(&(raw_.y), p->y, memoryOrderRelaxed);*/
+    __builtin_nontemporal_store(p->x, &(raw_.x));
+    __builtin_nontemporal_store(p->y, &(raw_.y));
 #endif
   }
 
