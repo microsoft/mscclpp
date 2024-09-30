@@ -382,7 +382,7 @@ __global__ void __launch_bounds__(512, 1)
     __syncthreads();
     // Starts allgather
     for (size_t idx = threadIdx.x; idx < nInt4PerChunk; idx += blockDim.x) {
-      for (int i = 0; i < nPeer; i++) {
+      for (int i = 0; i < NPEERS; i++) {
         const int peerIdx = (i + blockIdx.x) % nPeer;
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = buff4[nInt4PerRank * remoteRank + idx + offsetOfThisBlock];
@@ -399,13 +399,13 @@ __global__ void __launch_bounds__(512, 1)
 
     for (size_t idx = threadIdx.x; idx < nInt4PerChunk; idx += blockDim.x) {
       int4 data = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
-      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
         data = add_vectors<T>(val, data);
       }
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
-      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
         outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
                                    data);
       }
@@ -419,7 +419,7 @@ __global__ void __launch_bounds__(512, 1)
     }
     __syncthreads();
     for (size_t idx = threadIdx.x; idx < restNInt4; idx += blockDim.x) {
-      for (int i = 0; i < nPeer; i++) {
+      for (int i = 0; i < NPEERS; i++) {
         const int peerIdx = (i + blockIdx.x) % nPeer;
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = buff4[nInt4PerRank * remoteRank + idx + offsetOfThisBlock];
@@ -435,13 +435,13 @@ __global__ void __launch_bounds__(512, 1)
 
     for (size_t idx = threadIdx.x; idx < restNInt4; idx += blockDim.x) {
       int4 data = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
-      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
         data = add_vectors<T>(val, data);
       }
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
-      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
         outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
                                    data);
       }
