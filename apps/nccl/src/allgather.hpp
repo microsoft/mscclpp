@@ -102,6 +102,9 @@ __global__ void __launch_bounds__(1024, 1)
       }
     }
   }
+
+  deviceSyncer.sync(gridDim.x);
+
   if (threadIdx.x < nPeer) {
     smChans[threadIdx.x].relaxedSignal();
     smChans[threadIdx.x].wait();

@@ -14,7 +14,6 @@
 #include "common.hpp"
 #include "gpu_data_types.hpp"
 
-__device__ mscclpp::DeviceSyncer deviceSyncer;
 
 template <typename To, typename From>
 __forceinline__ __device__ To bit_cast(const From& src) {

@@ -16,4 +16,8 @@ constexpr int NPEERS = 7;
 
 constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread-blocks * 8 ranks * 256KB = 70MB
 
+#include <mscclpp/concurrency_device.hpp>
+
+__device__ mscclpp::DeviceSyncer deviceSyncer;
+
 #endif  // NCCL_COMMON_HPP_
