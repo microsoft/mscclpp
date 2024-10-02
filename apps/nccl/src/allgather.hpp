@@ -102,6 +102,10 @@ __global__ void __launch_bounds__(1024, 1)
       }
     }
   }
+  if (threadIdx.x < nPeer) {
+    smChans[threadIdx.x].relaxedSignal();
+    smChans[threadIdx.x].wait();
+  }
 }
 
 template <bool IsOutOfPlace, typename T>
