@@ -254,10 +254,18 @@ __global__ void __launch_bounds__(1024, 1)
                size_t nelems, uint32_t flag) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
-  nelems = nelems / (sizeof(int) / sizeof(T));
+  
+  if (sizeof(T) == 2)
+          nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
+  else
+        nelems = nelems / (sizeof(int) / sizeof(T));
+  
   const int nPeers = nRanksPerNode - 1;
   const size_t nPkts = nelems/2;
-  const int nelemsPerRank = nelems / worldSize;
+  
+  int nelemsPerRank = nelems / worldSize;
+  if ((nelemsPerRank % 2)) nelemsPerRank = (nelemsPerRank * sizeof(T) + sizeof(T)) / sizeof(T);
+
   const int nPktsPerRank = nelemsPerRank/2;
   // thread block & channel info
   const int nBlocksPerPeer = gridDim.x / nPeers;
