@@ -295,7 +295,7 @@ __global__ void __launch_bounds__(1024, 1)
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     //uint32_t data = 0;
-    uint2 data = make_uint2(0, 0);
+    uint2 data = src[idx];
     for (int index = 0; index < NPEERS; index++) {
       const int remoteRank = index < rank ? index : index + 1;
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
@@ -305,8 +305,6 @@ __global__ void __launch_bounds__(1024, 1)
       data.x = add_vectors<T>(val.x, data.x);
       data.y = add_vectors<T>(val.y, data.y); 
     }
-    data.x = add_vectors<T>(data.x, src[idx].x);
-    data.y = add_vectors<T>(data.y, src[idx].y);	
 
     dst[idx].x = data.x;
     dst[idx].y = data.y;
