@@ -630,7 +630,6 @@ def test_executor(mpi_group: MpiGroup, filename: str):
         sendbuf.nbytes,
         sendbuf.nbytes,
         DataType.float16,
-        512,
         execution_plan,
         stream.ptr,
     )

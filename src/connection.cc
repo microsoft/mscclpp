@@ -16,9 +16,12 @@
 
 namespace mscclpp {
 
-void validateTransport(RegisteredMemory mem, Transport transport) {
+void validateTransport(RegisteredMemory mem, Transport transport, uint64_t offset = 0, uint64_t size = 0) {
   if (!mem.transports().has(transport)) {
     throw Error("RegisteredMemory does not support this transport", ErrorCode::InvalidUsage);
+  }
+  if (offset + size > mem.size()) {
+    throw Error("RegisteredMemory out of bounds", ErrorCode::InvalidUsage);
   }
 }
 
@@ -59,8 +62,8 @@ Transport CudaIpcConnection::remoteTransport() { return Transport::CudaIpc; }
 
 void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                               uint64_t size) {
-  validateTransport(dst, remoteTransport());
-  validateTransport(src, transport());
+  validateTransport(dst, remoteTransport(), dstOffset, size);
+  validateTransport(src, transport(), srcOffset, size);
 
   char* dstPtr = (char*)dst.data();
   char* srcPtr = (char*)src.data();
@@ -115,8 +118,8 @@ Transport IBConnection::remoteTransport() { return remoteTransport_; }
 
 void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                          uint64_t size) {
-  validateTransport(dst, remoteTransport());
-  validateTransport(src, transport());
+  validateTransport(dst, remoteTransport(), dstOffset, size);
+  validateTransport(src, transport(), srcOffset, size);
 
   auto dstTransportInfo = getImpl(dst)->getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
@@ -231,8 +234,8 @@ Transport EthernetConnection::remoteTransport() { return Transport::Ethernet; }
 void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                                uint64_t size) {
   // Validating Transport Protocol
-  validateTransport(dst, remoteTransport());
-  validateTransport(src, transport());
+  validateTransport(dst, remoteTransport(), dstOffset, size);
+  validateTransport(src, transport(), srcOffset, size);
 
   // Initializing Variables
   char* srcPtr = reinterpret_cast<char*>(src.data()) + srcOffset / sizeof(char);
