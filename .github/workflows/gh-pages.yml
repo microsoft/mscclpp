@@ -9,7 +9,7 @@ on:
     - main
 
 jobs:
-  docs-build:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
