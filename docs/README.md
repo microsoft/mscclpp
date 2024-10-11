@@ -3,7 +3,7 @@
 1. Install `doxygen`.
 
     ```bash
-    $ sudo apt-get install doxygen
+    $ sudo apt-get install doxygen graphviz
     ```
 
 2. Install Python packages below. If you install them on the user's local, you need to include `~/.local/bin` to `$PATH` (to use `sphinx-build`).
