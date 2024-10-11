@@ -24,6 +24,7 @@ Getting Started
 Design
 -------
 - :doc:`Design <design/design>` doc for those who want to understand the internals of MSCCL++.
+- :doc:`NCCL over MSCCL++ <design/nccl-over-mscclpp>` doc for those who want to understand how to use NCCL over MSCCL++.
 
 .. toctree::
    :maxdepth: 1
@@ -31,6 +32,7 @@ Design
    :hidden:
 
    design/design
+   design/nccl-over-mscclpp
 
 Performance
 ---------------

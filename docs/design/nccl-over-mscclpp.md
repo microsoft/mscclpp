@@ -1,6 +1,7 @@
-## NCCL Over MSCCL++
+# NCCL Over MSCCL++
 
-### Limitations
+(limitations)=
+## Limitations
 
 Current NCCL over MSCCL++ has a few limitations.
 
@@ -8,7 +9,8 @@ Current NCCL over MSCCL++ has a few limitations.
 * Multi-node communication is not supported yet.
 * Currently, collective communication functions may not work correctly if the buffer address is differed from that of previous function calls while sharing the same base address (returned by [cuMemGetAddressRange](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g64fee5711274a2a0573a789c94d8299b)) with the previous address. This is because the current implementation performs zero-copy communication over user buffers, and it is difficult to efficiently inform all ranks if the buffer address dynamically changes.
 
-### API Support Table
+(api-support-table)=
+## API Support Table
 
 The table below lists all NCCL APIs (v2.21). We may cover more APIs in the future.
 
@@ -45,7 +47,7 @@ The table below lists all NCCL APIs (v2.21). We may cover more APIs in the futur
 | ncclRedOpCreatePreMulSum | X         |
 | ncclRedOpDestroy         | X         |
 
-### Executor Support
+## Executor Support
 
 The executor is a versatile tool designed to specify how mscclpp executes algorithms. Currently, only the allReduce operation allows for algorithm customization. The following environment variables can be managed:
 
@@ -56,9 +58,13 @@ The executor is a versatile tool designed to specify how mscclpp executes algori
 - ALLREDUCE_SMALL_MSG_BOUNDARY: Defines the size threshold at which the algorithm will switch between fallback code and the customized algorithm for small messages.
 - ALLREDUCE_LARGE_MSG_BOUNDARY: Defines the size threshold at which the algorithm will switch between the customized algorithm for small messages and that for larger messages.
 
-| <center>Decision Flowchart for Message Size-Based Algorithm Execution |
-|-------------------------------|
-| <img src="../.././docs/figs/size_boundary_diagram.png" alt="MSCCL++ Abstractions" style="width: 800px;"/> |
+```{figure} ../figs/size_boundary_diagram.png
+:name: MMSCCL++ Abstractions
+:alt: MSCCL++ Abstractions
+:align: center
+
+Decision Flowchart for Message Size-Based Algorithm Execution
+```
 
 This is an example of executing the interface with the executor:
 ``` bash

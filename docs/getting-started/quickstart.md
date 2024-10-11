@@ -30,6 +30,7 @@ $ docker run -it --privileged --net=host --ipc=host --gpus all ghcr.io/microsoft
 
 See all available images [here](https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp).
 
+(build-from-source)=
 ## Build from Source
 
 CMake 3.25 or later is required.
@@ -64,6 +65,7 @@ $ make -j mscclpp mscclpp_static
 $ sudo make install/fast
 ```
 
+(install-from-source-python-module)=
 ## Install from Source (Python Module)
 
 Python 3.8 or later is required.
@@ -173,4 +175,4 @@ mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/app
 
 If MSCCL++ is built on AMD platforms, `libmscclpp_nccl.so` would replace the [RCCL](https://github.com/ROCm/rccl) library (i.e., `librccl.so`).
 
-See limitations of the current NCCL over MSCCL++ from [here](../apps/nccl/README.md#limitations).
+See limitations of the current NCCL over MSCCL++ from [here](../design/nccl-over-mscclpp.md#limitations).
