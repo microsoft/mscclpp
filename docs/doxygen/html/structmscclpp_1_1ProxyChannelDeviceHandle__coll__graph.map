@@ -1,0 +1,6 @@
+<map id="mscclpp::ProxyChannelDeviceHandle" name="mscclpp::ProxyChannelDeviceHandle">
+<area shape="rect" id="node1" title=" " alt="" coords="178,199,397,240"/>
+<area shape="rect" id="node2" href="$structmscclpp_1_1FifoDeviceHandle.html" title=" " alt="" coords="5,102,204,129"/>
+<area shape="rect" id="node3" href="$structmscclpp_1_1ProxyTrigger.html" title=" " alt="" coords="22,5,187,32"/>
+<area shape="rect" id="node4" href="$structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle.html" title="Device&#45;side handle for Host2DeviceSemaphore." alt="" coords="228,95,469,136"/>
+</map>

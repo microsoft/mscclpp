@@ -1,0 +1,4 @@
+<map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
+<area shape="rect" id="node1" href="$classmscclpp_1_1Bootstrap.html" title="Base class for bootstraps." alt="" coords="5,5,152,32"/>
+<area shape="rect" id="node2" href="$classmscclpp_1_1TcpBootstrap.html" title="A native implementation of the bootstrap using TCP sockets." alt="" coords="200,5,368,32"/>
+</map>

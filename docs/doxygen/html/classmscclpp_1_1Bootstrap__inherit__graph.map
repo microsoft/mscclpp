@@ -1,0 +1,4 @@
+<map id="mscclpp::Bootstrap" name="mscclpp::Bootstrap">
+<area shape="rect" id="node1" title="Base class for bootstraps." alt="" coords="16,5,163,32"/>
+<area shape="rect" id="node2" href="$classmscclpp_1_1TcpBootstrap.html" title="A native implementation of the bootstrap using TCP sockets." alt="" coords="5,80,173,107"/>
+</map>

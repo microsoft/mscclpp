@@ -1,0 +1,94 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1DeviceSyncer" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::DeviceSyncer</compoundname>
+    <includes refid="concurrency__device_8hpp" local="no">concurrency_device.hpp</includes>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1DeviceSyncer_1a68c5205e734ed727b23533551bcde7ee" prot="private" static="no" mutable="no">
+        <type>unsigned int</type>
+        <definition>unsigned int mscclpp::DeviceSyncer::flag_</definition>
+        <argsstring></argsstring>
+        <name>flag_</name>
+        <briefdescription>
+<para>The flag to indicate whether the barrier is reached by the latest thread. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/concurrency_device.hpp" line="49" column="16" bodyfile="/root/mscclpp/include/mscclpp/concurrency_device.hpp" bodystart="49" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1DeviceSyncer_1a1d3f01397f76269e74be17d42efb9083" prot="private" static="no" mutable="no">
+        <type>unsigned int</type>
+        <definition>unsigned int mscclpp::DeviceSyncer::count_</definition>
+        <argsstring></argsstring>
+        <name>count_</name>
+        <briefdescription>
+<para>The counter of synchronized blocks. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/concurrency_device.hpp" line="51" column="16" bodyfile="/root/mscclpp/include/mscclpp/concurrency_device.hpp" bodystart="51" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1DeviceSyncer_1a1ff2eb8aaca9ee0e4508a25f47a15165" prot="private" static="no" mutable="no">
+        <type>unsigned int</type>
+        <definition>unsigned int mscclpp::DeviceSyncer::preFlag_</definition>
+        <argsstring></argsstring>
+        <name>preFlag_</name>
+        <briefdescription>
+<para>The flag to indicate whether to increase or decrease flag_. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/concurrency_device.hpp" line="53" column="16" bodyfile="/root/mscclpp/include/mscclpp/concurrency_device.hpp" bodystart="53" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="structmscclpp_1_1DeviceSyncer_1a899a8f9e921b3cebd6db9d60258f735d" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::DeviceSyncer::DeviceSyncer</definition>
+        <argsstring>()=default</argsstring>
+        <name>DeviceSyncer</name>
+        <briefdescription>
+<para>Construct a new <ref refid="structmscclpp_1_1DeviceSyncer" kindref="compound">DeviceSyncer</ref> object. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/concurrency_device.hpp" line="16" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1DeviceSyncer_1a6edd8ef7432021e3b307f91efb147b8e" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::DeviceSyncer::~DeviceSyncer</definition>
+        <argsstring>()=default</argsstring>
+        <name>~DeviceSyncer</name>
+        <briefdescription>
+<para>Destroy the <ref refid="structmscclpp_1_1DeviceSyncer" kindref="compound">DeviceSyncer</ref> object. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/concurrency_device.hpp" line="19" column="3"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>A device-wide barrier. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/concurrency_device.hpp" line="13" column="19" bodyfile="/root/mscclpp/include/mscclpp/concurrency_device.hpp" bodystart="13" bodyend="54"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1DeviceSyncer_1a1d3f01397f76269e74be17d42efb9083" prot="private" virt="non-virtual"><scope>mscclpp::DeviceSyncer</scope><name>count_</name></member>
+      <member refid="structmscclpp_1_1DeviceSyncer_1a899a8f9e921b3cebd6db9d60258f735d" prot="public" virt="non-virtual"><scope>mscclpp::DeviceSyncer</scope><name>DeviceSyncer</name></member>
+      <member refid="structmscclpp_1_1DeviceSyncer_1a68c5205e734ed727b23533551bcde7ee" prot="private" virt="non-virtual"><scope>mscclpp::DeviceSyncer</scope><name>flag_</name></member>
+      <member refid="structmscclpp_1_1DeviceSyncer_1a1ff2eb8aaca9ee0e4508a25f47a15165" prot="private" virt="non-virtual"><scope>mscclpp::DeviceSyncer</scope><name>preFlag_</name></member>
+      <member refid="structmscclpp_1_1DeviceSyncer_1a6edd8ef7432021e3b307f91efb147b8e" prot="public" virt="non-virtual"><scope>mscclpp::DeviceSyncer</scope><name>~DeviceSyncer</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

@@ -1,0 +1,95 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1IbError" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::IbError</compoundname>
+    <basecompoundref refid="classmscclpp_1_1BaseError" prot="public" virt="non-virtual">mscclpp::BaseError</basecompoundref>
+    <includes refid="errors_8hpp" local="no">errors.hpp</includes>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1IbError_1a661ceae408585a232e41c87079aef1a0" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::IbError::IbError</definition>
+        <argsstring>(const std::string &amp;message, int errorCode)</argsstring>
+        <name>IbError</name>
+        <param>
+          <type>const std::string &amp;</type>
+          <declname>message</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>errorCode</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/errors.hpp" line="92" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1IbError_1aedb17c2b5e8fd1f83fd12d4905a1e377" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type></type>
+        <definition>virtual mscclpp::IbError::~IbError</definition>
+        <argsstring>()=default</argsstring>
+        <name>~IbError</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/errors.hpp" line="93" column="11"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>An error from an ibverbs library call. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <inheritancegraph>
+      <node id="3">
+        <label>std::runtime_error</label>
+      </node>
+      <node id="1">
+        <label>mscclpp::IbError</label>
+        <link refid="classmscclpp_1_1IbError"/>
+        <childnode refid="2" relation="public-inheritance">
+        </childnode>
+      </node>
+      <node id="2">
+        <label>mscclpp::BaseError</label>
+        <link refid="classmscclpp_1_1BaseError"/>
+        <childnode refid="3" relation="public-inheritance">
+        </childnode>
+      </node>
+    </inheritancegraph>
+    <collaborationgraph>
+      <node id="3">
+        <label>std::runtime_error</label>
+      </node>
+      <node id="1">
+        <label>mscclpp::IbError</label>
+        <link refid="classmscclpp_1_1IbError"/>
+        <childnode refid="2" relation="public-inheritance">
+        </childnode>
+      </node>
+      <node id="2">
+        <label>mscclpp::BaseError</label>
+        <link refid="classmscclpp_1_1BaseError"/>
+        <childnode refid="3" relation="public-inheritance">
+        </childnode>
+      </node>
+    </collaborationgraph>
+    <location file="/root/mscclpp/include/mscclpp/errors.hpp" line="90" column="31" bodyfile="/root/mscclpp/include/mscclpp/errors.hpp" bodystart="90" bodyend="94"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1BaseError_1aea99c987306c47a44a8720b1bddf8901" prot="public" virt="non-virtual"><scope>mscclpp::IbError</scope><name>BaseError</name></member>
+      <member refid="classmscclpp_1_1BaseError_1a1be995088a556e5627ba5a06d3b698d8" prot="public" virt="non-virtual"><scope>mscclpp::IbError</scope><name>BaseError</name></member>
+      <member refid="classmscclpp_1_1BaseError_1a10e56452844c8f3b59ffdd5dd25bf805" prot="protected" virt="non-virtual"><scope>mscclpp::IbError</scope><name>errorCode_</name></member>
+      <member refid="classmscclpp_1_1BaseError_1af17f47caed93cb0b5f73994d6a636258" prot="public" virt="non-virtual"><scope>mscclpp::IbError</scope><name>getErrorCode</name></member>
+      <member refid="classmscclpp_1_1IbError_1a661ceae408585a232e41c87079aef1a0" prot="public" virt="non-virtual"><scope>mscclpp::IbError</scope><name>IbError</name></member>
+      <member refid="classmscclpp_1_1BaseError_1a7ffe97152f9083131bfd7d3eb27c4751" prot="protected" virt="non-virtual"><scope>mscclpp::IbError</scope><name>message_</name></member>
+      <member refid="classmscclpp_1_1BaseError_1ac3b7c44b7d625195e19e97e4407b7f65" prot="public" virt="non-virtual"><scope>mscclpp::IbError</scope><name>what</name></member>
+      <member refid="classmscclpp_1_1BaseError_1a3e83519aadf3747f6325b6fc2abf53ea" prot="public" virt="virtual"><scope>mscclpp::IbError</scope><name>~BaseError</name></member>
+      <member refid="classmscclpp_1_1IbError_1aedb17c2b5e8fd1f83fd12d4905a1e377" prot="public" virt="virtual"><scope>mscclpp::IbError</scope><name>~IbError</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

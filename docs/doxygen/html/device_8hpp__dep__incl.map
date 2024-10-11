@@ -1,0 +1,19 @@
+<map id="device.hpp" name="device.hpp">
+<area shape="rect" id="node1" title=" " alt="" coords="525,5,619,32"/>
+<area shape="rect" id="node2" href="$atomic__device_8hpp.html" title=" " alt="" coords="22,80,167,107"/>
+<area shape="rect" id="node4" href="$poll__device_8hpp.html" title=" " alt="" coords="191,80,315,107"/>
+<area shape="rect" id="node5" href="$fifo__device_8hpp.html" title=" " alt="" coords="339,80,461,107"/>
+<area shape="rect" id="node10" href="$npkit_8hpp.html" title=" " alt="" coords="683,80,765,107"/>
+<area shape="rect" id="node11" href="$nvls__device_8hpp.html" title=" " alt="" coords="790,80,917,107"/>
+<area shape="rect" id="node13" href="$packet__device_8hpp.html" title=" " alt="" coords="941,80,1083,107"/>
+<area shape="rect" id="node14" href="$semaphore__device_8hpp.html" title=" " alt="" coords="485,80,659,107"/>
+<area shape="rect" id="node3" href="$concurrency__device_8hpp.html" title=" " alt="" coords="5,155,184,181"/>
+<area shape="rect" id="node6" href="$fifo_8hpp.html" title=" " alt="" coords="209,155,279,181"/>
+<area shape="rect" id="node9" href="$proxy__channel__device_8hpp.html" title=" " alt="" coords="304,155,499,181"/>
+<area shape="rect" id="node7" href="$proxy_8hpp.html" title=" " alt="" coords="240,229,325,256"/>
+<area shape="rect" id="node8" href="$proxy__channel_8hpp.html" title=" " alt="" coords="329,304,474,331"/>
+<area shape="rect" id="node12" href="$nvls_8hpp.html" title=" " alt="" coords="872,155,949,181"/>
+<area shape="rect" id="node15" href="$semaphore_8hpp.html" title=" " alt="" coords="523,155,645,181"/>
+<area shape="rect" id="node17" href="$sm__channel__device_8hpp.html" title=" " alt="" coords="669,155,848,181"/>
+<area shape="rect" id="node16" href="$sm__channel_8hpp.html" title=" " alt="" coords="577,229,705,256"/>
+</map>

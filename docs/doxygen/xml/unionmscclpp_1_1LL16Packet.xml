@@ -1,0 +1,102 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="unionmscclpp_1_1LL16Packet" kind="union" language="C++" prot="public">
+    <compoundname>mscclpp::LL16Packet</compoundname>
+    <includes refid="packet__device_8hpp" local="no">packet_device.hpp</includes>
+      <sectiondef kind="public-type">
+      <memberdef kind="typedef" id="unionmscclpp_1_1LL16Packet_1a76d4e11d20cfb941d1cd5e42d204c086" prot="public" static="no">
+        <type>uint2</type>
+        <definition>using mscclpp::LL16Packet::Payload =  uint2</definition>
+        <argsstring></argsstring>
+        <name>Payload</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="27" column="3" bodyfile="/root/mscclpp/include/mscclpp/packet_device.hpp" bodystart="27" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="unionmscclpp_1_1LL16Packet_1a8fe40ee4780cc4d3c4b6fab7da5619ef" prot="public" static="no" mutable="no">
+        <type>uint32_t</type>
+        <definition>uint32_t mscclpp::LL16Packet::data1</definition>
+        <argsstring></argsstring>
+        <name>data1</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="22" column="14" bodyfile="/root/mscclpp/include/mscclpp/packet_device.hpp" bodystart="22" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1LL16Packet_1af699354b2885f59182ebe2e10e217acc" prot="public" static="no" mutable="no">
+        <type>uint32_t</type>
+        <definition>uint32_t mscclpp::LL16Packet::flag1</definition>
+        <argsstring></argsstring>
+        <name>flag1</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="23" column="14" bodyfile="/root/mscclpp/include/mscclpp/packet_device.hpp" bodystart="23" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1LL16Packet_1a822e4c583e14cab3bc7eab374ab321ea" prot="public" static="no" mutable="no">
+        <type>uint32_t</type>
+        <definition>uint32_t mscclpp::LL16Packet::data2</definition>
+        <argsstring></argsstring>
+        <name>data2</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="24" column="14" bodyfile="/root/mscclpp/include/mscclpp/packet_device.hpp" bodystart="24" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1LL16Packet_1ac9b64bf1e730b1bb0092f9373e342289" prot="public" static="no" mutable="no">
+        <type>uint32_t</type>
+        <definition>uint32_t mscclpp::LL16Packet::flag2</definition>
+        <argsstring></argsstring>
+        <name>flag2</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="25" column="14" bodyfile="/root/mscclpp/include/mscclpp/packet_device.hpp" bodystart="25" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1LL16Packet_1af79382c4460060aa678ffacb50ef960e" prot="public" static="no" mutable="no">
+        <type>struct mscclpp::LL16Packet::@1</type>
+        <definition>struct mscclpp::LL16Packet::@1 mscclpp::LL16Packet::@2</definition>
+        <argsstring></argsstring>
+        <name>@2</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="26" column="3"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>LL (low latency) protocol packet. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="19" column="24" bodyfile="/root/mscclpp/include/mscclpp/packet_device.hpp" bodystart="19" bodyend="102"/>
+    <listofallmembers>
+      <member refid="unionmscclpp_1_1LL16Packet_1a8fe40ee4780cc4d3c4b6fab7da5619ef" prot="public" virt="non-virtual"><scope>mscclpp::LL16Packet</scope><name>data1</name></member>
+      <member refid="unionmscclpp_1_1LL16Packet_1a822e4c583e14cab3bc7eab374ab321ea" prot="public" virt="non-virtual"><scope>mscclpp::LL16Packet</scope><name>data2</name></member>
+      <member refid="unionmscclpp_1_1LL16Packet_1af699354b2885f59182ebe2e10e217acc" prot="public" virt="non-virtual"><scope>mscclpp::LL16Packet</scope><name>flag1</name></member>
+      <member refid="unionmscclpp_1_1LL16Packet_1ac9b64bf1e730b1bb0092f9373e342289" prot="public" virt="non-virtual"><scope>mscclpp::LL16Packet</scope><name>flag2</name></member>
+      <member refid="unionmscclpp_1_1LL16Packet_1a76d4e11d20cfb941d1cd5e42d204c086" prot="public" virt="non-virtual"><scope>mscclpp::LL16Packet</scope><name>Payload</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

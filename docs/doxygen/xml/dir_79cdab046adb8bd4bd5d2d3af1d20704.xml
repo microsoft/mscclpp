@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="dir_79cdab046adb8bd4bd5d2d3af1d20704" kind="dir">
+    <compoundname>npkit</compoundname>
+    <innerfile refid="npkit_8hpp">npkit.hpp</innerfile>
+    <innerfile refid="npkit__event_8hpp">npkit_event.hpp</innerfile>
+    <innerfile refid="npkit__struct_8hpp">npkit_struct.hpp</innerfile>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/npkit/"/>
+  </compounddef>
+</doxygen>

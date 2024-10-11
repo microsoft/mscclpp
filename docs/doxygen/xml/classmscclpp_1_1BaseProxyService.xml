@@ -1,0 +1,88 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1BaseProxyService" kind="class" language="C++" prot="public" abstract="yes">
+    <compoundname>mscclpp::BaseProxyService</compoundname>
+    <derivedcompoundref refid="classmscclpp_1_1ProxyService" prot="public" virt="non-virtual">mscclpp::ProxyService</derivedcompoundref>
+    <includes refid="proxy__channel_8hpp" local="no">proxy_channel.hpp</includes>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1BaseProxyService_1af495272dc3ecf8fd6e14b6a4033a2601" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::BaseProxyService::BaseProxyService</definition>
+        <argsstring>()=default</argsstring>
+        <name>BaseProxyService</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="19" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1BaseProxyService_1a9fd21d53992189f1dece203418e5752c" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type></type>
+        <definition>virtual mscclpp::BaseProxyService::~BaseProxyService</definition>
+        <argsstring>()=default</argsstring>
+        <name>~BaseProxyService</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="20" column="11"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1BaseProxyService_1a16999668fd551642ba6870079f9fcfe9" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type>void</type>
+        <definition>virtual void mscclpp::BaseProxyService::startProxy</definition>
+        <argsstring>()=0</argsstring>
+        <name>startProxy</name>
+        <reimplementedby refid="classmscclpp_1_1ProxyService_1a3a7fee2e10b27ab739c3d4ad54d53e0d">startProxy</reimplementedby>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="21" column="16"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1BaseProxyService_1a7efff2a6d38ccf89640c2d0bf97c1b00" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type>void</type>
+        <definition>virtual void mscclpp::BaseProxyService::stopProxy</definition>
+        <argsstring>()=0</argsstring>
+        <name>stopProxy</name>
+        <reimplementedby refid="classmscclpp_1_1ProxyService_1aa6aa0c9f840452b053f278debd3ad5cd">stopProxy</reimplementedby>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="22" column="16"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Base class for proxy services. <ref refid="classmscclpp_1_1Proxy" kindref="compound">Proxy</ref> services are used to proxy data between devices. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <inheritancegraph>
+      <node id="1">
+        <label>mscclpp::BaseProxyService</label>
+        <link refid="classmscclpp_1_1BaseProxyService"/>
+      </node>
+      <node id="2">
+        <label>mscclpp::ProxyService</label>
+        <link refid="classmscclpp_1_1ProxyService"/>
+        <childnode refid="1" relation="public-inheritance">
+        </childnode>
+      </node>
+    </inheritancegraph>
+    <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="17" column="23" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel.hpp" bodystart="17" bodyend="23"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1BaseProxyService_1af495272dc3ecf8fd6e14b6a4033a2601" prot="public" virt="non-virtual"><scope>mscclpp::BaseProxyService</scope><name>BaseProxyService</name></member>
+      <member refid="classmscclpp_1_1BaseProxyService_1a16999668fd551642ba6870079f9fcfe9" prot="public" virt="pure-virtual"><scope>mscclpp::BaseProxyService</scope><name>startProxy</name></member>
+      <member refid="classmscclpp_1_1BaseProxyService_1a7efff2a6d38ccf89640c2d0bf97c1b00" prot="public" virt="pure-virtual"><scope>mscclpp::BaseProxyService</scope><name>stopProxy</name></member>
+      <member refid="classmscclpp_1_1BaseProxyService_1a9fd21d53992189f1dece203418e5752c" prot="public" virt="virtual"><scope>mscclpp::BaseProxyService</scope><name>~BaseProxyService</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

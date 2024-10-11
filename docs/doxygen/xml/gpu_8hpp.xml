@@ -1,0 +1,247 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="gpu_8hpp" kind="file" language="C++">
+    <compoundname>gpu.hpp</compoundname>
+    <includes local="no">cuda.h</includes>
+    <includes local="no">cuda_runtime.h</includes>
+    <includes local="no">linux/version.h</includes>
+    <includedby refid="core_8hpp" local="no">core.hpp</includedby>
+    <includedby refid="gpu__utils_8hpp" local="yes">gpu_utils.hpp</includedby>
+    <includedby refid="nvls__device_8hpp" local="no">nvls_device.hpp</includedby>
+    <incdepgraph>
+      <node id="4">
+        <label>linux/version.h</label>
+      </node>
+      <node id="3">
+        <label>cuda_runtime.h</label>
+      </node>
+      <node id="1">
+        <label>gpu.hpp</label>
+        <link refid="gpu_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="3" relation="include">
+        </childnode>
+        <childnode refid="4" relation="include">
+        </childnode>
+      </node>
+      <node id="2">
+        <label>cuda.h</label>
+      </node>
+    </incdepgraph>
+    <invincdepgraph>
+      <node id="3">
+        <label>executor.hpp</label>
+        <link refid="executor_8hpp"/>
+      </node>
+      <node id="2">
+        <label>core.hpp</label>
+        <link refid="core_8hpp"/>
+        <childnode refid="3" relation="include">
+        </childnode>
+        <childnode refid="4" relation="include">
+        </childnode>
+        <childnode refid="5" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+      </node>
+      <node id="9">
+        <label>nvls.hpp</label>
+        <link refid="nvls_8hpp"/>
+      </node>
+      <node id="10">
+        <label>nvls_device.hpp</label>
+        <link refid="nvls__device_8hpp"/>
+        <childnode refid="9" relation="include">
+        </childnode>
+      </node>
+      <node id="1">
+        <label>gpu.hpp</label>
+        <link refid="gpu_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="7" relation="include">
+        </childnode>
+        <childnode refid="10" relation="include">
+        </childnode>
+      </node>
+      <node id="5">
+        <label>semaphore.hpp</label>
+        <link refid="semaphore_8hpp"/>
+        <childnode refid="4" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+      </node>
+      <node id="4">
+        <label>proxy_channel.hpp</label>
+        <link refid="proxy__channel_8hpp"/>
+      </node>
+      <node id="6">
+        <label>sm_channel.hpp</label>
+        <link refid="sm__channel_8hpp"/>
+      </node>
+      <node id="7">
+        <label>gpu_utils.hpp</label>
+        <link refid="gpu__utils_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="8" relation="include">
+        </childnode>
+        <childnode refid="9" relation="include">
+        </childnode>
+        <childnode refid="5" relation="include">
+        </childnode>
+      </node>
+      <node id="8">
+        <label>npkit.hpp</label>
+        <link refid="npkit_8hpp"/>
+      </node>
+    </invincdepgraph>
+      <sectiondef kind="define">
+      <memberdef kind="define" id="gpu_8hpp_1a3cff8107d8747cb69a1c8a37a16ba71a" prot="public" static="no">
+        <name>USE_NVLS</name>
+        <initializer>((CUDART_VERSION &gt;= 12010) &amp;&amp; (LINUX_VERSION_CODE &gt;= KERNEL_VERSION(5, 6, 0)))</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu.hpp" line="100" column="10" bodyfile="/root/mscclpp/include/mscclpp/gpu.hpp" bodystart="100" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="define" id="gpu_8hpp_1a84f682e32e9d09458ba6d10a0778418d" prot="public" static="no">
+        <name>__syncshm</name>
+        <param></param>
+        <initializer>__syncthreads();</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu.hpp" line="109" column="10" bodyfile="/root/mscclpp/include/mscclpp/gpu.hpp" bodystart="109" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>MSCCLPP_GPU_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>MSCCLPP_GPU_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(__HIP_PLATFORM_AMD__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight></codeline>
+<codeline lineno="9"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;hip/hip_runtime.h&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="10"><highlight class="normal"></highlight></codeline>
+<codeline lineno="11"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>cudaError_t<sp/>=<sp/>hipError_t;</highlight></codeline>
+<codeline lineno="12"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>cudaGraph_t<sp/>=<sp/>hipGraph_t;</highlight></codeline>
+<codeline lineno="13"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>cudaGraphExec_t<sp/>=<sp/>hipGraphExec_t;</highlight></codeline>
+<codeline lineno="14"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>cudaDeviceProp<sp/>=<sp/>hipDeviceProp_t;</highlight></codeline>
+<codeline lineno="15"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>cudaStream_t<sp/>=<sp/>hipStream_t;</highlight></codeline>
+<codeline lineno="16"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>cudaStreamCaptureMode<sp/>=<sp/>hipStreamCaptureMode;</highlight></codeline>
+<codeline lineno="17"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>cudaMemcpyKind<sp/>=<sp/>hipMemcpyKind;</highlight></codeline>
+<codeline lineno="18"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>cudaIpcMemHandle_t<sp/>=<sp/>hipIpcMemHandle_t;</highlight></codeline>
+<codeline lineno="19"><highlight class="normal"></highlight></codeline>
+<codeline lineno="20"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>CUresult<sp/>=<sp/>hipError_t;</highlight></codeline>
+<codeline lineno="21"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>CUdeviceptr<sp/>=<sp/>hipDeviceptr_t;</highlight></codeline>
+<codeline lineno="22"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>CUmemGenericAllocationHandle<sp/>=<sp/>hipMemGenericAllocationHandle_t;</highlight></codeline>
+<codeline lineno="23"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>CUmemAllocationProp<sp/>=<sp/>hipMemAllocationProp;</highlight></codeline>
+<codeline lineno="24"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>CUmemAccessDesc<sp/>=<sp/>hipMemAccessDesc;</highlight></codeline>
+<codeline lineno="25"><highlight class="normal"></highlight></codeline>
+<codeline lineno="26"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>cudaSuccess<sp/>=<sp/>hipSuccess;</highlight></codeline>
+<codeline lineno="27"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>cudaStreamNonBlocking<sp/>=<sp/>hipStreamNonBlocking;</highlight></codeline>
+<codeline lineno="28"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>cudaStreamCaptureModeGlobal<sp/>=<sp/>hipStreamCaptureModeGlobal;</highlight></codeline>
+<codeline lineno="29"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>cudaStreamCaptureModeRelaxed<sp/>=<sp/>hipStreamCaptureModeRelaxed;</highlight></codeline>
+<codeline lineno="30"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>cudaHostAllocMapped<sp/>=<sp/>hipHostMallocMapped;</highlight></codeline>
+<codeline lineno="31"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>cudaHostAllocWriteCombined<sp/>=<sp/>hipHostMallocWriteCombined;</highlight></codeline>
+<codeline lineno="32"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>cudaMemcpyDefault<sp/>=<sp/>hipMemcpyDefault;</highlight></codeline>
+<codeline lineno="33"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>cudaMemcpyDeviceToDevice<sp/>=<sp/>hipMemcpyDeviceToDevice;</highlight></codeline>
+<codeline lineno="34"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>cudaMemcpyHostToDevice<sp/>=<sp/>hipMemcpyHostToDevice;</highlight></codeline>
+<codeline lineno="35"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>cudaMemcpyDeviceToHost<sp/>=<sp/>hipMemcpyDeviceToHost;</highlight></codeline>
+<codeline lineno="36"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>cudaIpcMemLazyEnablePeerAccess<sp/>=<sp/>hipIpcMemLazyEnablePeerAccess;</highlight></codeline>
+<codeline lineno="37"><highlight class="normal"></highlight></codeline>
+<codeline lineno="38"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>CU_MEM_ALLOCATION_TYPE_PINNED<sp/>=<sp/>hipMemAllocationTypePinned;</highlight></codeline>
+<codeline lineno="39"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>CU_MEM_LOCATION_TYPE_DEVICE<sp/>=<sp/>hipMemLocationTypeDevice;</highlight></codeline>
+<codeline lineno="40"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR<sp/>=<sp/>hipMemHandleTypePosixFileDescriptor;</highlight></codeline>
+<codeline lineno="41"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>CU_MEM_ACCESS_FLAGS_PROT_READWRITE<sp/>=<sp/>hipMemAccessFlagsProtReadWrite;</highlight></codeline>
+<codeline lineno="42"><highlight class="normal"></highlight></codeline>
+<codeline lineno="43"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>CUDA_SUCCESS</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="44"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>CUDA_SUCCESS<sp/>hipSuccess</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="45"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>CUDA_SUCCESS</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="46"><highlight class="normal"></highlight></codeline>
+<codeline lineno="47"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaGetErrorString(...)<sp/>hipGetErrorString(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="48"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaGetDevice(...)<sp/>hipGetDevice(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="49"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaGetDeviceCount(...)<sp/>hipGetDeviceCount(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="50"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaGetDeviceProperties(...)<sp/>hipGetDeviceProperties(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="51"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaGetLastError(...)<sp/>hipGetLastError(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="52"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaSetDevice(...)<sp/>hipSetDevice(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="53"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaDeviceSynchronize(...)<sp/>hipDeviceSynchronize(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="54"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaDeviceGetPCIBusId(...)<sp/>hipDeviceGetPCIBusId(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="55"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaHostAlloc(...)<sp/>hipHostMalloc(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="56"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaMalloc(...)<sp/>hipMalloc(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="57"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaFree(...)<sp/>hipFree(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="58"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaFreeHost(...)<sp/>hipHostFree(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="59"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaMemset(...)<sp/>hipMemset(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="60"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaMemsetAsync(...)<sp/>hipMemsetAsync(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="61"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaMemcpy(...)<sp/>hipMemcpy(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="62"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaMemcpyAsync(...)<sp/>hipMemcpyAsync(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="63"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaMemcpyToSymbol(...)<sp/>hipMemcpyToSymbol(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="64"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaMemcpyToSymbolAsync(...)<sp/>hipMemcpyToSymbolAsync(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="65"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaStreamCreate(...)<sp/>hipStreamCreate(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="66"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaStreamCreateWithFlags(...)<sp/>hipStreamCreateWithFlags(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="67"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaStreamSynchronize(...)<sp/>hipStreamSynchronize(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="68"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaStreamBeginCapture(...)<sp/>hipStreamBeginCapture(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="69"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaStreamEndCapture(...)<sp/>hipStreamEndCapture(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="70"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaStreamDestroy(...)<sp/>hipStreamDestroy(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="71"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaGraphInstantiate(...)<sp/>hipGraphInstantiate(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="72"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaGraphLaunch(...)<sp/>hipGraphLaunch(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="73"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaGraphDestroy(...)<sp/>hipGraphDestroy(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="74"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaGraphExecDestroy(...)<sp/>hipGraphExecDestroy(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="75"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaThreadExchangeStreamCaptureMode(...)<sp/>hipThreadExchangeStreamCaptureMode(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="76"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaIpcGetMemHandle(...)<sp/>hipIpcGetMemHandle(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="77"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaIpcOpenMemHandle(...)<sp/>hipIpcOpenMemHandle(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="78"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cudaIpcCloseMemHandle(...)<sp/>hipIpcCloseMemHandle(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="79"><highlight class="normal"></highlight></codeline>
+<codeline lineno="80"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cuGetErrorString(...)<sp/>hipDrvGetErrorString(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="81"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cuMemAddressReserve(...)<sp/>hipMemAddressReserve(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="82"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cuMemAddressFree(...)<sp/>hipMemAddressFree(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="83"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cuMemGetAddressRange(...)<sp/>hipMemGetAddressRange(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="84"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cuMemCreate(...)<sp/>hipMemCreate(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="85"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cuMemRelease(...)<sp/>hipMemRelease(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="86"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cuMemSetAccess(...)<sp/>hipMemSetAccess(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="87"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cuMemMap(...)<sp/>hipMemMap(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="88"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>cuMemUnmap(...)<sp/>hipMemUnmap(__VA_ARGS__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="89"><highlight class="normal"></highlight></codeline>
+<codeline lineno="90"><highlight class="normal"></highlight><highlight class="preprocessor">#else</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="91"><highlight class="normal"></highlight></codeline>
+<codeline lineno="92"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;cuda.h&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="93"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;cuda_runtime.h&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="94"><highlight class="normal"></highlight></codeline>
+<codeline lineno="95"><highlight class="normal"></highlight><highlight class="preprocessor">#endif</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="96"><highlight class="normal"></highlight></codeline>
+<codeline lineno="97"><highlight class="normal"></highlight><highlight class="comment">//<sp/>NVLS</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="98"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>!defined(__HIP_PLATFORM_AMD__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="99"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;linux/version.h&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="100" refid="gpu_8hpp_1a3cff8107d8747cb69a1c8a37a16ba71a" refkind="member"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>USE_NVLS<sp/>((CUDART_VERSION<sp/>&gt;=<sp/>12010)<sp/>&amp;&amp;<sp/>(LINUX_VERSION_CODE<sp/>&gt;=<sp/>KERNEL_VERSION(5,<sp/>6,<sp/>0)))</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="101"><highlight class="normal"></highlight><highlight class="preprocessor">#else<sp/><sp/>//<sp/>!defined(__HIP_PLATFORM_AMD__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="102"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>USE_NVLS<sp/>0</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="103"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>!defined(__HIP_PLATFORM_AMD__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="104"><highlight class="normal"></highlight></codeline>
+<codeline lineno="105"><highlight class="normal"></highlight><highlight class="comment">//<sp/>GPU<sp/>sync<sp/>threads</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="106"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(__HIP_PLATFORM_AMD__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="107"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>__syncshm()<sp/>asm<sp/>volatile(&quot;s_waitcnt<sp/>lgkmcnt(0)<sp/>\n<sp/>s_barrier&quot;);</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="108"><highlight class="normal"></highlight><highlight class="preprocessor">#else</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="109" refid="gpu_8hpp_1a84f682e32e9d09458ba6d10a0778418d" refkind="member"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>__syncshm()<sp/>__syncthreads();</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="110"><highlight class="normal"></highlight><highlight class="preprocessor">#endif</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="111"><highlight class="normal"></highlight></codeline>
+<codeline lineno="112"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>MSCCLPP_GPU_HPP_</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/gpu.hpp"/>
+  </compounddef>
+</doxygen>

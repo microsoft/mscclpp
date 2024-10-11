@@ -1,0 +1,240 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="npkit_8hpp" kind="file" language="C++">
+    <compoundname>npkit.hpp</compoundname>
+    <includes refid="device_8hpp" local="no">mscclpp/device.hpp</includes>
+    <includes refid="gpu__utils_8hpp" local="no">mscclpp/gpu_utils.hpp</includes>
+    <includes refid="npkit__event_8hpp" local="no">mscclpp/npkit/npkit_event.hpp</includes>
+    <includes refid="npkit__struct_8hpp" local="no">mscclpp/npkit/npkit_struct.hpp</includes>
+    <includes local="no">string</includes>
+    <includes local="no">thread</includes>
+    <includes local="no">vector</includes>
+    <incdepgraph>
+      <node id="12">
+        <label>mscclpp/npkit/npkit_event.hpp</label>
+        <link refid="npkit__event_8hpp"/>
+      </node>
+      <node id="2">
+        <label>mscclpp/device.hpp</label>
+        <link refid="device_8hpp"/>
+      </node>
+      <node id="13">
+        <label>mscclpp/npkit/npkit_struct.hpp</label>
+        <link refid="npkit__struct_8hpp"/>
+        <childnode refid="14" relation="include">
+        </childnode>
+      </node>
+      <node id="6">
+        <label>errors.hpp</label>
+        <link refid="errors_8hpp"/>
+        <childnode refid="7" relation="include">
+        </childnode>
+      </node>
+      <node id="14">
+        <label>cstdint</label>
+      </node>
+      <node id="11">
+        <label>linux/version.h</label>
+      </node>
+      <node id="10">
+        <label>cuda_runtime.h</label>
+      </node>
+      <node id="7">
+        <label>stdexcept</label>
+      </node>
+      <node id="15">
+        <label>string</label>
+      </node>
+      <node id="8">
+        <label>gpu.hpp</label>
+        <link refid="gpu_8hpp"/>
+        <childnode refid="9" relation="include">
+        </childnode>
+        <childnode refid="10" relation="include">
+        </childnode>
+        <childnode refid="11" relation="include">
+        </childnode>
+      </node>
+      <node id="17">
+        <label>vector</label>
+      </node>
+      <node id="9">
+        <label>cuda.h</label>
+      </node>
+      <node id="16">
+        <label>thread</label>
+      </node>
+      <node id="4">
+        <label>cstring</label>
+      </node>
+      <node id="3">
+        <label>mscclpp/gpu_utils.hpp</label>
+        <link refid="gpu__utils_8hpp"/>
+        <childnode refid="4" relation="include">
+        </childnode>
+        <childnode refid="5" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+        <childnode refid="8" relation="include">
+        </childnode>
+      </node>
+      <node id="5">
+        <label>memory</label>
+      </node>
+      <node id="1">
+        <label>npkit.hpp</label>
+        <link refid="npkit_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="3" relation="include">
+        </childnode>
+        <childnode refid="12" relation="include">
+        </childnode>
+        <childnode refid="13" relation="include">
+        </childnode>
+        <childnode refid="15" relation="include">
+        </childnode>
+        <childnode refid="16" relation="include">
+        </childnode>
+        <childnode refid="17" relation="include">
+        </childnode>
+      </node>
+    </incdepgraph>
+    <innerclass refid="classNpKit" prot="public">NpKit</innerclass>
+      <sectiondef kind="define">
+      <memberdef kind="define" id="npkit_8hpp_1a97597ec9fa775e930438c05f854803f3" prot="public" static="no">
+        <name>NPKIT_GET_GPU_TIMESTAMP</name>
+        <initializer>clock64</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="24" column="10" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="24" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="define" id="npkit_8hpp_1ab85d3b73a46c9d68b1c2825b50538fdb" prot="public" static="no">
+        <name>NPKIT_SHM_NUM_EVENTS</name>
+        <initializer>64</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="27" column="9" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="27" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>NPKIT_H_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_H_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;<ref refid="device_8hpp" kindref="compound">mscclpp/device.hpp</ref>&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;<ref refid="gpu__utils_8hpp" kindref="compound">mscclpp/gpu_utils.hpp</ref>&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="9"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;<ref refid="npkit__event_8hpp" kindref="compound">mscclpp/npkit/npkit_event.hpp</ref>&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="10"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;<ref refid="npkit__struct_8hpp" kindref="compound">mscclpp/npkit/npkit_struct.hpp</ref>&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="11"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;string&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="12"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;thread&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="13"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;vector&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="14"><highlight class="normal"></highlight></codeline>
+<codeline lineno="15"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(__HIP_PLATFORM_AMD__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="16"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_GET_GPU_TIMESTAMP<sp/>wall_clock64</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="17"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_MAX_NUM_GPU_THREADBLOCKS<sp/>64</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="18"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_CPU_TIMESTAMP_SLOT_SIZE<sp/>128</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="19"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_LOAD_CPU_TIMESTAMP_PER_BLOCK(buf,<sp/>blk)<sp/>*(buf<sp/>+<sp/>NPKIT_CPU_TIMESTAMP_SLOT_SIZE<sp/>*<sp/>blk<sp/>/<sp/>sizeof(uint64_t))</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="20"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_STORE_CPU_TIMESTAMP_PER_BLOCK(buf,<sp/>val,<sp/>blk)<sp/>\</highlight></codeline>
+<codeline lineno="21"><highlight class="preprocessor"><sp/><sp/>*reinterpret_cast&lt;volatile<sp/>uint64_t*&gt;(buf<sp/>+<sp/>NPKIT_CPU_TIMESTAMP_SLOT_SIZE<sp/>*<sp/>blk<sp/>/<sp/>sizeof(uint64_t))<sp/>=<sp/>val</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="22"><highlight class="normal"></highlight></codeline>
+<codeline lineno="23"><highlight class="normal"></highlight><highlight class="preprocessor">#else</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="24" refid="npkit_8hpp_1a97597ec9fa775e930438c05f854803f3" refkind="member"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_GET_GPU_TIMESTAMP<sp/>clock64</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="25"><highlight class="normal"></highlight><highlight class="preprocessor">#endif</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="26"><highlight class="normal"></highlight></codeline>
+<codeline lineno="27" refid="npkit_8hpp_1ab85d3b73a46c9d68b1c2825b50538fdb" refkind="member"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_SHM_NUM_EVENTS<sp/>64</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="28"><highlight class="normal"></highlight></codeline>
+<codeline lineno="29" refid="classNpKit" refkind="compound"><highlight class="normal"></highlight><highlight class="keyword">class<sp/></highlight><highlight class="normal"><ref refid="classNpKit" kindref="compound">NpKit</ref><sp/>{</highlight></codeline>
+<codeline lineno="30"><highlight class="normal"><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="31" refid="classNpKit_1ae6dac68259fb9a6f006be30c2b8a9cbb" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>uint64_t<sp/><ref refid="classNpKit_1ae6dac68259fb9a6f006be30c2b8a9cbb" kindref="member">kNumGpuEventBuffers</ref><sp/>=<sp/>1024;</highlight></codeline>
+<codeline lineno="32"><highlight class="normal"></highlight></codeline>
+<codeline lineno="33" refid="classNpKit_1ab08d0c01fbc983de0316617f29e4a6d6" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>uint64_t<sp/><ref refid="classNpKit_1ab08d0c01fbc983de0316617f29e4a6d6" kindref="member">kNumCpuEventBuffers</ref><sp/>=<sp/>64;</highlight></codeline>
+<codeline lineno="34"><highlight class="normal"></highlight></codeline>
+<codeline lineno="35"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="classNpKit_1aea699b78b693417076c8f7e683d5d384" kindref="member">Init</ref>(</highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>rank);</highlight></codeline>
+<codeline lineno="36"><highlight class="normal"></highlight></codeline>
+<codeline lineno="37"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="classNpKit_1aea751160f3b23a7a200b984bd3e9f1e8" kindref="member">Dump</ref>(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>std::string&amp;<sp/>dump_dir);</highlight></codeline>
+<codeline lineno="38"><highlight class="normal"></highlight></codeline>
+<codeline lineno="39"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="classNpKit_1a4eca2b839b34d427dbb9f35e78bbe4e2" kindref="member">Shutdown</ref>();</highlight></codeline>
+<codeline lineno="40"><highlight class="normal"></highlight></codeline>
+<codeline lineno="41"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/><ref refid="structNpKitEventCollectContext" kindref="compound">NpKitEventCollectContext</ref>*<sp/><ref refid="classNpKit_1afe895a10aa5d15c57891f9709d4929f5" kindref="member">GetGpuEventCollectContexts</ref>();</highlight></codeline>
+<codeline lineno="42"><highlight class="normal"></highlight></codeline>
+<codeline lineno="43"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="44"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>CollectGpuEventShm(uint8_t<sp/>type,<sp/>uint32_t<sp/>size,<sp/>uint32_t<sp/>rsvd,<sp/>uint64_t<sp/>timestamp,</highlight></codeline>
+<codeline lineno="45"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><ref refid="unionNpKitEvent" kindref="compound">NpKitEvent</ref>*<sp/>event_buffer,<sp/>uint64_t*<sp/>event_buffer_head)<sp/>{</highlight></codeline>
+<codeline lineno="46"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(*event_buffer_head<sp/>&lt;<sp/><ref refid="npkit_8hpp_1ab85d3b73a46c9d68b1c2825b50538fdb" kindref="member">NPKIT_SHM_NUM_EVENTS</ref>)<sp/>{</highlight></codeline>
+<codeline lineno="47"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(threadIdx.x<sp/>==<sp/>0)<sp/>{</highlight></codeline>
+<codeline lineno="48"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><ref refid="unionNpKitEvent" kindref="compound">NpKitEvent</ref>&amp;<sp/></highlight><highlight class="keyword">event</highlight><highlight class="normal"><sp/>=<sp/>event_buffer[*event_buffer_head];</highlight></codeline>
+<codeline lineno="49"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/></highlight><highlight class="keyword">event</highlight><highlight class="normal">.<ref refid="unionNpKitEvent_1a9569908320dc284e3abfcf333ff212f5" kindref="member">fields</ref>.<ref refid="unionNpKitEvent_1af030b738f6ebff7a4305a6d498816099" kindref="member">type</ref><sp/>=<sp/>type;</highlight></codeline>
+<codeline lineno="50"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/></highlight><highlight class="keyword">event</highlight><highlight class="normal">.fields.size<sp/>=<sp/>size;</highlight></codeline>
+<codeline lineno="51"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/></highlight><highlight class="keyword">event</highlight><highlight class="normal">.fields.rsvd<sp/>=<sp/>rsvd;</highlight></codeline>
+<codeline lineno="52"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/></highlight><highlight class="keyword">event</highlight><highlight class="normal">.fields.timestamp<sp/>=<sp/>timestamp;</highlight></codeline>
+<codeline lineno="53"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>}</highlight></codeline>
+<codeline lineno="54"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>(*event_buffer_head)++;</highlight></codeline>
+<codeline lineno="55"><highlight class="normal"><sp/><sp/><sp/><sp/>}</highlight></codeline>
+<codeline lineno="56"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="57"><highlight class="normal"></highlight></codeline>
+<codeline lineno="58"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>StoreGpuEventShm(<ref refid="structNpKitEventCollectContext" kindref="compound">NpKitEventCollectContext</ref>*<sp/>npKitEventCollectContexts,</highlight></codeline>
+<codeline lineno="59"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><ref refid="unionNpKitEvent" kindref="compound">NpKitEvent</ref>*<sp/>event_buffer,<sp/>uint64_t<sp/>event_buffer_head)<sp/>{</highlight></codeline>
+<codeline lineno="60"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="gpu_8hpp_1a84f682e32e9d09458ba6d10a0778418d" kindref="member">__syncshm</ref>();</highlight></codeline>
+<codeline lineno="61"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="structNpKitEventCollectContext" kindref="compound">NpKitEventCollectContext</ref>*<sp/>npKitCtx<sp/>=<sp/>npKitEventCollectContexts<sp/>+<sp/>blockIdx.x;</highlight></codeline>
+<codeline lineno="62"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="unionNpKitEvent" kindref="compound">NpKitEvent</ref>*<sp/>global_event_buffer<sp/>=<sp/>npKitCtx-&gt;<ref refid="structNpKitEventCollectContext_1a0c495b9f5dfe117236ba38a876ce8062" kindref="member">event_buffer</ref>;</highlight></codeline>
+<codeline lineno="63"><highlight class="normal"><sp/><sp/><sp/><sp/>uint64_t<sp/>global_event_buffer_head<sp/>=<sp/>npKitCtx-&gt;<ref refid="structNpKitEventCollectContext_1ade29036d1e789b33491ce29ae5c67b49" kindref="member">event_buffer_head</ref>;</highlight></codeline>
+<codeline lineno="64"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">for</highlight><highlight class="normal"><sp/>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>i<sp/>=<sp/>threadIdx.x;<sp/>i<sp/>&lt;<sp/>event_buffer_head<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(<ref refid="unionNpKitEvent" kindref="compound">NpKitEvent</ref>)<sp/>/<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(int4);<sp/>i<sp/>+=<sp/>blockDim.x)<sp/>{</highlight></codeline>
+<codeline lineno="65"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>((int4*)(global_event_buffer<sp/>+<sp/>global_event_buffer_head))[i]<sp/>=<sp/>((int4*)event_buffer)[i];</highlight></codeline>
+<codeline lineno="66"><highlight class="normal"><sp/><sp/><sp/><sp/>}</highlight></codeline>
+<codeline lineno="67"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(threadIdx.x<sp/>==<sp/>0)<sp/>{</highlight></codeline>
+<codeline lineno="68"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>npKitCtx-&gt;<ref refid="structNpKitEventCollectContext_1ade29036d1e789b33491ce29ae5c67b49" kindref="member">event_buffer_head</ref><sp/>+=<sp/>event_buffer_head;</highlight></codeline>
+<codeline lineno="69"><highlight class="normal"><sp/><sp/><sp/><sp/>}</highlight></codeline>
+<codeline lineno="70"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="71"><highlight class="normal"></highlight><highlight class="preprocessor">#endif</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="72"><highlight class="normal"></highlight></codeline>
+<codeline lineno="73"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="classNpKit_1aa747acd5eb8fe77eecb618e553b0fcca" kindref="member">CollectCpuEvent</ref>(uint8_t<sp/>type,<sp/>uint32_t<sp/>size,<sp/>uint32_t<sp/>rsvd,<sp/>uint64_t<sp/>timestamp,<sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>channel_id);</highlight></codeline>
+<codeline lineno="74"><highlight class="normal"></highlight></codeline>
+<codeline lineno="75"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/>uint64_t*<sp/><ref refid="classNpKit_1aa9a5924be5c0aae822e2a72763927c92" kindref="member">GetCpuTimestamp</ref>();</highlight></codeline>
+<codeline lineno="76"><highlight class="normal"></highlight></codeline>
+<codeline lineno="77"><highlight class="normal"><sp/></highlight><highlight class="keyword">private</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="78"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>CpuTimestampUpdateThread();</highlight></codeline>
+<codeline lineno="79"><highlight class="normal"></highlight></codeline>
+<codeline lineno="80"><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>64K<sp/>*<sp/>1024<sp/>*<sp/>16B<sp/>=<sp/>1GB<sp/>per<sp/>GPU</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="81"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>uint64_t<sp/>kMaxNumGpuEventsPerBuffer<sp/>=<sp/>1ULL<sp/>&lt;&lt;<sp/>16;</highlight></codeline>
+<codeline lineno="82"><highlight class="normal"></highlight></codeline>
+<codeline lineno="83"><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>64K<sp/>*<sp/>2<sp/>(send/recv)<sp/>*<sp/>(1024/64)<sp/>=<sp/>2M,<sp/>2M<sp/>*<sp/>64<sp/>*<sp/>16B<sp/>=<sp/>2GB<sp/>per<sp/>CPU</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="84"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>uint64_t<sp/>kMaxNumCpuEventsPerBuffer<sp/>=<sp/>1ULL<sp/>&lt;&lt;<sp/>21;</highlight></codeline>
+<codeline lineno="85"><highlight class="normal"></highlight></codeline>
+<codeline lineno="86"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/>std::vector&lt;mscclpp::UniqueCudaPtr&lt;NpKitEvent&gt;&gt;<sp/>gpu_event_buffers_;</highlight></codeline>
+<codeline lineno="87"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/>std::vector&lt;std::unique_ptr&lt;NpKitEvent[]&gt;&gt;<sp/>cpu_event_buffers_;</highlight></codeline>
+<codeline lineno="88"><highlight class="normal"></highlight></codeline>
+<codeline lineno="89"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/><ref refid="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" kindref="member">mscclpp::UniqueCudaPtr&lt;NpKitEventCollectContext&gt;</ref><sp/>gpu_collect_contexts_;</highlight></codeline>
+<codeline lineno="90"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/>std::unique_ptr&lt;NpKitEventCollectContext[]&gt;<sp/>cpu_collect_contexts_;</highlight></codeline>
+<codeline lineno="91"><highlight class="normal"></highlight></codeline>
+<codeline lineno="92"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/>uint64_t<sp/>rank_;</highlight></codeline>
+<codeline lineno="93"><highlight class="normal"></highlight></codeline>
+<codeline lineno="94"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(__HIP_PLATFORM_AMD__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="95"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/><ref refid="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" kindref="member">mscclpp::UniqueCudaHostPtr&lt;uint64_t[]&gt;</ref><sp/>cpu_timestamp_;</highlight></codeline>
+<codeline lineno="96"><highlight class="normal"></highlight><highlight class="preprocessor">#else</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="97"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/><ref refid="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" kindref="member">mscclpp::UniqueCudaHostPtr&lt;uint64_t&gt;</ref><sp/>cpu_timestamp_;</highlight></codeline>
+<codeline lineno="98"><highlight class="normal"></highlight><highlight class="preprocessor">#endif</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="99"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/>std::unique_ptr&lt;std::thread&gt;<sp/>cpu_timestamp_update_thread_;</highlight></codeline>
+<codeline lineno="100"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/></highlight><highlight class="keyword">volatile</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/>cpu_timestamp_update_thread_should_stop_;</highlight></codeline>
+<codeline lineno="101"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="102"><highlight class="normal"></highlight></codeline>
+<codeline lineno="103"><highlight class="normal"></highlight><highlight class="preprocessor">#endif</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp"/>
+  </compounddef>
+</doxygen>

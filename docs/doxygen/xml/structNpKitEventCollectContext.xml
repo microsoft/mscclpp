@@ -1,0 +1,57 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structNpKitEventCollectContext" kind="struct" language="C++" prot="public">
+    <compoundname>NpKitEventCollectContext</compoundname>
+    <includes refid="npkit__struct_8hpp" local="no">npkit_struct.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structNpKitEventCollectContext_1a0c495b9f5dfe117236ba38a876ce8062" prot="public" static="no" mutable="no">
+        <type><ref refid="unionNpKitEvent" kindref="compound">NpKitEvent</ref> *</type>
+        <definition>NpKitEvent* NpKitEventCollectContext::event_buffer</definition>
+        <argsstring></argsstring>
+        <name>event_buffer</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" line="22" column="14" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" bodystart="22" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structNpKitEventCollectContext_1ade29036d1e789b33491ce29ae5c67b49" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t NpKitEventCollectContext::event_buffer_head</definition>
+        <argsstring></argsstring>
+        <name>event_buffer_head</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" line="23" column="12" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" bodystart="23" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <collaborationgraph>
+      <node id="1">
+        <label>NpKitEventCollectContext</label>
+        <link refid="structNpKitEventCollectContext"/>
+        <childnode refid="2" relation="usage">
+          <edgelabel>event_buffer</edgelabel>
+        </childnode>
+      </node>
+      <node id="2">
+        <label>NpKitEvent</label>
+        <link refid="unionNpKitEvent"/>
+      </node>
+    </collaborationgraph>
+    <location file="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" line="21" column="31" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" bodystart="21" bodyend="24"/>
+    <listofallmembers>
+      <member refid="structNpKitEventCollectContext_1a0c495b9f5dfe117236ba38a876ce8062" prot="public" virt="non-virtual"><scope>NpKitEventCollectContext</scope><name>event_buffer</name></member>
+      <member refid="structNpKitEventCollectContext_1ade29036d1e789b33491ce29ae5c67b49" prot="public" virt="non-virtual"><scope>NpKitEventCollectContext</scope><name>event_buffer_head</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

@@ -1,0 +1,143 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="fifo__device_8hpp" kind="file" language="C++">
+    <compoundname>fifo_device.hpp</compoundname>
+    <includes local="no">cstdint</includes>
+    <includes refid="device_8hpp" local="yes">device.hpp</includes>
+    <includedby refid="fifo_8hpp" local="yes">fifo.hpp</includedby>
+    <includedby refid="proxy__channel__device_8hpp" local="yes">proxy_channel_device.hpp</includedby>
+    <incdepgraph>
+      <node id="3">
+        <label>device.hpp</label>
+        <link refid="device_8hpp"/>
+      </node>
+      <node id="2">
+        <label>cstdint</label>
+      </node>
+      <node id="1">
+        <label>fifo_device.hpp</label>
+        <link refid="fifo__device_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="3" relation="include">
+        </childnode>
+      </node>
+    </incdepgraph>
+    <invincdepgraph>
+      <node id="5">
+        <label>proxy_channel_device.hpp</label>
+        <link refid="proxy__channel__device_8hpp"/>
+        <childnode refid="4" relation="include">
+        </childnode>
+      </node>
+      <node id="3">
+        <label>proxy.hpp</label>
+        <link refid="proxy_8hpp"/>
+        <childnode refid="4" relation="include">
+        </childnode>
+      </node>
+      <node id="4">
+        <label>proxy_channel.hpp</label>
+        <link refid="proxy__channel_8hpp"/>
+      </node>
+      <node id="2">
+        <label>fifo.hpp</label>
+        <link refid="fifo_8hpp"/>
+        <childnode refid="3" relation="include">
+        </childnode>
+      </node>
+      <node id="1">
+        <label>fifo_device.hpp</label>
+        <link refid="fifo__device_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="5" relation="include">
+        </childnode>
+      </node>
+    </invincdepgraph>
+    <innerclass refid="structmscclpp_1_1ProxyTrigger" prot="public">mscclpp::ProxyTrigger</innerclass>
+    <innerclass refid="structmscclpp_1_1FifoDeviceHandle" prot="public">mscclpp::FifoDeviceHandle</innerclass>
+    <innernamespace refid="namespacemscclpp">mscclpp</innernamespace>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>MSCCLPP_FIFO_DEVICE_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>MSCCLPP_FIFO_DEVICE_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;cstdint&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight></codeline>
+<codeline lineno="9"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="device_8hpp" kindref="compound">device.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="10"><highlight class="normal"></highlight></codeline>
+<codeline lineno="11"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="12"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="atomic__device_8hpp" kindref="compound">atomic_device.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="13"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="poll__device_8hpp" kindref="compound">poll_device.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="14"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="15"><highlight class="normal"></highlight></codeline>
+<codeline lineno="16"><highlight class="normal"></highlight><highlight class="keyword">namespace<sp/></highlight><highlight class="normal"><ref refid="namespacemscclpp" kindref="compound">mscclpp</ref><sp/>{</highlight></codeline>
+<codeline lineno="17"><highlight class="normal"></highlight></codeline>
+<codeline lineno="24" refid="structmscclpp_1_1ProxyTrigger" refkind="compound"><highlight class="keyword">struct<sp/></highlight><highlight class="keyword">alignas</highlight><highlight class="normal">(16)<sp/><ref refid="structmscclpp_1_1ProxyTrigger" kindref="compound">ProxyTrigger</ref><sp/>{</highlight></codeline>
+<codeline lineno="25" refid="structmscclpp_1_1ProxyTrigger_1ada4a5508e6db9e930f6d6018f98dc060" refkind="member"><highlight class="normal"><sp/><sp/>uint64_t<sp/><ref refid="structmscclpp_1_1ProxyTrigger_1a1bb30b77dff4f6b3a79bd308927fddba" kindref="member">fst</ref>,<sp/><ref refid="structmscclpp_1_1ProxyTrigger_1ada4a5508e6db9e930f6d6018f98dc060" kindref="member">snd</ref>;</highlight></codeline>
+<codeline lineno="26"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="27"><highlight class="normal"></highlight></codeline>
+<codeline lineno="41" refid="structmscclpp_1_1FifoDeviceHandle" refkind="compound"><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1FifoDeviceHandle" kindref="compound">FifoDeviceHandle</ref><sp/>{</highlight></codeline>
+<codeline lineno="42"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="43"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/>uint64_t<sp/>push(<ref refid="structmscclpp_1_1ProxyTrigger" kindref="compound">ProxyTrigger</ref><sp/>trigger,<sp/>int64_t<sp/>maxSpinCount<sp/>=<sp/>1000000)<sp/>{</highlight></codeline>
+<codeline lineno="49"><highlight class="normal"><sp/><sp/><sp/><sp/>uint64_t<sp/>curFifoHead<sp/>=<sp/>atomicFetchAdd(this-&gt;<ref refid="structmscclpp_1_1FifoDeviceHandle_1ada28c63ccea5a0fb8481872798a566b4" kindref="member">head</ref>,<sp/>(uint64_t)1,<sp/>memoryOrderRelaxed);</highlight></codeline>
+<codeline lineno="50"><highlight class="normal"></highlight></codeline>
+<codeline lineno="51"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>make<sp/>the<sp/>last<sp/>bit<sp/>intentionally<sp/>non-zero<sp/>so<sp/>that<sp/>we<sp/>can<sp/>safely<sp/>poll.<sp/>Don&apos;t<sp/>worry,<sp/>we<sp/>will<sp/>change<sp/>it<sp/>back<sp/>in<sp/>host</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="52"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>side</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="53"><highlight class="normal"><sp/><sp/><sp/><sp/>trigger.<ref refid="structmscclpp_1_1ProxyTrigger_1ada4a5508e6db9e930f6d6018f98dc060" kindref="member">snd</ref><sp/>^=<sp/>((uint64_t)1<sp/>&lt;&lt;<sp/>(uint64_t)63);</highlight></codeline>
+<codeline lineno="54"><highlight class="normal"></highlight></codeline>
+<codeline lineno="55"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>Only<sp/>one<sp/>of<sp/>two<sp/>conditions<sp/>need<sp/>to<sp/>be<sp/>met<sp/>to<sp/>proceed.<sp/>Either<sp/>the<sp/>tail<sp/>has<sp/>advanced<sp/>enough<sp/>or<sp/>where<sp/>we<sp/>need<sp/>to</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="56"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>write<sp/>to<sp/>is<sp/>0.<sp/>However,<sp/>the<sp/>first<sp/>condition<sp/>is<sp/>faster<sp/>to<sp/>check<sp/>since<sp/>the<sp/>tail<sp/>is<sp/>flushed<sp/>periodically<sp/>anyways<sp/>but</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="57"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>for<sp/>the<sp/>second<sp/>condition<sp/>we<sp/>need<sp/>to<sp/>read<sp/>CPU<sp/>memory.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="58"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>As<sp/>atomic<sp/>access<sp/>is<sp/>slow,<sp/>we<sp/>first<sp/>check<sp/>using<sp/>the<sp/>bare<sp/>pointer<sp/>and<sp/>then<sp/>use<sp/>the<sp/>atomic<sp/>load<sp/>if<sp/>the</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="59"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>condition<sp/>is<sp/>not<sp/>met.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="60"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(curFifoHead<sp/>&gt;=<sp/><ref refid="structmscclpp_1_1FifoDeviceHandle_1aacf8ab8a267d230c61c22120fa610d0d" kindref="member">size</ref><sp/>+<sp/>*(this-&gt;<ref refid="structmscclpp_1_1FifoDeviceHandle_1a830e5d971d5de7944abe457a0affed12" kindref="member">tailReplica</ref>))<sp/>{</highlight></codeline>
+<codeline lineno="61"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>OR_POLL_MAYBE_JAILBREAK((curFifoHead<sp/>&gt;=<sp/><ref refid="structmscclpp_1_1FifoDeviceHandle_1aacf8ab8a267d230c61c22120fa610d0d" kindref="member">size</ref><sp/>+<sp/>atomicLoad(this-&gt;<ref refid="structmscclpp_1_1FifoDeviceHandle_1a830e5d971d5de7944abe457a0affed12" kindref="member">tailReplica</ref>,<sp/>memoryOrderRelaxed)),</highlight></codeline>
+<codeline lineno="62"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>(atomicLoad(&amp;(this-&gt;<ref refid="structmscclpp_1_1FifoDeviceHandle_1a7be1ddbf8d4ac632b7b218ba28c15171" kindref="member">triggers</ref>[curFifoHead<sp/>%<sp/><ref refid="structmscclpp_1_1FifoDeviceHandle_1aacf8ab8a267d230c61c22120fa610d0d" kindref="member">size</ref>].fst),<sp/>memoryOrderRelaxed)<sp/>!=<sp/>0),</highlight></codeline>
+<codeline lineno="63"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>maxSpinCount);</highlight></codeline>
+<codeline lineno="64"><highlight class="normal"><sp/><sp/><sp/><sp/>}</highlight></codeline>
+<codeline lineno="65"><highlight class="normal"></highlight></codeline>
+<codeline lineno="66"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="structmscclpp_1_1ProxyTrigger" kindref="compound">ProxyTrigger</ref>*<sp/>triggerPtr<sp/>=<sp/>&amp;(this-&gt;<ref refid="structmscclpp_1_1FifoDeviceHandle_1a7be1ddbf8d4ac632b7b218ba28c15171" kindref="member">triggers</ref>[curFifoHead<sp/>%<sp/><ref refid="structmscclpp_1_1FifoDeviceHandle_1aacf8ab8a267d230c61c22120fa610d0d" kindref="member">size</ref>]);</highlight></codeline>
+<codeline lineno="67"><highlight class="normal"></highlight></codeline>
+<codeline lineno="68"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>There<sp/>is<sp/>a<sp/>Write-After-Read<sp/>hazard<sp/>for<sp/>the<sp/>triggerPtr-&gt;fst.<sp/>So<sp/>the<sp/>st<sp/>instruction<sp/>will<sp/>not<sp/>be<sp/>executed</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="69"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>before<sp/>the<sp/>loop.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="70"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(MSCCLPP_DEVICE_CUDA)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="71"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keyword">asm</highlight><highlight class="normal"><sp/></highlight><highlight class="keyword">volatile</highlight><highlight class="normal">(</highlight><highlight class="stringliteral">&quot;st.global.relaxed.sys.v2.u64<sp/>[%0],<sp/>{%1,%2};&quot;</highlight><highlight class="normal"><sp/>::</highlight><highlight class="stringliteral">&quot;l&quot;</highlight><highlight class="normal">(triggerPtr),<sp/></highlight><highlight class="stringliteral">&quot;l&quot;</highlight><highlight class="normal">(trigger.<ref refid="structmscclpp_1_1ProxyTrigger_1a1bb30b77dff4f6b3a79bd308927fddba" kindref="member">fst</ref>),<sp/></highlight><highlight class="stringliteral">&quot;l&quot;</highlight><highlight class="normal">(trigger.<ref refid="structmscclpp_1_1ProxyTrigger_1ada4a5508e6db9e930f6d6018f98dc060" kindref="member">snd</ref>));</highlight></codeline>
+<codeline lineno="72"><highlight class="normal"></highlight><highlight class="preprocessor">#else<sp/><sp/><sp/>//<sp/>!defined(MSCCLPP_DEVICE_CUDA)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="73"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>store<sp/>snd<sp/>no<sp/>later<sp/>than<sp/>fst.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="74"><highlight class="normal"><sp/><sp/><sp/><sp/>atomicStore(&amp;(triggerPtr-&gt;<ref refid="structmscclpp_1_1ProxyTrigger_1ada4a5508e6db9e930f6d6018f98dc060" kindref="member">snd</ref>),<sp/>trigger.<ref refid="structmscclpp_1_1ProxyTrigger_1ada4a5508e6db9e930f6d6018f98dc060" kindref="member">snd</ref>,<sp/>memoryOrderRelaxed);</highlight></codeline>
+<codeline lineno="75"><highlight class="normal"><sp/><sp/><sp/><sp/>atomicStore(&amp;(triggerPtr-&gt;<ref refid="structmscclpp_1_1ProxyTrigger_1a1bb30b77dff4f6b3a79bd308927fddba" kindref="member">fst</ref>),<sp/>trigger.<ref refid="structmscclpp_1_1ProxyTrigger_1a1bb30b77dff4f6b3a79bd308927fddba" kindref="member">fst</ref>,<sp/>memoryOrderRelaxed);</highlight></codeline>
+<codeline lineno="76"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>!defined(MSCCLPP_DEVICE_CUDA)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="77"><highlight class="normal"></highlight></codeline>
+<codeline lineno="78"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>curFifoHead;</highlight></codeline>
+<codeline lineno="79"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="80"><highlight class="normal"></highlight></codeline>
+<codeline lineno="85"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>sync(uint64_t<sp/>curFifoHead,<sp/>int64_t<sp/>maxSpinCount<sp/>=<sp/>1000000)<sp/>{</highlight></codeline>
+<codeline lineno="86"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>Same<sp/>as<sp/>push<sp/>but<sp/>in<sp/>this<sp/>case<sp/>checking<sp/>the<sp/>fist<sp/>condition<sp/>is<sp/>probably<sp/>faster<sp/>since<sp/>for<sp/>tail<sp/>to<sp/>be<sp/>pushed<sp/>we<sp/>need</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="87"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>to<sp/>wait<sp/>for<sp/>cudaMemcpy<sp/>to<sp/>be<sp/>done.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="88"><highlight class="normal"><sp/><sp/><sp/><sp/>OR_POLL_MAYBE_JAILBREAK((curFifoHead<sp/>&gt;=<sp/>atomicLoad(this-&gt;<ref refid="structmscclpp_1_1FifoDeviceHandle_1a830e5d971d5de7944abe457a0affed12" kindref="member">tailReplica</ref>,<sp/>memoryOrderRelaxed)),</highlight></codeline>
+<codeline lineno="89"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>(atomicLoad(&amp;(this-&gt;<ref refid="structmscclpp_1_1FifoDeviceHandle_1a7be1ddbf8d4ac632b7b218ba28c15171" kindref="member">triggers</ref>[curFifoHead<sp/>%<sp/><ref refid="structmscclpp_1_1FifoDeviceHandle_1aacf8ab8a267d230c61c22120fa610d0d" kindref="member">size</ref>].fst),<sp/>memoryOrderRelaxed)<sp/>!=<sp/>0),</highlight></codeline>
+<codeline lineno="90"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>maxSpinCount);</highlight></codeline>
+<codeline lineno="91"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="92"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="93"><highlight class="normal"></highlight></codeline>
+<codeline lineno="95" refid="structmscclpp_1_1FifoDeviceHandle_1a7be1ddbf8d4ac632b7b218ba28c15171" refkind="member"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1ProxyTrigger" kindref="compound">ProxyTrigger</ref>*<sp/><ref refid="structmscclpp_1_1FifoDeviceHandle_1a7be1ddbf8d4ac632b7b218ba28c15171" kindref="member">triggers</ref>;</highlight></codeline>
+<codeline lineno="97" refid="structmscclpp_1_1FifoDeviceHandle_1a830e5d971d5de7944abe457a0affed12" refkind="member"><highlight class="normal"><sp/><sp/>uint64_t*<sp/><ref refid="structmscclpp_1_1FifoDeviceHandle_1a830e5d971d5de7944abe457a0affed12" kindref="member">tailReplica</ref>;</highlight></codeline>
+<codeline lineno="99" refid="structmscclpp_1_1FifoDeviceHandle_1ada28c63ccea5a0fb8481872798a566b4" refkind="member"><highlight class="normal"><sp/><sp/>uint64_t*<sp/><ref refid="structmscclpp_1_1FifoDeviceHandle_1ada28c63ccea5a0fb8481872798a566b4" kindref="member">head</ref>;</highlight></codeline>
+<codeline lineno="101" refid="structmscclpp_1_1FifoDeviceHandle_1aacf8ab8a267d230c61c22120fa610d0d" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1FifoDeviceHandle_1aacf8ab8a267d230c61c22120fa610d0d" kindref="member">size</ref>;</highlight></codeline>
+<codeline lineno="102"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="103"><highlight class="normal"></highlight></codeline>
+<codeline lineno="104"><highlight class="normal">}<sp/><sp/></highlight><highlight class="comment">//<sp/>namespace<sp/>mscclpp</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="105"><highlight class="normal"></highlight></codeline>
+<codeline lineno="106"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>MSCCLPP_FIFO_DEVICE_HPP_</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/fifo_device.hpp"/>
+  </compounddef>
+</doxygen>

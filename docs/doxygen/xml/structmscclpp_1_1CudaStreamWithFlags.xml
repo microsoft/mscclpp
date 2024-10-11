@@ -1,0 +1,79 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1CudaStreamWithFlags" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::CudaStreamWithFlags</compoundname>
+    <includes refid="gpu__utils_8hpp" local="no">gpu_utils.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1CudaStreamWithFlags_1ab48f05c327a479883b78463832f9a8a3" prot="public" static="no" mutable="no">
+        <type>cudaStream_t</type>
+        <definition>cudaStream_t mscclpp::CudaStreamWithFlags::stream_</definition>
+        <argsstring></argsstring>
+        <name>stream_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="50" column="16" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="50" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="structmscclpp_1_1CudaStreamWithFlags_1a56e23ca6cc525e4cc48091c9ae3a677c" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::CudaStreamWithFlags::CudaStreamWithFlags</definition>
+        <argsstring>(unsigned int flags)</argsstring>
+        <name>CudaStreamWithFlags</name>
+        <param>
+          <type>unsigned int</type>
+          <declname>flags</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="47" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1CudaStreamWithFlags_1a326806523b6df1f290fceb65bd3ee4f3" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::CudaStreamWithFlags::~CudaStreamWithFlags</definition>
+        <argsstring>()</argsstring>
+        <name>~CudaStreamWithFlags</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="48" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1CudaStreamWithFlags_1af65576b1b3f91f1c35a3ebbbcf8d4e56" prot="public" static="no" const="yes" explicit="no" inline="yes" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::CudaStreamWithFlags::operator cudaStream_t</definition>
+        <argsstring>() const</argsstring>
+        <name>operator cudaStream_t</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="49" column="3" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="49" bodyend="49"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>A RAII wrapper around cudaStream_t that will call cudaStreamDestroy on destruction. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="46" column="26" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="46" bodyend="51"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1CudaStreamWithFlags_1a56e23ca6cc525e4cc48091c9ae3a677c" prot="public" virt="non-virtual"><scope>mscclpp::CudaStreamWithFlags</scope><name>CudaStreamWithFlags</name></member>
+      <member refid="structmscclpp_1_1CudaStreamWithFlags_1af65576b1b3f91f1c35a3ebbbcf8d4e56" prot="public" virt="non-virtual"><scope>mscclpp::CudaStreamWithFlags</scope><name>operator cudaStream_t</name></member>
+      <member refid="structmscclpp_1_1CudaStreamWithFlags_1ab48f05c327a479883b78463832f9a8a3" prot="public" virt="non-virtual"><scope>mscclpp::CudaStreamWithFlags</scope><name>stream_</name></member>
+      <member refid="structmscclpp_1_1CudaStreamWithFlags_1a326806523b6df1f290fceb65bd3ee4f3" prot="public" virt="non-virtual"><scope>mscclpp::CudaStreamWithFlags</scope><name>~CudaStreamWithFlags</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

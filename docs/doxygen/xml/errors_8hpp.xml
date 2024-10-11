@@ -1,0 +1,169 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="errors_8hpp" kind="file" language="C++">
+    <compoundname>errors.hpp</compoundname>
+    <includes local="no">stdexcept</includes>
+    <includedby refid="core_8hpp" local="yes">core.hpp</includedby>
+    <includedby refid="gpu__utils_8hpp" local="yes">gpu_utils.hpp</includedby>
+    <incdepgraph>
+      <node id="1">
+        <label>errors.hpp</label>
+        <link refid="errors_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+      </node>
+      <node id="2">
+        <label>stdexcept</label>
+      </node>
+    </incdepgraph>
+    <invincdepgraph>
+      <node id="3">
+        <label>executor.hpp</label>
+        <link refid="executor_8hpp"/>
+      </node>
+      <node id="2">
+        <label>core.hpp</label>
+        <link refid="core_8hpp"/>
+        <childnode refid="3" relation="include">
+        </childnode>
+        <childnode refid="4" relation="include">
+        </childnode>
+        <childnode refid="5" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+      </node>
+      <node id="1">
+        <label>errors.hpp</label>
+        <link refid="errors_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="7" relation="include">
+        </childnode>
+      </node>
+      <node id="9">
+        <label>nvls.hpp</label>
+        <link refid="nvls_8hpp"/>
+      </node>
+      <node id="5">
+        <label>semaphore.hpp</label>
+        <link refid="semaphore_8hpp"/>
+        <childnode refid="4" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+      </node>
+      <node id="4">
+        <label>proxy_channel.hpp</label>
+        <link refid="proxy__channel_8hpp"/>
+      </node>
+      <node id="6">
+        <label>sm_channel.hpp</label>
+        <link refid="sm__channel_8hpp"/>
+      </node>
+      <node id="7">
+        <label>gpu_utils.hpp</label>
+        <link refid="gpu__utils_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="8" relation="include">
+        </childnode>
+        <childnode refid="9" relation="include">
+        </childnode>
+        <childnode refid="5" relation="include">
+        </childnode>
+      </node>
+      <node id="8">
+        <label>npkit.hpp</label>
+        <link refid="npkit_8hpp"/>
+      </node>
+    </invincdepgraph>
+    <innerclass refid="classmscclpp_1_1BaseError" prot="public">mscclpp::BaseError</innerclass>
+    <innerclass refid="classmscclpp_1_1Error" prot="public">mscclpp::Error</innerclass>
+    <innerclass refid="classmscclpp_1_1SysError" prot="public">mscclpp::SysError</innerclass>
+    <innerclass refid="classmscclpp_1_1CudaError" prot="public">mscclpp::CudaError</innerclass>
+    <innerclass refid="classmscclpp_1_1CuError" prot="public">mscclpp::CuError</innerclass>
+    <innerclass refid="classmscclpp_1_1IbError" prot="public">mscclpp::IbError</innerclass>
+    <innernamespace refid="namespacemscclpp">mscclpp</innernamespace>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>MSCCLPP_ERRORS_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>MSCCLPP_ERRORS_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;stdexcept&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight></codeline>
+<codeline lineno="9"><highlight class="normal"></highlight><highlight class="keyword">namespace<sp/></highlight><highlight class="normal"><ref refid="namespacemscclpp" kindref="compound">mscclpp</ref><sp/>{</highlight></codeline>
+<codeline lineno="10"><highlight class="normal"></highlight></codeline>
+<codeline lineno="12" refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbc" refkind="member"><highlight class="keyword">enum<sp/>class</highlight><highlight class="normal"><sp/><ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbc" kindref="member">ErrorCode</ref><sp/>{</highlight></codeline>
+<codeline lineno="13"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcab932b91f686c2aa588adfd9a407155ca" kindref="member">SystemError</ref>,<sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>A<sp/>system<sp/>error<sp/>occurred.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="14"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbca8462b58246e70e5c83e5b939a9332cb5" kindref="member">InternalError</ref>,<sp/><sp/></highlight><highlight class="comment">//<sp/>An<sp/>MSCCL++<sp/>internal<sp/>error<sp/>occurred.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="15"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcad5b659018d1b3646985936dcde01ca16" kindref="member">RemoteError</ref>,<sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>An<sp/>error<sp/>occurred<sp/>on<sp/>a<sp/>remote<sp/>system.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="16"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcaa524b35e5f186bcacbedd2b6661224aa" kindref="member">InvalidUsage</ref>,<sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>The<sp/>function<sp/>was<sp/>used<sp/>incorrectly.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="17"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcac85a251cc457840f1e032f1b733e9398" kindref="member">Timeout</ref>,<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>The<sp/>operation<sp/>timed<sp/>out.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="18"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbca721c28f4c74928cc9e0bb3fef345e408" kindref="member">Aborted</ref>,<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>The<sp/>operation<sp/>was<sp/>aborted.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="19"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcaddc23c9d813edd1499f0f5986a163011" kindref="member">ExecutorError</ref>,<sp/><sp/></highlight><highlight class="comment">//<sp/>An<sp/>error<sp/>occurred<sp/>in<sp/>the<sp/>MSCCL++<sp/>executor.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="20"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="21"><highlight class="normal"></highlight></codeline>
+<codeline lineno="26"><highlight class="normal">std::string<sp/><ref refid="namespacemscclpp_1abe9a611772fc87e4afb22a5342de69f2" kindref="member">errorToString</ref>(</highlight><highlight class="keyword">enum</highlight><highlight class="normal"><sp/><ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbc" kindref="member">ErrorCode</ref><sp/>error);</highlight></codeline>
+<codeline lineno="27"><highlight class="normal"></highlight></codeline>
+<codeline lineno="29" refid="classmscclpp_1_1BaseError" refkind="compound"><highlight class="keyword">class<sp/></highlight><highlight class="normal"><ref refid="classmscclpp_1_1BaseError" kindref="compound">BaseError</ref><sp/>:<sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal"><sp/>std::runtime_error<sp/>{</highlight></codeline>
+<codeline lineno="30"><highlight class="normal"><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="35"><highlight class="normal"><sp/><sp/><ref refid="classmscclpp_1_1BaseError_1aea99c987306c47a44a8720b1bddf8901" kindref="member">BaseError</ref>(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>std::string&amp;<sp/>message,<sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>errorCode);</highlight></codeline>
+<codeline lineno="36"><highlight class="normal"></highlight></codeline>
+<codeline lineno="40"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">explicit</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseError_1aea99c987306c47a44a8720b1bddf8901" kindref="member">BaseError</ref>(</highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>errorCode);</highlight></codeline>
+<codeline lineno="41"><highlight class="normal"></highlight></codeline>
+<codeline lineno="43"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">virtual</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseError_1a3e83519aadf3747f6325b6fc2abf53ea" kindref="member">~BaseError</ref>()<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="44"><highlight class="normal"></highlight></codeline>
+<codeline lineno="48"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseError_1af17f47caed93cb0b5f73994d6a636258" kindref="member">getErrorCode</ref>()<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="49"><highlight class="normal"></highlight></codeline>
+<codeline lineno="53"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordtype">char</highlight><highlight class="normal">*<sp/><ref refid="classmscclpp_1_1BaseError_1ac3b7c44b7d625195e19e97e4407b7f65" kindref="member">what</ref>()<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>noexcept<sp/></highlight><highlight class="keyword">override</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="54"><highlight class="normal"></highlight></codeline>
+<codeline lineno="55"><highlight class="normal"><sp/></highlight><highlight class="keyword">protected</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="56" refid="classmscclpp_1_1BaseError_1a7ffe97152f9083131bfd7d3eb27c4751" refkind="member"><highlight class="normal"><sp/><sp/>std::string<sp/><ref refid="classmscclpp_1_1BaseError_1a7ffe97152f9083131bfd7d3eb27c4751" kindref="member">message_</ref>;</highlight></codeline>
+<codeline lineno="57" refid="classmscclpp_1_1BaseError_1a10e56452844c8f3b59ffdd5dd25bf805" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseError_1a10e56452844c8f3b59ffdd5dd25bf805" kindref="member">errorCode_</ref>;</highlight></codeline>
+<codeline lineno="58"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="59"><highlight class="normal"></highlight></codeline>
+<codeline lineno="61" refid="classmscclpp_1_1Error" refkind="compound"><highlight class="keyword">class<sp/></highlight><highlight class="normal"><ref refid="classmscclpp_1_1Error" kindref="compound">Error</ref><sp/>:<sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseError" kindref="compound">BaseError</ref><sp/>{</highlight></codeline>
+<codeline lineno="62"><highlight class="normal"><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="63"><highlight class="normal"><sp/><sp/><ref refid="classmscclpp_1_1Error_1aa7f1033551301bfcfab6cbbebf48652a" kindref="member">Error</ref>(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>std::string&amp;<sp/>message,<sp/><ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbc" kindref="member">ErrorCode</ref><sp/>errorCode);</highlight></codeline>
+<codeline lineno="64"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">virtual</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1Error_1a2c6ffa0e3d9516e079997d8135a880c4" kindref="member">~Error</ref>()<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="65"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbc" kindref="member">ErrorCode</ref><sp/><ref refid="classmscclpp_1_1Error_1a98e0eaded64ecfee29d67434cca9dd6c" kindref="member">getErrorCode</ref>()<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="66"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="67"><highlight class="normal"></highlight></codeline>
+<codeline lineno="69" refid="classmscclpp_1_1SysError" refkind="compound"><highlight class="keyword">class<sp/></highlight><highlight class="normal"><ref refid="classmscclpp_1_1SysError" kindref="compound">SysError</ref><sp/>:<sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseError" kindref="compound">BaseError</ref><sp/>{</highlight></codeline>
+<codeline lineno="70"><highlight class="normal"><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="71"><highlight class="normal"><sp/><sp/><ref refid="classmscclpp_1_1SysError_1a4d52be5dc562e327df016d6bce42965b" kindref="member">SysError</ref>(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>std::string&amp;<sp/>message,<sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>errorCode);</highlight></codeline>
+<codeline lineno="72"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">virtual</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1SysError_1aef3717c1a2fcf3c7ca6ba2d68b529551" kindref="member">~SysError</ref>()<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="73"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="74"><highlight class="normal"></highlight></codeline>
+<codeline lineno="76" refid="classmscclpp_1_1CudaError" refkind="compound"><highlight class="keyword">class<sp/></highlight><highlight class="normal"><ref refid="classmscclpp_1_1CudaError" kindref="compound">CudaError</ref><sp/>:<sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseError" kindref="compound">BaseError</ref><sp/>{</highlight></codeline>
+<codeline lineno="77"><highlight class="normal"><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="78"><highlight class="normal"><sp/><sp/><ref refid="classmscclpp_1_1CudaError_1ab1264d2ce63b5107b0487717fb521cf3" kindref="member">CudaError</ref>(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>std::string&amp;<sp/>message,<sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>errorCode);</highlight></codeline>
+<codeline lineno="79"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">virtual</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1CudaError_1a9dad2ab374bb7790642f8b578b875369" kindref="member">~CudaError</ref>()<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="80"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="81"><highlight class="normal"></highlight></codeline>
+<codeline lineno="83" refid="classmscclpp_1_1CuError" refkind="compound"><highlight class="keyword">class<sp/></highlight><highlight class="normal"><ref refid="classmscclpp_1_1CuError" kindref="compound">CuError</ref><sp/>:<sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseError" kindref="compound">BaseError</ref><sp/>{</highlight></codeline>
+<codeline lineno="84"><highlight class="normal"><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="85"><highlight class="normal"><sp/><sp/><ref refid="classmscclpp_1_1CuError_1a4544ae4842958dcbf611ef54f8ba1089" kindref="member">CuError</ref>(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>std::string&amp;<sp/>message,<sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>errorCode);</highlight></codeline>
+<codeline lineno="86"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">virtual</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1CuError_1a58c64ed0a12394a240d41683f661661e" kindref="member">~CuError</ref>()<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="87"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="88"><highlight class="normal"></highlight></codeline>
+<codeline lineno="90" refid="classmscclpp_1_1IbError" refkind="compound"><highlight class="keyword">class<sp/></highlight><highlight class="normal"><ref refid="classmscclpp_1_1IbError" kindref="compound">IbError</ref><sp/>:<sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseError" kindref="compound">BaseError</ref><sp/>{</highlight></codeline>
+<codeline lineno="91"><highlight class="normal"><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="92"><highlight class="normal"><sp/><sp/><ref refid="classmscclpp_1_1IbError_1a661ceae408585a232e41c87079aef1a0" kindref="member">IbError</ref>(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>std::string&amp;<sp/>message,<sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>errorCode);</highlight></codeline>
+<codeline lineno="93"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">virtual</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1IbError_1aedb17c2b5e8fd1f83fd12d4905a1e377" kindref="member">~IbError</ref>()<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="94"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="95"><highlight class="normal"></highlight></codeline>
+<codeline lineno="96"><highlight class="normal">};<sp/><sp/></highlight><highlight class="comment">//<sp/>namespace<sp/>mscclpp</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="97"><highlight class="normal"></highlight></codeline>
+<codeline lineno="98"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>MSCCLPP_ERRORS_HPP_</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/errors.hpp"/>
+  </compounddef>
+</doxygen>

@@ -1,0 +1,320 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classNpKit" kind="class" language="C++" prot="public">
+    <compoundname>NpKit</compoundname>
+    <includes refid="npkit_8hpp" local="no">npkit.hpp</includes>
+      <sectiondef kind="public-static-attrib">
+      <memberdef kind="variable" id="classNpKit_1ae6dac68259fb9a6f006be30c2b8a9cbb" prot="public" static="yes" mutable="no">
+        <type>const uint64_t</type>
+        <definition>const uint64_t NpKit::kNumGpuEventBuffers</definition>
+        <argsstring></argsstring>
+        <name>kNumGpuEventBuffers</name>
+        <initializer>= 1024</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="31" column="25" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="31" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classNpKit_1ab08d0c01fbc983de0316617f29e4a6d6" prot="public" static="yes" mutable="no">
+        <type>const uint64_t</type>
+        <definition>const uint64_t NpKit::kNumCpuEventBuffers</definition>
+        <argsstring></argsstring>
+        <name>kNumCpuEventBuffers</name>
+        <initializer>= 64</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="33" column="25" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="33" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="private-static-attrib">
+      <memberdef kind="variable" id="classNpKit_1aad140d5ed6287f91d710d1a17bdce4c8" prot="private" static="yes" mutable="no">
+        <type>const uint64_t</type>
+        <definition>const uint64_t NpKit::kMaxNumGpuEventsPerBuffer</definition>
+        <argsstring></argsstring>
+        <name>kMaxNumGpuEventsPerBuffer</name>
+        <initializer>= 1ULL &lt;&lt; 16</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="81" column="25" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="81" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classNpKit_1a31e3ff6da7206a8eb7ecc36658683b91" prot="private" static="yes" mutable="no">
+        <type>const uint64_t</type>
+        <definition>const uint64_t NpKit::kMaxNumCpuEventsPerBuffer</definition>
+        <argsstring></argsstring>
+        <name>kMaxNumCpuEventsPerBuffer</name>
+        <initializer>= 1ULL &lt;&lt; 21</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="84" column="25" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="84" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classNpKit_1a26a49521befcdf1ebf67edca79bf4bc4" prot="private" static="yes" mutable="no">
+        <type>std::vector&lt; <ref refid="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" kindref="member">mscclpp::UniqueCudaPtr</ref>&lt; <ref refid="unionNpKitEvent" kindref="compound">NpKitEvent</ref> &gt; &gt;</type>
+        <definition>std::vector&lt;mscclpp::UniqueCudaPtr&lt;NpKitEvent&gt; &gt; NpKit::gpu_event_buffers_</definition>
+        <argsstring></argsstring>
+        <name>gpu_event_buffers_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="86" column="22" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="86" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classNpKit_1adc23c45ba6f5349209066e53c3bd3c6f" prot="private" static="yes" mutable="no">
+        <type>std::vector&lt; std::unique_ptr&lt; <ref refid="unionNpKitEvent" kindref="compound">NpKitEvent</ref>[]&gt; &gt;</type>
+        <definition>std::vector&lt;std::unique_ptr&lt;NpKitEvent[]&gt; &gt; NpKit::cpu_event_buffers_</definition>
+        <argsstring></argsstring>
+        <name>cpu_event_buffers_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="87" column="22" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="87" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classNpKit_1a3420eca4571949cc11486af0ee04a604" prot="private" static="yes" mutable="no">
+        <type><ref refid="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" kindref="member">mscclpp::UniqueCudaPtr</ref>&lt; <ref refid="structNpKitEventCollectContext" kindref="compound">NpKitEventCollectContext</ref> &gt;</type>
+        <definition>mscclpp::UniqueCudaPtr&lt;NpKitEventCollectContext&gt; NpKit::gpu_collect_contexts_</definition>
+        <argsstring></argsstring>
+        <name>gpu_collect_contexts_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="89" column="33" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="89" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classNpKit_1afbf250f9053d10fa2db3b3e855670ca1" prot="private" static="yes" mutable="no">
+        <type>std::unique_ptr&lt; <ref refid="structNpKitEventCollectContext" kindref="compound">NpKitEventCollectContext</ref>[]&gt;</type>
+        <definition>std::unique_ptr&lt;NpKitEventCollectContext[]&gt; NpKit::cpu_collect_contexts_</definition>
+        <argsstring></argsstring>
+        <name>cpu_collect_contexts_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="90" column="26" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="90" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classNpKit_1a16d20c69a7453508b9f43959d3f88751" prot="private" static="yes" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t NpKit::rank_</definition>
+        <argsstring></argsstring>
+        <name>rank_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="92" column="19" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="92" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classNpKit_1a0ce3ca100fef3e166770bd7a717a22b8" prot="private" static="yes" mutable="no">
+        <type><ref refid="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" kindref="member">mscclpp::UniqueCudaHostPtr</ref>&lt; uint64_t &gt;</type>
+        <definition>mscclpp::UniqueCudaHostPtr&lt;uint64_t&gt; NpKit::cpu_timestamp_</definition>
+        <argsstring></argsstring>
+        <name>cpu_timestamp_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="97" column="37" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="97" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classNpKit_1a43eaf5e3c08a5a40c48050b58fad7cca" prot="private" static="yes" mutable="no">
+        <type>std::unique_ptr&lt; std::thread &gt;</type>
+        <definition>std::unique_ptr&lt;std::thread&gt; NpKit::cpu_timestamp_update_thread_</definition>
+        <argsstring></argsstring>
+        <name>cpu_timestamp_update_thread_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="99" column="26" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="99" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classNpKit_1a79fd879fc812817ff293263c41bfb37f" prot="private" static="yes" mutable="no">
+        <type>bool</type>
+        <definition>volatile bool NpKit::cpu_timestamp_update_thread_should_stop_</definition>
+        <argsstring></argsstring>
+        <name>cpu_timestamp_update_thread_should_stop_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="100" column="24" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="100" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-static-func">
+      <memberdef kind="function" id="classNpKit_1aea699b78b693417076c8f7e683d5d384" prot="public" static="yes" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>static void NpKit::Init</definition>
+        <argsstring>(int rank)</argsstring>
+        <name>Init</name>
+        <param>
+          <type>int</type>
+          <declname>rank</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="35" column="15"/>
+      </memberdef>
+      <memberdef kind="function" id="classNpKit_1aea751160f3b23a7a200b984bd3e9f1e8" prot="public" static="yes" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>static void NpKit::Dump</definition>
+        <argsstring>(const std::string &amp;dump_dir)</argsstring>
+        <name>Dump</name>
+        <param>
+          <type>const std::string &amp;</type>
+          <declname>dump_dir</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="37" column="15"/>
+      </memberdef>
+      <memberdef kind="function" id="classNpKit_1a4eca2b839b34d427dbb9f35e78bbe4e2" prot="public" static="yes" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>static void NpKit::Shutdown</definition>
+        <argsstring>()</argsstring>
+        <name>Shutdown</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="39" column="15"/>
+      </memberdef>
+      <memberdef kind="function" id="classNpKit_1afe895a10aa5d15c57891f9709d4929f5" prot="public" static="yes" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="structNpKitEventCollectContext" kindref="compound">NpKitEventCollectContext</ref> *</type>
+        <definition>static NpKitEventCollectContext* NpKit::GetGpuEventCollectContexts</definition>
+        <argsstring>()</argsstring>
+        <name>GetGpuEventCollectContexts</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="41" column="35"/>
+      </memberdef>
+      <memberdef kind="function" id="classNpKit_1aa747acd5eb8fe77eecb618e553b0fcca" prot="public" static="yes" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>static void NpKit::CollectCpuEvent</definition>
+        <argsstring>(uint8_t type, uint32_t size, uint32_t rsvd, uint64_t timestamp, int channel_id)</argsstring>
+        <name>CollectCpuEvent</name>
+        <param>
+          <type>uint8_t</type>
+          <declname>type</declname>
+        </param>
+        <param>
+          <type>uint32_t</type>
+          <declname>size</declname>
+        </param>
+        <param>
+          <type>uint32_t</type>
+          <declname>rsvd</declname>
+        </param>
+        <param>
+          <type>uint64_t</type>
+          <declname>timestamp</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>channel_id</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="73" column="15"/>
+      </memberdef>
+      <memberdef kind="function" id="classNpKit_1aa9a5924be5c0aae822e2a72763927c92" prot="public" static="yes" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>uint64_t *</type>
+        <definition>static uint64_t* NpKit::GetCpuTimestamp</definition>
+        <argsstring>()</argsstring>
+        <name>GetCpuTimestamp</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="75" column="19"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="private-static-func">
+      <memberdef kind="function" id="classNpKit_1ab8ff8ee0110685eaba18ad367f7604ec" prot="private" static="yes" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>static void NpKit::CpuTimestampUpdateThread</definition>
+        <argsstring>()</argsstring>
+        <name>CpuTimestampUpdateThread</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="78" column="15"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" line="29" column="12" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit.hpp" bodystart="29" bodyend="101"/>
+    <listofallmembers>
+      <member refid="classNpKit_1aa747acd5eb8fe77eecb618e553b0fcca" prot="public" virt="non-virtual"><scope>NpKit</scope><name>CollectCpuEvent</name></member>
+      <member refid="classNpKit_1afbf250f9053d10fa2db3b3e855670ca1" prot="private" virt="non-virtual"><scope>NpKit</scope><name>cpu_collect_contexts_</name></member>
+      <member refid="classNpKit_1adc23c45ba6f5349209066e53c3bd3c6f" prot="private" virt="non-virtual"><scope>NpKit</scope><name>cpu_event_buffers_</name></member>
+      <member refid="classNpKit_1a0ce3ca100fef3e166770bd7a717a22b8" prot="private" virt="non-virtual"><scope>NpKit</scope><name>cpu_timestamp_</name></member>
+      <member refid="classNpKit_1a43eaf5e3c08a5a40c48050b58fad7cca" prot="private" virt="non-virtual"><scope>NpKit</scope><name>cpu_timestamp_update_thread_</name></member>
+      <member refid="classNpKit_1a79fd879fc812817ff293263c41bfb37f" prot="private" virt="non-virtual"><scope>NpKit</scope><name>cpu_timestamp_update_thread_should_stop_</name></member>
+      <member refid="classNpKit_1ab8ff8ee0110685eaba18ad367f7604ec" prot="private" virt="non-virtual"><scope>NpKit</scope><name>CpuTimestampUpdateThread</name></member>
+      <member refid="classNpKit_1aea751160f3b23a7a200b984bd3e9f1e8" prot="public" virt="non-virtual"><scope>NpKit</scope><name>Dump</name></member>
+      <member refid="classNpKit_1aa9a5924be5c0aae822e2a72763927c92" prot="public" virt="non-virtual"><scope>NpKit</scope><name>GetCpuTimestamp</name></member>
+      <member refid="classNpKit_1afe895a10aa5d15c57891f9709d4929f5" prot="public" virt="non-virtual"><scope>NpKit</scope><name>GetGpuEventCollectContexts</name></member>
+      <member refid="classNpKit_1a3420eca4571949cc11486af0ee04a604" prot="private" virt="non-virtual"><scope>NpKit</scope><name>gpu_collect_contexts_</name></member>
+      <member refid="classNpKit_1a26a49521befcdf1ebf67edca79bf4bc4" prot="private" virt="non-virtual"><scope>NpKit</scope><name>gpu_event_buffers_</name></member>
+      <member refid="classNpKit_1aea699b78b693417076c8f7e683d5d384" prot="public" virt="non-virtual"><scope>NpKit</scope><name>Init</name></member>
+      <member refid="classNpKit_1a31e3ff6da7206a8eb7ecc36658683b91" prot="private" virt="non-virtual"><scope>NpKit</scope><name>kMaxNumCpuEventsPerBuffer</name></member>
+      <member refid="classNpKit_1aad140d5ed6287f91d710d1a17bdce4c8" prot="private" virt="non-virtual"><scope>NpKit</scope><name>kMaxNumGpuEventsPerBuffer</name></member>
+      <member refid="classNpKit_1ab08d0c01fbc983de0316617f29e4a6d6" prot="public" virt="non-virtual"><scope>NpKit</scope><name>kNumCpuEventBuffers</name></member>
+      <member refid="classNpKit_1ae6dac68259fb9a6f006be30c2b8a9cbb" prot="public" virt="non-virtual"><scope>NpKit</scope><name>kNumGpuEventBuffers</name></member>
+      <member refid="classNpKit_1a16d20c69a7453508b9f43959d3f88751" prot="private" virt="non-virtual"><scope>NpKit</scope><name>rank_</name></member>
+      <member refid="classNpKit_1a4eca2b839b34d427dbb9f35e78bbe4e2" prot="public" virt="non-virtual"><scope>NpKit</scope><name>Shutdown</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

@@ -1,0 +1,157 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1Timer" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::Timer</compoundname>
+    <derivedcompoundref refid="structmscclpp_1_1ScopedTimer" prot="public" virt="non-virtual">mscclpp::ScopedTimer</derivedcompoundref>
+    <includes refid="utils_8hpp" local="no">utils.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1Timer_1a5cb6507599b038483df1204dd0098105" prot="public" static="no" mutable="no">
+        <type>std::chrono::steady_clock::time_point</type>
+        <definition>std::chrono::steady_clock::time_point mscclpp::Timer::start_</definition>
+        <argsstring></argsstring>
+        <name>start_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="13" column="41" bodyfile="/root/mscclpp/include/mscclpp/utils.hpp" bodystart="13" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1Timer_1a4bac0fadd833f68607812a1490337204" prot="public" static="no" mutable="no">
+        <type>int</type>
+        <definition>int mscclpp::Timer::timeout_</definition>
+        <argsstring></argsstring>
+        <name>timeout_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="14" column="7" bodyfile="/root/mscclpp/include/mscclpp/utils.hpp" bodystart="14" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="structmscclpp_1_1Timer_1a4e748ef61bc2e3e7288a9d20c4b43d23" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Timer::Timer</definition>
+        <argsstring>(int timeout=-1)</argsstring>
+        <name>Timer</name>
+        <param>
+          <type>int</type>
+          <declname>timeout</declname>
+          <defval>-1</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="16" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1Timer_1acd3b971240d25ec3c6b603eee70c93a0" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Timer::~Timer</definition>
+        <argsstring>()</argsstring>
+        <name>~Timer</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="18" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1Timer_1ae6ae9c8a2e3c869f5b7d98375bc31b8a" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type>int64_t</type>
+        <definition>int64_t mscclpp::Timer::elapsed</definition>
+        <argsstring>() const</argsstring>
+        <name>elapsed</name>
+        <briefdescription>
+<para>Returns the elapsed time in microseconds. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="21" column="11"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1Timer_1a2a03cefb3d4eed484631d2c91334aa2e" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Timer::set</definition>
+        <argsstring>(int timeout)</argsstring>
+        <name>set</name>
+        <param>
+          <type>int</type>
+          <declname>timeout</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="23" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1Timer_1a092d22cd4c45728f5da6a1520a2b2064" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Timer::reset</definition>
+        <argsstring>()</argsstring>
+        <name>reset</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="25" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1Timer_1a7de1b00faa1cd10ef8a9ad92f605ece6" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Timer::print</definition>
+        <argsstring>(const std::string &amp;name)</argsstring>
+        <name>print</name>
+        <param>
+          <type>const std::string &amp;</type>
+          <declname>name</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="27" column="8"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <inheritancegraph>
+      <node id="2">
+        <label>mscclpp::ScopedTimer</label>
+        <link refid="structmscclpp_1_1ScopedTimer"/>
+        <childnode refid="1" relation="public-inheritance">
+        </childnode>
+      </node>
+      <node id="1">
+        <label>mscclpp::Timer</label>
+        <link refid="structmscclpp_1_1Timer"/>
+      </node>
+    </inheritancegraph>
+    <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="12" column="12" bodyfile="/root/mscclpp/include/mscclpp/utils.hpp" bodystart="12" bodyend="28"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1Timer_1ae6ae9c8a2e3c869f5b7d98375bc31b8a" prot="public" virt="non-virtual"><scope>mscclpp::Timer</scope><name>elapsed</name></member>
+      <member refid="structmscclpp_1_1Timer_1a7de1b00faa1cd10ef8a9ad92f605ece6" prot="public" virt="non-virtual"><scope>mscclpp::Timer</scope><name>print</name></member>
+      <member refid="structmscclpp_1_1Timer_1a092d22cd4c45728f5da6a1520a2b2064" prot="public" virt="non-virtual"><scope>mscclpp::Timer</scope><name>reset</name></member>
+      <member refid="structmscclpp_1_1Timer_1a2a03cefb3d4eed484631d2c91334aa2e" prot="public" virt="non-virtual"><scope>mscclpp::Timer</scope><name>set</name></member>
+      <member refid="structmscclpp_1_1Timer_1a5cb6507599b038483df1204dd0098105" prot="public" virt="non-virtual"><scope>mscclpp::Timer</scope><name>start_</name></member>
+      <member refid="structmscclpp_1_1Timer_1a4bac0fadd833f68607812a1490337204" prot="public" virt="non-virtual"><scope>mscclpp::Timer</scope><name>timeout_</name></member>
+      <member refid="structmscclpp_1_1Timer_1a4e748ef61bc2e3e7288a9d20c4b43d23" prot="public" virt="non-virtual"><scope>mscclpp::Timer</scope><name>Timer</name></member>
+      <member refid="structmscclpp_1_1Timer_1acd3b971240d25ec3c6b603eee70c93a0" prot="public" virt="non-virtual"><scope>mscclpp::Timer</scope><name>~Timer</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

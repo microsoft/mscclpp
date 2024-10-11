@@ -1,0 +1,204 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1NvlsConnection" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::NvlsConnection</compoundname>
+    <includes refid="nvls_8hpp" local="no">nvls.hpp</includes>
+    <innerclass refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer" prot="public">mscclpp::NvlsConnection::DeviceMulticastPointer</innerclass>
+      <sectiondef kind="public-static-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1NvlsConnection_1a2792ac41d2ce8213f73dd2420bab2d61" prot="public" static="yes" mutable="no">
+        <type>const int</type>
+        <definition>const int mscclpp::NvlsConnection::DefaultNvlsBufferSize</definition>
+        <argsstring></argsstring>
+        <name>DefaultNvlsBufferSize</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="20" column="20" bodyfile="/root/mscclpp/include/mscclpp/nvls.hpp" bodystart="20" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1NvlsConnection_1afef4c76d57cb8d3b3ec1e34c9c91fdb1" prot="private" static="no" mutable="no">
+        <type>std::shared_ptr&lt; Impl &gt;</type>
+        <definition>std::shared_ptr&lt;Impl&gt; mscclpp::NvlsConnection::pimpl_</definition>
+        <argsstring></argsstring>
+        <name>pimpl_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="53" column="19" bodyfile="/root/mscclpp/include/mscclpp/nvls.hpp" bodystart="52" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1NvlsConnection_1aa730ffb5f624d8e79787ac8a32396e38" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::NvlsConnection::NvlsConnection</definition>
+        <argsstring>(size_t bufferSize, int numDevices)</argsstring>
+        <name>NvlsConnection</name>
+        <param>
+          <type>size_t</type>
+          <declname>bufferSize</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>numDevices</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="14" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1NvlsConnection_1a43bfa26d664be6b35c9574ca7864bad9" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::NvlsConnection::NvlsConnection</definition>
+        <argsstring>(const std::vector&lt; char &gt; &amp;data)</argsstring>
+        <name>NvlsConnection</name>
+        <param>
+          <type>const std::vector&lt; char &gt; &amp;</type>
+          <declname>data</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="15" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1NvlsConnection_1a6ed362f5edd4b04ca0736a1523323dcd" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::NvlsConnection::NvlsConnection</definition>
+        <argsstring>()=delete</argsstring>
+        <name>NvlsConnection</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="16" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1NvlsConnection_1a6c1596a8a6a0f0a37445d622c1c7c686" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::vector&lt; char &gt;</type>
+        <definition>std::vector&lt;char&gt; mscclpp::NvlsConnection::serialize</definition>
+        <argsstring>()</argsstring>
+        <name>serialize</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="17" column="15"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1NvlsConnection_1a417d0ba75886b614d69af4bed774792e" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::NvlsConnection::addDevice</definition>
+        <argsstring>()</argsstring>
+        <name>addDevice</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="23" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1NvlsConnection_1a1e96d58b63a9a509976d87ad2c3eb609" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::NvlsConnection::addDevice</definition>
+        <argsstring>(int cudaDeviceId)</argsstring>
+        <name>addDevice</name>
+        <param>
+          <type>int</type>
+          <declname>cudaDeviceId</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="24" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1NvlsConnection_1ab05ead62fb33b078f227dc3b91b4cb38" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::shared_ptr&lt; <ref refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer" kindref="compound">DeviceMulticastPointer</ref> &gt;</type>
+        <definition>std::shared_ptr&lt;DeviceMulticastPointer&gt; mscclpp::NvlsConnection::allocateAndBindCuda</definition>
+        <argsstring>(size_t size)</argsstring>
+        <name>allocateAndBindCuda</name>
+        <param>
+          <type>size_t</type>
+          <declname>size</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="43" column="19"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1NvlsConnection_1accd44d52b9318af537d24b457e1aa54d" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::shared_ptr&lt; char &gt;</type>
+        <definition>std::shared_ptr&lt;char&gt; mscclpp::NvlsConnection::bindAllocatedCuda</definition>
+        <argsstring>(CUmemGenericAllocationHandle memHandle, size_t size)</argsstring>
+        <name>bindAllocatedCuda</name>
+        <param>
+          <type>CUmemGenericAllocationHandle</type>
+          <declname>memHandle</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>size</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>The <computeroutput>handle</computeroutput> to the allocation (its lifetime is managed by the caller) and the <computeroutput>size</computeroutput> of the allocation. </para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="47" column="19"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1NvlsConnection_1a778fc050887ef0fc0e4a63485b094a34" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>size_t</type>
+        <definition>size_t mscclpp::NvlsConnection::getMultiCastMinGranularity</definition>
+        <argsstring>()</argsstring>
+        <name>getMultiCastMinGranularity</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="49" column="10"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="12" column="21" bodyfile="/root/mscclpp/include/mscclpp/nvls.hpp" bodystart="12" bodyend="54"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1NvlsConnection_1a417d0ba75886b614d69af4bed774792e" prot="public" virt="non-virtual"><scope>mscclpp::NvlsConnection</scope><name>addDevice</name></member>
+      <member refid="classmscclpp_1_1NvlsConnection_1a1e96d58b63a9a509976d87ad2c3eb609" prot="public" virt="non-virtual"><scope>mscclpp::NvlsConnection</scope><name>addDevice</name></member>
+      <member refid="classmscclpp_1_1NvlsConnection_1ab05ead62fb33b078f227dc3b91b4cb38" prot="public" virt="non-virtual"><scope>mscclpp::NvlsConnection</scope><name>allocateAndBindCuda</name></member>
+      <member refid="classmscclpp_1_1NvlsConnection_1accd44d52b9318af537d24b457e1aa54d" prot="public" virt="non-virtual"><scope>mscclpp::NvlsConnection</scope><name>bindAllocatedCuda</name></member>
+      <member refid="classmscclpp_1_1NvlsConnection_1a2792ac41d2ce8213f73dd2420bab2d61" prot="public" virt="non-virtual"><scope>mscclpp::NvlsConnection</scope><name>DefaultNvlsBufferSize</name></member>
+      <member refid="classmscclpp_1_1NvlsConnection_1a778fc050887ef0fc0e4a63485b094a34" prot="public" virt="non-virtual"><scope>mscclpp::NvlsConnection</scope><name>getMultiCastMinGranularity</name></member>
+      <member refid="classmscclpp_1_1NvlsConnection_1aa730ffb5f624d8e79787ac8a32396e38" prot="public" virt="non-virtual"><scope>mscclpp::NvlsConnection</scope><name>NvlsConnection</name></member>
+      <member refid="classmscclpp_1_1NvlsConnection_1a43bfa26d664be6b35c9574ca7864bad9" prot="public" virt="non-virtual"><scope>mscclpp::NvlsConnection</scope><name>NvlsConnection</name></member>
+      <member refid="classmscclpp_1_1NvlsConnection_1a6ed362f5edd4b04ca0736a1523323dcd" prot="public" virt="non-virtual"><scope>mscclpp::NvlsConnection</scope><name>NvlsConnection</name></member>
+      <member refid="classmscclpp_1_1NvlsConnection_1afef4c76d57cb8d3b3ec1e34c9c91fdb1" prot="private" virt="non-virtual"><scope>mscclpp::NvlsConnection</scope><name>pimpl_</name></member>
+      <member refid="classmscclpp_1_1NvlsConnection_1a6c1596a8a6a0f0a37445d622c1c7c686" prot="public" virt="non-virtual"><scope>mscclpp::NvlsConnection</scope><name>serialize</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

@@ -1,0 +1,192 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="sm__channel__device_8hpp" kind="file" language="C++">
+    <compoundname>sm_channel_device.hpp</compoundname>
+    <includes refid="semaphore__device_8hpp" local="yes">semaphore_device.hpp</includes>
+    <includedby refid="sm__channel_8hpp" local="yes">sm_channel.hpp</includedby>
+    <incdepgraph>
+      <node id="3">
+        <label>device.hpp</label>
+        <link refid="device_8hpp"/>
+      </node>
+      <node id="2">
+        <label>semaphore_device.hpp</label>
+        <link refid="semaphore__device_8hpp"/>
+        <childnode refid="3" relation="include">
+        </childnode>
+      </node>
+      <node id="1">
+        <label>sm_channel_device.hpp</label>
+        <link refid="sm__channel__device_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+      </node>
+    </incdepgraph>
+    <invincdepgraph>
+      <node id="1">
+        <label>sm_channel_device.hpp</label>
+        <link refid="sm__channel__device_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+      </node>
+      <node id="2">
+        <label>sm_channel.hpp</label>
+        <link refid="sm__channel_8hpp"/>
+      </node>
+    </invincdepgraph>
+    <innerclass refid="structmscclpp_1_1SmChannelDeviceHandle" prot="public">mscclpp::SmChannelDeviceHandle</innerclass>
+    <innernamespace refid="namespacemscclpp">mscclpp</innernamespace>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>MSCCLPP_SM_CHANNEL_DEVICE_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>MSCCLPP_SM_CHANNEL_DEVICE_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="semaphore__device_8hpp" kindref="compound">semaphore_device.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="9"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="packet__device_8hpp" kindref="compound">packet_device.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="10"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="11"><highlight class="normal"></highlight></codeline>
+<codeline lineno="12"><highlight class="normal"></highlight><highlight class="keyword">namespace<sp/></highlight><highlight class="normal"><ref refid="namespacemscclpp" kindref="compound">mscclpp</ref><sp/>{</highlight></codeline>
+<codeline lineno="13"><highlight class="normal"></highlight></codeline>
+<codeline lineno="14"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="15"><highlight class="normal"></highlight></codeline>
+<codeline lineno="16"><highlight class="normal"></highlight><highlight class="keyword">namespace<sp/></highlight><highlight class="normal">Element<sp/>{</highlight></codeline>
+<codeline lineno="17"><highlight class="normal"></highlight></codeline>
+<codeline lineno="30"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">typename</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="31"><highlight class="normal">MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>copy(T*<sp/>dst,<sp/>T*<sp/>src,<sp/>uint64_t<sp/>numElems,<sp/>uint32_t<sp/>threadId,<sp/>uint32_t<sp/>numThreads)<sp/>{</highlight></codeline>
+<codeline lineno="32"><highlight class="normal"><sp/><sp/>T<sp/>reg;</highlight></codeline>
+<codeline lineno="33"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">for</highlight><highlight class="normal"><sp/>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>i<sp/>=<sp/>threadId;<sp/>i<sp/>&lt;<sp/>numElems;<sp/>i<sp/>+=<sp/>numThreads)<sp/>{</highlight></codeline>
+<codeline lineno="34"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>Load<sp/>to<sp/>register<sp/>first.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="35"><highlight class="normal"><sp/><sp/><sp/><sp/>reg<sp/>=<sp/>src[i];</highlight></codeline>
+<codeline lineno="36"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>Then<sp/>store<sp/>to<sp/>destination.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="37"><highlight class="normal"><sp/><sp/><sp/><sp/>dst[i]<sp/>=<sp/>reg;</highlight></codeline>
+<codeline lineno="38"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="39"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="40"><highlight class="normal"></highlight></codeline>
+<codeline lineno="41"><highlight class="normal">}<sp/><sp/></highlight><highlight class="comment">//<sp/>namespace<sp/>Element</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="42"><highlight class="normal"></highlight></codeline>
+<codeline lineno="43"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="44"><highlight class="normal"></highlight></codeline>
+<codeline lineno="46" refid="structmscclpp_1_1SmChannelDeviceHandle" refkind="compound"><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1SmChannelDeviceHandle" kindref="compound">SmChannelDeviceHandle</ref><sp/>{</highlight></codeline>
+<codeline lineno="47" refid="structmscclpp_1_1SmChannelDeviceHandle_1a48cab162122c88e0120abd5ac782cc43" refkind="member"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle" kindref="compound">SmDevice2DeviceSemaphoreDeviceHandle</ref><sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48cab162122c88e0120abd5ac782cc43" kindref="member">semaphore_</ref>;</highlight></codeline>
+<codeline lineno="48" refid="structmscclpp_1_1SmChannelDeviceHandle_1a48b6bd95a338420b2b51d8c293109b66" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal">*<sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48b6bd95a338420b2b51d8c293109b66" kindref="member">src_</ref>;</highlight></codeline>
+<codeline lineno="49" refid="structmscclpp_1_1SmChannelDeviceHandle_1aac9b386aae4da09e5b48a375a7325f64" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal">*<sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1aac9b386aae4da09e5b48a375a7325f64" kindref="member">dst_</ref>;</highlight></codeline>
+<codeline lineno="50" refid="structmscclpp_1_1SmChannelDeviceHandle_1a43c60f841e30967d44ac51d2f7908fa7" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal">*<sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a43c60f841e30967d44ac51d2f7908fa7" kindref="member">getPacketBuffer_</ref>;</highlight></codeline>
+<codeline lineno="51"><highlight class="normal"></highlight></codeline>
+<codeline lineno="52"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="53"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">typename</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="58"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/>T<sp/>read(uint64_t<sp/>index)<sp/>{</highlight></codeline>
+<codeline lineno="59"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>*(</highlight><highlight class="keyword">reinterpret_cast&lt;</highlight><highlight class="normal">T*</highlight><highlight class="keyword">&gt;</highlight><highlight class="normal">(<ref refid="structmscclpp_1_1SmChannelDeviceHandle_1aac9b386aae4da09e5b48a375a7325f64" kindref="member">dst_</ref>)<sp/>+<sp/>index);</highlight></codeline>
+<codeline lineno="60"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="61"><highlight class="normal"></highlight></codeline>
+<codeline lineno="66"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">typename</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="67"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>write(uint64_t<sp/>index,<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>T&amp;<sp/>v)<sp/>{</highlight></codeline>
+<codeline lineno="68"><highlight class="normal"><sp/><sp/><sp/><sp/>*(</highlight><highlight class="keyword">reinterpret_cast&lt;</highlight><highlight class="normal">T*</highlight><highlight class="keyword">&gt;</highlight><highlight class="normal">(<ref refid="structmscclpp_1_1SmChannelDeviceHandle_1aac9b386aae4da09e5b48a375a7325f64" kindref="member">dst_</ref>)<sp/>+<sp/>index)<sp/>=<sp/>v;</highlight></codeline>
+<codeline lineno="69"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="70"><highlight class="normal"></highlight></codeline>
+<codeline lineno="72"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">typename</highlight><highlight class="normal"><sp/>T,<sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/>CopyRemainder<sp/>=<sp/>true&gt;</highlight></codeline>
+<codeline lineno="73"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>copy_helper(</highlight><highlight class="keywordtype">void</highlight><highlight class="normal">*<sp/>dst,<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal">*<sp/>src,<sp/>uint64_t<sp/>bytes,<sp/>uint32_t<sp/>threadId,<sp/>uint32_t<sp/>numThreads)<sp/>{</highlight></codeline>
+<codeline lineno="74"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal">*<sp/>dstInt<sp/>=<sp/></highlight><highlight class="keyword">reinterpret_cast&lt;</highlight><highlight class="keywordtype">int</highlight><highlight class="normal">*</highlight><highlight class="keyword">&gt;</highlight><highlight class="normal">(dst);</highlight></codeline>
+<codeline lineno="75"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal">*<sp/>srcInt<sp/>=<sp/></highlight><highlight class="keyword">reinterpret_cast&lt;</highlight><highlight class="keywordtype">int</highlight><highlight class="normal">*</highlight><highlight class="keyword">&gt;</highlight><highlight class="normal">(src);</highlight></codeline>
+<codeline lineno="76"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>uintptr_t<sp/>dstPtr<sp/>=<sp/></highlight><highlight class="keyword">reinterpret_cast&lt;</highlight><highlight class="normal">uintptr_t</highlight><highlight class="keyword">&gt;</highlight><highlight class="normal">(dst);</highlight></codeline>
+<codeline lineno="77"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>uintptr_t<sp/>srcPtr<sp/>=<sp/></highlight><highlight class="keyword">reinterpret_cast&lt;</highlight><highlight class="normal">uintptr_t</highlight><highlight class="keyword">&gt;</highlight><highlight class="normal">(src);</highlight></codeline>
+<codeline lineno="78"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>uint64_t<sp/>numInt<sp/>=<sp/>bytes<sp/>/<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(int);</highlight></codeline>
+<codeline lineno="79"><highlight class="normal"><sp/><sp/><sp/><sp/>T*<sp/>dstElem<sp/>=<sp/></highlight><highlight class="keyword">reinterpret_cast&lt;</highlight><highlight class="normal">T*</highlight><highlight class="keyword">&gt;</highlight><highlight class="normal">((dstPtr<sp/>+<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T)<sp/>-<sp/>1)<sp/>/<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T)<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T));</highlight></codeline>
+<codeline lineno="80"><highlight class="normal"><sp/><sp/><sp/><sp/>T*<sp/>srcElem<sp/>=<sp/></highlight><highlight class="keyword">reinterpret_cast&lt;</highlight><highlight class="normal">T*</highlight><highlight class="keyword">&gt;</highlight><highlight class="normal">((srcPtr<sp/>+<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T)<sp/>-<sp/>1)<sp/>/<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T)<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T));</highlight></codeline>
+<codeline lineno="81"><highlight class="normal"><sp/><sp/><sp/><sp/>uint64_t<sp/>nFirstInt<sp/>=<sp/>(</highlight><highlight class="keyword">reinterpret_cast&lt;</highlight><highlight class="normal">uintptr_t</highlight><highlight class="keyword">&gt;</highlight><highlight class="normal">(dstElem)<sp/>-<sp/>dstPtr)<sp/>/<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(int);</highlight></codeline>
+<codeline lineno="82"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(CopyRemainder)<sp/>{</highlight></codeline>
+<codeline lineno="83"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>Copy<sp/>the<sp/>remainder<sp/>integers<sp/>at<sp/>the<sp/>beginning.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="84"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>Element::copy&lt;int&gt;(dstInt,<sp/>srcInt,<sp/>nFirstInt,<sp/>threadId,<sp/>numThreads);</highlight></codeline>
+<codeline lineno="85"><highlight class="normal"><sp/><sp/><sp/><sp/>}</highlight></codeline>
+<codeline lineno="86"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>Copy<sp/>elements.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="87"><highlight class="normal"><sp/><sp/><sp/><sp/>constexpr<sp/>uint64_t<sp/>nIntPerElem<sp/>=<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T)<sp/>/<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(</highlight><highlight class="keywordtype">int</highlight><highlight class="normal">);</highlight></codeline>
+<codeline lineno="88"><highlight class="normal"><sp/><sp/><sp/><sp/>uint64_t<sp/>nElem<sp/>=<sp/>(numInt<sp/>-<sp/>nFirstInt)<sp/>/<sp/>nIntPerElem;</highlight></codeline>
+<codeline lineno="89"><highlight class="normal"><sp/><sp/><sp/><sp/>Element::copy&lt;T&gt;(dstElem,<sp/>srcElem,<sp/>nElem,<sp/>threadId,<sp/>numThreads);</highlight></codeline>
+<codeline lineno="90"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(CopyRemainder<sp/>&amp;&amp;<sp/>nIntPerElem<sp/>&gt;<sp/>1)<sp/>{</highlight></codeline>
+<codeline lineno="91"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>Copy<sp/>the<sp/>remainder<sp/>integers<sp/>at<sp/>the<sp/>end.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="92"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>uint64_t<sp/>nLastInt<sp/>=<sp/>(numInt<sp/>-<sp/>nFirstInt)<sp/>%<sp/>nIntPerElem;</highlight></codeline>
+<codeline lineno="93"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>Element::copy&lt;int&gt;(dstInt<sp/>+<sp/>nFirstInt<sp/>+<sp/>nElem<sp/>*<sp/>nIntPerElem,<sp/>srcInt<sp/>+<sp/>nFirstInt<sp/>+<sp/>nElem<sp/>*<sp/>nIntPerElem,<sp/>nLastInt,</highlight></codeline>
+<codeline lineno="94"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>threadId,<sp/>numThreads);</highlight></codeline>
+<codeline lineno="95"><highlight class="normal"><sp/><sp/><sp/><sp/>}</highlight></codeline>
+<codeline lineno="96"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="97"><highlight class="normal"></highlight></codeline>
+<codeline lineno="111"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>Alignment<sp/>=<sp/>16,<sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/>CopyRemainder<sp/>=<sp/>true&gt;</highlight></codeline>
+<codeline lineno="112"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>copy(</highlight><highlight class="keywordtype">void</highlight><highlight class="normal">*<sp/>dst,<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal">*<sp/>src,<sp/>uint64_t<sp/>bytes,<sp/>uint32_t<sp/>threadId,<sp/>uint32_t<sp/>numThreads)<sp/>{</highlight></codeline>
+<codeline lineno="113"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(Alignment<sp/>==<sp/>4)<sp/>{</highlight></codeline>
+<codeline lineno="114"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>copy_helper&lt;int,<sp/>CopyRemainder&gt;(dst,<sp/>src,<sp/>bytes,<sp/>threadId,<sp/>numThreads);</highlight></codeline>
+<codeline lineno="115"><highlight class="normal"><sp/><sp/><sp/><sp/>}<sp/></highlight><highlight class="keywordflow">else</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(Alignment<sp/>==<sp/>8)<sp/>{</highlight></codeline>
+<codeline lineno="116"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>copy_helper&lt;long<sp/>long,<sp/>CopyRemainder&gt;(dst,<sp/>src,<sp/>bytes,<sp/>threadId,<sp/>numThreads);</highlight></codeline>
+<codeline lineno="117"><highlight class="normal"><sp/><sp/><sp/><sp/>}<sp/></highlight><highlight class="keywordflow">else</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(Alignment<sp/>==<sp/>16)<sp/>{</highlight></codeline>
+<codeline lineno="118"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>copy_helper&lt;longlong2,<sp/>CopyRemainder&gt;(dst,<sp/>src,<sp/>bytes,<sp/>threadId,<sp/>numThreads);</highlight></codeline>
+<codeline lineno="119"><highlight class="normal"><sp/><sp/><sp/><sp/>}<sp/></highlight><highlight class="keywordflow">else</highlight><highlight class="normal"><sp/>{</highlight></codeline>
+<codeline lineno="120"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>static_assert(Alignment<sp/>==<sp/>4<sp/>||<sp/>Alignment<sp/>==<sp/>8<sp/>||<sp/>Alignment<sp/>==<sp/>16,<sp/></highlight><highlight class="stringliteral">&quot;Unsupported<sp/>alignment&quot;</highlight><highlight class="normal">);</highlight></codeline>
+<codeline lineno="121"><highlight class="normal"><sp/><sp/><sp/><sp/>}</highlight></codeline>
+<codeline lineno="122"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="123"><highlight class="normal"></highlight></codeline>
+<codeline lineno="138"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>Alignment<sp/>=<sp/>16,<sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/>CopyRemainder<sp/>=<sp/>true&gt;</highlight></codeline>
+<codeline lineno="139"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>put(uint64_t<sp/>targetOffset,<sp/>uint64_t<sp/>originOffset,<sp/>uint64_t<sp/>originBytes,<sp/>uint32_t<sp/>threadId,</highlight></codeline>
+<codeline lineno="140"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>uint32_t<sp/>numThreads)<sp/>{</highlight></codeline>
+<codeline lineno="141"><highlight class="normal"><sp/><sp/><sp/><sp/>copy&lt;Alignment,<sp/>CopyRemainder&gt;((</highlight><highlight class="keywordtype">char</highlight><highlight class="normal">*)<ref refid="structmscclpp_1_1SmChannelDeviceHandle_1aac9b386aae4da09e5b48a375a7325f64" kindref="member">dst_</ref><sp/>+<sp/>targetOffset,<sp/>(</highlight><highlight class="keywordtype">char</highlight><highlight class="normal">*)<ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48b6bd95a338420b2b51d8c293109b66" kindref="member">src_</ref><sp/>+<sp/>originOffset,<sp/>originBytes,<sp/>threadId,</highlight></codeline>
+<codeline lineno="142"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>numThreads);</highlight></codeline>
+<codeline lineno="143"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="144"><highlight class="normal"></highlight></codeline>
+<codeline lineno="159"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>Alignment<sp/>=<sp/>16,<sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/>CopyRemainder<sp/>=<sp/>true&gt;</highlight></codeline>
+<codeline lineno="160"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>get(uint64_t<sp/>targetOffset,<sp/>uint64_t<sp/>originOffset,<sp/>uint64_t<sp/>originBytes,<sp/>uint32_t<sp/>threadId,</highlight></codeline>
+<codeline lineno="161"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>uint32_t<sp/>numThreads)<sp/>{</highlight></codeline>
+<codeline lineno="162"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>Note<sp/>that<sp/>`dst`<sp/>and<sp/>`src`<sp/>are<sp/>swapped<sp/>for<sp/>`get()`.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="163"><highlight class="normal"><sp/><sp/><sp/><sp/>copy&lt;Alignment,<sp/>CopyRemainder&gt;((</highlight><highlight class="keywordtype">char</highlight><highlight class="normal">*)<ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48b6bd95a338420b2b51d8c293109b66" kindref="member">src_</ref><sp/>+<sp/>originOffset,<sp/>(</highlight><highlight class="keywordtype">char</highlight><highlight class="normal">*)<ref refid="structmscclpp_1_1SmChannelDeviceHandle_1aac9b386aae4da09e5b48a375a7325f64" kindref="member">dst_</ref><sp/>+<sp/>targetOffset,<sp/>originBytes,<sp/>threadId,</highlight></codeline>
+<codeline lineno="164"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>numThreads);</highlight></codeline>
+<codeline lineno="165"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="166"><highlight class="normal"></highlight></codeline>
+<codeline lineno="180"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>Alignment<sp/>=<sp/>16,<sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/>CopyRemainder<sp/>=<sp/>true&gt;</highlight></codeline>
+<codeline lineno="181"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>put(uint64_t<sp/>offset,<sp/>uint64_t<sp/>bytes,<sp/>uint32_t<sp/>threadId,<sp/>uint32_t<sp/>numThreads)<sp/>{</highlight></codeline>
+<codeline lineno="182"><highlight class="normal"><sp/><sp/><sp/><sp/>put&lt;Alignment,<sp/>CopyRemainder&gt;(offset,<sp/>offset,<sp/>bytes,<sp/>threadId,<sp/>numThreads);</highlight></codeline>
+<codeline lineno="183"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="184"><highlight class="normal"></highlight></codeline>
+<codeline lineno="198"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>Alignment<sp/>=<sp/>16,<sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/>CopyRemainder<sp/>=<sp/>true&gt;</highlight></codeline>
+<codeline lineno="199"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>get(uint64_t<sp/>offset,<sp/>uint64_t<sp/>bytes,<sp/>uint32_t<sp/>threadId,<sp/>uint32_t<sp/>numThreads)<sp/>{</highlight></codeline>
+<codeline lineno="200"><highlight class="normal"><sp/><sp/><sp/><sp/>get&lt;Alignment,<sp/>CopyRemainder&gt;(offset,<sp/>offset,<sp/>bytes,<sp/>threadId,<sp/>numThreads);</highlight></codeline>
+<codeline lineno="201"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="202"><highlight class="normal"></highlight></codeline>
+<codeline lineno="216"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">typename</highlight><highlight class="normal"><sp/>PacketType<sp/>=<sp/>LL16Packet&gt;</highlight></codeline>
+<codeline lineno="217"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>putPackets(uint64_t<sp/>targetOffset,<sp/>uint64_t<sp/>originOffset,<sp/>uint64_t<sp/>originBytes,</highlight></codeline>
+<codeline lineno="218"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>uint32_t<sp/>threadId,<sp/>uint32_t<sp/>numThreads,<sp/>uint32_t<sp/>flag)<sp/>{</highlight></codeline>
+<codeline lineno="219"><highlight class="normal"><sp/><sp/><sp/><sp/>mscclpp::putPackets&lt;PacketType&gt;(<ref refid="structmscclpp_1_1SmChannelDeviceHandle_1aac9b386aae4da09e5b48a375a7325f64" kindref="member">dst_</ref>,<sp/>targetOffset,<sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48b6bd95a338420b2b51d8c293109b66" kindref="member">src_</ref>,<sp/>originOffset,<sp/>originBytes,<sp/>threadId,<sp/>numThreads,<sp/>flag);</highlight></codeline>
+<codeline lineno="220"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="221"><highlight class="normal"></highlight></codeline>
+<codeline lineno="234"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">typename</highlight><highlight class="normal"><sp/>PacketType<sp/>=<sp/>LL16Packet&gt;</highlight></codeline>
+<codeline lineno="235"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>getPackets(uint64_t<sp/>targetOffset,<sp/>uint64_t<sp/>originOffset,<sp/>uint64_t<sp/>originBytes,</highlight></codeline>
+<codeline lineno="236"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>uint32_t<sp/>threadId,<sp/>uint32_t<sp/>numThreads,<sp/>uint32_t<sp/>flag)<sp/>{</highlight></codeline>
+<codeline lineno="237"><highlight class="normal"><sp/><sp/><sp/><sp/>mscclpp::getPackets&lt;PacketType&gt;(<ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a43c60f841e30967d44ac51d2f7908fa7" kindref="member">getPacketBuffer_</ref>,<sp/>targetOffset,<sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48b6bd95a338420b2b51d8c293109b66" kindref="member">src_</ref>,<sp/>originOffset,<sp/>originBytes,<sp/>threadId,</highlight></codeline>
+<codeline lineno="238"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>numThreads,<sp/>flag);</highlight></codeline>
+<codeline lineno="239"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="240"><highlight class="normal"></highlight></codeline>
+<codeline lineno="246"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>signal()<sp/>{<sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48cab162122c88e0120abd5ac782cc43" kindref="member">semaphore_</ref>.signal();<sp/>}</highlight></codeline>
+<codeline lineno="247"><highlight class="normal"></highlight></codeline>
+<codeline lineno="253"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>relaxedSignal()<sp/>{<sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48cab162122c88e0120abd5ac782cc43" kindref="member">semaphore_</ref>.relaxedSignal();<sp/>}</highlight></codeline>
+<codeline lineno="254"><highlight class="normal"></highlight></codeline>
+<codeline lineno="261"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>signalPacket()<sp/>{<sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48cab162122c88e0120abd5ac782cc43" kindref="member">semaphore_</ref>.signalPacket();<sp/>}</highlight></codeline>
+<codeline lineno="262"><highlight class="normal"></highlight></codeline>
+<codeline lineno="264"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>semaphoreIncrement()<sp/>{<sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48cab162122c88e0120abd5ac782cc43" kindref="member">semaphore_</ref>.semaphoreIncrement();<sp/>}</highlight></codeline>
+<codeline lineno="265"><highlight class="normal"></highlight></codeline>
+<codeline lineno="267"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/>uint64_t<sp/>semaphoreGetLocal()</highlight><highlight class="keyword"><sp/>const<sp/></highlight><highlight class="normal">{<sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48cab162122c88e0120abd5ac782cc43" kindref="member">semaphore_</ref>.semaphoreGetLocal();<sp/>}</highlight></codeline>
+<codeline lineno="268"><highlight class="normal"></highlight></codeline>
+<codeline lineno="271"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/>poll()<sp/>{<sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48cab162122c88e0120abd5ac782cc43" kindref="member">semaphore_</ref>.poll();<sp/>}</highlight></codeline>
+<codeline lineno="272"><highlight class="normal"></highlight></codeline>
+<codeline lineno="275"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>wait(int64_t<sp/>maxSpinCount<sp/>=<sp/>10000000)<sp/>{<sp/><ref refid="structmscclpp_1_1SmChannelDeviceHandle_1a48cab162122c88e0120abd5ac782cc43" kindref="member">semaphore_</ref>.wait(maxSpinCount);<sp/>}</highlight></codeline>
+<codeline lineno="276"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="277"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="278"><highlight class="normal"></highlight></codeline>
+<codeline lineno="279"><highlight class="normal">}<sp/><sp/></highlight><highlight class="comment">//<sp/>namespace<sp/>mscclpp</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="280"><highlight class="normal"></highlight></codeline>
+<codeline lineno="281"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>MSCCLPP_SM_CHANNEL_DEVICE_HPP_</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/sm_channel_device.hpp"/>
+  </compounddef>
+</doxygen>

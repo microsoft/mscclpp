@@ -1,0 +1,477 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1TcpBootstrap" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::TcpBootstrap</compoundname>
+    <basecompoundref refid="classmscclpp_1_1Bootstrap" prot="public" virt="non-virtual">mscclpp::Bootstrap</basecompoundref>
+    <includes refid="core_8hpp" local="no">core.hpp</includes>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1TcpBootstrap_1a347279b922e0b8a39e5159483427f0da" prot="private" static="no" mutable="no">
+        <type>std::unique_ptr&lt; Impl &gt;</type>
+        <definition>std::unique_ptr&lt;Impl&gt; mscclpp::TcpBootstrap::pimpl_</definition>
+        <argsstring></argsstring>
+        <name>pimpl_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="128" column="19" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="125" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-static-func">
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1a48a32333bd3c59760843d34cc38c3cd2" prot="public" static="yes" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="namespacemscclpp_1a19370d8ff8c2df952046da3ba001f3c3" kindref="member">UniqueId</ref></type>
+        <definition>static UniqueId mscclpp::TcpBootstrap::createUniqueId</definition>
+        <argsstring>()</argsstring>
+        <name>createUniqueId</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Create a random unique ID. <simplesect kind="return"><para>The created unique ID. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="56" column="19"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1a5eb94b2579a9973957d873903f0730e7" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::TcpBootstrap::TcpBootstrap</definition>
+        <argsstring>(int rank, int nRanks)</argsstring>
+        <name>TcpBootstrap</name>
+        <param>
+          <type>int</type>
+          <declname>rank</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>nRanks</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Constructor. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>rank</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The rank of the process. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>nRanks</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The total number of ranks. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="61" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1af41527f180197af4ed6a589cd454c140" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::TcpBootstrap::~TcpBootstrap</definition>
+        <argsstring>()</argsstring>
+        <name>~TcpBootstrap</name>
+        <briefdescription>
+<para>Destructor. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="64" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1a42e706ec6fd395fd4ce2ceb4c33d5cbc" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="namespacemscclpp_1a19370d8ff8c2df952046da3ba001f3c3" kindref="member">UniqueId</ref></type>
+        <definition>UniqueId mscclpp::TcpBootstrap::getUniqueId</definition>
+        <argsstring>() const</argsstring>
+        <name>getUniqueId</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Return the unique ID stored in the <ref refid="classmscclpp_1_1TcpBootstrap" kindref="compound">TcpBootstrap</ref>. <simplesect kind="return"><para>The unique ID stored in the <ref refid="classmscclpp_1_1TcpBootstrap" kindref="compound">TcpBootstrap</ref>. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="68" column="12"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1a5b4ed57f6ca910958730fd6902d52b60" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::TcpBootstrap::initialize</definition>
+        <argsstring>(UniqueId uniqueId, int64_t timeoutSec=30)</argsstring>
+        <name>initialize</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1a19370d8ff8c2df952046da3ba001f3c3" kindref="member">UniqueId</ref></type>
+          <declname>uniqueId</declname>
+        </param>
+        <param>
+          <type>int64_t</type>
+          <declname>timeoutSec</declname>
+          <defval>30</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Initialize the <ref refid="classmscclpp_1_1TcpBootstrap" kindref="compound">TcpBootstrap</ref> with a given unique ID. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>uniqueId</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The unique ID to initialize the <ref refid="classmscclpp_1_1TcpBootstrap" kindref="compound">TcpBootstrap</ref> with. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>timeoutSec</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The connection timeout in seconds. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="73" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1a25b95bbe6bded81d7f9c15dc12d8f093" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::TcpBootstrap::initialize</definition>
+        <argsstring>(const std::string &amp;ifIpPortTrio, int64_t timeoutSec=30)</argsstring>
+        <name>initialize</name>
+        <param>
+          <type>const std::string &amp;</type>
+          <declname>ifIpPortTrio</declname>
+        </param>
+        <param>
+          <type>int64_t</type>
+          <declname>timeoutSec</declname>
+          <defval>30</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Initialize the <ref refid="classmscclpp_1_1TcpBootstrap" kindref="compound">TcpBootstrap</ref> with a string formatted as &quot;ip:port&quot; or &quot;interface:ip:port&quot;. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>ifIpPortTrio</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The string formatted as &quot;ip:port&quot; or &quot;interface:ip:port&quot;. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>timeoutSec</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The connection timeout in seconds. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="78" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1a5626eeaefd2077e77af3a8a3091330cd" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type>int</type>
+        <definition>int mscclpp::TcpBootstrap::getRank</definition>
+        <argsstring>() override</argsstring>
+        <name>getRank</name>
+        <reimplements refid="classmscclpp_1_1Bootstrap_1a10022347ad48c3bf287de670dbc36761">getRank</reimplements>
+        <briefdescription>
+<para>Return the rank of the process. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="81" column="7"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1a8b492af79a381b05eddbc20b60620ed3" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type>int</type>
+        <definition>int mscclpp::TcpBootstrap::getNranks</definition>
+        <argsstring>() override</argsstring>
+        <name>getNranks</name>
+        <reimplements refid="classmscclpp_1_1Bootstrap_1a87e0617ba1f3f23f4f3727e346776dd7">getNranks</reimplements>
+        <briefdescription>
+<para>Return the total number of ranks. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="84" column="7"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1ab4733042b3e69b34ff5c1f9fe3a22f59" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type>int</type>
+        <definition>int mscclpp::TcpBootstrap::getNranksPerNode</definition>
+        <argsstring>() override</argsstring>
+        <name>getNranksPerNode</name>
+        <reimplements refid="classmscclpp_1_1Bootstrap_1aadfcff6cb4251705297c29f18a8b1d1a">getNranksPerNode</reimplements>
+        <briefdescription>
+<para>Return the total number of ranks per node. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="87" column="7"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1a9257e0474c2e858038d6d18fe7e3b8cd" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type>void</type>
+        <definition>void mscclpp::TcpBootstrap::send</definition>
+        <argsstring>(void *data, int size, int peer, int tag) override</argsstring>
+        <name>send</name>
+        <reimplements refid="classmscclpp_1_1Bootstrap_1a84e2033bb8b197a0d19e2b4c1b2f6bd5">send</reimplements>
+        <param>
+          <type>void *</type>
+          <declname>data</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>size</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>peer</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>tag</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Send data to another process.</para>
+<para>Data sent via <computeroutput>send(senderBuff, size, receiverRank, tag)</computeroutput> can be received via <computeroutput>recv(receiverBuff, size, senderRank, tag)</computeroutput>.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>data</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The data to send. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>size</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The size of the data to send. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>peer</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The rank of the process to send the data to. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>tag</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The tag to send the data with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="98" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1a3547a9251d27190099ca690877448993" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type>void</type>
+        <definition>void mscclpp::TcpBootstrap::recv</definition>
+        <argsstring>(void *data, int size, int peer, int tag) override</argsstring>
+        <name>recv</name>
+        <reimplements refid="classmscclpp_1_1Bootstrap_1a0bcc9e55f2b14b7013476e802418ce70">recv</reimplements>
+        <param>
+          <type>void *</type>
+          <declname>data</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>size</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>peer</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>tag</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Receive data from another process.</para>
+<para>Data sent via <computeroutput>send(senderBuff, size, receiverRank, tag)</computeroutput> can be received via <computeroutput>recv(receiverBuff, size, senderRank, tag)</computeroutput>.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>data</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The buffer to write the received data to. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>size</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The size of the data to receive. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>peer</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The rank of the process to receive the data from. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>tag</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The tag to receive the data with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="109" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1a75c07cdf8d10e77b5e1bb6bd4aed6654" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type>void</type>
+        <definition>void mscclpp::TcpBootstrap::allGather</definition>
+        <argsstring>(void *allData, int size) override</argsstring>
+        <name>allGather</name>
+        <reimplements refid="classmscclpp_1_1Bootstrap_1af1a3f26e418d020dc1e145ef22ef9328">allGather</reimplements>
+        <param>
+          <type>void *</type>
+          <declname>allData</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>size</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Gather data from all processes.</para>
+<para>When called by rank <computeroutput>r</computeroutput>, this sends data from <computeroutput>allData[r * size]</computeroutput> to <computeroutput>allData[(r + 1) * size - 1]</computeroutput> to all other ranks. The data sent by rank <computeroutput>r</computeroutput> is received into <computeroutput>allData[r * size]</computeroutput> of other ranks.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>allData</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The buffer to write the received data to. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>size</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The size of the data each rank sends. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="118" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TcpBootstrap_1a20747dc53f4485ebf080c135a352be12" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type>void</type>
+        <definition>void mscclpp::TcpBootstrap::barrier</definition>
+        <argsstring>() override</argsstring>
+        <name>barrier</name>
+        <reimplements refid="classmscclpp_1_1Bootstrap_1a99aa291ae8bf645c9853ee603b8e3794">barrier</reimplements>
+        <briefdescription>
+<para>Synchronize all processes. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="121" column="8"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>A native implementation of the bootstrap using TCP sockets. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <inheritancegraph>
+      <node id="2">
+        <label>mscclpp::Bootstrap</label>
+        <link refid="classmscclpp_1_1Bootstrap"/>
+      </node>
+      <node id="1">
+        <label>mscclpp::TcpBootstrap</label>
+        <link refid="classmscclpp_1_1TcpBootstrap"/>
+        <childnode refid="2" relation="public-inheritance">
+        </childnode>
+      </node>
+    </inheritancegraph>
+    <collaborationgraph>
+      <node id="2">
+        <label>mscclpp::Bootstrap</label>
+        <link refid="classmscclpp_1_1Bootstrap"/>
+      </node>
+      <node id="1">
+        <label>mscclpp::TcpBootstrap</label>
+        <link refid="classmscclpp_1_1TcpBootstrap"/>
+        <childnode refid="2" relation="public-inheritance">
+        </childnode>
+      </node>
+    </collaborationgraph>
+    <location file="/root/mscclpp/include/mscclpp/core.hpp" line="52" column="36" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="52" bodyend="129"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1TcpBootstrap_1a75c07cdf8d10e77b5e1bb6bd4aed6654" prot="public" virt="virtual"><scope>mscclpp::TcpBootstrap</scope><name>allGather</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1a20747dc53f4485ebf080c135a352be12" prot="public" virt="virtual"><scope>mscclpp::TcpBootstrap</scope><name>barrier</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1a899129191be1369ad4cbd1c1d984ca19" prot="public" virt="non-virtual"><scope>mscclpp::TcpBootstrap</scope><name>Bootstrap</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1a48a32333bd3c59760843d34cc38c3cd2" prot="public" virt="non-virtual"><scope>mscclpp::TcpBootstrap</scope><name>createUniqueId</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1a8b492af79a381b05eddbc20b60620ed3" prot="public" virt="virtual"><scope>mscclpp::TcpBootstrap</scope><name>getNranks</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1ab4733042b3e69b34ff5c1f9fe3a22f59" prot="public" virt="virtual"><scope>mscclpp::TcpBootstrap</scope><name>getNranksPerNode</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1a5626eeaefd2077e77af3a8a3091330cd" prot="public" virt="virtual"><scope>mscclpp::TcpBootstrap</scope><name>getRank</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1a42e706ec6fd395fd4ce2ceb4c33d5cbc" prot="public" virt="non-virtual"><scope>mscclpp::TcpBootstrap</scope><name>getUniqueId</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1ae5c6937a9e14d6b08966e79fe38c1e21" prot="public" virt="non-virtual"><scope>mscclpp::TcpBootstrap</scope><name>groupBarrier</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1a5b4ed57f6ca910958730fd6902d52b60" prot="public" virt="non-virtual"><scope>mscclpp::TcpBootstrap</scope><name>initialize</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1a25b95bbe6bded81d7f9c15dc12d8f093" prot="public" virt="non-virtual"><scope>mscclpp::TcpBootstrap</scope><name>initialize</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1a347279b922e0b8a39e5159483427f0da" prot="private" virt="non-virtual"><scope>mscclpp::TcpBootstrap</scope><name>pimpl_</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1a3547a9251d27190099ca690877448993" prot="public" virt="virtual"><scope>mscclpp::TcpBootstrap</scope><name>recv</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1a6f4382f88a2222f82cfe4d0c63ba5959" prot="public" virt="non-virtual" ambiguityscope="mscclpp::Bootstrap::"><scope>mscclpp::TcpBootstrap</scope><name>recv</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1a9257e0474c2e858038d6d18fe7e3b8cd" prot="public" virt="virtual"><scope>mscclpp::TcpBootstrap</scope><name>send</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1a15ecbbe1be20a98c603d4c482184baf4" prot="public" virt="non-virtual" ambiguityscope="mscclpp::Bootstrap::"><scope>mscclpp::TcpBootstrap</scope><name>send</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1a5eb94b2579a9973957d873903f0730e7" prot="public" virt="non-virtual"><scope>mscclpp::TcpBootstrap</scope><name>TcpBootstrap</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1aebeededabb3c6262b4c464ad563c87ce" prot="public" virt="virtual"><scope>mscclpp::TcpBootstrap</scope><name>~Bootstrap</name></member>
+      <member refid="classmscclpp_1_1TcpBootstrap_1af41527f180197af4ed6a589cd454c140" prot="public" virt="non-virtual"><scope>mscclpp::TcpBootstrap</scope><name>~TcpBootstrap</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

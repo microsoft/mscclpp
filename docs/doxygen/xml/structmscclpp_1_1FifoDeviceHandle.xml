@@ -1,0 +1,92 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1FifoDeviceHandle" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::FifoDeviceHandle</compoundname>
+    <includes refid="fifo__device_8hpp" local="no">fifo_device.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1FifoDeviceHandle_1a7be1ddbf8d4ac632b7b218ba28c15171" prot="public" static="no" mutable="no">
+        <type><ref refid="structmscclpp_1_1ProxyTrigger" kindref="compound">ProxyTrigger</ref> *</type>
+        <definition>ProxyTrigger* mscclpp::FifoDeviceHandle::triggers</definition>
+        <argsstring></argsstring>
+        <name>triggers</name>
+        <briefdescription>
+<para>The FIFO buffer that is allocated on the host via <computeroutput>cudaHostAlloc()</computeroutput>. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo_device.hpp" line="95" column="16" bodyfile="/root/mscclpp/include/mscclpp/fifo_device.hpp" bodystart="95" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1FifoDeviceHandle_1a830e5d971d5de7944abe457a0affed12" prot="public" static="no" mutable="no">
+        <type>uint64_t *</type>
+        <definition>uint64_t* mscclpp::FifoDeviceHandle::tailReplica</definition>
+        <argsstring></argsstring>
+        <name>tailReplica</name>
+        <briefdescription>
+<para>Replica of the FIFO tail that is allocated on device. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo_device.hpp" line="97" column="12" bodyfile="/root/mscclpp/include/mscclpp/fifo_device.hpp" bodystart="97" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1FifoDeviceHandle_1ada28c63ccea5a0fb8481872798a566b4" prot="public" static="no" mutable="no">
+        <type>uint64_t *</type>
+        <definition>uint64_t* mscclpp::FifoDeviceHandle::head</definition>
+        <argsstring></argsstring>
+        <name>head</name>
+        <briefdescription>
+<para>The FIFO head. Allocated on the device and only accessed by the device. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo_device.hpp" line="99" column="12" bodyfile="/root/mscclpp/include/mscclpp/fifo_device.hpp" bodystart="99" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1FifoDeviceHandle_1aacf8ab8a267d230c61c22120fa610d0d" prot="public" static="no" mutable="no">
+        <type>int</type>
+        <definition>int mscclpp::FifoDeviceHandle::size</definition>
+        <argsstring></argsstring>
+        <name>size</name>
+        <briefdescription>
+<para>The FIFO size. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo_device.hpp" line="101" column="7" bodyfile="/root/mscclpp/include/mscclpp/fifo_device.hpp" bodystart="101" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+<para>A concurrent FIFO where multiple device threads (the number of threads should not exceed the fifo size) can push work elements and a single host proxy thread consumes them.</para>
+<para>The FIFO has a head pointer allocated on the device which starts at 0 and goes up to 2^64-1, which is almost infinity. There are two copies of the tail, one on the device, <ref refid="structmscclpp_1_1FifoDeviceHandle_1a830e5d971d5de7944abe457a0affed12" kindref="member">FifoDeviceHandle::tailReplica</ref>, and another on the host, namely, hostTail. The host always has the &quot;true&quot; tail and occasionally pushes it to the copy on the device. Therefore, most of the time, the device has a stale version. The invariants are: tailReplica &lt;= hostTail &lt;= head. The push() function increments head, hostTail is updated in <ref refid="classmscclpp_1_1Fifo_1a1928c4910d23d3e9633e3330d3fd8a56" kindref="member">Fifo::pop()</ref>, and it occasionally flushes it to tailReplica via <ref refid="classmscclpp_1_1Fifo_1a8c6bf62637122f109737db0635cf97c7" kindref="member">Fifo::flushTail()</ref>.</para>
+<para>Duplicating the tail is a good idea because the FIFO is large enough, and we do not need frequent updates for the tail as there is usually enough space for device threads to push their work into. </para>
+    </detaileddescription>
+    <collaborationgraph>
+      <node id="1">
+        <label>mscclpp::FifoDeviceHandle</label>
+        <link refid="structmscclpp_1_1FifoDeviceHandle"/>
+        <childnode refid="2" relation="usage">
+          <edgelabel>triggers</edgelabel>
+        </childnode>
+      </node>
+      <node id="2">
+        <label>mscclpp::ProxyTrigger</label>
+        <link refid="structmscclpp_1_1ProxyTrigger"/>
+      </node>
+    </collaborationgraph>
+    <location file="/root/mscclpp/include/mscclpp/fifo_device.hpp" line="41" column="23" bodyfile="/root/mscclpp/include/mscclpp/fifo_device.hpp" bodystart="41" bodyend="102"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1FifoDeviceHandle_1ada28c63ccea5a0fb8481872798a566b4" prot="public" virt="non-virtual"><scope>mscclpp::FifoDeviceHandle</scope><name>head</name></member>
+      <member refid="structmscclpp_1_1FifoDeviceHandle_1aacf8ab8a267d230c61c22120fa610d0d" prot="public" virt="non-virtual"><scope>mscclpp::FifoDeviceHandle</scope><name>size</name></member>
+      <member refid="structmscclpp_1_1FifoDeviceHandle_1a830e5d971d5de7944abe457a0affed12" prot="public" virt="non-virtual"><scope>mscclpp::FifoDeviceHandle</scope><name>tailReplica</name></member>
+      <member refid="structmscclpp_1_1FifoDeviceHandle_1a7be1ddbf8d4ac632b7b218ba28c15171" prot="public" virt="non-virtual"><scope>mscclpp::FifoDeviceHandle</scope><name>triggers</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

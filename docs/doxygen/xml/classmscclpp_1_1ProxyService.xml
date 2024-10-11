@@ -1,0 +1,342 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1ProxyService" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::ProxyService</compoundname>
+    <basecompoundref refid="classmscclpp_1_1BaseProxyService" prot="public" virt="non-virtual">mscclpp::BaseProxyService</basecompoundref>
+    <includes refid="proxy__channel_8hpp" local="no">proxy_channel.hpp</includes>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1ProxyService_1ab09d7ec075b98e92dbb69bfe6cd17db7" prot="private" static="no" mutable="no">
+        <type>std::vector&lt; std::shared_ptr&lt; <ref refid="classmscclpp_1_1Host2DeviceSemaphore" kindref="compound">Host2DeviceSemaphore</ref> &gt; &gt;</type>
+        <definition>std::vector&lt;std::shared_ptr&lt;Host2DeviceSemaphore&gt; &gt; mscclpp::ProxyService::semaphores_</definition>
+        <argsstring></argsstring>
+        <name>semaphores_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="63" column="15" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel.hpp" bodystart="63" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classmscclpp_1_1ProxyService_1a98209686f2b61350d12799cdc8187f71" prot="private" static="no" mutable="no">
+        <type>std::vector&lt; <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> &gt;</type>
+        <definition>std::vector&lt;RegisteredMemory&gt; mscclpp::ProxyService::memories_</definition>
+        <argsstring></argsstring>
+        <name>memories_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="64" column="15" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel.hpp" bodystart="64" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classmscclpp_1_1ProxyService_1a38b51fc65436dbff54e4020ba9fbc491" prot="private" static="no" mutable="no">
+        <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Proxy" kindref="compound">Proxy</ref> &gt;</type>
+        <definition>std::shared_ptr&lt;Proxy&gt; mscclpp::ProxyService::proxy_</definition>
+        <argsstring></argsstring>
+        <name>proxy_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="65" column="19" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel.hpp" bodystart="65" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="classmscclpp_1_1ProxyService_1a189ea1fbe9276fd1dfd484505a0e3f53" prot="private" static="no" mutable="no">
+        <type>int</type>
+        <definition>int mscclpp::ProxyService::deviceNumaNode</definition>
+        <argsstring></argsstring>
+        <name>deviceNumaNode</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="66" column="7" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel.hpp" bodystart="66" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1ProxyService_1ac56d9af9e910320fbe52b433d6de959c" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::ProxyService::ProxyService</definition>
+        <argsstring>(size_t fifoSize=DEFAULT_FIFO_SIZE)</argsstring>
+        <name>ProxyService</name>
+        <param>
+          <type>size_t</type>
+          <declname>fifoSize</declname>
+          <defval><ref refid="namespacemscclpp_1aa40b9c69ba9b54d1f87f52573162c31c" kindref="member">DEFAULT_FIFO_SIZE</ref></defval>
+        </param>
+        <briefdescription>
+<para>Constructor. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="29" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1ProxyService_1a880ed2bf8c6e63b0bcf0fd8d7495469c" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" kindref="member">SemaphoreId</ref></type>
+        <definition>SemaphoreId mscclpp::ProxyService::buildAndAddSemaphore</definition>
+        <argsstring>(Communicator &amp;communicator, std::shared_ptr&lt; Connection &gt; connection)</argsstring>
+        <name>buildAndAddSemaphore</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1Communicator" kindref="compound">Communicator</ref> &amp;</type>
+          <declname>communicator</declname>
+        </param>
+        <param>
+          <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Connection" kindref="compound">Connection</ref> &gt;</type>
+          <declname>connection</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Build and add a semaphore to the proxy service. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>connection</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The connection associated with the semaphore. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>The ID of the semaphore. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="34" column="15"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1ProxyService_1a72beabb0542995757521bc93e7643deb" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" kindref="member">SemaphoreId</ref></type>
+        <definition>SemaphoreId mscclpp::ProxyService::addSemaphore</definition>
+        <argsstring>(std::shared_ptr&lt; Host2DeviceSemaphore &gt; semaphore)</argsstring>
+        <name>addSemaphore</name>
+        <param>
+          <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Host2DeviceSemaphore" kindref="compound">Host2DeviceSemaphore</ref> &gt;</type>
+          <declname>semaphore</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Add a semaphore to the proxy service. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>semaphore</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The semaphore to be added </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>The ID of the semaphore. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="39" column="15"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1ProxyService_1ab6c0a37630d9e2977cbf8ea48eaae16e" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="namespacemscclpp_1a9fe82c3a70c0ff0872516c2fa7bf6682" kindref="member">MemoryId</ref></type>
+        <definition>MemoryId mscclpp::ProxyService::addMemory</definition>
+        <argsstring>(RegisteredMemory memory)</argsstring>
+        <name>addMemory</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref></type>
+          <declname>memory</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Register a memory region with the proxy service. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>memory</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The memory region to register. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>The ID of the memory region. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="44" column="12"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1ProxyService_1a73c52d37ae3942b2d6934c253fc556e9" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Host2DeviceSemaphore" kindref="compound">Host2DeviceSemaphore</ref> &gt;</type>
+        <definition>std::shared_ptr&lt;Host2DeviceSemaphore&gt; mscclpp::ProxyService::semaphore</definition>
+        <argsstring>(SemaphoreId id) const</argsstring>
+        <name>semaphore</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" kindref="member">SemaphoreId</ref></type>
+          <declname>id</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get a semaphore by ID. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>id</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The ID of the semaphore. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>The semaphore. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="49" column="19"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1ProxyService_1ac8addb08bdeafb34ab9403f4289699b9" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="structmscclpp_1_1ProxyChannel" kindref="compound">ProxyChannel</ref></type>
+        <definition>ProxyChannel mscclpp::ProxyService::proxyChannel</definition>
+        <argsstring>(SemaphoreId id)</argsstring>
+        <name>proxyChannel</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" kindref="member">SemaphoreId</ref></type>
+          <declname>id</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get a proxy channel by semaphore ID. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>id</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The ID of the semaphore. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>The proxy channel. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="54" column="16"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1ProxyService_1a3a7fee2e10b27ab739c3d4ad54d53e0d" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type>void</type>
+        <definition>void mscclpp::ProxyService::startProxy</definition>
+        <argsstring>()</argsstring>
+        <name>startProxy</name>
+        <reimplements refid="classmscclpp_1_1BaseProxyService_1a16999668fd551642ba6870079f9fcfe9">startProxy</reimplements>
+        <briefdescription>
+<para>Start the proxy service. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="57" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1ProxyService_1aa6aa0c9f840452b053f278debd3ad5cd" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type>void</type>
+        <definition>void mscclpp::ProxyService::stopProxy</definition>
+        <argsstring>()</argsstring>
+        <name>stopProxy</name>
+        <reimplements refid="classmscclpp_1_1BaseProxyService_1a7efff2a6d38ccf89640c2d0bf97c1b00">stopProxy</reimplements>
+        <briefdescription>
+<para>Stop the proxy service. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="60" column="8"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="private-func">
+      <memberdef kind="function" id="classmscclpp_1_1ProxyService_1a350640e8e2594e51125508c6bd3c7fc4" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::ProxyService::bindThread</definition>
+        <argsstring>()</argsstring>
+        <name>bindThread</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="68" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1ProxyService_1a69d54a1910a89f064a8b5e5741961e65" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="namespacemscclpp_1ad8b700e44edeb049b38add920666759f" kindref="member">ProxyHandlerResult</ref></type>
+        <definition>ProxyHandlerResult mscclpp::ProxyService::handleTrigger</definition>
+        <argsstring>(ProxyTrigger triggerRaw)</argsstring>
+        <name>handleTrigger</name>
+        <param>
+          <type><ref refid="structmscclpp_1_1ProxyTrigger" kindref="compound">ProxyTrigger</ref></type>
+          <declname>triggerRaw</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="70" column="22"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para><ref refid="classmscclpp_1_1Proxy" kindref="compound">Proxy</ref> service implementation. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <inheritancegraph>
+      <node id="2">
+        <label>mscclpp::BaseProxyService</label>
+        <link refid="classmscclpp_1_1BaseProxyService"/>
+      </node>
+      <node id="1">
+        <label>mscclpp::ProxyService</label>
+        <link refid="classmscclpp_1_1ProxyService"/>
+        <childnode refid="2" relation="public-inheritance">
+        </childnode>
+      </node>
+    </inheritancegraph>
+    <collaborationgraph>
+      <node id="2">
+        <label>mscclpp::BaseProxyService</label>
+        <link refid="classmscclpp_1_1BaseProxyService"/>
+      </node>
+      <node id="1">
+        <label>mscclpp::ProxyService</label>
+        <link refid="classmscclpp_1_1ProxyService"/>
+        <childnode refid="2" relation="public-inheritance">
+        </childnode>
+      </node>
+    </collaborationgraph>
+    <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="26" column="43" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel.hpp" bodystart="26" bodyend="71"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1ProxyService_1ab6c0a37630d9e2977cbf8ea48eaae16e" prot="public" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>addMemory</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1a72beabb0542995757521bc93e7643deb" prot="public" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>addSemaphore</name></member>
+      <member refid="classmscclpp_1_1BaseProxyService_1af495272dc3ecf8fd6e14b6a4033a2601" prot="public" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>BaseProxyService</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1a350640e8e2594e51125508c6bd3c7fc4" prot="private" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>bindThread</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1a880ed2bf8c6e63b0bcf0fd8d7495469c" prot="public" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>buildAndAddSemaphore</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1a189ea1fbe9276fd1dfd484505a0e3f53" prot="private" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>deviceNumaNode</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1a69d54a1910a89f064a8b5e5741961e65" prot="private" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>handleTrigger</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1a98209686f2b61350d12799cdc8187f71" prot="private" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>memories_</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1a38b51fc65436dbff54e4020ba9fbc491" prot="private" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>proxy_</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1ac8addb08bdeafb34ab9403f4289699b9" prot="public" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>proxyChannel</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1ac56d9af9e910320fbe52b433d6de959c" prot="public" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>ProxyService</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1a73c52d37ae3942b2d6934c253fc556e9" prot="public" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>semaphore</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1ab09d7ec075b98e92dbb69bfe6cd17db7" prot="private" virt="non-virtual"><scope>mscclpp::ProxyService</scope><name>semaphores_</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1a3a7fee2e10b27ab739c3d4ad54d53e0d" prot="public" virt="virtual"><scope>mscclpp::ProxyService</scope><name>startProxy</name></member>
+      <member refid="classmscclpp_1_1ProxyService_1aa6aa0c9f840452b053f278debd3ad5cd" prot="public" virt="virtual"><scope>mscclpp::ProxyService</scope><name>stopProxy</name></member>
+      <member refid="classmscclpp_1_1BaseProxyService_1a9fd21d53992189f1dece203418e5752c" prot="public" virt="virtual"><scope>mscclpp::ProxyService</scope><name>~BaseProxyService</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

@@ -1,0 +1,77 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="utils_8hpp" kind="file" language="C++">
+    <compoundname>utils.hpp</compoundname>
+    <includes local="no">chrono</includes>
+    <includes local="no">string</includes>
+    <incdepgraph>
+      <node id="1">
+        <label>utils.hpp</label>
+        <link refid="utils_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="3" relation="include">
+        </childnode>
+      </node>
+      <node id="3">
+        <label>string</label>
+      </node>
+      <node id="2">
+        <label>chrono</label>
+      </node>
+    </incdepgraph>
+    <innerclass refid="structmscclpp_1_1Timer" prot="public">mscclpp::Timer</innerclass>
+    <innerclass refid="structmscclpp_1_1ScopedTimer" prot="public">mscclpp::ScopedTimer</innerclass>
+    <innernamespace refid="namespacemscclpp">mscclpp</innernamespace>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>MSCCLPP_UTILS_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>MSCCLPP_UTILS_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;chrono&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;string&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="9"><highlight class="normal"></highlight></codeline>
+<codeline lineno="10"><highlight class="normal"></highlight><highlight class="keyword">namespace<sp/></highlight><highlight class="normal"><ref refid="namespacemscclpp" kindref="compound">mscclpp</ref><sp/>{</highlight></codeline>
+<codeline lineno="11"><highlight class="normal"></highlight></codeline>
+<codeline lineno="12" refid="structmscclpp_1_1Timer" refkind="compound"><highlight class="normal"></highlight><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1Timer" kindref="compound">Timer</ref><sp/>{</highlight></codeline>
+<codeline lineno="13" refid="structmscclpp_1_1Timer_1a5cb6507599b038483df1204dd0098105" refkind="member"><highlight class="normal"><sp/><sp/>std::chrono::steady_clock::time_point<sp/><ref refid="structmscclpp_1_1Timer_1a5cb6507599b038483df1204dd0098105" kindref="member">start_</ref>;</highlight></codeline>
+<codeline lineno="14" refid="structmscclpp_1_1Timer_1a4bac0fadd833f68607812a1490337204" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1Timer_1a4bac0fadd833f68607812a1490337204" kindref="member">timeout_</ref>;</highlight></codeline>
+<codeline lineno="15"><highlight class="normal"></highlight></codeline>
+<codeline lineno="16"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1Timer_1a4e748ef61bc2e3e7288a9d20c4b43d23" kindref="member">Timer</ref>(</highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>timeout<sp/>=<sp/>-1);</highlight></codeline>
+<codeline lineno="17"><highlight class="normal"></highlight></codeline>
+<codeline lineno="18"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1Timer_1acd3b971240d25ec3c6b603eee70c93a0" kindref="member">~Timer</ref>();</highlight></codeline>
+<codeline lineno="19"><highlight class="normal"></highlight></codeline>
+<codeline lineno="21"><highlight class="normal"><sp/><sp/>int64_t<sp/><ref refid="structmscclpp_1_1Timer_1ae6ae9c8a2e3c869f5b7d98375bc31b8a" kindref="member">elapsed</ref>()<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="22"><highlight class="normal"></highlight></codeline>
+<codeline lineno="23"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1Timer_1a2a03cefb3d4eed484631d2c91334aa2e" kindref="member">set</ref>(</highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>timeout);</highlight></codeline>
+<codeline lineno="24"><highlight class="normal"></highlight></codeline>
+<codeline lineno="25"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1Timer_1a092d22cd4c45728f5da6a1520a2b2064" kindref="member">reset</ref>();</highlight></codeline>
+<codeline lineno="26"><highlight class="normal"></highlight></codeline>
+<codeline lineno="27"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1Timer_1a7de1b00faa1cd10ef8a9ad92f605ece6" kindref="member">print</ref>(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>std::string&amp;<sp/>name);</highlight></codeline>
+<codeline lineno="28"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="29"><highlight class="normal"></highlight></codeline>
+<codeline lineno="30" refid="structmscclpp_1_1ScopedTimer" refkind="compound"><highlight class="normal"></highlight><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1ScopedTimer" kindref="compound">ScopedTimer</ref><sp/>:<sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1Timer" kindref="compound">Timer</ref><sp/>{</highlight></codeline>
+<codeline lineno="31" refid="structmscclpp_1_1ScopedTimer_1a022f4f0e17964c04bb691da604b0cf4d" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>std::string<sp/><ref refid="structmscclpp_1_1ScopedTimer_1a022f4f0e17964c04bb691da604b0cf4d" kindref="member">name_</ref>;</highlight></codeline>
+<codeline lineno="32"><highlight class="normal"></highlight></codeline>
+<codeline lineno="33"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1ScopedTimer_1a62182ba1e4e3f8e2b33b290050e1c6d4" kindref="member">ScopedTimer</ref>(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>std::string&amp;<sp/>name);</highlight></codeline>
+<codeline lineno="34"><highlight class="normal"></highlight></codeline>
+<codeline lineno="35"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1ScopedTimer_1a1f5a4cbda7873e9dce0772fbe6cf37e8" kindref="member">~ScopedTimer</ref>();</highlight></codeline>
+<codeline lineno="36"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="37"><highlight class="normal"></highlight></codeline>
+<codeline lineno="38"><highlight class="normal">std::string<sp/><ref refid="namespacemscclpp_1a9d63396e8bf8f8d3a2d6dfbf7c130fe0" kindref="member">getHostName</ref>(</highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>maxlen,<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordtype">char</highlight><highlight class="normal"><sp/>delim);</highlight></codeline>
+<codeline lineno="39"><highlight class="normal"></highlight></codeline>
+<codeline lineno="40"><highlight class="normal"></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/><ref refid="namespacemscclpp_1a2f4e90d0b7834b9f4d243d1e6e92ba37" kindref="member">isNvlsSupported</ref>();</highlight></codeline>
+<codeline lineno="41"><highlight class="normal"></highlight></codeline>
+<codeline lineno="42"><highlight class="normal">}<sp/><sp/></highlight><highlight class="comment">//<sp/>namespace<sp/>mscclpp</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="43"><highlight class="normal"></highlight></codeline>
+<codeline lineno="44"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>MSCCLPP_UTILS_HPP_</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/utils.hpp"/>
+  </compounddef>
+</doxygen>

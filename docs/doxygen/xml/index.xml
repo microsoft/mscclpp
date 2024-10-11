@@ -1,0 +1,647 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygenindex xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="index.xsd" version="1.8.17">
+  <compound refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" kind="struct"><name>mscclpp::AvoidCudaGraphCaptureGuard</name>
+    <member refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1aa797c7f64d5c35cf65342e73140838b4" kind="variable"><name>mode_</name></member>
+    <member refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1abf219c8d6fd2687994f00946297827ce" kind="function"><name>AvoidCudaGraphCaptureGuard</name></member>
+    <member refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1a6e2d24442544ef0a83cb5e8882a04c9d" kind="function"><name>~AvoidCudaGraphCaptureGuard</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1BaseError" kind="class"><name>mscclpp::BaseError</name>
+    <member refid="classmscclpp_1_1BaseError_1a7ffe97152f9083131bfd7d3eb27c4751" kind="variable"><name>message_</name></member>
+    <member refid="classmscclpp_1_1BaseError_1a10e56452844c8f3b59ffdd5dd25bf805" kind="variable"><name>errorCode_</name></member>
+    <member refid="classmscclpp_1_1BaseError_1aea99c987306c47a44a8720b1bddf8901" kind="function"><name>BaseError</name></member>
+    <member refid="classmscclpp_1_1BaseError_1a1be995088a556e5627ba5a06d3b698d8" kind="function"><name>BaseError</name></member>
+    <member refid="classmscclpp_1_1BaseError_1a3e83519aadf3747f6325b6fc2abf53ea" kind="function"><name>~BaseError</name></member>
+    <member refid="classmscclpp_1_1BaseError_1af17f47caed93cb0b5f73994d6a636258" kind="function"><name>getErrorCode</name></member>
+    <member refid="classmscclpp_1_1BaseError_1ac3b7c44b7d625195e19e97e4407b7f65" kind="function"><name>what</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1BaseProxyService" kind="class"><name>mscclpp::BaseProxyService</name>
+    <member refid="classmscclpp_1_1BaseProxyService_1af495272dc3ecf8fd6e14b6a4033a2601" kind="function"><name>BaseProxyService</name></member>
+    <member refid="classmscclpp_1_1BaseProxyService_1a9fd21d53992189f1dece203418e5752c" kind="function"><name>~BaseProxyService</name></member>
+    <member refid="classmscclpp_1_1BaseProxyService_1a16999668fd551642ba6870079f9fcfe9" kind="function"><name>startProxy</name></member>
+    <member refid="classmscclpp_1_1BaseProxyService_1a7efff2a6d38ccf89640c2d0bf97c1b00" kind="function"><name>stopProxy</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1BaseSemaphore" kind="class"><name>mscclpp::BaseSemaphore</name>
+    <member refid="classmscclpp_1_1BaseSemaphore_1a5f3a599ecb971f2613df2b0cb9467a55" kind="variable"><name>remoteInboundSemaphoreIdsRegMem_</name></member>
+    <member refid="classmscclpp_1_1BaseSemaphore_1aa3f8d454e6f289f7fc004107b3698b90" kind="variable"><name>localInboundSemaphore_</name></member>
+    <member refid="classmscclpp_1_1BaseSemaphore_1a13cc1511293d69d57f2bae285844129c" kind="variable"><name>expectedInboundSemaphore_</name></member>
+    <member refid="classmscclpp_1_1BaseSemaphore_1aec4ea46dd287fbc9c619dcc9a2df2886" kind="variable"><name>outboundSemaphore_</name></member>
+    <member refid="classmscclpp_1_1BaseSemaphore_1a1f438a138ad58311a3a97966f647b5c2" kind="function"><name>BaseSemaphore</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1Bootstrap" kind="class"><name>mscclpp::Bootstrap</name>
+    <member refid="classmscclpp_1_1Bootstrap_1a899129191be1369ad4cbd1c1d984ca19" kind="function"><name>Bootstrap</name></member>
+    <member refid="classmscclpp_1_1Bootstrap_1aebeededabb3c6262b4c464ad563c87ce" kind="function"><name>~Bootstrap</name></member>
+    <member refid="classmscclpp_1_1Bootstrap_1a10022347ad48c3bf287de670dbc36761" kind="function"><name>getRank</name></member>
+    <member refid="classmscclpp_1_1Bootstrap_1a87e0617ba1f3f23f4f3727e346776dd7" kind="function"><name>getNranks</name></member>
+    <member refid="classmscclpp_1_1Bootstrap_1aadfcff6cb4251705297c29f18a8b1d1a" kind="function"><name>getNranksPerNode</name></member>
+    <member refid="classmscclpp_1_1Bootstrap_1a84e2033bb8b197a0d19e2b4c1b2f6bd5" kind="function"><name>send</name></member>
+    <member refid="classmscclpp_1_1Bootstrap_1a0bcc9e55f2b14b7013476e802418ce70" kind="function"><name>recv</name></member>
+    <member refid="classmscclpp_1_1Bootstrap_1af1a3f26e418d020dc1e145ef22ef9328" kind="function"><name>allGather</name></member>
+    <member refid="classmscclpp_1_1Bootstrap_1a99aa291ae8bf645c9853ee603b8e3794" kind="function"><name>barrier</name></member>
+    <member refid="classmscclpp_1_1Bootstrap_1ae5c6937a9e14d6b08966e79fe38c1e21" kind="function"><name>groupBarrier</name></member>
+    <member refid="classmscclpp_1_1Bootstrap_1a15ecbbe1be20a98c603d4c482184baf4" kind="function"><name>send</name></member>
+    <member refid="classmscclpp_1_1Bootstrap_1a6f4382f88a2222f82cfe4d0c63ba5959" kind="function"><name>recv</name></member>
+  </compound>
+  <compound refid="unionmscclpp_1_1ChannelTrigger" kind="union"><name>mscclpp::ChannelTrigger</name>
+    <member refid="unionmscclpp_1_1ChannelTrigger_1af4179d4ed19ff34dedd33f1e273601f7" kind="variable"><name>value</name></member>
+    <member refid="unionmscclpp_1_1ChannelTrigger_1acc32df9b5fab434c325860a5dfd30190" kind="variable"><name>size</name></member>
+    <member refid="unionmscclpp_1_1ChannelTrigger_1abd9bf3f7f61ddc3722a635de55b6d055" kind="variable"><name>srcOffset</name></member>
+    <member refid="unionmscclpp_1_1ChannelTrigger_1a945f7c801c1431ef222185bec5c12b0d" kind="variable"><name>__pad0__</name></member>
+    <member refid="unionmscclpp_1_1ChannelTrigger_1a8f0a55fd29204b3c89ac9bf0ccb7fd15" kind="variable"><name>dstOffset</name></member>
+    <member refid="unionmscclpp_1_1ChannelTrigger_1a61ace42e49d9da74868cdfea0f4d2762" kind="variable"><name>srcMemoryId</name></member>
+    <member refid="unionmscclpp_1_1ChannelTrigger_1af2e866a37f9ff8c9373cf61830cb41f8" kind="variable"><name>dstMemoryId</name></member>
+    <member refid="unionmscclpp_1_1ChannelTrigger_1aad15a06a855092f3c572610bb9449126" kind="variable"><name>type</name></member>
+    <member refid="unionmscclpp_1_1ChannelTrigger_1ab1347abdfc396ca0c0338349fa239316" kind="variable"><name>chanId</name></member>
+    <member refid="unionmscclpp_1_1ChannelTrigger_1a9b3f61bdb089c80e84875100829020f6" kind="variable"><name>__pad1__</name></member>
+    <member refid="unionmscclpp_1_1ChannelTrigger_1a774ad4dde3ea9b806d1482b675296664" kind="variable"><name>reserved</name></member>
+    <member refid="unionmscclpp_1_1ChannelTrigger_1adb391858bd825e696bae24c9267d3f58" kind="variable"><name>fields</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1Communicator" kind="class"><name>mscclpp::Communicator</name>
+    <member refid="classmscclpp_1_1Communicator_1a0792bccf11d247a81aab3ae105071ff5" kind="variable"><name>pimpl_</name></member>
+    <member refid="classmscclpp_1_1Communicator_1a11b52d62f42d5deecdfc74ea6cad2089" kind="function"><name>Communicator</name></member>
+    <member refid="classmscclpp_1_1Communicator_1af9d3df40a651fd623e6bbba149d34127" kind="function"><name>~Communicator</name></member>
+    <member refid="classmscclpp_1_1Communicator_1a3f6184e06629f370d23fa67170c358c4" kind="function"><name>bootstrap</name></member>
+    <member refid="classmscclpp_1_1Communicator_1ab242faa5778c1f8a9abdb1e95b5274ca" kind="function"><name>context</name></member>
+    <member refid="classmscclpp_1_1Communicator_1a537a32056272f718ca913a23bde5f1c8" kind="function"><name>registerMemory</name></member>
+    <member refid="classmscclpp_1_1Communicator_1ad17015b7dc79d3848e39c844d69b785c" kind="function"><name>sendMemoryOnSetup</name></member>
+    <member refid="classmscclpp_1_1Communicator_1a1a78462696471fbc78784be5e4448499" kind="function"><name>recvMemoryOnSetup</name></member>
+    <member refid="classmscclpp_1_1Communicator_1a80c0ba6e6ccfdd827521a03535e575e6" kind="function"><name>connectOnSetup</name></member>
+    <member refid="classmscclpp_1_1Communicator_1a1791887f6a3197ab46253b948077d1a1" kind="function"><name>remoteRankOf</name></member>
+    <member refid="classmscclpp_1_1Communicator_1a3d7c2f328081e381014fa6c5598988e6" kind="function"><name>tagOf</name></member>
+    <member refid="classmscclpp_1_1Communicator_1a6a6489423bc5cb54d82062344f6f14c4" kind="function"><name>onSetup</name></member>
+    <member refid="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" kind="function"><name>setup</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1Connection" kind="class"><name>mscclpp::Connection</name>
+    <member refid="classmscclpp_1_1Connection_1a286f0fc3a946e33611c9c106553fdaee" kind="function"><name>~Connection</name></member>
+    <member refid="classmscclpp_1_1Connection_1a4a78353163997c281e0f362f2e739353" kind="function"><name>write</name></member>
+    <member refid="classmscclpp_1_1Connection_1a2c273f8dc12c89bf8fe62ea6bbcd51d4" kind="function"><name>updateAndSync</name></member>
+    <member refid="classmscclpp_1_1Connection_1a0ba24623e37399d71238ea3175f9a708" kind="function"><name>flush</name></member>
+    <member refid="classmscclpp_1_1Connection_1a9d6c1c244c07cbcd43389f0f96ea664f" kind="function"><name>transport</name></member>
+    <member refid="classmscclpp_1_1Connection_1abd5e8b2fd7c51566ca76198e5b4e45df" kind="function"><name>remoteTransport</name></member>
+    <member refid="classmscclpp_1_1Connection_1a73ce3b8c610bb0241f5823c86c7b1fa5" kind="function"><name>getTransportName</name></member>
+    <member refid="classmscclpp_1_1Connection_1a37ace3de29efd9638c19f9b6f7f33f64" kind="function"><name>getImpl</name></member>
+    <member refid="classmscclpp_1_1Connection_1a4d724f5195be136fb09555aab9243f59" kind="function"><name>getImpl</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1Context" kind="class"><name>mscclpp::Context</name>
+    <member refid="classmscclpp_1_1Context_1ae1696629e6f650a60d500451f519c681" kind="variable"><name>pimpl_</name></member>
+    <member refid="classmscclpp_1_1Context_1ab37b6eaaea41aadc7a1368770d42e06b" kind="friend"><name>RegisteredMemory</name></member>
+    <member refid="classmscclpp_1_1Context_1a500d74fc41e3ab6b4889a579193566ed" kind="friend"><name>Endpoint</name></member>
+    <member refid="classmscclpp_1_1Context_1ab44953106d9bd1b4d509d60e3045fb78" kind="function"><name>Context</name></member>
+    <member refid="classmscclpp_1_1Context_1a551861e75db451016e29a2d08f0d88fc" kind="function"><name>~Context</name></member>
+    <member refid="classmscclpp_1_1Context_1a1f4aa133e4d56ac59a611a3119e37e7c" kind="function"><name>registerMemory</name></member>
+    <member refid="classmscclpp_1_1Context_1a1708feee05e072560ae83e3bb9915398" kind="function"><name>createEndpoint</name></member>
+    <member refid="classmscclpp_1_1Context_1ac7a474fecb0843f29eac0a1c1f631501" kind="function"><name>connect</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1CudaDeleter" kind="struct"><name>mscclpp::CudaDeleter</name>
+    <member refid="structmscclpp_1_1CudaDeleter_1ae73e2efb24f0bc7b7c6a352535f7aa6e" kind="typedef"><name>TPtrOrArray</name></member>
+    <member refid="structmscclpp_1_1CudaDeleter_1a650ce6e3cc16b396baea9eabc28bb228" kind="function"><name>operator()</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1CudaError" kind="class"><name>mscclpp::CudaError</name>
+    <member refid="classmscclpp_1_1CudaError_1ab1264d2ce63b5107b0487717fb521cf3" kind="function"><name>CudaError</name></member>
+    <member refid="classmscclpp_1_1CudaError_1a9dad2ab374bb7790642f8b578b875369" kind="function"><name>~CudaError</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1CudaHostDeleter" kind="struct"><name>mscclpp::CudaHostDeleter</name>
+    <member refid="structmscclpp_1_1CudaHostDeleter_1a6c29c7b9e68cf233c016d82954fee08b" kind="typedef"><name>TPtrOrArray</name></member>
+    <member refid="structmscclpp_1_1CudaHostDeleter_1aaa90000ffc60bae0f9d7b12c39ff3825" kind="function"><name>operator()</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1CudaPhysicalDeleter" kind="struct"><name>mscclpp::CudaPhysicalDeleter</name>
+    <member refid="structmscclpp_1_1CudaPhysicalDeleter_1a6045bcd05cc4ec9ae2617739d2256ec9" kind="function"><name>operator()</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1CudaStreamWithFlags" kind="struct"><name>mscclpp::CudaStreamWithFlags</name>
+    <member refid="structmscclpp_1_1CudaStreamWithFlags_1ab48f05c327a479883b78463832f9a8a3" kind="variable"><name>stream_</name></member>
+    <member refid="structmscclpp_1_1CudaStreamWithFlags_1a56e23ca6cc525e4cc48091c9ae3a677c" kind="function"><name>CudaStreamWithFlags</name></member>
+    <member refid="structmscclpp_1_1CudaStreamWithFlags_1a326806523b6df1f290fceb65bd3ee4f3" kind="function"><name>~CudaStreamWithFlags</name></member>
+    <member refid="structmscclpp_1_1CudaStreamWithFlags_1af65576b1b3f91f1c35a3ebbbcf8d4e56" kind="function"><name>operator cudaStream_t</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1CuError" kind="class"><name>mscclpp::CuError</name>
+    <member refid="classmscclpp_1_1CuError_1a4544ae4842958dcbf611ef54f8ba1089" kind="function"><name>CuError</name></member>
+    <member refid="classmscclpp_1_1CuError_1a58c64ed0a12394a240d41683f661661e" kind="function"><name>~CuError</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer" kind="struct"><name>mscclpp::NvlsConnection::DeviceMulticastPointer</name>
+    <member refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1a826ec4d19455aa85e9cf832c17541233" kind="typedef"><name>DeviceHandle</name></member>
+    <member refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1a0106e1e9a8e4e5bc5f1b527fbe84829d" kind="variable"><name>deviceMem_</name></member>
+    <member refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1ae20d7b7d1da288f6f14546ab80c4b67e" kind="variable"><name>mcPtr_</name></member>
+    <member refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1aeea0539c1290df5f9f0547dd33b0658e" kind="variable"><name>bufferSize_</name></member>
+    <member refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1a6cec34d4ef3b63c8c6f812bf26b75245" kind="friend"><name>NvlsConnection</name></member>
+    <member refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1a1e1ace787e9501934882f9b2a7f6cbd7" kind="function"><name>DeviceMulticastPointer</name></member>
+    <member refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1a0316389580e2ef18c02c76d09d57f615" kind="function"><name>deviceHandle</name></member>
+    <member refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1a781622c1d257d3a9a506cb9da9e13a91" kind="function"><name>getDevicePtr</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1DeviceMulticastPointerDeviceHandle" kind="struct"><name>mscclpp::DeviceMulticastPointerDeviceHandle</name>
+    <member refid="structmscclpp_1_1DeviceMulticastPointerDeviceHandle_1aee7c0c7f573830d80aa31b8f6082232a" kind="variable"><name>devicePtr</name></member>
+    <member refid="structmscclpp_1_1DeviceMulticastPointerDeviceHandle_1a87de04bd08c3ced0419adf9c40ce9143" kind="variable"><name>mcPtr</name></member>
+    <member refid="structmscclpp_1_1DeviceMulticastPointerDeviceHandle_1a73cb2d15a0859d46bd4e85c8fbbe173e" kind="variable"><name>bufferSize</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1DeviceSyncer" kind="struct"><name>mscclpp::DeviceSyncer</name>
+    <member refid="structmscclpp_1_1DeviceSyncer_1a68c5205e734ed727b23533551bcde7ee" kind="variable"><name>flag_</name></member>
+    <member refid="structmscclpp_1_1DeviceSyncer_1a1d3f01397f76269e74be17d42efb9083" kind="variable"><name>count_</name></member>
+    <member refid="structmscclpp_1_1DeviceSyncer_1a1ff2eb8aaca9ee0e4508a25f47a15165" kind="variable"><name>preFlag_</name></member>
+    <member refid="structmscclpp_1_1DeviceSyncer_1a899a8f9e921b3cebd6db9d60258f735d" kind="function"><name>DeviceSyncer</name></member>
+    <member refid="structmscclpp_1_1DeviceSyncer_1a6edd8ef7432021e3b307f91efb147b8e" kind="function"><name>~DeviceSyncer</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1Endpoint" kind="class"><name>mscclpp::Endpoint</name>
+    <member refid="classmscclpp_1_1Endpoint_1af58e6b1bdee1b82a3f61ba4acc4963ba" kind="variable"><name>pimpl_</name></member>
+    <member refid="classmscclpp_1_1Endpoint_1ac26c806e60ca4a0547680edb68f6e39b" kind="friend"><name>Context</name></member>
+    <member refid="classmscclpp_1_1Endpoint_1a54a11fdc71e1679a42fa0c0e3856673d" kind="friend"><name>Connection</name></member>
+    <member refid="classmscclpp_1_1Endpoint_1a33b41dd99c476ae84df501a146876367" kind="function"><name>Endpoint</name></member>
+    <member refid="classmscclpp_1_1Endpoint_1adb3143b0a2c6a363e4febfe81fafb20b" kind="function"><name>transport</name></member>
+    <member refid="classmscclpp_1_1Endpoint_1af8d24e2c3614491cf56a7b3faba744e6" kind="function"><name>serialize</name></member>
+    <member refid="classmscclpp_1_1Endpoint_1ae1aae33321f716abf24176d6c80ab39d" kind="function"><name>deserialize</name></member>
+    <member refid="classmscclpp_1_1Endpoint_1a1ce2e12e3b25781b94502a7ecacf145f" kind="function"><name>Endpoint</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1EndpointConfig" kind="struct"><name>mscclpp::EndpointConfig</name>
+    <member refid="structmscclpp_1_1EndpointConfig_1ab3ca5aca93af630f26766bf3bc80bc21" kind="variable"><name>DefaultMaxCqSize</name></member>
+    <member refid="structmscclpp_1_1EndpointConfig_1a386e60334cfaff1b077325170f35a45e" kind="variable"><name>DefaultMaxCqPollNum</name></member>
+    <member refid="structmscclpp_1_1EndpointConfig_1af0a91cc2ce66e43a837c4537c676c6e5" kind="variable"><name>DefaultMaxSendWr</name></member>
+    <member refid="structmscclpp_1_1EndpointConfig_1a9a953a01ee0f8d2e9354ac2314a0a534" kind="variable"><name>DefaultMaxWrPerSend</name></member>
+    <member refid="structmscclpp_1_1EndpointConfig_1a7e087c523405a3c5fa831c5d3cd92eee" kind="variable"><name>transport</name></member>
+    <member refid="structmscclpp_1_1EndpointConfig_1adf8fcb0cf1629291779357d95e10940f" kind="variable"><name>ibMaxCqSize</name></member>
+    <member refid="structmscclpp_1_1EndpointConfig_1a1731b60320378fabd2bc0a25dfc4e5b8" kind="variable"><name>ibMaxCqPollNum</name></member>
+    <member refid="structmscclpp_1_1EndpointConfig_1a3664a28757c214abd288b4b2e41e78c4" kind="variable"><name>ibMaxSendWr</name></member>
+    <member refid="structmscclpp_1_1EndpointConfig_1aeb249794110e711618e2683dec85ddb5" kind="variable"><name>ibMaxWrPerSend</name></member>
+    <member refid="structmscclpp_1_1EndpointConfig_1a12ea27a851fd0dca2b06f489ba49e6a7" kind="function"><name>EndpointConfig</name></member>
+    <member refid="structmscclpp_1_1EndpointConfig_1aefd631df12e9e3de680d5836a0578a32" kind="function"><name>EndpointConfig</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1Error" kind="class"><name>mscclpp::Error</name>
+    <member refid="classmscclpp_1_1Error_1aa7f1033551301bfcfab6cbbebf48652a" kind="function"><name>Error</name></member>
+    <member refid="classmscclpp_1_1Error_1a2c6ffa0e3d9516e079997d8135a880c4" kind="function"><name>~Error</name></member>
+    <member refid="classmscclpp_1_1Error_1a98e0eaded64ecfee29d67434cca9dd6c" kind="function"><name>getErrorCode</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1ExecutionPlan" kind="class"><name>mscclpp::ExecutionPlan</name>
+    <member refid="classmscclpp_1_1ExecutionPlan_1a513a4938002a405078e2f7ba0644ab33" kind="variable"><name>impl_</name></member>
+    <member refid="classmscclpp_1_1ExecutionPlan_1a763b2f90bc53f92d680a635fe28e858e" kind="friend"><name>Executor</name></member>
+    <member refid="classmscclpp_1_1ExecutionPlan_1a44258711598e397203fe3557cb160b02" kind="function"><name>ExecutionPlan</name></member>
+    <member refid="classmscclpp_1_1ExecutionPlan_1a0e36198cc7ad5add36f4831f3794a88b" kind="function"><name>~ExecutionPlan</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1Executor" kind="class"><name>mscclpp::Executor</name>
+    <member refid="classmscclpp_1_1Executor_1afc9c156a19979e1a5cec7da03ae32adc" kind="variable"><name>impl_</name></member>
+    <member refid="classmscclpp_1_1Executor_1a9a459bb447b826d239f612e0d613dd44" kind="function"><name>Executor</name></member>
+    <member refid="classmscclpp_1_1Executor_1ae5b1df56597b8b30c5575f309a66fc09" kind="function"><name>Executor</name></member>
+    <member refid="classmscclpp_1_1Executor_1a041bd8c7630a8d4b3246cffdd7c6c3d5" kind="function"><name>operator=</name></member>
+    <member refid="classmscclpp_1_1Executor_1a85c8da4d0aa2ae24cba5b84c7d462765" kind="function"><name>~Executor</name></member>
+    <member refid="classmscclpp_1_1Executor_1a7eec006eebd0d03eededdf9713a5485c" kind="function"><name>execute</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1Fifo" kind="class"><name>mscclpp::Fifo</name>
+    <member refid="classmscclpp_1_1Fifo_1a4d4ed6ff99dd7bba3d7b389c50496ba1" kind="variable"><name>pimpl</name></member>
+    <member refid="classmscclpp_1_1Fifo_1a5bbe4b106acc409c9b3fe56129817a46" kind="function"><name>Fifo</name></member>
+    <member refid="classmscclpp_1_1Fifo_1ab8efdb24c7dabd3ed918275fc2b490fe" kind="function"><name>~Fifo</name></member>
+    <member refid="classmscclpp_1_1Fifo_1a2ec56c9b4679f2eb3be575e5a22ee940" kind="function"><name>poll</name></member>
+    <member refid="classmscclpp_1_1Fifo_1a1928c4910d23d3e9633e3330d3fd8a56" kind="function"><name>pop</name></member>
+    <member refid="classmscclpp_1_1Fifo_1a8c6bf62637122f109737db0635cf97c7" kind="function"><name>flushTail</name></member>
+    <member refid="classmscclpp_1_1Fifo_1a45c9b3cb33d95e482dee25441dec99e7" kind="function"><name>size</name></member>
+    <member refid="classmscclpp_1_1Fifo_1a916061cedcd24241ef0a615a5e8b8729" kind="function"><name>deviceHandle</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1FifoDeviceHandle" kind="struct"><name>mscclpp::FifoDeviceHandle</name>
+    <member refid="structmscclpp_1_1FifoDeviceHandle_1a7be1ddbf8d4ac632b7b218ba28c15171" kind="variable"><name>triggers</name></member>
+    <member refid="structmscclpp_1_1FifoDeviceHandle_1a830e5d971d5de7944abe457a0affed12" kind="variable"><name>tailReplica</name></member>
+    <member refid="structmscclpp_1_1FifoDeviceHandle_1ada28c63ccea5a0fb8481872798a566b4" kind="variable"><name>head</name></member>
+    <member refid="structmscclpp_1_1FifoDeviceHandle_1aacf8ab8a267d230c61c22120fa610d0d" kind="variable"><name>size</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1Host2DeviceSemaphore" kind="class"><name>mscclpp::Host2DeviceSemaphore</name>
+    <member refid="classmscclpp_1_1Host2DeviceSemaphore_1af3ffce164a9024c8e7cf881dafdbb0f3" kind="typedef"><name>DeviceHandle</name></member>
+    <member refid="classmscclpp_1_1Host2DeviceSemaphore_1a2a2587b98a88a36e467ab410f29f9a3e" kind="variable"><name>connection_</name></member>
+    <member refid="classmscclpp_1_1Host2DeviceSemaphore_1a73d129c6dae97b2a8b2cdf02edb85156" kind="function"><name>Host2DeviceSemaphore</name></member>
+    <member refid="classmscclpp_1_1Host2DeviceSemaphore_1aa23450892f42bddfd40676d211c0385f" kind="function"><name>connection</name></member>
+    <member refid="classmscclpp_1_1Host2DeviceSemaphore_1aadcbfaeab2c331f0df600ec3dbdb6134" kind="function"><name>signal</name></member>
+    <member refid="classmscclpp_1_1Host2DeviceSemaphore_1a6f984a90dd6765dc9e6fe6df3af19e49" kind="function"><name>deviceHandle</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle" kind="struct"><name>mscclpp::Host2DeviceSemaphoreDeviceHandle</name>
+    <member refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1aa623814c8fbab8277b2e0022da603e1a" kind="variable"><name>inboundSemaphoreId</name></member>
+    <member refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1a1253f98401651b96f41f3b6a365d8489" kind="variable"><name>expectedInboundSemaphoreId</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1Host2HostSemaphore" kind="class"><name>mscclpp::Host2HostSemaphore</name>
+    <member refid="classmscclpp_1_1Host2HostSemaphore_1ac59aca041cd91d4b673a0c545d22db2d" kind="variable"><name>connection_</name></member>
+    <member refid="classmscclpp_1_1Host2HostSemaphore_1abeaaf1af313fc3e9d9ab6447538918bd" kind="function"><name>Host2HostSemaphore</name></member>
+    <member refid="classmscclpp_1_1Host2HostSemaphore_1a0a908a5f08d49f59f2f2f9d2e3ba3798" kind="function"><name>connection</name></member>
+    <member refid="classmscclpp_1_1Host2HostSemaphore_1a620ff6ee7990f256610bcc42ef06f017" kind="function"><name>signal</name></member>
+    <member refid="classmscclpp_1_1Host2HostSemaphore_1ae089f5f8fca1603c9ec3b9a2a4145e1a" kind="function"><name>poll</name></member>
+    <member refid="classmscclpp_1_1Host2HostSemaphore_1a276ad1c97f216d626349e93029f28f72" kind="function"><name>wait</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1IbError" kind="class"><name>mscclpp::IbError</name>
+    <member refid="classmscclpp_1_1IbError_1a661ceae408585a232e41c87079aef1a0" kind="function"><name>IbError</name></member>
+    <member refid="classmscclpp_1_1IbError_1aedb17c2b5e8fd1f83fd12d4905a1e377" kind="function"><name>~IbError</name></member>
+  </compound>
+  <compound refid="unionmscclpp_1_1LL16Packet" kind="union"><name>mscclpp::LL16Packet</name>
+    <member refid="unionmscclpp_1_1LL16Packet_1a76d4e11d20cfb941d1cd5e42d204c086" kind="typedef"><name>Payload</name></member>
+    <member refid="unionmscclpp_1_1LL16Packet_1a8fe40ee4780cc4d3c4b6fab7da5619ef" kind="variable"><name>data1</name></member>
+    <member refid="unionmscclpp_1_1LL16Packet_1af699354b2885f59182ebe2e10e217acc" kind="variable"><name>flag1</name></member>
+    <member refid="unionmscclpp_1_1LL16Packet_1a822e4c583e14cab3bc7eab374ab321ea" kind="variable"><name>data2</name></member>
+    <member refid="unionmscclpp_1_1LL16Packet_1ac9b64bf1e730b1bb0092f9373e342289" kind="variable"><name>flag2</name></member>
+    <member refid="unionmscclpp_1_1LL16Packet_1af79382c4460060aa678ffacb50ef960e" kind="variable"><name>@2</name></member>
+  </compound>
+  <compound refid="unionmscclpp_1_1LL8Packet" kind="union"><name>mscclpp::LL8Packet</name>
+    <member refid="unionmscclpp_1_1LL8Packet_1a263c0f189389599ce469c90181579e29" kind="typedef"><name>Payload</name></member>
+    <member refid="unionmscclpp_1_1LL8Packet_1a4fe87a7dcf95cdd598e83a21f3cd90ab" kind="variable"><name>data</name></member>
+    <member refid="unionmscclpp_1_1LL8Packet_1ad8bff06eb599755b47fb9d3176ad7a70" kind="variable"><name>flag</name></member>
+    <member refid="unionmscclpp_1_1LL8Packet_1afa37fd91ae3ed1ba22f771bf48a77684" kind="variable"><name>@4</name></member>
+    <member refid="unionmscclpp_1_1LL8Packet_1ad37fe974f93f35964dabe23acc4fb811" kind="variable"><name>raw_</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1NonblockingFuture" kind="class"><name>mscclpp::NonblockingFuture</name>
+    <member refid="classmscclpp_1_1NonblockingFuture_1ab746e008d80b2f092b62fb4d6e52ced2" kind="variable"><name>future</name></member>
+    <member refid="classmscclpp_1_1NonblockingFuture_1a0f2ddff6636f798558edb8d865d4e766" kind="function"><name>NonblockingFuture</name></member>
+    <member refid="classmscclpp_1_1NonblockingFuture_1a4c2070ffab1d6717159fb4913bcea2c0" kind="function"><name>NonblockingFuture</name></member>
+    <member refid="classmscclpp_1_1NonblockingFuture_1acb37162793ab9f481db9ce84ed5f84c1" kind="function"><name>ready</name></member>
+    <member refid="classmscclpp_1_1NonblockingFuture_1ab79350c4b28c219a5d85bd59c23ed165" kind="function"><name>get</name></member>
+  </compound>
+  <compound refid="classNpKit" kind="class"><name>NpKit</name>
+    <member refid="classNpKit_1ae6dac68259fb9a6f006be30c2b8a9cbb" kind="variable"><name>kNumGpuEventBuffers</name></member>
+    <member refid="classNpKit_1ab08d0c01fbc983de0316617f29e4a6d6" kind="variable"><name>kNumCpuEventBuffers</name></member>
+    <member refid="classNpKit_1aad140d5ed6287f91d710d1a17bdce4c8" kind="variable"><name>kMaxNumGpuEventsPerBuffer</name></member>
+    <member refid="classNpKit_1a31e3ff6da7206a8eb7ecc36658683b91" kind="variable"><name>kMaxNumCpuEventsPerBuffer</name></member>
+    <member refid="classNpKit_1a26a49521befcdf1ebf67edca79bf4bc4" kind="variable"><name>gpu_event_buffers_</name></member>
+    <member refid="classNpKit_1adc23c45ba6f5349209066e53c3bd3c6f" kind="variable"><name>cpu_event_buffers_</name></member>
+    <member refid="classNpKit_1a3420eca4571949cc11486af0ee04a604" kind="variable"><name>gpu_collect_contexts_</name></member>
+    <member refid="classNpKit_1afbf250f9053d10fa2db3b3e855670ca1" kind="variable"><name>cpu_collect_contexts_</name></member>
+    <member refid="classNpKit_1a16d20c69a7453508b9f43959d3f88751" kind="variable"><name>rank_</name></member>
+    <member refid="classNpKit_1a0ce3ca100fef3e166770bd7a717a22b8" kind="variable"><name>cpu_timestamp_</name></member>
+    <member refid="classNpKit_1a43eaf5e3c08a5a40c48050b58fad7cca" kind="variable"><name>cpu_timestamp_update_thread_</name></member>
+    <member refid="classNpKit_1a79fd879fc812817ff293263c41bfb37f" kind="variable"><name>cpu_timestamp_update_thread_should_stop_</name></member>
+    <member refid="classNpKit_1aea699b78b693417076c8f7e683d5d384" kind="function"><name>Init</name></member>
+    <member refid="classNpKit_1aea751160f3b23a7a200b984bd3e9f1e8" kind="function"><name>Dump</name></member>
+    <member refid="classNpKit_1a4eca2b839b34d427dbb9f35e78bbe4e2" kind="function"><name>Shutdown</name></member>
+    <member refid="classNpKit_1afe895a10aa5d15c57891f9709d4929f5" kind="function"><name>GetGpuEventCollectContexts</name></member>
+    <member refid="classNpKit_1aa747acd5eb8fe77eecb618e553b0fcca" kind="function"><name>CollectCpuEvent</name></member>
+    <member refid="classNpKit_1aa9a5924be5c0aae822e2a72763927c92" kind="function"><name>GetCpuTimestamp</name></member>
+    <member refid="classNpKit_1ab8ff8ee0110685eaba18ad367f7604ec" kind="function"><name>CpuTimestampUpdateThread</name></member>
+  </compound>
+  <compound refid="unionNpKitEvent" kind="union"><name>NpKitEvent</name>
+    <member refid="unionNpKitEvent_1ab05475973457f1795ba3828c72a63b12" kind="variable"><name>bits</name></member>
+    <member refid="unionNpKitEvent_1af030b738f6ebff7a4305a6d498816099" kind="variable"><name>type</name></member>
+    <member refid="unionNpKitEvent_1a551ad9c5a3edbc77d3c7572053ec1ea9" kind="variable"><name>size</name></member>
+    <member refid="unionNpKitEvent_1a541531dfadf4422d01c73070538a0eb0" kind="variable"><name>rsvd</name></member>
+    <member refid="unionNpKitEvent_1a34dfd2c8df91860efbac15e7fc6943f5" kind="variable"><name>timestamp</name></member>
+    <member refid="unionNpKitEvent_1a9569908320dc284e3abfcf333ff212f5" kind="variable"><name>fields</name></member>
+  </compound>
+  <compound refid="structNpKitEventCollectContext" kind="struct"><name>NpKitEventCollectContext</name>
+    <member refid="structNpKitEventCollectContext_1a0c495b9f5dfe117236ba38a876ce8062" kind="variable"><name>event_buffer</name></member>
+    <member refid="structNpKitEventCollectContext_1ade29036d1e789b33491ce29ae5c67b49" kind="variable"><name>event_buffer_head</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1NvlsConnection" kind="class"><name>mscclpp::NvlsConnection</name>
+    <member refid="classmscclpp_1_1NvlsConnection_1a2792ac41d2ce8213f73dd2420bab2d61" kind="variable"><name>DefaultNvlsBufferSize</name></member>
+    <member refid="classmscclpp_1_1NvlsConnection_1afef4c76d57cb8d3b3ec1e34c9c91fdb1" kind="variable"><name>pimpl_</name></member>
+    <member refid="classmscclpp_1_1NvlsConnection_1aa730ffb5f624d8e79787ac8a32396e38" kind="function"><name>NvlsConnection</name></member>
+    <member refid="classmscclpp_1_1NvlsConnection_1a43bfa26d664be6b35c9574ca7864bad9" kind="function"><name>NvlsConnection</name></member>
+    <member refid="classmscclpp_1_1NvlsConnection_1a6ed362f5edd4b04ca0736a1523323dcd" kind="function"><name>NvlsConnection</name></member>
+    <member refid="classmscclpp_1_1NvlsConnection_1a6c1596a8a6a0f0a37445d622c1c7c686" kind="function"><name>serialize</name></member>
+    <member refid="classmscclpp_1_1NvlsConnection_1a417d0ba75886b614d69af4bed774792e" kind="function"><name>addDevice</name></member>
+    <member refid="classmscclpp_1_1NvlsConnection_1a1e96d58b63a9a509976d87ad2c3eb609" kind="function"><name>addDevice</name></member>
+    <member refid="classmscclpp_1_1NvlsConnection_1ab05ead62fb33b078f227dc3b91b4cb38" kind="function"><name>allocateAndBindCuda</name></member>
+    <member refid="classmscclpp_1_1NvlsConnection_1accd44d52b9318af537d24b457e1aa54d" kind="function"><name>bindAllocatedCuda</name></member>
+    <member refid="classmscclpp_1_1NvlsConnection_1a778fc050887ef0fc0e4a63485b094a34" kind="function"><name>getMultiCastMinGranularity</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1PhysicalCudaMemory" kind="struct"><name>mscclpp::PhysicalCudaMemory</name>
+    <member refid="structmscclpp_1_1PhysicalCudaMemory_1a45c224e9494ebc1f2d403aaeb1791514" kind="variable"><name>memHandle_</name></member>
+    <member refid="structmscclpp_1_1PhysicalCudaMemory_1a539ed2d4dadae40eedeed921d22bd50a" kind="variable"><name>devicePtr_</name></member>
+    <member refid="structmscclpp_1_1PhysicalCudaMemory_1a94c0509cda015378eacd0c45363e61f1" kind="variable"><name>size_</name></member>
+    <member refid="structmscclpp_1_1PhysicalCudaMemory_1a04c6d9b2565b31b4e780f477493f1512" kind="function"><name>PhysicalCudaMemory</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1Proxy" kind="class"><name>mscclpp::Proxy</name>
+    <member refid="classmscclpp_1_1Proxy_1abdcd0a6a6b412090b512d07edfc007cf" kind="variable"><name>pimpl</name></member>
+    <member refid="classmscclpp_1_1Proxy_1a5cc0dfbad7b29e7d5f28bde0f8bc824a" kind="function"><name>Proxy</name></member>
+    <member refid="classmscclpp_1_1Proxy_1a6419a275da6b05c44a8e1b5fc5ac5730" kind="function"><name>Proxy</name></member>
+    <member refid="classmscclpp_1_1Proxy_1a81d6ba99fdce09c07ffa94b92dba20ae" kind="function"><name>~Proxy</name></member>
+    <member refid="classmscclpp_1_1Proxy_1aa21d0c55b9f419c031b6a94cf6cd8e8d" kind="function"><name>start</name></member>
+    <member refid="classmscclpp_1_1Proxy_1abd7ec02a2c0787f270f65bb508c9b60f" kind="function"><name>stop</name></member>
+    <member refid="classmscclpp_1_1Proxy_1a3256ff714acc1c577682ab6e12881a58" kind="function"><name>fifo</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1ProxyChannel" kind="struct"><name>mscclpp::ProxyChannel</name>
+    <member refid="structmscclpp_1_1ProxyChannel_1a743cb0cae9c5f602f8259b9e818f1cab" kind="typedef"><name>DeviceHandle</name></member>
+    <member refid="structmscclpp_1_1ProxyChannel_1a637bd020569f7286597dba013b2330ff" kind="variable"><name>semaphoreId_</name></member>
+    <member refid="structmscclpp_1_1ProxyChannel_1ad67f3eeaa5fa6b56d93bdf54c43e9445" kind="variable"><name>semaphore_</name></member>
+    <member refid="structmscclpp_1_1ProxyChannel_1a2c6b21c932494fa185186bdf91575e7c" kind="variable"><name>proxy_</name></member>
+    <member refid="structmscclpp_1_1ProxyChannel_1a307c9c9a1031493d322b5afbaeeeee94" kind="function"><name>ProxyChannel</name></member>
+    <member refid="structmscclpp_1_1ProxyChannel_1a8a3b57c12af2a1bb481104e5ddf25f28" kind="function"><name>ProxyChannel</name></member>
+    <member refid="structmscclpp_1_1ProxyChannel_1a42b0e5538d00278ffcbf3dd09f68a4fe" kind="function"><name>ProxyChannel</name></member>
+    <member refid="structmscclpp_1_1ProxyChannel_1a07deaa22c2e34b934556e25286d96e66" kind="function"><name>operator=</name></member>
+    <member refid="structmscclpp_1_1ProxyChannel_1a973c1ffc6fd221faba9f6cb9b83c7aff" kind="function"><name>deviceHandle</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1ProxyChannelDeviceHandle" kind="struct"><name>mscclpp::ProxyChannelDeviceHandle</name>
+    <member refid="structmscclpp_1_1ProxyChannelDeviceHandle_1a55ba043b50f0402209a2737e74485383" kind="variable"><name>semaphoreId_</name></member>
+    <member refid="structmscclpp_1_1ProxyChannelDeviceHandle_1a70c63ab8cc9e7bd294c8c76fcd92791a" kind="variable"><name>semaphore_</name></member>
+    <member refid="structmscclpp_1_1ProxyChannelDeviceHandle_1a73a50acf873eb0878c4f47a92a6925bf" kind="variable"><name>fifo_</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1ProxyService" kind="class"><name>mscclpp::ProxyService</name>
+    <member refid="classmscclpp_1_1ProxyService_1ab09d7ec075b98e92dbb69bfe6cd17db7" kind="variable"><name>semaphores_</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1a98209686f2b61350d12799cdc8187f71" kind="variable"><name>memories_</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1a38b51fc65436dbff54e4020ba9fbc491" kind="variable"><name>proxy_</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1a189ea1fbe9276fd1dfd484505a0e3f53" kind="variable"><name>deviceNumaNode</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1ac56d9af9e910320fbe52b433d6de959c" kind="function"><name>ProxyService</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1a880ed2bf8c6e63b0bcf0fd8d7495469c" kind="function"><name>buildAndAddSemaphore</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1a72beabb0542995757521bc93e7643deb" kind="function"><name>addSemaphore</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1ab6c0a37630d9e2977cbf8ea48eaae16e" kind="function"><name>addMemory</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1a73c52d37ae3942b2d6934c253fc556e9" kind="function"><name>semaphore</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1ac8addb08bdeafb34ab9403f4289699b9" kind="function"><name>proxyChannel</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1a3a7fee2e10b27ab739c3d4ad54d53e0d" kind="function"><name>startProxy</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1aa6aa0c9f840452b053f278debd3ad5cd" kind="function"><name>stopProxy</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1a350640e8e2594e51125508c6bd3c7fc4" kind="function"><name>bindThread</name></member>
+    <member refid="classmscclpp_1_1ProxyService_1a69d54a1910a89f064a8b5e5741961e65" kind="function"><name>handleTrigger</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1ProxyTrigger" kind="struct"><name>mscclpp::ProxyTrigger</name>
+    <member refid="structmscclpp_1_1ProxyTrigger_1a1bb30b77dff4f6b3a79bd308927fddba" kind="variable"><name>fst</name></member>
+    <member refid="structmscclpp_1_1ProxyTrigger_1ada4a5508e6db9e930f6d6018f98dc060" kind="variable"><name>snd</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1RegisteredMemory" kind="class"><name>mscclpp::RegisteredMemory</name>
+    <member refid="classmscclpp_1_1RegisteredMemory_1ae6c8f47ee37f5ba553c045ab8568a83a" kind="variable"><name>pimpl_</name></member>
+    <member refid="classmscclpp_1_1RegisteredMemory_1ac26c806e60ca4a0547680edb68f6e39b" kind="friend"><name>Context</name></member>
+    <member refid="classmscclpp_1_1RegisteredMemory_1a54a11fdc71e1679a42fa0c0e3856673d" kind="friend"><name>Connection</name></member>
+    <member refid="classmscclpp_1_1RegisteredMemory_1adc1495674137bba267dd551e8785f190" kind="function"><name>RegisteredMemory</name></member>
+    <member refid="classmscclpp_1_1RegisteredMemory_1a3311b826e508ea3b32a1854a1b374762" kind="function"><name>~RegisteredMemory</name></member>
+    <member refid="classmscclpp_1_1RegisteredMemory_1a1c13a23ac813d58d565d77aae14d9985" kind="function"><name>data</name></member>
+    <member refid="classmscclpp_1_1RegisteredMemory_1a25cdadf35f55e37bdf612d0230735a9b" kind="function"><name>originalDataPtr</name></member>
+    <member refid="classmscclpp_1_1RegisteredMemory_1afce245c8338ddbda17328db4568d1866" kind="function"><name>size</name></member>
+    <member refid="classmscclpp_1_1RegisteredMemory_1a6b246e1c9320fa285efcad1d197acb7b" kind="function"><name>transports</name></member>
+    <member refid="classmscclpp_1_1RegisteredMemory_1a575c641be12844002cf834d7b3d326a5" kind="function"><name>serialize</name></member>
+    <member refid="classmscclpp_1_1RegisteredMemory_1a3565c1cbeccce649ed27b9b52933f003" kind="function"><name>deserialize</name></member>
+    <member refid="classmscclpp_1_1RegisteredMemory_1a5165a292c9bd41354aaee9d1da6d13ea" kind="function"><name>RegisteredMemory</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1ScopedTimer" kind="struct"><name>mscclpp::ScopedTimer</name>
+    <member refid="structmscclpp_1_1ScopedTimer_1a022f4f0e17964c04bb691da604b0cf4d" kind="variable"><name>name_</name></member>
+    <member refid="structmscclpp_1_1ScopedTimer_1a62182ba1e4e3f8e2b33b290050e1c6d4" kind="function"><name>ScopedTimer</name></member>
+    <member refid="structmscclpp_1_1ScopedTimer_1a1f5a4cbda7873e9dce0772fbe6cf37e8" kind="function"><name>~ScopedTimer</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1Setuppable" kind="struct"><name>mscclpp::Setuppable</name>
+    <member refid="structmscclpp_1_1Setuppable_1af2561909cc34d2ed14abe7104d7ba8de" kind="function"><name>~Setuppable</name></member>
+    <member refid="structmscclpp_1_1Setuppable_1a034319ab87641125260ebd813696a5fc" kind="function"><name>beginSetup</name></member>
+    <member refid="structmscclpp_1_1Setuppable_1a7711cd5132a03d6e75b433d956ecb32d" kind="function"><name>endSetup</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1SimpleProxyChannel" kind="struct"><name>mscclpp::SimpleProxyChannel</name>
+    <member refid="structmscclpp_1_1SimpleProxyChannel_1a94b927b3391c59e8a88a09611d20ca2e" kind="typedef"><name>DeviceHandle</name></member>
+    <member refid="structmscclpp_1_1SimpleProxyChannel_1a44960299700c08310c2f9f1339f2b426" kind="variable"><name>proxyChan_</name></member>
+    <member refid="structmscclpp_1_1SimpleProxyChannel_1ab040aa7db9d855f29b920d716f01542a" kind="variable"><name>dst_</name></member>
+    <member refid="structmscclpp_1_1SimpleProxyChannel_1a515c3ce9c531c94f62ccdeb418fb701c" kind="variable"><name>src_</name></member>
+    <member refid="structmscclpp_1_1SimpleProxyChannel_1a201d78f688024a1df644c3a6847cf882" kind="function"><name>SimpleProxyChannel</name></member>
+    <member refid="structmscclpp_1_1SimpleProxyChannel_1aaf6a84b0ed69b6e8c671ce10f159710d" kind="function"><name>SimpleProxyChannel</name></member>
+    <member refid="structmscclpp_1_1SimpleProxyChannel_1afcb4694409181cc563f733cb2d7b142e" kind="function"><name>SimpleProxyChannel</name></member>
+    <member refid="structmscclpp_1_1SimpleProxyChannel_1ab08ba7d2060a1a9d24c40dc97f29d288" kind="function"><name>SimpleProxyChannel</name></member>
+    <member refid="structmscclpp_1_1SimpleProxyChannel_1a4a4394da6e135b17fe6f1e2a28ee14a8" kind="function"><name>operator=</name></member>
+    <member refid="structmscclpp_1_1SimpleProxyChannel_1a35fb91c8df4b8d9e8781d3d7b078a5b7" kind="function"><name>deviceHandle</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1SimpleProxyChannelDeviceHandle" kind="struct"><name>mscclpp::SimpleProxyChannelDeviceHandle</name>
+    <member refid="structmscclpp_1_1SimpleProxyChannelDeviceHandle_1a1d416250941a5fbec68b01dee3bb9a6d" kind="variable"><name>proxyChan_</name></member>
+    <member refid="structmscclpp_1_1SimpleProxyChannelDeviceHandle_1a60ac305edf6a9c79db5977ab7656b861" kind="variable"><name>dst_</name></member>
+    <member refid="structmscclpp_1_1SimpleProxyChannelDeviceHandle_1adf6c9198cf176fe268888d3ca21c6e92" kind="variable"><name>src_</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1SmChannel" kind="struct"><name>mscclpp::SmChannel</name>
+    <member refid="structmscclpp_1_1SmChannel_1a1c86dbf6925353c0a4dd6cb06b941c54" kind="typedef"><name>DeviceHandle</name></member>
+    <member refid="structmscclpp_1_1SmChannel_1a9ce2b4150ac25dc51bedf7b992049f26" kind="variable"><name>semaphore_</name></member>
+    <member refid="structmscclpp_1_1SmChannel_1a84913958064676c30a2b83c4b612ebe1" kind="variable"><name>dst_</name></member>
+    <member refid="structmscclpp_1_1SmChannel_1a325800d8384a2435f1e824803277a805" kind="variable"><name>src_</name></member>
+    <member refid="structmscclpp_1_1SmChannel_1acc215742fd7c64db592e39ab0d718c15" kind="variable"><name>getPacketBuffer_</name></member>
+    <member refid="structmscclpp_1_1SmChannel_1ad301d42fdc731f1fa219362b740b9b23" kind="function"><name>SmChannel</name></member>
+    <member refid="structmscclpp_1_1SmChannel_1a46efd79557d8ea586704875e61d8475c" kind="function"><name>SmChannel</name></member>
+    <member refid="structmscclpp_1_1SmChannel_1a4f7d3e6e5aec79c3273b45f0e83a9148" kind="function"><name>deviceHandle</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1SmChannelDeviceHandle" kind="struct"><name>mscclpp::SmChannelDeviceHandle</name>
+    <member refid="structmscclpp_1_1SmChannelDeviceHandle_1a48cab162122c88e0120abd5ac782cc43" kind="variable"><name>semaphore_</name></member>
+    <member refid="structmscclpp_1_1SmChannelDeviceHandle_1a48b6bd95a338420b2b51d8c293109b66" kind="variable"><name>src_</name></member>
+    <member refid="structmscclpp_1_1SmChannelDeviceHandle_1aac9b386aae4da09e5b48a375a7325f64" kind="variable"><name>dst_</name></member>
+    <member refid="structmscclpp_1_1SmChannelDeviceHandle_1a43c60f841e30967d44ac51d2f7908fa7" kind="variable"><name>getPacketBuffer_</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1SmDevice2DeviceSemaphore" kind="class"><name>mscclpp::SmDevice2DeviceSemaphore</name>
+    <member refid="classmscclpp_1_1SmDevice2DeviceSemaphore_1a1ed9818ce26e8281d3cdb003a61ef248" kind="typedef"><name>DeviceHandle</name></member>
+    <member refid="classmscclpp_1_1SmDevice2DeviceSemaphore_1a38f5c3a55699515d16e9f96cbadb89f8" kind="variable"><name>isRemoteInboundSemaphoreIdSet_</name></member>
+    <member refid="classmscclpp_1_1SmDevice2DeviceSemaphore_1a3f6933c37c99106cc39510165d7006d9" kind="function"><name>SmDevice2DeviceSemaphore</name></member>
+    <member refid="classmscclpp_1_1SmDevice2DeviceSemaphore_1ab238869f02562031eeaea62d78b07ebd" kind="function"><name>SmDevice2DeviceSemaphore</name></member>
+    <member refid="classmscclpp_1_1SmDevice2DeviceSemaphore_1ae6cece1f7f231e473d74c24dcb6f1217" kind="function"><name>deviceHandle</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle" kind="struct"><name>mscclpp::SmDevice2DeviceSemaphoreDeviceHandle</name>
+    <member refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1afc25beec257d7a0d115d80040d63da3b" kind="variable"><name>inboundSemaphoreId</name></member>
+    <member refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1ad9a183b0d2ef78f39a3d6646676c5833" kind="variable"><name>outboundSemaphoreId</name></member>
+    <member refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a96ecfb855503f9937185aebcf67b0ea8" kind="variable"><name>remoteInboundSemaphoreId</name></member>
+    <member refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a5c37cf594f6a48b30b25fd1c07f09fb5" kind="variable"><name>expectedInboundSemaphoreId</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1SysError" kind="class"><name>mscclpp::SysError</name>
+    <member refid="classmscclpp_1_1SysError_1a4d52be5dc562e327df016d6bce42965b" kind="function"><name>SysError</name></member>
+    <member refid="classmscclpp_1_1SysError_1aef3717c1a2fcf3c7ca6ba2d68b529551" kind="function"><name>~SysError</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1TcpBootstrap" kind="class"><name>mscclpp::TcpBootstrap</name>
+    <member refid="classmscclpp_1_1TcpBootstrap_1a347279b922e0b8a39e5159483427f0da" kind="variable"><name>pimpl_</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1a48a32333bd3c59760843d34cc38c3cd2" kind="function"><name>createUniqueId</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1a5eb94b2579a9973957d873903f0730e7" kind="function"><name>TcpBootstrap</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1af41527f180197af4ed6a589cd454c140" kind="function"><name>~TcpBootstrap</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1a42e706ec6fd395fd4ce2ceb4c33d5cbc" kind="function"><name>getUniqueId</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1a5b4ed57f6ca910958730fd6902d52b60" kind="function"><name>initialize</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1a25b95bbe6bded81d7f9c15dc12d8f093" kind="function"><name>initialize</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1a5626eeaefd2077e77af3a8a3091330cd" kind="function"><name>getRank</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1a8b492af79a381b05eddbc20b60620ed3" kind="function"><name>getNranks</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1ab4733042b3e69b34ff5c1f9fe3a22f59" kind="function"><name>getNranksPerNode</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1a9257e0474c2e858038d6d18fe7e3b8cd" kind="function"><name>send</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1a3547a9251d27190099ca690877448993" kind="function"><name>recv</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1a75c07cdf8d10e77b5e1bb6bd4aed6654" kind="function"><name>allGather</name></member>
+    <member refid="classmscclpp_1_1TcpBootstrap_1a20747dc53f4485ebf080c135a352be12" kind="function"><name>barrier</name></member>
+  </compound>
+  <compound refid="structmscclpp_1_1Timer" kind="struct"><name>mscclpp::Timer</name>
+    <member refid="structmscclpp_1_1Timer_1a5cb6507599b038483df1204dd0098105" kind="variable"><name>start_</name></member>
+    <member refid="structmscclpp_1_1Timer_1a4bac0fadd833f68607812a1490337204" kind="variable"><name>timeout_</name></member>
+    <member refid="structmscclpp_1_1Timer_1a4e748ef61bc2e3e7288a9d20c4b43d23" kind="function"><name>Timer</name></member>
+    <member refid="structmscclpp_1_1Timer_1acd3b971240d25ec3c6b603eee70c93a0" kind="function"><name>~Timer</name></member>
+    <member refid="structmscclpp_1_1Timer_1ae6ae9c8a2e3c869f5b7d98375bc31b8a" kind="function"><name>elapsed</name></member>
+    <member refid="structmscclpp_1_1Timer_1a2a03cefb3d4eed484631d2c91334aa2e" kind="function"><name>set</name></member>
+    <member refid="structmscclpp_1_1Timer_1a092d22cd4c45728f5da6a1520a2b2064" kind="function"><name>reset</name></member>
+    <member refid="structmscclpp_1_1Timer_1a7de1b00faa1cd10ef8a9ad92f605ece6" kind="function"><name>print</name></member>
+  </compound>
+  <compound refid="classmscclpp_1_1TransportFlags" kind="class"><name>mscclpp::TransportFlags</name>
+    <member refid="classmscclpp_1_1TransportFlags_1a8f431e1c521f357776de8c53ffa51f6f" kind="function"><name>TransportFlags</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a5f3f9eb2a6d920a721d3528ac461e3a0" kind="function"><name>TransportFlags</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1ac9a4764afa0d2fc666b2a8abf8c4e8a5" kind="function"><name>has</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a43fd58a7b336442ce0ac8c6c40a65f37" kind="function"><name>none</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1ad068407d3a354b948f5afe65a1b0d55e" kind="function"><name>any</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a0bd787f2f3c4aa2dc4fa08c3f7fbc45b" kind="function"><name>all</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a900c36a2133e72e280fbfafbf731ddcb" kind="function"><name>count</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a289913bfae398736e3d9a6108143071c" kind="function"><name>operator|=</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a29a081218913a06f8a5585664ec80adc" kind="function"><name>operator|</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a72cb5eb9b1c6dfc2275e0df7cd6de091" kind="function"><name>operator|</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a6ae5594b574dd4a4945c0101eaed4161" kind="function"><name>operator&amp;=</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a1c4fd205887f80395c23d53e9e861773" kind="function"><name>operator&amp;</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a0191b71525296e4252f43edf70e10b8f" kind="function"><name>operator&amp;</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1aec0ccdd401f53f0b479413e1eeb8959a" kind="function"><name>operator^=</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1aa638cd8ce3c8341e5a7938b52194ef9b" kind="function"><name>operator^</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a88b52fbf1051119326c155044acf3b90" kind="function"><name>operator^</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a82f9e58ea40a0d87e6add3c8d26a7dbe" kind="function"><name>operator~</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1ab5c9f9fb5708506d1bf826a1bf52c3a9" kind="function"><name>operator==</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a86a40422be6816924a43f00a39913c1d" kind="function"><name>operator!=</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1ac83b750adebe27e9c4876e2c97b6252b" kind="function"><name>toBitset</name></member>
+    <member refid="classmscclpp_1_1TransportFlags_1a2cec2faf5796b0fe287626e368aea8e1" kind="function"><name>TransportFlags</name></member>
+  </compound>
+  <compound refid="namespacemscclpp" kind="namespace"><name>mscclpp</name>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kind="enum"><name>Transport</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a88183b946cc5f0e8c96b2e66e1c74a7e" kind="enumvalue"><name>Unknown</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a8c7ec76d5a330fb526292c4cd0111993" kind="enumvalue"><name>CudaIpc</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a4bd6a6a63f68c8a22ee4882619410e82" kind="enumvalue"><name>Nvls</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a6a5053e4054e9194a290da8442f29a5c" kind="enumvalue"><name>IB0</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a1f68a7ebea7dc4c5394aea292e9f0f45" kind="enumvalue"><name>IB1</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a2451b52950545a82b6245ade95824ffb" kind="enumvalue"><name>IB2</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5ab73258fcea9e16c11be6b0b8493087ce" kind="enumvalue"><name>IB3</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a0940acbe03c05a45793aaac8f9967416" kind="enumvalue"><name>IB4</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5ac6aed92a3f88a500f307b88d0674f62f" kind="enumvalue"><name>IB5</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a4b664254eb1a6fedb52e6b781000ec41" kind="enumvalue"><name>IB6</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5afbff6de8c76186402db75f8892040338" kind="enumvalue"><name>IB7</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5abe2ae05fb04ddcf6efa31e63e0f0e111" kind="enumvalue"><name>Ethernet</name></member>
+    <member refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a7084f1074b04e617fc843c5fd32d8df7" kind="enumvalue"><name>NumTransports</name></member>
+    <member refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbc" kind="enum"><name>ErrorCode</name></member>
+    <member refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcab932b91f686c2aa588adfd9a407155ca" kind="enumvalue"><name>SystemError</name></member>
+    <member refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbca8462b58246e70e5c83e5b939a9332cb5" kind="enumvalue"><name>InternalError</name></member>
+    <member refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcad5b659018d1b3646985936dcde01ca16" kind="enumvalue"><name>RemoteError</name></member>
+    <member refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcaa524b35e5f186bcacbedd2b6661224aa" kind="enumvalue"><name>InvalidUsage</name></member>
+    <member refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcac85a251cc457840f1e032f1b733e9398" kind="enumvalue"><name>Timeout</name></member>
+    <member refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbca721c28f4c74928cc9e0bb3fef345e408" kind="enumvalue"><name>Aborted</name></member>
+    <member refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcaddc23c9d813edd1499f0f5986a163011" kind="enumvalue"><name>ExecutorError</name></member>
+    <member refid="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4" kind="enum"><name>DataType</name></member>
+    <member refid="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4a6495adba09844fac8eeb0aba86e6f1bf" kind="enumvalue"><name>INT32</name></member>
+    <member refid="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4a17266551181f69a1b4a3ad5c9e270afc" kind="enumvalue"><name>UINT32</name></member>
+    <member refid="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4ac49f280a5ad551ccc77be0b01a2f386a" kind="enumvalue"><name>FLOAT16</name></member>
+    <member refid="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4a967d280b5c16d95f2947647dd2ca6cc2" kind="enumvalue"><name>FLOAT32</name></member>
+    <member refid="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4aa4b19a06b5361a32b32759aa26ffdbab" kind="enumvalue"><name>BFLOAT16</name></member>
+    <member refid="namespacemscclpp_1a2ec75f8e9d6c6de7fc1532a6c89237a2" kind="enum"><name>PacketType</name></member>
+    <member refid="namespacemscclpp_1a2ec75f8e9d6c6de7fc1532a6c89237a2af21c479d93a15ab23a8f377d7bf85a56" kind="enumvalue"><name>LL8</name></member>
+    <member refid="namespacemscclpp_1a2ec75f8e9d6c6de7fc1532a6c89237a2a1cf99f8f958b06f0ac3e38321e1f53d4" kind="enumvalue"><name>LL16</name></member>
+    <member refid="namespacemscclpp_1ad8b700e44edeb049b38add920666759f" kind="enum"><name>ProxyHandlerResult</name></member>
+    <member refid="namespacemscclpp_1ad8b700e44edeb049b38add920666759faa0bfb8e59e6c13fc8d990781f77694fe" kind="enumvalue"><name>Continue</name></member>
+    <member refid="namespacemscclpp_1ad8b700e44edeb049b38add920666759fa15499a7fff2bc6ba591660047b46fd4e" kind="enumvalue"><name>FlushFifoTailAndContinue</name></member>
+    <member refid="namespacemscclpp_1ad8b700e44edeb049b38add920666759fa11a755d598c0c417f9a36758c3da7481" kind="enumvalue"><name>Stop</name></member>
+    <member refid="namespacemscclpp_1a19370d8ff8c2df952046da3ba001f3c3" kind="typedef"><name>UniqueId</name></member>
+    <member refid="namespacemscclpp_1ad527fb55e019c2b79a09d5be24c81aa6" kind="typedef"><name>DeviceHandle</name></member>
+    <member refid="namespacemscclpp_1a604295c701800da45821703ae4944ab3" kind="typedef"><name>PacketPayload</name></member>
+    <member refid="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" kind="typedef"><name>UniqueCudaPtr</name></member>
+    <member refid="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" kind="typedef"><name>UniqueCudaHostPtr</name></member>
+    <member refid="namespacemscclpp_1a4c273e632c842bb3f17b60c7ab59a79a" kind="typedef"><name>LLPacket</name></member>
+    <member refid="namespacemscclpp_1a073987e5c4ba2650412cea9523bcd9d0" kind="typedef"><name>ProxyHandler</name></member>
+    <member refid="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" kind="typedef"><name>SemaphoreId</name></member>
+    <member refid="namespacemscclpp_1a9fe82c3a70c0ff0872516c2fa7bf6682" kind="typedef"><name>MemoryId</name></member>
+    <member refid="namespacemscclpp_1a9473825c43b8a63f5f47a642d0697939" kind="typedef"><name>TriggerType</name></member>
+    <member refid="namespacemscclpp_1a5a14d1ce0857e0d3de41570ce434a517" kind="variable"><name>TransportNames</name></member>
+    <member refid="namespacemscclpp_1a394245690cdad5f3f029ac8a4e311216" kind="variable"><name>NoTransports</name></member>
+    <member refid="namespacemscclpp_1af4aaacb732590ef5e1cbbae173332e5c" kind="variable"><name>AllIBTransports</name></member>
+    <member refid="namespacemscclpp_1a664b35f70f5b7fcbb32ab7d71ec539d9" kind="variable"><name>AllTransports</name></member>
+    <member refid="namespacemscclpp_1aa40b9c69ba9b54d1f87f52573162c31c" kind="variable"><name>DEFAULT_FIFO_SIZE</name></member>
+    <member refid="namespacemscclpp_1a50714640772d2d58175332977806e443" kind="variable"><name>dependentFalse</name></member>
+    <member refid="namespacemscclpp_1addf417a90640b6643ded0a7077d155a4" kind="variable"><name>TriggerData</name></member>
+    <member refid="namespacemscclpp_1a8e7eac8f555a6bc81178f62d8011e044" kind="variable"><name>TriggerFlag</name></member>
+    <member refid="namespacemscclpp_1a8e66e5ac91f52fb8fe9664b0cd87dfbf" kind="variable"><name>TriggerSync</name></member>
+    <member refid="namespacemscclpp_1a05204aa1421dccefd7317279e7c38d5c" kind="function"><name>version</name></member>
+    <member refid="namespacemscclpp_1a0c632c46b1f8d8de99fcbbbb97fb67e4" kind="function"><name>operator|</name></member>
+    <member refid="namespacemscclpp_1a0e8406f18c274a5ce00f6f8c598b9583" kind="function"><name>operator&amp;</name></member>
+    <member refid="namespacemscclpp_1a982ccfce637872e7b3d07797edcd2c7b" kind="function"><name>operator^</name></member>
+    <member refid="namespacemscclpp_1ac2f0d27f4155eba491c250b3cc9a062b" kind="function"><name>getIBDeviceCount</name></member>
+    <member refid="namespacemscclpp_1afe4b8fcebe602c294a81f65d2f004824" kind="function"><name>getIBDeviceName</name></member>
+    <member refid="namespacemscclpp_1af9217af381b04d6860c42a8f8d69b0ac" kind="function"><name>getIBTransportByDeviceName</name></member>
+    <member refid="namespacemscclpp_1af6fab3d5a649a2dff1467e9eeb3a7ee3" kind="function"><name>deviceHandle</name></member>
+    <member refid="namespacemscclpp_1abe9a611772fc87e4afb22a5342de69f2" kind="function"><name>errorToString</name></member>
+    <member refid="namespacemscclpp_1ab10073b88d810432087d16a9068e5aa8" kind="function"><name>allocSharedCuda</name></member>
+    <member refid="namespacemscclpp_1a076026a23c37219386fd72e235a16404" kind="function"><name>allocSharedPhysicalCuda</name></member>
+    <member refid="namespacemscclpp_1a20fbe029082ab21502c8f354bc636263" kind="function"><name>allocExtSharedCuda</name></member>
+    <member refid="namespacemscclpp_1ad31cd9626a62c64d05b44736adf3dbb9" kind="function"><name>allocUniqueCuda</name></member>
+    <member refid="namespacemscclpp_1a1e74ee49d25a2209aca5dc3c6ad7828b" kind="function"><name>allocUniquePhysicalCuda</name></member>
+    <member refid="namespacemscclpp_1a9f462309da3d603572c9f4731e0a54bf" kind="function"><name>allocExtUniqueCuda</name></member>
+    <member refid="namespacemscclpp_1abbc4c2a44a23d76110dc492e1de23ad2" kind="function"><name>makeSharedCudaHost</name></member>
+    <member refid="namespacemscclpp_1a56a0554f903817c7a2600296eca9c166" kind="function"><name>makeSharedCudaHost</name></member>
+    <member refid="namespacemscclpp_1a40cb9e2eef899f052b7e72c706f5ab7b" kind="function"><name>makeUniqueCudaHost</name></member>
+    <member refid="namespacemscclpp_1af5e91d93bd1a5e7bfb98a0b353e7b05e" kind="function"><name>makeUniqueCudaHost</name></member>
+    <member refid="namespacemscclpp_1afd3d7997563fb05cafdf33e2886f90ba" kind="function"><name>memcpyCudaAsync</name></member>
+    <member refid="namespacemscclpp_1a48d4cf01618324fd8c4e55a4c6eca6fe" kind="function"><name>memcpyCuda</name></member>
+    <member refid="namespacemscclpp_1a50618667a7699e167b8cf8e00d05ad36" kind="function"><name>getDeviceNumaNode</name></member>
+    <member refid="namespacemscclpp_1a95f78a88c99f65c2f2769b4b0c64f8e4" kind="function"><name>numaBind</name></member>
+    <member refid="namespacemscclpp_1a8b8a1fdab1bc4ff47206a28eeae0eafd" kind="function"><name>connectNvlsCollective</name></member>
+    <member refid="namespacemscclpp_1a9d63396e8bf8f8d3a2d6dfbf7c130fe0" kind="function"><name>getHostName</name></member>
+    <member refid="namespacemscclpp_1a2f4e90d0b7834b9f4d243d1e6e92ba37" kind="function"><name>isNvlsSupported</name></member>
+  </compound>
+  <compound refid="namespacemscclpp_1_1detail" kind="namespace"><name>mscclpp::detail</name>
+    <member refid="namespacemscclpp_1_1detail_1afe546a620f7aeead78e250d188eb1dd6" kind="typedef"><name>TransportFlagsBase</name></member>
+    <member refid="namespacemscclpp_1_1detail_1a244cf6ec06e88229aaca5f66fa8f0893" kind="variable"><name>TransportFlagsSize</name></member>
+    <member refid="namespacemscclpp_1_1detail_1a516c87b6820034278a7df844025810c9" kind="function"><name>cudaCalloc</name></member>
+    <member refid="namespacemscclpp_1_1detail_1a1cd1744838f784b1e3a5a39bdab766c6" kind="function"><name>cudaPhysicalCalloc</name></member>
+    <member refid="namespacemscclpp_1_1detail_1a7020a4cfcb1f117144e26092dd3c3830" kind="function"><name>cudaExtCalloc</name></member>
+    <member refid="namespacemscclpp_1_1detail_1a38d4884d9380c232773dcfb2a8640a0a" kind="function"><name>cudaHostCalloc</name></member>
+    <member refid="namespacemscclpp_1_1detail_1a62940c9a543b65f5473a68506c9c1d11" kind="function"><name>safeAlloc</name></member>
+    <member refid="namespacemscclpp_1_1detail_1a4ee3d070850c9434e07ee34b1c1c80df" kind="function"><name>safeAlloc</name></member>
+  </compound>
+  <compound refid="namespacestd" kind="namespace"><name>std</name>
+  </compound>
+  <compound refid="atomic__device_8hpp" kind="file"><name>atomic_device.hpp</name>
+  </compound>
+  <compound refid="concurrency__device_8hpp" kind="file"><name>concurrency_device.hpp</name>
+  </compound>
+  <compound refid="core_8hpp" kind="file"><name>core.hpp</name>
+    <member refid="core_8hpp_1a2268d0e9c6def6355d26c335ea88b115" kind="define"><name>MSCCLPP_MAJOR</name></member>
+    <member refid="core_8hpp_1aaf11c0aee52527ee3a8c1dcab14a791b" kind="define"><name>MSCCLPP_MINOR</name></member>
+    <member refid="core_8hpp_1a59a20ac40c71441a66aa9ce72a78e906" kind="define"><name>MSCCLPP_PATCH</name></member>
+    <member refid="core_8hpp_1a7ed91b6d7c406d85b6e4c4712e005064" kind="define"><name>MSCCLPP_VERSION</name></member>
+    <member refid="core_8hpp_1a343926bd0143fdf98a7f173cb45986a9" kind="define"><name>MSCCLPP_UNIQUE_ID_BYTES</name></member>
+  </compound>
+  <compound refid="device_8hpp" kind="file"><name>device.hpp</name>
+    <member refid="device_8hpp_1aa37c87124fd2392e9119fe7cb7df6f07" kind="define"><name>MSCCLPP_HOST_COMPILE</name></member>
+    <member refid="device_8hpp_1a250d9c0adf7d0feb6033bddada9b9609" kind="define"><name>MSCCLPP_HOST_DEVICE_INLINE</name></member>
+  </compound>
+  <compound refid="errors_8hpp" kind="file"><name>errors.hpp</name>
+  </compound>
+  <compound refid="executor_8hpp" kind="file"><name>executor.hpp</name>
+  </compound>
+  <compound refid="fifo_8hpp" kind="file"><name>fifo.hpp</name>
+  </compound>
+  <compound refid="fifo__device_8hpp" kind="file"><name>fifo_device.hpp</name>
+  </compound>
+  <compound refid="gpu_8hpp" kind="file"><name>gpu.hpp</name>
+    <member refid="gpu_8hpp_1a3cff8107d8747cb69a1c8a37a16ba71a" kind="define"><name>USE_NVLS</name></member>
+    <member refid="gpu_8hpp_1a84f682e32e9d09458ba6d10a0778418d" kind="define"><name>__syncshm</name></member>
+  </compound>
+  <compound refid="gpu__utils_8hpp" kind="file"><name>gpu_utils.hpp</name>
+    <member refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kind="define"><name>MSCCLPP_CUDATHROW</name></member>
+    <member refid="gpu__utils_8hpp_1a4d47839c3dc2d87dd3e68fb1ce789593" kind="define"><name>MSCCLPP_CUTHROW</name></member>
+  </compound>
+  <compound refid="npkit_8hpp" kind="file"><name>npkit.hpp</name>
+    <member refid="npkit_8hpp_1a97597ec9fa775e930438c05f854803f3" kind="define"><name>NPKIT_GET_GPU_TIMESTAMP</name></member>
+    <member refid="npkit_8hpp_1ab85d3b73a46c9d68b1c2825b50538fdb" kind="define"><name>NPKIT_SHM_NUM_EVENTS</name></member>
+  </compound>
+  <compound refid="npkit__event_8hpp" kind="file"><name>npkit_event.hpp</name>
+    <member refid="npkit__event_8hpp_1a84d11d0a2616203f7ed0cf5f5ef69389" kind="define"><name>NPKIT_EVENT_INVALID</name></member>
+    <member refid="npkit__event_8hpp_1aa881975035eb1cc059cf006757a1214d" kind="define"><name>NPKIT_EVENT_TIME_SYNC_GPU</name></member>
+    <member refid="npkit__event_8hpp_1a2027a1f771fdc491bd4ed936387f5323" kind="define"><name>NPKIT_EVENT_TIME_SYNC_CPU</name></member>
+    <member refid="npkit__event_8hpp_1aeefc00a8ca6c5a9d8eefd8bd21992827" kind="define"><name>NPKIT_EVENT_EXECUTOR_INIT_ENTRY</name></member>
+    <member refid="npkit__event_8hpp_1afda0df3874d2b0ecb4a1c034229d015e" kind="define"><name>NPKIT_EVENT_EXECUTOR_INIT_EXIT</name></member>
+    <member refid="npkit__event_8hpp_1a341e2a45ce62c0ef66113b42bb310d18" kind="define"><name>NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY</name></member>
+    <member refid="npkit__event_8hpp_1a1c933abdcbe4c00650d7eeb208a42bd7" kind="define"><name>NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT</name></member>
+  </compound>
+  <compound refid="npkit__struct_8hpp" kind="file"><name>npkit_struct.hpp</name>
+  </compound>
+  <compound refid="numa_8hpp" kind="file"><name>numa.hpp</name>
+  </compound>
+  <compound refid="nvls_8hpp" kind="file"><name>nvls.hpp</name>
+  </compound>
+  <compound refid="nvls__device_8hpp" kind="file"><name>nvls_device.hpp</name>
+  </compound>
+  <compound refid="packet__device_8hpp" kind="file"><name>packet_device.hpp</name>
+  </compound>
+  <compound refid="poll__device_8hpp" kind="file"><name>poll_device.hpp</name>
+  </compound>
+  <compound refid="proxy_8hpp" kind="file"><name>proxy.hpp</name>
+  </compound>
+  <compound refid="proxy__channel_8hpp" kind="file"><name>proxy_channel.hpp</name>
+  </compound>
+  <compound refid="proxy__channel__device_8hpp" kind="file"><name>proxy_channel_device.hpp</name>
+    <member refid="proxy__channel__device_8hpp_1ae4eabcf9644290bc305eb0f6c22bf51b" kind="define"><name>MSCCLPP_BITS_SIZE</name></member>
+    <member refid="proxy__channel__device_8hpp_1a159538c3f36c97724afd2c1e2d0fe0ab" kind="define"><name>MSCCLPP_BITS_OFFSET</name></member>
+    <member refid="proxy__channel__device_8hpp_1ae3fa4fdec000454d083b0f7e81a3fc3e" kind="define"><name>MSCCLPP_BITS_REGMEM_HANDLE</name></member>
+    <member refid="proxy__channel__device_8hpp_1a7af69df3f1f242f6109ca8f7354dd886" kind="define"><name>MSCCLPP_BITS_TYPE</name></member>
+    <member refid="proxy__channel__device_8hpp_1a4bfcbb64a44d31a216324428b2d946f6" kind="define"><name>MSCCLPP_BITS_CONNID</name></member>
+    <member refid="proxy__channel__device_8hpp_1a242450659984655a3ebf1967e7951ddf" kind="define"><name>MSCCLPP_BITS_FIFO_RESERVED</name></member>
+  </compound>
+  <compound refid="README_8md" kind="file"><name>README.md</name>
+  </compound>
+  <compound refid="semaphore_8hpp" kind="file"><name>semaphore.hpp</name>
+  </compound>
+  <compound refid="semaphore__device_8hpp" kind="file"><name>semaphore_device.hpp</name>
+  </compound>
+  <compound refid="sm__channel_8hpp" kind="file"><name>sm_channel.hpp</name>
+  </compound>
+  <compound refid="sm__channel__device_8hpp" kind="file"><name>sm_channel_device.hpp</name>
+  </compound>
+  <compound refid="utils_8hpp" kind="file"><name>utils.hpp</name>
+  </compound>
+  <compound refid="dir_d44c64559bbebec7f509842c48db8b23" kind="dir"><name>include</name>
+  </compound>
+  <compound refid="dir_5b58d9d970ef29bd3b9d7292e7628c41" kind="dir"><name>mscclpp</name>
+  </compound>
+  <compound refid="dir_79cdab046adb8bd4bd5d2d3af1d20704" kind="dir"><name>npkit</name>
+  </compound>
+  <compound refid="indexpage" kind="page"><name>index</name>
+  </compound>
+</doxygenindex>

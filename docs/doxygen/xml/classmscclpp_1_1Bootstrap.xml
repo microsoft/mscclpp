@@ -1,0 +1,273 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1Bootstrap" kind="class" language="C++" prot="public" abstract="yes">
+    <compoundname>mscclpp::Bootstrap</compoundname>
+    <derivedcompoundref refid="classmscclpp_1_1TcpBootstrap" prot="public" virt="non-virtual">mscclpp::TcpBootstrap</derivedcompoundref>
+    <includes refid="core_8hpp" local="no">core.hpp</includes>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1Bootstrap_1a899129191be1369ad4cbd1c1d984ca19" prot="public" static="no" const="no" explicit="no" inline="yes" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Bootstrap::Bootstrap</definition>
+        <argsstring>()</argsstring>
+        <name>Bootstrap</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="36" column="3" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="36" bodyend="36"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Bootstrap_1aebeededabb3c6262b4c464ad563c87ce" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type></type>
+        <definition>virtual mscclpp::Bootstrap::~Bootstrap</definition>
+        <argsstring>()=default</argsstring>
+        <name>~Bootstrap</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="37" column="11"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Bootstrap_1a10022347ad48c3bf287de670dbc36761" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type>int</type>
+        <definition>virtual int mscclpp::Bootstrap::getRank</definition>
+        <argsstring>()=0</argsstring>
+        <name>getRank</name>
+        <reimplementedby refid="classmscclpp_1_1TcpBootstrap_1a5626eeaefd2077e77af3a8a3091330cd">getRank</reimplementedby>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="38" column="15"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Bootstrap_1a87e0617ba1f3f23f4f3727e346776dd7" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type>int</type>
+        <definition>virtual int mscclpp::Bootstrap::getNranks</definition>
+        <argsstring>()=0</argsstring>
+        <name>getNranks</name>
+        <reimplementedby refid="classmscclpp_1_1TcpBootstrap_1a8b492af79a381b05eddbc20b60620ed3">getNranks</reimplementedby>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="39" column="15"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Bootstrap_1aadfcff6cb4251705297c29f18a8b1d1a" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type>int</type>
+        <definition>virtual int mscclpp::Bootstrap::getNranksPerNode</definition>
+        <argsstring>()=0</argsstring>
+        <name>getNranksPerNode</name>
+        <reimplementedby refid="classmscclpp_1_1TcpBootstrap_1ab4733042b3e69b34ff5c1f9fe3a22f59">getNranksPerNode</reimplementedby>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="40" column="15"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Bootstrap_1a84e2033bb8b197a0d19e2b4c1b2f6bd5" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type>void</type>
+        <definition>virtual void mscclpp::Bootstrap::send</definition>
+        <argsstring>(void *data, int size, int peer, int tag)=0</argsstring>
+        <name>send</name>
+        <reimplementedby refid="classmscclpp_1_1TcpBootstrap_1a9257e0474c2e858038d6d18fe7e3b8cd">send</reimplementedby>
+        <param>
+          <type>void *</type>
+          <declname>data</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>size</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>peer</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>tag</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="41" column="16"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Bootstrap_1a0bcc9e55f2b14b7013476e802418ce70" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type>void</type>
+        <definition>virtual void mscclpp::Bootstrap::recv</definition>
+        <argsstring>(void *data, int size, int peer, int tag)=0</argsstring>
+        <name>recv</name>
+        <reimplementedby refid="classmscclpp_1_1TcpBootstrap_1a3547a9251d27190099ca690877448993">recv</reimplementedby>
+        <param>
+          <type>void *</type>
+          <declname>data</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>size</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>peer</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>tag</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="42" column="16"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Bootstrap_1af1a3f26e418d020dc1e145ef22ef9328" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type>void</type>
+        <definition>virtual void mscclpp::Bootstrap::allGather</definition>
+        <argsstring>(void *allData, int size)=0</argsstring>
+        <name>allGather</name>
+        <reimplementedby refid="classmscclpp_1_1TcpBootstrap_1a75c07cdf8d10e77b5e1bb6bd4aed6654">allGather</reimplementedby>
+        <param>
+          <type>void *</type>
+          <declname>allData</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>size</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="43" column="16"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Bootstrap_1a99aa291ae8bf645c9853ee603b8e3794" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type>void</type>
+        <definition>virtual void mscclpp::Bootstrap::barrier</definition>
+        <argsstring>()=0</argsstring>
+        <name>barrier</name>
+        <reimplementedby refid="classmscclpp_1_1TcpBootstrap_1a20747dc53f4485ebf080c135a352be12">barrier</reimplementedby>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="44" column="16"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Bootstrap_1ae5c6937a9e14d6b08966e79fe38c1e21" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Bootstrap::groupBarrier</definition>
+        <argsstring>(const std::vector&lt; int &gt; &amp;ranks)</argsstring>
+        <name>groupBarrier</name>
+        <param>
+          <type>const std::vector&lt; int &gt; &amp;</type>
+          <declname>ranks</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="46" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Bootstrap_1a15ecbbe1be20a98c603d4c482184baf4" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Bootstrap::send</definition>
+        <argsstring>(const std::vector&lt; char &gt; &amp;data, int peer, int tag)</argsstring>
+        <name>send</name>
+        <param>
+          <type>const std::vector&lt; char &gt; &amp;</type>
+          <declname>data</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>peer</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>tag</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="47" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Bootstrap_1a6f4382f88a2222f82cfe4d0c63ba5959" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Bootstrap::recv</definition>
+        <argsstring>(std::vector&lt; char &gt; &amp;data, int peer, int tag)</argsstring>
+        <name>recv</name>
+        <param>
+          <type>std::vector&lt; char &gt; &amp;</type>
+          <declname>data</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>peer</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>tag</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="48" column="8"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Base class for bootstraps. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <inheritancegraph>
+      <node id="1">
+        <label>mscclpp::Bootstrap</label>
+        <link refid="classmscclpp_1_1Bootstrap"/>
+      </node>
+      <node id="2">
+        <label>mscclpp::TcpBootstrap</label>
+        <link refid="classmscclpp_1_1TcpBootstrap"/>
+        <childnode refid="1" relation="public-inheritance">
+        </childnode>
+      </node>
+    </inheritancegraph>
+    <location file="/root/mscclpp/include/mscclpp/core.hpp" line="34" column="16" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="34" bodyend="49"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1Bootstrap_1af1a3f26e418d020dc1e145ef22ef9328" prot="public" virt="pure-virtual"><scope>mscclpp::Bootstrap</scope><name>allGather</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1a99aa291ae8bf645c9853ee603b8e3794" prot="public" virt="pure-virtual"><scope>mscclpp::Bootstrap</scope><name>barrier</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1a899129191be1369ad4cbd1c1d984ca19" prot="public" virt="non-virtual"><scope>mscclpp::Bootstrap</scope><name>Bootstrap</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1a87e0617ba1f3f23f4f3727e346776dd7" prot="public" virt="pure-virtual"><scope>mscclpp::Bootstrap</scope><name>getNranks</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1aadfcff6cb4251705297c29f18a8b1d1a" prot="public" virt="pure-virtual"><scope>mscclpp::Bootstrap</scope><name>getNranksPerNode</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1a10022347ad48c3bf287de670dbc36761" prot="public" virt="pure-virtual"><scope>mscclpp::Bootstrap</scope><name>getRank</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1ae5c6937a9e14d6b08966e79fe38c1e21" prot="public" virt="non-virtual"><scope>mscclpp::Bootstrap</scope><name>groupBarrier</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1a0bcc9e55f2b14b7013476e802418ce70" prot="public" virt="pure-virtual"><scope>mscclpp::Bootstrap</scope><name>recv</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1a6f4382f88a2222f82cfe4d0c63ba5959" prot="public" virt="non-virtual"><scope>mscclpp::Bootstrap</scope><name>recv</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1a84e2033bb8b197a0d19e2b4c1b2f6bd5" prot="public" virt="pure-virtual"><scope>mscclpp::Bootstrap</scope><name>send</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1a15ecbbe1be20a98c603d4c482184baf4" prot="public" virt="non-virtual"><scope>mscclpp::Bootstrap</scope><name>send</name></member>
+      <member refid="classmscclpp_1_1Bootstrap_1aebeededabb3c6262b4c464ad563c87ce" prot="public" virt="virtual"><scope>mscclpp::Bootstrap</scope><name>~Bootstrap</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

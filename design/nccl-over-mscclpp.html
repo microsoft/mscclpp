@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NCCL Over MSCCL++ &mdash; mscclpp v0.5.2 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js?v=0dc63f2a"></script>
+        <script src="../_static/doctools.js?v=888ff710"></script>
+        <script src="../_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="NDmv4 Performance" href="../performance/performance-ndmv4.html" />
+    <link rel="prev" title="MSCCL++ Design Document" href="design.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            mscclpp
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../getting-started/quickstart.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting-started/tutorials/index.html">Tutorials</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Design</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="design.html">MSCCL++ Design Document</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">NCCL Over MSCCL++</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#limitations">Limitations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#api-support-table">API Support Table</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#executor-support">Executor Support</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../performance/performance-ndmv4.html">NDmv4 Performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">C++ API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../api/index.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">mscclpp</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">NCCL Over MSCCL++</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/design/nccl-over-mscclpp.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="nccl-over-msccl">
+<h1>NCCL Over MSCCL++<a class="headerlink" href="#nccl-over-msccl" title="Permalink to this heading"></a></h1>
+<section id="limitations">
+<span id="id1"></span><h2>Limitations<a class="headerlink" href="#limitations" title="Permalink to this heading"></a></h2>
+<p>Current NCCL over MSCCL++ has a few limitations.</p>
+<ul class="simple">
+<li><p>We do not cover all APIs yet. See the <a class="reference internal" href="#api-support-table">API Support Table</a> for details.</p></li>
+<li><p>Multi-node communication is not supported yet.</p></li>
+<li><p>Currently, collective communication functions may not work correctly if the buffer address is differed from that of previous function calls while sharing the same base address (returned by <a class="reference external" href="https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g64fee5711274a2a0573a789c94d8299b">cuMemGetAddressRange</a>) with the previous address. This is because the current implementation performs zero-copy communication over user buffers, and it is difficult to efficiently inform all ranks if the buffer address dynamically changes.</p></li>
+</ul>
+</section>
+<section id="api-support-table">
+<span id="id2"></span><h2>API Support Table<a class="headerlink" href="#api-support-table" title="Permalink to this heading"></a></h2>
+<p>The table below lists all NCCL APIs (v2.21). We may cover more APIs in the future.</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head text-left"><p>API Name</p></th>
+<th class="head text-center"><p>Supported</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td class="text-left"><p>ncclGetLastError</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclGetErrorString</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclGetVersion</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclGetUniqueId</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclCommInitRank</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclCommInitAll</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclCommInitRankConfig</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclCommSplit</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclCommFinalize</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclCommDestroy</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclCommAbort</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclCommGetAsyncError</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclCommCount</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclCommCuDevice</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclCommUserRank</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclCommRegister</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclCommDeregister</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclMemAlloc</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclMemFree</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclAllReduce</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclBroadcast</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclReduce</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclAllGather</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclReduceScatter</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclGroupStart</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclGroupEnd</p></td>
+<td class="text-center"><p>O</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclSend</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclRecv</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-even"><td class="text-left"><p>ncclRedOpCreatePreMulSum</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p>ncclRedOpDestroy</p></td>
+<td class="text-center"><p>X</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="executor-support">
+<h2>Executor Support<a class="headerlink" href="#executor-support" title="Permalink to this heading"></a></h2>
+<p>The executor is a versatile tool designed to specify how mscclpp executes algorithms. Currently, only the allReduce operation allows for algorithm customization. The following environment variables can be managed:</p>
+<ul class="simple">
+<li><p>ALLREDUCEPKT_IP_JSON_FILE: Specifies the path to the JSON file that defines the algorithm for small-sized, in-place operations.</p></li>
+<li><p>ALLREDUCEPKT_OP_JSON_FILE: Specifies the path to the JSON file that defines the algorithm for small-sized, out-of-place operations.</p></li>
+<li><p>ALLREDUCE_IP_JSON_FILE: Specifies the path to the JSON file that defines the algorithm for larger-sized, in-place operations.</p></li>
+<li><p>ALLREDUCE_OP_JSON_FILE: Specifies the path to the JSON file that defines the algorithm for larger-sized, out-of-place operations.</p></li>
+<li><p>ALLREDUCE_SMALL_MSG_BOUNDARY: Defines the size threshold at which the algorithm will switch between fallback code and the customized algorithm for small messages.</p></li>
+<li><p>ALLREDUCE_LARGE_MSG_BOUNDARY: Defines the size threshold at which the algorithm will switch between the customized algorithm for small messages and that for larger messages.</p></li>
+</ul>
+<figure class="align-center" id="mmsccl-abstractions">
+<img alt="MSCCL++ Abstractions" src="../_images/size_boundary_diagram.png" />
+<figcaption>
+<p><span class="caption-text">Decision Flowchart for Message Size-Based Algorithm Execution</span><a class="headerlink" href="#mmsccl-abstractions" title="Permalink to this image"></a></p>
+</figcaption>
+</figure>
+<p>This is an example of executing the interface with the executor:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mpirun<span class="w"> </span>-np<span class="w"> </span><span class="m">8</span><span class="w"> </span>-x<span class="w"> </span><span class="nv">ALLREDUCEPKT_IP_JSON_FILE</span><span class="o">=</span>/root/azure-mscclpp/nccl/test/execution-files/allreducepacket.json<span class="w"> </span>-x<span class="w"> </span><span class="nv">ALLREDUCE_IP_JSON_FILE</span><span class="o">=</span>/root/azure-mscclpp/nccl/test/execution-files/allreducesm.json<span class="w"> </span>-x<span class="w"> </span><span class="nv">ALLREDUCE_SMALL_MSG_BOUNDARY</span><span class="o">=</span>16K<span class="w"> </span>-x<span class="w"> </span><span class="nv">ALLREDUCE_LARGE_MSG_BOUNDARY</span><span class="o">=</span>1M<span class="w"> </span>./apps/nccl/test/nccl_api_test
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="design.html" class="btn btn-neutral float-left" title="MSCCL++ Design Document" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="../performance/performance-ndmv4.html" class="btn btn-neutral float-right" title="NDmv4 Performance" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, MSCCL++ Team.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

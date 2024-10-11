@@ -1,0 +1,9 @@
+<map id="mscclpp::BaseError" name="mscclpp::BaseError">
+<area shape="rect" id="node1" title="Base class for all errors thrown by MSCCL++." alt="" coords="192,107,339,133"/>
+<area shape="rect" id="node3" href="$classmscclpp_1_1CudaError.html" title="An error from a CUDA runtime library call." alt="" coords="387,5,535,32"/>
+<area shape="rect" id="node4" href="$classmscclpp_1_1CuError.html" title="An error from a CUDA driver library call." alt="" coords="395,56,527,83"/>
+<area shape="rect" id="node5" href="$classmscclpp_1_1Error.html" title="A generic error." alt="" coords="403,107,518,133"/>
+<area shape="rect" id="node6" href="$classmscclpp_1_1IbError.html" title="An error from an ibverbs library call." alt="" coords="397,157,524,184"/>
+<area shape="rect" id="node7" href="$classmscclpp_1_1SysError.html" title="An error from a system call that sets errno." alt="" coords="391,208,530,235"/>
+<area shape="rect" id="node2" title=" " alt="" coords="5,107,144,133"/>
+</map>

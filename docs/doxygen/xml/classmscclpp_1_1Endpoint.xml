@@ -1,0 +1,167 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1Endpoint" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::Endpoint</compoundname>
+    <includes refid="core_8hpp" local="no">core.hpp</includes>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1Endpoint_1af58e6b1bdee1b82a3f61ba4acc4963ba" prot="private" static="no" mutable="no">
+        <type>std::shared_ptr&lt; Impl &gt;</type>
+        <definition>std::shared_ptr&lt;Impl&gt; mscclpp::Endpoint::pimpl_</definition>
+        <argsstring></argsstring>
+        <name>pimpl_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="410" column="19" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="410" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="friend">
+      <memberdef kind="friend" id="classmscclpp_1_1Endpoint_1ac26c806e60ca4a0547680edb68f6e39b" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>friend class</type>
+        <definition>friend class Context</definition>
+        <argsstring></argsstring>
+        <name>Context</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="412" column="3" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="412" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="friend" id="classmscclpp_1_1Endpoint_1a54a11fdc71e1679a42fa0c0e3856673d" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>friend class</type>
+        <definition>friend class Connection</definition>
+        <argsstring></argsstring>
+        <name>Connection</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="413" column="3" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="413" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1Endpoint_1a33b41dd99c476ae84df501a146876367" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Endpoint::Endpoint</definition>
+        <argsstring>()=default</argsstring>
+        <name>Endpoint</name>
+        <briefdescription>
+<para>Default constructor. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="384" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Endpoint_1adb3143b0a2c6a363e4febfe81fafb20b" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+        <definition>Transport mscclpp::Endpoint::transport</definition>
+        <argsstring>()</argsstring>
+        <name>transport</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the transport used.</para>
+<para><simplesect kind="return"><para>The transport used. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="389" column="13"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Endpoint_1af8d24e2c3614491cf56a7b3faba744e6" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::vector&lt; char &gt;</type>
+        <definition>std::vector&lt;char&gt; mscclpp::Endpoint::serialize</definition>
+        <argsstring>()</argsstring>
+        <name>serialize</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Serialize the <ref refid="classmscclpp_1_1Endpoint" kindref="compound">Endpoint</ref> object to a vector of characters.</para>
+<para><simplesect kind="return"><para>A vector of characters representing the serialized <ref refid="classmscclpp_1_1Endpoint" kindref="compound">Endpoint</ref> object. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="394" column="15"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-static-func">
+      <memberdef kind="function" id="classmscclpp_1_1Endpoint_1ae1aae33321f716abf24176d6c80ab39d" prot="public" static="yes" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1Endpoint" kindref="compound">Endpoint</ref></type>
+        <definition>static Endpoint mscclpp::Endpoint::deserialize</definition>
+        <argsstring>(const std::vector&lt; char &gt; &amp;data)</argsstring>
+        <name>deserialize</name>
+        <param>
+          <type>const std::vector&lt; char &gt; &amp;</type>
+          <declname>data</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Deserialize a <ref refid="classmscclpp_1_1Endpoint" kindref="compound">Endpoint</ref> object from a vector of characters.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>data</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>A vector of characters representing a serialized <ref refid="classmscclpp_1_1Endpoint" kindref="compound">Endpoint</ref> object. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A deserialized <ref refid="classmscclpp_1_1Endpoint" kindref="compound">Endpoint</ref> object. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="400" column="19"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="private-func">
+      <memberdef kind="function" id="classmscclpp_1_1Endpoint_1a1ce2e12e3b25781b94502a7ecacf145f" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Endpoint::Endpoint</definition>
+        <argsstring>(std::shared_ptr&lt; Impl &gt; pimpl)</argsstring>
+        <name>Endpoint</name>
+        <param>
+          <type>std::shared_ptr&lt; Impl &gt;</type>
+          <declname>pimpl</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="407" column="3"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Represents one end of a connection. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/core.hpp" line="381" column="15" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="381" bodyend="414"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1Endpoint_1a54a11fdc71e1679a42fa0c0e3856673d" prot="private" virt="non-virtual"><scope>mscclpp::Endpoint</scope><name>Connection</name></member>
+      <member refid="classmscclpp_1_1Endpoint_1ac26c806e60ca4a0547680edb68f6e39b" prot="private" virt="non-virtual"><scope>mscclpp::Endpoint</scope><name>Context</name></member>
+      <member refid="classmscclpp_1_1Endpoint_1ae1aae33321f716abf24176d6c80ab39d" prot="public" virt="non-virtual"><scope>mscclpp::Endpoint</scope><name>deserialize</name></member>
+      <member refid="classmscclpp_1_1Endpoint_1a33b41dd99c476ae84df501a146876367" prot="public" virt="non-virtual"><scope>mscclpp::Endpoint</scope><name>Endpoint</name></member>
+      <member refid="classmscclpp_1_1Endpoint_1a1ce2e12e3b25781b94502a7ecacf145f" prot="private" virt="non-virtual"><scope>mscclpp::Endpoint</scope><name>Endpoint</name></member>
+      <member refid="classmscclpp_1_1Endpoint_1af58e6b1bdee1b82a3f61ba4acc4963ba" prot="private" virt="non-virtual"><scope>mscclpp::Endpoint</scope><name>pimpl_</name></member>
+      <member refid="classmscclpp_1_1Endpoint_1af8d24e2c3614491cf56a7b3faba744e6" prot="public" virt="non-virtual"><scope>mscclpp::Endpoint</scope><name>serialize</name></member>
+      <member refid="classmscclpp_1_1Endpoint_1adb3143b0a2c6a363e4febfe81fafb20b" prot="public" virt="non-virtual"><scope>mscclpp::Endpoint</scope><name>transport</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

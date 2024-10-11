@@ -1,0 +1,451 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1Communicator" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::Communicator</compoundname>
+    <includes refid="core_8hpp" local="no">core.hpp</includes>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1Communicator_1a0792bccf11d247a81aab3ae105071ff5" prot="private" static="no" mutable="no">
+        <type>std::unique_ptr&lt; Impl &gt;</type>
+        <definition>std::unique_ptr&lt;Impl&gt; mscclpp::Communicator::pimpl_</definition>
+        <argsstring></argsstring>
+        <name>pimpl_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="695" column="19" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="692" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1Communicator_1a11b52d62f42d5deecdfc74ea6cad2089" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Communicator::Communicator</definition>
+        <argsstring>(std::shared_ptr&lt; Bootstrap &gt; bootstrap, std::shared_ptr&lt; Context &gt; context=nullptr)</argsstring>
+        <name>Communicator</name>
+        <param>
+          <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Bootstrap" kindref="compound">Bootstrap</ref> &gt;</type>
+          <declname>bootstrap</declname>
+        </param>
+        <param>
+          <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Context" kindref="compound">Context</ref> &gt;</type>
+          <declname>context</declname>
+          <defval>nullptr</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Initializes the communicator with a given bootstrap implementation.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>bootstrap</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>An implementation of the <ref refid="classmscclpp_1_1Bootstrap" kindref="compound">Bootstrap</ref> that the communicator will use. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>context</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>An optional context to use for the communicator. If not provided, a new context will be created. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="608" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Communicator_1af9d3df40a651fd623e6bbba149d34127" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Communicator::~Communicator</definition>
+        <argsstring>()</argsstring>
+        <name>~Communicator</name>
+        <briefdescription>
+<para>Destroy the communicator. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="611" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Communicator_1a3f6184e06629f370d23fa67170c358c4" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Bootstrap" kindref="compound">Bootstrap</ref> &gt;</type>
+        <definition>std::shared_ptr&lt;Bootstrap&gt; mscclpp::Communicator::bootstrap</definition>
+        <argsstring>()</argsstring>
+        <name>bootstrap</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Returns the bootstrap held by this communicator.</para>
+<para><simplesect kind="return"><para>std::shared_ptr&lt;Bootstrap&gt; The bootstrap held by this communicator. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="616" column="19"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Communicator_1ab242faa5778c1f8a9abdb1e95b5274ca" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Context" kindref="compound">Context</ref> &gt;</type>
+        <definition>std::shared_ptr&lt;Context&gt; mscclpp::Communicator::context</definition>
+        <argsstring>()</argsstring>
+        <name>context</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Returns the context held by this communicator.</para>
+<para><simplesect kind="return"><para>std::shared_ptr&lt;Context&gt; The context held by this communicator. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="621" column="19"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Communicator_1a537a32056272f718ca913a23bde5f1c8" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref></type>
+        <definition>RegisteredMemory mscclpp::Communicator::registerMemory</definition>
+        <argsstring>(void *ptr, size_t size, TransportFlags transports)</argsstring>
+        <name>registerMemory</name>
+        <param>
+          <type>void *</type>
+          <declname>ptr</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>size</declname>
+        </param>
+        <param>
+          <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+          <declname>transports</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Register a region of GPU memory for use in this communicator&apos;s context.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>ptr</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Base pointer to the memory. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>size</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Size of the memory region in bytes. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>transports</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Transport flags. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> A handle to the buffer. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="629" column="20"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Communicator_1ad17015b7dc79d3848e39c844d69b785c" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Communicator::sendMemoryOnSetup</definition>
+        <argsstring>(RegisteredMemory memory, int remoteRank, int tag)</argsstring>
+        <name>sendMemoryOnSetup</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref></type>
+          <declname>memory</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>remoteRank</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>tag</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Send information of a registered memory to the remote side on setup.</para>
+<para>This function registers a send to a remote process that will happen by a following call of <ref refid="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" kindref="member">setup()</ref>. The send will carry information about a registered memory on the local process.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>memory</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The registered memory buffer to send information about. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>remoteRank</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The rank of the remote process. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>tag</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The tag to use for identifying the send. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="639" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Communicator_1a1a78462696471fbc78784be5e4448499" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1NonblockingFuture" kindref="compound">NonblockingFuture</ref>&lt; <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> &gt;</type>
+        <definition>NonblockingFuture&lt;RegisteredMemory&gt; mscclpp::Communicator::recvMemoryOnSetup</definition>
+        <argsstring>(int remoteRank, int tag)</argsstring>
+        <name>recvMemoryOnSetup</name>
+        <param>
+          <type>int</type>
+          <declname>remoteRank</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>tag</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Receive memory on setup.</para>
+<para>This function registers a receive from a remote process that will happen by a following call of <ref refid="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" kindref="member">setup()</ref>. The receive will carry information about a registered memory on the remote process.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>remoteRank</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The rank of the remote process. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>tag</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The tag to use for identifying the receive. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>NonblockingFuture&lt;RegisteredMemory&gt; A non-blocking future of registered memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="649" column="21"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Communicator_1a80c0ba6e6ccfdd827521a03535e575e6" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1NonblockingFuture" kindref="compound">NonblockingFuture</ref>&lt; std::shared_ptr&lt; <ref refid="classmscclpp_1_1Connection" kindref="compound">Connection</ref> &gt; &gt;</type>
+        <definition>NonblockingFuture&lt;std::shared_ptr&lt;Connection&gt; &gt; mscclpp::Communicator::connectOnSetup</definition>
+        <argsstring>(int remoteRank, int tag, EndpointConfig localConfig)</argsstring>
+        <name>connectOnSetup</name>
+        <param>
+          <type>int</type>
+          <declname>remoteRank</declname>
+        </param>
+        <param>
+          <type>int</type>
+          <declname>tag</declname>
+        </param>
+        <param>
+          <type><ref refid="structmscclpp_1_1EndpointConfig" kindref="compound">EndpointConfig</ref></type>
+          <declname>localConfig</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Connect to a remote rank on setup.</para>
+<para>This function only prepares metadata for connection. The actual connection is made by a following call of <ref refid="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" kindref="member">setup()</ref>. Note that this function is two-way and a connection from rank <computeroutput>i</computeroutput> to remote rank <computeroutput>j</computeroutput> needs to have a counterpart from rank <computeroutput>j</computeroutput> to rank <computeroutput>i</computeroutput>. Note that with IB, buffers are registered at a page level and if a buffer is spread through multiple pages and do not fully utilize all of them, IB&apos;s QP has to register for all involved pages. This potentially has security risks if the connection&apos;s accesses are given to a malicious process.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>remoteRank</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The rank of the remote process. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>tag</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The tag of the connection for identifying it. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>config</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The configuration for the local endpoint. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para><ref refid="classmscclpp_1_1NonblockingFuture" kindref="compound">NonblockingFuture</ref>&lt;<ref refid="classmscclpp_1_1NonblockingFuture" kindref="compound">NonblockingFuture</ref>&lt;std::shared_ptr&lt;Connection&gt;&gt;&gt; A non-blocking future of shared pointer to the connection. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="664" column="21"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Communicator_1a1791887f6a3197ab46253b948077d1a1" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>int</type>
+        <definition>int mscclpp::Communicator::remoteRankOf</definition>
+        <argsstring>(const Connection &amp;connection)</argsstring>
+        <name>remoteRankOf</name>
+        <param>
+          <type>const <ref refid="classmscclpp_1_1Connection" kindref="compound">Connection</ref> &amp;</type>
+          <declname>connection</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the remote rank a connection is connected to.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>connection</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The connection to get the remote rank for. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>The remote rank the connection is connected to. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="670" column="7"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Communicator_1a3d7c2f328081e381014fa6c5598988e6" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>int</type>
+        <definition>int mscclpp::Communicator::tagOf</definition>
+        <argsstring>(const Connection &amp;connection)</argsstring>
+        <name>tagOf</name>
+        <param>
+          <type>const <ref refid="classmscclpp_1_1Connection" kindref="compound">Connection</ref> &amp;</type>
+          <declname>connection</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the tag a connection was made with.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>connection</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The connection to get the tag for. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>The tag the connection was made with. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="676" column="7"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Communicator_1a6a6489423bc5cb54d82062344f6f14c4" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Communicator::onSetup</definition>
+        <argsstring>(std::shared_ptr&lt; Setuppable &gt; setuppable)</argsstring>
+        <name>onSetup</name>
+        <param>
+          <type>std::shared_ptr&lt; <ref refid="structmscclpp_1_1Setuppable" kindref="compound">Setuppable</ref> &gt;</type>
+          <declname>setuppable</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Add a custom <ref refid="structmscclpp_1_1Setuppable" kindref="compound">Setuppable</ref> object to a list of objects to be setup later, when <ref refid="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" kindref="member">setup()</ref> is called.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>setuppable</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>A shared pointer to the <ref refid="structmscclpp_1_1Setuppable" kindref="compound">Setuppable</ref> object. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="681" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Communicator::setup</definition>
+        <argsstring>()</argsstring>
+        <name>setup</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Setup all objects that have registered for setup.</para>
+<para>This includes previous calls of <ref refid="classmscclpp_1_1Communicator_1ad17015b7dc79d3848e39c844d69b785c" kindref="member">sendMemoryOnSetup()</ref>, <ref refid="classmscclpp_1_1Communicator_1a1a78462696471fbc78784be5e4448499" kindref="member">recvMemoryOnSetup()</ref>, <ref refid="classmscclpp_1_1Communicator_1a80c0ba6e6ccfdd827521a03535e575e6" kindref="member">connectOnSetup()</ref>, and <ref refid="classmscclpp_1_1Communicator_1a6a6489423bc5cb54d82062344f6f14c4" kindref="member">onSetup()</ref>. It is allowed to call this function multiple times, where the n-th call will only setup objects that have been registered after the (n-1)-th call. </para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="688" column="8"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+<para>A class that sets up all registered memories and connections between processes.</para>
+<para>A typical way to use this class:<orderedlist>
+<listitem><para>Call <ref refid="classmscclpp_1_1Communicator_1a80c0ba6e6ccfdd827521a03535e575e6" kindref="member">connectOnSetup()</ref> to declare connections between the calling process with other processes.</para>
+</listitem><listitem><para>Call <ref refid="classmscclpp_1_1Communicator_1a537a32056272f718ca913a23bde5f1c8" kindref="member">registerMemory()</ref> to register memory regions that will be used for communication.</para>
+</listitem><listitem><para>Call <ref refid="classmscclpp_1_1Communicator_1ad17015b7dc79d3848e39c844d69b785c" kindref="member">sendMemoryOnSetup()</ref> or <ref refid="classmscclpp_1_1Communicator_1a1a78462696471fbc78784be5e4448499" kindref="member">recvMemoryOnSetup()</ref> to send/receive registered memory regions to/from other processes.</para>
+</listitem><listitem><para>Call <ref refid="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" kindref="member">setup()</ref> to set up all registered memories and connections declared in the previous steps.</para>
+</listitem><listitem><para>Call <ref refid="classmscclpp_1_1NonblockingFuture_1ab79350c4b28c219a5d85bd59c23ed165" kindref="member">NonblockingFuture&lt;RegisteredMemory&gt;::get()</ref> to get the registered memory regions received from other processes.</para>
+</listitem><listitem><para>All done; use connections and registered memories to build channels. </para>
+</listitem></orderedlist>
+</para>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/core.hpp" line="602" column="19" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="602" bodyend="696"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1Communicator_1a3f6184e06629f370d23fa67170c358c4" prot="public" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>bootstrap</name></member>
+      <member refid="classmscclpp_1_1Communicator_1a11b52d62f42d5deecdfc74ea6cad2089" prot="public" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>Communicator</name></member>
+      <member refid="classmscclpp_1_1Communicator_1a80c0ba6e6ccfdd827521a03535e575e6" prot="public" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>connectOnSetup</name></member>
+      <member refid="classmscclpp_1_1Communicator_1ab242faa5778c1f8a9abdb1e95b5274ca" prot="public" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>context</name></member>
+      <member refid="classmscclpp_1_1Communicator_1a6a6489423bc5cb54d82062344f6f14c4" prot="public" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>onSetup</name></member>
+      <member refid="classmscclpp_1_1Communicator_1a0792bccf11d247a81aab3ae105071ff5" prot="private" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>pimpl_</name></member>
+      <member refid="classmscclpp_1_1Communicator_1a1a78462696471fbc78784be5e4448499" prot="public" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>recvMemoryOnSetup</name></member>
+      <member refid="classmscclpp_1_1Communicator_1a537a32056272f718ca913a23bde5f1c8" prot="public" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>registerMemory</name></member>
+      <member refid="classmscclpp_1_1Communicator_1a1791887f6a3197ab46253b948077d1a1" prot="public" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>remoteRankOf</name></member>
+      <member refid="classmscclpp_1_1Communicator_1ad17015b7dc79d3848e39c844d69b785c" prot="public" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>sendMemoryOnSetup</name></member>
+      <member refid="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" prot="public" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>setup</name></member>
+      <member refid="classmscclpp_1_1Communicator_1a3d7c2f328081e381014fa6c5598988e6" prot="public" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>tagOf</name></member>
+      <member refid="classmscclpp_1_1Communicator_1af9d3df40a651fd623e6bbba149d34127" prot="public" virt="non-virtual"><scope>mscclpp::Communicator</scope><name>~Communicator</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

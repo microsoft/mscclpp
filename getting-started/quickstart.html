@@ -67,6 +67,7 @@
 <p class="caption" role="heading"><span class="caption-text">Design</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../design/design.html">MSCCL++ Design Document</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/nccl-over-mscclpp.html">NCCL Over MSCCL++</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Performance</span></p>
 <ul>
@@ -144,7 +145,7 @@
 <p>See all available images <a class="reference external" href="https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp">here</a>.</p>
 </section>
 <section id="build-from-source">
-<h2>Build from Source<a class="headerlink" href="#build-from-source" title="Permalink to this heading"></a></h2>
+<span id="id1"></span><h2>Build from Source<a class="headerlink" href="#build-from-source" title="Permalink to this heading"></a></h2>
 <p>CMake 3.25 or later is required.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/microsoft/mscclpp.git
 $<span class="w"> </span>mkdir<span class="w"> </span>-p<span class="w"> </span>mscclpp/build<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>mscclpp/build
@@ -173,7 +174,7 @@ $<span class="w"> </span>sudo<span class="w"> </span>make<span class="w"> </span
 </div>
 </section>
 <section id="install-from-source-python-module">
-<h2>Install from Source (Python Module)<a class="headerlink" href="#install-from-source-python-module" title="Permalink to this heading"></a></h2>
+<span id="id2"></span><h2>Install from Source (Python Module)<a class="headerlink" href="#install-from-source-python-module" title="Permalink to this heading"></a></h2>
 <p>Python 3.8 or later is required.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># For NVIDIA platforms</span>
 $<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>.
@@ -211,7 +212,7 @@ $<span class="w"> </span>mpirun<span class="w"> </span>-np<span class="w"> </spa
 <h2>Performance Benchmark<a class="headerlink" href="#performance-benchmark" title="Permalink to this heading"></a></h2>
 <section id="python-benchmark">
 <h3>Python Benchmark<a class="headerlink" href="#python-benchmark" title="Permalink to this heading"></a></h3>
-<p><a class="reference internal" href="#install-from-source-python-module"><span class="xref myst">Install the MSCCL++ Python package</span></a> and run our Python AllReduce benchmark as follows. It requires MPI on the system.</p>
+<p><a class="reference internal" href="#install-from-source-python-module">Install the MSCCL++ Python package</a> and run our Python AllReduce benchmark as follows. It requires MPI on the system.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Choose `requirements_*.txt` according to your CUDA/ROCm version.</span>
 $<span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>./python/requirements_cuda12.txt
 $<span class="w"> </span>mpirun<span class="w"> </span>-tag-output<span class="w"> </span>-np<span class="w"> </span><span class="m">8</span><span class="w"> </span>python3<span class="w"> </span>./python/mscclpp_benchmark/allreduce_bench.py
@@ -255,7 +256,7 @@ USAGE:<span class="w"> </span>allreduce_test_perf
 <h2>NCCL over MSCCL++<a class="headerlink" href="#nccl-over-msccl" title="Permalink to this heading"></a></h2>
 <p>We implement <a class="reference external" href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api.html">NCCL</a> APIs using MSCCL++. How to use:</p>
 <ol class="arabic simple">
-<li><p><a class="reference internal" href="#build-from-source"><span class="xref myst">Build MSCCL++ from source</span></a>.</p></li>
+<li><p><a class="reference internal" href="#build-from-source">Build MSCCL++ from source</a>.</p></li>
 <li><p>Replace your <code class="docutils literal notranslate"><span class="pre">libnccl.so</span></code> library with <code class="docutils literal notranslate"><span class="pre">libmscclpp_nccl.so</span></code>, which is compiled under <code class="docutils literal notranslate"><span class="pre">./build/apps/nccl/</span></code> directory.</p></li>
 </ol>
 <p>For example, you can run <a class="reference external" href="https://github.com/NVIDIA/nccl-tests">nccl-tests</a> using <code class="docutils literal notranslate"><span class="pre">libmscclpp_nccl.so</span></code> as follows, where <code class="docutils literal notranslate"><span class="pre">MSCCLPP_BUILD</span></code> is your MSCCL++ build directory.</p>
@@ -263,7 +264,7 @@ USAGE:<span class="w"> </span>allreduce_test_perf
 </pre></div>
 </div>
 <p>If MSCCL++ is built on AMD platforms, <code class="docutils literal notranslate"><span class="pre">libmscclpp_nccl.so</span></code> would replace the <a class="reference external" href="https://github.com/ROCm/rccl">RCCL</a> library (i.e., <code class="docutils literal notranslate"><span class="pre">librccl.so</span></code>).</p>
-<p>See limitations of the current NCCL over MSCCL++ from <a class="reference internal" href="#../apps/nccl/README.md#limitations"><span class="xref myst">here</span></a>.</p>
+<p>See limitations of the current NCCL over MSCCL++ from <a class="reference internal" href="../design/nccl-over-mscclpp.html#limitations"><span class="std std-ref">here</span></a>.</p>
 </section>
 </section>
 

@@ -1,0 +1,27 @@
+<map id="proxy_channel.hpp" name="proxy_channel.hpp">
+<area shape="rect" id="node1" title=" " alt="" coords="734,5,879,32"/>
+<area shape="rect" id="node2" href="$core_8hpp.html" title=" " alt="" coords="322,155,401,181"/>
+<area shape="rect" id="node17" href="$proxy_8hpp.html" title=" " alt="" coords="828,80,913,107"/>
+<area shape="rect" id="node23" href="$proxy__channel__device_8hpp.html" title=" " alt="" coords="993,80,1188,107"/>
+<area shape="rect" id="node25" href="$semaphore_8hpp.html" title=" " alt="" coords="681,80,804,107"/>
+<area shape="rect" id="node3" title=" " alt="" coords="252,229,308,256"/>
+<area shape="rect" id="node4" title=" " alt="" coords="332,229,391,256"/>
+<area shape="rect" id="node5" title=" " alt="" coords="415,229,476,256"/>
+<area shape="rect" id="node6" title=" " alt="" coords="717,304,795,331"/>
+<area shape="rect" id="node7" href="$gpu_8hpp.html" title=" " alt="" coords="338,304,470,331"/>
+<area shape="rect" id="node11" href="$gpu__utils_8hpp.html" title=" " alt="" coords="501,229,667,256"/>
+<area shape="rect" id="node13" href="$errors_8hpp.html" title=" " alt="" coords="5,304,93,331"/>
+<area shape="rect" id="node15" title=" " alt="" coords="81,229,140,256"/>
+<area shape="rect" id="node16" title=" " alt="" coords="165,229,227,256"/>
+<area shape="rect" id="node8" title=" " alt="" coords="371,379,437,405"/>
+<area shape="rect" id="node9" title=" " alt="" coords="461,379,584,405"/>
+<area shape="rect" id="node10" title=" " alt="" coords="229,379,347,405"/>
+<area shape="rect" id="node12" title=" " alt="" coords="551,304,617,331"/>
+<area shape="rect" id="node14" title=" " alt="" coords="6,379,93,405"/>
+<area shape="rect" id="node18" title=" " alt="" coords="845,229,931,256"/>
+<area shape="rect" id="node19" href="$fifo_8hpp.html" title=" " alt="" coords="909,155,979,181"/>
+<area shape="rect" id="node20" title=" " alt="" coords="1009,304,1076,331"/>
+<area shape="rect" id="node21" href="$fifo__device_8hpp.html" title=" " alt="" coords="1058,229,1179,256"/>
+<area shape="rect" id="node22" href="$device_8hpp.html" title=" " alt="" coords="1147,304,1240,331"/>
+<area shape="rect" id="node24" href="$semaphore__device_8hpp.html" title=" " alt="" coords="1004,155,1177,181"/>
+</map>

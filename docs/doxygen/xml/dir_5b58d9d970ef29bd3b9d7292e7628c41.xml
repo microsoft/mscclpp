@@ -1,0 +1,35 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="dir_5b58d9d970ef29bd3b9d7292e7628c41" kind="dir">
+    <compoundname>mscclpp</compoundname>
+    <innerdir refid="dir_79cdab046adb8bd4bd5d2d3af1d20704">npkit</innerdir>
+    <innerfile refid="atomic__device_8hpp">atomic_device.hpp</innerfile>
+    <innerfile refid="concurrency__device_8hpp">concurrency_device.hpp</innerfile>
+    <innerfile refid="core_8hpp">core.hpp</innerfile>
+    <innerfile refid="device_8hpp">device.hpp</innerfile>
+    <innerfile refid="errors_8hpp">errors.hpp</innerfile>
+    <innerfile refid="executor_8hpp">executor.hpp</innerfile>
+    <innerfile refid="fifo_8hpp">fifo.hpp</innerfile>
+    <innerfile refid="fifo__device_8hpp">fifo_device.hpp</innerfile>
+    <innerfile refid="gpu_8hpp">gpu.hpp</innerfile>
+    <innerfile refid="gpu__utils_8hpp">gpu_utils.hpp</innerfile>
+    <innerfile refid="numa_8hpp">numa.hpp</innerfile>
+    <innerfile refid="nvls_8hpp">nvls.hpp</innerfile>
+    <innerfile refid="nvls__device_8hpp">nvls_device.hpp</innerfile>
+    <innerfile refid="packet__device_8hpp">packet_device.hpp</innerfile>
+    <innerfile refid="poll__device_8hpp">poll_device.hpp</innerfile>
+    <innerfile refid="proxy_8hpp">proxy.hpp</innerfile>
+    <innerfile refid="proxy__channel_8hpp">proxy_channel.hpp</innerfile>
+    <innerfile refid="proxy__channel__device_8hpp">proxy_channel_device.hpp</innerfile>
+    <innerfile refid="semaphore_8hpp">semaphore.hpp</innerfile>
+    <innerfile refid="semaphore__device_8hpp">semaphore_device.hpp</innerfile>
+    <innerfile refid="sm__channel_8hpp">sm_channel.hpp</innerfile>
+    <innerfile refid="sm__channel__device_8hpp">sm_channel_device.hpp</innerfile>
+    <innerfile refid="utils_8hpp">utils.hpp</innerfile>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/"/>
+  </compounddef>
+</doxygen>

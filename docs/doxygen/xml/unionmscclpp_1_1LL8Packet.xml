@@ -1,0 +1,87 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="unionmscclpp_1_1LL8Packet" kind="union" language="C++" prot="public">
+    <compoundname>mscclpp::LL8Packet</compoundname>
+    <includes refid="packet__device_8hpp" local="no">packet_device.hpp</includes>
+      <sectiondef kind="public-type">
+      <memberdef kind="typedef" id="unionmscclpp_1_1LL8Packet_1a263c0f189389599ce469c90181579e29" prot="public" static="no">
+        <type>uint32_t</type>
+        <definition>using mscclpp::LL8Packet::Payload =  uint32_t</definition>
+        <argsstring></argsstring>
+        <name>Payload</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="112" column="3" bodyfile="/root/mscclpp/include/mscclpp/packet_device.hpp" bodystart="112" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="unionmscclpp_1_1LL8Packet_1a4fe87a7dcf95cdd598e83a21f3cd90ab" prot="public" static="no" mutable="no">
+        <type>uint32_t</type>
+        <definition>uint32_t mscclpp::LL8Packet::data</definition>
+        <argsstring></argsstring>
+        <name>data</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="107" column="14" bodyfile="/root/mscclpp/include/mscclpp/packet_device.hpp" bodystart="107" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1LL8Packet_1ad8bff06eb599755b47fb9d3176ad7a70" prot="public" static="no" mutable="no">
+        <type>uint32_t</type>
+        <definition>uint32_t mscclpp::LL8Packet::flag</definition>
+        <argsstring></argsstring>
+        <name>flag</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="108" column="14" bodyfile="/root/mscclpp/include/mscclpp/packet_device.hpp" bodystart="108" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1LL8Packet_1afa37fd91ae3ed1ba22f771bf48a77684" prot="public" static="no" mutable="no">
+        <type>struct mscclpp::LL8Packet::@3</type>
+        <definition>struct mscclpp::LL8Packet::@3 mscclpp::LL8Packet::@4</definition>
+        <argsstring></argsstring>
+        <name>@4</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="109" column="3"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1LL8Packet_1ad37fe974f93f35964dabe23acc4fb811" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::LL8Packet::raw_</definition>
+        <argsstring></argsstring>
+        <name>raw_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="110" column="12" bodyfile="/root/mscclpp/include/mscclpp/packet_device.hpp" bodystart="110" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="104" column="23" bodyfile="/root/mscclpp/include/mscclpp/packet_device.hpp" bodystart="104" bodyend="155"/>
+    <listofallmembers>
+      <member refid="unionmscclpp_1_1LL8Packet_1a4fe87a7dcf95cdd598e83a21f3cd90ab" prot="public" virt="non-virtual"><scope>mscclpp::LL8Packet</scope><name>data</name></member>
+      <member refid="unionmscclpp_1_1LL8Packet_1ad8bff06eb599755b47fb9d3176ad7a70" prot="public" virt="non-virtual"><scope>mscclpp::LL8Packet</scope><name>flag</name></member>
+      <member refid="unionmscclpp_1_1LL8Packet_1a263c0f189389599ce469c90181579e29" prot="public" virt="non-virtual"><scope>mscclpp::LL8Packet</scope><name>Payload</name></member>
+      <member refid="unionmscclpp_1_1LL8Packet_1ad37fe974f93f35964dabe23acc4fb811" prot="public" virt="non-virtual"><scope>mscclpp::LL8Packet</scope><name>raw_</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

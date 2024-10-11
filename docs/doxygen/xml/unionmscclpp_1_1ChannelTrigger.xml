@@ -1,0 +1,208 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="unionmscclpp_1_1ChannelTrigger" kind="union" language="C++" prot="public">
+    <compoundname>mscclpp::ChannelTrigger</compoundname>
+    <includes refid="proxy__channel__device_8hpp" local="no">proxy_channel_device.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="unionmscclpp_1_1ChannelTrigger_1af4179d4ed19ff34dedd33f1e273601f7" prot="public" static="no" mutable="no">
+        <type><ref refid="structmscclpp_1_1ProxyTrigger" kindref="compound">ProxyTrigger</ref></type>
+        <definition>ProxyTrigger mscclpp::ChannelTrigger::value</definition>
+        <argsstring></argsstring>
+        <name>value</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="32" column="16" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="32" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1ChannelTrigger_1acc32df9b5fab434c325860a5dfd30190" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::ChannelTrigger::size</definition>
+        <argsstring></argsstring>
+        <name>size</name>
+        <bitfield> MSCCLPP_BITS_SIZE</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="36" column="14" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="36" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1ChannelTrigger_1abd9bf3f7f61ddc3722a635de55b6d055" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::ChannelTrigger::srcOffset</definition>
+        <argsstring></argsstring>
+        <name>srcOffset</name>
+        <bitfield> MSCCLPP_BITS_OFFSET</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="37" column="14" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="37" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1ChannelTrigger_1a945f7c801c1431ef222185bec5c12b0d" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::ChannelTrigger::__pad0__</definition>
+        <argsstring></argsstring>
+        <name>__pad0__</name>
+        <bitfield> (64 - MSCCLPP_BITS_SIZE - MSCCLPP_BITS_OFFSET)</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="38" column="5" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="38" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1ChannelTrigger_1a8f0a55fd29204b3c89ac9bf0ccb7fd15" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::ChannelTrigger::dstOffset</definition>
+        <argsstring></argsstring>
+        <name>dstOffset</name>
+        <bitfield> MSCCLPP_BITS_OFFSET</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="40" column="14" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="40" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1ChannelTrigger_1a61ace42e49d9da74868cdfea0f4d2762" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::ChannelTrigger::srcMemoryId</definition>
+        <argsstring></argsstring>
+        <name>srcMemoryId</name>
+        <bitfield> MSCCLPP_BITS_REGMEM_HANDLE</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="41" column="14" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="41" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1ChannelTrigger_1af2e866a37f9ff8c9373cf61830cb41f8" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::ChannelTrigger::dstMemoryId</definition>
+        <argsstring></argsstring>
+        <name>dstMemoryId</name>
+        <bitfield> MSCCLPP_BITS_REGMEM_HANDLE</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="42" column="14" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="42" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1ChannelTrigger_1aad15a06a855092f3c572610bb9449126" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::ChannelTrigger::type</definition>
+        <argsstring></argsstring>
+        <name>type</name>
+        <bitfield> MSCCLPP_BITS_TYPE</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="43" column="14" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="43" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1ChannelTrigger_1ab1347abdfc396ca0c0338349fa239316" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::ChannelTrigger::chanId</definition>
+        <argsstring></argsstring>
+        <name>chanId</name>
+        <bitfield> MSCCLPP_BITS_CONNID</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="44" column="14" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="44" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1ChannelTrigger_1a9b3f61bdb089c80e84875100829020f6" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::ChannelTrigger::__pad1__</definition>
+        <argsstring></argsstring>
+        <name>__pad1__</name>
+        <bitfield> (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_REGMEM_HANDLE - MSCCLPP_BITS_REGMEM_HANDLE - MSCCLPP_BITS_TYPE - MSCCLPP_BITS_CONNID - MSCCLPP_BITS_FIFO_RESERVED)</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="45" column="5" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="46" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1ChannelTrigger_1a774ad4dde3ea9b806d1482b675296664" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::ChannelTrigger::reserved</definition>
+        <argsstring></argsstring>
+        <name>reserved</name>
+        <bitfield> MSCCLPP_BITS_FIFO_RESERVED</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="47" column="14" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="47" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionmscclpp_1_1ChannelTrigger_1adb391858bd825e696bae24c9267d3f58" prot="public" static="no" mutable="no">
+        <type>struct mscclpp::ChannelTrigger::@5</type>
+        <definition>struct mscclpp::ChannelTrigger::@5 mscclpp::ChannelTrigger::fields</definition>
+        <argsstring></argsstring>
+        <name>fields</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="48" column="10"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Basic structure of each work element in the FIFO. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <collaborationgraph>
+      <node id="2">
+        <label>mscclpp::ProxyTrigger</label>
+        <link refid="structmscclpp_1_1ProxyTrigger"/>
+      </node>
+      <node id="1">
+        <label>mscclpp::ChannelTrigger</label>
+        <link refid="unionmscclpp_1_1ChannelTrigger"/>
+        <childnode refid="2" relation="usage">
+          <edgelabel>value</edgelabel>
+        </childnode>
+      </node>
+    </collaborationgraph>
+    <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="31" column="21" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="31" bodyend="84"/>
+    <listofallmembers>
+      <member refid="unionmscclpp_1_1ChannelTrigger_1a945f7c801c1431ef222185bec5c12b0d" prot="public" virt="non-virtual"><scope>mscclpp::ChannelTrigger</scope><name>__pad0__</name></member>
+      <member refid="unionmscclpp_1_1ChannelTrigger_1a9b3f61bdb089c80e84875100829020f6" prot="public" virt="non-virtual"><scope>mscclpp::ChannelTrigger</scope><name>__pad1__</name></member>
+      <member refid="unionmscclpp_1_1ChannelTrigger_1ab1347abdfc396ca0c0338349fa239316" prot="public" virt="non-virtual"><scope>mscclpp::ChannelTrigger</scope><name>chanId</name></member>
+      <member refid="unionmscclpp_1_1ChannelTrigger_1af2e866a37f9ff8c9373cf61830cb41f8" prot="public" virt="non-virtual"><scope>mscclpp::ChannelTrigger</scope><name>dstMemoryId</name></member>
+      <member refid="unionmscclpp_1_1ChannelTrigger_1a8f0a55fd29204b3c89ac9bf0ccb7fd15" prot="public" virt="non-virtual"><scope>mscclpp::ChannelTrigger</scope><name>dstOffset</name></member>
+      <member refid="unionmscclpp_1_1ChannelTrigger_1adb391858bd825e696bae24c9267d3f58" prot="public" virt="non-virtual"><scope>mscclpp::ChannelTrigger</scope><name>fields</name></member>
+      <member refid="unionmscclpp_1_1ChannelTrigger_1a774ad4dde3ea9b806d1482b675296664" prot="public" virt="non-virtual"><scope>mscclpp::ChannelTrigger</scope><name>reserved</name></member>
+      <member refid="unionmscclpp_1_1ChannelTrigger_1acc32df9b5fab434c325860a5dfd30190" prot="public" virt="non-virtual"><scope>mscclpp::ChannelTrigger</scope><name>size</name></member>
+      <member refid="unionmscclpp_1_1ChannelTrigger_1a61ace42e49d9da74868cdfea0f4d2762" prot="public" virt="non-virtual"><scope>mscclpp::ChannelTrigger</scope><name>srcMemoryId</name></member>
+      <member refid="unionmscclpp_1_1ChannelTrigger_1abd9bf3f7f61ddc3722a635de55b6d055" prot="public" virt="non-virtual"><scope>mscclpp::ChannelTrigger</scope><name>srcOffset</name></member>
+      <member refid="unionmscclpp_1_1ChannelTrigger_1aad15a06a855092f3c572610bb9449126" prot="public" virt="non-virtual"><scope>mscclpp::ChannelTrigger</scope><name>type</name></member>
+      <member refid="unionmscclpp_1_1ChannelTrigger_1af4179d4ed19ff34dedd33f1e273601f7" prot="public" virt="non-virtual"><scope>mscclpp::ChannelTrigger</scope><name>value</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

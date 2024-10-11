@@ -1,0 +1,153 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="semaphore__device_8hpp" kind="file" language="C++">
+    <compoundname>semaphore_device.hpp</compoundname>
+    <includes refid="device_8hpp" local="yes">device.hpp</includes>
+    <includedby refid="proxy__channel__device_8hpp" local="yes">proxy_channel_device.hpp</includedby>
+    <includedby refid="semaphore_8hpp" local="yes">semaphore.hpp</includedby>
+    <includedby refid="sm__channel__device_8hpp" local="yes">sm_channel_device.hpp</includedby>
+    <incdepgraph>
+      <node id="2">
+        <label>device.hpp</label>
+        <link refid="device_8hpp"/>
+      </node>
+      <node id="1">
+        <label>semaphore_device.hpp</label>
+        <link refid="semaphore__device_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+      </node>
+    </incdepgraph>
+    <invincdepgraph>
+      <node id="2">
+        <label>proxy_channel_device.hpp</label>
+        <link refid="proxy__channel__device_8hpp"/>
+        <childnode refid="3" relation="include">
+        </childnode>
+      </node>
+      <node id="1">
+        <label>semaphore_device.hpp</label>
+        <link refid="semaphore__device_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="4" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+      </node>
+      <node id="6">
+        <label>sm_channel_device.hpp</label>
+        <link refid="sm__channel__device_8hpp"/>
+        <childnode refid="5" relation="include">
+        </childnode>
+      </node>
+      <node id="4">
+        <label>semaphore.hpp</label>
+        <link refid="semaphore_8hpp"/>
+        <childnode refid="3" relation="include">
+        </childnode>
+        <childnode refid="5" relation="include">
+        </childnode>
+      </node>
+      <node id="3">
+        <label>proxy_channel.hpp</label>
+        <link refid="proxy__channel_8hpp"/>
+      </node>
+      <node id="5">
+        <label>sm_channel.hpp</label>
+        <link refid="sm__channel_8hpp"/>
+      </node>
+    </invincdepgraph>
+    <innerclass refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle" prot="public">mscclpp::Host2DeviceSemaphoreDeviceHandle</innerclass>
+    <innerclass refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle" prot="public">mscclpp::SmDevice2DeviceSemaphoreDeviceHandle</innerclass>
+    <innernamespace refid="namespacemscclpp">mscclpp</innernamespace>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>MSCCLPP_SEMAPHORE_DEVICE_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>MSCCLPP_SEMAPHORE_DEVICE_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="device_8hpp" kindref="compound">device.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight></codeline>
+<codeline lineno="9"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="10"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="atomic__device_8hpp" kindref="compound">atomic_device.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="11"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="poll__device_8hpp" kindref="compound">poll_device.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="12"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="13"><highlight class="normal"></highlight></codeline>
+<codeline lineno="14"><highlight class="normal"></highlight><highlight class="keyword">namespace<sp/></highlight><highlight class="normal"><ref refid="namespacemscclpp" kindref="compound">mscclpp</ref><sp/>{</highlight></codeline>
+<codeline lineno="15"><highlight class="normal"></highlight></codeline>
+<codeline lineno="17" refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle" refkind="compound"><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle" kindref="compound">Host2DeviceSemaphoreDeviceHandle</ref><sp/>{</highlight></codeline>
+<codeline lineno="18"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="19"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/>poll()<sp/>{</highlight></codeline>
+<codeline lineno="22"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/>signaled<sp/>=<sp/>(atomicLoad(<ref refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1aa623814c8fbab8277b2e0022da603e1a" kindref="member">inboundSemaphoreId</ref>,<sp/>memoryOrderAcquire)<sp/>&gt;<sp/>(*expectedInboundSemaphoreId));</highlight></codeline>
+<codeline lineno="23"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(signaled)<sp/>(*expectedInboundSemaphoreId)<sp/>+=<sp/>1;</highlight></codeline>
+<codeline lineno="24"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>signaled;</highlight></codeline>
+<codeline lineno="25"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="26"><highlight class="normal"></highlight></codeline>
+<codeline lineno="28"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>wait(int64_t<sp/>maxSpinCount<sp/>=<sp/>100000000)<sp/>{</highlight></codeline>
+<codeline lineno="29"><highlight class="normal"><sp/><sp/><sp/><sp/>(*expectedInboundSemaphoreId)<sp/>+=<sp/>1;</highlight></codeline>
+<codeline lineno="30"><highlight class="normal"><sp/><sp/><sp/><sp/>POLL_MAYBE_JAILBREAK((atomicLoad(<ref refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1aa623814c8fbab8277b2e0022da603e1a" kindref="member">inboundSemaphoreId</ref>,<sp/>memoryOrderAcquire)<sp/>&lt;<sp/>(*<ref refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1a1253f98401651b96f41f3b6a365d8489" kindref="member">expectedInboundSemaphoreId</ref>)),</highlight></codeline>
+<codeline lineno="31"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>maxSpinCount);</highlight></codeline>
+<codeline lineno="32"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="33"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="34"><highlight class="normal"></highlight></codeline>
+<codeline lineno="35" refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1aa623814c8fbab8277b2e0022da603e1a" refkind="member"><highlight class="normal"><sp/><sp/>uint64_t*<sp/><ref refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1aa623814c8fbab8277b2e0022da603e1a" kindref="member">inboundSemaphoreId</ref>;</highlight></codeline>
+<codeline lineno="36" refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1a1253f98401651b96f41f3b6a365d8489" refkind="member"><highlight class="normal"><sp/><sp/>uint64_t*<sp/><ref refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1a1253f98401651b96f41f3b6a365d8489" kindref="member">expectedInboundSemaphoreId</ref>;</highlight></codeline>
+<codeline lineno="37"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="38"><highlight class="normal"></highlight></codeline>
+<codeline lineno="40" refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle" refkind="compound"><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle" kindref="compound">SmDevice2DeviceSemaphoreDeviceHandle</ref><sp/>{</highlight></codeline>
+<codeline lineno="41"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="42"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/>poll()<sp/>{</highlight></codeline>
+<codeline lineno="45"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal"><sp/>signaled<sp/>=<sp/>(atomicLoad(<ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1afc25beec257d7a0d115d80040d63da3b" kindref="member">inboundSemaphoreId</ref>,<sp/>memoryOrderAcquire)<sp/>&gt;<sp/>(*expectedInboundSemaphoreId));</highlight></codeline>
+<codeline lineno="46"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(signaled)<sp/>(*expectedInboundSemaphoreId)<sp/>+=<sp/>1;</highlight></codeline>
+<codeline lineno="47"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>signaled;</highlight></codeline>
+<codeline lineno="48"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="49"><highlight class="normal"></highlight></codeline>
+<codeline lineno="51"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>wait(int64_t<sp/>maxSpinCount<sp/>=<sp/>100000000)<sp/>{</highlight></codeline>
+<codeline lineno="52"><highlight class="normal"><sp/><sp/><sp/><sp/>(*expectedInboundSemaphoreId)<sp/>+=<sp/>1;</highlight></codeline>
+<codeline lineno="53"><highlight class="normal"><sp/><sp/><sp/><sp/>POLL_MAYBE_JAILBREAK((atomicLoad(<ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1afc25beec257d7a0d115d80040d63da3b" kindref="member">inboundSemaphoreId</ref>,<sp/>memoryOrderAcquire)<sp/>&lt;<sp/>(*<ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a5c37cf594f6a48b30b25fd1c07f09fb5" kindref="member">expectedInboundSemaphoreId</ref>)),</highlight></codeline>
+<codeline lineno="54"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>maxSpinCount);</highlight></codeline>
+<codeline lineno="55"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="56"><highlight class="normal"></highlight></codeline>
+<codeline lineno="62"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>signal()<sp/>{</highlight></codeline>
+<codeline lineno="63"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>This<sp/>fence<sp/>ensures<sp/>that<sp/>preceding<sp/>writes<sp/>are<sp/>visible<sp/>on<sp/>the<sp/>peer<sp/>GPU<sp/>before<sp/>the<sp/>incremented</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="64"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>`outboundSemaphoreId`<sp/>is<sp/>visible.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="65"><highlight class="normal"><sp/><sp/><sp/><sp/>semaphoreIncrement();</highlight></codeline>
+<codeline lineno="66"><highlight class="normal"><sp/><sp/><sp/><sp/>atomicStore(<ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a96ecfb855503f9937185aebcf67b0ea8" kindref="member">remoteInboundSemaphoreId</ref>,<sp/>semaphoreGetLocal(),<sp/>memoryOrderSeqCst);</highlight></codeline>
+<codeline lineno="67"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="68"><highlight class="normal"></highlight></codeline>
+<codeline lineno="74"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>relaxedSignal()<sp/>{</highlight></codeline>
+<codeline lineno="75"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>This<sp/>fence<sp/>ensures<sp/>that<sp/>preceding<sp/>writes<sp/>are<sp/>visible<sp/>on<sp/>the<sp/>peer<sp/>GPU<sp/>before<sp/>the<sp/>incremented</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="76"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="comment">//<sp/>`outboundSemaphoreId`<sp/>is<sp/>visible.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="77"><highlight class="normal"><sp/><sp/><sp/><sp/>semaphoreIncrement();</highlight></codeline>
+<codeline lineno="78"><highlight class="normal"><sp/><sp/><sp/><sp/>atomicStore(<ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a96ecfb855503f9937185aebcf67b0ea8" kindref="member">remoteInboundSemaphoreId</ref>,<sp/>semaphoreGetLocal(),<sp/>memoryOrderRelaxed);</highlight></codeline>
+<codeline lineno="79"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="80"><highlight class="normal"></highlight></codeline>
+<codeline lineno="87"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>signalPacket()<sp/>{</highlight></codeline>
+<codeline lineno="88"><highlight class="normal"><sp/><sp/><sp/><sp/>semaphoreIncrement();</highlight></codeline>
+<codeline lineno="89"><highlight class="normal"><sp/><sp/><sp/><sp/>*<ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a96ecfb855503f9937185aebcf67b0ea8" kindref="member">remoteInboundSemaphoreId</ref><sp/>=<sp/>semaphoreGetLocal();</highlight></codeline>
+<codeline lineno="90"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="91"><highlight class="normal"></highlight></codeline>
+<codeline lineno="93"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>semaphoreIncrement()<sp/>{<sp/>*<ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1ad9a183b0d2ef78f39a3d6646676c5833" kindref="member">outboundSemaphoreId</ref><sp/>+=<sp/>1;<sp/>}</highlight></codeline>
+<codeline lineno="94"><highlight class="normal"></highlight></codeline>
+<codeline lineno="96"><highlight class="normal"><sp/><sp/>MSCCLPP_DEVICE_INLINE<sp/>uint64_t<sp/>semaphoreGetLocal()</highlight><highlight class="keyword"><sp/>const<sp/></highlight><highlight class="normal">{<sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>*<ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1ad9a183b0d2ef78f39a3d6646676c5833" kindref="member">outboundSemaphoreId</ref>;<sp/>}</highlight></codeline>
+<codeline lineno="97"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>defined(MSCCLPP_DEVICE_COMPILE)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="98"><highlight class="normal"></highlight></codeline>
+<codeline lineno="99" refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1afc25beec257d7a0d115d80040d63da3b" refkind="member"><highlight class="normal"><sp/><sp/>uint64_t*<sp/><ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1afc25beec257d7a0d115d80040d63da3b" kindref="member">inboundSemaphoreId</ref>;</highlight></codeline>
+<codeline lineno="100" refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1ad9a183b0d2ef78f39a3d6646676c5833" refkind="member"><highlight class="normal"><sp/><sp/>uint64_t*<sp/><ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1ad9a183b0d2ef78f39a3d6646676c5833" kindref="member">outboundSemaphoreId</ref>;</highlight></codeline>
+<codeline lineno="101" refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a96ecfb855503f9937185aebcf67b0ea8" refkind="member"><highlight class="normal"><sp/><sp/>uint64_t*<sp/><ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a96ecfb855503f9937185aebcf67b0ea8" kindref="member">remoteInboundSemaphoreId</ref>;</highlight></codeline>
+<codeline lineno="102" refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a5c37cf594f6a48b30b25fd1c07f09fb5" refkind="member"><highlight class="normal"><sp/><sp/>uint64_t*<sp/><ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a5c37cf594f6a48b30b25fd1c07f09fb5" kindref="member">expectedInboundSemaphoreId</ref>;</highlight></codeline>
+<codeline lineno="103"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="104"><highlight class="normal"></highlight></codeline>
+<codeline lineno="105"><highlight class="normal">}<sp/><sp/></highlight><highlight class="comment">//<sp/>namespace<sp/>mscclpp</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="106"><highlight class="normal"></highlight></codeline>
+<codeline lineno="107"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>MSCCLPP_SEMAPHORE_DEVICE_HPP_</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/semaphore_device.hpp"/>
+  </compounddef>
+</doxygen>

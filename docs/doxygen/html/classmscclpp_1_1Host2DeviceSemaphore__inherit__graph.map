@@ -1,0 +1,4 @@
+<map id="mscclpp::Host2DeviceSemaphore" name="mscclpp::Host2DeviceSemaphore">
+<area shape="rect" id="node1" title="A semaphore for sending signals from the host to the device." alt="" coords="5,109,247,136"/>
+<area shape="rect" id="node2" href="$classmscclpp_1_1BaseSemaphore.html" title=" " alt="" coords="26,5,226,61"/>
+</map>

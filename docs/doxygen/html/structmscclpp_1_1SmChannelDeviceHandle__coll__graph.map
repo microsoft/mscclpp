@@ -1,0 +1,4 @@
+<map id="mscclpp::SmChannelDeviceHandle" name="mscclpp::SmChannelDeviceHandle">
+<area shape="rect" id="node1" title="Channel for accessing peer memory directly from SM." alt="" coords="5,109,208,151"/>
+<area shape="rect" id="node2" href="$structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle.html" title="Device&#45;side handle for SmDevice2DeviceSemaphore." alt="" coords="5,5,208,47"/>
+</map>

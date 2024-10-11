@@ -1,0 +1,4 @@
+var searchData=
+[
+  ['devicehandle_716',['DeviceHandle',['../structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer.html#a826ec4d19455aa85e9cf832c17541233',1,'mscclpp::NvlsConnection::DeviceMulticastPointer::DeviceHandle()'],['../structmscclpp_1_1ProxyChannel.html#a743cb0cae9c5f602f8259b9e818f1cab',1,'mscclpp::ProxyChannel::DeviceHandle()'],['../structmscclpp_1_1SimpleProxyChannel.html#a94b927b3391c59e8a88a09611d20ca2e',1,'mscclpp::SimpleProxyChannel::DeviceHandle()'],['../classmscclpp_1_1Host2DeviceSemaphore.html#af3ffce164a9024c8e7cf881dafdbb0f3',1,'mscclpp::Host2DeviceSemaphore::DeviceHandle()'],['../classmscclpp_1_1SmDevice2DeviceSemaphore.html#a1ed9818ce26e8281d3cdb003a61ef248',1,'mscclpp::SmDevice2DeviceSemaphore::DeviceHandle()'],['../structmscclpp_1_1SmChannel.html#a1c86dbf6925353c0a4dd6cb06b941c54',1,'mscclpp::SmChannel::DeviceHandle()'],['../namespacemscclpp.html#ad527fb55e019c2b79a09d5be24c81aa6',1,'mscclpp::DeviceHandle()']]]
+];

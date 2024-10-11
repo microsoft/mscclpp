@@ -1,0 +1,5 @@
+<map id="mscclpp::CudaError" name="mscclpp::CudaError">
+<area shape="rect" id="node1" title="An error from a CUDA runtime library call." alt="" coords="5,155,153,181"/>
+<area shape="rect" id="node2" href="$classmscclpp_1_1BaseError.html" title="Base class for all errors thrown by MSCCL++." alt="" coords="6,80,153,107"/>
+<area shape="rect" id="node3" title=" " alt="" coords="10,5,149,32"/>
+</map>

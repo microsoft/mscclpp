@@ -1,0 +1,123 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="npkit__event_8hpp" kind="file" language="C++">
+    <compoundname>npkit_event.hpp</compoundname>
+    <includedby refid="npkit_8hpp" local="no">npkit.hpp</includedby>
+    <invincdepgraph>
+      <node id="1">
+        <label>npkit_event.hpp</label>
+        <link refid="npkit__event_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+      </node>
+      <node id="2">
+        <label>npkit.hpp</label>
+        <link refid="npkit_8hpp"/>
+      </node>
+    </invincdepgraph>
+      <sectiondef kind="define">
+      <memberdef kind="define" id="npkit__event_8hpp_1a84d11d0a2616203f7ed0cf5f5ef69389" prot="public" static="no">
+        <name>NPKIT_EVENT_INVALID</name>
+        <initializer>0x0</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" line="7" column="9" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" bodystart="7" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="define" id="npkit__event_8hpp_1aa881975035eb1cc059cf006757a1214d" prot="public" static="no">
+        <name>NPKIT_EVENT_TIME_SYNC_GPU</name>
+        <initializer>0x1</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" line="9" column="9" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" bodystart="9" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="define" id="npkit__event_8hpp_1a2027a1f771fdc491bd4ed936387f5323" prot="public" static="no">
+        <name>NPKIT_EVENT_TIME_SYNC_CPU</name>
+        <initializer>0x2</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" line="10" column="9" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" bodystart="10" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="define" id="npkit__event_8hpp_1aeefc00a8ca6c5a9d8eefd8bd21992827" prot="public" static="no">
+        <name>NPKIT_EVENT_EXECUTOR_INIT_ENTRY</name>
+        <initializer>0x3</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" line="12" column="9" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" bodystart="12" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="define" id="npkit__event_8hpp_1afda0df3874d2b0ecb4a1c034229d015e" prot="public" static="no">
+        <name>NPKIT_EVENT_EXECUTOR_INIT_EXIT</name>
+        <initializer>0x4</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" line="13" column="9" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" bodystart="13" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="define" id="npkit__event_8hpp_1a341e2a45ce62c0ef66113b42bb310d18" prot="public" static="no">
+        <name>NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY</name>
+        <initializer>0x5</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" line="15" column="9" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" bodystart="15" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="define" id="npkit__event_8hpp_1a1c933abdcbe4c00650d7eeb208a42bd7" prot="public" static="no">
+        <name>NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT</name>
+        <initializer>0x17</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" line="16" column="9" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp" bodystart="16" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>NPKIT_EVENT_H_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_EVENT_H_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7" refid="npkit__event_8hpp_1a84d11d0a2616203f7ed0cf5f5ef69389" refkind="member"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_EVENT_INVALID<sp/>0x0</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight></codeline>
+<codeline lineno="9" refid="npkit__event_8hpp_1aa881975035eb1cc059cf006757a1214d" refkind="member"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_EVENT_TIME_SYNC_GPU<sp/>0x1</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="10" refid="npkit__event_8hpp_1a2027a1f771fdc491bd4ed936387f5323" refkind="member"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_EVENT_TIME_SYNC_CPU<sp/>0x2</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="11"><highlight class="normal"></highlight></codeline>
+<codeline lineno="12" refid="npkit__event_8hpp_1aeefc00a8ca6c5a9d8eefd8bd21992827" refkind="member"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_EVENT_EXECUTOR_INIT_ENTRY<sp/>0x3</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="13" refid="npkit__event_8hpp_1afda0df3874d2b0ecb4a1c034229d015e" refkind="member"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_EVENT_EXECUTOR_INIT_EXIT<sp/>0x4</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="14"><highlight class="normal"></highlight></codeline>
+<codeline lineno="15" refid="npkit__event_8hpp_1a341e2a45ce62c0ef66113b42bb310d18" refkind="member"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY<sp/>0x5</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="16" refid="npkit__event_8hpp_1a1c933abdcbe4c00650d7eeb208a42bd7" refkind="member"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT<sp/>0x17</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="17"><highlight class="normal"></highlight></codeline>
+<codeline lineno="18"><highlight class="normal"></highlight><highlight class="preprocessor">#endif</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/npkit/npkit_event.hpp"/>
+  </compounddef>
+</doxygen>

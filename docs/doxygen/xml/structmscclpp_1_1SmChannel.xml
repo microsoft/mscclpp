@@ -1,0 +1,188 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1SmChannel" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::SmChannel</compoundname>
+    <includes refid="sm__channel_8hpp" local="no">sm_channel.hpp</includes>
+      <sectiondef kind="public-type">
+      <memberdef kind="typedef" id="structmscclpp_1_1SmChannel_1a1c86dbf6925353c0a4dd6cb06b941c54" prot="public" static="no">
+        <type><ref refid="structmscclpp_1_1SmChannelDeviceHandle" kindref="compound">SmChannelDeviceHandle</ref></type>
+        <definition>using mscclpp::SmChannel::DeviceHandle =  SmChannelDeviceHandle</definition>
+        <argsstring></argsstring>
+        <name>DeviceHandle</name>
+        <briefdescription>
+<para>Device-side handle for <ref refid="structmscclpp_1_1SmChannel" kindref="compound">SmChannel</ref>. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/sm_channel.hpp" line="36" column="3" bodyfile="/root/mscclpp/include/mscclpp/sm_channel.hpp" bodystart="36" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1SmChannel_1a9ce2b4150ac25dc51bedf7b992049f26" prot="private" static="no" mutable="no">
+        <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1SmDevice2DeviceSemaphore" kindref="compound">SmDevice2DeviceSemaphore</ref> &gt;</type>
+        <definition>std::shared_ptr&lt;SmDevice2DeviceSemaphore&gt; mscclpp::SmChannel::semaphore_</definition>
+        <argsstring></argsstring>
+        <name>semaphore_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/sm_channel.hpp" line="18" column="19" bodyfile="/root/mscclpp/include/mscclpp/sm_channel.hpp" bodystart="18" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1SmChannel_1a84913958064676c30a2b83c4b612ebe1" prot="private" static="no" mutable="no">
+        <type><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref></type>
+        <definition>RegisteredMemory mscclpp::SmChannel::dst_</definition>
+        <argsstring></argsstring>
+        <name>dst_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/sm_channel.hpp" line="19" column="20" bodyfile="/root/mscclpp/include/mscclpp/sm_channel.hpp" bodystart="19" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1SmChannel_1a325800d8384a2435f1e824803277a805" prot="private" static="no" mutable="no">
+        <type>void *</type>
+        <definition>void* mscclpp::SmChannel::src_</definition>
+        <argsstring></argsstring>
+        <name>src_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/sm_channel.hpp" line="20" column="8" bodyfile="/root/mscclpp/include/mscclpp/sm_channel.hpp" bodystart="20" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1SmChannel_1acc215742fd7c64db592e39ab0d718c15" prot="private" static="no" mutable="no">
+        <type>void *</type>
+        <definition>void* mscclpp::SmChannel::getPacketBuffer_</definition>
+        <argsstring></argsstring>
+        <name>getPacketBuffer_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/sm_channel.hpp" line="21" column="8" bodyfile="/root/mscclpp/include/mscclpp/sm_channel.hpp" bodystart="21" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="structmscclpp_1_1SmChannel_1ad301d42fdc731f1fa219362b740b9b23" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::SmChannel::SmChannel</definition>
+        <argsstring>()=default</argsstring>
+        <name>SmChannel</name>
+        <briefdescription>
+<para>Constructor. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/sm_channel.hpp" line="25" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1SmChannel_1a46efd79557d8ea586704875e61d8475c" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::SmChannel::SmChannel</definition>
+        <argsstring>(std::shared_ptr&lt; SmDevice2DeviceSemaphore &gt; semaphore, RegisteredMemory dst, void *src, void *getPacketBuffer=nullptr)</argsstring>
+        <name>SmChannel</name>
+        <param>
+          <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1SmDevice2DeviceSemaphore" kindref="compound">SmDevice2DeviceSemaphore</ref> &gt;</type>
+          <declname>semaphore</declname>
+        </param>
+        <param>
+          <type><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref></type>
+          <declname>dst</declname>
+        </param>
+        <param>
+          <type>void *</type>
+          <declname>src</declname>
+        </param>
+        <param>
+          <type>void *</type>
+          <declname>getPacketBuffer</declname>
+          <defval>nullptr</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Constructor. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>semaphore</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The semaphore used to synchronize the communication. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>dst</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Registered memory of the destination. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>src</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The source memory address. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>getPacketBuffer</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The optional buffer used for getPackets(). </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/sm_channel.hpp" line="32" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1SmChannel_1a4f7d3e6e5aec79c3273b45f0e83a9148" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="structmscclpp_1_1SmChannel_1a1c86dbf6925353c0a4dd6cb06b941c54" kindref="member">DeviceHandle</ref></type>
+        <definition>DeviceHandle mscclpp::SmChannel::deviceHandle</definition>
+        <argsstring>() const</argsstring>
+        <name>deviceHandle</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Returns the device-side handle.</para>
+<para>User should make sure the <ref refid="structmscclpp_1_1SmChannel" kindref="compound">SmChannel</ref> is not released when using the returned handle. </para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/sm_channel.hpp" line="42" column="16"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Channel for accessing peer memory directly from SM. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/sm_channel.hpp" line="16" column="16" bodyfile="/root/mscclpp/include/mscclpp/sm_channel.hpp" bodystart="16" bodyend="43"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1SmChannel_1a1c86dbf6925353c0a4dd6cb06b941c54" prot="public" virt="non-virtual"><scope>mscclpp::SmChannel</scope><name>DeviceHandle</name></member>
+      <member refid="structmscclpp_1_1SmChannel_1a4f7d3e6e5aec79c3273b45f0e83a9148" prot="public" virt="non-virtual"><scope>mscclpp::SmChannel</scope><name>deviceHandle</name></member>
+      <member refid="structmscclpp_1_1SmChannel_1a84913958064676c30a2b83c4b612ebe1" prot="private" virt="non-virtual"><scope>mscclpp::SmChannel</scope><name>dst_</name></member>
+      <member refid="structmscclpp_1_1SmChannel_1acc215742fd7c64db592e39ab0d718c15" prot="private" virt="non-virtual"><scope>mscclpp::SmChannel</scope><name>getPacketBuffer_</name></member>
+      <member refid="structmscclpp_1_1SmChannel_1a9ce2b4150ac25dc51bedf7b992049f26" prot="private" virt="non-virtual"><scope>mscclpp::SmChannel</scope><name>semaphore_</name></member>
+      <member refid="structmscclpp_1_1SmChannel_1ad301d42fdc731f1fa219362b740b9b23" prot="public" virt="non-virtual"><scope>mscclpp::SmChannel</scope><name>SmChannel</name></member>
+      <member refid="structmscclpp_1_1SmChannel_1a46efd79557d8ea586704875e61d8475c" prot="public" virt="non-virtual"><scope>mscclpp::SmChannel</scope><name>SmChannel</name></member>
+      <member refid="structmscclpp_1_1SmChannel_1a325800d8384a2435f1e824803277a805" prot="private" virt="non-virtual"><scope>mscclpp::SmChannel</scope><name>src_</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

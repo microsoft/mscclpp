@@ -1,0 +1,68 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="npkit__struct_8hpp" kind="file" language="C++">
+    <compoundname>npkit_struct.hpp</compoundname>
+    <includes local="no">cstdint</includes>
+    <includedby refid="npkit_8hpp" local="no">npkit.hpp</includedby>
+    <incdepgraph>
+      <node id="1">
+        <label>npkit_struct.hpp</label>
+        <link refid="npkit__struct_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+      </node>
+      <node id="2">
+        <label>cstdint</label>
+      </node>
+    </incdepgraph>
+    <invincdepgraph>
+      <node id="1">
+        <label>npkit_struct.hpp</label>
+        <link refid="npkit__struct_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+      </node>
+      <node id="2">
+        <label>npkit.hpp</label>
+        <link refid="npkit_8hpp"/>
+      </node>
+    </invincdepgraph>
+    <innerclass refid="unionNpKitEvent" prot="public">NpKitEvent</innerclass>
+    <innerclass refid="structNpKitEventCollectContext" prot="public">NpKitEventCollectContext</innerclass>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>NPKIT_STRUCT_H_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>NPKIT_STRUCT_H_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;cstdint&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight></codeline>
+<codeline lineno="9"><highlight class="normal"></highlight><highlight class="preprocessor">#pragma<sp/>pack(push,<sp/>1)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="10"><highlight class="normal"></highlight></codeline>
+<codeline lineno="11" refid="unionNpKitEvent" refkind="compound"><highlight class="normal"></highlight><highlight class="keyword">union<sp/></highlight><highlight class="normal"><ref refid="unionNpKitEvent" kindref="compound">NpKitEvent</ref><sp/>{</highlight></codeline>
+<codeline lineno="12" refid="unionNpKitEvent_1ab05475973457f1795ba3828c72a63b12" refkind="member"><highlight class="normal"><sp/><sp/>uint64_t<sp/><ref refid="unionNpKitEvent_1ab05475973457f1795ba3828c72a63b12" kindref="member">bits</ref>[2];</highlight></codeline>
+<codeline lineno="13"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">struct<sp/></highlight><highlight class="normal">{</highlight></codeline>
+<codeline lineno="14" refid="unionNpKitEvent_1af030b738f6ebff7a4305a6d498816099" refkind="member"><highlight class="normal"><sp/><sp/><sp/><sp/>uint64_t<sp/><ref refid="unionNpKitEvent_1af030b738f6ebff7a4305a6d498816099" kindref="member">type</ref><sp/>:<sp/>8;</highlight></codeline>
+<codeline lineno="15" refid="unionNpKitEvent_1a551ad9c5a3edbc77d3c7572053ec1ea9" refkind="member"><highlight class="normal"><sp/><sp/><sp/><sp/>uint64_t<sp/><ref refid="unionNpKitEvent_1a551ad9c5a3edbc77d3c7572053ec1ea9" kindref="member">size</ref><sp/>:<sp/>32;</highlight></codeline>
+<codeline lineno="16" refid="unionNpKitEvent_1a541531dfadf4422d01c73070538a0eb0" refkind="member"><highlight class="normal"><sp/><sp/><sp/><sp/>uint64_t<sp/><ref refid="unionNpKitEvent_1a541531dfadf4422d01c73070538a0eb0" kindref="member">rsvd</ref><sp/>:<sp/>24;</highlight></codeline>
+<codeline lineno="17" refid="unionNpKitEvent_1a34dfd2c8df91860efbac15e7fc6943f5" refkind="member"><highlight class="normal"><sp/><sp/><sp/><sp/>uint64_t<sp/><ref refid="unionNpKitEvent_1a34dfd2c8df91860efbac15e7fc6943f5" kindref="member">timestamp</ref>;</highlight></codeline>
+<codeline lineno="18"><highlight class="normal"><sp/><sp/>}<sp/><ref refid="unionNpKitEvent_1a9569908320dc284e3abfcf333ff212f5" kindref="member">fields</ref>;</highlight></codeline>
+<codeline lineno="19"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="20"><highlight class="normal"></highlight></codeline>
+<codeline lineno="21" refid="structNpKitEventCollectContext" refkind="compound"><highlight class="normal"></highlight><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structNpKitEventCollectContext" kindref="compound">NpKitEventCollectContext</ref><sp/>{</highlight></codeline>
+<codeline lineno="22" refid="structNpKitEventCollectContext_1a0c495b9f5dfe117236ba38a876ce8062" refkind="member"><highlight class="normal"><sp/><sp/><ref refid="unionNpKitEvent" kindref="compound">NpKitEvent</ref>*<sp/><ref refid="structNpKitEventCollectContext_1a0c495b9f5dfe117236ba38a876ce8062" kindref="member">event_buffer</ref>;</highlight></codeline>
+<codeline lineno="23" refid="structNpKitEventCollectContext_1ade29036d1e789b33491ce29ae5c67b49" refkind="member"><highlight class="normal"><sp/><sp/>uint64_t<sp/><ref refid="structNpKitEventCollectContext_1ade29036d1e789b33491ce29ae5c67b49" kindref="member">event_buffer_head</ref>;</highlight></codeline>
+<codeline lineno="24"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="25"><highlight class="normal"></highlight></codeline>
+<codeline lineno="26"><highlight class="normal"></highlight><highlight class="preprocessor">#pragma<sp/>pack(pop)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="27"><highlight class="normal"></highlight></codeline>
+<codeline lineno="28"><highlight class="normal"></highlight><highlight class="preprocessor">#endif</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp"/>
+  </compounddef>
+</doxygen>

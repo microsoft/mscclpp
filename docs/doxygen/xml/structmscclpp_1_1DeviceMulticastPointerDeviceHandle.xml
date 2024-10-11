@@ -1,0 +1,59 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1DeviceMulticastPointerDeviceHandle" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::DeviceMulticastPointerDeviceHandle</compoundname>
+    <includes refid="nvls__device_8hpp" local="no">nvls_device.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1DeviceMulticastPointerDeviceHandle_1aee7c0c7f573830d80aa31b8f6082232a" prot="public" static="no" mutable="no">
+        <type>void *</type>
+        <definition>void* mscclpp::DeviceMulticastPointerDeviceHandle::devicePtr</definition>
+        <argsstring></argsstring>
+        <name>devicePtr</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls_device.hpp" line="23" column="8" bodyfile="/root/mscclpp/include/mscclpp/nvls_device.hpp" bodystart="23" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1DeviceMulticastPointerDeviceHandle_1a87de04bd08c3ced0419adf9c40ce9143" prot="public" static="no" mutable="no">
+        <type>void *</type>
+        <definition>void* mscclpp::DeviceMulticastPointerDeviceHandle::mcPtr</definition>
+        <argsstring></argsstring>
+        <name>mcPtr</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls_device.hpp" line="24" column="8" bodyfile="/root/mscclpp/include/mscclpp/nvls_device.hpp" bodystart="24" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1DeviceMulticastPointerDeviceHandle_1a73cb2d15a0859d46bd4e85c8fbbe173e" prot="public" static="no" mutable="no">
+        <type>size_t</type>
+        <definition>size_t mscclpp::DeviceMulticastPointerDeviceHandle::bufferSize</definition>
+        <argsstring></argsstring>
+        <name>bufferSize</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls_device.hpp" line="25" column="10" bodyfile="/root/mscclpp/include/mscclpp/nvls_device.hpp" bodystart="25" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Device-side handle for <ref refid="classmscclpp_1_1Host2DeviceSemaphore" kindref="compound">Host2DeviceSemaphore</ref>. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/nvls_device.hpp" line="22" column="41" bodyfile="/root/mscclpp/include/mscclpp/nvls_device.hpp" bodystart="22" bodyend="109"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1DeviceMulticastPointerDeviceHandle_1a73cb2d15a0859d46bd4e85c8fbbe173e" prot="public" virt="non-virtual"><scope>mscclpp::DeviceMulticastPointerDeviceHandle</scope><name>bufferSize</name></member>
+      <member refid="structmscclpp_1_1DeviceMulticastPointerDeviceHandle_1aee7c0c7f573830d80aa31b8f6082232a" prot="public" virt="non-virtual"><scope>mscclpp::DeviceMulticastPointerDeviceHandle</scope><name>devicePtr</name></member>
+      <member refid="structmscclpp_1_1DeviceMulticastPointerDeviceHandle_1a87de04bd08c3ced0419adf9c40ce9143" prot="public" virt="non-virtual"><scope>mscclpp::DeviceMulticastPointerDeviceHandle</scope><name>mcPtr</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

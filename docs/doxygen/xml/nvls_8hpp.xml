@@ -1,0 +1,152 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="nvls_8hpp" kind="file" language="C++">
+    <compoundname>nvls.hpp</compoundname>
+    <includes refid="gpu__utils_8hpp" local="no">mscclpp/gpu_utils.hpp</includes>
+    <includes refid="nvls__device_8hpp" local="no">mscclpp/nvls_device.hpp</includes>
+    <incdepgraph>
+      <node id="13">
+        <label>device.hpp</label>
+        <link refid="device_8hpp"/>
+      </node>
+      <node id="5">
+        <label>errors.hpp</label>
+        <link refid="errors_8hpp"/>
+        <childnode refid="6" relation="include">
+        </childnode>
+      </node>
+      <node id="10">
+        <label>linux/version.h</label>
+      </node>
+      <node id="9">
+        <label>cuda_runtime.h</label>
+      </node>
+      <node id="1">
+        <label>nvls.hpp</label>
+        <link refid="nvls_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="11" relation="include">
+        </childnode>
+      </node>
+      <node id="6">
+        <label>stdexcept</label>
+      </node>
+      <node id="11">
+        <label>mscclpp/nvls_device.hpp</label>
+        <link refid="nvls__device_8hpp"/>
+        <childnode refid="7" relation="include">
+        </childnode>
+        <childnode refid="12" relation="include">
+        </childnode>
+        <childnode refid="13" relation="include">
+        </childnode>
+      </node>
+      <node id="7">
+        <label>gpu.hpp</label>
+        <link refid="gpu_8hpp"/>
+        <childnode refid="8" relation="include">
+        </childnode>
+        <childnode refid="9" relation="include">
+        </childnode>
+        <childnode refid="10" relation="include">
+        </childnode>
+      </node>
+      <node id="8">
+        <label>cuda.h</label>
+      </node>
+      <node id="12">
+        <label>type_traits</label>
+      </node>
+      <node id="3">
+        <label>cstring</label>
+      </node>
+      <node id="2">
+        <label>mscclpp/gpu_utils.hpp</label>
+        <link refid="gpu__utils_8hpp"/>
+        <childnode refid="3" relation="include">
+        </childnode>
+        <childnode refid="4" relation="include">
+        </childnode>
+        <childnode refid="5" relation="include">
+        </childnode>
+        <childnode refid="7" relation="include">
+        </childnode>
+      </node>
+      <node id="4">
+        <label>memory</label>
+      </node>
+    </incdepgraph>
+    <innerclass refid="classmscclpp_1_1NvlsConnection" prot="public">mscclpp::NvlsConnection</innerclass>
+    <innerclass refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer" prot="public">mscclpp::NvlsConnection::DeviceMulticastPointer</innerclass>
+    <innernamespace refid="namespacemscclpp">mscclpp</innernamespace>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>MSCCLPP_NVLS_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>MSCCLPP_NVLS_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;<ref refid="gpu__utils_8hpp" kindref="compound">mscclpp/gpu_utils.hpp</ref>&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;<ref refid="nvls__device_8hpp" kindref="compound">mscclpp/nvls_device.hpp</ref>&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="9"><highlight class="normal"></highlight></codeline>
+<codeline lineno="10"><highlight class="normal"></highlight><highlight class="keyword">namespace<sp/></highlight><highlight class="normal"><ref refid="namespacemscclpp" kindref="compound">mscclpp</ref><sp/>{</highlight></codeline>
+<codeline lineno="11"><highlight class="normal"></highlight></codeline>
+<codeline lineno="12" refid="classmscclpp_1_1NvlsConnection" refkind="compound"><highlight class="normal"></highlight><highlight class="keyword">class<sp/></highlight><highlight class="normal"><ref refid="classmscclpp_1_1NvlsConnection" kindref="compound">NvlsConnection</ref><sp/>{</highlight></codeline>
+<codeline lineno="13"><highlight class="normal"><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="14"><highlight class="normal"><sp/><sp/><ref refid="classmscclpp_1_1NvlsConnection_1a6ed362f5edd4b04ca0736a1523323dcd" kindref="member">NvlsConnection</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>bufferSize,<sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>numDevices);</highlight></codeline>
+<codeline lineno="15"><highlight class="normal"><sp/><sp/><ref refid="classmscclpp_1_1NvlsConnection_1a6ed362f5edd4b04ca0736a1523323dcd" kindref="member">NvlsConnection</ref>(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>std::vector&lt;char&gt;&amp;<sp/>data);</highlight></codeline>
+<codeline lineno="16"><highlight class="normal"><sp/><sp/><ref refid="classmscclpp_1_1NvlsConnection_1a6ed362f5edd4b04ca0736a1523323dcd" kindref="member">NvlsConnection</ref>()<sp/>=<sp/></highlight><highlight class="keyword">delete</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="17"><highlight class="normal"><sp/><sp/>std::vector&lt;char&gt;<sp/><ref refid="classmscclpp_1_1NvlsConnection_1a6c1596a8a6a0f0a37445d622c1c7c686" kindref="member">serialize</ref>();</highlight></codeline>
+<codeline lineno="18"><highlight class="normal"></highlight></codeline>
+<codeline lineno="19"><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>the<sp/>recommended<sp/>buffer<sp/>size<sp/>for<sp/>NVLS,<sp/>returned<sp/>by<sp/>cuMulticastGetGranularity</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="20" refid="classmscclpp_1_1NvlsConnection_1a2792ac41d2ce8213f73dd2420bab2d61" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">static</highlight><highlight class="normal"><sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1NvlsConnection_1a2792ac41d2ce8213f73dd2420bab2d61" kindref="member">DefaultNvlsBufferSize</ref>;</highlight></codeline>
+<codeline lineno="21"><highlight class="normal"></highlight></codeline>
+<codeline lineno="22"><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>Everyone<sp/>needs<sp/>to<sp/>synchronize<sp/>after<sp/>creating<sp/>a<sp/>NVLS<sp/>connection<sp/>before<sp/>adding<sp/>devices</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="23"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1NvlsConnection_1a417d0ba75886b614d69af4bed774792e" kindref="member">addDevice</ref>();</highlight></codeline>
+<codeline lineno="24"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1NvlsConnection_1a417d0ba75886b614d69af4bed774792e" kindref="member">addDevice</ref>(</highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>cudaDeviceId);</highlight></codeline>
+<codeline lineno="25"><highlight class="normal"></highlight></codeline>
+<codeline lineno="26" refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer" refkind="compound"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer" kindref="compound">DeviceMulticastPointer</ref><sp/>{</highlight></codeline>
+<codeline lineno="27"><highlight class="normal"><sp/><sp/><sp/></highlight><highlight class="keyword">private</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="28"><highlight class="normal"><sp/><sp/><sp/><sp/>std::shared_ptr&lt;PhysicalCudaMemory&lt;char&gt;&gt;<sp/>deviceMem_;</highlight></codeline>
+<codeline lineno="29"><highlight class="normal"><sp/><sp/><sp/><sp/>std::shared_ptr&lt;char&gt;<sp/>mcPtr_;</highlight></codeline>
+<codeline lineno="30"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>bufferSize_;</highlight></codeline>
+<codeline lineno="31"><highlight class="normal"></highlight></codeline>
+<codeline lineno="32"><highlight class="normal"><sp/><sp/><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="33" refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1a826ec4d19455aa85e9cf832c17541233" refkind="member"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1DeviceMulticastPointerDeviceHandle" kindref="compound">DeviceHandle</ref><sp/>=<sp/><ref refid="structmscclpp_1_1DeviceMulticastPointerDeviceHandle" kindref="compound">DeviceMulticastPointerDeviceHandle</ref>;</highlight></codeline>
+<codeline lineno="34" refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1a1e1ace787e9501934882f9b2a7f6cbd7" refkind="member"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1a1e1ace787e9501934882f9b2a7f6cbd7" kindref="member">DeviceMulticastPointer</ref>(std::shared_ptr&lt;<ref refid="structmscclpp_1_1PhysicalCudaMemory" kindref="compound">PhysicalCudaMemory&lt;char&gt;</ref>&gt;<sp/>deviceMem,<sp/>std::shared_ptr&lt;char&gt;<sp/>mcPtr,</highlight></codeline>
+<codeline lineno="35"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>bufferSize)</highlight></codeline>
+<codeline lineno="36"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>:<sp/>deviceMem_(deviceMem),<sp/>mcPtr_(mcPtr),<sp/>bufferSize_(bufferSize)<sp/>{}</highlight></codeline>
+<codeline lineno="37"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="namespacemscclpp_1ad527fb55e019c2b79a09d5be24c81aa6" kindref="member">DeviceHandle</ref><sp/><ref refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1a0316389580e2ef18c02c76d09d57f615" kindref="member">deviceHandle</ref>();</highlight></codeline>
+<codeline lineno="38"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordtype">char</highlight><highlight class="normal">*<sp/><ref refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1a781622c1d257d3a9a506cb9da9e13a91" kindref="member">getDevicePtr</ref>();</highlight></codeline>
+<codeline lineno="39"><highlight class="normal"></highlight></codeline>
+<codeline lineno="40" refid="structmscclpp_1_1NvlsConnection_1_1DeviceMulticastPointer_1a6cec34d4ef3b63c8c6f812bf26b75245" refkind="member"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keyword">friend</highlight><highlight class="normal"><sp/></highlight><highlight class="keyword">class<sp/></highlight><highlight class="normal"><ref refid="classmscclpp_1_1NvlsConnection" kindref="compound">NvlsConnection</ref>;</highlight></codeline>
+<codeline lineno="41"><highlight class="normal"><sp/><sp/>};</highlight></codeline>
+<codeline lineno="42"><highlight class="normal"></highlight></codeline>
+<codeline lineno="43"><highlight class="normal"><sp/><sp/>std::shared_ptr&lt;DeviceMulticastPointer&gt;<sp/><ref refid="classmscclpp_1_1NvlsConnection_1ab05ead62fb33b078f227dc3b91b4cb38" kindref="member">allocateAndBindCuda</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>size);</highlight></codeline>
+<codeline lineno="44"><highlight class="normal"></highlight></codeline>
+<codeline lineno="47"><highlight class="normal"><sp/><sp/>std::shared_ptr&lt;char&gt;<sp/><ref refid="classmscclpp_1_1NvlsConnection_1accd44d52b9318af537d24b457e1aa54d" kindref="member">bindAllocatedCuda</ref>(CUmemGenericAllocationHandle<sp/>memHandle,<sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>size);</highlight></codeline>
+<codeline lineno="48"><highlight class="normal"></highlight></codeline>
+<codeline lineno="49"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1NvlsConnection_1a778fc050887ef0fc0e4a63485b094a34" kindref="member">getMultiCastMinGranularity</ref>();</highlight></codeline>
+<codeline lineno="50"><highlight class="normal"></highlight></codeline>
+<codeline lineno="51"><highlight class="normal"><sp/></highlight><highlight class="keyword">private</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="52"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">class<sp/></highlight><highlight class="normal">Impl;</highlight></codeline>
+<codeline lineno="53"><highlight class="normal"><sp/><sp/>std::shared_ptr&lt;Impl&gt;<sp/>pimpl_;</highlight></codeline>
+<codeline lineno="54"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="55"><highlight class="normal"></highlight></codeline>
+<codeline lineno="56"><highlight class="normal"></highlight><highlight class="keyword">class<sp/></highlight><highlight class="normal"><ref refid="classmscclpp_1_1Communicator" kindref="compound">Communicator</ref>;</highlight></codeline>
+<codeline lineno="57"><highlight class="normal"></highlight></codeline>
+<codeline lineno="67"><highlight class="normal">std::shared_ptr&lt;NvlsConnection&gt;<sp/><ref refid="namespacemscclpp_1a8b8a1fdab1bc4ff47206a28eeae0eafd" kindref="member">connectNvlsCollective</ref>(std::shared_ptr&lt;Communicator&gt;<sp/>comm,<sp/>std::vector&lt;int&gt;<sp/>allRanks,</highlight></codeline>
+<codeline lineno="68"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>bufferSize<sp/>=<sp/><ref refid="classmscclpp_1_1NvlsConnection_1a2792ac41d2ce8213f73dd2420bab2d61" kindref="member">NvlsConnection::DefaultNvlsBufferSize</ref>);</highlight></codeline>
+<codeline lineno="69"><highlight class="normal"></highlight></codeline>
+<codeline lineno="70"><highlight class="normal">}<sp/><sp/></highlight><highlight class="comment">//<sp/>namespace<sp/>mscclpp</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="71"><highlight class="normal"></highlight></codeline>
+<codeline lineno="72"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>MSCCLPP_NVLS_HPP_</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/nvls.hpp"/>
+  </compounddef>
+</doxygen>

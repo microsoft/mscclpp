@@ -1,0 +1,4 @@
+<map id="mscclpp::ProxyService" name="mscclpp::ProxyService">
+<area shape="rect" id="node1" title="Proxy service implementation." alt="" coords="21,80,191,107"/>
+<area shape="rect" id="node2" href="$classmscclpp_1_1BaseProxyService.html" title="Base class for proxy services. Proxy services are used to proxy data between devices." alt="" coords="5,5,207,32"/>
+</map>

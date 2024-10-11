@@ -1,0 +1,180 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="indexpage" kind="page">
+    <compoundname>index</compoundname>
+    <title>MSCCL++</title>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+<para><ulink url="https://github.com/microsoft/mscclpp/releases/latest"><image type="html" name="mscclpp.svg" inline="yes"></image>
+</ulink> [<image type="html" name="mscclpp.svg" inline="yes"></image>
+](LICENSE) <ulink url="https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml"><image type="html" name="badge.svg?branch=main" inline="yes"></image>
+</ulink></para>
+<para><table rows="4" cols="2"><row>
+<entry thead="yes"><para>Pipelines </para>
+</entry><entry thead="yes"><para>Build Status  </para>
+</entry></row>
+<row>
+<entry thead="no"><para>Unit Tests (CUDA) </para>
+</entry><entry thead="no"><para><ulink url="https://dev.azure.com/binyli/HPC/_build/latest?definitionId=4&amp;branchName=main"><image type="html" name="status%2Fmscclpp-ut?branchName=main" inline="yes"></image>
+</ulink>  </para>
+</entry></row>
+<row>
+<entry thead="no"><para>Integration Tests (CUDA) </para>
+</entry><entry thead="no"><para><ulink url="https://dev.azure.com/binyli/HPC/_build/latest?definitionId=3&amp;branchName=main"><image type="html" name="status%2Fmscclpp-test?branchName=main" inline="yes"></image>
+</ulink>  </para>
+</entry></row>
+<row>
+<entry thead="no"><para>Integration Tests (ROCm) </para>
+</entry><entry thead="no"><para><ulink url="https://dev.azure.com/binyli/HPC/_build/latest?definitionId=7&amp;branchName=main"><image type="html" name="status%2Fmscclpp-test-rocm?branchName=main" inline="yes"></image>
+</ulink>  </para>
+</entry></row>
+</table>
+</para>
+<para>A GPU-driven communication stack for scalable AI applications.</para>
+<para>See Quick Start to quickly get started.</para>
+<sect1 id="index_1autotoc_md1">
+<title>Overview</title>
+<para>MSCCL++ redefines inter-GPU communication interfaces, thereby delivering a highly efficient and customizable communication stack for distributed GPU applications. Its design is specifically tailored to accommodate diverse performance optimization scenarios often encountered in state-of-the-art AI applications. Figure below provides a high-level overview of MSCCL++ abstractions in CUDA, C, and Python.</para>
+<para><table rows="2" cols="1"><row>
+<entry thead="yes"><para><center>MSCCL++ Abstractions Overview  </center></para>
+</entry></row>
+<row>
+<entry thead="no"><para><center> <image type="html" name="abstractions.png" inline="yes"></image>
+  </center></para>
+</entry></row>
+</table>
+</para>
+<para><center>The followings highlight the key features of MSCCL++.</center></para>
+<para><center><itemizedlist>
+<listitem><para><bold>Light-weight and multi-layer abstractions.</bold> MSCCL++ provides communication abstractions at lowest level close to hardware and at the highest level close to application API. The lowest level of abstraction is ultra light weight which enables a user to implement logics of data movement for a collective operation such as AllReduce inside a GPU kernel extremely efficiently without worrying about memory ordering of different ops. The modularity of MSCCL++ enables a user to construct the building blocks of MSCCL++ in a high level abstraction in Python and feed them to a CUDA kernel in order to facilitate the user&apos;s productivity.</para>
+</listitem><listitem><para><bold>1-sided 0-copy synchronous and asynchronous abstracts.</bold> MSCCL++ provides fine-grained synchronous and asynchronous 0-copy 1-sided abstracts for communication primitives such as <computeroutput>put()</computeroutput>, <computeroutput>get()</computeroutput>, <computeroutput>signal()</computeroutput>, <computeroutput>flush()</computeroutput>, and <computeroutput>wait()</computeroutput>. The 1-sided abstractions allows a user to asynchronously <computeroutput>put()</computeroutput> their data on the remote GPU as soon as it is ready without requiring the remote side to issue any receive instruction. This enables users to easily implement flexible communication logics, such as overlapping communication with computation, or implementing customized collective communication algorithms without worrying about potential deadlocks. Additionally, the 0-copy capability enables MSCCL++ to directly transfer data between user&apos;s buffers without using intermediate internal buffers which saves GPU bandwidth and memory capacity.</para>
+</listitem><listitem><para><bold>Unified abstractions for different interconnection hardware.</bold> MSCCL++ provides consistent abstractions regardless of the location of the remote GPU (either on the local node or on a remote node) or the underlying link (either NVLink/xGMI or InfiniBand). This simplifies the code for inter-GPU communication, which is often complex due to memory ordering of GPU/CPU read/writes and therefore, is error-prone.</para>
+</listitem></itemizedlist>
+</center></para>
+<para><center></center></para>
+</sect1>
+<sect1 id="index_1autotoc_md2">
+<title>Performance</title>
+<para><center> While the power of MSCCL++ is fully realized with application-specific optimization, it still delivers performance benefits even for collective communication operations. The following figures provide a comparison of the AllReduce throughput of MSCCL++ against NCCL 2.19.3. This benchmark was tested over two <ulink url="https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series">Azure NDmv4 SKUs</ulink> (8 A100-80G GPUs per node).</center></para>
+<para><center>The key motivation behind these results is scaling of inference for LLM models using tensor parallelism. LLM requests usually are executed in two phases: prompt processing and token sampling. The prompt processing uses a large batch size that is usually equal to a request context length and the corresponding AllReduce size is <computeroutput>len_context*dim_hidden*sizeof(fp16)</computeroutput>. For a context length of 2048 with a hidden dimension of 12288 (GPT-3 size), the AllReduce size is 48MB. The token sampling uses a smaller batch size which corresponds to concurrent user requests in the system and therefore, the AllReduce size is <computeroutput>batch_size*dim_hidden*sizeof(fp16)</computeroutput>. For a concurrency of 16 users, the AllReduce size is 384KB. As the figures below demonstrates, MSCCL++ provides significant speed up over NCCL which is crucial for efficiency of serving LLMs at large scale.</center></para>
+<para><center><table rows="2" cols="2"><row>
+<entry thead="yes"><para><center>Single-node AllReduce </center></para>
+</entry><entry thead="yes"><para><center> <center>Two-node AllReduce  </center></center></para>
+</entry></row>
+<row>
+<entry thead="no"><para><center><center> <image type="html" name="mscclpp_vs_nccl_comparison_num_nodes_1.jpeg" inline="yes"></image>
+ </center></center></para>
+</entry><entry thead="no"><para><center><center> <image type="html" name="mscclpp_vs_nccl_comparison_num_nodes_2.jpeg" inline="yes"></image>
+  </center></center></para>
+</entry></row>
+</table>
+</center></para>
+<para><center><center><center></center></center></center></para>
+</sect1>
+<sect1 id="index_1autotoc_md3">
+<title>Key Concepts</title>
+<para><center><center><center> The following highlights key concepts of MSCCL++.</center></center></center></para>
+<para><center><center><center></center></center></center></para>
+<sect2 id="index_1autotoc_md4">
+<title>On-GPU Communication Interfaces: Channels</title>
+<para><center><center><center> MSCCL++ provides peer-to-peer communication methods between GPUs. A peer-to-peer connection between two GPUs is called a <emphasis>Channel</emphasis>. Channels are constructed by MSCCL++ host-side interfaces and copied to GPUs during initialization. Channels provide <emphasis>GPU-side interfaces</emphasis>, which means that all communication methods are defined as a device function to be called from a GPU kernel code. For example, the <computeroutput>put()</computeroutput> method in the following example copies 1KB data from the local GPU to a remote GPU.</center></center></center></para>
+<para><center><center><center><programlisting filename=".cpp"><codeline><highlight class="comment">//<sp/>`ProxyChannel`<sp/>will<sp/>be<sp/>explained<sp/>in<sp/>the<sp/>following<sp/>section.</highlight><highlight class="normal"></highlight></codeline>
+<codeline><highlight class="normal">__device__<sp/><ref refid="namespacemscclpp_1ad527fb55e019c2b79a09d5be24c81aa6" kindref="member">mscclpp::DeviceHandle&lt;mscclpp::SimpleProxyChannel&gt;</ref><sp/>channel;</highlight></codeline>
+<codeline><highlight class="normal">__global__<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>gpuKernel()<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>...</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>Only<sp/>one<sp/>thread<sp/>is<sp/>needed<sp/>for<sp/>this<sp/>method.</highlight><highlight class="normal"></highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>channel.put(</highlight><highlight class="comment">/*dstOffset=*/</highlight><highlight class="normal"><sp/>0,<sp/></highlight><highlight class="comment">/*srcOffset=*/</highlight><highlight class="normal"><sp/>0,<sp/></highlight><highlight class="comment">/*size=*/</highlight><highlight class="normal"><sp/>1024);</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>...</highlight></codeline>
+<codeline><highlight class="normal">}</highlight></codeline>
+</programlisting></center></center></center></para>
+<para><center><center><center>MSCCL++ also provides efficient synchronization methods, <computeroutput>signal()</computeroutput>, <computeroutput>flush()</computeroutput>, and <computeroutput>wait()</computeroutput>. For example, we can implement a simple barrier between two ranks (peer-to-peer connected through <computeroutput>channel</computeroutput>) as follows. Explanation of each method is inlined.</center></center></center></para>
+<para><center><center><center><programlisting filename=".cpp"><codeline><highlight class="comment">//<sp/>Only<sp/>one<sp/>thread<sp/>is<sp/>needed<sp/>for<sp/>this<sp/>function.</highlight><highlight class="normal"></highlight></codeline>
+<codeline><highlight class="normal">__device__<sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>barrier()<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>Inform<sp/>the<sp/>peer<sp/>GPU<sp/>that<sp/>I<sp/>have<sp/>arrived<sp/>at<sp/>this<sp/>point.</highlight><highlight class="normal"></highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>channel.signal();</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>Flush<sp/>the<sp/>previous<sp/>signal()<sp/>call,<sp/>which<sp/>will<sp/>wait<sp/>for<sp/>completion<sp/>of<sp/>signaling.</highlight><highlight class="normal"></highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>channel.flush();</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>Wait<sp/>for<sp/>the<sp/>peer<sp/>GPU<sp/>to<sp/>call<sp/>signal().</highlight><highlight class="normal"></highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>channel.wait();</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>Now<sp/>this<sp/>thread<sp/>is<sp/>synchronized<sp/>with<sp/>the<sp/>remote<sp/>GPU’s<sp/>thread.</highlight><highlight class="normal"></highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>Users<sp/>may<sp/>call<sp/>a<sp/>local<sp/>synchronize<sp/>functions<sp/>(e.g.,<sp/>__syncthreads())</highlight><highlight class="normal"></highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>to<sp/>synchronize<sp/>other<sp/>local<sp/>threads<sp/>as<sp/>well<sp/>with<sp/>the<sp/>remote<sp/>side.</highlight><highlight class="normal"></highlight></codeline>
+<codeline><highlight class="normal">}</highlight></codeline>
+</programlisting></center></center></center></para>
+<para><center><center><center>MSCCL++ provides consistent interfaces, i.e., the above interfaces are used regardless of the location of the remote GPU (either on the local node or on a remote node) or the underlying link (either NVLink/xGMI or InfiniBand).</center></center></center></para>
+<para><center><center><center></center></center></center></para>
+</sect2>
+<sect2 id="index_1autotoc_md5">
+<title>ProxyChannel and SmChannel</title>
+<para><center><center><center> MSCCL++ delivers two types of channels, <bold>ProxyChannel</bold> and <bold>SmChannel</bold>. <computeroutput>ProxyChannel</computeroutput> provides (R)DMA-based data copy and synchronization methods. When called, these methods send/receive a signal to/from a host-side proxy (hence the name <computeroutput>ProxyChannel</computeroutput>), which will trigger (R)DMA (such as <computeroutput>cudaMemcpy*</computeroutput> or <computeroutput>ibv_post_send</computeroutput>) or issue synchronization methods (such as <computeroutput>cudaStreamSynchronize</computeroutput> or <computeroutput>ibv_poll_cq</computeroutput>). Since the key functionalities are run by the proxy, <computeroutput>ProxyChannel</computeroutput> requires only a single GPU thread to call its methods. See all <computeroutput>ProxyChannel</computeroutput> methods from <ulink url="./include/mscclpp/proxy_channel_device.hpp">here</ulink>.</center></center></center></para>
+<para><center><center><center>On the other hand, <computeroutput>SmChannel</computeroutput> provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU&apos;s memory space. Comparing against <computeroutput>ProxyChannel</computeroutput>, <computeroutput>SmChannel</computeroutput> is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all <computeroutput>SmChannel</computeroutput> methods from <ulink url="./include/mscclpp/sm_channel_device.hpp">here</ulink>.</center></center></center></para>
+<para><center><center><center></center></center></center></para>
+</sect2>
+<sect2 id="index_1autotoc_md6">
+<title>Host-Side Communication Proxy</title>
+<para><center><center><center> MSCCL++ provides a default implementation of a host-side proxy for ProxyChannels, which is a background host thread that busy polls triggers from GPUs and conducts functionalities accordingly. For example, the following is a typical host-side code for MSCCL++.</center></center></center></para>
+<para><center><center><center>```cpp // Bootstrap: initialize control-plane connections between all ranks auto bootstrap = std::make_shared&lt;mscclpp::TcpBootstrap&gt;(rank, world_size); // Create a communicator for connection setup <ref refid="classmscclpp_1_1Communicator" kindref="compound">mscclpp::Communicator</ref> comm(bootstrap); // Setup connections here using <computeroutput>comm</computeroutput> ... // Construct the default proxy <ref refid="classmscclpp_1_1ProxyService" kindref="compound">mscclpp::ProxyService</ref> proxyService(); // Start the proxy proxyService.startProxy(); // Run the user application, i.e., launch GPU kernels here ... // Stop the proxy after the application is finished proxyService.stopProxy(); <programlisting><codeline><highlight class="normal">While<sp/>the<sp/>default<sp/>implementation<sp/>already<sp/>enables<sp/>any<sp/>kinds<sp/>of<sp/>communication,<sp/>MSCCL++<sp/>also<sp/>supports<sp/>users<sp/>to<sp/>easily<sp/>implement<sp/>their<sp/>own<sp/>customized<sp/>proxies<sp/>for<sp/>further<sp/>optimization.<sp/>For<sp/>example,<sp/>the<sp/>following<sp/>example<sp/>re-defines<sp/>how<sp/>to<sp/>interpret<sp/>triggers<sp/>from<sp/>GPUs.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">```cpp</highlight></codeline>
+<codeline><highlight class="normal">//<sp/>Proxy<sp/>FIFO<sp/>is<sp/>obtained<sp/>from<sp/>mscclpp::Proxy<sp/>on<sp/>the<sp/>host<sp/>and<sp/>copied<sp/>to<sp/>the<sp/>device.</highlight></codeline>
+<codeline><highlight class="normal">__device__<sp/>mscclpp::FifoDeviceHandle<sp/>fifo;</highlight></codeline>
+<codeline><highlight class="normal">__global__<sp/>void<sp/>gpuKernel()<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>...</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Only<sp/>one<sp/>thread<sp/>is<sp/>needed<sp/>for<sp/>the<sp/>followings</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>mscclpp::ProxyTrigger<sp/>trigger;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Send<sp/>a<sp/>custom<sp/>request:<sp/>&quot;1&quot;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>trigger.fst<sp/>=<sp/>1;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>fifo.push(trigger);</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Send<sp/>a<sp/>custom<sp/>request:<sp/>&quot;2&quot;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>trigger.fst<sp/>=<sp/>2;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>fifo.push(trigger);</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Send<sp/>a<sp/>custom<sp/>request:<sp/>&quot;0xdeadbeef&quot;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>trigger.fst<sp/>=<sp/>0xdeadbeef;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>fifo.push(trigger);</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>...</highlight></codeline>
+<codeline><highlight class="normal">}</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">//<sp/>Host-side<sp/>custom<sp/>proxy<sp/>service</highlight></codeline>
+<codeline><highlight class="normal">class<sp/>CustomProxyService<sp/>{</highlight></codeline>
+<codeline><highlight class="normal">private:</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>mscclpp::Proxy<sp/>proxy_;</highlight></codeline>
+<codeline><highlight class="normal">public:</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>CustomProxyService()<sp/>:<sp/>proxy_([&amp;](mscclpp::ProxyTrigger<sp/>trigger)<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>//<sp/>Custom<sp/>trigger<sp/>handler</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>if<sp/>(trigger.fst<sp/>==<sp/>1)<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>//<sp/>Handle<sp/>request<sp/>&quot;1&quot;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>}<sp/>else<sp/>if<sp/>(trigger.fst<sp/>==<sp/>2)<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>//<sp/>Handle<sp/>request<sp/>&quot;2&quot;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>}<sp/>else<sp/>if<sp/>(trigger.fst<sp/>==<sp/>0xdeadbeef)<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>//<sp/>Handle<sp/>request<sp/>&quot;0xdeadbeef&quot;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>}</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>},</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>[&amp;]()<sp/>{<sp/>/*<sp/>Empty<sp/>proxy<sp/>initializer<sp/>*/<sp/>})<sp/>{}</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>void<sp/>startProxy()<sp/>{<sp/>proxy_.start();<sp/>}</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>void<sp/>stopProxy()<sp/><sp/>{<sp/>proxy_.stop();<sp/>}</highlight></codeline>
+<codeline><highlight class="normal">};</highlight></codeline>
+</programlisting></center></center></center></para>
+<para><center><center><center>Customized proxies can be used for conducting a series of pre-defined data transfers within only a single trigger from GPU at runtime. This would be more efficient than sending a trigger for each data transfer one by one.</center></center></center></para>
+<para><center><center><center></center></center></center></para>
+</sect2>
+<sect2 id="index_1autotoc_md7">
+<title>Python Interfaces</title>
+<para><center><center><center> MSCCL++ provides Python bindings and interfaces, which simplifies integration with Python applications.</center></center></center></para>
+<para><center><center><center></center></center></center></para>
+</sect2>
+</sect1>
+<sect1 id="index_1autotoc_md8">
+<title>Contributing</title>
+<para><center><center><center> This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit <ulink url="https://cla.opensource.microsoft.com">https://cla.opensource.microsoft.com</ulink>.</center></center></center></para>
+<para><center><center><center>When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.</center></center></center></para>
+<para><center><center><center>This project has adopted the <ulink url="https://opensource.microsoft.com/codeofconduct/">Microsoft Open Source Code of Conduct</ulink>. For more information see the <ulink url="https://opensource.microsoft.com/codeofconduct/faq/">Code of Conduct FAQ</ulink> or contact <ulink url="mailto:opencode@microsoft.com">opencode@microsoft.com</ulink> with any additional questions or comments.</center></center></center></para>
+<para><center><center><center></center></center></center></para>
+</sect1>
+<sect1 id="index_1autotoc_md9">
+<title>Trademarks</title>
+<para><center><center><center> This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow <ulink url="https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general">Microsoft&apos;s Trademark &amp; Brand Guidelines</ulink>. Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos are subject to those third-party&apos;s policies. </center></center></center></para>
+</sect1>
+    </detaileddescription>
+  </compounddef>
+</doxygen>

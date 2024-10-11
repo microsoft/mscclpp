@@ -1,0 +1,103 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="unionNpKitEvent" kind="union" language="C++" prot="public">
+    <compoundname>NpKitEvent</compoundname>
+    <includes refid="npkit__struct_8hpp" local="no">npkit_struct.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="unionNpKitEvent_1ab05475973457f1795ba3828c72a63b12" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t NpKitEvent::bits[2]</definition>
+        <argsstring>[2]</argsstring>
+        <name>bits</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" line="12" column="12" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" bodystart="12" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionNpKitEvent_1af030b738f6ebff7a4305a6d498816099" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t NpKitEvent::type</definition>
+        <argsstring></argsstring>
+        <name>type</name>
+        <bitfield> 8</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" line="14" column="14" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" bodystart="14" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionNpKitEvent_1a551ad9c5a3edbc77d3c7572053ec1ea9" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t NpKitEvent::size</definition>
+        <argsstring></argsstring>
+        <name>size</name>
+        <bitfield> 32</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" line="15" column="14" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" bodystart="15" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionNpKitEvent_1a541531dfadf4422d01c73070538a0eb0" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t NpKitEvent::rsvd</definition>
+        <argsstring></argsstring>
+        <name>rsvd</name>
+        <bitfield> 24</bitfield>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" line="16" column="14" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" bodystart="16" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionNpKitEvent_1a34dfd2c8df91860efbac15e7fc6943f5" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t NpKitEvent::timestamp</definition>
+        <argsstring></argsstring>
+        <name>timestamp</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" line="17" column="14" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" bodystart="17" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="unionNpKitEvent_1a9569908320dc284e3abfcf333ff212f5" prot="public" static="no" mutable="no">
+        <type>struct NpKitEvent::@0</type>
+        <definition>struct NpKitEvent::@0 NpKitEvent::fields</definition>
+        <argsstring></argsstring>
+        <name>fields</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" line="18" column="10"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" line="11" column="17" bodyfile="/root/mscclpp/include/mscclpp/npkit/npkit_struct.hpp" bodystart="11" bodyend="19"/>
+    <listofallmembers>
+      <member refid="unionNpKitEvent_1ab05475973457f1795ba3828c72a63b12" prot="public" virt="non-virtual"><scope>NpKitEvent</scope><name>bits</name></member>
+      <member refid="unionNpKitEvent_1a9569908320dc284e3abfcf333ff212f5" prot="public" virt="non-virtual"><scope>NpKitEvent</scope><name>fields</name></member>
+      <member refid="unionNpKitEvent_1a541531dfadf4422d01c73070538a0eb0" prot="public" virt="non-virtual"><scope>NpKitEvent</scope><name>rsvd</name></member>
+      <member refid="unionNpKitEvent_1a551ad9c5a3edbc77d3c7572053ec1ea9" prot="public" virt="non-virtual"><scope>NpKitEvent</scope><name>size</name></member>
+      <member refid="unionNpKitEvent_1a34dfd2c8df91860efbac15e7fc6943f5" prot="public" virt="non-virtual"><scope>NpKitEvent</scope><name>timestamp</name></member>
+      <member refid="unionNpKitEvent_1af030b738f6ebff7a4305a6d498816099" prot="public" virt="non-virtual"><scope>NpKitEvent</scope><name>type</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

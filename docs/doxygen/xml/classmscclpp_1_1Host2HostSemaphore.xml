@@ -1,0 +1,188 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1Host2HostSemaphore" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::Host2HostSemaphore</compoundname>
+    <basecompoundref refid="classmscclpp_1_1BaseSemaphore" prot="public" virt="non-virtual">mscclpp::BaseSemaphore&lt; std::default_delete, std::default_delete &gt;</basecompoundref>
+    <includes refid="semaphore_8hpp" local="no">semaphore.hpp</includes>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1Host2HostSemaphore_1ac59aca041cd91d4b673a0c545d22db2d" prot="private" static="no" mutable="no">
+        <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Connection" kindref="compound">Connection</ref> &gt;</type>
+        <definition>std::shared_ptr&lt;Connection&gt; mscclpp::Host2HostSemaphore::connection_</definition>
+        <argsstring></argsstring>
+        <name>connection_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/semaphore.hpp" line="116" column="19" bodyfile="/root/mscclpp/include/mscclpp/semaphore.hpp" bodystart="116" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1Host2HostSemaphore_1abeaaf1af313fc3e9d9ab6447538918bd" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Host2HostSemaphore::Host2HostSemaphore</definition>
+        <argsstring>(Communicator &amp;communicator, std::shared_ptr&lt; Connection &gt; connection)</argsstring>
+        <name>Host2HostSemaphore</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1Communicator" kindref="compound">Communicator</ref> &amp;</type>
+          <declname>communicator</declname>
+        </param>
+        <param>
+          <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Connection" kindref="compound">Connection</ref> &gt;</type>
+          <declname>connection</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Constructor <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>communicator</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The communicator. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>connection</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The connection associated with this semaphore. <ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a8c7ec76d5a330fb526292c4cd0111993" kindref="member">Transport::CudaIpc</ref> is not allowed for <ref refid="classmscclpp_1_1Host2HostSemaphore" kindref="compound">Host2HostSemaphore</ref>. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/semaphore.hpp" line="98" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Host2HostSemaphore_1a0a908a5f08d49f59f2f2f9d2e3ba3798" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Connection" kindref="compound">Connection</ref> &gt;</type>
+        <definition>std::shared_ptr&lt;Connection&gt; mscclpp::Host2HostSemaphore::connection</definition>
+        <argsstring>()</argsstring>
+        <name>connection</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Returns the connection. <simplesect kind="return"><para>The connection associated with this semaphore. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/semaphore.hpp" line="102" column="19"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Host2HostSemaphore_1a620ff6ee7990f256610bcc42ef06f017" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Host2HostSemaphore::signal</definition>
+        <argsstring>()</argsstring>
+        <name>signal</name>
+        <briefdescription>
+<para>Signal the remote host. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/semaphore.hpp" line="105" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Host2HostSemaphore_1ae089f5f8fca1603c9ec3b9a2a4145e1a" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>bool</type>
+        <definition>bool mscclpp::Host2HostSemaphore::poll</definition>
+        <argsstring>()</argsstring>
+        <name>poll</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Check if the remote host has signaled. <simplesect kind="return"><para>true if the remote host has signaled. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/semaphore.hpp" line="109" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Host2HostSemaphore_1a276ad1c97f216d626349e93029f28f72" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Host2HostSemaphore::wait</definition>
+        <argsstring>(int64_t maxSpinCount=10000000)</argsstring>
+        <name>wait</name>
+        <param>
+          <type>int64_t</type>
+          <declname>maxSpinCount</declname>
+          <defval>10000000</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Wait for the remote host to signal. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>maxSpinCount</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The maximum number of spin counts before throwing an exception. Never throws if negative. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/semaphore.hpp" line="113" column="8"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>A semaphore for sending signals from the local host to a remote host. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <inheritancegraph>
+      <node id="2">
+        <label>mscclpp::BaseSemaphore&lt; std::default_delete, std::default_delete &gt;</label>
+        <link refid="classmscclpp_1_1BaseSemaphore"/>
+      </node>
+      <node id="1">
+        <label>mscclpp::Host2HostSemaphore</label>
+        <link refid="classmscclpp_1_1Host2HostSemaphore"/>
+        <childnode refid="2" relation="public-inheritance">
+        </childnode>
+      </node>
+    </inheritancegraph>
+    <collaborationgraph>
+      <node id="3">
+        <label>mscclpp::NonblockingFuture&lt; mscclpp::RegisteredMemory &gt;</label>
+        <link refid="classmscclpp_1_1NonblockingFuture"/>
+      </node>
+      <node id="2">
+        <label>mscclpp::BaseSemaphore&lt; std::default_delete, std::default_delete &gt;</label>
+        <link refid="classmscclpp_1_1BaseSemaphore"/>
+        <childnode refid="3" relation="usage">
+          <edgelabel>remoteInboundSemaphoreIdsRegMem_</edgelabel>
+        </childnode>
+      </node>
+      <node id="1">
+        <label>mscclpp::Host2HostSemaphore</label>
+        <link refid="classmscclpp_1_1Host2HostSemaphore"/>
+        <childnode refid="2" relation="public-inheritance">
+        </childnode>
+      </node>
+    </collaborationgraph>
+    <location file="/root/mscclpp/include/mscclpp/semaphore.hpp" line="92" column="48" bodyfile="/root/mscclpp/include/mscclpp/semaphore.hpp" bodystart="92" bodyend="117"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1BaseSemaphore_1a1f438a138ad58311a3a97966f647b5c2" prot="public" virt="non-virtual"><scope>mscclpp::Host2HostSemaphore</scope><name>BaseSemaphore</name></member>
+      <member refid="classmscclpp_1_1Host2HostSemaphore_1a0a908a5f08d49f59f2f2f9d2e3ba3798" prot="public" virt="non-virtual"><scope>mscclpp::Host2HostSemaphore</scope><name>connection</name></member>
+      <member refid="classmscclpp_1_1Host2HostSemaphore_1ac59aca041cd91d4b673a0c545d22db2d" prot="private" virt="non-virtual"><scope>mscclpp::Host2HostSemaphore</scope><name>connection_</name></member>
+      <member refid="classmscclpp_1_1BaseSemaphore_1a13cc1511293d69d57f2bae285844129c" prot="protected" virt="non-virtual"><scope>mscclpp::Host2HostSemaphore</scope><name>expectedInboundSemaphore_</name></member>
+      <member refid="classmscclpp_1_1Host2HostSemaphore_1abeaaf1af313fc3e9d9ab6447538918bd" prot="public" virt="non-virtual"><scope>mscclpp::Host2HostSemaphore</scope><name>Host2HostSemaphore</name></member>
+      <member refid="classmscclpp_1_1BaseSemaphore_1aa3f8d454e6f289f7fc004107b3698b90" prot="protected" virt="non-virtual"><scope>mscclpp::Host2HostSemaphore</scope><name>localInboundSemaphore_</name></member>
+      <member refid="classmscclpp_1_1BaseSemaphore_1aec4ea46dd287fbc9c619dcc9a2df2886" prot="protected" virt="non-virtual"><scope>mscclpp::Host2HostSemaphore</scope><name>outboundSemaphore_</name></member>
+      <member refid="classmscclpp_1_1Host2HostSemaphore_1ae089f5f8fca1603c9ec3b9a2a4145e1a" prot="public" virt="non-virtual"><scope>mscclpp::Host2HostSemaphore</scope><name>poll</name></member>
+      <member refid="classmscclpp_1_1BaseSemaphore_1a5f3a599ecb971f2613df2b0cb9467a55" prot="protected" virt="non-virtual"><scope>mscclpp::Host2HostSemaphore</scope><name>remoteInboundSemaphoreIdsRegMem_</name></member>
+      <member refid="classmscclpp_1_1Host2HostSemaphore_1a620ff6ee7990f256610bcc42ef06f017" prot="public" virt="non-virtual"><scope>mscclpp::Host2HostSemaphore</scope><name>signal</name></member>
+      <member refid="classmscclpp_1_1Host2HostSemaphore_1a276ad1c97f216d626349e93029f28f72" prot="public" virt="non-virtual"><scope>mscclpp::Host2HostSemaphore</scope><name>wait</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

@@ -1,0 +1,173 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1Fifo" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::Fifo</compoundname>
+    <includes refid="fifo_8hpp" local="no">fifo.hpp</includes>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1Fifo_1a4d4ed6ff99dd7bba3d7b389c50496ba1" prot="private" static="no" mutable="no">
+        <type>std::unique_ptr&lt; Impl &gt;</type>
+        <definition>std::unique_ptr&lt;Impl&gt; mscclpp::Fifo::pimpl</definition>
+        <argsstring></argsstring>
+        <name>pimpl</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo.hpp" line="51" column="19" bodyfile="/root/mscclpp/include/mscclpp/fifo.hpp" bodystart="50" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1Fifo_1a5bbe4b106acc409c9b3fe56129817a46" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Fifo::Fifo</definition>
+        <argsstring>(int size=DEFAULT_FIFO_SIZE)</argsstring>
+        <name>Fifo</name>
+        <param>
+          <type>int</type>
+          <declname>size</declname>
+          <defval><ref refid="namespacemscclpp_1aa40b9c69ba9b54d1f87f52573162c31c" kindref="member">DEFAULT_FIFO_SIZE</ref></defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Constructs a new <ref refid="classmscclpp_1_1Fifo" kindref="compound">Fifo</ref> object. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>size</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The number of entires in the FIFO. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo.hpp" line="22" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Fifo_1ab8efdb24c7dabd3ed918275fc2b490fe" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Fifo::~Fifo</definition>
+        <argsstring>()</argsstring>
+        <name>~Fifo</name>
+        <briefdescription>
+<para>Destroys the <ref refid="classmscclpp_1_1Fifo" kindref="compound">Fifo</ref> object. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo.hpp" line="25" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Fifo_1a2ec56c9b4679f2eb3be575e5a22ee940" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="structmscclpp_1_1ProxyTrigger" kindref="compound">ProxyTrigger</ref></type>
+        <definition>ProxyTrigger mscclpp::Fifo::poll</definition>
+        <argsstring>()</argsstring>
+        <name>poll</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Polls the FIFO for a trigger.</para>
+<para>Returns <ref refid="structmscclpp_1_1ProxyTrigger" kindref="compound">ProxyTrigger</ref> which is the trigger at the head of fifo. </para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo.hpp" line="30" column="16"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Fifo_1a1928c4910d23d3e9633e3330d3fd8a56" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Fifo::pop</definition>
+        <argsstring>()</argsstring>
+        <name>pop</name>
+        <briefdescription>
+<para>Pops a trigger from the FIFO. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo.hpp" line="33" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Fifo_1a8c6bf62637122f109737db0635cf97c7" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Fifo::flushTail</definition>
+        <argsstring>(bool sync=false)</argsstring>
+        <name>flushTail</name>
+        <param>
+          <type>bool</type>
+          <declname>sync</declname>
+          <defval>false</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Flushes the tail of the FIFO.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>sync</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>If true, waits for the flush to complete before returning. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo.hpp" line="38" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Fifo_1a45c9b3cb33d95e482dee25441dec99e7" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type>int</type>
+        <definition>int mscclpp::Fifo::size</definition>
+        <argsstring>() const</argsstring>
+        <name>size</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Return the FIFO size. <simplesect kind="return"><para>The FIFO size. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo.hpp" line="42" column="7"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Fifo_1a916061cedcd24241ef0a615a5e8b8729" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="structmscclpp_1_1FifoDeviceHandle" kindref="compound">FifoDeviceHandle</ref></type>
+        <definition>FifoDeviceHandle mscclpp::Fifo::deviceHandle</definition>
+        <argsstring>()</argsstring>
+        <name>deviceHandle</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Returns a <ref refid="structmscclpp_1_1FifoDeviceHandle" kindref="compound">FifoDeviceHandle</ref> object representing the device FIFO.</para>
+<para><simplesect kind="return"><para>A <ref refid="structmscclpp_1_1FifoDeviceHandle" kindref="compound">FifoDeviceHandle</ref> object representing the device FIFO. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo.hpp" line="47" column="20"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>A class representing a host proxy FIFO that can consume work elements pushed by device threads. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/fifo.hpp" line="18" column="11" bodyfile="/root/mscclpp/include/mscclpp/fifo.hpp" bodystart="18" bodyend="52"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1Fifo_1a916061cedcd24241ef0a615a5e8b8729" prot="public" virt="non-virtual"><scope>mscclpp::Fifo</scope><name>deviceHandle</name></member>
+      <member refid="classmscclpp_1_1Fifo_1a5bbe4b106acc409c9b3fe56129817a46" prot="public" virt="non-virtual"><scope>mscclpp::Fifo</scope><name>Fifo</name></member>
+      <member refid="classmscclpp_1_1Fifo_1a8c6bf62637122f109737db0635cf97c7" prot="public" virt="non-virtual"><scope>mscclpp::Fifo</scope><name>flushTail</name></member>
+      <member refid="classmscclpp_1_1Fifo_1a4d4ed6ff99dd7bba3d7b389c50496ba1" prot="private" virt="non-virtual"><scope>mscclpp::Fifo</scope><name>pimpl</name></member>
+      <member refid="classmscclpp_1_1Fifo_1a2ec56c9b4679f2eb3be575e5a22ee940" prot="public" virt="non-virtual"><scope>mscclpp::Fifo</scope><name>poll</name></member>
+      <member refid="classmscclpp_1_1Fifo_1a1928c4910d23d3e9633e3330d3fd8a56" prot="public" virt="non-virtual"><scope>mscclpp::Fifo</scope><name>pop</name></member>
+      <member refid="classmscclpp_1_1Fifo_1a45c9b3cb33d95e482dee25441dec99e7" prot="public" virt="non-virtual"><scope>mscclpp::Fifo</scope><name>size</name></member>
+      <member refid="classmscclpp_1_1Fifo_1ab8efdb24c7dabd3ed918275fc2b490fe" prot="public" virt="non-virtual"><scope>mscclpp::Fifo</scope><name>~Fifo</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

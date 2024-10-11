@@ -1,0 +1,189 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="README_8md" kind="file" language="Markdown">
+    <compoundname>README.md</compoundname>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline><highlight class="normal">#<sp/>MSCCL++</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">[![Latest<sp/>Release](https://img.shields.io/github/release/microsoft/mscclpp.svg)](https://github.com/microsoft/mscclpp/releases/latest)</highlight></codeline>
+<codeline><highlight class="normal">[![License](https://img.shields.io/github/license/microsoft/mscclpp.svg)](LICENSE)</highlight></codeline>
+<codeline><highlight class="normal">[![CodeQL](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml)</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">|<sp/>Pipelines<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>|<sp/>Build<sp/>Status<sp/><sp/><sp/><sp/><sp/><sp/>|</highlight></codeline>
+<codeline><highlight class="normal">|--------------------------|-------------------|</highlight></codeline>
+<codeline><highlight class="normal">|<sp/>Unit<sp/>Tests<sp/>(CUDA)<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>|<sp/>[![Build<sp/>Status](https://dev.azure.com/binyli/HPC/_apis/build/status%2Fmscclpp-ut?branchName=main)](https://dev.azure.com/binyli/HPC/_build/latest?definitionId=4&amp;branchName=main)<sp/>|</highlight></codeline>
+<codeline><highlight class="normal">|<sp/>Integration<sp/>Tests<sp/>(CUDA)<sp/>|<sp/>[![Build<sp/>Status](https://dev.azure.com/binyli/HPC/_apis/build/status%2Fmscclpp-test?branchName=main)](https://dev.azure.com/binyli/HPC/_build/latest?definitionId=3&amp;branchName=main)<sp/>|</highlight></codeline>
+<codeline><highlight class="normal">|<sp/>Integration<sp/>Tests<sp/>(ROCm)<sp/>|<sp/>[![Build<sp/>Status](https://dev.azure.com/binyli/HPC/_apis/build/status%2Fmscclpp-test-rocm?branchName=main)](https://dev.azure.com/binyli/HPC/_build/latest?definitionId=7&amp;branchName=main)<sp/>|</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">A<sp/>GPU-driven<sp/>communication<sp/>stack<sp/>for<sp/>scalable<sp/>AI<sp/>applications.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">See<sp/>[Quick<sp/>Start](docs/quickstart.md)<sp/>to<sp/>quickly<sp/>get<sp/>started.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">##<sp/>Overview</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">MSCCL++<sp/>redefines<sp/>inter-GPU<sp/>communication<sp/>interfaces,<sp/>thereby<sp/>delivering<sp/>a<sp/>highly<sp/>efficient<sp/>and<sp/>customizable<sp/>communication<sp/>stack<sp/>for<sp/>distributed<sp/>GPU<sp/>applications.<sp/>Its<sp/>design<sp/>is<sp/>specifically<sp/>tailored<sp/>to<sp/>accommodate<sp/>diverse<sp/>performance<sp/>optimization<sp/>scenarios<sp/>often<sp/>encountered<sp/>in<sp/>state-of-the-art<sp/>AI<sp/>applications.<sp/>Figure<sp/>below<sp/>provides<sp/>a<sp/>high-level<sp/>overview<sp/>of<sp/>MSCCL++<sp/>abstractions<sp/>in<sp/>CUDA,<sp/>C,<sp/>and<sp/>Python.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">|<sp/>&lt;center&gt;MSCCL++<sp/>Abstractions<sp/>Overview<sp/>|</highlight></codeline>
+<codeline><highlight class="normal">|-------------------------------|</highlight></codeline>
+<codeline><highlight class="normal">|<sp/>&lt;img<sp/>src=&quot;./docs/figs/abstractions.png&quot;<sp/>alt=&quot;MSCCL++<sp/>Abstractions&quot;<sp/>style=&quot;width:<sp/>800px;&quot;/&gt;<sp/>|</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">The<sp/>followings<sp/>highlight<sp/>the<sp/>key<sp/>features<sp/>of<sp/>MSCCL++.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">*<sp/>**Light-weight<sp/>and<sp/>multi-layer<sp/>abstractions.**<sp/>MSCCL++<sp/>provides<sp/>communication<sp/>abstractions<sp/>at<sp/>lowest<sp/>level<sp/>close<sp/>to<sp/>hardware<sp/>and<sp/>at<sp/>the<sp/>highest<sp/>level<sp/>close<sp/>to<sp/>application<sp/>API.<sp/>The<sp/>lowest<sp/>level<sp/>of<sp/>abstraction<sp/>is<sp/>ultra<sp/>light<sp/>weight<sp/>which<sp/>enables<sp/>a<sp/>user<sp/>to<sp/>implement<sp/>logics<sp/>of<sp/>data<sp/>movement<sp/>for<sp/>a<sp/>collective<sp/>operation<sp/>such<sp/>as<sp/>AllReduce<sp/>inside<sp/>a<sp/>GPU<sp/>kernel<sp/>extremely<sp/>efficiently<sp/>without<sp/>worrying<sp/>about<sp/>memory<sp/>ordering<sp/>of<sp/>different<sp/>ops.<sp/>The<sp/>modularity<sp/>of<sp/>MSCCL++<sp/>enables<sp/>a<sp/>user<sp/>to<sp/>construct<sp/>the<sp/>building<sp/>blocks<sp/>of<sp/>MSCCL++<sp/>in<sp/>a<sp/>high<sp/>level<sp/>abstraction<sp/>in<sp/>Python<sp/>and<sp/>feed<sp/>them<sp/>to<sp/>a<sp/>CUDA<sp/>kernel<sp/>in<sp/>order<sp/>to<sp/>facilitate<sp/>the<sp/>user&apos;s<sp/>productivity.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">*<sp/>**1-sided<sp/>0-copy<sp/>synchronous<sp/>and<sp/>asynchronous<sp/>abstracts.**<sp/>MSCCL++<sp/>provides<sp/>fine-grained<sp/>synchronous<sp/>and<sp/>asynchronous<sp/>0-copy<sp/>1-sided<sp/>abstracts<sp/>for<sp/>communication<sp/>primitives<sp/>such<sp/>as<sp/>`put()`,<sp/>`get()`,<sp/>`signal()`,<sp/>`flush()`,<sp/>and<sp/>`wait()`.<sp/>The<sp/>1-sided<sp/>abstractions<sp/>allows<sp/>a<sp/>user<sp/>to<sp/>asynchronously<sp/>`put()`<sp/>their<sp/>data<sp/>on<sp/>the<sp/>remote<sp/>GPU<sp/>as<sp/>soon<sp/>as<sp/>it<sp/>is<sp/>ready<sp/>without<sp/>requiring<sp/>the<sp/>remote<sp/>side<sp/>to<sp/>issue<sp/>any<sp/>receive<sp/>instruction.<sp/>This<sp/>enables<sp/>users<sp/>to<sp/>easily<sp/>implement<sp/>flexible<sp/>communication<sp/>logics,<sp/>such<sp/>as<sp/>overlapping<sp/>communication<sp/>with<sp/>computation,<sp/>or<sp/>implementing<sp/>customized<sp/>collective<sp/>communication<sp/>algorithms<sp/>without<sp/>worrying<sp/>about<sp/>potential<sp/>deadlocks.<sp/>Additionally,<sp/>the<sp/>0-copy<sp/>capability<sp/>enables<sp/>MSCCL++<sp/>to<sp/>directly<sp/>transfer<sp/>data<sp/>between<sp/>user&apos;s<sp/>buffers<sp/>without<sp/>using<sp/>intermediate<sp/>internal<sp/>buffers<sp/>which<sp/>saves<sp/>GPU<sp/>bandwidth<sp/>and<sp/>memory<sp/>capacity.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">*<sp/>**Unified<sp/>abstractions<sp/>for<sp/>different<sp/>interconnection<sp/>hardware.**<sp/>MSCCL++<sp/>provides<sp/>consistent<sp/>abstractions<sp/>regardless<sp/>of<sp/>the<sp/>location<sp/>of<sp/>the<sp/>remote<sp/>GPU<sp/>(either<sp/>on<sp/>the<sp/>local<sp/>node<sp/>or<sp/>on<sp/>a<sp/>remote<sp/>node)<sp/>or<sp/>the<sp/>underlying<sp/>link<sp/>(either<sp/>NVLink/xGMI<sp/>or<sp/>InfiniBand).<sp/>This<sp/>simplifies<sp/>the<sp/>code<sp/>for<sp/>inter-GPU<sp/>communication,<sp/>which<sp/>is<sp/>often<sp/>complex<sp/>due<sp/>to<sp/>memory<sp/>ordering<sp/>of<sp/>GPU/CPU<sp/>read/writes<sp/>and<sp/>therefore,<sp/>is<sp/>error-prone.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">##<sp/>Performance</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">While<sp/>the<sp/>power<sp/>of<sp/>MSCCL++<sp/>is<sp/>fully<sp/>realized<sp/>with<sp/>application-specific<sp/>optimization,<sp/>it<sp/>still<sp/>delivers<sp/>performance<sp/>benefits<sp/>even<sp/>for<sp/>collective<sp/>communication<sp/>operations.<sp/>The<sp/>following<sp/>figures<sp/>provide<sp/>a<sp/>comparison<sp/>of<sp/>the<sp/>AllReduce<sp/>throughput<sp/>of<sp/>MSCCL++<sp/>against<sp/>NCCL<sp/>2.19.3.<sp/>This<sp/>benchmark<sp/>was<sp/>tested<sp/>over<sp/>two<sp/>[Azure<sp/>NDmv4<sp/>SKUs](https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series)<sp/>(8<sp/>A100-80G<sp/>GPUs<sp/>per<sp/>node).</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">The<sp/>key<sp/>motivation<sp/>behind<sp/>these<sp/>results<sp/>is<sp/>scaling<sp/>of<sp/>inference<sp/>for<sp/>LLM<sp/>models<sp/>using<sp/>tensor<sp/>parallelism.<sp/>LLM<sp/>requests<sp/>usually<sp/>are<sp/>executed<sp/>in<sp/>two<sp/>phases:<sp/>prompt<sp/>processing<sp/>and<sp/>token<sp/>sampling.<sp/>The<sp/>prompt<sp/>processing<sp/>uses<sp/>a<sp/>large<sp/>batch<sp/>size<sp/>that<sp/>is<sp/>usually<sp/>equal<sp/>to<sp/>a<sp/>request<sp/>context<sp/>length<sp/>and<sp/>the<sp/>corresponding<sp/>AllReduce<sp/>size<sp/>is<sp/>`len_context*dim_hidden*sizeof(fp16)`.<sp/>For<sp/>a<sp/>context<sp/>length<sp/>of<sp/>2048<sp/>with<sp/>a<sp/>hidden<sp/>dimension<sp/>of<sp/>12288<sp/>(GPT-3<sp/>size),<sp/>the<sp/>AllReduce<sp/>size<sp/>is<sp/>48MB.<sp/>The<sp/>token<sp/>sampling<sp/>uses<sp/>a<sp/>smaller<sp/>batch<sp/>size<sp/>which<sp/>corresponds<sp/>to<sp/>concurrent<sp/>user<sp/>requests<sp/>in<sp/>the<sp/>system<sp/>and<sp/>therefore,<sp/>the<sp/>AllReduce<sp/>size<sp/>is<sp/>`batch_size*dim_hidden*sizeof(fp16)`.<sp/>For<sp/>a<sp/>concurrency<sp/>of<sp/>16<sp/>users,<sp/>the<sp/>AllReduce<sp/>size<sp/>is<sp/>384KB.<sp/>As<sp/>the<sp/>figures<sp/>below<sp/>demonstrates,<sp/>MSCCL++<sp/>provides<sp/>significant<sp/>speed<sp/>up<sp/>over<sp/>NCCL<sp/>which<sp/>is<sp/>crucial<sp/>for<sp/>efficiency<sp/>of<sp/>serving<sp/>LLMs<sp/>at<sp/>large<sp/>scale.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">|<sp/>&lt;center&gt;Single-node<sp/>AllReduce<sp/>|<sp/>&lt;center&gt;Two-node<sp/>AllReduce<sp/>|</highlight></codeline>
+<codeline><highlight class="normal">|-------------------------------|----------------------------|</highlight></codeline>
+<codeline><highlight class="normal">|<sp/>&lt;img<sp/>src=&quot;./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_1.jpeg&quot;<sp/>alt=&quot;MSCCL++<sp/>vs<sp/>NCCL<sp/>AllReduce<sp/>(Single-node)&quot;<sp/>style=&quot;width:<sp/>400px;&quot;/&gt;<sp/>|<sp/>&lt;img<sp/>src=&quot;./docs/figs/mscclpp_vs_nccl_comparison_num_nodes_2.jpeg&quot;<sp/>alt=&quot;MSCCL++<sp/>vs<sp/>NCCL<sp/>AllReduce<sp/>(Two-node)&quot;<sp/>style=&quot;width:<sp/>400px;&quot;/&gt;<sp/>|</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">##<sp/>Key<sp/>Concepts</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">The<sp/>following<sp/>highlights<sp/>key<sp/>concepts<sp/>of<sp/>MSCCL++.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">###<sp/>On-GPU<sp/>Communication<sp/>Interfaces:<sp/>Channels</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">MSCCL++<sp/>provides<sp/>peer-to-peer<sp/>communication<sp/>methods<sp/>between<sp/>GPUs.<sp/>A<sp/>peer-to-peer<sp/>connection<sp/>between<sp/>two<sp/>GPUs<sp/>is<sp/>called<sp/>a<sp/>*Channel*.<sp/>Channels<sp/>are<sp/>constructed<sp/>by<sp/>MSCCL++<sp/>host-side<sp/>interfaces<sp/>and<sp/>copied<sp/>to<sp/>GPUs<sp/>during<sp/>initialization.<sp/>Channels<sp/>provide<sp/>*GPU-side<sp/>interfaces*,<sp/>which<sp/>means<sp/>that<sp/>all<sp/>communication<sp/>methods<sp/>are<sp/>defined<sp/>as<sp/>a<sp/>device<sp/>function<sp/>to<sp/>be<sp/>called<sp/>from<sp/>a<sp/>GPU<sp/>kernel<sp/>code.<sp/>For<sp/>example,<sp/>the<sp/>`put()`<sp/>method<sp/>in<sp/>the<sp/>following<sp/>example<sp/>copies<sp/>1KB<sp/>data<sp/>from<sp/>the<sp/>local<sp/>GPU<sp/>to<sp/>a<sp/>remote<sp/>GPU.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">```cpp</highlight></codeline>
+<codeline><highlight class="normal">//<sp/>`ProxyChannel`<sp/>will<sp/>be<sp/>explained<sp/>in<sp/>the<sp/>following<sp/>section.</highlight></codeline>
+<codeline><highlight class="normal">__device__<sp/>mscclpp::DeviceHandle&lt;mscclpp::SimpleProxyChannel&gt;<sp/>channel;</highlight></codeline>
+<codeline><highlight class="normal">__global__<sp/>void<sp/>gpuKernel()<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>...</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Only<sp/>one<sp/>thread<sp/>is<sp/>needed<sp/>for<sp/>this<sp/>method.</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>channel.put(/*dstOffset=*/<sp/>0,<sp/>/*srcOffset=*/<sp/>0,<sp/>/*size=*/<sp/>1024);</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>...</highlight></codeline>
+<codeline><highlight class="normal">}</highlight></codeline>
+<codeline><highlight class="normal">```</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">MSCCL++<sp/>also<sp/>provides<sp/>efficient<sp/>synchronization<sp/>methods,<sp/>`signal()`,<sp/>`flush()`,<sp/>and<sp/>`wait()`.<sp/>For<sp/>example,<sp/>we<sp/>can<sp/>implement<sp/>a<sp/>simple<sp/>barrier<sp/>between<sp/>two<sp/>ranks<sp/>(peer-to-peer<sp/>connected<sp/>through<sp/>`channel`)<sp/>as<sp/>follows.<sp/>Explanation<sp/>of<sp/>each<sp/>method<sp/>is<sp/>inlined.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">```cpp</highlight></codeline>
+<codeline><highlight class="normal">//<sp/>Only<sp/>one<sp/>thread<sp/>is<sp/>needed<sp/>for<sp/>this<sp/>function.</highlight></codeline>
+<codeline><highlight class="normal">__device__<sp/>void<sp/>barrier()<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Inform<sp/>the<sp/>peer<sp/>GPU<sp/>that<sp/>I<sp/>have<sp/>arrived<sp/>at<sp/>this<sp/>point.</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>channel.signal();</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Flush<sp/>the<sp/>previous<sp/>signal()<sp/>call,<sp/>which<sp/>will<sp/>wait<sp/>for<sp/>completion<sp/>of<sp/>signaling.</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>channel.flush();</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Wait<sp/>for<sp/>the<sp/>peer<sp/>GPU<sp/>to<sp/>call<sp/>signal().</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>channel.wait();</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Now<sp/>this<sp/>thread<sp/>is<sp/>synchronized<sp/>with<sp/>the<sp/>remote<sp/>GPU’s<sp/>thread.</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Users<sp/>may<sp/>call<sp/>a<sp/>local<sp/>synchronize<sp/>functions<sp/>(e.g.,<sp/>__syncthreads())</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>to<sp/>synchronize<sp/>other<sp/>local<sp/>threads<sp/>as<sp/>well<sp/>with<sp/>the<sp/>remote<sp/>side.</highlight></codeline>
+<codeline><highlight class="normal">}</highlight></codeline>
+<codeline><highlight class="normal">```</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">MSCCL++<sp/>provides<sp/>consistent<sp/>interfaces,<sp/>i.e.,<sp/>the<sp/>above<sp/>interfaces<sp/>are<sp/>used<sp/>regardless<sp/>of<sp/>the<sp/>location<sp/>of<sp/>the<sp/>remote<sp/>GPU<sp/>(either<sp/>on<sp/>the<sp/>local<sp/>node<sp/>or<sp/>on<sp/>a<sp/>remote<sp/>node)<sp/>or<sp/>the<sp/>underlying<sp/>link<sp/>(either<sp/>NVLink/xGMI<sp/>or<sp/>InfiniBand).</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">###<sp/>ProxyChannel<sp/>and<sp/>SmChannel</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">MSCCL++<sp/>delivers<sp/>two<sp/>types<sp/>of<sp/>channels,<sp/>**ProxyChannel**<sp/>and<sp/>**SmChannel**.<sp/>`ProxyChannel`<sp/>provides<sp/>(R)DMA-based<sp/>data<sp/>copy<sp/>and<sp/>synchronization<sp/>methods.<sp/>When<sp/>called,<sp/>these<sp/>methods<sp/>send/receive<sp/>a<sp/>signal<sp/>to/from<sp/>a<sp/>host-side<sp/>proxy<sp/>(hence<sp/>the<sp/>name<sp/>`ProxyChannel`),<sp/>which<sp/>will<sp/>trigger<sp/>(R)DMA<sp/>(such<sp/>as<sp/>`cudaMemcpy*`<sp/>or<sp/>`ibv_post_send`)<sp/>or<sp/>issue<sp/>synchronization<sp/>methods<sp/>(such<sp/>as<sp/>`cudaStreamSynchronize`<sp/>or<sp/>`ibv_poll_cq`).<sp/>Since<sp/>the<sp/>key<sp/>functionalities<sp/>are<sp/>run<sp/>by<sp/>the<sp/>proxy,<sp/>`ProxyChannel`<sp/>requires<sp/>only<sp/>a<sp/>single<sp/>GPU<sp/>thread<sp/>to<sp/>call<sp/>its<sp/>methods.<sp/>See<sp/>all<sp/>`ProxyChannel`<sp/>methods<sp/>from<sp/>[here](./include/mscclpp/proxy_channel_device.hpp).</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">On<sp/>the<sp/>other<sp/>hand,<sp/>`SmChannel`<sp/>provides<sp/>memory-mapping-based<sp/>copy<sp/>and<sp/>synchronization<sp/>methods.<sp/>When<sp/>called,<sp/>these<sp/>methods<sp/>will<sp/>directly<sp/>use<sp/>GPU<sp/>threads<sp/>to<sp/>read/write<sp/>from/to<sp/>the<sp/>remote<sp/>GPU&apos;s<sp/>memory<sp/>space.<sp/>Comparing<sp/>against<sp/>`ProxyChannel`,<sp/>`SmChannel`<sp/>is<sp/>especially<sp/>performant<sp/>for<sp/>low-latency<sp/>scenarios,<sp/>while<sp/>it<sp/>may<sp/>need<sp/>many<sp/>GPU<sp/>threads<sp/>to<sp/>call<sp/>copying<sp/>methods<sp/>at<sp/>the<sp/>same<sp/>time<sp/>to<sp/>achieve<sp/>high<sp/>copying<sp/>bandwidth.<sp/>See<sp/>all<sp/>`SmChannel`<sp/>methods<sp/>from<sp/>[here](./include/mscclpp/sm_channel_device.hpp).</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">###<sp/>Host-Side<sp/>Communication<sp/>Proxy</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">MSCCL++<sp/>provides<sp/>a<sp/>default<sp/>implementation<sp/>of<sp/>a<sp/>host-side<sp/>proxy<sp/>for<sp/>ProxyChannels,<sp/>which<sp/>is<sp/>a<sp/>background<sp/>host<sp/>thread<sp/>that<sp/>busy<sp/>polls<sp/>triggers<sp/>from<sp/>GPUs<sp/>and<sp/>conducts<sp/>functionalities<sp/>accordingly.<sp/>For<sp/>example,<sp/>the<sp/>following<sp/>is<sp/>a<sp/>typical<sp/>host-side<sp/>code<sp/>for<sp/>MSCCL++.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">```cpp</highlight></codeline>
+<codeline><highlight class="normal">//<sp/>Bootstrap:<sp/>initialize<sp/>control-plane<sp/>connections<sp/>between<sp/>all<sp/>ranks</highlight></codeline>
+<codeline><highlight class="normal">auto<sp/>bootstrap<sp/>=<sp/>std::make_shared&lt;mscclpp::TcpBootstrap&gt;(rank,<sp/>world_size);</highlight></codeline>
+<codeline><highlight class="normal">//<sp/>Create<sp/>a<sp/>communicator<sp/>for<sp/>connection<sp/>setup</highlight></codeline>
+<codeline><highlight class="normal">mscclpp::Communicator<sp/>comm(bootstrap);</highlight></codeline>
+<codeline><highlight class="normal">//<sp/>Setup<sp/>connections<sp/>here<sp/>using<sp/>`comm`</highlight></codeline>
+<codeline><highlight class="normal">...</highlight></codeline>
+<codeline><highlight class="normal">//<sp/>Construct<sp/>the<sp/>default<sp/>proxy</highlight></codeline>
+<codeline><highlight class="normal">mscclpp::ProxyService<sp/>proxyService();</highlight></codeline>
+<codeline><highlight class="normal">//<sp/>Start<sp/>the<sp/>proxy</highlight></codeline>
+<codeline><highlight class="normal">proxyService.startProxy();</highlight></codeline>
+<codeline><highlight class="normal">//<sp/>Run<sp/>the<sp/>user<sp/>application,<sp/>i.e.,<sp/>launch<sp/>GPU<sp/>kernels<sp/>here</highlight></codeline>
+<codeline><highlight class="normal">...</highlight></codeline>
+<codeline><highlight class="normal">//<sp/>Stop<sp/>the<sp/>proxy<sp/>after<sp/>the<sp/>application<sp/>is<sp/>finished</highlight></codeline>
+<codeline><highlight class="normal">proxyService.stopProxy();</highlight></codeline>
+<codeline><highlight class="normal">```</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">While<sp/>the<sp/>default<sp/>implementation<sp/>already<sp/>enables<sp/>any<sp/>kinds<sp/>of<sp/>communication,<sp/>MSCCL++<sp/>also<sp/>supports<sp/>users<sp/>to<sp/>easily<sp/>implement<sp/>their<sp/>own<sp/>customized<sp/>proxies<sp/>for<sp/>further<sp/>optimization.<sp/>For<sp/>example,<sp/>the<sp/>following<sp/>example<sp/>re-defines<sp/>how<sp/>to<sp/>interpret<sp/>triggers<sp/>from<sp/>GPUs.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">```cpp</highlight></codeline>
+<codeline><highlight class="normal">//<sp/>Proxy<sp/>FIFO<sp/>is<sp/>obtained<sp/>from<sp/>mscclpp::Proxy<sp/>on<sp/>the<sp/>host<sp/>and<sp/>copied<sp/>to<sp/>the<sp/>device.</highlight></codeline>
+<codeline><highlight class="normal">__device__<sp/>mscclpp::FifoDeviceHandle<sp/>fifo;</highlight></codeline>
+<codeline><highlight class="normal">__global__<sp/>void<sp/>gpuKernel()<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>...</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Only<sp/>one<sp/>thread<sp/>is<sp/>needed<sp/>for<sp/>the<sp/>followings</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>mscclpp::ProxyTrigger<sp/>trigger;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Send<sp/>a<sp/>custom<sp/>request:<sp/>&quot;1&quot;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>trigger.fst<sp/>=<sp/>1;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>fifo.push(trigger);</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Send<sp/>a<sp/>custom<sp/>request:<sp/>&quot;2&quot;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>trigger.fst<sp/>=<sp/>2;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>fifo.push(trigger);</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>//<sp/>Send<sp/>a<sp/>custom<sp/>request:<sp/>&quot;0xdeadbeef&quot;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>trigger.fst<sp/>=<sp/>0xdeadbeef;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>fifo.push(trigger);</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>...</highlight></codeline>
+<codeline><highlight class="normal">}</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">//<sp/>Host-side<sp/>custom<sp/>proxy<sp/>service</highlight></codeline>
+<codeline><highlight class="normal">class<sp/>CustomProxyService<sp/>{</highlight></codeline>
+<codeline><highlight class="normal">private:</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>mscclpp::Proxy<sp/>proxy_;</highlight></codeline>
+<codeline><highlight class="normal">public:</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>CustomProxyService()<sp/>:<sp/>proxy_([&amp;](mscclpp::ProxyTrigger<sp/>trigger)<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>//<sp/>Custom<sp/>trigger<sp/>handler</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>if<sp/>(trigger.fst<sp/>==<sp/>1)<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>//<sp/>Handle<sp/>request<sp/>&quot;1&quot;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>}<sp/>else<sp/>if<sp/>(trigger.fst<sp/>==<sp/>2)<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>//<sp/>Handle<sp/>request<sp/>&quot;2&quot;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>}<sp/>else<sp/>if<sp/>(trigger.fst<sp/>==<sp/>0xdeadbeef)<sp/>{</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>//<sp/>Handle<sp/>request<sp/>&quot;0xdeadbeef&quot;</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>}</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>},</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>[&amp;]()<sp/>{<sp/>/*<sp/>Empty<sp/>proxy<sp/>initializer<sp/>*/<sp/>})<sp/>{}</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>void<sp/>startProxy()<sp/>{<sp/>proxy_.start();<sp/>}</highlight></codeline>
+<codeline><highlight class="normal"><sp/><sp/>void<sp/>stopProxy()<sp/><sp/>{<sp/>proxy_.stop();<sp/>}</highlight></codeline>
+<codeline><highlight class="normal">};</highlight></codeline>
+<codeline><highlight class="normal">```</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">Customized<sp/>proxies<sp/>can<sp/>be<sp/>used<sp/>for<sp/>conducting<sp/>a<sp/>series<sp/>of<sp/>pre-defined<sp/>data<sp/>transfers<sp/>within<sp/>only<sp/>a<sp/>single<sp/>trigger<sp/>from<sp/>GPU<sp/>at<sp/>runtime.<sp/>This<sp/>would<sp/>be<sp/>more<sp/>efficient<sp/>than<sp/>sending<sp/>a<sp/>trigger<sp/>for<sp/>each<sp/>data<sp/>transfer<sp/>one<sp/>by<sp/>one.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">###<sp/>Python<sp/>Interfaces</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">MSCCL++<sp/>provides<sp/>Python<sp/>bindings<sp/>and<sp/>interfaces,<sp/>which<sp/>simplifies<sp/>integration<sp/>with<sp/>Python<sp/>applications.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">##<sp/>Contributing</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">This<sp/>project<sp/>welcomes<sp/>contributions<sp/>and<sp/>suggestions.<sp/><sp/>Most<sp/>contributions<sp/>require<sp/>you<sp/>to<sp/>agree<sp/>to<sp/>a</highlight></codeline>
+<codeline><highlight class="normal">Contributor<sp/>License<sp/>Agreement<sp/>(CLA)<sp/>declaring<sp/>that<sp/>you<sp/>have<sp/>the<sp/>right<sp/>to,<sp/>and<sp/>actually<sp/>do,<sp/>grant<sp/>us</highlight></codeline>
+<codeline><highlight class="normal">the<sp/>rights<sp/>to<sp/>use<sp/>your<sp/>contribution.<sp/>For<sp/>details,<sp/>visit<sp/>https://cla.opensource.microsoft.com.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">When<sp/>you<sp/>submit<sp/>a<sp/>pull<sp/>request,<sp/>a<sp/>CLA<sp/>bot<sp/>will<sp/>automatically<sp/>determine<sp/>whether<sp/>you<sp/>need<sp/>to<sp/>provide</highlight></codeline>
+<codeline><highlight class="normal">a<sp/>CLA<sp/>and<sp/>decorate<sp/>the<sp/>PR<sp/>appropriately<sp/>(e.g.,<sp/>status<sp/>check,<sp/>comment).<sp/>Simply<sp/>follow<sp/>the<sp/>instructions</highlight></codeline>
+<codeline><highlight class="normal">provided<sp/>by<sp/>the<sp/>bot.<sp/>You<sp/>will<sp/>only<sp/>need<sp/>to<sp/>do<sp/>this<sp/>once<sp/>across<sp/>all<sp/>repos<sp/>using<sp/>our<sp/>CLA.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">This<sp/>project<sp/>has<sp/>adopted<sp/>the<sp/>[Microsoft<sp/>Open<sp/>Source<sp/>Code<sp/>of<sp/>Conduct](https://opensource.microsoft.com/codeofconduct/).</highlight></codeline>
+<codeline><highlight class="normal">For<sp/>more<sp/>information<sp/>see<sp/>the<sp/>[Code<sp/>of<sp/>Conduct<sp/>FAQ](https://opensource.microsoft.com/codeofconduct/faq/)<sp/>or</highlight></codeline>
+<codeline><highlight class="normal">contact<sp/>[opencode@microsoft.com](mailto:opencode@microsoft.com)<sp/>with<sp/>any<sp/>additional<sp/>questions<sp/>or<sp/>comments.</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">##<sp/>Trademarks</highlight></codeline>
+<codeline></codeline>
+<codeline><highlight class="normal">This<sp/>project<sp/>may<sp/>contain<sp/>trademarks<sp/>or<sp/>logos<sp/>for<sp/>projects,<sp/>products,<sp/>or<sp/>services.<sp/>Authorized<sp/>use<sp/>of<sp/>Microsoft</highlight></codeline>
+<codeline><highlight class="normal">trademarks<sp/>or<sp/>logos<sp/>is<sp/>subject<sp/>to<sp/>and<sp/>must<sp/>follow</highlight></codeline>
+<codeline><highlight class="normal">[Microsoft&apos;s<sp/>Trademark<sp/>&amp;<sp/>Brand<sp/>Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).</highlight></codeline>
+<codeline><highlight class="normal">Use<sp/>of<sp/>Microsoft<sp/>trademarks<sp/>or<sp/>logos<sp/>in<sp/>modified<sp/>versions<sp/>of<sp/>this<sp/>project<sp/>must<sp/>not<sp/>cause<sp/>confusion<sp/>or<sp/>imply<sp/>Microsoft<sp/>sponsorship.</highlight></codeline>
+<codeline><highlight class="normal">Any<sp/>use<sp/>of<sp/>third-party<sp/>trademarks<sp/>or<sp/>logos<sp/>are<sp/>subject<sp/>to<sp/>those<sp/>third-party&apos;s<sp/>policies.</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/README.md"/>
+  </compounddef>
+</doxygen>

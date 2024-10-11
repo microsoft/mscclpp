@@ -1,0 +1,61 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1AvoidCudaGraphCaptureGuard" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::AvoidCudaGraphCaptureGuard</compoundname>
+    <includes refid="gpu__utils_8hpp" local="no">gpu_utils.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1aa797c7f64d5c35cf65342e73140838b4" prot="public" static="no" mutable="no">
+        <type>cudaStreamCaptureMode</type>
+        <definition>cudaStreamCaptureMode mscclpp::AvoidCudaGraphCaptureGuard::mode_</definition>
+        <argsstring></argsstring>
+        <name>mode_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="42" column="25" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="42" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1abf219c8d6fd2687994f00946297827ce" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::AvoidCudaGraphCaptureGuard::AvoidCudaGraphCaptureGuard</definition>
+        <argsstring>()</argsstring>
+        <name>AvoidCudaGraphCaptureGuard</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="40" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1a6e2d24442544ef0a83cb5e8882a04c9d" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::AvoidCudaGraphCaptureGuard::~AvoidCudaGraphCaptureGuard</definition>
+        <argsstring>()</argsstring>
+        <name>~AvoidCudaGraphCaptureGuard</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="41" column="3"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+<para>A RAII guard that will cudaThreadExchangeStreamCaptureMode to cudaStreamCaptureModeRelaxed on construction and restore the previous mode on destruction. This is helpful when we want to avoid CUDA graph capture. </para>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="39" column="33" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="39" bodyend="43"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1abf219c8d6fd2687994f00946297827ce" prot="public" virt="non-virtual"><scope>mscclpp::AvoidCudaGraphCaptureGuard</scope><name>AvoidCudaGraphCaptureGuard</name></member>
+      <member refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1aa797c7f64d5c35cf65342e73140838b4" prot="public" virt="non-virtual"><scope>mscclpp::AvoidCudaGraphCaptureGuard</scope><name>mode_</name></member>
+      <member refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1a6e2d24442544ef0a83cb5e8882a04c9d" prot="public" virt="non-virtual"><scope>mscclpp::AvoidCudaGraphCaptureGuard</scope><name>~AvoidCudaGraphCaptureGuard</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

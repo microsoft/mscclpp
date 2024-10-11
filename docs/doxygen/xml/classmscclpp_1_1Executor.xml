@@ -1,0 +1,149 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1Executor" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::Executor</compoundname>
+    <includes refid="executor_8hpp" local="no">executor.hpp</includes>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1Executor_1afc9c156a19979e1a5cec7da03ae32adc" prot="private" static="no" mutable="no">
+        <type>std::unique_ptr&lt; Impl &gt;</type>
+        <definition>std::unique_ptr&lt;Impl&gt; mscclpp::Executor::impl_</definition>
+        <argsstring></argsstring>
+        <name>impl_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="50" column="19" bodyfile="/root/mscclpp/include/mscclpp/executor.hpp" bodystart="49" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1Executor_1a9a459bb447b826d239f612e0d613dd44" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Executor::Executor</definition>
+        <argsstring>(std::shared_ptr&lt; Communicator &gt; comm)</argsstring>
+        <name>Executor</name>
+        <param>
+          <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Communicator" kindref="compound">Communicator</ref> &gt;</type>
+          <declname>comm</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="40" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Executor_1ae5b1df56597b8b30c5575f309a66fc09" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Executor::Executor</definition>
+        <argsstring>(const Executor &amp;)=delete</argsstring>
+        <name>Executor</name>
+        <param>
+          <type>const <ref refid="classmscclpp_1_1Executor" kindref="compound">Executor</ref> &amp;</type>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="41" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Executor_1a041bd8c7630a8d4b3246cffdd7c6c3d5" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1Executor" kindref="compound">Executor</ref> &amp;</type>
+        <definition>Executor&amp; mscclpp::Executor::operator=</definition>
+        <argsstring>(const Executor &amp;)=delete</argsstring>
+        <name>operator=</name>
+        <param>
+          <type>const <ref refid="classmscclpp_1_1Executor" kindref="compound">Executor</ref> &amp;</type>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="42" column="12"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Executor_1a85c8da4d0aa2ae24cba5b84c7d462765" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Executor::~Executor</definition>
+        <argsstring>()</argsstring>
+        <name>~Executor</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="43" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Executor_1a7eec006eebd0d03eededdf9713a5485c" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Executor::execute</definition>
+        <argsstring>(int rank, void *sendbuff, void *recvBuff, size_t sendBuffSize, size_t recvBuffSize, DataType dataType, const ExecutionPlan &amp;plan, cudaStream_t stream, PacketType packetType=PacketType::LL16)</argsstring>
+        <name>execute</name>
+        <param>
+          <type>int</type>
+          <declname>rank</declname>
+        </param>
+        <param>
+          <type>void *</type>
+          <declname>sendbuff</declname>
+        </param>
+        <param>
+          <type>void *</type>
+          <declname>recvBuff</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>sendBuffSize</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>recvBuffSize</declname>
+        </param>
+        <param>
+          <type><ref refid="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4" kindref="member">DataType</ref></type>
+          <declname>dataType</declname>
+        </param>
+        <param>
+          <type>const <ref refid="classmscclpp_1_1ExecutionPlan" kindref="compound">ExecutionPlan</ref> &amp;</type>
+          <declname>plan</declname>
+        </param>
+        <param>
+          <type>cudaStream_t</type>
+          <declname>stream</declname>
+        </param>
+        <param>
+          <type><ref refid="namespacemscclpp_1a2ec75f8e9d6c6de7fc1532a6c89237a2" kindref="member">PacketType</ref></type>
+          <declname>packetType</declname>
+          <defval><ref refid="namespacemscclpp_1a2ec75f8e9d6c6de7fc1532a6c89237a2a1cf99f8f958b06f0ac3e38321e1f53d4" kindref="member">PacketType::LL16</ref></defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="45" column="8"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="38" column="15" bodyfile="/root/mscclpp/include/mscclpp/executor.hpp" bodystart="38" bodyend="51"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1Executor_1a7eec006eebd0d03eededdf9713a5485c" prot="public" virt="non-virtual"><scope>mscclpp::Executor</scope><name>execute</name></member>
+      <member refid="classmscclpp_1_1Executor_1a9a459bb447b826d239f612e0d613dd44" prot="public" virt="non-virtual"><scope>mscclpp::Executor</scope><name>Executor</name></member>
+      <member refid="classmscclpp_1_1Executor_1ae5b1df56597b8b30c5575f309a66fc09" prot="public" virt="non-virtual"><scope>mscclpp::Executor</scope><name>Executor</name></member>
+      <member refid="classmscclpp_1_1Executor_1afc9c156a19979e1a5cec7da03ae32adc" prot="private" virt="non-virtual"><scope>mscclpp::Executor</scope><name>impl_</name></member>
+      <member refid="classmscclpp_1_1Executor_1a041bd8c7630a8d4b3246cffdd7c6c3d5" prot="public" virt="non-virtual"><scope>mscclpp::Executor</scope><name>operator=</name></member>
+      <member refid="classmscclpp_1_1Executor_1a85c8da4d0aa2ae24cba5b84c7d462765" prot="public" virt="non-virtual"><scope>mscclpp::Executor</scope><name>~Executor</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

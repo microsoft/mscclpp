@@ -1,0 +1,4 @@
+<map id="mscclpp::SmDevice2DeviceSemaphore" name="mscclpp::SmDevice2DeviceSemaphore">
+<area shape="rect" id="node1" title="A semaphore for sending signals from the local device to a peer device via SM." alt="" coords="15,95,218,136"/>
+<area shape="rect" id="node2" href="$classmscclpp_1_1BaseSemaphore.html" title=" " alt="" coords="5,5,228,47"/>
+</map>

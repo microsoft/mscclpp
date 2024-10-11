@@ -1,0 +1,47 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1ProxyTrigger" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::ProxyTrigger</compoundname>
+    <includes refid="fifo__device_8hpp" local="no">fifo_device.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1ProxyTrigger_1a1bb30b77dff4f6b3a79bd308927fddba" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::ProxyTrigger::fst</definition>
+        <argsstring></argsstring>
+        <name>fst</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo_device.hpp" line="25" column="12" bodyfile="/root/mscclpp/include/mscclpp/fifo_device.hpp" bodystart="25" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1ProxyTrigger_1ada4a5508e6db9e930f6d6018f98dc060" prot="public" static="no" mutable="no">
+        <type>uint64_t</type>
+        <definition>uint64_t mscclpp::ProxyTrigger::snd</definition>
+        <argsstring></argsstring>
+        <name>snd</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo_device.hpp" line="25" column="16" bodyfile="/root/mscclpp/include/mscclpp/fifo_device.hpp" bodystart="25" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+<para>A struct representing a pair of 64-bit unsigned integers used as a trigger for the proxy.</para>
+<para>This struct is used as a work element in the concurrent FIFO where multiple device threads can push <ref refid="structmscclpp_1_1ProxyTrigger" kindref="compound">ProxyTrigger</ref> elements and a single host proxy thread consumes these work elements.</para>
+<para>Do not use the most significant bit of <ref refid="structmscclpp_1_1ProxyTrigger_1ada4a5508e6db9e930f6d6018f98dc060" kindref="member">snd</ref> as it is reserved for memory consistency purposes </para>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/fifo_device.hpp" line="24" column="26" bodyfile="/root/mscclpp/include/mscclpp/fifo_device.hpp" bodystart="24" bodyend="26"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1ProxyTrigger_1a1bb30b77dff4f6b3a79bd308927fddba" prot="public" virt="non-virtual"><scope>mscclpp::ProxyTrigger</scope><name>fst</name></member>
+      <member refid="structmscclpp_1_1ProxyTrigger_1ada4a5508e6db9e930f6d6018f98dc060" prot="public" virt="non-virtual"><scope>mscclpp::ProxyTrigger</scope><name>snd</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

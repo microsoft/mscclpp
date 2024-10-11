@@ -1,0 +1,595 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1TransportFlags" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::TransportFlags</compoundname>
+    <basecompoundref prot="private" virt="non-virtual">TransportFlagsBase</basecompoundref>
+    <includes refid="core_8hpp" local="no">core.hpp</includes>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a8f431e1c521f357776de8c53ffa51f6f" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::TransportFlags::TransportFlags</definition>
+        <argsstring>()=default</argsstring>
+        <name>TransportFlags</name>
+        <briefdescription>
+<para>Default constructor for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="163" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a5f3f9eb2a6d920a721d3528ac461e3a0" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::TransportFlags::TransportFlags</definition>
+        <argsstring>(Transport transport)</argsstring>
+        <name>TransportFlags</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+          <declname>transport</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Constructor for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> that takes a Transport enum value.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>transport</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The transport to set the flag for. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="168" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1ac9a4764afa0d2fc666b2a8abf8c4e8a5" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type>bool</type>
+        <definition>bool mscclpp::TransportFlags::has</definition>
+        <argsstring>(Transport transport) const</argsstring>
+        <name>has</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+          <declname>transport</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Check if a specific transport flag is set.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>transport</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The transport to check the flag for. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>True if the flag is set, false otherwise. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="174" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a43fd58a7b336442ce0ac8c6c40a65f37" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type>bool</type>
+        <definition>bool mscclpp::TransportFlags::none</definition>
+        <argsstring>() const</argsstring>
+        <name>none</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Check if no transport flags are set.</para>
+<para><simplesect kind="return"><para>True if no flags are set, false otherwise. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="179" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1ad068407d3a354b948f5afe65a1b0d55e" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type>bool</type>
+        <definition>bool mscclpp::TransportFlags::any</definition>
+        <argsstring>() const</argsstring>
+        <name>any</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Check if any transport flags are set.</para>
+<para><simplesect kind="return"><para>True if any flags are set, false otherwise. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="184" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a0bd787f2f3c4aa2dc4fa08c3f7fbc45b" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type>bool</type>
+        <definition>bool mscclpp::TransportFlags::all</definition>
+        <argsstring>() const</argsstring>
+        <name>all</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Check if all transport flags are set.</para>
+<para><simplesect kind="return"><para>True if all flags are set, false otherwise. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="189" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a900c36a2133e72e280fbfafbf731ddcb" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type>size_t</type>
+        <definition>size_t mscclpp::TransportFlags::count</definition>
+        <argsstring>() const</argsstring>
+        <name>count</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the number of transport flags that are set.</para>
+<para><simplesect kind="return"><para>The number of flags that are set. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="194" column="10"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a289913bfae398736e3d9a6108143071c" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> &amp;</type>
+        <definition>TransportFlags&amp; mscclpp::TransportFlags::operator|=</definition>
+        <argsstring>(TransportFlags other)</argsstring>
+        <name>operator|=</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+          <declname>other</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise OR assignment operator for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>other</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The other <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> to perform the OR operation with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A reference to the modified <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="200" column="18"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a29a081218913a06f8a5585664ec80adc" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>TransportFlags mscclpp::TransportFlags::operator|</definition>
+        <argsstring>(TransportFlags other) const</argsstring>
+        <name>operator|</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+          <declname>other</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise OR operator for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>other</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The other <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> to perform the OR operation with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A new <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object with the result of the OR operation. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="206" column="18"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a72cb5eb9b1c6dfc2275e0df7cd6de091" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>TransportFlags mscclpp::TransportFlags::operator|</definition>
+        <argsstring>(Transport transport) const</argsstring>
+        <name>operator|</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+          <declname>transport</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise OR operator for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> and Transport.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>transport</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The Transport to perform the OR operation with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A new <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object with the result of the OR operation. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="212" column="18"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a6ae5594b574dd4a4945c0101eaed4161" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> &amp;</type>
+        <definition>TransportFlags&amp; mscclpp::TransportFlags::operator&amp;=</definition>
+        <argsstring>(TransportFlags other)</argsstring>
+        <name>operator&amp;=</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+          <declname>other</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise AND assignment operator for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>other</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The other <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> to perform the AND operation with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A reference to the modified <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="218" column="18"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a1c4fd205887f80395c23d53e9e861773" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>TransportFlags mscclpp::TransportFlags::operator&amp;</definition>
+        <argsstring>(TransportFlags other) const</argsstring>
+        <name>operator&amp;</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+          <declname>other</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise AND operator for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>other</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The other <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> to perform the AND operation with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A new <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object with the result of the AND operation. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="224" column="18"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a0191b71525296e4252f43edf70e10b8f" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>TransportFlags mscclpp::TransportFlags::operator&amp;</definition>
+        <argsstring>(Transport transport) const</argsstring>
+        <name>operator&amp;</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+          <declname>transport</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise AND operator for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> and Transport.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>transport</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The Transport to perform the AND operation with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A new <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object with the result of the AND operation. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="230" column="18"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1aec0ccdd401f53f0b479413e1eeb8959a" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> &amp;</type>
+        <definition>TransportFlags&amp; mscclpp::TransportFlags::operator^=</definition>
+        <argsstring>(TransportFlags other)</argsstring>
+        <name>operator^=</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+          <declname>other</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise XOR assignment operator for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>other</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The other <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> to perform the XOR operation with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A reference to the modified <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="236" column="18"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1aa638cd8ce3c8341e5a7938b52194ef9b" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>TransportFlags mscclpp::TransportFlags::operator^</definition>
+        <argsstring>(TransportFlags other) const</argsstring>
+        <name>operator^</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+          <declname>other</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise XOR operator for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>other</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The other <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> to perform the XOR operation with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A new <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object with the result of the XOR operation. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="242" column="18"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a88b52fbf1051119326c155044acf3b90" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>TransportFlags mscclpp::TransportFlags::operator^</definition>
+        <argsstring>(Transport transport) const</argsstring>
+        <name>operator^</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+          <declname>transport</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise XOR operator for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> and Transport.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>transport</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The Transport to perform the XOR operation with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A new <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object with the result of the XOR operation. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="248" column="18"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a82f9e58ea40a0d87e6add3c8d26a7dbe" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>TransportFlags mscclpp::TransportFlags::operator~</definition>
+        <argsstring>() const</argsstring>
+        <name>operator~</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise NOT operator for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>.</para>
+<para><simplesect kind="return"><para>A new <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object with the result of the NOT operation. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="253" column="18"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1ab5c9f9fb5708506d1bf826a1bf52c3a9" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type>bool</type>
+        <definition>bool mscclpp::TransportFlags::operator==</definition>
+        <argsstring>(TransportFlags other) const</argsstring>
+        <name>operator==</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+          <declname>other</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Equality comparison operator for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>other</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The other <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> to compare with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>True if the two <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> objects are equal, false otherwise. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="259" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a86a40422be6816924a43f00a39913c1d" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type>bool</type>
+        <definition>bool mscclpp::TransportFlags::operator!=</definition>
+        <argsstring>(TransportFlags other) const</argsstring>
+        <name>operator!=</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+          <declname>other</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Inequality comparison operator for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref>.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>other</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The other <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> to compare with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>True if the two <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> objects are not equal, false otherwise. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="265" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1ac83b750adebe27e9c4876e2c97b6252b" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="namespacemscclpp_1_1detail_1afe546a620f7aeead78e250d188eb1dd6" kindref="member">detail::TransportFlagsBase</ref></type>
+        <definition>detail::TransportFlagsBase mscclpp::TransportFlags::toBitset</definition>
+        <argsstring>() const</argsstring>
+        <name>toBitset</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Convert the <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object to a bitset representation.</para>
+<para><simplesect kind="return"><para>A <ref refid="namespacemscclpp_1_1detail_1afe546a620f7aeead78e250d188eb1dd6" kindref="member">detail::TransportFlagsBase</ref> object representing the <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="270" column="30"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="private-func">
+      <memberdef kind="function" id="classmscclpp_1_1TransportFlags_1a2cec2faf5796b0fe287626e368aea8e1" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::TransportFlags::TransportFlags</definition>
+        <argsstring>(detail::TransportFlagsBase bitset)</argsstring>
+        <name>TransportFlags</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1_1detail_1afe546a620f7aeead78e250d188eb1dd6" kindref="member">detail::TransportFlagsBase</ref></type>
+          <declname>bitset</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Private constructor for <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> that takes a bitset representation.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>bitset</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The bitset representation of the <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="276" column="3"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Stores transport flags. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <inheritancegraph>
+      <node id="2">
+        <label>detail::TransportFlagsBase</label>
+      </node>
+      <node id="1">
+        <label>mscclpp::TransportFlags</label>
+        <link refid="classmscclpp_1_1TransportFlags"/>
+        <childnode refid="2" relation="private-inheritance">
+        </childnode>
+      </node>
+    </inheritancegraph>
+    <collaborationgraph>
+      <node id="2">
+        <label>detail::TransportFlagsBase</label>
+      </node>
+      <node id="1">
+        <label>mscclpp::TransportFlags</label>
+        <link refid="classmscclpp_1_1TransportFlags"/>
+        <childnode refid="2" relation="private-inheritance">
+        </childnode>
+      </node>
+    </collaborationgraph>
+    <location file="/root/mscclpp/include/mscclpp/core.hpp" line="160" column="56" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="160" bodyend="277"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1TransportFlags_1a0bd787f2f3c4aa2dc4fa08c3f7fbc45b" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>all</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1ad068407d3a354b948f5afe65a1b0d55e" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>any</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a900c36a2133e72e280fbfafbf731ddcb" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>count</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1ac9a4764afa0d2fc666b2a8abf8c4e8a5" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>has</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a43fd58a7b336442ce0ac8c6c40a65f37" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>none</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a86a40422be6816924a43f00a39913c1d" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>operator!=</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a1c4fd205887f80395c23d53e9e861773" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>operator&amp;</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a0191b71525296e4252f43edf70e10b8f" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>operator&amp;</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a6ae5594b574dd4a4945c0101eaed4161" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>operator&amp;=</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1ab5c9f9fb5708506d1bf826a1bf52c3a9" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>operator==</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1aa638cd8ce3c8341e5a7938b52194ef9b" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>operator^</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a88b52fbf1051119326c155044acf3b90" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>operator^</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1aec0ccdd401f53f0b479413e1eeb8959a" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>operator^=</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a29a081218913a06f8a5585664ec80adc" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>operator|</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a72cb5eb9b1c6dfc2275e0df7cd6de091" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>operator|</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a289913bfae398736e3d9a6108143071c" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>operator|=</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a82f9e58ea40a0d87e6add3c8d26a7dbe" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>operator~</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1ac83b750adebe27e9c4876e2c97b6252b" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>toBitset</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a8f431e1c521f357776de8c53ffa51f6f" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>TransportFlags</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a5f3f9eb2a6d920a721d3528ac461e3a0" prot="public" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>TransportFlags</name></member>
+      <member refid="classmscclpp_1_1TransportFlags_1a2cec2faf5796b0fe287626e368aea8e1" prot="private" virt="non-virtual"><scope>mscclpp::TransportFlags</scope><name>TransportFlags</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

@@ -1,0 +1,89 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1Setuppable" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::Setuppable</compoundname>
+    <includes refid="core_8hpp" local="no">core.hpp</includes>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="structmscclpp_1_1Setuppable_1af2561909cc34d2ed14abe7104d7ba8de" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type></type>
+        <definition>virtual mscclpp::Setuppable::~Setuppable</definition>
+        <argsstring>()=default</argsstring>
+        <name>~Setuppable</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="545" column="11"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1Setuppable_1a034319ab87641125260ebd813696a5fc" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type>void</type>
+        <definition>virtual void mscclpp::Setuppable::beginSetup</definition>
+        <argsstring>(std::shared_ptr&lt; Bootstrap &gt; bootstrap)</argsstring>
+        <name>beginSetup</name>
+        <param>
+          <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Bootstrap" kindref="compound">Bootstrap</ref> &gt;</type>
+          <declname>bootstrap</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Called inside <ref refid="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" kindref="member">Communicator::setup()</ref> before any call to <ref refid="structmscclpp_1_1Setuppable_1a7711cd5132a03d6e75b433d956ecb32d" kindref="member">endSetup()</ref> of any <ref refid="structmscclpp_1_1Setuppable" kindref="compound">Setuppable</ref> object that is being set up within the same <ref refid="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" kindref="member">Communicator::setup()</ref> call.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>bootstrap</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>A shared pointer to the bootstrap implementation. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="551" column="16"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1Setuppable_1a7711cd5132a03d6e75b433d956ecb32d" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type>void</type>
+        <definition>virtual void mscclpp::Setuppable::endSetup</definition>
+        <argsstring>(std::shared_ptr&lt; Bootstrap &gt; bootstrap)</argsstring>
+        <name>endSetup</name>
+        <param>
+          <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Bootstrap" kindref="compound">Bootstrap</ref> &gt;</type>
+          <declname>bootstrap</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Called inside <ref refid="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" kindref="member">Communicator::setup()</ref> after all calls to <ref refid="structmscclpp_1_1Setuppable_1a034319ab87641125260ebd813696a5fc" kindref="member">beginSetup()</ref> of all <ref refid="structmscclpp_1_1Setuppable" kindref="compound">Setuppable</ref> objects that are being set up within the same <ref refid="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" kindref="member">Communicator::setup()</ref> call.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>bootstrap</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>A shared pointer to the bootstrap implementation. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="557" column="16"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>A base class for objects that can be set up during <ref refid="classmscclpp_1_1Communicator_1aae26dc138f2b2cbf14bfcb7e39266ca0" kindref="member">Communicator::setup()</ref>. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/core.hpp" line="544" column="17" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="544" bodyend="558"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1Setuppable_1a034319ab87641125260ebd813696a5fc" prot="public" virt="virtual"><scope>mscclpp::Setuppable</scope><name>beginSetup</name></member>
+      <member refid="structmscclpp_1_1Setuppable_1a7711cd5132a03d6e75b433d956ecb32d" prot="public" virt="virtual"><scope>mscclpp::Setuppable</scope><name>endSetup</name></member>
+      <member refid="structmscclpp_1_1Setuppable_1af2561909cc34d2ed14abe7104d7ba8de" prot="public" virt="virtual"><scope>mscclpp::Setuppable</scope><name>~Setuppable</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

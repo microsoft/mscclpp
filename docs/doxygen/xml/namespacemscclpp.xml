@@ -1,0 +1,1698 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="namespacemscclpp" kind="namespace" language="C++">
+    <compoundname>mscclpp</compoundname>
+    <innerclass refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" prot="public">mscclpp::AvoidCudaGraphCaptureGuard</innerclass>
+    <innerclass refid="classmscclpp_1_1BaseError" prot="public">mscclpp::BaseError</innerclass>
+    <innerclass refid="classmscclpp_1_1BaseProxyService" prot="public">mscclpp::BaseProxyService</innerclass>
+    <innerclass refid="classmscclpp_1_1BaseSemaphore" prot="public">mscclpp::BaseSemaphore</innerclass>
+    <innerclass refid="classmscclpp_1_1Bootstrap" prot="public">mscclpp::Bootstrap</innerclass>
+    <innerclass refid="unionmscclpp_1_1ChannelTrigger" prot="public">mscclpp::ChannelTrigger</innerclass>
+    <innerclass refid="classmscclpp_1_1Communicator" prot="public">mscclpp::Communicator</innerclass>
+    <innerclass refid="classmscclpp_1_1Connection" prot="public">mscclpp::Connection</innerclass>
+    <innerclass refid="classmscclpp_1_1Context" prot="public">mscclpp::Context</innerclass>
+    <innerclass refid="structmscclpp_1_1CudaDeleter" prot="public">mscclpp::CudaDeleter</innerclass>
+    <innerclass refid="classmscclpp_1_1CudaError" prot="public">mscclpp::CudaError</innerclass>
+    <innerclass refid="structmscclpp_1_1CudaHostDeleter" prot="public">mscclpp::CudaHostDeleter</innerclass>
+    <innerclass refid="structmscclpp_1_1CudaPhysicalDeleter" prot="public">mscclpp::CudaPhysicalDeleter</innerclass>
+    <innerclass refid="structmscclpp_1_1CudaStreamWithFlags" prot="public">mscclpp::CudaStreamWithFlags</innerclass>
+    <innerclass refid="classmscclpp_1_1CuError" prot="public">mscclpp::CuError</innerclass>
+    <innerclass refid="structmscclpp_1_1DeviceMulticastPointerDeviceHandle" prot="public">mscclpp::DeviceMulticastPointerDeviceHandle</innerclass>
+    <innerclass refid="structmscclpp_1_1DeviceSyncer" prot="public">mscclpp::DeviceSyncer</innerclass>
+    <innerclass refid="classmscclpp_1_1Endpoint" prot="public">mscclpp::Endpoint</innerclass>
+    <innerclass refid="structmscclpp_1_1EndpointConfig" prot="public">mscclpp::EndpointConfig</innerclass>
+    <innerclass refid="classmscclpp_1_1Error" prot="public">mscclpp::Error</innerclass>
+    <innerclass refid="classmscclpp_1_1ExecutionPlan" prot="public">mscclpp::ExecutionPlan</innerclass>
+    <innerclass refid="classmscclpp_1_1Executor" prot="public">mscclpp::Executor</innerclass>
+    <innerclass refid="classmscclpp_1_1Fifo" prot="public">mscclpp::Fifo</innerclass>
+    <innerclass refid="structmscclpp_1_1FifoDeviceHandle" prot="public">mscclpp::FifoDeviceHandle</innerclass>
+    <innerclass refid="classmscclpp_1_1Host2DeviceSemaphore" prot="public">mscclpp::Host2DeviceSemaphore</innerclass>
+    <innerclass refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle" prot="public">mscclpp::Host2DeviceSemaphoreDeviceHandle</innerclass>
+    <innerclass refid="classmscclpp_1_1Host2HostSemaphore" prot="public">mscclpp::Host2HostSemaphore</innerclass>
+    <innerclass refid="classmscclpp_1_1IbError" prot="public">mscclpp::IbError</innerclass>
+    <innerclass refid="unionmscclpp_1_1LL16Packet" prot="public">mscclpp::LL16Packet</innerclass>
+    <innerclass refid="unionmscclpp_1_1LL8Packet" prot="public">mscclpp::LL8Packet</innerclass>
+    <innerclass refid="classmscclpp_1_1NonblockingFuture" prot="public">mscclpp::NonblockingFuture</innerclass>
+    <innerclass refid="classmscclpp_1_1NvlsConnection" prot="public">mscclpp::NvlsConnection</innerclass>
+    <innerclass refid="structmscclpp_1_1PhysicalCudaMemory" prot="public">mscclpp::PhysicalCudaMemory</innerclass>
+    <innerclass refid="classmscclpp_1_1Proxy" prot="public">mscclpp::Proxy</innerclass>
+    <innerclass refid="structmscclpp_1_1ProxyChannel" prot="public">mscclpp::ProxyChannel</innerclass>
+    <innerclass refid="structmscclpp_1_1ProxyChannelDeviceHandle" prot="public">mscclpp::ProxyChannelDeviceHandle</innerclass>
+    <innerclass refid="classmscclpp_1_1ProxyService" prot="public">mscclpp::ProxyService</innerclass>
+    <innerclass refid="structmscclpp_1_1ProxyTrigger" prot="public">mscclpp::ProxyTrigger</innerclass>
+    <innerclass refid="classmscclpp_1_1RegisteredMemory" prot="public">mscclpp::RegisteredMemory</innerclass>
+    <innerclass refid="structmscclpp_1_1ScopedTimer" prot="public">mscclpp::ScopedTimer</innerclass>
+    <innerclass refid="structmscclpp_1_1Setuppable" prot="public">mscclpp::Setuppable</innerclass>
+    <innerclass refid="structmscclpp_1_1SimpleProxyChannel" prot="public">mscclpp::SimpleProxyChannel</innerclass>
+    <innerclass refid="structmscclpp_1_1SimpleProxyChannelDeviceHandle" prot="public">mscclpp::SimpleProxyChannelDeviceHandle</innerclass>
+    <innerclass refid="structmscclpp_1_1SmChannel" prot="public">mscclpp::SmChannel</innerclass>
+    <innerclass refid="structmscclpp_1_1SmChannelDeviceHandle" prot="public">mscclpp::SmChannelDeviceHandle</innerclass>
+    <innerclass refid="classmscclpp_1_1SmDevice2DeviceSemaphore" prot="public">mscclpp::SmDevice2DeviceSemaphore</innerclass>
+    <innerclass refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle" prot="public">mscclpp::SmDevice2DeviceSemaphoreDeviceHandle</innerclass>
+    <innerclass refid="classmscclpp_1_1SysError" prot="public">mscclpp::SysError</innerclass>
+    <innerclass refid="classmscclpp_1_1TcpBootstrap" prot="public">mscclpp::TcpBootstrap</innerclass>
+    <innerclass refid="structmscclpp_1_1Timer" prot="public">mscclpp::Timer</innerclass>
+    <innerclass refid="classmscclpp_1_1TransportFlags" prot="public">mscclpp::TransportFlags</innerclass>
+    <innernamespace refid="namespacemscclpp_1_1detail">mscclpp::detail</innernamespace>
+      <sectiondef kind="enum">
+      <memberdef kind="enum" id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" prot="public" static="no" strong="yes">
+        <type></type>
+        <name>Transport</name>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a88183b946cc5f0e8c96b2e66e1c74a7e" prot="public">
+          <name>Unknown</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a8c7ec76d5a330fb526292c4cd0111993" prot="public">
+          <name>CudaIpc</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a4bd6a6a63f68c8a22ee4882619410e82" prot="public">
+          <name>Nvls</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a6a5053e4054e9194a290da8442f29a5c" prot="public">
+          <name>IB0</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a1f68a7ebea7dc4c5394aea292e9f0f45" prot="public">
+          <name>IB1</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a2451b52950545a82b6245ade95824ffb" prot="public">
+          <name>IB2</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5ab73258fcea9e16c11be6b0b8493087ce" prot="public">
+          <name>IB3</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a0940acbe03c05a45793aaac8f9967416" prot="public">
+          <name>IB4</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5ac6aed92a3f88a500f307b88d0674f62f" prot="public">
+          <name>IB5</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a4b664254eb1a6fedb52e6b781000ec41" prot="public">
+          <name>IB6</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5afbff6de8c76186402db75f8892040338" prot="public">
+          <name>IB7</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5abe2ae05fb04ddcf6efa31e63e0f0e111" prot="public">
+          <name>Ethernet</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5a7084f1074b04e617fc843c5fd32d8df7" prot="public">
+          <name>NumTransports</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <briefdescription>
+<para>Enumerates the available transport types. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="132" column="21" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="132" bodyend="146"/>
+      </memberdef>
+      <memberdef kind="enum" id="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbc" prot="public" static="no" strong="yes">
+        <type></type>
+        <name>ErrorCode</name>
+        <enumvalue id="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcab932b91f686c2aa588adfd9a407155ca" prot="public">
+          <name>SystemError</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbca8462b58246e70e5c83e5b939a9332cb5" prot="public">
+          <name>InternalError</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcad5b659018d1b3646985936dcde01ca16" prot="public">
+          <name>RemoteError</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcaa524b35e5f186bcacbedd2b6661224aa" prot="public">
+          <name>InvalidUsage</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcac85a251cc457840f1e032f1b733e9398" prot="public">
+          <name>Timeout</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbca721c28f4c74928cc9e0bb3fef345e408" prot="public">
+          <name>Aborted</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcaddc23c9d813edd1499f0f5986a163011" prot="public">
+          <name>ExecutorError</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <briefdescription>
+<para>Enumeration of error codes used by MSCCL++. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/errors.hpp" line="12" column="21" bodyfile="/root/mscclpp/include/mscclpp/errors.hpp" bodystart="12" bodyend="20"/>
+      </memberdef>
+      <memberdef kind="enum" id="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4" prot="public" static="no" strong="yes">
+        <type></type>
+        <name>DataType</name>
+        <enumvalue id="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4a6495adba09844fac8eeb0aba86e6f1bf" prot="public">
+          <name>INT32</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4a17266551181f69a1b4a3ad5c9e270afc" prot="public">
+          <name>UINT32</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4ac49f280a5ad551ccc77be0b01a2f386a" prot="public">
+          <name>FLOAT16</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4a967d280b5c16d95f2947647dd2ca6cc2" prot="public">
+          <name>FLOAT32</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a245e0406ab2ec4845cd62b0def5299c4aa4b19a06b5361a32b32759aa26ffdbab" prot="public">
+          <name>BFLOAT16</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="13" column="20" bodyfile="/root/mscclpp/include/mscclpp/executor.hpp" bodystart="13" bodyend="19"/>
+      </memberdef>
+      <memberdef kind="enum" id="namespacemscclpp_1a2ec75f8e9d6c6de7fc1532a6c89237a2" prot="public" static="no" strong="yes">
+        <type></type>
+        <name>PacketType</name>
+        <enumvalue id="namespacemscclpp_1a2ec75f8e9d6c6de7fc1532a6c89237a2af21c479d93a15ab23a8f377d7bf85a56" prot="public">
+          <name>LL8</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1a2ec75f8e9d6c6de7fc1532a6c89237a2a1cf99f8f958b06f0ac3e38321e1f53d4" prot="public">
+          <name>LL16</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="21" column="22" bodyfile="/root/mscclpp/include/mscclpp/executor.hpp" bodystart="21" bodyend="24"/>
+      </memberdef>
+      <memberdef kind="enum" id="namespacemscclpp_1ad8b700e44edeb049b38add920666759f" prot="public" static="no" strong="yes">
+        <type></type>
+        <name>ProxyHandlerResult</name>
+        <enumvalue id="namespacemscclpp_1ad8b700e44edeb049b38add920666759faa0bfb8e59e6c13fc8d990781f77694fe" prot="public">
+          <name>Continue</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1ad8b700e44edeb049b38add920666759fa15499a7fff2bc6ba591660047b46fd4e" prot="public">
+          <name>FlushFifoTailAndContinue</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <enumvalue id="namespacemscclpp_1ad8b700e44edeb049b38add920666759fa11a755d598c0c417f9a36758c3da7481" prot="public">
+          <name>Stop</name>
+          <briefdescription>
+          </briefdescription>
+          <detaileddescription>
+          </detaileddescription>
+        </enumvalue>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy.hpp" line="14" column="30" bodyfile="/root/mscclpp/include/mscclpp/proxy.hpp" bodystart="14" bodyend="18"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="typedef">
+      <memberdef kind="typedef" id="namespacemscclpp_1a19370d8ff8c2df952046da3ba001f3c3" prot="public" static="no">
+        <type>std::array&lt; uint8_t, <ref refid="core_8hpp_1a343926bd0143fdf98a7f173cb45986a9" kindref="member">MSCCLPP_UNIQUE_ID_BYTES</ref> &gt;</type>
+        <definition>using mscclpp::UniqueId = typedef std::array&lt;uint8_t, MSCCLPP_UNIQUE_ID_BYTES&gt;</definition>
+        <argsstring></argsstring>
+        <name>UniqueId</name>
+        <briefdescription>
+<para>Unique ID for a process. This is a MSCCLPP_UNIQUE_ID_BYTES byte array that uniquely identifies a process. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="28" column="1" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="28" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="typedef" id="namespacemscclpp_1ad527fb55e019c2b79a09d5be24c81aa6" prot="public" static="no">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>typename T::DeviceHandle</type>
+        <definition>using mscclpp::DeviceHandle = typedef typename T::DeviceHandle</definition>
+        <argsstring></argsstring>
+        <name>DeviceHandle</name>
+        <briefdescription>
+<para>A type which could be safely used in device side. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="709" column="1" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="709" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="typedef" id="namespacemscclpp_1a604295c701800da45821703ae4944ab3" prot="public" static="no">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>typename T::Payload</type>
+        <definition>using mscclpp::PacketPayload = typedef typename T::Payload</definition>
+        <argsstring></argsstring>
+        <name>PacketPayload</name>
+        <briefdescription>
+<para>Packet value type. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="719" column="1" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="719" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="typedef" id="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" prot="public" static="no">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>std::unique_ptr&lt; T, <ref refid="structmscclpp_1_1CudaDeleter" kindref="compound">CudaDeleter</ref>&lt; T &gt; &gt;</type>
+        <definition>using mscclpp::UniqueCudaPtr = typedef std::unique_ptr&lt;T, CudaDeleter&lt;T&gt; &gt;</definition>
+        <argsstring></argsstring>
+        <name>UniqueCudaPtr</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Unique device pointer that will call cudaFree on destruction. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="261" column="1" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="261" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="typedef" id="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" prot="public" static="no">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>std::unique_ptr&lt; T, <ref refid="structmscclpp_1_1CudaHostDeleter" kindref="compound">CudaHostDeleter</ref>&lt; T &gt; &gt;</type>
+        <definition>using mscclpp::UniqueCudaHostPtr = typedef std::unique_ptr&lt;T, CudaHostDeleter&lt;T&gt; &gt;</definition>
+        <argsstring></argsstring>
+        <name>UniqueCudaHostPtr</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Unique CUDA host pointer that will call cudaFreeHost on destruction. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="323" column="1" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="323" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="typedef" id="namespacemscclpp_1a4c273e632c842bb3f17b60c7ab59a79a" prot="public" static="no">
+        <type><ref refid="unionmscclpp_1_1LL16Packet" kindref="compound">LL16Packet</ref></type>
+        <definition>using mscclpp::LLPacket = typedef LL16Packet</definition>
+        <argsstring></argsstring>
+        <name>LLPacket</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/packet_device.hpp" line="157" column="1" bodyfile="/root/mscclpp/include/mscclpp/packet_device.hpp" bodystart="157" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="typedef" id="namespacemscclpp_1a073987e5c4ba2650412cea9523bcd9d0" prot="public" static="no">
+        <type>std::function&lt; <ref refid="namespacemscclpp_1ad8b700e44edeb049b38add920666759f" kindref="member">ProxyHandlerResult</ref>(<ref refid="structmscclpp_1_1ProxyTrigger" kindref="compound">ProxyTrigger</ref>)&gt;</type>
+        <definition>using mscclpp::ProxyHandler = typedef std::function&lt;ProxyHandlerResult(ProxyTrigger)&gt;</definition>
+        <argsstring></argsstring>
+        <name>ProxyHandler</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy.hpp" line="21" column="1" bodyfile="/root/mscclpp/include/mscclpp/proxy.hpp" bodystart="21" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="typedef" id="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" prot="public" static="no">
+        <type>uint32_t</type>
+        <definition>using mscclpp::SemaphoreId = typedef uint32_t</definition>
+        <argsstring></argsstring>
+        <name>SemaphoreId</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="12" column="1" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="12" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="typedef" id="namespacemscclpp_1a9fe82c3a70c0ff0872516c2fa7bf6682" prot="public" static="no">
+        <type>uint32_t</type>
+        <definition>using mscclpp::MemoryId = typedef uint32_t</definition>
+        <argsstring></argsstring>
+        <name>MemoryId</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Numeric ID of <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref>. <ref refid="classmscclpp_1_1ProxyService" kindref="compound">ProxyService</ref> has an internal array indexed by these handles mapping to the actual. </para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="16" column="1" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="16" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="typedef" id="namespacemscclpp_1a9473825c43b8a63f5f47a642d0697939" prot="public" static="no">
+        <type>uint64_t</type>
+        <definition>using mscclpp::TriggerType = typedef uint64_t</definition>
+        <argsstring></argsstring>
+        <name>TriggerType</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="18" column="1" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="18" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="var">
+      <memberdef kind="variable" id="namespacemscclpp_1a5a14d1ce0857e0d3de41570ce434a517" prot="public" static="no" mutable="no">
+        <type>const std::string</type>
+        <definition>const std::string mscclpp::TransportNames[]</definition>
+        <argsstring>[]</argsstring>
+        <name>TransportNames</name>
+        <initializer>= {&quot;UNK&quot;, &quot;IPC&quot;, &quot;NVLS&quot;, &quot;IB0&quot;, &quot;IB1&quot;, &quot;IB2&quot;, &quot;IB3&quot;,
+                                      &quot;IB4&quot;, &quot;IB5&quot;, &quot;IB6&quot;,  &quot;IB7&quot;, &quot;ETH&quot;, &quot;NUM&quot;}</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="148" column="19" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="148" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="namespacemscclpp_1a394245690cdad5f3f029ac8a4e311216" prot="public" static="no" mutable="no">
+        <type>const <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>const TransportFlags mscclpp::NoTransports</definition>
+        <argsstring></argsstring>
+        <name>NoTransports</name>
+        <briefdescription>
+<para>A constant <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object representing no transports. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="699" column="29" declfile="/root/mscclpp/include/mscclpp/core.hpp" declline="699" declcolumn="29"/>
+      </memberdef>
+      <memberdef kind="variable" id="namespacemscclpp_1af4aaacb732590ef5e1cbbae173332e5c" prot="public" static="no" mutable="no">
+        <type>const <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>const TransportFlags mscclpp::AllIBTransports</definition>
+        <argsstring></argsstring>
+        <name>AllIBTransports</name>
+        <briefdescription>
+<para>A constant <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object representing all InfiniBand transports. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="702" column="29" declfile="/root/mscclpp/include/mscclpp/core.hpp" declline="702" declcolumn="29"/>
+      </memberdef>
+      <memberdef kind="variable" id="namespacemscclpp_1a664b35f70f5b7fcbb32ab7d71ec539d9" prot="public" static="no" mutable="no">
+        <type>const <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>const TransportFlags mscclpp::AllTransports</definition>
+        <argsstring></argsstring>
+        <name>AllTransports</name>
+        <briefdescription>
+<para>A constant <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object representing all transports. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="705" column="29" declfile="/root/mscclpp/include/mscclpp/core.hpp" declline="705" declcolumn="29"/>
+      </memberdef>
+      <memberdef kind="variable" id="namespacemscclpp_1aa40b9c69ba9b54d1f87f52573162c31c" prot="public" static="no" constexpr="yes" mutable="no">
+        <type>constexpr size_t</type>
+        <definition>constexpr size_t mscclpp::DEFAULT_FIFO_SIZE</definition>
+        <argsstring></argsstring>
+        <name>DEFAULT_FIFO_SIZE</name>
+        <initializer>= 128</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/fifo.hpp" line="15" column="18" bodyfile="/root/mscclpp/include/mscclpp/fifo.hpp" bodystart="15" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="namespacemscclpp_1a50714640772d2d58175332977806e443" prot="public" static="no" constexpr="yes" mutable="no">
+        <templateparamlist>
+          <param>
+            <type>class</type>
+          </param>
+        </templateparamlist>
+        <type>constexpr bool</type>
+        <definition>constexpr bool mscclpp::dependentFalse</definition>
+        <argsstring></argsstring>
+        <name>dependentFalse</name>
+        <initializer>= false</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls_device.hpp" line="19" column="16" bodyfile="/root/mscclpp/include/mscclpp/nvls_device.hpp" bodystart="19" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="namespacemscclpp_1addf417a90640b6643ded0a7077d155a4" prot="public" static="no" mutable="no">
+        <type>const <ref refid="namespacemscclpp_1a9473825c43b8a63f5f47a642d0697939" kindref="member">TriggerType</ref></type>
+        <definition>const TriggerType mscclpp::TriggerData</definition>
+        <argsstring></argsstring>
+        <name>TriggerData</name>
+        <initializer>= 0x1</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="19" column="19" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="19" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="namespacemscclpp_1a8e7eac8f555a6bc81178f62d8011e044" prot="public" static="no" mutable="no">
+        <type>const <ref refid="namespacemscclpp_1a9473825c43b8a63f5f47a642d0697939" kindref="member">TriggerType</ref></type>
+        <definition>const TriggerType mscclpp::TriggerFlag</definition>
+        <argsstring></argsstring>
+        <name>TriggerFlag</name>
+        <initializer>= 0x2</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="20" column="19" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="20" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="namespacemscclpp_1a8e66e5ac91f52fb8fe9664b0cd87dfbf" prot="public" static="no" mutable="no">
+        <type>const <ref refid="namespacemscclpp_1a9473825c43b8a63f5f47a642d0697939" kindref="member">TriggerType</ref></type>
+        <definition>const TriggerType mscclpp::TriggerSync</definition>
+        <argsstring></argsstring>
+        <name>TriggerSync</name>
+        <initializer>= 0x4</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="21" column="19" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="21" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="func">
+      <memberdef kind="function" id="namespacemscclpp_1a05204aa1421dccefd7317279e7c38d5c" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::string</type>
+        <definition>std::string mscclpp::version</definition>
+        <argsstring>()</argsstring>
+        <name>version</name>
+        <briefdescription>
+<para>Return a version string. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="31" column="13" declfile="/root/mscclpp/include/mscclpp/core.hpp" declline="31" declcolumn="13"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a0c632c46b1f8d8de99fcbbbb97fb67e4" prot="public" static="no" const="no" explicit="no" inline="yes" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>TransportFlags mscclpp::operator|</definition>
+        <argsstring>(Transport transport1, Transport transport2)</argsstring>
+        <name>operator|</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+          <declname>transport1</declname>
+        </param>
+        <param>
+          <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+          <declname>transport2</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise OR operator for two Transport objects.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>transport1</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The first Transport to perform the OR operation with. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>transport2</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The second Transport to perform the OR operation with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A new <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object with the result of the OR operation. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="284" column="23" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="284" bodyend="286"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a0e8406f18c274a5ce00f6f8c598b9583" prot="public" static="no" const="no" explicit="no" inline="yes" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>TransportFlags mscclpp::operator&amp;</definition>
+        <argsstring>(Transport transport1, Transport transport2)</argsstring>
+        <name>operator&amp;</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+          <declname>transport1</declname>
+        </param>
+        <param>
+          <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+          <declname>transport2</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise AND operator for two Transport objects.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>transport1</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The first Transport to perform the AND operation with. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>transport2</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The second Transport to perform the AND operation with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A new <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object with the result of the AND operation. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="293" column="23" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="293" bodyend="295"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a982ccfce637872e7b3d07797edcd2c7b" prot="public" static="no" const="no" explicit="no" inline="yes" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>TransportFlags mscclpp::operator^</definition>
+        <argsstring>(Transport transport1, Transport transport2)</argsstring>
+        <name>operator^</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+          <declname>transport1</declname>
+        </param>
+        <param>
+          <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+          <declname>transport2</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Bitwise XOR operator for two Transport objects.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>transport1</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The first Transport to perform the XOR operation with. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>transport2</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The second Transport to perform the XOR operation with. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A new <ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref> object with the result of the XOR operation. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="302" column="23" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="302" bodyend="304"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1ac2f0d27f4155eba491c250b3cc9a062b" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>int</type>
+        <definition>int mscclpp::getIBDeviceCount</definition>
+        <argsstring>()</argsstring>
+        <name>getIBDeviceCount</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the number of available InfiniBand devices.</para>
+<para><simplesect kind="return"><para>The number of available InfiniBand devices. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="309" column="5" declfile="/root/mscclpp/include/mscclpp/core.hpp" declline="309" declcolumn="5"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1afe4b8fcebe602c294a81f65d2f004824" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::string</type>
+        <definition>std::string mscclpp::getIBDeviceName</definition>
+        <argsstring>(Transport ibTransport)</argsstring>
+        <name>getIBDeviceName</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+          <declname>ibTransport</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the name of the InfiniBand device associated with the specified transport.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>ibTransport</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The InfiniBand transport to get the device name for. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>The name of the InfiniBand device associated with the specified transport. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="315" column="13" declfile="/root/mscclpp/include/mscclpp/core.hpp" declline="315" declcolumn="13"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1af9217af381b04d6860c42a8f8d69b0ac" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+        <definition>Transport mscclpp::getIBTransportByDeviceName</definition>
+        <argsstring>(const std::string &amp;ibDeviceName)</argsstring>
+        <name>getIBTransportByDeviceName</name>
+        <param>
+          <type>const std::string &amp;</type>
+          <declname>ibDeviceName</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the InfiniBand transport associated with the specified device name.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>ibDeviceName</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The name of the InfiniBand device to get the transport for. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>The InfiniBand transport associated with the specified device name. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="321" column="11" declfile="/root/mscclpp/include/mscclpp/core.hpp" declline="321" declcolumn="11"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1af6fab3d5a649a2dff1467e9eeb3a7ee3" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>typename T</type>
+          </param>
+        </templateparamlist>
+        <type><ref refid="namespacemscclpp_1ad527fb55e019c2b79a09d5be24c81aa6" kindref="member">DeviceHandle</ref>&lt; std::remove_reference_t&lt; T &gt; &gt;</type>
+        <definition>DeviceHandle&lt;std::remove_reference_t&lt;T&gt; &gt; mscclpp::deviceHandle</definition>
+        <argsstring>(T &amp;&amp;t)</argsstring>
+        <name>deviceHandle</name>
+        <param>
+          <type>T &amp;&amp;</type>
+          <declname>t</declname>
+        </param>
+        <briefdescription>
+<para>Retrieve the deviceHandle instance from host object. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="713" column="14" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="713" bodyend="715"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1abe9a611772fc87e4afb22a5342de69f2" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::string</type>
+        <definition>std::string mscclpp::errorToString</definition>
+        <argsstring>(enum ErrorCode error)</argsstring>
+        <name>errorToString</name>
+        <param>
+          <type>enum <ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbc" kindref="member">ErrorCode</ref></type>
+          <declname>error</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Convert an error code to a string.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>error</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The error code to convert. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>The string representation of the error code. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/errors.hpp" line="26" column="13" declfile="/root/mscclpp/include/mscclpp/errors.hpp" declline="26" declcolumn="13"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1ab10073b88d810432087d16a9068e5aa8" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>std::shared_ptr&lt; T &gt;</type>
+        <definition>std::shared_ptr&lt;T&gt; mscclpp::allocSharedCuda</definition>
+        <argsstring>(size_t count=1)</argsstring>
+        <name>allocSharedCuda</name>
+        <param>
+          <type>size_t</type>
+          <declname>count</declname>
+          <defval>1</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>count</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to allocate. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A std::shared_ptr to the allocated memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="233" column="17" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="233" bodyend="235"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a076026a23c37219386fd72e235a16404" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>std::shared_ptr&lt; <ref refid="structmscclpp_1_1PhysicalCudaMemory" kindref="compound">PhysicalCudaMemory</ref>&lt; T &gt; &gt;</type>
+        <definition>std::shared_ptr&lt;PhysicalCudaMemory&lt;T&gt; &gt; mscclpp::allocSharedPhysicalCuda</definition>
+        <argsstring>(size_t count, size_t gran)</argsstring>
+        <name>allocSharedPhysicalCuda</name>
+        <param>
+          <type>size_t</type>
+          <declname>count</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>gran</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Allocated physical memory on the device and returns a memory handle along with a memory handle for it. The deallocation only happens <ref refid="structmscclpp_1_1PhysicalCudaMemory" kindref="compound">PhysicalCudaMemory</ref> goes out of scope. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>count</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to allocate. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>gran</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>the granularity of the allocation. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A std::shared_ptr to the memory handle and a device pointer for that memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="244" column="17" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="244" bodyend="247"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a20fbe029082ab21502c8f354bc636263" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>std::shared_ptr&lt; T &gt;</type>
+        <definition>std::shared_ptr&lt;T&gt; mscclpp::allocExtSharedCuda</definition>
+        <argsstring>(size_t count=1)</argsstring>
+        <name>allocExtSharedCuda</name>
+        <param>
+          <type>size_t</type>
+          <declname>count</declname>
+          <defval>1</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>count</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to allocate. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A std::shared_ptr to the allocated memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="254" column="17" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="254" bodyend="256"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1ad31cd9626a62c64d05b44736adf3dbb9" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type><ref refid="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" kindref="member">UniqueCudaPtr</ref>&lt; T &gt;</type>
+        <definition>UniqueCudaPtr&lt;T&gt; mscclpp::allocUniqueCuda</definition>
+        <argsstring>(size_t count=1)</argsstring>
+        <name>allocUniqueCuda</name>
+        <param>
+          <type>size_t</type>
+          <declname>count</declname>
+          <defval>1</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Allocates memory on the device and returns a std::unique_ptr to it. The memory is zeroed out. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>count</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to allocate. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A std::unique_ptr to the allocated memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="268" column="15" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="268" bodyend="270"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a1e74ee49d25a2209aca5dc3c6ad7828b" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>std::unique_ptr&lt; <ref refid="structmscclpp_1_1PhysicalCudaMemory" kindref="compound">PhysicalCudaMemory</ref>&lt; T &gt; &gt;</type>
+        <definition>std::unique_ptr&lt;PhysicalCudaMemory&lt;T&gt; &gt; mscclpp::allocUniquePhysicalCuda</definition>
+        <argsstring>(size_t count, size_t gran)</argsstring>
+        <name>allocUniquePhysicalCuda</name>
+        <param>
+          <type>size_t</type>
+          <declname>count</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>gran</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Allocated physical memory on the device and returns a memory handle along with a virtual memory handle for it. The memory is zeroed out. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>count</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to allocate. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>gran</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>the granularity of the allocation. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A std::unique_ptr to the memory handle and a device pointer for that memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="279" column="17" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="279" bodyend="282"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a9f462309da3d603572c9f4731e0a54bf" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type><ref refid="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" kindref="member">UniqueCudaPtr</ref>&lt; T &gt;</type>
+        <definition>UniqueCudaPtr&lt;T&gt; mscclpp::allocExtUniqueCuda</definition>
+        <argsstring>(size_t count=1)</argsstring>
+        <name>allocExtUniqueCuda</name>
+        <param>
+          <type>size_t</type>
+          <declname>count</declname>
+          <defval>1</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Allocates memory on the device and returns a std::unique_ptr to it. The memory is zeroed out. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>count</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to allocate. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A std::unique_ptr to the allocated memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="289" column="15" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="289" bodyend="291"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1abbc4c2a44a23d76110dc492e1de23ad2" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+          <param>
+            <type>typename...</type>
+            <declname>Args</declname>
+            <defname>Args</defname>
+          </param>
+        </templateparamlist>
+        <type>std::shared_ptr&lt; T &gt;</type>
+        <definition>std::shared_ptr&lt;T&gt; mscclpp::makeSharedCudaHost</definition>
+        <argsstring>(Args &amp;&amp;... args)</argsstring>
+        <name>makeSharedCudaHost</name>
+        <param>
+          <type>Args &amp;&amp;...</type>
+          <declname>args</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Allocates memory with cudaHostAlloc, constructs an object of type T in it and returns a std::shared_ptr to it. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of the object to construct. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>Args</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Types of the arguments to pass to the constructor. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>args</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Arguments to pass to the constructor. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A std::shared_ptr to the allocated memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="299" column="17" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="299" bodyend="303"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a56a0554f903817c7a2600296eca9c166" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>std::shared_ptr&lt; T[]&gt;</type>
+        <definition>std::shared_ptr&lt;T[]&gt; mscclpp::makeSharedCudaHost</definition>
+        <argsstring>(size_t count)</argsstring>
+        <name>makeSharedCudaHost</name>
+        <param>
+          <type>size_t</type>
+          <declname>count</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Allocates an array of objects of type T with cudaHostAlloc, default constructs each element and returns a std::shared_ptr to it. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of the object to construct. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>count</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to allocate. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A std::shared_ptr to the allocated memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="311" column="17" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="311" bodyend="318"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a40cb9e2eef899f052b7e72c706f5ab7b" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+          <param>
+            <type>typename...</type>
+            <declname>Args</declname>
+            <defname>Args</defname>
+          </param>
+          <param>
+            <type>std::enable_if_t&lt; false==std::is_array_v&lt; T &gt;, bool &gt;</type>
+            <defval>true</defval>
+          </param>
+        </templateparamlist>
+        <type><ref refid="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" kindref="member">UniqueCudaHostPtr</ref>&lt; T &gt;</type>
+        <definition>UniqueCudaHostPtr&lt;T&gt; mscclpp::makeUniqueCudaHost</definition>
+        <argsstring>(Args &amp;&amp;... args)</argsstring>
+        <name>makeUniqueCudaHost</name>
+        <param>
+          <type>Args &amp;&amp;...</type>
+          <declname>args</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Allocates memory with cudaHostAlloc, constructs an object of type T in it and returns a std::unique_ptr to it. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of the object to construct. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>Args</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Types of the arguments to pass to the constructor. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>args</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Arguments to pass to the constructor. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A std::unique_ptr to the allocated memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="331" column="19" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="331" bodyend="335"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1af5e91d93bd1a5e7bfb98a0b353e7b05e" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+          <param>
+            <type>std::enable_if_t&lt; true==std::is_array_v&lt; T &gt;, bool &gt;</type>
+            <defval>true</defval>
+          </param>
+        </templateparamlist>
+        <type><ref refid="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" kindref="member">UniqueCudaHostPtr</ref>&lt; T &gt;</type>
+        <definition>UniqueCudaHostPtr&lt;T&gt; mscclpp::makeUniqueCudaHost</definition>
+        <argsstring>(size_t count)</argsstring>
+        <name>makeUniqueCudaHost</name>
+        <param>
+          <type>size_t</type>
+          <declname>count</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Allocates an array of objects of type T with cudaHostAlloc, default constructs each element and returns a std::unique_ptr to it. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of the object to construct. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>count</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to allocate. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A std::unique_ptr to the allocated memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="343" column="19" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="343" bodyend="350"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1afd3d7997563fb05cafdf33e2886f90ba" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>void</type>
+        <definition>void mscclpp::memcpyCudaAsync</definition>
+        <argsstring>(T *dst, const T *src, size_t count, cudaStream_t stream, cudaMemcpyKind kind=cudaMemcpyDefault)</argsstring>
+        <name>memcpyCudaAsync</name>
+        <param>
+          <type>T *</type>
+          <declname>dst</declname>
+        </param>
+        <param>
+          <type>const T *</type>
+          <declname>src</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>count</declname>
+        </param>
+        <param>
+          <type>cudaStream_t</type>
+          <declname>stream</declname>
+        </param>
+        <param>
+          <type>cudaMemcpyKind</type>
+          <declname>kind</declname>
+          <defval>cudaMemcpyDefault</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Asynchronous cudaMemcpy without capture into a CUDA graph. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>dst</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Destination pointer. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>src</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Source pointer. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>count</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to copy. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>stream</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>CUDA stream to use. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>kind</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of cudaMemcpy to perform. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="360" column="6" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="360" bodyend="363"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a48d4cf01618324fd8c4e55a4c6eca6fe" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>void</type>
+        <definition>void mscclpp::memcpyCuda</definition>
+        <argsstring>(T *dst, const T *src, size_t count, cudaMemcpyKind kind=cudaMemcpyDefault)</argsstring>
+        <name>memcpyCuda</name>
+        <param>
+          <type>T *</type>
+          <declname>dst</declname>
+        </param>
+        <param>
+          <type>const T *</type>
+          <declname>src</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>count</declname>
+        </param>
+        <param>
+          <type>cudaMemcpyKind</type>
+          <declname>kind</declname>
+          <defval>cudaMemcpyDefault</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Synchronous cudaMemcpy without capture into a CUDA graph. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>dst</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Destination pointer. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>src</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Source pointer. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>count</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to copy. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>kind</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of cudaMemcpy to perform. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="372" column="6" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="372" bodyend="377"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a50618667a7699e167b8cf8e00d05ad36" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>int</type>
+        <definition>int mscclpp::getDeviceNumaNode</definition>
+        <argsstring>(int cudaDev)</argsstring>
+        <name>getDeviceNumaNode</name>
+        <param>
+          <type>int</type>
+          <declname>cudaDev</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/numa.hpp" line="9" column="5" declfile="/root/mscclpp/include/mscclpp/numa.hpp" declline="9" declcolumn="5"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a95f78a88c99f65c2f2769b4b0c64f8e4" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::numaBind</definition>
+        <argsstring>(int node)</argsstring>
+        <name>numaBind</name>
+        <param>
+          <type>int</type>
+          <declname>node</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/numa.hpp" line="10" column="6" declfile="/root/mscclpp/include/mscclpp/numa.hpp" declline="10" declcolumn="6"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a8b8a1fdab1bc4ff47206a28eeae0eafd" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1NvlsConnection" kindref="compound">NvlsConnection</ref> &gt;</type>
+        <definition>std::shared_ptr&lt;NvlsConnection&gt; mscclpp::connectNvlsCollective</definition>
+        <argsstring>(std::shared_ptr&lt; Communicator &gt; comm, std::vector&lt; int &gt; allRanks, size_t bufferSize=NvlsConnection::DefaultNvlsBufferSize)</argsstring>
+        <name>connectNvlsCollective</name>
+        <param>
+          <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Communicator" kindref="compound">Communicator</ref> &gt;</type>
+          <declname>comm</declname>
+        </param>
+        <param>
+          <type>std::vector&lt; int &gt;</type>
+          <declname>allRanks</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>bufferSize</declname>
+          <defval><ref refid="classmscclpp_1_1NvlsConnection_1a2792ac41d2ce8213f73dd2420bab2d61" kindref="member">NvlsConnection::DefaultNvlsBufferSize</ref></defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Connect to NVLS on setup.</para>
+<para>This function used to connect to NVLS on setup. NVLS collective using multicast operations to send/recv data. Here we need to put all involved ranks into the collective group.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>comm</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The communicator. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>allRanks</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The ranks of all processes involved in the collective. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>config</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The configuration for the local endpoint. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>std::shared_ptr&lt;NvlsConnection&gt; A shared pointer to the NVLS connection. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/nvls.hpp" line="67" column="17" declfile="/root/mscclpp/include/mscclpp/nvls.hpp" declline="67" declcolumn="17"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a9d63396e8bf8f8d3a2d6dfbf7c130fe0" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::string</type>
+        <definition>std::string mscclpp::getHostName</definition>
+        <argsstring>(int maxlen, const char delim)</argsstring>
+        <name>getHostName</name>
+        <param>
+          <type>int</type>
+          <declname>maxlen</declname>
+        </param>
+        <param>
+          <type>const char</type>
+          <declname>delim</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="38" column="13" declfile="/root/mscclpp/include/mscclpp/utils.hpp" declline="38" declcolumn="13"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1a2f4e90d0b7834b9f4d243d1e6e92ba37" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>bool</type>
+        <definition>bool mscclpp::isNvlsSupported</definition>
+        <argsstring>()</argsstring>
+        <name>isNvlsSupported</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="40" column="6" declfile="/root/mscclpp/include/mscclpp/utils.hpp" declline="40" declcolumn="6"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/atomic_device.hpp" line="13" column="17"/>
+  </compounddef>
+</doxygen>

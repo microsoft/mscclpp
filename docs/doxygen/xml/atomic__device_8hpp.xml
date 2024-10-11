@@ -1,0 +1,105 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="atomic__device_8hpp" kind="file" language="C++">
+    <compoundname>atomic_device.hpp</compoundname>
+    <includes refid="device_8hpp" local="yes">device.hpp</includes>
+    <includedby refid="concurrency__device_8hpp" local="yes">concurrency_device.hpp</includedby>
+    <incdepgraph>
+      <node id="2">
+        <label>device.hpp</label>
+        <link refid="device_8hpp"/>
+      </node>
+      <node id="1">
+        <label>atomic_device.hpp</label>
+        <link refid="atomic__device_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+      </node>
+    </incdepgraph>
+    <invincdepgraph>
+      <node id="1">
+        <label>atomic_device.hpp</label>
+        <link refid="atomic__device_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+      </node>
+      <node id="2">
+        <label>concurrency_device.hpp</label>
+        <link refid="concurrency__device_8hpp"/>
+      </node>
+    </invincdepgraph>
+    <innernamespace refid="namespacemscclpp">mscclpp</innernamespace>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>MSCCLPP_ATOMIC_DEVICE_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>MSCCLPP_ATOMIC_DEVICE_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="device_8hpp" kindref="compound">device.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight></codeline>
+<codeline lineno="9"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(MSCCLPP_DEVICE_CUDA)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="10"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;cuda/atomic&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="11"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>defined(MSCCLPP_DEVICE_CUDA)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="12"><highlight class="normal"></highlight></codeline>
+<codeline lineno="13" refid="namespacemscclpp" refkind="compound"><highlight class="normal"></highlight><highlight class="keyword">namespace<sp/></highlight><highlight class="normal"><ref refid="namespacemscclpp" kindref="compound">mscclpp</ref><sp/>{</highlight></codeline>
+<codeline lineno="14"><highlight class="normal"></highlight></codeline>
+<codeline lineno="15"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(MSCCLPP_DEVICE_CUDA)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="16"><highlight class="normal"></highlight></codeline>
+<codeline lineno="17"><highlight class="normal">constexpr<sp/>cuda::memory_order<sp/>memoryOrderRelaxed<sp/>=<sp/>cuda::memory_order_relaxed;</highlight></codeline>
+<codeline lineno="18"><highlight class="normal">constexpr<sp/>cuda::memory_order<sp/>memoryOrderAcquire<sp/>=<sp/>cuda::memory_order_acquire;</highlight></codeline>
+<codeline lineno="19"><highlight class="normal">constexpr<sp/>cuda::memory_order<sp/>memoryOrderRelease<sp/>=<sp/>cuda::memory_order_release;</highlight></codeline>
+<codeline lineno="20"><highlight class="normal">constexpr<sp/>cuda::memory_order<sp/>memoryOrderAcqRel<sp/>=<sp/>cuda::memory_order_acq_rel;</highlight></codeline>
+<codeline lineno="21"><highlight class="normal">constexpr<sp/>cuda::memory_order<sp/>memoryOrderSeqCst<sp/>=<sp/>cuda::memory_order_seq_cst;</highlight></codeline>
+<codeline lineno="22"><highlight class="normal"></highlight></codeline>
+<codeline lineno="23"><highlight class="normal"></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">typename</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="24"><highlight class="normal"><ref refid="device_8hpp_1a250d9c0adf7d0feb6033bddada9b9609" kindref="member">MSCCLPP_HOST_DEVICE_INLINE</ref><sp/>T<sp/>atomicLoad(T*<sp/>ptr,<sp/>cuda::memory_order<sp/>memoryOrder)<sp/>{</highlight></codeline>
+<codeline lineno="25"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>cuda::atomic_ref&lt;T,<sp/>cuda::thread_scope_system&gt;{*ptr}.load(memoryOrder);</highlight></codeline>
+<codeline lineno="26"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="27"><highlight class="normal"></highlight></codeline>
+<codeline lineno="28"><highlight class="normal"></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">typename</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="29"><highlight class="normal"><ref refid="device_8hpp_1a250d9c0adf7d0feb6033bddada9b9609" kindref="member">MSCCLPP_HOST_DEVICE_INLINE</ref><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>atomicStore(T*<sp/>ptr,<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>T&amp;<sp/>val,<sp/>cuda::memory_order<sp/>memoryOrder)<sp/>{</highlight></codeline>
+<codeline lineno="30"><highlight class="normal"><sp/><sp/>cuda::atomic_ref&lt;T,<sp/>cuda::thread_scope_system&gt;{*ptr}.store(val,<sp/>memoryOrder);</highlight></codeline>
+<codeline lineno="31"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="32"><highlight class="normal"></highlight></codeline>
+<codeline lineno="33"><highlight class="normal"></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">typename</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="34"><highlight class="normal"><ref refid="device_8hpp_1a250d9c0adf7d0feb6033bddada9b9609" kindref="member">MSCCLPP_HOST_DEVICE_INLINE</ref><sp/>T<sp/>atomicFetchAdd(T*<sp/>ptr,<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>T&amp;<sp/>val,<sp/>cuda::memory_order<sp/>memoryOrder)<sp/>{</highlight></codeline>
+<codeline lineno="35"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>cuda::atomic_ref&lt;T,<sp/>cuda::thread_scope_system&gt;{*ptr}.fetch_add(val,<sp/>memoryOrder);</highlight></codeline>
+<codeline lineno="36"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="37"><highlight class="normal"></highlight></codeline>
+<codeline lineno="38"><highlight class="normal"></highlight><highlight class="preprocessor">#elif<sp/>defined(MSCCLPP_DEVICE_HIP)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="39"><highlight class="normal"></highlight></codeline>
+<codeline lineno="40"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>memoryOrderRelaxed<sp/>=<sp/>__ATOMIC_RELAXED;</highlight></codeline>
+<codeline lineno="41"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>memoryOrderAcquire<sp/>=<sp/>__ATOMIC_ACQUIRE;</highlight></codeline>
+<codeline lineno="42"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>memoryOrderRelease<sp/>=<sp/>__ATOMIC_RELEASE;</highlight></codeline>
+<codeline lineno="43"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>memoryOrderAcqRel<sp/>=<sp/>__ATOMIC_ACQ_REL;</highlight></codeline>
+<codeline lineno="44"><highlight class="normal">constexpr<sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>memoryOrderSeqCst<sp/>=<sp/>__ATOMIC_SEQ_CST;</highlight></codeline>
+<codeline lineno="45"><highlight class="normal"></highlight></codeline>
+<codeline lineno="46"><highlight class="normal"></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">typename</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="47"><highlight class="normal"><ref refid="device_8hpp_1a250d9c0adf7d0feb6033bddada9b9609" kindref="member">MSCCLPP_HOST_DEVICE_INLINE</ref><sp/>T<sp/>atomicLoad(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>T*<sp/>ptr,<sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>memoryOrder)<sp/>{</highlight></codeline>
+<codeline lineno="48"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>__atomic_load_n(ptr,<sp/>memoryOrder);</highlight></codeline>
+<codeline lineno="49"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="50"><highlight class="normal"></highlight></codeline>
+<codeline lineno="51"><highlight class="normal"></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">typename</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="52"><highlight class="normal"><ref refid="device_8hpp_1a250d9c0adf7d0feb6033bddada9b9609" kindref="member">MSCCLPP_HOST_DEVICE_INLINE</ref><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>atomicStore(T*<sp/>ptr,<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>T&amp;<sp/>val,<sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>memoryOrder)<sp/>{</highlight></codeline>
+<codeline lineno="53"><highlight class="normal"><sp/><sp/>__atomic_store_n(ptr,<sp/>val,<sp/>memoryOrder);</highlight></codeline>
+<codeline lineno="54"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="55"><highlight class="normal"></highlight></codeline>
+<codeline lineno="56"><highlight class="normal"></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">typename</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="57"><highlight class="normal"><ref refid="device_8hpp_1a250d9c0adf7d0feb6033bddada9b9609" kindref="member">MSCCLPP_HOST_DEVICE_INLINE</ref><sp/>T<sp/>atomicFetchAdd(T*<sp/>ptr,<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>T&amp;<sp/>val,<sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>memoryOrder)<sp/>{</highlight></codeline>
+<codeline lineno="58"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>__atomic_fetch_add(ptr,<sp/>val,<sp/>memoryOrder);</highlight></codeline>
+<codeline lineno="59"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="60"><highlight class="normal"></highlight></codeline>
+<codeline lineno="61"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>defined(MSCCLPP_DEVICE_HIP)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="62"><highlight class="normal"></highlight></codeline>
+<codeline lineno="63"><highlight class="normal">}<sp/><sp/></highlight><highlight class="comment">//<sp/>namespace<sp/>mscclpp</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="64"><highlight class="normal"></highlight></codeline>
+<codeline lineno="65"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>MSCCLPP_ATOMIC_DEVICE_HPP_</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/atomic_device.hpp"/>
+  </compounddef>
+</doxygen>

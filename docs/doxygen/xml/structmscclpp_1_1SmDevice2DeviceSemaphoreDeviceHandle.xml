@@ -1,0 +1,73 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::SmDevice2DeviceSemaphoreDeviceHandle</compoundname>
+    <includes refid="semaphore__device_8hpp" local="no">semaphore_device.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1afc25beec257d7a0d115d80040d63da3b" prot="public" static="no" mutable="no">
+        <type>uint64_t *</type>
+        <definition>uint64_t* mscclpp::SmDevice2DeviceSemaphoreDeviceHandle::inboundSemaphoreId</definition>
+        <argsstring></argsstring>
+        <name>inboundSemaphoreId</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/semaphore_device.hpp" line="99" column="12" bodyfile="/root/mscclpp/include/mscclpp/semaphore_device.hpp" bodystart="99" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1ad9a183b0d2ef78f39a3d6646676c5833" prot="public" static="no" mutable="no">
+        <type>uint64_t *</type>
+        <definition>uint64_t* mscclpp::SmDevice2DeviceSemaphoreDeviceHandle::outboundSemaphoreId</definition>
+        <argsstring></argsstring>
+        <name>outboundSemaphoreId</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/semaphore_device.hpp" line="100" column="12" bodyfile="/root/mscclpp/include/mscclpp/semaphore_device.hpp" bodystart="100" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a96ecfb855503f9937185aebcf67b0ea8" prot="public" static="no" mutable="no">
+        <type>uint64_t *</type>
+        <definition>uint64_t* mscclpp::SmDevice2DeviceSemaphoreDeviceHandle::remoteInboundSemaphoreId</definition>
+        <argsstring></argsstring>
+        <name>remoteInboundSemaphoreId</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/semaphore_device.hpp" line="101" column="12" bodyfile="/root/mscclpp/include/mscclpp/semaphore_device.hpp" bodystart="101" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a5c37cf594f6a48b30b25fd1c07f09fb5" prot="public" static="no" mutable="no">
+        <type>uint64_t *</type>
+        <definition>uint64_t* mscclpp::SmDevice2DeviceSemaphoreDeviceHandle::expectedInboundSemaphoreId</definition>
+        <argsstring></argsstring>
+        <name>expectedInboundSemaphoreId</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/semaphore_device.hpp" line="102" column="12" bodyfile="/root/mscclpp/include/mscclpp/semaphore_device.hpp" bodystart="102" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Device-side handle for <ref refid="classmscclpp_1_1SmDevice2DeviceSemaphore" kindref="compound">SmDevice2DeviceSemaphore</ref>. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/semaphore_device.hpp" line="40" column="43" bodyfile="/root/mscclpp/include/mscclpp/semaphore_device.hpp" bodystart="40" bodyend="103"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a5c37cf594f6a48b30b25fd1c07f09fb5" prot="public" virt="non-virtual"><scope>mscclpp::SmDevice2DeviceSemaphoreDeviceHandle</scope><name>expectedInboundSemaphoreId</name></member>
+      <member refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1afc25beec257d7a0d115d80040d63da3b" prot="public" virt="non-virtual"><scope>mscclpp::SmDevice2DeviceSemaphoreDeviceHandle</scope><name>inboundSemaphoreId</name></member>
+      <member refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1ad9a183b0d2ef78f39a3d6646676c5833" prot="public" virt="non-virtual"><scope>mscclpp::SmDevice2DeviceSemaphoreDeviceHandle</scope><name>outboundSemaphoreId</name></member>
+      <member refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle_1a96ecfb855503f9937185aebcf67b0ea8" prot="public" virt="non-virtual"><scope>mscclpp::SmDevice2DeviceSemaphoreDeviceHandle</scope><name>remoteInboundSemaphoreId</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

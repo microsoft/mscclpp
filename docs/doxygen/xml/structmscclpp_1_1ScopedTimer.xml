@@ -1,0 +1,97 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1ScopedTimer" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::ScopedTimer</compoundname>
+    <basecompoundref refid="structmscclpp_1_1Timer" prot="public" virt="non-virtual">mscclpp::Timer</basecompoundref>
+    <includes refid="utils_8hpp" local="no">utils.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1ScopedTimer_1a022f4f0e17964c04bb691da604b0cf4d" prot="public" static="no" mutable="no">
+        <type>const std::string</type>
+        <definition>const std::string mscclpp::ScopedTimer::name_</definition>
+        <argsstring></argsstring>
+        <name>name_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="31" column="21" bodyfile="/root/mscclpp/include/mscclpp/utils.hpp" bodystart="31" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="structmscclpp_1_1ScopedTimer_1a62182ba1e4e3f8e2b33b290050e1c6d4" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::ScopedTimer::ScopedTimer</definition>
+        <argsstring>(const std::string &amp;name)</argsstring>
+        <name>ScopedTimer</name>
+        <param>
+          <type>const std::string &amp;</type>
+          <declname>name</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="33" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1ScopedTimer_1a1f5a4cbda7873e9dce0772fbe6cf37e8" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::ScopedTimer::~ScopedTimer</definition>
+        <argsstring>()</argsstring>
+        <name>~ScopedTimer</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="35" column="3"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <inheritancegraph>
+      <node id="1">
+        <label>mscclpp::ScopedTimer</label>
+        <link refid="structmscclpp_1_1ScopedTimer"/>
+        <childnode refid="2" relation="public-inheritance">
+        </childnode>
+      </node>
+      <node id="2">
+        <label>mscclpp::Timer</label>
+        <link refid="structmscclpp_1_1Timer"/>
+      </node>
+    </inheritancegraph>
+    <collaborationgraph>
+      <node id="1">
+        <label>mscclpp::ScopedTimer</label>
+        <link refid="structmscclpp_1_1ScopedTimer"/>
+        <childnode refid="2" relation="public-inheritance">
+        </childnode>
+      </node>
+      <node id="2">
+        <label>mscclpp::Timer</label>
+        <link refid="structmscclpp_1_1Timer"/>
+      </node>
+    </collaborationgraph>
+    <location file="/root/mscclpp/include/mscclpp/utils.hpp" line="30" column="31" bodyfile="/root/mscclpp/include/mscclpp/utils.hpp" bodystart="30" bodyend="36"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1Timer_1ae6ae9c8a2e3c869f5b7d98375bc31b8a" prot="public" virt="non-virtual"><scope>mscclpp::ScopedTimer</scope><name>elapsed</name></member>
+      <member refid="structmscclpp_1_1ScopedTimer_1a022f4f0e17964c04bb691da604b0cf4d" prot="public" virt="non-virtual"><scope>mscclpp::ScopedTimer</scope><name>name_</name></member>
+      <member refid="structmscclpp_1_1Timer_1a7de1b00faa1cd10ef8a9ad92f605ece6" prot="public" virt="non-virtual"><scope>mscclpp::ScopedTimer</scope><name>print</name></member>
+      <member refid="structmscclpp_1_1Timer_1a092d22cd4c45728f5da6a1520a2b2064" prot="public" virt="non-virtual"><scope>mscclpp::ScopedTimer</scope><name>reset</name></member>
+      <member refid="structmscclpp_1_1ScopedTimer_1a62182ba1e4e3f8e2b33b290050e1c6d4" prot="public" virt="non-virtual"><scope>mscclpp::ScopedTimer</scope><name>ScopedTimer</name></member>
+      <member refid="structmscclpp_1_1Timer_1a2a03cefb3d4eed484631d2c91334aa2e" prot="public" virt="non-virtual"><scope>mscclpp::ScopedTimer</scope><name>set</name></member>
+      <member refid="structmscclpp_1_1Timer_1a5cb6507599b038483df1204dd0098105" prot="public" virt="non-virtual"><scope>mscclpp::ScopedTimer</scope><name>start_</name></member>
+      <member refid="structmscclpp_1_1Timer_1a4bac0fadd833f68607812a1490337204" prot="public" virt="non-virtual"><scope>mscclpp::ScopedTimer</scope><name>timeout_</name></member>
+      <member refid="structmscclpp_1_1Timer_1a4e748ef61bc2e3e7288a9d20c4b43d23" prot="public" virt="non-virtual"><scope>mscclpp::ScopedTimer</scope><name>Timer</name></member>
+      <member refid="structmscclpp_1_1ScopedTimer_1a1f5a4cbda7873e9dce0772fbe6cf37e8" prot="public" virt="non-virtual"><scope>mscclpp::ScopedTimer</scope><name>~ScopedTimer</name></member>
+      <member refid="structmscclpp_1_1Timer_1acd3b971240d25ec3c6b603eee70c93a0" prot="public" virt="non-virtual"><scope>mscclpp::ScopedTimer</scope><name>~Timer</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

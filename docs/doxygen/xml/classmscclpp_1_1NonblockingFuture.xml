@@ -1,0 +1,127 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1NonblockingFuture" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::NonblockingFuture</compoundname>
+    <includes refid="core_8hpp" local="no">core.hpp</includes>
+    <templateparamlist>
+      <param>
+        <type>typename T</type>
+      </param>
+    </templateparamlist>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1NonblockingFuture_1ab746e008d80b2f092b62fb4d6e52ced2" prot="private" static="no" mutable="no">
+        <type>std::shared_future&lt; T &gt;</type>
+        <definition>std::shared_future&lt;T&gt; mscclpp::NonblockingFuture&lt; T &gt;::future</definition>
+        <argsstring></argsstring>
+        <name>future</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="563" column="22" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="563" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1NonblockingFuture_1a0f2ddff6636f798558edb8d865d4e766" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::NonblockingFuture&lt; T &gt;::NonblockingFuture</definition>
+        <argsstring>()=default</argsstring>
+        <name>NonblockingFuture</name>
+        <briefdescription>
+<para>Default constructor. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="567" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1NonblockingFuture_1a4c2070ffab1d6717159fb4913bcea2c0" prot="public" static="no" const="no" explicit="no" inline="yes" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::NonblockingFuture&lt; T &gt;::NonblockingFuture</definition>
+        <argsstring>(std::shared_future&lt; T &gt; &amp;&amp;future)</argsstring>
+        <name>NonblockingFuture</name>
+        <param>
+          <type>std::shared_future&lt; T &gt; &amp;&amp;</type>
+          <declname>future</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Constructor that takes a shared future and moves it into the <ref refid="classmscclpp_1_1NonblockingFuture" kindref="compound">NonblockingFuture</ref>.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>future</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The shared future to move. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="572" column="3" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="572" bodyend="572"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1NonblockingFuture_1acb37162793ab9f481db9ce84ed5f84c1" prot="public" static="no" const="yes" explicit="no" inline="yes" virt="non-virtual">
+        <type>bool</type>
+        <definition>bool mscclpp::NonblockingFuture&lt; T &gt;::ready</definition>
+        <argsstring>() const</argsstring>
+        <name>ready</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Check if the value is ready to be retrieved.</para>
+<para><simplesect kind="return"><para>True if the value is ready, false otherwise. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="577" column="8" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="577" bodyend="577"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1NonblockingFuture_1ab79350c4b28c219a5d85bd59c23ed165" prot="public" static="no" const="yes" explicit="no" inline="yes" virt="non-virtual">
+        <type>T</type>
+        <definition>T mscclpp::NonblockingFuture&lt; T &gt;::get</definition>
+        <argsstring>() const</argsstring>
+        <name>get</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the value.</para>
+<para><simplesect kind="return"><para>The value.</para>
+</simplesect>
+<parameterlist kind="exception"><parameteritem>
+<parameternamelist>
+<parametername><ref refid="classmscclpp_1_1Error" kindref="compound">Error</ref></parametername>
+</parameternamelist>
+<parameterdescription>
+<para>if the value is not ready. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="584" column="5" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="584" bodyend="587"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>A non-blocking future that can be used to check if a value is ready and retrieve it. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/core.hpp" line="562" column="24" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="562" bodyend="588"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1NonblockingFuture_1ab746e008d80b2f092b62fb4d6e52ced2" prot="private" virt="non-virtual"><scope>mscclpp::NonblockingFuture</scope><name>future</name></member>
+      <member refid="classmscclpp_1_1NonblockingFuture_1ab79350c4b28c219a5d85bd59c23ed165" prot="public" virt="non-virtual"><scope>mscclpp::NonblockingFuture</scope><name>get</name></member>
+      <member refid="classmscclpp_1_1NonblockingFuture_1a0f2ddff6636f798558edb8d865d4e766" prot="public" virt="non-virtual"><scope>mscclpp::NonblockingFuture</scope><name>NonblockingFuture</name></member>
+      <member refid="classmscclpp_1_1NonblockingFuture_1a4c2070ffab1d6717159fb4913bcea2c0" prot="public" virt="non-virtual"><scope>mscclpp::NonblockingFuture</scope><name>NonblockingFuture</name></member>
+      <member refid="classmscclpp_1_1NonblockingFuture_1acb37162793ab9f481db9ce84ed5f84c1" prot="public" virt="non-virtual"><scope>mscclpp::NonblockingFuture</scope><name>ready</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

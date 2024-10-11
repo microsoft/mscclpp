@@ -1,0 +1,84 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1ExecutionPlan" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::ExecutionPlan</compoundname>
+    <includes refid="executor_8hpp" local="no">executor.hpp</includes>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1ExecutionPlan_1a513a4938002a405078e2f7ba0644ab33" prot="private" static="no" mutable="no">
+        <type>std::shared_ptr&lt; Impl &gt;</type>
+        <definition>std::shared_ptr&lt;Impl&gt; mscclpp::ExecutionPlan::impl_</definition>
+        <argsstring></argsstring>
+        <name>impl_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="33" column="19" bodyfile="/root/mscclpp/include/mscclpp/executor.hpp" bodystart="32" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="friend">
+      <memberdef kind="friend" id="classmscclpp_1_1ExecutionPlan_1a763b2f90bc53f92d680a635fe28e858e" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>friend class</type>
+        <definition>friend class Executor</definition>
+        <argsstring></argsstring>
+        <name>Executor</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="35" column="3" bodyfile="/root/mscclpp/include/mscclpp/executor.hpp" bodystart="35" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1ExecutionPlan_1a44258711598e397203fe3557cb160b02" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::ExecutionPlan::ExecutionPlan</definition>
+        <argsstring>(const std::string &amp;name, const std::string &amp;planPath)</argsstring>
+        <name>ExecutionPlan</name>
+        <param>
+          <type>const std::string &amp;</type>
+          <declname>name</declname>
+        </param>
+        <param>
+          <type>const std::string &amp;</type>
+          <declname>planPath</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="28" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1ExecutionPlan_1a0e36198cc7ad5add36f4831f3794a88b" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::ExecutionPlan::~ExecutionPlan</definition>
+        <argsstring>()=default</argsstring>
+        <name>~ExecutionPlan</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="29" column="3"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/executor.hpp" line="26" column="20" bodyfile="/root/mscclpp/include/mscclpp/executor.hpp" bodystart="26" bodyend="36"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1ExecutionPlan_1a44258711598e397203fe3557cb160b02" prot="public" virt="non-virtual"><scope>mscclpp::ExecutionPlan</scope><name>ExecutionPlan</name></member>
+      <member refid="classmscclpp_1_1ExecutionPlan_1a763b2f90bc53f92d680a635fe28e858e" prot="private" virt="non-virtual"><scope>mscclpp::ExecutionPlan</scope><name>Executor</name></member>
+      <member refid="classmscclpp_1_1ExecutionPlan_1a513a4938002a405078e2f7ba0644ab33" prot="private" virt="non-virtual"><scope>mscclpp::ExecutionPlan</scope><name>impl_</name></member>
+      <member refid="classmscclpp_1_1ExecutionPlan_1a0e36198cc7ad5add36f4831f3794a88b" prot="public" virt="non-virtual"><scope>mscclpp::ExecutionPlan</scope><name>~ExecutionPlan</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

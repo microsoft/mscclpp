@@ -1,0 +1,285 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1Connection" kind="class" language="C++" prot="public" abstract="yes">
+    <compoundname>mscclpp::Connection</compoundname>
+    <includes refid="core_8hpp" local="no">core.hpp</includes>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1Connection_1a286f0fc3a946e33611c9c106553fdaee" prot="public" static="no" const="no" explicit="no" inline="no" virt="virtual">
+        <type></type>
+        <definition>virtual mscclpp::Connection::~Connection</definition>
+        <argsstring>()=default</argsstring>
+        <name>~Connection</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="419" column="11"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Connection_1a4a78353163997c281e0f362f2e739353" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type>void</type>
+        <definition>virtual void mscclpp::Connection::write</definition>
+        <argsstring>(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size)=0</argsstring>
+        <name>write</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref></type>
+          <declname>dst</declname>
+        </param>
+        <param>
+          <type>uint64_t</type>
+          <declname>dstOffset</declname>
+        </param>
+        <param>
+          <type><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref></type>
+          <declname>src</declname>
+        </param>
+        <param>
+          <type>uint64_t</type>
+          <declname>srcOffset</declname>
+        </param>
+        <param>
+          <type>uint64_t</type>
+          <declname>size</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Write data from a source <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> to a destination <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref>.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>dst</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The destination <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref>. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>dstOffset</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The offset in bytes from the start of the destination <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref>. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>src</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The source <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref>. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>srcOffset</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The offset in bytes from the start of the source <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref>. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>size</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The number of bytes to write. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="428" column="16"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Connection_1a2c273f8dc12c89bf8fe62ea6bbcd51d4" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type>void</type>
+        <definition>virtual void mscclpp::Connection::updateAndSync</definition>
+        <argsstring>(RegisteredMemory dst, uint64_t dstOffset, uint64_t *src, uint64_t newValue)=0</argsstring>
+        <name>updateAndSync</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref></type>
+          <declname>dst</declname>
+        </param>
+        <param>
+          <type>uint64_t</type>
+          <declname>dstOffset</declname>
+        </param>
+        <param>
+          <type>uint64_t *</type>
+          <declname>src</declname>
+        </param>
+        <param>
+          <type>uint64_t</type>
+          <declname>newValue</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Update a 8-byte value in a destination <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> and synchronize the change with the remote process.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>dst</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The destination <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref>. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>dstOffset</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The offset in bytes from the start of the destination <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref>. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>src</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>A pointer to the value to update. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>newValue</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The new value to write. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="437" column="16"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Connection_1a0ba24623e37399d71238ea3175f9a708" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type>void</type>
+        <definition>virtual void mscclpp::Connection::flush</definition>
+        <argsstring>(int64_t timeoutUsec=3e7)=0</argsstring>
+        <name>flush</name>
+        <param>
+          <type>int64_t</type>
+          <declname>timeoutUsec</declname>
+          <defval>3e7</defval>
+        </param>
+        <briefdescription>
+<para>Flush any pending writes to the remote process. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="440" column="16"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Connection_1a9d6c1c244c07cbcd43389f0f96ea664f" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+        <definition>virtual Transport mscclpp::Connection::transport</definition>
+        <argsstring>()=0</argsstring>
+        <name>transport</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the transport used by the local process.</para>
+<para><simplesect kind="return"><para>The transport used by the local process. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="445" column="21"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Connection_1abd5e8b2fd7c51566ca76198e5b4e45df" prot="public" static="no" const="no" explicit="no" inline="no" virt="pure-virtual">
+        <type><ref refid="namespacemscclpp_1a8a3c0a9f4ff7265a1fc612e32d8004a5" kindref="member">Transport</ref></type>
+        <definition>virtual Transport mscclpp::Connection::remoteTransport</definition>
+        <argsstring>()=0</argsstring>
+        <name>remoteTransport</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the transport used by the remote process.</para>
+<para><simplesect kind="return"><para>The transport used by the remote process. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="450" column="21"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Connection_1a73ce3b8c610bb0241f5823c86c7b1fa5" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::string</type>
+        <definition>std::string mscclpp::Connection::getTransportName</definition>
+        <argsstring>()</argsstring>
+        <name>getTransportName</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the name of the transport used for this connection</para>
+<para><simplesect kind="return"><para>name of <ref refid="classmscclpp_1_1Connection_1a9d6c1c244c07cbcd43389f0f96ea664f" kindref="member">transport()</ref> -&gt; <ref refid="classmscclpp_1_1Connection_1abd5e8b2fd7c51566ca76198e5b4e45df" kindref="member">remoteTransport()</ref> </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="455" column="15"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="protected-static-func">
+      <memberdef kind="function" id="classmscclpp_1_1Connection_1a37ace3de29efd9638c19f9b6f7f33f64" prot="protected" static="yes" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::shared_ptr&lt; RegisteredMemory::Impl &gt;</type>
+        <definition>static std::shared_ptr&lt;RegisteredMemory::Impl&gt; mscclpp::Connection::getImpl</definition>
+        <argsstring>(RegisteredMemory &amp;memory)</argsstring>
+        <name>getImpl</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> &amp;</type>
+          <declname>memory</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="459" column="26"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Connection_1a4d724f5195be136fb09555aab9243f59" prot="protected" static="yes" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::shared_ptr&lt; Endpoint::Impl &gt;</type>
+        <definition>static std::shared_ptr&lt;Endpoint::Impl&gt; mscclpp::Connection::getImpl</definition>
+        <argsstring>(Endpoint &amp;memory)</argsstring>
+        <name>getImpl</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1Endpoint" kindref="compound">Endpoint</ref> &amp;</type>
+          <declname>memory</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="460" column="26"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Represents a connection between two processes. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/core.hpp" line="417" column="17" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="417" bodyend="461"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1Connection_1a0ba24623e37399d71238ea3175f9a708" prot="public" virt="pure-virtual"><scope>mscclpp::Connection</scope><name>flush</name></member>
+      <member refid="classmscclpp_1_1Connection_1a37ace3de29efd9638c19f9b6f7f33f64" prot="protected" virt="non-virtual"><scope>mscclpp::Connection</scope><name>getImpl</name></member>
+      <member refid="classmscclpp_1_1Connection_1a4d724f5195be136fb09555aab9243f59" prot="protected" virt="non-virtual"><scope>mscclpp::Connection</scope><name>getImpl</name></member>
+      <member refid="classmscclpp_1_1Connection_1a73ce3b8c610bb0241f5823c86c7b1fa5" prot="public" virt="non-virtual"><scope>mscclpp::Connection</scope><name>getTransportName</name></member>
+      <member refid="classmscclpp_1_1Connection_1abd5e8b2fd7c51566ca76198e5b4e45df" prot="public" virt="pure-virtual"><scope>mscclpp::Connection</scope><name>remoteTransport</name></member>
+      <member refid="classmscclpp_1_1Connection_1a9d6c1c244c07cbcd43389f0f96ea664f" prot="public" virt="pure-virtual"><scope>mscclpp::Connection</scope><name>transport</name></member>
+      <member refid="classmscclpp_1_1Connection_1a2c273f8dc12c89bf8fe62ea6bbcd51d4" prot="public" virt="pure-virtual"><scope>mscclpp::Connection</scope><name>updateAndSync</name></member>
+      <member refid="classmscclpp_1_1Connection_1a4a78353163997c281e0f362f2e739353" prot="public" virt="pure-virtual"><scope>mscclpp::Connection</scope><name>write</name></member>
+      <member refid="classmscclpp_1_1Connection_1a286f0fc3a946e33611c9c106553fdaee" prot="public" virt="virtual"><scope>mscclpp::Connection</scope><name>~Connection</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

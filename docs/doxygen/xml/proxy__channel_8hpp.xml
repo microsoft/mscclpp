@@ -1,0 +1,284 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="proxy__channel_8hpp" kind="file" language="C++">
+    <compoundname>proxy_channel.hpp</compoundname>
+    <includes refid="core_8hpp" local="yes">core.hpp</includes>
+    <includes refid="proxy_8hpp" local="yes">proxy.hpp</includes>
+    <includes refid="proxy__channel__device_8hpp" local="yes">proxy_channel_device.hpp</includes>
+    <includes refid="semaphore_8hpp" local="yes">semaphore.hpp</includes>
+    <incdepgraph>
+      <node id="22">
+        <label>device.hpp</label>
+        <link refid="device_8hpp"/>
+      </node>
+      <node id="18">
+        <label>functional</label>
+      </node>
+      <node id="2">
+        <label>core.hpp</label>
+        <link refid="core_8hpp"/>
+        <childnode refid="3" relation="include">
+        </childnode>
+        <childnode refid="4" relation="include">
+        </childnode>
+        <childnode refid="5" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+        <childnode refid="7" relation="include">
+        </childnode>
+        <childnode refid="11" relation="include">
+        </childnode>
+        <childnode refid="15" relation="include">
+        </childnode>
+        <childnode refid="16" relation="include">
+        </childnode>
+        <childnode refid="13" relation="include">
+        </childnode>
+      </node>
+      <node id="13">
+        <label>errors.hpp</label>
+        <link refid="errors_8hpp"/>
+        <childnode refid="14" relation="include">
+        </childnode>
+      </node>
+      <node id="20">
+        <label>cstdint</label>
+      </node>
+      <node id="10">
+        <label>linux/version.h</label>
+      </node>
+      <node id="23">
+        <label>proxy_channel_device.hpp</label>
+        <link refid="proxy__channel__device_8hpp"/>
+        <childnode refid="21" relation="include">
+        </childnode>
+        <childnode refid="24" relation="include">
+        </childnode>
+      </node>
+      <node id="9">
+        <label>cuda_runtime.h</label>
+      </node>
+      <node id="14">
+        <label>stdexcept</label>
+      </node>
+      <node id="15">
+        <label>string</label>
+      </node>
+      <node id="24">
+        <label>semaphore_device.hpp</label>
+        <link refid="semaphore__device_8hpp"/>
+        <childnode refid="22" relation="include">
+        </childnode>
+      </node>
+      <node id="7">
+        <label>mscclpp/gpu.hpp</label>
+        <link refid="gpu_8hpp"/>
+        <childnode refid="8" relation="include">
+        </childnode>
+        <childnode refid="9" relation="include">
+        </childnode>
+        <childnode refid="10" relation="include">
+        </childnode>
+      </node>
+      <node id="4">
+        <label>bitset</label>
+      </node>
+      <node id="5">
+        <label>future</label>
+      </node>
+      <node id="17">
+        <label>proxy.hpp</label>
+        <link refid="proxy_8hpp"/>
+        <childnode refid="18" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+        <childnode refid="19" relation="include">
+        </childnode>
+      </node>
+      <node id="16">
+        <label>vector</label>
+      </node>
+      <node id="3">
+        <label>array</label>
+      </node>
+      <node id="25">
+        <label>semaphore.hpp</label>
+        <link refid="semaphore_8hpp"/>
+        <childnode refid="6" relation="include">
+        </childnode>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="11" relation="include">
+        </childnode>
+        <childnode refid="24" relation="include">
+        </childnode>
+      </node>
+      <node id="8">
+        <label>cuda.h</label>
+      </node>
+      <node id="1">
+        <label>proxy_channel.hpp</label>
+        <link refid="proxy__channel_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="17" relation="include">
+        </childnode>
+        <childnode refid="23" relation="include">
+        </childnode>
+        <childnode refid="25" relation="include">
+        </childnode>
+      </node>
+      <node id="12">
+        <label>cstring</label>
+      </node>
+      <node id="11">
+        <label>mscclpp/gpu_utils.hpp</label>
+        <link refid="gpu__utils_8hpp"/>
+        <childnode refid="12" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+        <childnode refid="13" relation="include">
+        </childnode>
+        <childnode refid="7" relation="include">
+        </childnode>
+      </node>
+      <node id="6">
+        <label>memory</label>
+      </node>
+      <node id="19">
+        <label>fifo.hpp</label>
+        <link refid="fifo_8hpp"/>
+        <childnode refid="20" relation="include">
+        </childnode>
+        <childnode refid="18" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+        <childnode refid="21" relation="include">
+        </childnode>
+      </node>
+      <node id="21">
+        <label>fifo_device.hpp</label>
+        <link refid="fifo__device_8hpp"/>
+        <childnode refid="20" relation="include">
+        </childnode>
+        <childnode refid="22" relation="include">
+        </childnode>
+      </node>
+    </incdepgraph>
+    <innerclass refid="classmscclpp_1_1BaseProxyService" prot="public">mscclpp::BaseProxyService</innerclass>
+    <innerclass refid="classmscclpp_1_1ProxyService" prot="public">mscclpp::ProxyService</innerclass>
+    <innerclass refid="structmscclpp_1_1ProxyChannel" prot="public">mscclpp::ProxyChannel</innerclass>
+    <innerclass refid="structmscclpp_1_1SimpleProxyChannel" prot="public">mscclpp::SimpleProxyChannel</innerclass>
+    <innernamespace refid="namespacemscclpp">mscclpp</innernamespace>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>MSCCLPP_PROXY_CHANNEL_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>MSCCLPP_PROXY_CHANNEL_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="core_8hpp" kindref="compound">core.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="proxy_8hpp" kindref="compound">proxy.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="9"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="proxy__channel__device_8hpp" kindref="compound">proxy_channel_device.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="10"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="semaphore_8hpp" kindref="compound">semaphore.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="11"><highlight class="normal"></highlight></codeline>
+<codeline lineno="12"><highlight class="normal"></highlight><highlight class="keyword">namespace<sp/></highlight><highlight class="normal"><ref refid="namespacemscclpp" kindref="compound">mscclpp</ref><sp/>{</highlight></codeline>
+<codeline lineno="13"><highlight class="normal"></highlight></codeline>
+<codeline lineno="14"><highlight class="normal"></highlight><highlight class="keyword">struct<sp/></highlight><highlight class="normal">ProxyChannel;</highlight></codeline>
+<codeline lineno="15"><highlight class="normal"></highlight></codeline>
+<codeline lineno="17" refid="classmscclpp_1_1BaseProxyService" refkind="compound"><highlight class="keyword">class<sp/></highlight><highlight class="normal"><ref refid="classmscclpp_1_1BaseProxyService" kindref="compound">BaseProxyService</ref><sp/>{</highlight></codeline>
+<codeline lineno="18"><highlight class="normal"><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="19"><highlight class="normal"><sp/><sp/><ref refid="classmscclpp_1_1BaseProxyService_1af495272dc3ecf8fd6e14b6a4033a2601" kindref="member">BaseProxyService</ref>()<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="20"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">virtual</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseProxyService_1a9fd21d53992189f1dece203418e5752c" kindref="member">~BaseProxyService</ref>()<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="21"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">virtual</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseProxyService_1a16999668fd551642ba6870079f9fcfe9" kindref="member">startProxy</ref>()<sp/>=<sp/>0;</highlight></codeline>
+<codeline lineno="22"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">virtual</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseProxyService_1a7efff2a6d38ccf89640c2d0bf97c1b00" kindref="member">stopProxy</ref>()<sp/>=<sp/>0;</highlight></codeline>
+<codeline lineno="23"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="24"><highlight class="normal"></highlight></codeline>
+<codeline lineno="26" refid="classmscclpp_1_1ProxyService" refkind="compound"><highlight class="keyword">class<sp/></highlight><highlight class="normal"><ref refid="classmscclpp_1_1ProxyService" kindref="compound">ProxyService</ref><sp/>:<sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1BaseProxyService" kindref="compound">BaseProxyService</ref><sp/>{</highlight></codeline>
+<codeline lineno="27"><highlight class="normal"><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="29"><highlight class="normal"><sp/><sp/><ref refid="classmscclpp_1_1ProxyService_1ac56d9af9e910320fbe52b433d6de959c" kindref="member">ProxyService</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>fifoSize<sp/>=<sp/><ref refid="namespacemscclpp_1aa40b9c69ba9b54d1f87f52573162c31c" kindref="member">DEFAULT_FIFO_SIZE</ref>);</highlight></codeline>
+<codeline lineno="30"><highlight class="normal"></highlight></codeline>
+<codeline lineno="34"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" kindref="member">SemaphoreId</ref><sp/><ref refid="classmscclpp_1_1ProxyService_1a880ed2bf8c6e63b0bcf0fd8d7495469c" kindref="member">buildAndAddSemaphore</ref>(<ref refid="classmscclpp_1_1Communicator" kindref="compound">Communicator</ref>&amp;<sp/>communicator,<sp/>std::shared_ptr&lt;Connection&gt;<sp/>connection);</highlight></codeline>
+<codeline lineno="35"><highlight class="normal"></highlight></codeline>
+<codeline lineno="39"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" kindref="member">SemaphoreId</ref><sp/><ref refid="classmscclpp_1_1ProxyService_1a72beabb0542995757521bc93e7643deb" kindref="member">addSemaphore</ref>(std::shared_ptr&lt;Host2DeviceSemaphore&gt;<sp/><ref refid="classmscclpp_1_1ProxyService_1a73c52d37ae3942b2d6934c253fc556e9" kindref="member">semaphore</ref>);</highlight></codeline>
+<codeline lineno="40"><highlight class="normal"></highlight></codeline>
+<codeline lineno="44"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1a9fe82c3a70c0ff0872516c2fa7bf6682" kindref="member">MemoryId</ref><sp/><ref refid="classmscclpp_1_1ProxyService_1ab6c0a37630d9e2977cbf8ea48eaae16e" kindref="member">addMemory</ref>(<ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref><sp/>memory);</highlight></codeline>
+<codeline lineno="45"><highlight class="normal"></highlight></codeline>
+<codeline lineno="49"><highlight class="normal"><sp/><sp/>std::shared_ptr&lt;Host2DeviceSemaphore&gt;<sp/><ref refid="classmscclpp_1_1ProxyService_1a73c52d37ae3942b2d6934c253fc556e9" kindref="member">semaphore</ref>(<ref refid="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" kindref="member">SemaphoreId</ref><sp/></highlight><highlight class="keywordtype">id</highlight><highlight class="normal">)<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="50"><highlight class="normal"></highlight></codeline>
+<codeline lineno="54"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1ProxyChannel" kindref="compound">ProxyChannel</ref><sp/><ref refid="classmscclpp_1_1ProxyService_1ac8addb08bdeafb34ab9403f4289699b9" kindref="member">proxyChannel</ref>(<ref refid="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" kindref="member">SemaphoreId</ref><sp/></highlight><highlight class="keywordtype">id</highlight><highlight class="normal">);</highlight></codeline>
+<codeline lineno="55"><highlight class="normal"></highlight></codeline>
+<codeline lineno="57"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1ProxyService_1a3a7fee2e10b27ab739c3d4ad54d53e0d" kindref="member">startProxy</ref>();</highlight></codeline>
+<codeline lineno="58"><highlight class="normal"></highlight></codeline>
+<codeline lineno="60"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1ProxyService_1aa6aa0c9f840452b053f278debd3ad5cd" kindref="member">stopProxy</ref>();</highlight></codeline>
+<codeline lineno="61"><highlight class="normal"></highlight></codeline>
+<codeline lineno="62"><highlight class="normal"><sp/></highlight><highlight class="keyword">private</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="63"><highlight class="normal"><sp/><sp/>std::vector&lt;std::shared_ptr&lt;Host2DeviceSemaphore&gt;&gt;<sp/>semaphores_;</highlight></codeline>
+<codeline lineno="64"><highlight class="normal"><sp/><sp/>std::vector&lt;RegisteredMemory&gt;<sp/>memories_;</highlight></codeline>
+<codeline lineno="65"><highlight class="normal"><sp/><sp/>std::shared_ptr&lt;Proxy&gt;<sp/>proxy_;</highlight></codeline>
+<codeline lineno="66"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>deviceNumaNode;</highlight></codeline>
+<codeline lineno="67"><highlight class="normal"></highlight></codeline>
+<codeline lineno="68"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/>bindThread();</highlight></codeline>
+<codeline lineno="69"><highlight class="normal"></highlight></codeline>
+<codeline lineno="70"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1ad8b700e44edeb049b38add920666759f" kindref="member">ProxyHandlerResult</ref><sp/>handleTrigger(<ref refid="structmscclpp_1_1ProxyTrigger" kindref="compound">ProxyTrigger</ref><sp/>triggerRaw);</highlight></codeline>
+<codeline lineno="71"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="72"><highlight class="normal"></highlight></codeline>
+<codeline lineno="74" refid="structmscclpp_1_1ProxyChannel" refkind="compound"><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1ProxyChannel" kindref="compound">ProxyChannel</ref><sp/>{</highlight></codeline>
+<codeline lineno="75"><highlight class="normal"><sp/></highlight><highlight class="keyword">private</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="76"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" kindref="member">SemaphoreId</ref><sp/>semaphoreId_;</highlight></codeline>
+<codeline lineno="77"><highlight class="normal"></highlight></codeline>
+<codeline lineno="78"><highlight class="normal"><sp/><sp/>std::shared_ptr&lt;Host2DeviceSemaphore&gt;<sp/>semaphore_;</highlight></codeline>
+<codeline lineno="79"><highlight class="normal"></highlight></codeline>
+<codeline lineno="80"><highlight class="normal"><sp/><sp/>std::shared_ptr&lt;Proxy&gt;<sp/>proxy_;</highlight></codeline>
+<codeline lineno="81"><highlight class="normal"></highlight></codeline>
+<codeline lineno="82"><highlight class="normal"><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="83"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1ProxyChannel_1a307c9c9a1031493d322b5afbaeeeee94" kindref="member">ProxyChannel</ref>()<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="84"><highlight class="normal"></highlight></codeline>
+<codeline lineno="85"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1ProxyChannel_1a307c9c9a1031493d322b5afbaeeeee94" kindref="member">ProxyChannel</ref>(<ref refid="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" kindref="member">SemaphoreId</ref><sp/>semaphoreId,<sp/>std::shared_ptr&lt;Host2DeviceSemaphore&gt;<sp/>semaphore,<sp/>std::shared_ptr&lt;Proxy&gt;<sp/>proxy);</highlight></codeline>
+<codeline lineno="86"><highlight class="normal"></highlight></codeline>
+<codeline lineno="87"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1ProxyChannel_1a307c9c9a1031493d322b5afbaeeeee94" kindref="member">ProxyChannel</ref>(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1ProxyChannel" kindref="compound">ProxyChannel</ref>&amp;<sp/>other)<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="88"><highlight class="normal"></highlight></codeline>
+<codeline lineno="89"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1ProxyChannel" kindref="compound">ProxyChannel</ref>&amp;<sp/><ref refid="structmscclpp_1_1ProxyChannel_1a07deaa22c2e34b934556e25286d96e66" kindref="member">operator=</ref>(<ref refid="structmscclpp_1_1ProxyChannel" kindref="compound">ProxyChannel</ref>&amp;<sp/>other)<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="90"><highlight class="normal"></highlight></codeline>
+<codeline lineno="92" refid="structmscclpp_1_1ProxyChannel_1a743cb0cae9c5f602f8259b9e818f1cab" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1ProxyChannelDeviceHandle" kindref="compound">DeviceHandle</ref><sp/>=<sp/><ref refid="structmscclpp_1_1ProxyChannelDeviceHandle" kindref="compound">ProxyChannelDeviceHandle</ref>;</highlight></codeline>
+<codeline lineno="93"><highlight class="normal"></highlight></codeline>
+<codeline lineno="98"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1ProxyChannelDeviceHandle" kindref="compound">DeviceHandle</ref><sp/><ref refid="structmscclpp_1_1ProxyChannel_1a973c1ffc6fd221faba9f6cb9b83c7aff" kindref="member">deviceHandle</ref>()<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="99"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="100"><highlight class="normal"></highlight></codeline>
+<codeline lineno="102" refid="structmscclpp_1_1SimpleProxyChannel" refkind="compound"><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1SimpleProxyChannel" kindref="compound">SimpleProxyChannel</ref><sp/>{</highlight></codeline>
+<codeline lineno="103"><highlight class="normal"><sp/></highlight><highlight class="keyword">private</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="104"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1ProxyChannel" kindref="compound">ProxyChannel</ref><sp/>proxyChan_;</highlight></codeline>
+<codeline lineno="105"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1a9fe82c3a70c0ff0872516c2fa7bf6682" kindref="member">MemoryId</ref><sp/>dst_;</highlight></codeline>
+<codeline lineno="106"><highlight class="normal"><sp/><sp/><ref refid="namespacemscclpp_1a9fe82c3a70c0ff0872516c2fa7bf6682" kindref="member">MemoryId</ref><sp/>src_;</highlight></codeline>
+<codeline lineno="107"><highlight class="normal"></highlight></codeline>
+<codeline lineno="108"><highlight class="normal"><sp/></highlight><highlight class="keyword">public</highlight><highlight class="normal">:</highlight></codeline>
+<codeline lineno="110"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1SimpleProxyChannel_1a201d78f688024a1df644c3a6847cf882" kindref="member">SimpleProxyChannel</ref>()<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="111"><highlight class="normal"></highlight></codeline>
+<codeline lineno="116"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1SimpleProxyChannel_1a201d78f688024a1df644c3a6847cf882" kindref="member">SimpleProxyChannel</ref>(<ref refid="structmscclpp_1_1ProxyChannel" kindref="compound">ProxyChannel</ref><sp/>proxyChan,<sp/><ref refid="namespacemscclpp_1a9fe82c3a70c0ff0872516c2fa7bf6682" kindref="member">MemoryId</ref><sp/>dst,<sp/><ref refid="namespacemscclpp_1a9fe82c3a70c0ff0872516c2fa7bf6682" kindref="member">MemoryId</ref><sp/>src);</highlight></codeline>
+<codeline lineno="117"><highlight class="normal"></highlight></codeline>
+<codeline lineno="120" refid="structmscclpp_1_1SimpleProxyChannel_1afcb4694409181cc563f733cb2d7b142e" refkind="member"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1SimpleProxyChannel_1afcb4694409181cc563f733cb2d7b142e" kindref="member">SimpleProxyChannel</ref>(<ref refid="structmscclpp_1_1ProxyChannel" kindref="compound">ProxyChannel</ref><sp/>proxyChan)<sp/>:<sp/>proxyChan_(proxyChan)<sp/>{}</highlight></codeline>
+<codeline lineno="121"><highlight class="normal"></highlight></codeline>
+<codeline lineno="123"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1SimpleProxyChannel_1a201d78f688024a1df644c3a6847cf882" kindref="member">SimpleProxyChannel</ref>(</highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1SimpleProxyChannel" kindref="compound">SimpleProxyChannel</ref>&amp;<sp/>other)<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="124"><highlight class="normal"></highlight></codeline>
+<codeline lineno="126"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1SimpleProxyChannel" kindref="compound">SimpleProxyChannel</ref>&amp;<sp/><ref refid="structmscclpp_1_1SimpleProxyChannel_1a4a4394da6e135b17fe6f1e2a28ee14a8" kindref="member">operator=</ref>(<ref refid="structmscclpp_1_1SimpleProxyChannel" kindref="compound">SimpleProxyChannel</ref>&amp;<sp/>other)<sp/>=<sp/></highlight><highlight class="keywordflow">default</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="127"><highlight class="normal"></highlight></codeline>
+<codeline lineno="129" refid="structmscclpp_1_1SimpleProxyChannel_1a94b927b3391c59e8a88a09611d20ca2e" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1SimpleProxyChannelDeviceHandle" kindref="compound">DeviceHandle</ref><sp/>=<sp/><ref refid="structmscclpp_1_1SimpleProxyChannelDeviceHandle" kindref="compound">SimpleProxyChannelDeviceHandle</ref>;</highlight></codeline>
+<codeline lineno="130"><highlight class="normal"></highlight></codeline>
+<codeline lineno="135"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1SimpleProxyChannelDeviceHandle" kindref="compound">DeviceHandle</ref><sp/><ref refid="structmscclpp_1_1SimpleProxyChannel_1a35fb91c8df4b8d9e8781d3d7b078a5b7" kindref="member">deviceHandle</ref>()<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="136"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="137"><highlight class="normal"></highlight></codeline>
+<codeline lineno="138"><highlight class="normal">}<sp/><sp/></highlight><highlight class="comment">//<sp/>namespace<sp/>mscclpp</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="139"><highlight class="normal"></highlight></codeline>
+<codeline lineno="140"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>MSCCLPP_PROXY_CHANNEL_HPP_</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp"/>
+  </compounddef>
+</doxygen>

@@ -1,0 +1,478 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="gpu__utils_8hpp" kind="file" language="C++">
+    <compoundname>gpu_utils.hpp</compoundname>
+    <includes local="no">cstring</includes>
+    <includes local="no">memory</includes>
+    <includes refid="errors_8hpp" local="yes">errors.hpp</includes>
+    <includes refid="gpu_8hpp" local="yes">gpu.hpp</includes>
+    <includedby refid="core_8hpp" local="no">core.hpp</includedby>
+    <includedby refid="npkit_8hpp" local="no">npkit.hpp</includedby>
+    <includedby refid="nvls_8hpp" local="no">nvls.hpp</includedby>
+    <includedby refid="semaphore_8hpp" local="yes">semaphore.hpp</includedby>
+    <incdepgraph>
+      <node id="4">
+        <label>errors.hpp</label>
+        <link refid="errors_8hpp"/>
+        <childnode refid="5" relation="include">
+        </childnode>
+      </node>
+      <node id="9">
+        <label>linux/version.h</label>
+      </node>
+      <node id="8">
+        <label>cuda_runtime.h</label>
+      </node>
+      <node id="5">
+        <label>stdexcept</label>
+      </node>
+      <node id="6">
+        <label>gpu.hpp</label>
+        <link refid="gpu_8hpp"/>
+        <childnode refid="7" relation="include">
+        </childnode>
+        <childnode refid="8" relation="include">
+        </childnode>
+        <childnode refid="9" relation="include">
+        </childnode>
+      </node>
+      <node id="7">
+        <label>cuda.h</label>
+      </node>
+      <node id="2">
+        <label>cstring</label>
+      </node>
+      <node id="1">
+        <label>gpu_utils.hpp</label>
+        <link refid="gpu__utils_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="3" relation="include">
+        </childnode>
+        <childnode refid="4" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+      </node>
+      <node id="3">
+        <label>memory</label>
+      </node>
+    </incdepgraph>
+    <invincdepgraph>
+      <node id="3">
+        <label>executor.hpp</label>
+        <link refid="executor_8hpp"/>
+      </node>
+      <node id="2">
+        <label>core.hpp</label>
+        <link refid="core_8hpp"/>
+        <childnode refid="3" relation="include">
+        </childnode>
+        <childnode refid="4" relation="include">
+        </childnode>
+        <childnode refid="5" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+      </node>
+      <node id="8">
+        <label>nvls.hpp</label>
+        <link refid="nvls_8hpp"/>
+      </node>
+      <node id="5">
+        <label>semaphore.hpp</label>
+        <link refid="semaphore_8hpp"/>
+        <childnode refid="4" relation="include">
+        </childnode>
+        <childnode refid="6" relation="include">
+        </childnode>
+      </node>
+      <node id="4">
+        <label>proxy_channel.hpp</label>
+        <link refid="proxy__channel_8hpp"/>
+      </node>
+      <node id="6">
+        <label>sm_channel.hpp</label>
+        <link refid="sm__channel_8hpp"/>
+      </node>
+      <node id="1">
+        <label>gpu_utils.hpp</label>
+        <link refid="gpu__utils_8hpp"/>
+        <childnode refid="2" relation="include">
+        </childnode>
+        <childnode refid="7" relation="include">
+        </childnode>
+        <childnode refid="8" relation="include">
+        </childnode>
+        <childnode refid="5" relation="include">
+        </childnode>
+      </node>
+      <node id="7">
+        <label>npkit.hpp</label>
+        <link refid="npkit_8hpp"/>
+      </node>
+    </invincdepgraph>
+    <innerclass refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" prot="public">mscclpp::AvoidCudaGraphCaptureGuard</innerclass>
+    <innerclass refid="structmscclpp_1_1CudaStreamWithFlags" prot="public">mscclpp::CudaStreamWithFlags</innerclass>
+    <innerclass refid="structmscclpp_1_1CudaDeleter" prot="public">mscclpp::CudaDeleter</innerclass>
+    <innerclass refid="structmscclpp_1_1PhysicalCudaMemory" prot="public">mscclpp::PhysicalCudaMemory</innerclass>
+    <innerclass refid="structmscclpp_1_1CudaDeleter" prot="public">mscclpp::CudaDeleter</innerclass>
+    <innerclass refid="structmscclpp_1_1CudaPhysicalDeleter" prot="public">mscclpp::CudaPhysicalDeleter</innerclass>
+    <innerclass refid="structmscclpp_1_1CudaHostDeleter" prot="public">mscclpp::CudaHostDeleter</innerclass>
+    <innernamespace refid="namespacemscclpp">mscclpp</innernamespace>
+    <innernamespace refid="namespacemscclpp_1_1detail">mscclpp::detail</innernamespace>
+      <sectiondef kind="define">
+      <memberdef kind="define" id="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" prot="public" static="no">
+        <name>MSCCLPP_CUDATHROW</name>
+        <param><defname>cmd</defname></param>
+        <initializer>  do {                                                                                                               \
+    cudaError_t err = cmd;                                                                                           \
+    if (err != cudaSuccess) {                                                                                        \
+      throw <ref refid="classmscclpp_1_1CudaError" kindref="compound">mscclpp::CudaError</ref>(std::string(&quot;Call to &quot; #cmd &quot; failed. &quot;) + __FILE__ + &quot;:&quot; + std::to_string(__LINE__), \
+                               err);                                                                                 \
+    }                                                                                                                \
+  } while (false)</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Throw <ref refid="classmscclpp_1_1CudaError" kindref="compound">mscclpp::CudaError</ref> if <computeroutput>cmd</computeroutput> does not return cudaSuccess. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>cmd</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The command to execute. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="15" column="9" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="15" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="define" id="gpu__utils_8hpp_1a4d47839c3dc2d87dd3e68fb1ce789593" prot="public" static="no">
+        <name>MSCCLPP_CUTHROW</name>
+        <param><defname>cmd</defname></param>
+        <initializer>  do {                                                                                                            \
+    CUresult err = cmd;                                                                                           \
+    if (err != CUDA_SUCCESS) {                                                                                    \
+      throw <ref refid="classmscclpp_1_1CuError" kindref="compound">mscclpp::CuError</ref>(std::string(&quot;Call to &quot; #cmd &quot; failed.&quot;) + __FILE__ + &quot;:&quot; + std::to_string(__LINE__), \
+                             err);                                                                                \
+    }                                                                                                             \
+  } while (false)</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Throw <ref refid="classmscclpp_1_1CuError" kindref="compound">mscclpp::CuError</ref> if <computeroutput>cmd</computeroutput> does not return CUDA_SUCCESS. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>cmd</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The command to execute. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="26" column="9" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="26" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1"><highlight class="comment">//<sp/>Copyright<sp/>(c)<sp/>Microsoft<sp/>Corporation.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="2"><highlight class="normal"></highlight><highlight class="comment">//<sp/>Licensed<sp/>under<sp/>the<sp/>MIT<sp/>license.</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="3"><highlight class="normal"></highlight></codeline>
+<codeline lineno="4"><highlight class="normal"></highlight><highlight class="preprocessor">#ifndef<sp/>MSCCLPP_GPU_UTILS_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="5"><highlight class="normal"></highlight><highlight class="preprocessor">#define<sp/>MSCCLPP_GPU_UTILS_HPP_</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="6"><highlight class="normal"></highlight></codeline>
+<codeline lineno="7"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;cstring&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="8"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&lt;memory&gt;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="9"><highlight class="normal"></highlight></codeline>
+<codeline lineno="10"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="errors_8hpp" kindref="compound">errors.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="11"><highlight class="normal"></highlight><highlight class="preprocessor">#include<sp/>&quot;<ref refid="gpu_8hpp" kindref="compound">gpu.hpp</ref>&quot;</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="12"><highlight class="normal"></highlight></codeline>
+<codeline lineno="15" refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" refkind="member"><highlight class="preprocessor">#define<sp/>MSCCLPP_CUDATHROW(cmd)<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>\</highlight></codeline>
+<codeline lineno="16"><highlight class="preprocessor"><sp/><sp/>do<sp/>{<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>\</highlight></codeline>
+<codeline lineno="17"><highlight class="preprocessor"><sp/><sp/><sp/><sp/>cudaError_t<sp/>err<sp/>=<sp/>cmd;<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>\</highlight></codeline>
+<codeline lineno="18"><highlight class="preprocessor"><sp/><sp/><sp/><sp/>if<sp/>(err<sp/>!=<sp/>cudaSuccess)<sp/>{<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>\</highlight></codeline>
+<codeline lineno="19"><highlight class="preprocessor"><sp/><sp/><sp/><sp/><sp/><sp/>throw<sp/>mscclpp::CudaError(std::string(&quot;Call<sp/>to<sp/>&quot;<sp/>#cmd<sp/>&quot;<sp/>failed.<sp/>&quot;)<sp/>+<sp/>__FILE__<sp/>+<sp/>&quot;:&quot;<sp/>+<sp/>std::to_string(__LINE__),<sp/>\</highlight></codeline>
+<codeline lineno="20"><highlight class="preprocessor"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>err);<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>\</highlight></codeline>
+<codeline lineno="21"><highlight class="preprocessor"><sp/><sp/><sp/><sp/>}<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>\</highlight></codeline>
+<codeline lineno="22"><highlight class="preprocessor"><sp/><sp/>}<sp/>while<sp/>(false)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="23"><highlight class="normal"></highlight></codeline>
+<codeline lineno="26" refid="gpu__utils_8hpp_1a4d47839c3dc2d87dd3e68fb1ce789593" refkind="member"><highlight class="preprocessor">#define<sp/>MSCCLPP_CUTHROW(cmd)<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>\</highlight></codeline>
+<codeline lineno="27"><highlight class="preprocessor"><sp/><sp/>do<sp/>{<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>\</highlight></codeline>
+<codeline lineno="28"><highlight class="preprocessor"><sp/><sp/><sp/><sp/>CUresult<sp/>err<sp/>=<sp/>cmd;<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>\</highlight></codeline>
+<codeline lineno="29"><highlight class="preprocessor"><sp/><sp/><sp/><sp/>if<sp/>(err<sp/>!=<sp/>CUDA_SUCCESS)<sp/>{<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>\</highlight></codeline>
+<codeline lineno="30"><highlight class="preprocessor"><sp/><sp/><sp/><sp/><sp/><sp/>throw<sp/>mscclpp::CuError(std::string(&quot;Call<sp/>to<sp/>&quot;<sp/>#cmd<sp/>&quot;<sp/>failed.&quot;)<sp/>+<sp/>__FILE__<sp/>+<sp/>&quot;:&quot;<sp/>+<sp/>std::to_string(__LINE__),<sp/>\</highlight></codeline>
+<codeline lineno="31"><highlight class="preprocessor"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>err);<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>\</highlight></codeline>
+<codeline lineno="32"><highlight class="preprocessor"><sp/><sp/><sp/><sp/>}<sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>\</highlight></codeline>
+<codeline lineno="33"><highlight class="preprocessor"><sp/><sp/>}<sp/>while<sp/>(false)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="34"><highlight class="normal"></highlight></codeline>
+<codeline lineno="35"><highlight class="normal"></highlight><highlight class="keyword">namespace<sp/></highlight><highlight class="normal"><ref refid="namespacemscclpp" kindref="compound">mscclpp</ref><sp/>{</highlight></codeline>
+<codeline lineno="36"><highlight class="normal"></highlight></codeline>
+<codeline lineno="39" refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" refkind="compound"><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" kindref="compound">AvoidCudaGraphCaptureGuard</ref><sp/>{</highlight></codeline>
+<codeline lineno="40"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1abf219c8d6fd2687994f00946297827ce" kindref="member">AvoidCudaGraphCaptureGuard</ref>();</highlight></codeline>
+<codeline lineno="41"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1a6e2d24442544ef0a83cb5e8882a04c9d" kindref="member">~AvoidCudaGraphCaptureGuard</ref>();</highlight></codeline>
+<codeline lineno="42" refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1aa797c7f64d5c35cf65342e73140838b4" refkind="member"><highlight class="normal"><sp/><sp/>cudaStreamCaptureMode<sp/><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard_1aa797c7f64d5c35cf65342e73140838b4" kindref="member">mode_</ref>;</highlight></codeline>
+<codeline lineno="43"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="44"><highlight class="normal"></highlight></codeline>
+<codeline lineno="46" refid="structmscclpp_1_1CudaStreamWithFlags" refkind="compound"><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1CudaStreamWithFlags" kindref="compound">CudaStreamWithFlags</ref><sp/>{</highlight></codeline>
+<codeline lineno="47"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1CudaStreamWithFlags_1a56e23ca6cc525e4cc48091c9ae3a677c" kindref="member">CudaStreamWithFlags</ref>(</highlight><highlight class="keywordtype">unsigned</highlight><highlight class="normal"><sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>flags);</highlight></codeline>
+<codeline lineno="48"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1CudaStreamWithFlags_1a326806523b6df1f290fceb65bd3ee4f3" kindref="member">~CudaStreamWithFlags</ref>();</highlight></codeline>
+<codeline lineno="49" refid="structmscclpp_1_1CudaStreamWithFlags_1af65576b1b3f91f1c35a3ebbbcf8d4e56" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">operator</highlight><highlight class="normal"><sp/>cudaStream_t()</highlight><highlight class="keyword"><sp/>const<sp/></highlight><highlight class="normal">{<sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1CudaStreamWithFlags_1ab48f05c327a479883b78463832f9a8a3" kindref="member">stream_</ref>;<sp/>}</highlight></codeline>
+<codeline lineno="50" refid="structmscclpp_1_1CudaStreamWithFlags_1ab48f05c327a479883b78463832f9a8a3" refkind="member"><highlight class="normal"><sp/><sp/>cudaStream_t<sp/><ref refid="structmscclpp_1_1CudaStreamWithFlags_1ab48f05c327a479883b78463832f9a8a3" kindref="member">stream_</ref>;</highlight></codeline>
+<codeline lineno="51"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="52"><highlight class="normal"></highlight></codeline>
+<codeline lineno="53"><highlight class="normal"></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="54" refid="structmscclpp_1_1CudaDeleter" refkind="compound"><highlight class="normal"></highlight><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1CudaDeleter" kindref="compound">CudaDeleter</ref>;</highlight></codeline>
+<codeline lineno="55"><highlight class="normal"></highlight></codeline>
+<codeline lineno="56"><highlight class="normal"></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="57" refid="structmscclpp_1_1PhysicalCudaMemory" refkind="compound"><highlight class="normal"></highlight><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1PhysicalCudaMemory" kindref="compound">PhysicalCudaMemory</ref><sp/>{</highlight></codeline>
+<codeline lineno="58" refid="structmscclpp_1_1PhysicalCudaMemory_1a45c224e9494ebc1f2d403aaeb1791514" refkind="member"><highlight class="normal"><sp/><sp/>CUmemGenericAllocationHandle<sp/><ref refid="structmscclpp_1_1PhysicalCudaMemory_1a45c224e9494ebc1f2d403aaeb1791514" kindref="member">memHandle_</ref>;</highlight></codeline>
+<codeline lineno="59" refid="structmscclpp_1_1PhysicalCudaMemory_1a539ed2d4dadae40eedeed921d22bd50a" refkind="member"><highlight class="normal"><sp/><sp/>T*<sp/><ref refid="structmscclpp_1_1PhysicalCudaMemory_1a539ed2d4dadae40eedeed921d22bd50a" kindref="member">devicePtr_</ref>;</highlight></codeline>
+<codeline lineno="60" refid="structmscclpp_1_1PhysicalCudaMemory_1a94c0509cda015378eacd0c45363e61f1" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1PhysicalCudaMemory_1a94c0509cda015378eacd0c45363e61f1" kindref="member">size_</ref>;</highlight></codeline>
+<codeline lineno="61" refid="structmscclpp_1_1PhysicalCudaMemory_1a04c6d9b2565b31b4e780f477493f1512" refkind="member"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1PhysicalCudaMemory_1a04c6d9b2565b31b4e780f477493f1512" kindref="member">PhysicalCudaMemory</ref>(CUmemGenericAllocationHandle<sp/>memHandle,<sp/>T*<sp/>devicePtr,<sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>size)</highlight></codeline>
+<codeline lineno="62"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>:<sp/><ref refid="structmscclpp_1_1PhysicalCudaMemory_1a45c224e9494ebc1f2d403aaeb1791514" kindref="member">memHandle_</ref>(memHandle),<sp/><ref refid="structmscclpp_1_1PhysicalCudaMemory_1a539ed2d4dadae40eedeed921d22bd50a" kindref="member">devicePtr_</ref>(devicePtr),<sp/><ref refid="structmscclpp_1_1PhysicalCudaMemory_1a94c0509cda015378eacd0c45363e61f1" kindref="member">size_</ref>(size)<sp/>{}</highlight></codeline>
+<codeline lineno="63"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="64"><highlight class="normal"></highlight></codeline>
+<codeline lineno="65"><highlight class="normal"></highlight><highlight class="keyword">namespace<sp/></highlight><highlight class="normal">detail<sp/>{</highlight></codeline>
+<codeline lineno="66"><highlight class="normal"></highlight></codeline>
+<codeline lineno="71"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="72" refid="namespacemscclpp_1_1detail_1a516c87b6820034278a7df844025810c9" refkind="member"><highlight class="normal">T*<sp/><ref refid="namespacemscclpp_1_1detail_1a516c87b6820034278a7df844025810c9" kindref="member">cudaCalloc</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>nelem)<sp/>{</highlight></codeline>
+<codeline lineno="73"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" kindref="compound">AvoidCudaGraphCaptureGuard</ref><sp/>cgcGuard;</highlight></codeline>
+<codeline lineno="74"><highlight class="normal"><sp/><sp/>T*<sp/>ptr;</highlight></codeline>
+<codeline lineno="75"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1CudaStreamWithFlags" kindref="compound">CudaStreamWithFlags</ref><sp/>stream(cudaStreamNonBlocking);</highlight></codeline>
+<codeline lineno="76"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaMalloc(&amp;ptr,<sp/>nelem<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T)));</highlight></codeline>
+<codeline lineno="77"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaMemsetAsync(ptr,<sp/>0,<sp/>nelem<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T),<sp/>stream));</highlight></codeline>
+<codeline lineno="78"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaStreamSynchronize(stream));</highlight></codeline>
+<codeline lineno="79"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>ptr;</highlight></codeline>
+<codeline lineno="80"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="81"><highlight class="normal"></highlight></codeline>
+<codeline lineno="82"><highlight class="normal"></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="83" refid="namespacemscclpp_1_1detail_1a1cd1744838f784b1e3a5a39bdab766c6" refkind="member"><highlight class="normal"><ref refid="structmscclpp_1_1PhysicalCudaMemory" kindref="compound">PhysicalCudaMemory&lt;T&gt;</ref>*<sp/><ref refid="namespacemscclpp_1_1detail_1a1cd1744838f784b1e3a5a39bdab766c6" kindref="member">cudaPhysicalCalloc</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>nelem,<sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>gran)<sp/>{</highlight></codeline>
+<codeline lineno="84"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" kindref="compound">AvoidCudaGraphCaptureGuard</ref><sp/>cgcGuard;</highlight></codeline>
+<codeline lineno="85"><highlight class="normal"></highlight></codeline>
+<codeline lineno="86"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">int</highlight><highlight class="normal"><sp/>deviceId<sp/>=<sp/>-1;</highlight></codeline>
+<codeline lineno="87"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaGetDevice(&amp;deviceId));</highlight></codeline>
+<codeline lineno="88"><highlight class="normal"></highlight></codeline>
+<codeline lineno="89"><highlight class="normal"><sp/><sp/>CUmemAllocationProp<sp/>prop<sp/>=<sp/>{};</highlight></codeline>
+<codeline lineno="90"><highlight class="normal"><sp/><sp/>prop.type<sp/>=<sp/>CU_MEM_ALLOCATION_TYPE_PINNED;</highlight></codeline>
+<codeline lineno="91"><highlight class="normal"><sp/><sp/>prop.location.type<sp/>=<sp/>CU_MEM_LOCATION_TYPE_DEVICE;</highlight></codeline>
+<codeline lineno="92"><highlight class="normal"><sp/><sp/>prop.location.id<sp/>=<sp/>deviceId;</highlight></codeline>
+<codeline lineno="93"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(__HIP_PLATFORM_AMD__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="94"><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>TODO:<sp/>revisit<sp/>when<sp/>HIP<sp/>fixes<sp/>this<sp/>typo<sp/>in<sp/>the<sp/>field<sp/>name</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="95"><highlight class="normal"><sp/><sp/>prop.requestedHandleType<sp/>=<sp/>CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;</highlight></codeline>
+<codeline lineno="96"><highlight class="normal"></highlight><highlight class="preprocessor">#else</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="97"><highlight class="normal"><sp/><sp/>prop.requestedHandleTypes<sp/>=<sp/>CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;</highlight></codeline>
+<codeline lineno="98"><highlight class="normal"></highlight><highlight class="preprocessor">#endif</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="99"><highlight class="normal"></highlight></codeline>
+<codeline lineno="100"><highlight class="normal"><sp/><sp/>CUmemGenericAllocationHandle<sp/>memHandle;</highlight></codeline>
+<codeline lineno="101"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>bufferSize<sp/>=<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T)<sp/>*<sp/>nelem;</highlight></codeline>
+<codeline lineno="102"><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>allocate<sp/>physical<sp/>memory</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="103"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a4d47839c3dc2d87dd3e68fb1ce789593" kindref="member">MSCCLPP_CUTHROW</ref>(cuMemCreate(&amp;memHandle,<sp/>bufferSize,<sp/>&amp;prop,<sp/>0<sp/></highlight><highlight class="comment">/*flags*/</highlight><highlight class="normal">));</highlight></codeline>
+<codeline lineno="104"><highlight class="normal"></highlight></codeline>
+<codeline lineno="105"><highlight class="normal"><sp/><sp/>CUmemAccessDesc<sp/>accessDesc<sp/>=<sp/>{};</highlight></codeline>
+<codeline lineno="106"><highlight class="normal"><sp/><sp/>accessDesc.location.type<sp/>=<sp/>CU_MEM_LOCATION_TYPE_DEVICE;</highlight></codeline>
+<codeline lineno="107"><highlight class="normal"><sp/><sp/>accessDesc.location.id<sp/>=<sp/>deviceId;</highlight></codeline>
+<codeline lineno="108"><highlight class="normal"><sp/><sp/>accessDesc.flags<sp/>=<sp/>CU_MEM_ACCESS_FLAGS_PROT_READWRITE;</highlight></codeline>
+<codeline lineno="109"><highlight class="normal"></highlight></codeline>
+<codeline lineno="110"><highlight class="normal"><sp/><sp/>T*<sp/>devicePtr<sp/>=<sp/></highlight><highlight class="keyword">nullptr</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="111"><highlight class="normal"><sp/><sp/></highlight><highlight class="comment">//<sp/>Map<sp/>the<sp/>device<sp/>pointer</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="112"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a4d47839c3dc2d87dd3e68fb1ce789593" kindref="member">MSCCLPP_CUTHROW</ref>(cuMemAddressReserve((CUdeviceptr*)&amp;devicePtr,<sp/>bufferSize,<sp/>gran,<sp/>0U,<sp/>0));</highlight></codeline>
+<codeline lineno="113"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a4d47839c3dc2d87dd3e68fb1ce789593" kindref="member">MSCCLPP_CUTHROW</ref>(cuMemMap((CUdeviceptr)devicePtr,<sp/>bufferSize,<sp/>0,<sp/>memHandle,<sp/>0));</highlight></codeline>
+<codeline lineno="114"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a4d47839c3dc2d87dd3e68fb1ce789593" kindref="member">MSCCLPP_CUTHROW</ref>(cuMemSetAccess((CUdeviceptr)devicePtr,<sp/>bufferSize,<sp/>&amp;accessDesc,<sp/>1));</highlight></codeline>
+<codeline lineno="115"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1CudaStreamWithFlags" kindref="compound">CudaStreamWithFlags</ref><sp/>stream(cudaStreamNonBlocking);</highlight></codeline>
+<codeline lineno="116"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaMemsetAsync(devicePtr,<sp/>0,<sp/>bufferSize,<sp/>stream));</highlight></codeline>
+<codeline lineno="117"><highlight class="normal"></highlight></codeline>
+<codeline lineno="118"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaStreamSynchronize(stream));</highlight></codeline>
+<codeline lineno="119"><highlight class="normal"></highlight></codeline>
+<codeline lineno="120"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/></highlight><highlight class="keyword">new</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1PhysicalCudaMemory" kindref="compound">PhysicalCudaMemory&lt;T&gt;</ref>(memHandle,<sp/>devicePtr,<sp/>bufferSize);</highlight></codeline>
+<codeline lineno="121"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="122"><highlight class="normal"></highlight></codeline>
+<codeline lineno="123"><highlight class="normal"></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="124" refid="namespacemscclpp_1_1detail_1a7020a4cfcb1f117144e26092dd3c3830" refkind="member"><highlight class="normal">T*<sp/><ref refid="namespacemscclpp_1_1detail_1a7020a4cfcb1f117144e26092dd3c3830" kindref="member">cudaExtCalloc</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>nelem)<sp/>{</highlight></codeline>
+<codeline lineno="125"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" kindref="compound">AvoidCudaGraphCaptureGuard</ref><sp/>cgcGuard;</highlight></codeline>
+<codeline lineno="126"><highlight class="normal"><sp/><sp/>T*<sp/>ptr;</highlight></codeline>
+<codeline lineno="127"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1CudaStreamWithFlags" kindref="compound">CudaStreamWithFlags</ref><sp/>stream(cudaStreamNonBlocking);</highlight></codeline>
+<codeline lineno="128"><highlight class="normal"></highlight><highlight class="preprocessor">#if<sp/>defined(__HIP_PLATFORM_AMD__)</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="129"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(hipExtMallocWithFlags((</highlight><highlight class="keywordtype">void</highlight><highlight class="normal">**)&amp;ptr,<sp/>nelem<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T),<sp/>hipDeviceMallocUncached));</highlight></codeline>
+<codeline lineno="130"><highlight class="normal"></highlight><highlight class="preprocessor">#else</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="131"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaMalloc(&amp;ptr,<sp/>nelem<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T)));</highlight></codeline>
+<codeline lineno="132"><highlight class="normal"></highlight><highlight class="preprocessor">#endif</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="133"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaMemsetAsync(ptr,<sp/>0,<sp/>nelem<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T),<sp/>stream));</highlight></codeline>
+<codeline lineno="134"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaStreamSynchronize(stream));</highlight></codeline>
+<codeline lineno="135"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>ptr;</highlight></codeline>
+<codeline lineno="136"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="137"><highlight class="normal"></highlight></codeline>
+<codeline lineno="142"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="143" refid="namespacemscclpp_1_1detail_1a38d4884d9380c232773dcfb2a8640a0a" refkind="member"><highlight class="normal">T*<sp/><ref refid="namespacemscclpp_1_1detail_1a38d4884d9380c232773dcfb2a8640a0a" kindref="member">cudaHostCalloc</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>nelem)<sp/>{</highlight></codeline>
+<codeline lineno="144"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" kindref="compound">AvoidCudaGraphCaptureGuard</ref><sp/>cgcGuard;</highlight></codeline>
+<codeline lineno="145"><highlight class="normal"><sp/><sp/>T*<sp/>ptr;</highlight></codeline>
+<codeline lineno="146"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaHostAlloc(&amp;ptr,<sp/>nelem<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T),<sp/>cudaHostAllocMapped<sp/>|<sp/>cudaHostAllocWriteCombined));</highlight></codeline>
+<codeline lineno="147"><highlight class="normal"><sp/><sp/>memset(ptr,<sp/>0,<sp/>nelem<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T));</highlight></codeline>
+<codeline lineno="148"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>ptr;</highlight></codeline>
+<codeline lineno="149"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="150"><highlight class="normal"></highlight></codeline>
+<codeline lineno="160"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T,<sp/>T*(alloc)(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal">),<sp/></highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>Deleter,<sp/></highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>Memory&gt;</highlight></codeline>
+<codeline lineno="161" refid="namespacemscclpp_1_1detail_1a62940c9a543b65f5473a68506c9c1d11" refkind="member"><highlight class="normal">Memory<sp/><ref refid="namespacemscclpp_1_1detail_1a62940c9a543b65f5473a68506c9c1d11" kindref="member">safeAlloc</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>nelem)<sp/>{</highlight></codeline>
+<codeline lineno="162"><highlight class="normal"><sp/><sp/>T*<sp/>ptr<sp/>=<sp/></highlight><highlight class="keyword">nullptr</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="163"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">try</highlight><highlight class="normal"><sp/>{</highlight></codeline>
+<codeline lineno="164"><highlight class="normal"><sp/><sp/><sp/><sp/>ptr<sp/>=<sp/>alloc(nelem);</highlight></codeline>
+<codeline lineno="165"><highlight class="normal"><sp/><sp/>}<sp/></highlight><highlight class="keywordflow">catch</highlight><highlight class="normal"><sp/>(...)<sp/>{</highlight></codeline>
+<codeline lineno="166"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(ptr)<sp/>{</highlight></codeline>
+<codeline lineno="167"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>Deleter()(ptr);</highlight></codeline>
+<codeline lineno="168"><highlight class="normal"><sp/><sp/><sp/><sp/>}</highlight></codeline>
+<codeline lineno="169"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">throw</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="170"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="171"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>Memory(ptr,<sp/>Deleter());</highlight></codeline>
+<codeline lineno="172"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="173"><highlight class="normal"></highlight></codeline>
+<codeline lineno="174"><highlight class="normal"></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T,<sp/>T*(alloc)(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal">,<sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal">),<sp/></highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>Deleter,<sp/></highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>Memory&gt;</highlight></codeline>
+<codeline lineno="175" refid="namespacemscclpp_1_1detail_1a4ee3d070850c9434e07ee34b1c1c80df" refkind="member"><highlight class="normal">Memory<sp/><ref refid="namespacemscclpp_1_1detail_1a62940c9a543b65f5473a68506c9c1d11" kindref="member">safeAlloc</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>nelem,<sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>gran)<sp/>{</highlight></codeline>
+<codeline lineno="176"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>((nelem<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T))<sp/>%<sp/>gran)<sp/>{</highlight></codeline>
+<codeline lineno="177"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">throw</highlight><highlight class="normal"><sp/><ref refid="classmscclpp_1_1Error" kindref="compound">Error</ref>(</highlight><highlight class="stringliteral">&quot;The<sp/>request<sp/>allocation<sp/>size<sp/>is<sp/>not<sp/>divisible<sp/>by<sp/>the<sp/>required<sp/>granularity:&quot;</highlight><highlight class="normal"><sp/>+</highlight></codeline>
+<codeline lineno="178"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>std::to_string(nelem<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T))<sp/>+<sp/></highlight><highlight class="stringliteral">&quot;<sp/>vs<sp/>&quot;</highlight><highlight class="normal"><sp/>+<sp/>std::to_string(gran),</highlight></codeline>
+<codeline lineno="179"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><ref refid="namespacemscclpp_1abfe795a8ee512f106d16ae733255ddbcaa524b35e5f186bcacbedd2b6661224aa" kindref="member">ErrorCode::InvalidUsage</ref>);</highlight></codeline>
+<codeline lineno="180"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="181"><highlight class="normal"><sp/><sp/>T*<sp/>ptr<sp/>=<sp/></highlight><highlight class="keyword">nullptr</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="182"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">try</highlight><highlight class="normal"><sp/>{</highlight></codeline>
+<codeline lineno="183"><highlight class="normal"><sp/><sp/><sp/><sp/>ptr<sp/>=<sp/>alloc(nelem,<sp/>gran);</highlight></codeline>
+<codeline lineno="184"><highlight class="normal"><sp/><sp/>}<sp/></highlight><highlight class="keywordflow">catch</highlight><highlight class="normal"><sp/>(...)<sp/>{</highlight></codeline>
+<codeline lineno="185"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">if</highlight><highlight class="normal"><sp/>(ptr)<sp/>{</highlight></codeline>
+<codeline lineno="186"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/>Deleter()(ptr);</highlight></codeline>
+<codeline lineno="187"><highlight class="normal"><sp/><sp/><sp/><sp/>}</highlight></codeline>
+<codeline lineno="188"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keywordflow">throw</highlight><highlight class="normal">;</highlight></codeline>
+<codeline lineno="189"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="190"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>Memory(ptr,<sp/>Deleter());</highlight></codeline>
+<codeline lineno="191"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="192"><highlight class="normal"></highlight></codeline>
+<codeline lineno="193"><highlight class="normal">}<sp/><sp/></highlight><highlight class="comment">//<sp/>namespace<sp/>detail</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="194"><highlight class="normal"></highlight></codeline>
+<codeline lineno="197"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="198"><highlight class="normal"></highlight><highlight class="keyword">struct<sp/></highlight><highlight class="normal">CudaDeleter<sp/>{</highlight></codeline>
+<codeline lineno="199" refid="structmscclpp_1_1CudaDeleter_1ae73e2efb24f0bc7b7c6a352535f7aa6e" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1CudaDeleter_1ae73e2efb24f0bc7b7c6a352535f7aa6e" kindref="member">TPtrOrArray</ref><sp/>=<sp/>std::conditional_t&lt;std::is_array_v&lt;T&gt;,<sp/>T,<sp/>T*&gt;;</highlight></codeline>
+<codeline lineno="200" refid="structmscclpp_1_1CudaDeleter_1a650ce6e3cc16b396baea9eabc28bb228" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1CudaDeleter_1a650ce6e3cc16b396baea9eabc28bb228" kindref="member">operator()</ref>(<ref refid="structmscclpp_1_1CudaDeleter_1ae73e2efb24f0bc7b7c6a352535f7aa6e" kindref="member">TPtrOrArray</ref><sp/>ptr)<sp/>{</highlight></codeline>
+<codeline lineno="201"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" kindref="compound">AvoidCudaGraphCaptureGuard</ref><sp/>cgcGuard;</highlight></codeline>
+<codeline lineno="202"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaFree(ptr));</highlight></codeline>
+<codeline lineno="203"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="204"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="205"><highlight class="normal"></highlight></codeline>
+<codeline lineno="206"><highlight class="normal"></highlight><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="207" refid="structmscclpp_1_1CudaPhysicalDeleter" refkind="compound"><highlight class="normal"></highlight><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1CudaPhysicalDeleter" kindref="compound">CudaPhysicalDeleter</ref><sp/>{</highlight></codeline>
+<codeline lineno="208"><highlight class="normal"><sp/><sp/>static_assert(!std::is_array_v&lt;T&gt;,<sp/></highlight><highlight class="stringliteral">&quot;T<sp/>must<sp/>not<sp/>be<sp/>an<sp/>array&quot;</highlight><highlight class="normal">);</highlight></codeline>
+<codeline lineno="209" refid="structmscclpp_1_1CudaPhysicalDeleter_1a6045bcd05cc4ec9ae2617739d2256ec9" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1CudaPhysicalDeleter_1a6045bcd05cc4ec9ae2617739d2256ec9" kindref="member">operator()</ref>(<ref refid="structmscclpp_1_1PhysicalCudaMemory" kindref="compound">PhysicalCudaMemory&lt;T&gt;</ref>*<sp/>ptr)<sp/>{</highlight></codeline>
+<codeline lineno="210"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" kindref="compound">AvoidCudaGraphCaptureGuard</ref><sp/>cgcGuard;</highlight></codeline>
+<codeline lineno="211"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="gpu__utils_8hpp_1a4d47839c3dc2d87dd3e68fb1ce789593" kindref="member">MSCCLPP_CUTHROW</ref>(cuMemUnmap((CUdeviceptr)ptr-&gt;<ref refid="structmscclpp_1_1PhysicalCudaMemory_1a539ed2d4dadae40eedeed921d22bd50a" kindref="member">devicePtr_</ref>,<sp/>ptr-&gt;<ref refid="structmscclpp_1_1PhysicalCudaMemory_1a94c0509cda015378eacd0c45363e61f1" kindref="member">size_</ref>));</highlight></codeline>
+<codeline lineno="212"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="gpu__utils_8hpp_1a4d47839c3dc2d87dd3e68fb1ce789593" kindref="member">MSCCLPP_CUTHROW</ref>(cuMemAddressFree((CUdeviceptr)ptr-&gt;<ref refid="structmscclpp_1_1PhysicalCudaMemory_1a539ed2d4dadae40eedeed921d22bd50a" kindref="member">devicePtr_</ref>,<sp/>ptr-&gt;<ref refid="structmscclpp_1_1PhysicalCudaMemory_1a94c0509cda015378eacd0c45363e61f1" kindref="member">size_</ref>));</highlight></codeline>
+<codeline lineno="213"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="gpu__utils_8hpp_1a4d47839c3dc2d87dd3e68fb1ce789593" kindref="member">MSCCLPP_CUTHROW</ref>(cuMemRelease(ptr-&gt;<ref refid="structmscclpp_1_1PhysicalCudaMemory_1a45c224e9494ebc1f2d403aaeb1791514" kindref="member">memHandle_</ref>));</highlight></codeline>
+<codeline lineno="214"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="215"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="216"><highlight class="normal"></highlight></codeline>
+<codeline lineno="219"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="220" refid="structmscclpp_1_1CudaHostDeleter" refkind="compound"><highlight class="normal"></highlight><highlight class="keyword">struct<sp/></highlight><highlight class="normal"><ref refid="structmscclpp_1_1CudaHostDeleter" kindref="compound">CudaHostDeleter</ref><sp/>{</highlight></codeline>
+<codeline lineno="221" refid="structmscclpp_1_1CudaHostDeleter_1a6c29c7b9e68cf233c016d82954fee08b" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1CudaHostDeleter_1a6c29c7b9e68cf233c016d82954fee08b" kindref="member">TPtrOrArray</ref><sp/>=<sp/>std::conditional_t&lt;std::is_array_v&lt;T&gt;,<sp/>T,<sp/>T*&gt;;</highlight></codeline>
+<codeline lineno="222" refid="structmscclpp_1_1CudaHostDeleter_1aaa90000ffc60bae0f9d7b12c39ff3825" refkind="member"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="structmscclpp_1_1CudaHostDeleter_1aaa90000ffc60bae0f9d7b12c39ff3825" kindref="member">operator()</ref>(<ref refid="structmscclpp_1_1CudaHostDeleter_1a6c29c7b9e68cf233c016d82954fee08b" kindref="member">TPtrOrArray</ref><sp/>ptr)<sp/>{</highlight></codeline>
+<codeline lineno="223"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" kindref="compound">AvoidCudaGraphCaptureGuard</ref><sp/>cgcGuard;</highlight></codeline>
+<codeline lineno="224"><highlight class="normal"><sp/><sp/><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaFreeHost(ptr));</highlight></codeline>
+<codeline lineno="225"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="226"><highlight class="normal">};</highlight></codeline>
+<codeline lineno="227"><highlight class="normal"></highlight></codeline>
+<codeline lineno="232"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="233" refid="namespacemscclpp_1ab10073b88d810432087d16a9068e5aa8" refkind="member"><highlight class="normal">std::shared_ptr&lt;T&gt;<sp/><ref refid="namespacemscclpp_1ab10073b88d810432087d16a9068e5aa8" kindref="member">allocSharedCuda</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>count<sp/>=<sp/>1)<sp/>{</highlight></codeline>
+<codeline lineno="234"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>detail::safeAlloc&lt;T,<sp/>detail::cudaCalloc&lt;T&gt;,<sp/><ref refid="structmscclpp_1_1CudaDeleter" kindref="compound">CudaDeleter&lt;T&gt;</ref>,<sp/>std::shared_ptr&lt;T&gt;&gt;(count);</highlight></codeline>
+<codeline lineno="235"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="236"><highlight class="normal"></highlight></codeline>
+<codeline lineno="243"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="244" refid="namespacemscclpp_1a076026a23c37219386fd72e235a16404" refkind="member"><highlight class="normal">std::shared_ptr&lt;PhysicalCudaMemory&lt;T&gt;&gt;<sp/><ref refid="namespacemscclpp_1a076026a23c37219386fd72e235a16404" kindref="member">allocSharedPhysicalCuda</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>count,<sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>gran)<sp/>{</highlight></codeline>
+<codeline lineno="245"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>detail::safeAlloc&lt;PhysicalCudaMemory&lt;T&gt;,<sp/>detail::cudaPhysicalCalloc&lt;T&gt;,<sp/><ref refid="structmscclpp_1_1CudaPhysicalDeleter" kindref="compound">CudaPhysicalDeleter&lt;T&gt;</ref>,</highlight></codeline>
+<codeline lineno="246"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>std::shared_ptr&lt;PhysicalCudaMemory&lt;T&gt;&gt;&gt;(count,<sp/>gran);</highlight></codeline>
+<codeline lineno="247"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="248"><highlight class="normal"></highlight></codeline>
+<codeline lineno="253"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="254" refid="namespacemscclpp_1a20fbe029082ab21502c8f354bc636263" refkind="member"><highlight class="normal">std::shared_ptr&lt;T&gt;<sp/><ref refid="namespacemscclpp_1a20fbe029082ab21502c8f354bc636263" kindref="member">allocExtSharedCuda</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>count<sp/>=<sp/>1)<sp/>{</highlight></codeline>
+<codeline lineno="255"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>detail::safeAlloc&lt;T,<sp/>detail::cudaExtCalloc&lt;T&gt;,<sp/><ref refid="structmscclpp_1_1CudaDeleter" kindref="compound">CudaDeleter&lt;T&gt;</ref>,<sp/>std::shared_ptr&lt;T&gt;&gt;(count);</highlight></codeline>
+<codeline lineno="256"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="257"><highlight class="normal"></highlight></codeline>
+<codeline lineno="260"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="261" refid="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" refkind="member"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/><ref refid="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" kindref="member">UniqueCudaPtr</ref><sp/>=<sp/>std::unique_ptr&lt;T,<sp/>CudaDeleter&lt;T&gt;&gt;;</highlight></codeline>
+<codeline lineno="262"><highlight class="normal"></highlight></codeline>
+<codeline lineno="267"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="268" refid="namespacemscclpp_1ad31cd9626a62c64d05b44736adf3dbb9" refkind="member"><highlight class="normal"><ref refid="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" kindref="member">UniqueCudaPtr&lt;T&gt;</ref><sp/><ref refid="namespacemscclpp_1ad31cd9626a62c64d05b44736adf3dbb9" kindref="member">allocUniqueCuda</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>count<sp/>=<sp/>1)<sp/>{</highlight></codeline>
+<codeline lineno="269"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>detail::safeAlloc&lt;T,<sp/>detail::cudaCalloc&lt;T&gt;,<sp/><ref refid="structmscclpp_1_1CudaDeleter" kindref="compound">CudaDeleter&lt;T&gt;</ref>,<sp/><ref refid="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" kindref="member">UniqueCudaPtr&lt;T&gt;</ref>&gt;(count);</highlight></codeline>
+<codeline lineno="270"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="271"><highlight class="normal"></highlight></codeline>
+<codeline lineno="278"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="279" refid="namespacemscclpp_1a1e74ee49d25a2209aca5dc3c6ad7828b" refkind="member"><highlight class="normal">std::unique_ptr&lt;PhysicalCudaMemory&lt;T&gt;&gt;<sp/><ref refid="namespacemscclpp_1a1e74ee49d25a2209aca5dc3c6ad7828b" kindref="member">allocUniquePhysicalCuda</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>count,<sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>gran)<sp/>{</highlight></codeline>
+<codeline lineno="280"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>detail::safeAlloc&lt;PhysicalCudaMemory&lt;T&gt;,<sp/>detail::cudaPhysicalCalloc&lt;T&gt;,<sp/><ref refid="structmscclpp_1_1CudaPhysicalDeleter" kindref="compound">CudaPhysicalDeleter&lt;T&gt;</ref>,</highlight></codeline>
+<codeline lineno="281"><highlight class="normal"><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/><sp/>std::unique_ptr&lt;CudaPhysicalDeleter&lt;T&gt;,<sp/><ref refid="structmscclpp_1_1CudaDeleter" kindref="compound">CudaDeleter&lt;CudaPhysicalDeleter&lt;T&gt;</ref>&gt;&gt;&gt;(count,<sp/>gran);</highlight></codeline>
+<codeline lineno="282"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="283"><highlight class="normal"></highlight></codeline>
+<codeline lineno="288"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="289" refid="namespacemscclpp_1a9f462309da3d603572c9f4731e0a54bf" refkind="member"><highlight class="normal"><ref refid="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" kindref="member">UniqueCudaPtr&lt;T&gt;</ref><sp/><ref refid="namespacemscclpp_1a9f462309da3d603572c9f4731e0a54bf" kindref="member">allocExtUniqueCuda</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>count<sp/>=<sp/>1)<sp/>{</highlight></codeline>
+<codeline lineno="290"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>detail::safeAlloc&lt;T,<sp/>detail::cudaExtCalloc&lt;T&gt;,<sp/><ref refid="structmscclpp_1_1CudaDeleter" kindref="compound">CudaDeleter&lt;T&gt;</ref>,<sp/><ref refid="namespacemscclpp_1aac22fb505100d35de3039a144aabbc3a" kindref="member">UniqueCudaPtr&lt;T&gt;</ref>&gt;(count);</highlight></codeline>
+<codeline lineno="291"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="292"><highlight class="normal"></highlight></codeline>
+<codeline lineno="298"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class<sp/></highlight><highlight class="normal">T,<sp/></highlight><highlight class="keyword">typename</highlight><highlight class="normal">...<sp/>Args&gt;</highlight></codeline>
+<codeline lineno="299" refid="namespacemscclpp_1abbc4c2a44a23d76110dc492e1de23ad2" refkind="member"><highlight class="normal">std::shared_ptr&lt;T&gt;<sp/><ref refid="namespacemscclpp_1abbc4c2a44a23d76110dc492e1de23ad2" kindref="member">makeSharedCudaHost</ref>(Args&amp;&amp;...<sp/>args)<sp/>{</highlight></codeline>
+<codeline lineno="300"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>ptr<sp/>=<sp/>detail::safeAlloc&lt;T,<sp/>detail::cudaHostCalloc&lt;T&gt;,<sp/><ref refid="structmscclpp_1_1CudaHostDeleter" kindref="compound">CudaHostDeleter&lt;T&gt;</ref>,<sp/>std::shared_ptr&lt;T&gt;&gt;(1);</highlight></codeline>
+<codeline lineno="301"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">new</highlight><highlight class="normal"><sp/>(ptr.get())<sp/>T(std::forward&lt;Args&gt;(args)...);</highlight></codeline>
+<codeline lineno="302"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>ptr;</highlight></codeline>
+<codeline lineno="303"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="304"><highlight class="normal"></highlight></codeline>
+<codeline lineno="310"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="311" refid="namespacemscclpp_1a56a0554f903817c7a2600296eca9c166" refkind="member"><highlight class="normal">std::shared_ptr&lt;T[]&gt;<sp/><ref refid="namespacemscclpp_1abbc4c2a44a23d76110dc492e1de23ad2" kindref="member">makeSharedCudaHost</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>count)<sp/>{</highlight></codeline>
+<codeline lineno="312"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>TElem<sp/>=<sp/>std::remove_extent_t&lt;T&gt;;</highlight></codeline>
+<codeline lineno="313"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>ptr<sp/>=<sp/>detail::safeAlloc&lt;T,<sp/>detail::cudaHostCalloc&lt;T&gt;,<sp/><ref refid="structmscclpp_1_1CudaHostDeleter" kindref="compound">CudaHostDeleter&lt;TElem&gt;</ref>,<sp/>std::shared_ptr&lt;T[]&gt;&gt;(count);</highlight></codeline>
+<codeline lineno="314"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">for</highlight><highlight class="normal"><sp/>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>i<sp/>=<sp/>0;<sp/>i<sp/>&lt;<sp/>count;<sp/>++i)<sp/>{</highlight></codeline>
+<codeline lineno="315"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keyword">new</highlight><highlight class="normal"><sp/>(&amp;ptr[i])<sp/>TElem();</highlight></codeline>
+<codeline lineno="316"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="317"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>ptr;</highlight></codeline>
+<codeline lineno="318"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="319"><highlight class="normal"></highlight></codeline>
+<codeline lineno="322"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="323" refid="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" refkind="member"><highlight class="normal"></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/><ref refid="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" kindref="member">UniqueCudaHostPtr</ref><sp/>=<sp/>std::unique_ptr&lt;T,<sp/>CudaHostDeleter&lt;T&gt;&gt;;</highlight></codeline>
+<codeline lineno="324"><highlight class="normal"></highlight></codeline>
+<codeline lineno="330"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class<sp/></highlight><highlight class="normal">T,<sp/></highlight><highlight class="keyword">typename</highlight><highlight class="normal">...<sp/>Args,<sp/>std::enable_if_t&lt;false<sp/>==<sp/>std::is_array_v&lt;T&gt;,<sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal">&gt;<sp/>=<sp/></highlight><highlight class="keyword">true</highlight><highlight class="normal">&gt;</highlight></codeline>
+<codeline lineno="331" refid="namespacemscclpp_1a40cb9e2eef899f052b7e72c706f5ab7b" refkind="member"><highlight class="normal"><ref refid="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" kindref="member">UniqueCudaHostPtr&lt;T&gt;</ref><sp/><ref refid="namespacemscclpp_1a40cb9e2eef899f052b7e72c706f5ab7b" kindref="member">makeUniqueCudaHost</ref>(Args&amp;&amp;...<sp/>args)<sp/>{</highlight></codeline>
+<codeline lineno="332"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>ptr<sp/>=<sp/>detail::safeAlloc&lt;T,<sp/>detail::cudaHostCalloc&lt;T&gt;,<sp/><ref refid="structmscclpp_1_1CudaHostDeleter" kindref="compound">CudaHostDeleter&lt;T&gt;</ref>,<sp/><ref refid="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" kindref="member">UniqueCudaHostPtr&lt;T&gt;</ref>&gt;(1);</highlight></codeline>
+<codeline lineno="333"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">new</highlight><highlight class="normal"><sp/>(ptr.get())<sp/>T(std::forward&lt;Args&gt;(args)...);</highlight></codeline>
+<codeline lineno="334"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>ptr;</highlight></codeline>
+<codeline lineno="335"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="336"><highlight class="normal"></highlight></codeline>
+<codeline lineno="342"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T,<sp/>std::enable_if_t&lt;true<sp/>==<sp/>std::is_array_v&lt;T&gt;,<sp/></highlight><highlight class="keywordtype">bool</highlight><highlight class="normal">&gt;<sp/>=<sp/>true&gt;</highlight></codeline>
+<codeline lineno="343" refid="namespacemscclpp_1af5e91d93bd1a5e7bfb98a0b353e7b05e" refkind="member"><highlight class="normal"><ref refid="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" kindref="member">UniqueCudaHostPtr&lt;T&gt;</ref><sp/><ref refid="namespacemscclpp_1a40cb9e2eef899f052b7e72c706f5ab7b" kindref="member">makeUniqueCudaHost</ref>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>count)<sp/>{</highlight></codeline>
+<codeline lineno="344"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">using</highlight><highlight class="normal"><sp/>TElem<sp/>=<sp/>std::remove_extent_t&lt;T&gt;;</highlight></codeline>
+<codeline lineno="345"><highlight class="normal"><sp/><sp/></highlight><highlight class="keyword">auto</highlight><highlight class="normal"><sp/>ptr<sp/>=<sp/>detail::safeAlloc&lt;TElem,<sp/>detail::cudaHostCalloc&lt;TElem&gt;,<sp/><ref refid="structmscclpp_1_1CudaHostDeleter" kindref="compound">CudaHostDeleter&lt;T&gt;</ref>,<sp/><ref refid="namespacemscclpp_1ab7b8109e9603301b78ac09fa25d3af7a" kindref="member">UniqueCudaHostPtr&lt;T&gt;</ref>&gt;(count);</highlight></codeline>
+<codeline lineno="346"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">for</highlight><highlight class="normal"><sp/>(</highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>i<sp/>=<sp/>0;<sp/>i<sp/>&lt;<sp/>count;<sp/>++i)<sp/>{</highlight></codeline>
+<codeline lineno="347"><highlight class="normal"><sp/><sp/><sp/><sp/></highlight><highlight class="keyword">new</highlight><highlight class="normal"><sp/>(&amp;ptr[i])<sp/>TElem();</highlight></codeline>
+<codeline lineno="348"><highlight class="normal"><sp/><sp/>}</highlight></codeline>
+<codeline lineno="349"><highlight class="normal"><sp/><sp/></highlight><highlight class="keywordflow">return</highlight><highlight class="normal"><sp/>ptr;</highlight></codeline>
+<codeline lineno="350"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="351"><highlight class="normal"></highlight></codeline>
+<codeline lineno="359"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="360" refid="namespacemscclpp_1afd3d7997563fb05cafdf33e2886f90ba" refkind="member"><highlight class="normal"></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="namespacemscclpp_1afd3d7997563fb05cafdf33e2886f90ba" kindref="member">memcpyCudaAsync</ref>(T*<sp/>dst,<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>T*<sp/>src,<sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>count,<sp/>cudaStream_t<sp/>stream,<sp/>cudaMemcpyKind<sp/>kind<sp/>=<sp/>cudaMemcpyDefault)<sp/>{</highlight></codeline>
+<codeline lineno="361"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" kindref="compound">AvoidCudaGraphCaptureGuard</ref><sp/>cgcGuard;</highlight></codeline>
+<codeline lineno="362"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaMemcpyAsync(dst,<sp/>src,<sp/>count<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T),<sp/>kind,<sp/>stream));</highlight></codeline>
+<codeline lineno="363"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="364"><highlight class="normal"></highlight></codeline>
+<codeline lineno="371"><highlight class="keyword">template</highlight><highlight class="normal"><sp/>&lt;</highlight><highlight class="keyword">class</highlight><highlight class="normal"><sp/>T&gt;</highlight></codeline>
+<codeline lineno="372" refid="namespacemscclpp_1a48d4cf01618324fd8c4e55a4c6eca6fe" refkind="member"><highlight class="normal"></highlight><highlight class="keywordtype">void</highlight><highlight class="normal"><sp/><ref refid="namespacemscclpp_1a48d4cf01618324fd8c4e55a4c6eca6fe" kindref="member">memcpyCuda</ref>(T*<sp/>dst,<sp/></highlight><highlight class="keyword">const</highlight><highlight class="normal"><sp/>T*<sp/>src,<sp/></highlight><highlight class="keywordtype">size_t</highlight><highlight class="normal"><sp/>count,<sp/>cudaMemcpyKind<sp/>kind<sp/>=<sp/>cudaMemcpyDefault)<sp/>{</highlight></codeline>
+<codeline lineno="373"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1AvoidCudaGraphCaptureGuard" kindref="compound">AvoidCudaGraphCaptureGuard</ref><sp/>cgcGuard;</highlight></codeline>
+<codeline lineno="374"><highlight class="normal"><sp/><sp/><ref refid="structmscclpp_1_1CudaStreamWithFlags" kindref="compound">CudaStreamWithFlags</ref><sp/>stream(cudaStreamNonBlocking);</highlight></codeline>
+<codeline lineno="375"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaMemcpyAsync(dst,<sp/>src,<sp/>count<sp/>*<sp/></highlight><highlight class="keyword">sizeof</highlight><highlight class="normal">(T),<sp/>kind,<sp/>stream));</highlight></codeline>
+<codeline lineno="376"><highlight class="normal"><sp/><sp/><ref refid="gpu__utils_8hpp_1a053aed9c5383a2eb108d565f7e03cb5e" kindref="member">MSCCLPP_CUDATHROW</ref>(cudaStreamSynchronize(stream));</highlight></codeline>
+<codeline lineno="377"><highlight class="normal">}</highlight></codeline>
+<codeline lineno="378"><highlight class="normal"></highlight></codeline>
+<codeline lineno="379"><highlight class="normal">}<sp/><sp/></highlight><highlight class="comment">//<sp/>namespace<sp/>mscclpp</highlight><highlight class="normal"></highlight></codeline>
+<codeline lineno="380"><highlight class="normal"></highlight></codeline>
+<codeline lineno="381"><highlight class="normal"></highlight><highlight class="preprocessor">#endif<sp/><sp/>//<sp/>MSCCLPP_GPU_UTILS_HPP_</highlight></codeline>
+    </programlisting>
+    <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp"/>
+  </compounddef>
+</doxygen>

@@ -1,0 +1,227 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1SimpleProxyChannel" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::SimpleProxyChannel</compoundname>
+    <includes refid="proxy__channel_8hpp" local="no">proxy_channel.hpp</includes>
+      <sectiondef kind="public-type">
+      <memberdef kind="typedef" id="structmscclpp_1_1SimpleProxyChannel_1a94b927b3391c59e8a88a09611d20ca2e" prot="public" static="no">
+        <type><ref refid="structmscclpp_1_1SimpleProxyChannelDeviceHandle" kindref="compound">SimpleProxyChannelDeviceHandle</ref></type>
+        <definition>using mscclpp::SimpleProxyChannel::DeviceHandle =  SimpleProxyChannelDeviceHandle</definition>
+        <argsstring></argsstring>
+        <name>DeviceHandle</name>
+        <briefdescription>
+<para>Device-side handle for <ref refid="structmscclpp_1_1SimpleProxyChannel" kindref="compound">SimpleProxyChannel</ref>. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="129" column="3" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel.hpp" bodystart="129" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1SimpleProxyChannel_1a44960299700c08310c2f9f1339f2b426" prot="private" static="no" mutable="no">
+        <type><ref refid="structmscclpp_1_1ProxyChannel" kindref="compound">ProxyChannel</ref></type>
+        <definition>ProxyChannel mscclpp::SimpleProxyChannel::proxyChan_</definition>
+        <argsstring></argsstring>
+        <name>proxyChan_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="104" column="16" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel.hpp" bodystart="104" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1SimpleProxyChannel_1ab040aa7db9d855f29b920d716f01542a" prot="private" static="no" mutable="no">
+        <type><ref refid="namespacemscclpp_1a9fe82c3a70c0ff0872516c2fa7bf6682" kindref="member">MemoryId</ref></type>
+        <definition>MemoryId mscclpp::SimpleProxyChannel::dst_</definition>
+        <argsstring></argsstring>
+        <name>dst_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="105" column="12" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel.hpp" bodystart="105" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1SimpleProxyChannel_1a515c3ce9c531c94f62ccdeb418fb701c" prot="private" static="no" mutable="no">
+        <type><ref refid="namespacemscclpp_1a9fe82c3a70c0ff0872516c2fa7bf6682" kindref="member">MemoryId</ref></type>
+        <definition>MemoryId mscclpp::SimpleProxyChannel::src_</definition>
+        <argsstring></argsstring>
+        <name>src_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="106" column="12" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel.hpp" bodystart="106" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="structmscclpp_1_1SimpleProxyChannel_1a201d78f688024a1df644c3a6847cf882" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::SimpleProxyChannel::SimpleProxyChannel</definition>
+        <argsstring>()=default</argsstring>
+        <name>SimpleProxyChannel</name>
+        <briefdescription>
+<para>Default constructor. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="110" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1SimpleProxyChannel_1aaf6a84b0ed69b6e8c671ce10f159710d" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::SimpleProxyChannel::SimpleProxyChannel</definition>
+        <argsstring>(ProxyChannel proxyChan, MemoryId dst, MemoryId src)</argsstring>
+        <name>SimpleProxyChannel</name>
+        <param>
+          <type><ref refid="structmscclpp_1_1ProxyChannel" kindref="compound">ProxyChannel</ref></type>
+          <declname>proxyChan</declname>
+        </param>
+        <param>
+          <type><ref refid="namespacemscclpp_1a9fe82c3a70c0ff0872516c2fa7bf6682" kindref="member">MemoryId</ref></type>
+          <declname>dst</declname>
+        </param>
+        <param>
+          <type><ref refid="namespacemscclpp_1a9fe82c3a70c0ff0872516c2fa7bf6682" kindref="member">MemoryId</ref></type>
+          <declname>src</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Constructor. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>proxyChan</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The proxy channel. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>dst</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The destination memory region. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>src</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The source memory region. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="116" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1SimpleProxyChannel_1afcb4694409181cc563f733cb2d7b142e" prot="public" static="no" const="no" explicit="no" inline="yes" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::SimpleProxyChannel::SimpleProxyChannel</definition>
+        <argsstring>(ProxyChannel proxyChan)</argsstring>
+        <name>SimpleProxyChannel</name>
+        <param>
+          <type><ref refid="structmscclpp_1_1ProxyChannel" kindref="compound">ProxyChannel</ref></type>
+          <declname>proxyChan</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Constructor. <parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>proxyChan</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The proxy channel. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="120" column="3" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel.hpp" bodystart="120" bodyend="120"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1SimpleProxyChannel_1ab08ba7d2060a1a9d24c40dc97f29d288" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::SimpleProxyChannel::SimpleProxyChannel</definition>
+        <argsstring>(const SimpleProxyChannel &amp;other)=default</argsstring>
+        <name>SimpleProxyChannel</name>
+        <param>
+          <type>const <ref refid="structmscclpp_1_1SimpleProxyChannel" kindref="compound">SimpleProxyChannel</ref> &amp;</type>
+          <declname>other</declname>
+        </param>
+        <briefdescription>
+<para>Copy constructor. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="123" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1SimpleProxyChannel_1a4a4394da6e135b17fe6f1e2a28ee14a8" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="structmscclpp_1_1SimpleProxyChannel" kindref="compound">SimpleProxyChannel</ref> &amp;</type>
+        <definition>SimpleProxyChannel&amp; mscclpp::SimpleProxyChannel::operator=</definition>
+        <argsstring>(SimpleProxyChannel &amp;other)=default</argsstring>
+        <name>operator=</name>
+        <param>
+          <type><ref refid="structmscclpp_1_1SimpleProxyChannel" kindref="compound">SimpleProxyChannel</ref> &amp;</type>
+          <declname>other</declname>
+        </param>
+        <briefdescription>
+<para>Assignment operator. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="126" column="22"/>
+      </memberdef>
+      <memberdef kind="function" id="structmscclpp_1_1SimpleProxyChannel_1a35fb91c8df4b8d9e8781d3d7b078a5b7" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="structmscclpp_1_1SimpleProxyChannel_1a94b927b3391c59e8a88a09611d20ca2e" kindref="member">DeviceHandle</ref></type>
+        <definition>DeviceHandle mscclpp::SimpleProxyChannel::deviceHandle</definition>
+        <argsstring>() const</argsstring>
+        <name>deviceHandle</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Returns the device-side handle.</para>
+<para>User should make sure the <ref refid="structmscclpp_1_1SimpleProxyChannel" kindref="compound">SimpleProxyChannel</ref> is not released when using the returned handle. </para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="135" column="16"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Simple proxy channel with a single destination and source memory region. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/proxy_channel.hpp" line="102" column="25" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel.hpp" bodystart="102" bodyend="136"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1SimpleProxyChannel_1a94b927b3391c59e8a88a09611d20ca2e" prot="public" virt="non-virtual"><scope>mscclpp::SimpleProxyChannel</scope><name>DeviceHandle</name></member>
+      <member refid="structmscclpp_1_1SimpleProxyChannel_1a35fb91c8df4b8d9e8781d3d7b078a5b7" prot="public" virt="non-virtual"><scope>mscclpp::SimpleProxyChannel</scope><name>deviceHandle</name></member>
+      <member refid="structmscclpp_1_1SimpleProxyChannel_1ab040aa7db9d855f29b920d716f01542a" prot="private" virt="non-virtual"><scope>mscclpp::SimpleProxyChannel</scope><name>dst_</name></member>
+      <member refid="structmscclpp_1_1SimpleProxyChannel_1a4a4394da6e135b17fe6f1e2a28ee14a8" prot="public" virt="non-virtual"><scope>mscclpp::SimpleProxyChannel</scope><name>operator=</name></member>
+      <member refid="structmscclpp_1_1SimpleProxyChannel_1a44960299700c08310c2f9f1339f2b426" prot="private" virt="non-virtual"><scope>mscclpp::SimpleProxyChannel</scope><name>proxyChan_</name></member>
+      <member refid="structmscclpp_1_1SimpleProxyChannel_1a201d78f688024a1df644c3a6847cf882" prot="public" virt="non-virtual"><scope>mscclpp::SimpleProxyChannel</scope><name>SimpleProxyChannel</name></member>
+      <member refid="structmscclpp_1_1SimpleProxyChannel_1aaf6a84b0ed69b6e8c671ce10f159710d" prot="public" virt="non-virtual"><scope>mscclpp::SimpleProxyChannel</scope><name>SimpleProxyChannel</name></member>
+      <member refid="structmscclpp_1_1SimpleProxyChannel_1afcb4694409181cc563f733cb2d7b142e" prot="public" virt="non-virtual"><scope>mscclpp::SimpleProxyChannel</scope><name>SimpleProxyChannel</name></member>
+      <member refid="structmscclpp_1_1SimpleProxyChannel_1ab08ba7d2060a1a9d24c40dc97f29d288" prot="public" virt="non-virtual"><scope>mscclpp::SimpleProxyChannel</scope><name>SimpleProxyChannel</name></member>
+      <member refid="structmscclpp_1_1SimpleProxyChannel_1a515c3ce9c531c94f62ccdeb418fb701c" prot="private" virt="non-virtual"><scope>mscclpp::SimpleProxyChannel</scope><name>src_</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

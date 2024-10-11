@@ -1,0 +1,141 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1Proxy" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::Proxy</compoundname>
+    <includes refid="proxy_8hpp" local="no">proxy.hpp</includes>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1Proxy_1abdcd0a6a6b412090b512d07edfc007cf" prot="private" static="no" mutable="no">
+        <type>std::unique_ptr&lt; Impl &gt;</type>
+        <definition>std::unique_ptr&lt;Impl&gt; mscclpp::Proxy::pimpl</definition>
+        <argsstring></argsstring>
+        <name>pimpl</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy.hpp" line="39" column="19" bodyfile="/root/mscclpp/include/mscclpp/proxy.hpp" bodystart="38" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1Proxy_1a5cc0dfbad7b29e7d5f28bde0f8bc824a" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Proxy::Proxy</definition>
+        <argsstring>(ProxyHandler handler, std::function&lt; void()&gt; threadInit, size_t fifoSize=DEFAULT_FIFO_SIZE)</argsstring>
+        <name>Proxy</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1a073987e5c4ba2650412cea9523bcd9d0" kindref="member">ProxyHandler</ref></type>
+          <declname>handler</declname>
+        </param>
+        <param>
+          <type>std::function&lt; void()&gt;</type>
+          <declname>threadInit</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>fifoSize</declname>
+          <defval><ref refid="namespacemscclpp_1aa40b9c69ba9b54d1f87f52573162c31c" kindref="member">DEFAULT_FIFO_SIZE</ref></defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy.hpp" line="25" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Proxy_1a6419a275da6b05c44a8e1b5fc5ac5730" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Proxy::Proxy</definition>
+        <argsstring>(ProxyHandler handler, size_t fifoSize=DEFAULT_FIFO_SIZE)</argsstring>
+        <name>Proxy</name>
+        <param>
+          <type><ref refid="namespacemscclpp_1a073987e5c4ba2650412cea9523bcd9d0" kindref="member">ProxyHandler</ref></type>
+          <declname>handler</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>fifoSize</declname>
+          <defval><ref refid="namespacemscclpp_1aa40b9c69ba9b54d1f87f52573162c31c" kindref="member">DEFAULT_FIFO_SIZE</ref></defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy.hpp" line="26" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Proxy_1a81d6ba99fdce09c07ffa94b92dba20ae" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Proxy::~Proxy</definition>
+        <argsstring>()</argsstring>
+        <name>~Proxy</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy.hpp" line="27" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Proxy_1aa21d0c55b9f419c031b6a94cf6cd8e8d" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Proxy::start</definition>
+        <argsstring>()</argsstring>
+        <name>start</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy.hpp" line="29" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Proxy_1abd7ec02a2c0787f270f65bb508c9b60f" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>void</type>
+        <definition>void mscclpp::Proxy::stop</definition>
+        <argsstring>()</argsstring>
+        <name>stop</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy.hpp" line="30" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Proxy_1a3256ff714acc1c577682ab6e12881a58" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1Fifo" kindref="compound">Fifo</ref> &amp;</type>
+        <definition>Fifo&amp; mscclpp::Proxy::fifo</definition>
+        <argsstring>()</argsstring>
+        <name>fifo</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>This is a concurrent fifo which is multiple threads from the device can produce for and the sole proxy thread consumes it. <simplesect kind="return"><para>the fifo </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy.hpp" line="35" column="8"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/proxy.hpp" line="23" column="12" bodyfile="/root/mscclpp/include/mscclpp/proxy.hpp" bodystart="23" bodyend="40"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1Proxy_1a3256ff714acc1c577682ab6e12881a58" prot="public" virt="non-virtual"><scope>mscclpp::Proxy</scope><name>fifo</name></member>
+      <member refid="classmscclpp_1_1Proxy_1abdcd0a6a6b412090b512d07edfc007cf" prot="private" virt="non-virtual"><scope>mscclpp::Proxy</scope><name>pimpl</name></member>
+      <member refid="classmscclpp_1_1Proxy_1a5cc0dfbad7b29e7d5f28bde0f8bc824a" prot="public" virt="non-virtual"><scope>mscclpp::Proxy</scope><name>Proxy</name></member>
+      <member refid="classmscclpp_1_1Proxy_1a6419a275da6b05c44a8e1b5fc5ac5730" prot="public" virt="non-virtual"><scope>mscclpp::Proxy</scope><name>Proxy</name></member>
+      <member refid="classmscclpp_1_1Proxy_1aa21d0c55b9f419c031b6a94cf6cd8e8d" prot="public" virt="non-virtual"><scope>mscclpp::Proxy</scope><name>start</name></member>
+      <member refid="classmscclpp_1_1Proxy_1abd7ec02a2c0787f270f65bb508c9b60f" prot="public" virt="non-virtual"><scope>mscclpp::Proxy</scope><name>stop</name></member>
+      <member refid="classmscclpp_1_1Proxy_1a81d6ba99fdce09c07ffa94b92dba20ae" prot="public" virt="non-virtual"><scope>mscclpp::Proxy</scope><name>~Proxy</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

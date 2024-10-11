@@ -1,0 +1,85 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1ProxyChannelDeviceHandle" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::ProxyChannelDeviceHandle</compoundname>
+    <includes refid="proxy__channel__device_8hpp" local="no">proxy_channel_device.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1ProxyChannelDeviceHandle_1a55ba043b50f0402209a2737e74485383" prot="public" static="no" mutable="no">
+        <type><ref refid="namespacemscclpp_1ac6b7b716d281fa7b0a2a46f5c2c4893c" kindref="member">SemaphoreId</ref></type>
+        <definition>SemaphoreId mscclpp::ProxyChannelDeviceHandle::semaphoreId_</definition>
+        <argsstring></argsstring>
+        <name>semaphoreId_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="87" column="15" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="87" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1ProxyChannelDeviceHandle_1a70c63ab8cc9e7bd294c8c76fcd92791a" prot="public" static="no" mutable="no">
+        <type><ref refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle" kindref="compound">Host2DeviceSemaphoreDeviceHandle</ref></type>
+        <definition>Host2DeviceSemaphoreDeviceHandle mscclpp::ProxyChannelDeviceHandle::semaphore_</definition>
+        <argsstring></argsstring>
+        <name>semaphore_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="89" column="36" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="89" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1ProxyChannelDeviceHandle_1a73a50acf873eb0878c4f47a92a6925bf" prot="public" static="no" mutable="no">
+        <type><ref refid="structmscclpp_1_1FifoDeviceHandle" kindref="compound">FifoDeviceHandle</ref></type>
+        <definition>FifoDeviceHandle mscclpp::ProxyChannelDeviceHandle::fifo_</definition>
+        <argsstring></argsstring>
+        <name>fifo_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="93" column="20" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="93" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <collaborationgraph>
+      <node id="2">
+        <label>mscclpp::FifoDeviceHandle</label>
+        <link refid="structmscclpp_1_1FifoDeviceHandle"/>
+        <childnode refid="3" relation="usage">
+          <edgelabel>triggers</edgelabel>
+        </childnode>
+      </node>
+      <node id="4">
+        <label>mscclpp::Host2DeviceSemaphoreDeviceHandle</label>
+        <link refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle"/>
+      </node>
+      <node id="3">
+        <label>mscclpp::ProxyTrigger</label>
+        <link refid="structmscclpp_1_1ProxyTrigger"/>
+      </node>
+      <node id="1">
+        <label>mscclpp::ProxyChannelDeviceHandle</label>
+        <link refid="structmscclpp_1_1ProxyChannelDeviceHandle"/>
+        <childnode refid="2" relation="usage">
+          <edgelabel>fifo_</edgelabel>
+        </childnode>
+        <childnode refid="4" relation="usage">
+          <edgelabel>semaphore_</edgelabel>
+        </childnode>
+      </node>
+    </collaborationgraph>
+    <location file="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" line="86" column="31" bodyfile="/root/mscclpp/include/mscclpp/proxy_channel_device.hpp" bodystart="86" bodyend="176"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1ProxyChannelDeviceHandle_1a73a50acf873eb0878c4f47a92a6925bf" prot="public" virt="non-virtual"><scope>mscclpp::ProxyChannelDeviceHandle</scope><name>fifo_</name></member>
+      <member refid="structmscclpp_1_1ProxyChannelDeviceHandle_1a70c63ab8cc9e7bd294c8c76fcd92791a" prot="public" virt="non-virtual"><scope>mscclpp::ProxyChannelDeviceHandle</scope><name>semaphore_</name></member>
+      <member refid="structmscclpp_1_1ProxyChannelDeviceHandle_1a55ba043b50f0402209a2737e74485383" prot="public" virt="non-virtual"><scope>mscclpp::ProxyChannelDeviceHandle</scope><name>semaphoreId_</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

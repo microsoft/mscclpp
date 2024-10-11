@@ -1,0 +1,86 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1SmChannelDeviceHandle" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::SmChannelDeviceHandle</compoundname>
+    <includes refid="sm__channel__device_8hpp" local="no">sm_channel_device.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1SmChannelDeviceHandle_1a48cab162122c88e0120abd5ac782cc43" prot="public" static="no" mutable="no">
+        <type><ref refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle" kindref="compound">SmDevice2DeviceSemaphoreDeviceHandle</ref></type>
+        <definition>SmDevice2DeviceSemaphoreDeviceHandle mscclpp::SmChannelDeviceHandle::semaphore_</definition>
+        <argsstring></argsstring>
+        <name>semaphore_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/sm_channel_device.hpp" line="47" column="40" bodyfile="/root/mscclpp/include/mscclpp/sm_channel_device.hpp" bodystart="47" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1SmChannelDeviceHandle_1a48b6bd95a338420b2b51d8c293109b66" prot="public" static="no" mutable="no">
+        <type>void *</type>
+        <definition>void* mscclpp::SmChannelDeviceHandle::src_</definition>
+        <argsstring></argsstring>
+        <name>src_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/sm_channel_device.hpp" line="48" column="8" bodyfile="/root/mscclpp/include/mscclpp/sm_channel_device.hpp" bodystart="48" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1SmChannelDeviceHandle_1aac9b386aae4da09e5b48a375a7325f64" prot="public" static="no" mutable="no">
+        <type>void *</type>
+        <definition>void* mscclpp::SmChannelDeviceHandle::dst_</definition>
+        <argsstring></argsstring>
+        <name>dst_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/sm_channel_device.hpp" line="49" column="8" bodyfile="/root/mscclpp/include/mscclpp/sm_channel_device.hpp" bodystart="49" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1SmChannelDeviceHandle_1a43c60f841e30967d44ac51d2f7908fa7" prot="public" static="no" mutable="no">
+        <type>void *</type>
+        <definition>void* mscclpp::SmChannelDeviceHandle::getPacketBuffer_</definition>
+        <argsstring></argsstring>
+        <name>getPacketBuffer_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/sm_channel_device.hpp" line="50" column="8" bodyfile="/root/mscclpp/include/mscclpp/sm_channel_device.hpp" bodystart="50" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Channel for accessing peer memory directly from SM. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <collaborationgraph>
+      <node id="1">
+        <label>mscclpp::SmChannelDeviceHandle</label>
+        <link refid="structmscclpp_1_1SmChannelDeviceHandle"/>
+        <childnode refid="2" relation="usage">
+          <edgelabel>semaphore_</edgelabel>
+        </childnode>
+      </node>
+      <node id="2">
+        <label>mscclpp::SmDevice2DeviceSemaphoreDeviceHandle</label>
+        <link refid="structmscclpp_1_1SmDevice2DeviceSemaphoreDeviceHandle"/>
+      </node>
+    </collaborationgraph>
+    <location file="/root/mscclpp/include/mscclpp/sm_channel_device.hpp" line="46" column="28" bodyfile="/root/mscclpp/include/mscclpp/sm_channel_device.hpp" bodystart="46" bodyend="277"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1SmChannelDeviceHandle_1aac9b386aae4da09e5b48a375a7325f64" prot="public" virt="non-virtual"><scope>mscclpp::SmChannelDeviceHandle</scope><name>dst_</name></member>
+      <member refid="structmscclpp_1_1SmChannelDeviceHandle_1a43c60f841e30967d44ac51d2f7908fa7" prot="public" virt="non-virtual"><scope>mscclpp::SmChannelDeviceHandle</scope><name>getPacketBuffer_</name></member>
+      <member refid="structmscclpp_1_1SmChannelDeviceHandle_1a48cab162122c88e0120abd5ac782cc43" prot="public" virt="non-virtual"><scope>mscclpp::SmChannelDeviceHandle</scope><name>semaphore_</name></member>
+      <member refid="structmscclpp_1_1SmChannelDeviceHandle_1a48b6bd95a338420b2b51d8c293109b66" prot="public" virt="non-virtual"><scope>mscclpp::SmChannelDeviceHandle</scope><name>src_</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

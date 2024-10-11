@@ -1,0 +1,290 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="namespacemscclpp_1_1detail" kind="namespace" language="C++">
+    <compoundname>mscclpp::detail</compoundname>
+      <sectiondef kind="typedef">
+      <memberdef kind="typedef" id="namespacemscclpp_1_1detail_1afe546a620f7aeead78e250d188eb1dd6" prot="public" static="no">
+        <type>std::bitset&lt; <ref refid="namespacemscclpp_1_1detail_1a244cf6ec06e88229aaca5f66fa8f0893" kindref="member">TransportFlagsSize</ref> &gt;</type>
+        <definition>using mscclpp::detail::TransportFlagsBase = typedef std::bitset&lt;TransportFlagsSize&gt;</definition>
+        <argsstring></argsstring>
+        <name>TransportFlagsBase</name>
+        <briefdescription>
+<para>Bitset for storing transport flags. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="156" column="1" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="156" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="var">
+      <memberdef kind="variable" id="namespacemscclpp_1_1detail_1a244cf6ec06e88229aaca5f66fa8f0893" prot="public" static="no" mutable="no">
+        <type>const size_t</type>
+        <definition>const size_t mscclpp::detail::TransportFlagsSize</definition>
+        <argsstring></argsstring>
+        <name>TransportFlagsSize</name>
+        <initializer>= 12</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="152" column="14" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="152" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="func">
+      <memberdef kind="function" id="namespacemscclpp_1_1detail_1a516c87b6820034278a7df844025810c9" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>T *</type>
+        <definition>T* mscclpp::detail::cudaCalloc</definition>
+        <argsstring>(size_t nelem)</argsstring>
+        <name>cudaCalloc</name>
+        <param>
+          <type>size_t</type>
+          <declname>nelem</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>A wrapper of cudaMalloc that sets the allocated memory to zero. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>nelem</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to allocate. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A pointer to the allocated memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="72" column="3" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="72" bodyend="80"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1_1detail_1a1cd1744838f784b1e3a5a39bdab766c6" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type><ref refid="structmscclpp_1_1PhysicalCudaMemory" kindref="compound">PhysicalCudaMemory</ref>&lt; T &gt; *</type>
+        <definition>PhysicalCudaMemory&lt;T&gt;* mscclpp::detail::cudaPhysicalCalloc</definition>
+        <argsstring>(size_t nelem, size_t gran)</argsstring>
+        <name>cudaPhysicalCalloc</name>
+        <param>
+          <type>size_t</type>
+          <declname>nelem</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>gran</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="83" column="20" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="83" bodyend="121"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1_1detail_1a7020a4cfcb1f117144e26092dd3c3830" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>T *</type>
+        <definition>T* mscclpp::detail::cudaExtCalloc</definition>
+        <argsstring>(size_t nelem)</argsstring>
+        <name>cudaExtCalloc</name>
+        <param>
+          <type>size_t</type>
+          <declname>nelem</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="124" column="3" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="124" bodyend="136"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1_1detail_1a38d4884d9380c232773dcfb2a8640a0a" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+        </templateparamlist>
+        <type>T *</type>
+        <definition>T* mscclpp::detail::cudaHostCalloc</definition>
+        <argsstring>(size_t nelem)</argsstring>
+        <name>cudaHostCalloc</name>
+        <param>
+          <type>size_t</type>
+          <declname>nelem</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>A wrapper of cudaHostAlloc that sets the allocated memory to zero. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>nelem</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to allocate. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A pointer to the allocated memory. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="143" column="3" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="143" bodyend="149"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1_1detail_1a62940c9a543b65f5473a68506c9c1d11" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+          <param>
+            <type>T *</type>
+          </param>
+          <param>
+            <type>class Deleter</type>
+          </param>
+          <param>
+            <type>class Memory</type>
+          </param>
+        </templateparamlist>
+        <type>Memory</type>
+        <definition>Memory mscclpp::detail::safeAlloc</definition>
+        <argsstring>(size_t nelem)</argsstring>
+        <name>safeAlloc</name>
+        <param>
+          <type>size_t</type>
+          <declname>nelem</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>A template function that allocates memory while ensuring that the memory will be freed when the returned object is destroyed. <parameterlist kind="templateparam"><parameteritem>
+<parameternamelist>
+<parametername>T</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Type of each element in the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>alloc</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>A function that allocates memory. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>Deleter</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>A deleter that will be used to free the allocated memory. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>Memory</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The type of the returned object. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>nelem</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Number of elements to allocate. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>An object of type <computeroutput>Memory</computeroutput> that will free the allocated memory when destroyed. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="161" column="8" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="161" bodyend="172"/>
+      </memberdef>
+      <memberdef kind="function" id="namespacemscclpp_1_1detail_1a4ee3d070850c9434e07ee34b1c1c80df" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <templateparamlist>
+          <param>
+            <type>class T</type>
+          </param>
+          <param>
+            <type>T *</type>
+          </param>
+          <param>
+            <type>class Deleter</type>
+          </param>
+          <param>
+            <type>class Memory</type>
+          </param>
+        </templateparamlist>
+        <type>Memory</type>
+        <definition>Memory mscclpp::detail::safeAlloc</definition>
+        <argsstring>(size_t nelem, size_t gran)</argsstring>
+        <name>safeAlloc</name>
+        <param>
+          <type>size_t</type>
+          <declname>nelem</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>gran</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="175" column="8" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="175" bodyend="191"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/core.hpp" line="151" column="16"/>
+  </compounddef>
+</doxygen>

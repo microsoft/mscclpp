@@ -1,0 +1,91 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1PhysicalCudaMemory" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::PhysicalCudaMemory</compoundname>
+    <includes refid="gpu__utils_8hpp" local="no">gpu_utils.hpp</includes>
+    <templateparamlist>
+      <param>
+        <type>class T</type>
+      </param>
+    </templateparamlist>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1PhysicalCudaMemory_1a45c224e9494ebc1f2d403aaeb1791514" prot="public" static="no" mutable="no">
+        <type>CUmemGenericAllocationHandle</type>
+        <definition>CUmemGenericAllocationHandle mscclpp::PhysicalCudaMemory&lt; T &gt;::memHandle_</definition>
+        <argsstring></argsstring>
+        <name>memHandle_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="58" column="32" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="58" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1PhysicalCudaMemory_1a539ed2d4dadae40eedeed921d22bd50a" prot="public" static="no" mutable="no">
+        <type>T *</type>
+        <definition>T* mscclpp::PhysicalCudaMemory&lt; T &gt;::devicePtr_</definition>
+        <argsstring></argsstring>
+        <name>devicePtr_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="59" column="5" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="59" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1PhysicalCudaMemory_1a94c0509cda015378eacd0c45363e61f1" prot="public" static="no" mutable="no">
+        <type>size_t</type>
+        <definition>size_t mscclpp::PhysicalCudaMemory&lt; T &gt;::size_</definition>
+        <argsstring></argsstring>
+        <name>size_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="60" column="10" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="60" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="structmscclpp_1_1PhysicalCudaMemory_1a04c6d9b2565b31b4e780f477493f1512" prot="public" static="no" const="no" explicit="no" inline="yes" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::PhysicalCudaMemory&lt; T &gt;::PhysicalCudaMemory</definition>
+        <argsstring>(CUmemGenericAllocationHandle memHandle, T *devicePtr, size_t size)</argsstring>
+        <name>PhysicalCudaMemory</name>
+        <param>
+          <type>CUmemGenericAllocationHandle</type>
+          <declname>memHandle</declname>
+        </param>
+        <param>
+          <type>T *</type>
+          <declname>devicePtr</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>size</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="61" column="3" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="61" bodyend="62"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/gpu_utils.hpp" line="57" column="25" bodyfile="/root/mscclpp/include/mscclpp/gpu_utils.hpp" bodystart="57" bodyend="63"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1PhysicalCudaMemory_1a539ed2d4dadae40eedeed921d22bd50a" prot="public" virt="non-virtual"><scope>mscclpp::PhysicalCudaMemory</scope><name>devicePtr_</name></member>
+      <member refid="structmscclpp_1_1PhysicalCudaMemory_1a45c224e9494ebc1f2d403aaeb1791514" prot="public" virt="non-virtual"><scope>mscclpp::PhysicalCudaMemory</scope><name>memHandle_</name></member>
+      <member refid="structmscclpp_1_1PhysicalCudaMemory_1a04c6d9b2565b31b4e780f477493f1512" prot="public" virt="non-virtual"><scope>mscclpp::PhysicalCudaMemory</scope><name>PhysicalCudaMemory</name></member>
+      <member refid="structmscclpp_1_1PhysicalCudaMemory_1a94c0509cda015378eacd0c45363e61f1" prot="public" virt="non-virtual"><scope>mscclpp::PhysicalCudaMemory</scope><name>size_</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

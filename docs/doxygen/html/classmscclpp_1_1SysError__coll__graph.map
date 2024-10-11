@@ -1,0 +1,5 @@
+<map id="mscclpp::SysError" name="mscclpp::SysError">
+<area shape="rect" id="node1" title="An error from a system call that sets errno." alt="" coords="9,155,148,181"/>
+<area shape="rect" id="node2" href="$classmscclpp_1_1BaseError.html" title="Base class for all errors thrown by MSCCL++." alt="" coords="5,80,152,107"/>
+<area shape="rect" id="node3" title=" " alt="" coords="9,5,148,32"/>
+</map>

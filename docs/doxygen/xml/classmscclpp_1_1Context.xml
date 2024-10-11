@@ -1,0 +1,230 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1Context" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::Context</compoundname>
+    <includes refid="core_8hpp" local="no">core.hpp</includes>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1Context_1ae1696629e6f650a60d500451f519c681" prot="private" static="no" mutable="no">
+        <type>std::unique_ptr&lt; Impl &gt;</type>
+        <definition>std::unique_ptr&lt;Impl&gt; mscclpp::Context::pimpl_</definition>
+        <argsstring></argsstring>
+        <name>pimpl_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="537" column="19" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="534" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="friend">
+      <memberdef kind="friend" id="classmscclpp_1_1Context_1ab37b6eaaea41aadc7a1368770d42e06b" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>friend class</type>
+        <definition>friend class RegisteredMemory</definition>
+        <argsstring></argsstring>
+        <name>RegisteredMemory</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="539" column="3" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="539" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="friend" id="classmscclpp_1_1Context_1a500d74fc41e3ab6b4889a579193566ed" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>friend class</type>
+        <definition>friend class Endpoint</definition>
+        <argsstring></argsstring>
+        <name>Endpoint</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="540" column="3" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="540" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1Context_1ab44953106d9bd1b4d509d60e3045fb78" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Context::Context</definition>
+        <argsstring>()</argsstring>
+        <name>Context</name>
+        <briefdescription>
+<para>Create a context. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="504" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Context_1a551861e75db451016e29a2d08f0d88fc" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::Context::~Context</definition>
+        <argsstring>()</argsstring>
+        <name>~Context</name>
+        <briefdescription>
+<para>Destroy the context. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="507" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Context_1a1f4aa133e4d56ac59a611a3119e37e7c" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref></type>
+        <definition>RegisteredMemory mscclpp::Context::registerMemory</definition>
+        <argsstring>(void *ptr, size_t size, TransportFlags transports)</argsstring>
+        <name>registerMemory</name>
+        <param>
+          <type>void *</type>
+          <declname>ptr</declname>
+        </param>
+        <param>
+          <type>size_t</type>
+          <declname>size</declname>
+        </param>
+        <param>
+          <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+          <declname>transports</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Register a region of GPU memory for use in this context.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>ptr</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Base pointer to the memory. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>size</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Size of the memory region in bytes. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>transports</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>Transport flags. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> A handle to the buffer. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="515" column="20"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Context_1a1708feee05e072560ae83e3bb9915398" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1Endpoint" kindref="compound">Endpoint</ref></type>
+        <definition>Endpoint mscclpp::Context::createEndpoint</definition>
+        <argsstring>(EndpointConfig config)</argsstring>
+        <name>createEndpoint</name>
+        <param>
+          <type><ref refid="structmscclpp_1_1EndpointConfig" kindref="compound">EndpointConfig</ref></type>
+          <declname>config</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Create an endpoint for establishing connections.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>config</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The configuration for the endpoint. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>The newly created endpoint. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="521" column="12"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1Context_1ac7a474fecb0843f29eac0a1c1f631501" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::shared_ptr&lt; <ref refid="classmscclpp_1_1Connection" kindref="compound">Connection</ref> &gt;</type>
+        <definition>std::shared_ptr&lt;Connection&gt; mscclpp::Context::connect</definition>
+        <argsstring>(Endpoint localEndpoint, Endpoint remoteEndpoint)</argsstring>
+        <name>connect</name>
+        <param>
+          <type><ref refid="classmscclpp_1_1Endpoint" kindref="compound">Endpoint</ref></type>
+          <declname>localEndpoint</declname>
+        </param>
+        <param>
+          <type><ref refid="classmscclpp_1_1Endpoint" kindref="compound">Endpoint</ref></type>
+          <declname>remoteEndpoint</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Establish a connection between two endpoints. While this method immediately returns a connection object, the connection is only safe to use after the corresponding connection on the remote endpoint has been established. This method must be called on both endpoints to establish a connection.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>localEndpoint</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The local endpoint. </para>
+</parameterdescription>
+</parameteritem>
+<parameteritem>
+<parameternamelist>
+<parametername>remoteEndpoint</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>The remote endpoint. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>std::shared_ptr&lt;Connection&gt; A shared pointer to the connection. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="530" column="19"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+<para>Represents a context for communication. This provides a low-level interface for forming connections in use-cases where the process group abstraction offered by <ref refid="classmscclpp_1_1Communicator" kindref="compound">Communicator</ref> is not suitable, e.g., ephemeral client-server connections. Correct use of this class requires external synchronization when finalizing connections with the <ref refid="classmscclpp_1_1Context_1ac7a474fecb0843f29eac0a1c1f631501" kindref="member">connect()</ref> method.</para>
+<para>As an example, a client-server scenario where the server will write to the client might proceed as follows:<orderedlist>
+<listitem><para>The client creates an endpoint with <ref refid="classmscclpp_1_1Context_1a1708feee05e072560ae83e3bb9915398" kindref="member">createEndpoint()</ref> and sends it to the server.</para>
+</listitem><listitem><para>The server receives the client endpoint, creates its own endpoint with <ref refid="classmscclpp_1_1Context_1a1708feee05e072560ae83e3bb9915398" kindref="member">createEndpoint()</ref>, sends it to the client, and creates a connection with <ref refid="classmscclpp_1_1Context_1ac7a474fecb0843f29eac0a1c1f631501" kindref="member">connect()</ref>.</para>
+</listitem><listitem><para>The client receives the server endpoint, creates a connection with <ref refid="classmscclpp_1_1Context_1ac7a474fecb0843f29eac0a1c1f631501" kindref="member">connect()</ref> and sends a <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> to the server.</para>
+</listitem><listitem><para>The server receives the <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> and writes to it using the previously created connection. The client waiting to create a connection before sending the <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> ensures that the server can not write to the <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> before the connection is established.</para>
+</listitem></orderedlist>
+</para>
+<para>While some transports may have more relaxed implementation behavior, this should not be relied upon. </para>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/core.hpp" line="501" column="14" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="501" bodyend="541"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1Context_1ac7a474fecb0843f29eac0a1c1f631501" prot="public" virt="non-virtual"><scope>mscclpp::Context</scope><name>connect</name></member>
+      <member refid="classmscclpp_1_1Context_1ab44953106d9bd1b4d509d60e3045fb78" prot="public" virt="non-virtual"><scope>mscclpp::Context</scope><name>Context</name></member>
+      <member refid="classmscclpp_1_1Context_1a1708feee05e072560ae83e3bb9915398" prot="public" virt="non-virtual"><scope>mscclpp::Context</scope><name>createEndpoint</name></member>
+      <member refid="classmscclpp_1_1Context_1a500d74fc41e3ab6b4889a579193566ed" prot="private" virt="non-virtual"><scope>mscclpp::Context</scope><name>Endpoint</name></member>
+      <member refid="classmscclpp_1_1Context_1ae1696629e6f650a60d500451f519c681" prot="private" virt="non-virtual"><scope>mscclpp::Context</scope><name>pimpl_</name></member>
+      <member refid="classmscclpp_1_1Context_1ab37b6eaaea41aadc7a1368770d42e06b" prot="private" virt="non-virtual"><scope>mscclpp::Context</scope><name>RegisteredMemory</name></member>
+      <member refid="classmscclpp_1_1Context_1a1f4aa133e4d56ac59a611a3119e37e7c" prot="public" virt="non-virtual"><scope>mscclpp::Context</scope><name>registerMemory</name></member>
+      <member refid="classmscclpp_1_1Context_1a551861e75db451016e29a2d08f0d88fc" prot="public" virt="non-virtual"><scope>mscclpp::Context</scope><name>~Context</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

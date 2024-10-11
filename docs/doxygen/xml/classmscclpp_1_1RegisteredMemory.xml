@@ -1,0 +1,236 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="classmscclpp_1_1RegisteredMemory" kind="class" language="C++" prot="public">
+    <compoundname>mscclpp::RegisteredMemory</compoundname>
+    <includes refid="core_8hpp" local="no">core.hpp</includes>
+      <sectiondef kind="private-attrib">
+      <memberdef kind="variable" id="classmscclpp_1_1RegisteredMemory_1ae6c8f47ee37f5ba553c045ab8568a83a" prot="private" static="no" mutable="no">
+        <type>std::shared_ptr&lt; Impl &gt;</type>
+        <definition>std::shared_ptr&lt;Impl&gt; mscclpp::RegisteredMemory::pimpl_</definition>
+        <argsstring></argsstring>
+        <name>pimpl_</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="374" column="19" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="374" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="friend">
+      <memberdef kind="friend" id="classmscclpp_1_1RegisteredMemory_1ac26c806e60ca4a0547680edb68f6e39b" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>friend class</type>
+        <definition>friend class Context</definition>
+        <argsstring></argsstring>
+        <name>Context</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="376" column="3" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="376" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="friend" id="classmscclpp_1_1RegisteredMemory_1a54a11fdc71e1679a42fa0c0e3856673d" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>friend class</type>
+        <definition>friend class Connection</definition>
+        <argsstring></argsstring>
+        <name>Connection</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="377" column="3" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="377" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-func">
+      <memberdef kind="function" id="classmscclpp_1_1RegisteredMemory_1adc1495674137bba267dd551e8785f190" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::RegisteredMemory::RegisteredMemory</definition>
+        <argsstring>()=default</argsstring>
+        <name>RegisteredMemory</name>
+        <briefdescription>
+<para>Default constructor. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="330" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1RegisteredMemory_1a3311b826e508ea3b32a1854a1b374762" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::RegisteredMemory::~RegisteredMemory</definition>
+        <argsstring>()</argsstring>
+        <name>~RegisteredMemory</name>
+        <briefdescription>
+<para>Destructor. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="333" column="3"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1RegisteredMemory_1a1c13a23ac813d58d565d77aae14d9985" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type>void *</type>
+        <definition>void* mscclpp::RegisteredMemory::data</definition>
+        <argsstring>() const</argsstring>
+        <name>data</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get a pointer to the memory block.</para>
+<para><simplesect kind="return"><para>A pointer to the memory block. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="338" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1RegisteredMemory_1a25cdadf35f55e37bdf612d0230735a9b" prot="public" static="no" const="yes" explicit="no" inline="no" virt="non-virtual">
+        <type>void *</type>
+        <definition>void* mscclpp::RegisteredMemory::originalDataPtr</definition>
+        <argsstring>() const</argsstring>
+        <name>originalDataPtr</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get a pointer to the original memory block.</para>
+<para><simplesect kind="return"><para>A pointer to the original memory block. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="343" column="8"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1RegisteredMemory_1afce245c8338ddbda17328db4568d1866" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>size_t</type>
+        <definition>size_t mscclpp::RegisteredMemory::size</definition>
+        <argsstring>()</argsstring>
+        <name>size</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the size of the memory block.</para>
+<para><simplesect kind="return"><para>The size of the memory block. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="348" column="10"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1RegisteredMemory_1a6b246e1c9320fa285efcad1d197acb7b" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1TransportFlags" kindref="compound">TransportFlags</ref></type>
+        <definition>TransportFlags mscclpp::RegisteredMemory::transports</definition>
+        <argsstring>()</argsstring>
+        <name>transports</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Get the transport flags associated with the memory block.</para>
+<para><simplesect kind="return"><para>The transport flags associated with the memory block. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="353" column="18"/>
+      </memberdef>
+      <memberdef kind="function" id="classmscclpp_1_1RegisteredMemory_1a575c641be12844002cf834d7b3d326a5" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>std::vector&lt; char &gt;</type>
+        <definition>std::vector&lt;char&gt; mscclpp::RegisteredMemory::serialize</definition>
+        <argsstring>()</argsstring>
+        <name>serialize</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Serialize the <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> object to a vector of characters.</para>
+<para><simplesect kind="return"><para>A vector of characters representing the serialized <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> object. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="358" column="15"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="public-static-func">
+      <memberdef kind="function" id="classmscclpp_1_1RegisteredMemory_1a3565c1cbeccce649ed27b9b52933f003" prot="public" static="yes" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type><ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref></type>
+        <definition>static RegisteredMemory mscclpp::RegisteredMemory::deserialize</definition>
+        <argsstring>(const std::vector&lt; char &gt; &amp;data)</argsstring>
+        <name>deserialize</name>
+        <param>
+          <type>const std::vector&lt; char &gt; &amp;</type>
+          <declname>data</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+<para>Deserialize a <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> object from a vector of characters.</para>
+<para><parameterlist kind="param"><parameteritem>
+<parameternamelist>
+<parametername>data</parametername>
+</parameternamelist>
+<parameterdescription>
+<para>A vector of characters representing a serialized <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> object. </para>
+</parameterdescription>
+</parameteritem>
+</parameterlist>
+<simplesect kind="return"><para>A deserialized <ref refid="classmscclpp_1_1RegisteredMemory" kindref="compound">RegisteredMemory</ref> object. </para>
+</simplesect>
+</para>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="364" column="27"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="private-func">
+      <memberdef kind="function" id="classmscclpp_1_1RegisteredMemory_1a5165a292c9bd41354aaee9d1da6d13ea" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type></type>
+        <definition>mscclpp::RegisteredMemory::RegisteredMemory</definition>
+        <argsstring>(std::shared_ptr&lt; Impl &gt; pimpl)</argsstring>
+        <name>RegisteredMemory</name>
+        <param>
+          <type>std::shared_ptr&lt; Impl &gt;</type>
+          <declname>pimpl</declname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/core.hpp" line="371" column="3"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Represents a block of memory that has been registered to a <ref refid="classmscclpp_1_1Context" kindref="compound">Context</ref>. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/core.hpp" line="327" column="23" bodyfile="/root/mscclpp/include/mscclpp/core.hpp" bodystart="327" bodyend="378"/>
+    <listofallmembers>
+      <member refid="classmscclpp_1_1RegisteredMemory_1a54a11fdc71e1679a42fa0c0e3856673d" prot="private" virt="non-virtual"><scope>mscclpp::RegisteredMemory</scope><name>Connection</name></member>
+      <member refid="classmscclpp_1_1RegisteredMemory_1ac26c806e60ca4a0547680edb68f6e39b" prot="private" virt="non-virtual"><scope>mscclpp::RegisteredMemory</scope><name>Context</name></member>
+      <member refid="classmscclpp_1_1RegisteredMemory_1a1c13a23ac813d58d565d77aae14d9985" prot="public" virt="non-virtual"><scope>mscclpp::RegisteredMemory</scope><name>data</name></member>
+      <member refid="classmscclpp_1_1RegisteredMemory_1a3565c1cbeccce649ed27b9b52933f003" prot="public" virt="non-virtual"><scope>mscclpp::RegisteredMemory</scope><name>deserialize</name></member>
+      <member refid="classmscclpp_1_1RegisteredMemory_1a25cdadf35f55e37bdf612d0230735a9b" prot="public" virt="non-virtual"><scope>mscclpp::RegisteredMemory</scope><name>originalDataPtr</name></member>
+      <member refid="classmscclpp_1_1RegisteredMemory_1ae6c8f47ee37f5ba553c045ab8568a83a" prot="private" virt="non-virtual"><scope>mscclpp::RegisteredMemory</scope><name>pimpl_</name></member>
+      <member refid="classmscclpp_1_1RegisteredMemory_1adc1495674137bba267dd551e8785f190" prot="public" virt="non-virtual"><scope>mscclpp::RegisteredMemory</scope><name>RegisteredMemory</name></member>
+      <member refid="classmscclpp_1_1RegisteredMemory_1a5165a292c9bd41354aaee9d1da6d13ea" prot="private" virt="non-virtual"><scope>mscclpp::RegisteredMemory</scope><name>RegisteredMemory</name></member>
+      <member refid="classmscclpp_1_1RegisteredMemory_1a575c641be12844002cf834d7b3d326a5" prot="public" virt="non-virtual"><scope>mscclpp::RegisteredMemory</scope><name>serialize</name></member>
+      <member refid="classmscclpp_1_1RegisteredMemory_1afce245c8338ddbda17328db4568d1866" prot="public" virt="non-virtual"><scope>mscclpp::RegisteredMemory</scope><name>size</name></member>
+      <member refid="classmscclpp_1_1RegisteredMemory_1a6b246e1c9320fa285efcad1d197acb7b" prot="public" virt="non-virtual"><scope>mscclpp::RegisteredMemory</scope><name>transports</name></member>
+      <member refid="classmscclpp_1_1RegisteredMemory_1a3311b826e508ea3b32a1854a1b374762" prot="public" virt="non-virtual"><scope>mscclpp::RegisteredMemory</scope><name>~RegisteredMemory</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>

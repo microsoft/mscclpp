@@ -1,0 +1,9 @@
+<map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
+<area shape="rect" id="node1" title=" " alt="" coords="5,107,116,133"/>
+<area shape="rect" id="node2" href="$classmscclpp_1_1BaseError.html" title="Base class for all errors thrown by MSCCL++." alt="" coords="164,107,311,133"/>
+<area shape="rect" id="node3" href="$classmscclpp_1_1CudaError.html" title="An error from a CUDA runtime library call." alt="" coords="359,5,507,32"/>
+<area shape="rect" id="node4" href="$classmscclpp_1_1CuError.html" title="An error from a CUDA driver library call." alt="" coords="367,56,499,83"/>
+<area shape="rect" id="node5" href="$classmscclpp_1_1Error.html" title="A generic error." alt="" coords="375,107,490,133"/>
+<area shape="rect" id="node6" href="$classmscclpp_1_1IbError.html" title="An error from an ibverbs library call." alt="" coords="369,157,496,184"/>
+<area shape="rect" id="node7" href="$classmscclpp_1_1SysError.html" title="An error from a system call that sets errno." alt="" coords="363,208,502,235"/>
+</map>

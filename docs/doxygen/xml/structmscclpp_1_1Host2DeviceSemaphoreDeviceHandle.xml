@@ -1,0 +1,45 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.8.17">
+  <compounddef id="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle" kind="struct" language="C++" prot="public">
+    <compoundname>mscclpp::Host2DeviceSemaphoreDeviceHandle</compoundname>
+    <includes refid="semaphore__device_8hpp" local="no">semaphore_device.hpp</includes>
+      <sectiondef kind="public-attrib">
+      <memberdef kind="variable" id="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1aa623814c8fbab8277b2e0022da603e1a" prot="public" static="no" mutable="no">
+        <type>uint64_t *</type>
+        <definition>uint64_t* mscclpp::Host2DeviceSemaphoreDeviceHandle::inboundSemaphoreId</definition>
+        <argsstring></argsstring>
+        <name>inboundSemaphoreId</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/semaphore_device.hpp" line="35" column="12" bodyfile="/root/mscclpp/include/mscclpp/semaphore_device.hpp" bodystart="35" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1a1253f98401651b96f41f3b6a365d8489" prot="public" static="no" mutable="no">
+        <type>uint64_t *</type>
+        <definition>uint64_t* mscclpp::Host2DeviceSemaphoreDeviceHandle::expectedInboundSemaphoreId</definition>
+        <argsstring></argsstring>
+        <name>expectedInboundSemaphoreId</name>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="/root/mscclpp/include/mscclpp/semaphore_device.hpp" line="36" column="12" bodyfile="/root/mscclpp/include/mscclpp/semaphore_device.hpp" bodystart="36" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+<para>Device-side handle for <ref refid="classmscclpp_1_1Host2DeviceSemaphore" kindref="compound">Host2DeviceSemaphore</ref>. </para>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="/root/mscclpp/include/mscclpp/semaphore_device.hpp" line="17" column="39" bodyfile="/root/mscclpp/include/mscclpp/semaphore_device.hpp" bodystart="17" bodyend="37"/>
+    <listofallmembers>
+      <member refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1a1253f98401651b96f41f3b6a365d8489" prot="public" virt="non-virtual"><scope>mscclpp::Host2DeviceSemaphoreDeviceHandle</scope><name>expectedInboundSemaphoreId</name></member>
+      <member refid="structmscclpp_1_1Host2DeviceSemaphoreDeviceHandle_1aa623814c8fbab8277b2e0022da603e1a" prot="public" virt="non-virtual"><scope>mscclpp::Host2DeviceSemaphoreDeviceHandle</scope><name>inboundSemaphoreId</name></member>
+    </listofallmembers>
+  </compounddef>
+</doxygen>
