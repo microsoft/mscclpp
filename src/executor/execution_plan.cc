@@ -161,6 +161,8 @@ std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadbl
 
 int ExecutionPlan::Impl::getThreadblockCount(int rank) const { return this->operations.at(rank).size(); }
 
+int ExecutionPlan::Impl::getNThreadsPerBlock() const { return this->nThreadsPerBlock; }
+
 void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t contsSrcOffset, size_t constDstOffset) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
@@ -171,6 +173,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t contsSrcOff
   if (protocol == "LL") {
     this->isUsingPacket = true;
   }
+  this->nThreadsPerBlock = obj.value("num_threads_per_block", 1024);
   const auto& gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {

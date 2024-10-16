@@ -68,6 +68,7 @@ struct ExecutionPlan::Impl {
   size_t getScratchBufferSize(int rank, size_t inputSize) const;
   std::vector<Operation> getOperations(int rank, int threadblock) const;
   int getThreadblockCount(int rank) const;
+  int getNThreadsPerBlock() const;
 
   void loadExecutionPlan(size_t inputSize, size_t contsSrcOffset, size_t constDstOffset);
   void lightLoadExecutionPlan(size_t inputSize, size_t contsSrcOffset, size_t constDstOffset);
@@ -93,6 +94,7 @@ struct ExecutionPlan::Impl {
   std::unordered_map<int, uint32_t> scratchChunks;
   std::unordered_map<int, uint32_t> chunkGroups;
   size_t inputSize;
+  int nThreadsPerBlock;
 
  private:
   size_t getOffset(int rank, size_t inputSize, uint32_t chunkIndex, uint32_t alignment = 16) const;

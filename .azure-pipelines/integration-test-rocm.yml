@@ -64,7 +64,6 @@ jobs:
       set -e
       git clone https://$(GIT_USER):$(GIT_PAT)@msazure.visualstudio.com/DefaultCollection/One/_git/azure-mscclpp
       cd azure-mscclpp
-      git checkout binyli/ci
       mkdir execution-files
       python3 algos/allreduce_mi300_packet.py 8 8 > execution-files/allreduce_mi300_packet.json
       python3 algos/allreduce_mi300_sm_mscclpp.py 8 8 > execution-files/allreduce_mi300_sm_mscclpp.json
