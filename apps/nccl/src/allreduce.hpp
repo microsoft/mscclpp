@@ -14,8 +14,6 @@
 #include "common.hpp"
 #include "gpu_data_types.hpp"
 
-__device__ mscclpp::DeviceSyncer deviceSyncer;
-
 template <typename To, typename From>
 __forceinline__ __device__ To bit_cast(const From& src) {
   static_assert(sizeof(To) == sizeof(From), "Size mismatch for bit_cast");
@@ -236,14 +234,13 @@ __global__ void __launch_bounds__(1024, 1)
                                                    blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
-    uint32_t data = 0;
+    uint32_t data = src[idx];
     for (int index = 0; index < nPeers; index++) {
       const int remoteRank = index < rank ? index : index + 1;
       mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)scratchBuff + remoteRank * nPktsPerRank;
       uint32_t val = dstPkt[idx].read(flag, -1);
       data = add_vectors<T>(val, data);
     }
-    data = add_vectors<T>(data, src[idx]);
     dst[idx] = data;
 
     mscclpp::LL8Packet packet;
@@ -383,6 +380,10 @@ __global__ void __launch_bounds__(512, 1)
                                    data);
       }
     }
+  }
+  if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
+    outChannels[threadIdx.x].signal();
+    outChannels[threadIdx.x].wait();
   }
 }
 
