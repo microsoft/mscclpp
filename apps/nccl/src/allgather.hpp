@@ -102,14 +102,29 @@ __global__ void __launch_bounds__(1024, 1)
       }
     }
   }
+
+  deviceSyncer.sync(gridDim.x);
+
+  if (threadIdx.x < nPeer) {
+    smChans[threadIdx.x].relaxedSignal();
+    smChans[threadIdx.x].wait();
+  }
 }
 
 template <bool IsOutOfPlace, typename T>
 cudaError_t allgather(T* buff, [[maybe_unused]] T* scratch, [[maybe_unused]] T* resultBuff,
                       mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, size_t channelOutOffset, int rank,
                       int nRanksPerNode, int worldSize, size_t nelems, cudaStream_t stream) {
-  allgather6<IsOutOfPlace><<<28, 1024, 0, stream>>>((void*)buff, smChannels, channelOutOffset, rank, worldSize,
-                                                    nRanksPerNode, nelems * sizeof(T) / sizeof(int));
+  int nBlocks = 28;
+  if (nelems <= 4096) {
+    nBlocks = 7;
+  } else if (nelems <= 32768) {
+    nBlocks = 14;
+  } else if (nelems >= 2097152) {
+    nBlocks = 35;
+  }
+  allgather6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, smChannels, channelOutOffset, rank, worldSize,
+                                                         nRanksPerNode, nelems * sizeof(T) / sizeof(int));
   return cudaGetLastError();
 }
 
