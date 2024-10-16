@@ -43,7 +43,6 @@ template <>
 __forceinline__ __device__ __half2 clip(__half2 val) {
   val.x = __hmax(val.x, bit_cast<__half, unsigned short>(0xfbff));
   val.x = __hmin(val.x, bit_cast<__half, unsigned short>(0x7bff));
-  
   val.y = __hmax(val.y, bit_cast<__half, unsigned short>(0xfbff));
   val.y = __hmin(val.y, bit_cast<__half, unsigned short>(0x7bff));
   return val;
@@ -242,19 +241,19 @@ __global__ void __launch_bounds__(1024, 1)
                size_t nelems, uint32_t flag) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
-  
+
   if (sizeof(T) == 2)
-          nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
+    nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
   else
-        nelems = nelems / (sizeof(int) / sizeof(T));
-  
+    nelems = nelems / (sizeof(int) / sizeof(T));
+
   const int nPeers = nRanksPerNode - 1;
-  const size_t nPkts = nelems/2;
-  
+  const size_t nPkts = nelems / 2;
+
   int nelemsPerRank = nelems / worldSize;
   if ((nelemsPerRank % 2)) nelemsPerRank = (nelemsPerRank * sizeof(T) + sizeof(T)) / sizeof(T);
 
-  const int nPktsPerRank = nelemsPerRank/2;
+  const int nPktsPerRank = nelemsPerRank / 2;
   // thread block & channel info
   const int nBlocksPerPeer = gridDim.x / nPeers;
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
@@ -286,9 +285,7 @@ __global__ void __launch_bounds__(1024, 1)
     for (int index = 0; index < NPEERS; index++) {
       const int remoteRank = index < rank ? index : index + 1;
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
-      //uint32_t val = dstPkt[idx].read(flag, -1);
       uint2 val = dstPkt[idx].read(flag);
-      //data = add_vectors<T>(val, data);
       data.x = add_vectors<T>(val.x, data.x);
       data.y = add_vectors<T>(val.y, data.y); 
     }
