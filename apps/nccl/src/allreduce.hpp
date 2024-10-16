@@ -278,7 +278,7 @@ __global__ void __launch_bounds__(1024, 1)
 
   // step 1: write to scratch buffer
   channels[peerIdx].putPackets<mscclpp::LLPacket>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
-                                                   blockDim.x * nBlocksPerPeer, flag);
+                                                  blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     uint2 data = src[idx];
@@ -287,7 +287,7 @@ __global__ void __launch_bounds__(1024, 1)
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
       uint2 val = dstPkt[idx].read(flag);
       data.x = add_vectors<T>(val.x, data.x);
-      data.y = add_vectors<T>(val.y, data.y); 
+      data.y = add_vectors<T>(val.y, data.y);
     }
 
     dst[idx].x = data.x;
