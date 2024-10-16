@@ -293,7 +293,8 @@ NCCL_API ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank, ncclConfig_t*) {
+NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank,
+                                             ncclConfig_t*) {
   // TODO: implement config
   return ncclCommInitRank(comm, nranks, commId, rank);
 }
