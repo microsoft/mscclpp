@@ -14,8 +14,6 @@
 #include "common.hpp"
 #include "gpu_data_types.hpp"
 
-__device__ mscclpp::DeviceSyncer deviceSyncer;
-
 template <typename To, typename From>
 __forceinline__ __device__ To bit_cast(const From& src) {
   static_assert(sizeof(To) == sizeof(From), "Size mismatch for bit_cast");
@@ -29,18 +27,56 @@ __forceinline__ __device__ To bit_cast(const From& src) {
 }
 
 template <typename T>
+__forceinline__ __device__ T clip(T val) {
+  return val;
+}
+
+template <>
+__forceinline__ __device__ __half clip(__half val) {
+  val = __hmax(val, bit_cast<__half, unsigned short>(0xfbff));
+  val = __hmin(val, bit_cast<__half, unsigned short>(0x7bff));
+
+  return val;
+}
+
+template <>
+__forceinline__ __device__ __half2 clip(__half2 val) {
+  val.x = __hmax(val.x, bit_cast<__half, unsigned short>(0xfbff));
+  val.x = __hmin(val.x, bit_cast<__half, unsigned short>(0x7bff));
+  val.y = __hmax(val.y, bit_cast<__half, unsigned short>(0xfbff));
+  val.y = __hmin(val.y, bit_cast<__half, unsigned short>(0x7bff));
+  return val;
+}
+
+template <>
+__forceinline__ __device__ __bfloat16 clip(__bfloat16 val) {
+  val = __hmax(val, bit_cast<__bfloat16, unsigned short>(0xff80));
+  val = __hmin(val, bit_cast<__bfloat16, unsigned short>(0x7f80));
+  return val;
+}
+
+template <>
+__forceinline__ __device__ __bfloat162 clip(__bfloat162 val) {
+  val.x = __hmax(val.x, bit_cast<__bfloat16, unsigned short>(0xff80));
+  val.x = __hmin(val.x, bit_cast<__bfloat16, unsigned short>(0x7f80));
+  val.y = __hmax(val.y, bit_cast<__bfloat16, unsigned short>(0xff80));
+  val.y = __hmin(val.y, bit_cast<__bfloat16, unsigned short>(0x7f80));
+  return val;
+}
+
+template <typename T>
 __forceinline__ __device__ T add_elements(T a, T b) {
-  return a + b;
+  return clip(a + b);
 }
 
 template <>
 __forceinline__ __device__ __half2 add_elements(__half2 a, __half2 b) {
-  return __hadd2(a, b);
+  return clip(__hadd2(a, b));
 }
 
 template <>
 __forceinline__ __device__ __bfloat162 add_elements(__bfloat162 a, __bfloat162 b) {
-  return __hadd2(a, b);
+  return clip(__hadd2(a, b));
 }
 
 template <typename T>
@@ -205,11 +241,19 @@ __global__ void __launch_bounds__(1024, 1)
                size_t nelems, uint32_t flag) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
-  nelems = nelems / (sizeof(int) / sizeof(T));
+
+  if (sizeof(T) == 2)
+    nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
+  else
+    nelems = nelems / (sizeof(int) / sizeof(T));
+
   const int nPeers = nRanksPerNode - 1;
-  const size_t nPkts = nelems;
-  const int nelemsPerRank = nelems / worldSize;
-  const int nPktsPerRank = nelemsPerRank;
+  const size_t nPkts = nelems / 2;
+
+  int nelemsPerRank = nelems / worldSize;
+  if ((nelemsPerRank % 2)) nelemsPerRank = (nelemsPerRank * sizeof(T) + sizeof(T)) / sizeof(T);
+
+  const int nPktsPerRank = nelemsPerRank / 2;
   // thread block & channel info
   const int nBlocksPerPeer = gridDim.x / nPeers;
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
@@ -217,11 +261,12 @@ __global__ void __launch_bounds__(1024, 1)
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   void* scratchBuff = (void*)((char*)scratch + channelScratchOffset);
-  size_t scratchOffset = channelScratchOffset + rank * nPktsPerRank * sizeof(mscclpp::LL8Packet);
-  size_t scratchResultOffset = channelScratchOffset + 2 * nPkts * sizeof(mscclpp::LL8Packet);
+  size_t scratchOffset = channelScratchOffset + rank * nPktsPerRank * sizeof(mscclpp::LLPacket);
+  size_t scratchResultOffset = channelScratchOffset + 2 * nPkts * sizeof(mscclpp::LLPacket);
   size_t srcOffset = remoteRank * nelemsPerRank * sizeof(int) + channelDataOffset;
-  uint32_t* src = (uint32_t*)((char*)buff + rank * nelemsPerRank * sizeof(int));
-  uint32_t* dst = (uint32_t*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
+
+  uint2* src = (uint2*)((char*)buff + rank * nelemsPerRank * sizeof(int));
+  uint2* dst = (uint2*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
 
   // Put channels into shared memory, read channel info from global memory is unexpectable slow.
   __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> channels[NRANKS_PER_NODE - 1];
@@ -232,35 +277,40 @@ __global__ void __launch_bounds__(1024, 1)
   __syncwarp();
 
   // step 1: write to scratch buffer
-  channels[peerIdx].putPackets<mscclpp::LL8Packet>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
-                                                   blockDim.x * nBlocksPerPeer, flag);
+  channels[peerIdx].putPackets<mscclpp::LLPacket>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
+                                                  blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
-    uint32_t data = 0;
-    for (int index = 0; index < nPeers; index++) {
+    uint2 data = src[idx];
+    for (int index = 0; index < NPEERS; index++) {
       const int remoteRank = index < rank ? index : index + 1;
-      mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)scratchBuff + remoteRank * nPktsPerRank;
-      uint32_t val = dstPkt[idx].read(flag, -1);
-      data = add_vectors<T>(val, data);
+      mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
+      uint2 val = dstPkt[idx].read(flag);
+      data.x = add_vectors<T>(val.x, data.x);
+      data.y = add_vectors<T>(val.y, data.y);
     }
-    data = add_vectors<T>(data, src[idx]);
-    dst[idx] = data;
 
-    mscclpp::LL8Packet packet;
-    packet.data = data;
-    packet.flag = flag;
-    size_t offset = scratchResultOffset / sizeof(mscclpp::LL8Packet) + (idx + rank * nPktsPerRank);
-    for (int index = 0; index < nPeers; index++) {
+    dst[idx].x = data.x;
+    dst[idx].y = data.y;
+
+    mscclpp::LLPacket packet;
+    packet.data1 = data.x;
+    packet.flag1 = flag;
+    packet.data2 = data.y;
+    packet.flag2 = flag;
+    size_t offset = scratchResultOffset / sizeof(mscclpp::LLPacket) + (idx + rank * nPktsPerRank);
+    for (int index = 0; index < NPEERS; index++) {
       channels[index].write(offset, packet);
     }
   }
   // step 3: get data result from scratch buffer
-  mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)((char*)scratch + scratchResultOffset);
+  mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)scratch + scratchResultOffset);
   const int dstOffset = remoteRank * nPktsPerRank;
-  uint32_t* result = (uint32_t*)((char*)resultBuff + remoteRank * nelemsPerRank * sizeof(int));
+  uint2* result = (uint2*)((char*)resultBuff + remoteRank * nelemsPerRank * sizeof(int));
   for (int idx = threadIdx.x + localBlockIdx * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * nBlocksPerPeer) {
-    uint32_t data = dstPkt[idx + dstOffset].read(flag, -1);
-    result[idx] = data;
+    uint2 data = dstPkt[idx + dstOffset].read(flag, -1);
+    result[idx].x = data.x;
+    result[idx].y = data.y;
   }
 }
 
@@ -319,7 +369,7 @@ __global__ void __launch_bounds__(512, 1)
     __syncthreads();
     // Starts allgather
     for (size_t idx = threadIdx.x; idx < nInt4PerChunk; idx += blockDim.x) {
-      for (int i = 0; i < nPeer; i++) {
+      for (int i = 0; i < NPEERS; i++) {
         const int peerIdx = (i + blockIdx.x) % nPeer;
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = buff4[nInt4PerRank * remoteRank + idx + offsetOfThisBlock];
@@ -336,13 +386,13 @@ __global__ void __launch_bounds__(512, 1)
 
     for (size_t idx = threadIdx.x; idx < nInt4PerChunk; idx += blockDim.x) {
       int4 data = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
-      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
         data = add_vectors<T>(val, data);
       }
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
-      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
         outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
                                    data);
       }
@@ -356,7 +406,7 @@ __global__ void __launch_bounds__(512, 1)
     }
     __syncthreads();
     for (size_t idx = threadIdx.x; idx < restNInt4; idx += blockDim.x) {
-      for (int i = 0; i < nPeer; i++) {
+      for (int i = 0; i < NPEERS; i++) {
         const int peerIdx = (i + blockIdx.x) % nPeer;
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = buff4[nInt4PerRank * remoteRank + idx + offsetOfThisBlock];
@@ -372,17 +422,21 @@ __global__ void __launch_bounds__(512, 1)
 
     for (size_t idx = threadIdx.x; idx < restNInt4; idx += blockDim.x) {
       int4 data = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
-      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
         data = add_vectors<T>(val, data);
       }
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
-      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+      for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
         outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
                                    data);
       }
     }
+  }
+  if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
+    outChannels[threadIdx.x].signal();
+    outChannels[threadIdx.x].wait();
   }
 }
 
