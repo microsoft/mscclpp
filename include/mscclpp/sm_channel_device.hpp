@@ -243,7 +243,7 @@ struct SmChannelDeviceHandle {
   /// This function guarantees that all the memory operation before this function is completed before the remote
   /// semaphore is signaled.
   ///
-  MSCCLPP_DEVICE_INLINE void signal() { semaphore_.signal(); }
+  MSCCLPP_DEVICE_INLINE void signal(uint64_t count = 1) { semaphore_.signal(count); }
 
   /// Signal the remote semaphore.
   ///
@@ -267,8 +267,9 @@ struct SmChannelDeviceHandle {
   MSCCLPP_DEVICE_INLINE uint64_t semaphoreGetLocal() const { return semaphore_.semaphoreGetLocal(); }
 
   /// Check if the remote semaphore has signaled.
+  /// @param max_poll The max number of signals to poll.
   /// @return true if the remote semaphore has signaled.
-  MSCCLPP_DEVICE_INLINE bool poll() { return semaphore_.poll(); }
+  MSCCLPP_DEVICE_INLINE uint64_t poll(const int64_t max_poll = 1) { return semaphore_.poll(max_poll); }
 
   /// Wait for the remote semaphore to send a signal.
   /// @param maxSpinCount The maximum number of spins before asserting. Never assert if negative.
