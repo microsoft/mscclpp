@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #ifndef MSCCLPP_IBVERBS_WRAPPER_HPP_
 #define MSCCLPP_IBVERBS_WRAPPER_HPP_
 
