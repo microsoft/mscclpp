@@ -76,6 +76,7 @@ def dtype_to_mscclpp_dtype(dtype):
     else:
         raise ValueError(f"Unknown data type: {dtype}")
 
+
 def determine_result_buf(sendbuf, recvbuf, in_place, execution_plan_name):
     if "allgather" in execution_plan_name:
         return recvbuf
@@ -83,6 +84,7 @@ def determine_result_buf(sendbuf, recvbuf, in_place, execution_plan_name):
         return sendbuf
     else:
         return recvbuf
+
 
 def main(
     execution_plan_name: str,
@@ -139,7 +141,11 @@ def main(
     executor_func(stream)
     stream.synchronize()
 
-    assert cp.allclose(determine_result_buf(sendbuf, recvbuf, in_place, execution_plan_name), expected, atol=1e-2 * mscclpp_group.nranks)
+    assert cp.allclose(
+        determine_result_buf(sendbuf, recvbuf, in_place, execution_plan_name),
+        expected,
+        atol=1e-2 * mscclpp_group.nranks,
+    )
 
     mscclpp_group.barrier()
     execution_time = bench_time(10, 10, executor_func)
