@@ -3,13 +3,13 @@
 1. Install `doxygen`.
 
     ```bash
-    $ sudo apt-get install doxygen
+    $ sudo apt-get install doxygen graphviz
     ```
 
 2. Install Python packages below. If you install them on the user's local, you need to include `~/.local/bin` to `$PATH` (to use `sphinx-build`).
 
     ```bash
-    $ sudo python3 -m pip install sphinx sphinx_rtd_theme breathe
+    $ sudo python3 -m pip install -r ./requirements.txt
     ```
 
 3. Create Doxygen documents.
@@ -21,7 +21,7 @@
 4. Create Sphinx documents.
 
     ```bash
-    $ sphinx-build -b html -Dbreathe_projects.mscclpp=$PWD/doxygen/xml $PWD $PWD/sphinx
+    $ make html
     ```
 
-5. Done. The HTML files will be on `sphinx/` directory.
+5. Done. The HTML files will be on `_build/` directory.
