@@ -60,7 +60,7 @@ $ make -j
 
 ```bash
 # Install the generated headers and binaries to /usr/local/mscclpp
-$ cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local/mscclpp -DBUILD_PYTHON_BINDINGS=OFF ..
+$ cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local/mscclpp -DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF ..
 $ make -j mscclpp mscclpp_static
 $ sudo make install/fast
 ```
