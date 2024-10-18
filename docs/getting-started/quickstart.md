@@ -13,7 +13,17 @@
     * AMD MI250X GPUs + ROCm >= 5.7
     * AMD MI300X GPUs + ROCm >= 6.0
 * OS: tested over Ubuntu 18.04 and 20.04
-* Libraries: [libnuma](https://github.com/numactl/numactl), MPI (optional)
+* Libraries
+    * [libnuma](https://github.com/numactl/numactl)
+        ```bash
+        sudo apt-get install libnuma-dev
+        ```
+    * (Optional, for [building the Python module](#install-from-source-python-module)) Python >= 3.8 and Python Development Package
+        ```bash
+        sudo apt-get satisfy "python3 (>=3.8), python3-dev (>=3.8)"
+        ```
+        If you don't want to build Python module, you need to set `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF` in your `cmake` command (see details in [Install from Source (Libraries and Headers)](#install-from-source-libraries-and-headers)).
+    * (Optional, for benchmarks) MPI
 * Others
     * For NVIDIA platforms, `nvidia_peermem` driver should be loaded on all nodes. Check it via:
         ```
@@ -56,6 +66,7 @@ $ CXX=/path/to/hipcc cmake -DCMAKE_BUILD_TYPE=Release ..
 $ make -j
 ```
 
+(install-from-source-libraries-and-headers)=
 ## Install from Source (Libraries and Headers)
 
 ```bash
