@@ -20,6 +20,17 @@
         lsmod | grep nvidia_peermem
         ```
 
+## Build with Docker Images
+
+We provide docker images which package all prerequisites for MSCCL++. You can setup your dev environment with the following command.
+
+```bash
+$ docker run -it --privileged --net=host --ipc=host --gpus all ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2 mscclpp-dev bash
+```
+
+See all available images [here](https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp).
+
+(build-from-source)=
 ## Build from Source
 
 CMake 3.25 or later is required.
@@ -54,6 +65,7 @@ $ make -j mscclpp mscclpp_static
 $ sudo make install/fast
 ```
 
+(install-from-source-python-module)=
 ## Install from Source (Python Module)
 
 Python 3.8 or later is required.
@@ -101,7 +113,7 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.
 
 ### Python Benchmark
 
-[Install the MSCCL++ Python package](https://github.com/microsoft/mscclpp/blob/chhwang/docs/docs/quickstart.md#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
+[Install the MSCCL++ Python package](#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
 
 ```bash
 # Choose `requirements_*.txt` according to your CUDA/ROCm version.
@@ -163,4 +175,4 @@ mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/app
 
 If MSCCL++ is built on AMD platforms, `libmscclpp_nccl.so` would replace the [RCCL](https://github.com/ROCm/rccl) library (i.e., `librccl.so`).
 
-See limitations of the current NCCL over MSCCL++ from [here](../apps/nccl/README.md#limitations).
+See limitations of the current NCCL over MSCCL++ from [here](../design/nccl-over-mscclpp.md#limitations).
