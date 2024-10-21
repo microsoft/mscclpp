@@ -32,7 +32,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* /tmp/*
 
 # Install OFED
-ARG OFED_VERSION=5.8-5.1.1.2
+ARG OFED_VERSION=5.2-2.2.3.0
 RUN cd /tmp && \
     OS_VERSION=$(lsb_release -rs) && \
     OS_VERSION=ubuntu${OS_VERSION} && \

@@ -44,7 +44,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 cd ${SCRIPT_DIR}/..
 
-DEFAULT_OFED_VERSION="5.8-5.1.1.2"
+DEFAULT_OFED_VERSION="5.2-2.2.3.0"
 OFED_VERSION=${ofedVersionTable[${TARGET}]}
 if [[ -z ${OFED_VERSION} ]]; then
     OFED_VERSION=${DEFAULT_OFED_VERSION}
