@@ -118,7 +118,6 @@ def main(
                 recvbuf[mscclpp_group.my_rank * nelems + i] = sendbuf[i]
         expected = buffer
     else:
-        cp.random.seed(seed)
         recvbuf = cp.zeros(nelems, dtype=dtype)
         expected = cp.zeros_like(sendbuf, dtype=dtype)
         for i in range(mscclpp_group.nranks):
