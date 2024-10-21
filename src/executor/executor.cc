@@ -80,13 +80,13 @@ struct Executor::Impl {
   }
   ~Impl() = default;
 
-  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t messageSize,
-                                         size_t contsSrcOffset, size_t constDstOffset, size_t sendBufferSize,
-                                         size_t recvBufferSize, const ExecutionPlan& plan) {
+  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t inputMessageSize,
+                                         size_t outputMessageSize, size_t contsSrcOffset, size_t constDstOffset,
+                                         size_t sendBufferSize, size_t recvBufferSize, const ExecutionPlan& plan) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendBufferSize, recvBufferSize, plan.impl_->name};
     if (this->contexts.find(key) != this->contexts.end()) {
       plan.impl_->operationsReset();
-      plan.impl_->lightLoadExecutionPlan(messageSize, contsSrcOffset, constDstOffset);
+      plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, contsSrcOffset, constDstOffset);
       this->setupDeviceExecutionPlan(this->contexts[key], rank, plan);
       this->contexts[key].deviceExecutionPlansBuffer =
           allocExtSharedCuda<char>(this->contexts[key].deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan));
@@ -97,10 +97,10 @@ struct Executor::Impl {
     }
 
     plan.impl_->reset();
-    plan.impl_->loadExecutionPlan(messageSize, contsSrcOffset, constDstOffset);
+    plan.impl_->loadExecutionPlan(inputMessageSize, outputMessageSize, contsSrcOffset, constDstOffset);
 
     ExecutionContext context;
-    size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize);
+    size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize, recvBufferSize);
     std::shared_ptr<char> scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
     context.scratchBuffer = scratchBuffer;
     context.scratchBufferSize = scratchBufferSize;
@@ -350,8 +350,9 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   size_t offsetIn = (char*)sendbuff - (char*)sendBasePtr;
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
 
-  ExecutionContext context = this->impl_->setupExecutionContext(
-      rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, offsetIn, offsetOut, sendBytes, recvBytes, plan);
+  ExecutionContext context =
+      this->impl_->setupExecutionContext(rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, recvBuffSize,
+                                         offsetIn, offsetOut, sendBytes, recvBytes, plan);
   this->impl_->launchKernel(context, rank, sendbuff, recvbuff, dataType, stream, packetType);
 }
 
