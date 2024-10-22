@@ -69,6 +69,7 @@ struct ExecutionPlan::Impl {
   std::vector<Operation> getOperations(int rank, int threadblock) const;
   int getThreadblockCount(int rank) const;
   int getNThreadsPerBlock() const;
+  bool getIsUsingDoubleScratchBuffer() const;
 
   void loadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
   void lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
@@ -96,6 +97,7 @@ struct ExecutionPlan::Impl {
   size_t inputSize;
   size_t outputSize;
   int nThreadsPerBlock;
+  bool isUsingDoubleScratchBuffer;
 
  private:
   std::pair<size_t, u_int32_t> calcSizePerRank(int rank, size_t inputSize, size_t outputSize) const;

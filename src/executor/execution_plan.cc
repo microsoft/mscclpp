@@ -157,10 +157,14 @@ size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize, siz
   else
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
 
+  size_t scratchBufferSize = sizePerRank * this->scratchChunks.at(rank);
   if (this->isUsingPacket) {
-    return sizePerRank * this->scratchChunks.at(rank) * 2 /* data + flag*/ * 2 /*double buffer*/;
+    scratchBufferSize *= 2; // data + flag
   }
-  return sizePerRank * this->scratchChunks.at(rank);
+  if (this->isUsingDoubleScratchBuffer) {
+    scratchBufferSize *= 2; // double buffer
+  }
+  return scratchBufferSize;
 }
 std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadblock) const {
   return this->operations.at(rank)[threadblock];
@@ -169,6 +173,8 @@ std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadbl
 int ExecutionPlan::Impl::getThreadblockCount(int rank) const { return this->operations.at(rank).size(); }
 
 int ExecutionPlan::Impl::getNThreadsPerBlock() const { return this->nThreadsPerBlock; }
+
+bool ExecutionPlan::Impl::getIsUsingDoubleScratchBuffer() const { return this->getIsUsingDoubleScratchBuffer; }
 
 void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset,
                                             size_t constDstOffset) {
@@ -182,6 +188,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
     this->isUsingPacket = true;
   }
   this->nThreadsPerBlock = obj.value("num_threads_per_block", 1024);
+  this->isUsingDoubleScratchBuffer = obj["use_double_scratch_buffer"];
   const auto& gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {
@@ -209,6 +216,7 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t output
   if (protocol == "LL") {
     this->isUsingPacket = true;
   }
+  this->isUsingDoubleScratchBuffer = obj["use_double_scratch_buffer"];
   const auto& gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {

@@ -66,6 +66,7 @@ struct ExecutionContext {
   size_t scratchBufferSize;
   std::shared_ptr<char> deviceExecutionPlansBuffer;
   int nthreadsPerBlock;
+  bool isUsingDoubleScratchBuffer;
 };
 
 struct Executor::Impl {
@@ -106,6 +107,7 @@ struct Executor::Impl {
     context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
     context.nthreadsPerBlock = plan.impl_->getNThreadsPerBlock();
+    context.isUsingDoubleScratchBuffer = plan.impl_->getIsUsingDoubleScratchBuffer();
     this->setupConnections(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
     this->setupChannels(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
@@ -306,6 +308,14 @@ struct Executor::Impl {
                     cudaStream_t stream, PacketType packetType) {
     static uint32_t flag = 0;
     int nthreadblocks = context.deviceExecutionPlans.size();
+    char* kernelScratchBufferPtr = context.scratchBuffer.get();
+    size_t kernelScratchBufferSize = context.scratchBufferSize;
+    if (context.isUsingDoubleScratchBuffer) {
+      kernelScratchBufferSize /= 2;
+      if (flag % 2) {
+        kernelScratchBufferPtr += kernelScratchBufferSize;
+      }
+    }
 #if defined(ENABLE_NPKIT)
 #if defined(__HIP_PLATFORM_AMD__)
     if (nthreadblocks > NPKIT_MAX_NUM_GPU_THREADBLOCKS) {
@@ -321,16 +331,16 @@ struct Executor::Impl {
 #endif
     switch (packetType) {
       case PacketType::LL16:
-        ExecutionKernel::launchKernel<LL16Packet>(
-            rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
-            context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(),
-            sharedMemSize, stream, ++flag);
+        ExecutionKernel::launchKernel<LL16Packet>(rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff,
+                                                  (void*)kernelScratchBufferPtr, kernelScratchBufferSize, dataType,
+                                                  (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(),
+                                                  sharedMemSize, stream, ++flag);
         break;
       case PacketType::LL8:
-        ExecutionKernel::launchKernel<LL8Packet>(
-            rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
-            context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(),
-            sharedMemSize, stream, ++flag);
+        ExecutionKernel::launchKernel<LL8Packet>(rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff,
+                                                 (void*)kernelScratchBufferPtr, kernelScratchBufferSize, dataType,
+                                                 (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(),
+                                                 sharedMemSize, stream, ++flag);
         break;
       default:
         throw Error("Invalid packet type", ErrorCode::ExecutorError);
