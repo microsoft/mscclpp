@@ -2,7 +2,7 @@ ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 LABEL maintainer="MSCCL++"
-LABEL org.opencontainers.image.source https://github.com/microsoft/mscclpp
+LABEL org.opencontainers.image.source=https://github.com/microsoft/mscclpp
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
