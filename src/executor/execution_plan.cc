@@ -148,12 +148,19 @@ std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) c
   }
   return std::vector<BufferType>(bufferTypes.begin(), bufferTypes.end());
 }
-size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize) const {
+size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const {
+  size_t sizePerRank;
+  if (this->inputChunks.at(rank) != 0)
+    sizePerRank = inputSize / this->inputChunks.at(rank);
+  else if (this->outputChunks.at(rank) != 0)
+    sizePerRank = outputSize / this->outputChunks.at(rank);
+  else
+    throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
+
   if (this->isUsingPacket) {
-    return inputSize / this->inputChunks.at(rank) * this->scratchChunks.at(rank) * 2 /* data + flag*/ *
-           2 /*double buffer*/;
+    return sizePerRank * this->scratchChunks.at(rank) * 2 /* data + flag*/ * 2 /*double buffer*/;
   }
-  return inputSize / this->inputChunks.at(rank) * this->scratchChunks.at(rank);
+  return sizePerRank * this->scratchChunks.at(rank);
 }
 std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadblock) const {
   return this->operations.at(rank)[threadblock];
@@ -161,7 +168,10 @@ std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadbl
 
 int ExecutionPlan::Impl::getThreadblockCount(int rank) const { return this->operations.at(rank).size(); }
 
-void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t contsSrcOffset, size_t constDstOffset) {
+int ExecutionPlan::Impl::getNThreadsPerBlock() const { return this->nThreadsPerBlock; }
+
+void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset,
+                                            size_t constDstOffset) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
   if (this->name != obj["name"]) {
@@ -171,6 +181,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t contsSrcOff
   if (protocol == "LL") {
     this->isUsingPacket = true;
   }
+  this->nThreadsPerBlock = obj.value("num_threads_per_block", 1024);
   const auto& gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {
@@ -183,10 +194,12 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t contsSrcOff
   this->setupChannels(gpus);
 
   this->inputSize = inputSize;
+  this->outputSize = outputSize;
   this->setupOperations(gpus, contsSrcOffset, constDstOffset);
 }
 
-void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t contsSrcOffset, size_t constDstOffset) {
+void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset,
+                                                 size_t constDstOffset) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
   if (this->name != obj["name"]) {
@@ -207,6 +220,7 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t contsS
   }
 
   this->inputSize = inputSize;
+  this->outputSize = outputSize;
   this->setupOperations(gpus, contsSrcOffset, constDstOffset);
 }
 
@@ -310,8 +324,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
             // Get the relevant channel index in rank channelInfos
             operation.inputChannelIndexes[i] =
                 channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
-            operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["i_cids"][i]["off"]) +
-                                        (srcBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
+            operation.inputOffsets[i] =
+                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["i_cids"][i]["off"]) +
+                (srcBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
             chunkIndexes.push_back((uint32_t)op["i_cids"][i]["off"]);
           }
         }
@@ -320,8 +335,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
           operation.nInputs = op["srcs"].size();
           operation.inputBufferType = convertToBufferType(op["srcs"][0]["buff"]);
           for (int i = 0; i < operation.nInputs; i++) {
-            operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["srcs"][i]["off"]) +
-                                        (operation.inputBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
+            operation.inputOffsets[i] =
+                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["srcs"][i]["off"]) +
+                (operation.inputBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
             chunkIndexes.push_back((uint32_t)op["srcs"][i]["off"]);
           }
         }
@@ -332,8 +348,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
             BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
             operation.outputChannelIndexes[i] =
                 channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["o_cids"][i]["id"]];
-            operation.outputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["o_cids"][i]["off"]) +
-                                         (dstBufferType != BufferType::SCRATCH ? constDstOffset : 0);
+            operation.outputOffsets[i] =
+                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["o_cids"][i]["off"]) +
+                (dstBufferType != BufferType::SCRATCH ? constDstOffset : 0);
             chunkIndexes.push_back((uint32_t)op["o_cids"][i]["off"]);
           }
         }
@@ -342,8 +359,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
           operation.nOutputs = op["dsts"].size();
           operation.outputBufferType = convertToBufferType(op["dsts"][0]["buff"]);
           for (int i = 0; i < operation.nOutputs; i++) {
-            operation.outputOffsets[i] = this->getOffset(rank, this->inputSize, (uint32_t)op["dsts"][i]["off"]) +
-                                         (operation.outputBufferType != BufferType::SCRATCH ? constDstOffset : 0);
+            operation.outputOffsets[i] =
+                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["dsts"][i]["off"]) +
+                (operation.outputBufferType != BufferType::SCRATCH ? constDstOffset : 0);
             chunkIndexes.push_back((uint32_t)op["dsts"][i]["off"]);
           }
         }
@@ -351,18 +369,19 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
           operation.srcBufferType = convertToBufferType(op["srcbuff"]);
         }
         if (op.contains("srcoff")) {
-          operation.srcOffset = this->getOffset(rank, this->inputSize, (uint32_t)op["srcoff"]);
+          operation.srcOffset = this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["srcoff"]);
           chunkIndexes.push_back((uint32_t)op["srcoff"]);
         }
         if (op.contains("dstbuff")) {
           operation.dstBufferType = convertToBufferType(op["dstbuff"]);
         }
         if (op.contains("dstoff")) {
-          operation.dstOffset = this->getOffset(rank, this->inputSize, (uint32_t)op["dstoff"]);
+          operation.dstOffset = this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["dstoff"]);
           chunkIndexes.push_back((uint32_t)op["dstoff"]);
         }
         if (op.contains("cnt")) {
-          operation.size = this->getNChunkSize(rank, this->inputSize, (uint32_t)op["cnt"], chunkIndexes);
+          operation.size =
+              this->getNChunkSize(rank, this->inputSize, this->outputSize, (uint32_t)op["cnt"], chunkIndexes);
         }
         ops.push_back(operation);
       }
@@ -371,14 +390,33 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
   }
 }
 
-size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, uint32_t chunkIndex, uint32_t alignment) const {
+std::pair<size_t, u_int32_t> ExecutionPlan::Impl::calcSizePerRank(int rank, size_t inputSize, size_t outputSize) const {
+  std::pair<size_t, u_int32_t> sizePerRank;
+  if (this->inputChunks.at(rank) == 0 && this->outputChunks.at(rank) == 0) {
+    throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
+  } else if (this->inputChunks.at(rank) != 0 && this->outputChunks.at(rank) != 0) {
+    if (inputSize / this->inputChunks.at(rank) != outputSize / this->outputChunks.at(rank))
+      throw mscclpp::Error("Size per chunks inconsistent", mscclpp::ErrorCode::ExecutorError);
+    else
+      sizePerRank = std::make_pair(inputSize, this->inputChunks.at(rank));
+  } else if (this->inputChunks.at(rank) != 0) {
+    sizePerRank = std::make_pair(inputSize, this->inputChunks.at(rank));
+  } else if (this->outputChunks.at(rank) != 0) {
+    sizePerRank = std::make_pair(outputSize, this->outputChunks.at(rank));
+  }
+  return sizePerRank;
+}
+
+size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex,
+                                      uint32_t alignment) const {
   if (inputSize % alignment != 0) {
     throw Error("inputSize must be a multiple of alignment", ErrorCode::ExecutorError);
   }
 
   const int nGroups = this->chunkGroups.at(rank);
-  uint32_t nInputChunks = this->inputChunks.at(rank);
-  uint32_t nelems = inputSize / (alignment * sizeof(uint8_t));
+  auto sizePerRank = calcSizePerRank(rank, inputSize, outputSize);
+  uint32_t nInputChunks = sizePerRank.second;
+  uint32_t nelems = sizePerRank.first / (alignment * sizeof(uint8_t));
   if (nelems % nGroups != 0) {
     throw Error("Input size must be a multiple of nGroups", ErrorCode::ExecutorError);
   }
@@ -394,12 +432,12 @@ size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, uint32_t chunk
   return static_cast<size_t>(offset) * alignment;
 }
 
-size_t ExecutionPlan::Impl::getNChunkSize(int rank, size_t inputSize, uint32_t nChunks,
+size_t ExecutionPlan::Impl::getNChunkSize(int rank, size_t inputSize, size_t outputSize, uint32_t nChunks,
                                           const std::vector<uint32_t> chunkIndexes) const {
   size_t nChunkSize = 0;
   for (uint32_t index : chunkIndexes) {
-    uint32_t beginOff = getOffset(rank, inputSize, index);
-    uint32_t endOff = getOffset(rank, inputSize, index + nChunks);
+    uint32_t beginOff = getOffset(rank, inputSize, outputSize, index);
+    uint32_t endOff = getOffset(rank, inputSize, outputSize, index + nChunks);
     if (nChunkSize == 0) {
       nChunkSize = endOff - beginOff;
     } else if (nChunkSize != endOff - beginOff) {

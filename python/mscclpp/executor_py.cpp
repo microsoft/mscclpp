@@ -29,11 +29,10 @@ void register_executor(nb::module_& m) {
       .def(
           "execute",
           [](Executor* self, int rank, uintptr_t sendbuff, uintptr_t recvBuff, size_t sendBuffSize, size_t recvBuffSize,
-             DataType dataType, int nthreads, const ExecutionPlan& plan, uintptr_t stream, PacketType packetType) {
+             DataType dataType, const ExecutionPlan& plan, uintptr_t stream, PacketType packetType) {
             self->execute(rank, reinterpret_cast<void*>(sendbuff), reinterpret_cast<void*>(recvBuff), sendBuffSize,
-                          recvBuffSize, dataType, nthreads, plan, (cudaStream_t)stream, packetType);
+                          recvBuffSize, dataType, plan, (cudaStream_t)stream, packetType);
           },
           nb::arg("rank"), nb::arg("sendbuff"), nb::arg("recvBuff"), nb::arg("sendBuffSize"), nb::arg("recvBuffSize"),
-          nb::arg("dataType"), nb::arg("nthreads"), nb::arg("plan"), nb::arg("stream"),
-          nb::arg("packetType") = PacketType::LL16);
+          nb::arg("dataType"), nb::arg("plan"), nb::arg("stream"), nb::arg("packetType") = PacketType::LL16);
 }

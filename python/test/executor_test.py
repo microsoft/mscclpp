@@ -77,11 +77,20 @@ def dtype_to_mscclpp_dtype(dtype):
         raise ValueError(f"Unknown data type: {dtype}")
 
 
+def determine_result_buf(sendbuf, recvbuf, in_place, execution_plan_name):
+    if "allgather" in execution_plan_name:
+        return recvbuf
+    elif in_place:
+        return sendbuf
+    else:
+        return recvbuf
+
+
 def main(
-    execution_paln_name: str,
+    execution_plan_name: str,
     execution_plan_path: str,
     size: int,
-    nthreads_per_block: int,
+    in_place: bool = True,
     dtype: cp.dtype = cp.float16,
     packet_type: PacketType = PacketType.LL16,
     seed: int = 42,
@@ -92,26 +101,36 @@ def main(
     npkit_dump_dir = os.getenv("NPKIT_DUMP_DIR")
     if npkit_dump_dir is not None:
         npkit.init(mscclpp_group.my_rank)
-    execution_plan = ExecutionPlan(execution_paln_name, execution_plan_path)
+    execution_plan = ExecutionPlan(execution_plan_name, execution_plan_path)
 
     cp.random.seed(seed)
     nelems = size // cp.dtype(dtype).itemsize
-    buffer = cp.random.random(nelems * mscclpp_group.nranks).astype(dtype)
+    buffer = cp.random.random(nelems * mscclpp_group.nranks, dtype=cp.float32).astype(dtype)
     sub_arrays = cp.split(buffer, MPI.COMM_WORLD.size)
-    sendbuf = sub_arrays[MPI.COMM_WORLD.rank]
-    expected = cp.zeros_like(sendbuf)
-    for i in range(mscclpp_group.nranks):
-        expected += sub_arrays[i]
+    sendbuf = cp.zeros(nelems, dtype=dtype)
+    for i in range(nelems):
+        sendbuf[i] = sub_arrays[MPI.COMM_WORLD.rank][i]
+
+    if "allgather" in execution_plan_name:
+        recvbuf = cp.zeros(nelems * mscclpp_group.nranks, dtype=dtype)
+        if in_place:
+            for i in range(nelems):
+                recvbuf[mscclpp_group.my_rank * nelems + i] = sendbuf[i]
+        expected = buffer
+    else:
+        recvbuf = cp.zeros(nelems, dtype=dtype)
+        expected = cp.zeros_like(sendbuf, dtype=dtype)
+        for i in range(mscclpp_group.nranks):
+            expected += sub_arrays[i]
     mscclpp_group.barrier()
 
     executor_func = lambda stream: executor.execute(
         MPI.COMM_WORLD.rank,
         sendbuf.data.ptr,
-        sendbuf.data.ptr,
+        determine_result_buf(sendbuf, recvbuf, in_place, execution_plan_name).data.ptr,
         sendbuf.nbytes,
-        sendbuf.nbytes,
+        determine_result_buf(sendbuf, recvbuf, in_place, execution_plan_name).nbytes,
         dtype_to_mscclpp_dtype(dtype),
-        nthreads_per_block,
         execution_plan,
         stream.ptr,
         packet_type,
@@ -120,17 +139,22 @@ def main(
     stream = cp.cuda.Stream(non_blocking=True)
     executor_func(stream)
     stream.synchronize()
-    assert cp.allclose(sendbuf, expected, atol=1e-2 * mscclpp_group.nranks)
+
+    assert cp.allclose(
+        determine_result_buf(sendbuf, recvbuf, in_place, execution_plan_name),
+        expected,
+        atol=1e-2 * mscclpp_group.nranks,
+    )
 
     mscclpp_group.barrier()
-    execution_time = bench_time(100, 10, executor_func)
+    execution_time = bench_time(10, 10, executor_func)
     if npkit_dump_dir is not None:
         npkit.dump(npkit_dump_dir)
         npkit.shutdown()
     print(
         f"Rank: {MPI.COMM_WORLD.rank} Execution time: {execution_time} us, "
         f"data size: {sendbuf.nbytes} bytes data type: {dtype().dtype.name} "
-        f"packet type: {packet_type} nthreads_per_block: {nthreads_per_block}"
+        f"packet type: {packet_type}"
     )
     executor = None
     mscclpp_group = None
@@ -141,7 +165,7 @@ if __name__ == "__main__":
     parser.add_argument("-n", "--execution_plan_name", type=str, required=True)
     parser.add_argument("-path", "--execution_plan_path", type=str, required=True)
     parser.add_argument("--size", type=str, required=True)
-    parser.add_argument("--nthreads_per_block", type=int, required=True)
+    parser.add_argument("--in_place", action="store_true", help="flag to define an in-place operation")
     parser.add_argument("--dtype", type=str, default="float16", help="Choose from float16, float32, int32")
     parser.add_argument("--packet_type", type=str, default="LL16", help="Choose from LL8, LL16")
     parser.add_argument("--seed", type=int, default=42)
@@ -157,7 +181,7 @@ if __name__ == "__main__":
         args.execution_plan_name,
         args.execution_plan_path,
         buffer_size,
-        args.nthreads_per_block,
+        args.in_place,
         dtype,
         packet_type,
         args.seed,

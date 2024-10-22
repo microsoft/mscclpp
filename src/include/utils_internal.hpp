@@ -1,8 +1,6 @@
-/*************************************************************************
- * Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
- *
- * See LICENSE.txt for license information
- ************************************************************************/
+// Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
+// Modifications Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_UTILS_INTERNAL_HPP_
 #define MSCCLPP_UTILS_INTERNAL_HPP_

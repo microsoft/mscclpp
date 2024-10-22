@@ -14,7 +14,6 @@
 #include "common.hpp"
 #include "gpu_data_types.hpp"
 
-
 template <typename To, typename From>
 __forceinline__ __device__ To bit_cast(const From& src) {
   static_assert(sizeof(To) == sizeof(From), "Size mismatch for bit_cast");
@@ -44,7 +43,6 @@ template <>
 __forceinline__ __device__ __half2 clip(__half2 val) {
   val.x = __hmax(val.x, bit_cast<__half, unsigned short>(0xfbff));
   val.x = __hmin(val.x, bit_cast<__half, unsigned short>(0x7bff));
-  
   val.y = __hmax(val.y, bit_cast<__half, unsigned short>(0xfbff));
   val.y = __hmin(val.y, bit_cast<__half, unsigned short>(0x7bff));
   return val;
@@ -192,17 +190,6 @@ __forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem) {
   vectorSum(dst, src, nElem, blockIdx.x, gridDim.x);
 }
 
-// template <typename T>
-// __global__ void __launch_bounds__(32, 1)
-//     test(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-//                       size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
-//                       size_t nelems, uint32_t flag) {
-//   // add 0.1f to all elements
-//   for (size_t i = threadIdx.x + blockIdx.x * gridDim.x; i < nelems; i += blockDim.x * gridDim.x) {
-//     buff[i] = add_elements<T>(buff[i], T(0.1f));
-//   }
-// }
-
 template <typename T>
 __global__ void __launch_bounds__(32, 1)
     allreduceAllToAll(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
@@ -254,19 +241,19 @@ __global__ void __launch_bounds__(1024, 1)
                size_t nelems, uint32_t flag) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
-  
+
   if (sizeof(T) == 2)
-          nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
+    nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
   else
-        nelems = nelems / (sizeof(int) / sizeof(T));
-  
+    nelems = nelems / (sizeof(int) / sizeof(T));
+
   const int nPeers = nRanksPerNode - 1;
-  const size_t nPkts = nelems/2;
-  
+  const size_t nPkts = nelems / 2;
+
   int nelemsPerRank = nelems / worldSize;
   if ((nelemsPerRank % 2)) nelemsPerRank = (nelemsPerRank * sizeof(T) + sizeof(T)) / sizeof(T);
 
-  const int nPktsPerRank = nelemsPerRank/2;
+  const int nPktsPerRank = nelemsPerRank / 2;
   // thread block & channel info
   const int nBlocksPerPeer = gridDim.x / nPeers;
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
@@ -291,29 +278,22 @@ __global__ void __launch_bounds__(1024, 1)
 
   // step 1: write to scratch buffer
   channels[peerIdx].putPackets<mscclpp::LLPacket>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
-                                                   blockDim.x * nBlocksPerPeer, flag);
+                                                  blockDim.x * nBlocksPerPeer, flag);
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
-    //uint32_t data = 0;
-    uint2 data = make_uint2(0, 0);
+    uint2 data = src[idx];
     for (int index = 0; index < NPEERS; index++) {
       const int remoteRank = index < rank ? index : index + 1;
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
-      //uint32_t val = dstPkt[idx].read(flag, -1);
       uint2 val = dstPkt[idx].read(flag);
-      //data = add_vectors<T>(val, data);
       data.x = add_vectors<T>(val.x, data.x);
-      data.y = add_vectors<T>(val.y, data.y); 
+      data.y = add_vectors<T>(val.y, data.y);
     }
-    data.x = add_vectors<T>(data.x, src[idx].x);
-    data.y = add_vectors<T>(data.y, src[idx].y);	
 
     dst[idx].x = data.x;
     dst[idx].y = data.y;
 
     mscclpp::LLPacket packet;
-    /*packet.data = data;
-    packet.flag = flag;*/
     packet.data1 = data.x;
     packet.flag1 = flag;
     packet.data2 = data.y;
@@ -466,10 +446,6 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                       size_t channelOutOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
                       size_t nelems, cudaStream_t stream) {
   static uint32_t flag = 1;
-
-  // test<<<7, 32, 0, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset,
-  //                                                             channelScratchOffset, rank, nRanksPerNode, worldSize,
-  //                                                             nelems, flag++);
 
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
     int nBlocks = 7;
