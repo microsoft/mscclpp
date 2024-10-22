@@ -301,7 +301,7 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(DeviceHandle<SmChannel>* smChannels,
 
 template <typename T, typename PacketType, bool SendToRemote = true>
 MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBytes, T* src, uint32_t srcOffsetByBytes,
-                                                  T* inputBuff, size_t inputBuffSize, uint32_t* inputOffsets, int nSrcs,
+                                                  T* inputBuff, uint32_t* inputOffsets, int nSrcs,
                                                   DeviceHandle<SmChannel>* smChannels, uint8_t* outputChannelIndexes,
                                                   uint32_t* outputOffsets, int nDstChannels, size_t size,
                                                   uint32_t flag) {
@@ -331,8 +331,8 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBy
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, size_t srcSize, uint32_t dstOffset,
-                                            uint32_t srcOffset, size_t size, uint32_t flag) {
+MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset, size_t size,
+                                            uint32_t flag) {
   PacketType* srcPackets = (PacketType*)((char*)src + 2 * srcOffset);
   PacketPayload<PacketType>* result = (PacketPayload<PacketType>*)((char*)dst + dstOffset);
   size_t nPackets = size * 2 / sizeof(PacketType);
@@ -343,8 +343,8 @@ MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, size_t srcSize
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleTransformToPacket(void* dst, void* src, size_t dstSize, uint32_t dstOffset,
-                                                   uint32_t srcOffset, size_t size, uint32_t flag) {
+MSCCLPP_DEVICE_INLINE void handleTransformToPacket(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset,
+                                                   size_t size, uint32_t flag) {
   dstOffset = dstOffset * 2;
   mscclpp::putPackets<PacketType>(dst, dstOffset, src, srcOffset, size, threadIdx.x, blockDim.x, flag);
 }

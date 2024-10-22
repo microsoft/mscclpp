@@ -100,7 +100,7 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, BufferTy
 }
 
 std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfosByDstRank(int rank, BufferType bufferType) const {
-  auto pred = [rank, bufferType](const ChannelInfo& info) { return info.dstBufferType == bufferType; };
+  auto pred = [bufferType](const ChannelInfo& info) { return info.dstBufferType == bufferType; };
   return filter(this->channelInfosByDstRank.at(rank), pred);
 }
 
@@ -159,10 +159,10 @@ size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize, siz
 
   size_t scratchBufferSize = sizePerRank * this->scratchChunks.at(rank);
   if (this->isUsingPacket) {
-    scratchBufferSize *= 2; // data + flag
+    scratchBufferSize *= 2; /* data + flag */
   }
   if (this->isUsingDoubleScratchBuffer) {
-    scratchBufferSize *= 2; // double buffer
+    scratchBufferSize *= 2; /* double buffer */
   }
   return scratchBufferSize;
 }
@@ -174,7 +174,7 @@ int ExecutionPlan::Impl::getThreadblockCount(int rank) const { return this->oper
 
 int ExecutionPlan::Impl::getNThreadsPerBlock() const { return this->nThreadsPerBlock; }
 
-bool ExecutionPlan::Impl::getIsUsingDoubleScratchBuffer() const { return this->getIsUsingDoubleScratchBuffer; }
+bool ExecutionPlan::Impl::getIsUsingDoubleScratchBuffer() const { return this->isUsingDoubleScratchBuffer; }
 
 void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset,
                                             size_t constDstOffset) {

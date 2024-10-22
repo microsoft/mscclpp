@@ -309,12 +309,8 @@ struct Executor::Impl {
     static uint32_t flag = 0;
     int nthreadblocks = context.deviceExecutionPlans.size();
     char* kernelScratchBufferPtr = context.scratchBuffer.get();
-    size_t kernelScratchBufferSize = context.scratchBufferSize;
-    if (context.isUsingDoubleScratchBuffer) {
-      kernelScratchBufferSize /= 2;
-      if (flag % 2) {
-        kernelScratchBufferPtr += kernelScratchBufferSize;
-      }
+    if (context.isUsingDoubleScratchBuffer && (flag % 2)) {
+      kernelScratchBufferPtr += context.scratchBufferSize / 2;
     }
 #if defined(ENABLE_NPKIT)
 #if defined(__HIP_PLATFORM_AMD__)
@@ -332,13 +328,13 @@ struct Executor::Impl {
     switch (packetType) {
       case PacketType::LL16:
         ExecutionKernel::launchKernel<LL16Packet>(rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff,
-                                                  (void*)kernelScratchBufferPtr, kernelScratchBufferSize, dataType,
+                                                  (void*)kernelScratchBufferPtr, dataType,
                                                   (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(),
                                                   sharedMemSize, stream, ++flag);
         break;
       case PacketType::LL8:
         ExecutionKernel::launchKernel<LL8Packet>(rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff,
-                                                 (void*)kernelScratchBufferPtr, kernelScratchBufferSize, dataType,
+                                                 (void*)kernelScratchBufferPtr, dataType,
                                                  (DeviceExecutionPlan*)context.deviceExecutionPlansBuffer.get(),
                                                  sharedMemSize, stream, ++flag);
         break;
