@@ -34,7 +34,7 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::WAIT;
   } else if (str == "flush") {
     return mscclpp::OperationType::FLUSH;
-  } else if (str == "re") {
+  } else if (str == "reduce") {
     return mscclpp::OperationType::REDUCE;
   } else if (str == "rs") {
     return mscclpp::OperationType::REDUCE_SEND;
