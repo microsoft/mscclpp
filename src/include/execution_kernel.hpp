@@ -545,7 +545,7 @@ class ExecutionKernel {
   template <typename PacketType>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
                            DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize, cudaStream_t stream,
-                           uint32_t flag = 0) {
+                           uint32_t flag) {
     switch (dataType) {
       case DataType::INT32:
         executionKernel<int32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
@@ -603,7 +603,7 @@ class ExecutionKernel {
   template <typename PacketType>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
                            DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize, cudaStream_t stream,
-                           uint32_t flag = 0);
+                           uint32_t flag);
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
 };
 }  // namespace mscclpp

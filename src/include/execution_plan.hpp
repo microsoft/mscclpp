@@ -65,14 +65,15 @@ struct ExecutionPlan::Impl {
   std::vector<ChannelInfo> getUnpairedChannelInfos(int rank, int worldSize, ChannelType channelType);
   std::vector<int> getConnectedPeers(int rank) const;
   std::vector<BufferType> getConnectedBufferTypes(int rank) const;
-  size_t getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const;
+  size_t getScratchBufferSize() const;
   std::vector<Operation> getOperations(int rank, int threadblock) const;
   int getThreadblockCount(int rank) const;
   int getNThreadsPerBlock() const;
-  bool getIsUsingDoubleScratchBuffer() const;
 
-  void loadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
-  void lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
+  void loadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset, int rank,
+                         size_t inputBufferSize, size_t outputBufferSize, int flag);
+  void lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset,
+                              int rank, size_t inputBufferSize, size_t outputBufferSize, int flag);
   void setupChannels(const nlohmann::json& gpus);
   void setupOperations(const nlohmann::json& gpus, size_t contsSrcOffset, size_t constDstOffset);
 
@@ -98,12 +99,15 @@ struct ExecutionPlan::Impl {
   size_t outputSize;
   int nThreadsPerBlock;
   bool isUsingDoubleScratchBuffer;
+  size_t scratchBufferSize;
+  size_t scratchBufferOffset;
 
  private:
   std::pair<size_t, u_int32_t> calcSizePerRank(int rank, size_t inputSize, size_t outputSize) const;
   size_t getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex, uint32_t alignment = 16) const;
   size_t getNChunkSize(int rank, size_t inputSize, size_t outputSize, uint32_t nChunks,
                        const std::vector<uint32_t> offsets) const;
+  void calcScratchBufferSizeAndOffset(int rank, size_t inputSize, size_t outputSize, int flag);
 };
 
 }  // namespace mscclpp
