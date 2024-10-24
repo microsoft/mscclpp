@@ -34,7 +34,7 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::WAIT;
   } else if (str == "flush") {
     return mscclpp::OperationType::FLUSH;
-  } else if (str == "re") {
+  } else if (str == "reduce") {
     return mscclpp::OperationType::REDUCE;
   } else if (str == "rs") {
     return mscclpp::OperationType::REDUCE_SEND;
@@ -100,7 +100,7 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, BufferTy
 }
 
 std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfosByDstRank(int rank, BufferType bufferType) const {
-  auto pred = [rank, bufferType](const ChannelInfo& info) { return info.dstBufferType == bufferType; };
+  auto pred = [bufferType](const ChannelInfo& info) { return info.dstBufferType == bufferType; };
   return filter(this->channelInfosByDstRank.at(rank), pred);
 }
 
@@ -148,7 +148,8 @@ std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) c
   }
   return std::vector<BufferType>(bufferTypes.begin(), bufferTypes.end());
 }
-size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const {
+
+void ExecutionPlan::Impl::calcScratchBufferSizeAndOffset(int rank, size_t inputSize, size_t outputSize, int flag) {
   size_t sizePerRank;
   if (this->inputChunks.at(rank) != 0)
     sizePerRank = inputSize / this->inputChunks.at(rank);
@@ -157,11 +158,18 @@ size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize, siz
   else
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
 
+  this->scratchBufferSize = sizePerRank * this->scratchChunks.at(rank);
+  this->scratchBufferOffset = (this->isUsingDoubleScratchBuffer && (flag % 2) == 0) ? this->scratchBufferSize : 0;
   if (this->isUsingPacket) {
-    return sizePerRank * this->scratchChunks.at(rank) * 2 /* data + flag*/ * 2 /*double buffer*/;
+    this->scratchBufferSize *= 2; /* data + flag */
   }
-  return sizePerRank * this->scratchChunks.at(rank);
+  if (this->isUsingDoubleScratchBuffer) {
+    this->scratchBufferSize *= 2; /* double buffer */
+  }
 }
+
+size_t ExecutionPlan::Impl::getScratchBufferSize() const { return this->scratchBufferSize; }
+
 std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadblock) const {
   return this->operations.at(rank)[threadblock];
 }
@@ -170,8 +178,9 @@ int ExecutionPlan::Impl::getThreadblockCount(int rank) const { return this->oper
 
 int ExecutionPlan::Impl::getNThreadsPerBlock() const { return this->nThreadsPerBlock; }
 
-void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset,
-                                            size_t constDstOffset) {
+void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize, size_t constSrcOffset,
+                                            size_t constDstOffset, int selfRank, size_t inputBufferSize,
+                                            size_t outputBufferSize, int flag) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
   if (this->name != obj["name"]) {
@@ -182,6 +191,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
     this->isUsingPacket = true;
   }
   this->nThreadsPerBlock = obj.value("num_threads_per_block", 1024);
+  this->isUsingDoubleScratchBuffer = obj["use_double_scratch_buffer"];
   const auto& gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {
@@ -195,11 +205,13 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
 
   this->inputSize = inputSize;
   this->outputSize = outputSize;
-  this->setupOperations(gpus, contsSrcOffset, constDstOffset);
+  this->calcScratchBufferSizeAndOffset(selfRank, inputBufferSize, outputBufferSize, flag);
+  this->setupOperations(gpus, constSrcOffset, constDstOffset);
 }
 
-void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset,
-                                                 size_t constDstOffset) {
+void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t constSrcOffset,
+                                                 size_t constDstOffset, int selfRank, size_t inputBufferSize,
+                                                 size_t outputBufferSize, int flag) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
   if (this->name != obj["name"]) {
@@ -209,6 +221,7 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t output
   if (protocol == "LL") {
     this->isUsingPacket = true;
   }
+  this->isUsingDoubleScratchBuffer = obj["use_double_scratch_buffer"];
   const auto& gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {
@@ -221,7 +234,8 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t output
 
   this->inputSize = inputSize;
   this->outputSize = outputSize;
-  this->setupOperations(gpus, contsSrcOffset, constDstOffset);
+  this->calcScratchBufferSizeAndOffset(selfRank, inputBufferSize, outputBufferSize, flag);
+  this->setupOperations(gpus, constSrcOffset, constDstOffset);
 }
 
 // Construct the channel info. Step 1. Flatten SM and PROXY channels into separate vectors.
@@ -291,7 +305,16 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   }
 }
 
-void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffset, size_t constDstOffset) {
+void ExecutionPlan::Impl::checkChannelsPerOperation(int channels) {
+  if (channels > MAX_CHANNEL_PER_OPERATION) {
+    throw Error("Executor plan has " + std::to_string(channels) +
+                    " channels per operation, exceeding executor support (" +
+                    std::to_string(MAX_CHANNEL_PER_OPERATION) + ")",
+                ErrorCode::ExecutorError);
+  }
+}
+
+void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffset, size_t constDstOffset) {
   // setup threadblocks and operations
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];
@@ -318,6 +341,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
         }
         if (op.contains("i_cids")) {
           operation.nInputs = op["i_cids"].size();
+          checkChannelsPerOperation(operation.nInputs);
           for (int i = 0; i < operation.nInputs; i++) {
             BufferType srcBufferType = convertToBufferType(op["i_buff"]["src"]);
             BufferType dstBufferType = convertToBufferType(op["i_buff"]["dst"]);
@@ -326,23 +350,25 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
                 channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
             operation.inputOffsets[i] =
                 this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["i_cids"][i]["off"]) +
-                (srcBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
+                (srcBufferType != BufferType::SCRATCH ? constSrcOffset : this->scratchBufferOffset);
             chunkIndexes.push_back((uint32_t)op["i_cids"][i]["off"]);
           }
         }
         // will have either srcs or i_cids
         if (op.contains("srcs")) {
           operation.nInputs = op["srcs"].size();
+          checkChannelsPerOperation(operation.nInputs);
           operation.inputBufferType = convertToBufferType(op["srcs"][0]["buff"]);
           for (int i = 0; i < operation.nInputs; i++) {
             operation.inputOffsets[i] =
                 this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["srcs"][i]["off"]) +
-                (operation.inputBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
+                (operation.inputBufferType != BufferType::SCRATCH ? constSrcOffset : this->scratchBufferOffset);
             chunkIndexes.push_back((uint32_t)op["srcs"][i]["off"]);
           }
         }
         if (op.contains("o_cids")) {
           operation.nOutputs = op["o_cids"].size();
+          checkChannelsPerOperation(operation.nOutputs);
           for (int i = 0; i < operation.nOutputs; i++) {
             BufferType srcBufferType = convertToBufferType(op["o_buff"]["src"]);
             BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
@@ -350,18 +376,19 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
                 channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["o_cids"][i]["id"]];
             operation.outputOffsets[i] =
                 this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["o_cids"][i]["off"]) +
-                (dstBufferType != BufferType::SCRATCH ? constDstOffset : 0);
+                (dstBufferType != BufferType::SCRATCH ? constDstOffset : this->scratchBufferOffset);
             chunkIndexes.push_back((uint32_t)op["o_cids"][i]["off"]);
           }
         }
         // will have either dsts or o_cids
         if (op.contains("dsts")) {
           operation.nOutputs = op["dsts"].size();
+          checkChannelsPerOperation(operation.nOutputs);
           operation.outputBufferType = convertToBufferType(op["dsts"][0]["buff"]);
           for (int i = 0; i < operation.nOutputs; i++) {
             operation.outputOffsets[i] =
                 this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["dsts"][i]["off"]) +
-                (operation.outputBufferType != BufferType::SCRATCH ? constDstOffset : 0);
+                (operation.outputBufferType != BufferType::SCRATCH ? constDstOffset : this->scratchBufferOffset);
             chunkIndexes.push_back((uint32_t)op["dsts"][i]["off"]);
           }
         }
@@ -370,6 +397,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
         }
         if (op.contains("srcoff")) {
           operation.srcOffset = this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["srcoff"]);
+          if (operation.srcBufferType == BufferType::SCRATCH) {
+            operation.srcOffset += this->scratchBufferOffset;
+          }
           chunkIndexes.push_back((uint32_t)op["srcoff"]);
         }
         if (op.contains("dstbuff")) {
@@ -377,6 +407,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
         }
         if (op.contains("dstoff")) {
           operation.dstOffset = this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["dstoff"]);
+          if (operation.dstBufferType == BufferType::SCRATCH) {
+            operation.dstOffset += this->scratchBufferOffset;
+          }
           chunkIndexes.push_back((uint32_t)op["dstoff"]);
         }
         if (op.contains("cnt")) {
