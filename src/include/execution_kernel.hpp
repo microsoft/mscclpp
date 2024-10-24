@@ -8,6 +8,7 @@
 #if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.hpp>
 #endif
+#include <mscclpp/nvls_device.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
@@ -401,6 +402,29 @@ MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, 
   Element::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
 }
 
+template <typename T>
+MSCCLPP_DEVICE_INLINE void handleMultiAllreduce(T* dst, T* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
+  const size_t nInt4 = size / sizeof(int4);
+  const size_t srcOffset4 = srcOffsetByBytes / sizeof(int4);
+  const size_t dstOffset4 = dstOffsetByBytes / sizeof(int4);
+  int4* src4 = (int4*)src;
+  int4* dst4 = (int4*)dst;
+  for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
+    int4 val;
+    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (T*)(src4 + srcOffset4 + idx));
+    DeviceMulticastPointerDeviceHandle::multimemStore(val, (T*)(dst4 + dstOffset4 + idx));
+  }
+  // handle rest of data
+  size_t processed = nInt4 * sizeof(int4);
+  const size_t startIdx = (srcOffset + processed) / sizeof(T);
+  const size_t endIdx = (dstOffset + size) / sizeof(T);
+  for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
+    T val;
+    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, src + idx);
+    DeviceMulticastPointerDeviceHandle::multimemStore(val, dst + idx);
+  }
+}
+
 template <typename T, typename PacketType = LL16Packet>
 __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
                                 size_t scratchSize, DeviceExecutionPlan* plan, uint32_t flag
@@ -530,6 +554,14 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, smChannels, op.outputChannelIndexes,
                        op.outputOffsets, op.nOutputs, op.size);
     }
+if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+    else if (op.type == OperationType::MULTI_ALL_REDUCE) {
+      // The pointers should be nvls ptr
+      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
+      T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      handleMultiAllReduce(dst, op.dstOffset, src, op.srcOffset, op.size, op.outputOffsets);
+    }
+#endif
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT)
     NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),

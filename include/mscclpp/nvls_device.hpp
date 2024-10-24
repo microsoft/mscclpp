@@ -37,7 +37,7 @@ struct DeviceMulticastPointerDeviceHandle {
           : "=r"(val.x), "=r"(val.y)
           : "l"(ptr)
           : "memory");
-    } else if constexpr (std::is_same_v<TValue, uint1> && std::is_same_v<T, float>) {
+    } else if constexpr (std::is_same_v<TValue, float> && std::is_same_v<T, float>) {
       asm("multimem.ld_reduce.relaxed.sys.global.add.f32 {%0}, [%1];" : "=r"(val.x) : "l"(ptr) : "memory");
     } else if constexpr (std::is_same_v<TValue, uint4> && std::is_same_v<T, __half2>) {
       asm("multimem.ld_reduce.relaxed.sys.global.add.v4.f16x2 {%0,%1,%2,%3}, [%4];"
@@ -51,6 +51,8 @@ struct DeviceMulticastPointerDeviceHandle {
           : "memory");
     } else if constexpr (std::is_same_v<TValue, uint1> && std::is_same_v<T, __half2>) {
       asm("multimem.ld_reduce.relaxed.sys.global.add.f16x2 {%0}, [%1];" : "=r"(val.x) : "l"(ptr) : "memory");
+    } else if constexpr (std::is_same_v<TValue, __half> && std::is_same_v<T, __half>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.f16 {%0}, [%1];" : "=r"(val.x) : "l"(ptr) : "memory");
     } else {
       static_assert(dependentFalse<T>, "Not supported type");
     }
