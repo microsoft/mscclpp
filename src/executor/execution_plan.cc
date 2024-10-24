@@ -159,13 +159,13 @@ void ExecutionPlan::Impl::calcScratchBufferSizeAndOffset(int rank, size_t inputS
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
 
   this->scratchBufferSize = sizePerRank * this->scratchChunks.at(rank);
+  this->scratchBufferOffset = (this->isUsingDoubleScratchBuffer && (flag % 2) == 0) ? this->scratchBufferSize : 0;
   if (this->isUsingPacket) {
     this->scratchBufferSize *= 2; /* data + flag */
   }
   if (this->isUsingDoubleScratchBuffer) {
     this->scratchBufferSize *= 2; /* double buffer */
   }
-  this->scratchBufferOffset = (this->isUsingDoubleScratchBuffer && (flag % 2) == 0) ? (this->scratchBufferSize / 2) : 0;
 }
 
 size_t ExecutionPlan::Impl::getScratchBufferSize() const { return this->scratchBufferSize; }
