@@ -305,6 +305,15 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   }
 }
 
+void ExecutionPlan::Impl::checkChannelsPerOperation(int channels) {
+  if (channels > MAX_CHANNEL_PER_OPERATION) {
+    throw Error("Executor plan has " + std::to_string(channels) +
+                    " channels per operation, exceeding executor support (" +
+                    std::to_string(MAX_CHANNEL_PER_OPERATION) + ")",
+                ErrorCode::ExecutorError);
+  }
+}
+
 void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffset, size_t constDstOffset) {
   // setup threadblocks and operations
   for (const auto& gpu : gpus) {
@@ -332,6 +341,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
         }
         if (op.contains("i_cids")) {
           operation.nInputs = op["i_cids"].size();
+          checkChannelsPerOperation(operation.nInputs);
           for (int i = 0; i < operation.nInputs; i++) {
             BufferType srcBufferType = convertToBufferType(op["i_buff"]["src"]);
             BufferType dstBufferType = convertToBufferType(op["i_buff"]["dst"]);
@@ -347,6 +357,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
         // will have either srcs or i_cids
         if (op.contains("srcs")) {
           operation.nInputs = op["srcs"].size();
+          checkChannelsPerOperation(operation.nInputs);
           operation.inputBufferType = convertToBufferType(op["srcs"][0]["buff"]);
           for (int i = 0; i < operation.nInputs; i++) {
             operation.inputOffsets[i] =
@@ -357,6 +368,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
         }
         if (op.contains("o_cids")) {
           operation.nOutputs = op["o_cids"].size();
+          checkChannelsPerOperation(operation.nOutputs);
           for (int i = 0; i < operation.nOutputs; i++) {
             BufferType srcBufferType = convertToBufferType(op["o_buff"]["src"]);
             BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
@@ -371,6 +383,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
         // will have either dsts or o_cids
         if (op.contains("dsts")) {
           operation.nOutputs = op["dsts"].size();
+          checkChannelsPerOperation(operation.nOutputs);
           operation.outputBufferType = convertToBufferType(op["dsts"][0]["buff"]);
           for (int i = 0; i < operation.nOutputs; i++) {
             operation.outputOffsets[i] =

@@ -287,8 +287,19 @@ struct Executor::Impl {
       DeviceExecutionPlan deviceExecutionPlan = {};
       std::vector<Operation> ops = plan.impl_->getOperations(rank, threadblock);
       deviceExecutionPlan.nOperations = ops.size();
+      if (deviceExecutionPlan.nOperations > MAX_OPERATION) {
+        throw Error("Executor plan has " + std::to_string(deviceExecutionPlan.nOperations) +
+                        " operations, exceeding executor support (" + std::to_string(MAX_OPERATION) + ")",
+                    ErrorCode::ExecutorError);
+      }
       deviceExecutionPlan.nSmChannels = plan.impl_->threadblockSMChannelMap.at(rank).at(threadblock).size();
       deviceExecutionPlan.nProxyChannels = plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock).size();
+      if (deviceExecutionPlan.nSmChannels > MAX_CHANNEL || deviceExecutionPlan.nProxyChannels > MAX_CHANNEL) {
+        throw Error("Executor plan has " +
+                        std::to_string(std::max(deviceExecutionPlan.nSmChannels, deviceExecutionPlan.nProxyChannels)) +
+                        " channels, exceeding executor support (" + std::to_string(MAX_CHANNEL) + ")",
+                    ErrorCode::ExecutorError);
+      }
       int chanIndex = 0;
       for (const auto& [index, _] : plan.impl_->threadblockSMChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.smChannels[chanIndex++] = mscclpp::deviceHandle(context.smChannels[index]);

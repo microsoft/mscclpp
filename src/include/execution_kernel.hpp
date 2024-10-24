@@ -349,11 +349,11 @@ MSCCLPP_DEVICE_INLINE void handleTransformToPacket(void* dst, void* src, uint32_
   mscclpp::putPackets<PacketType>(dst, dstOffset, src, srcOffset, size, threadIdx.x, blockDim.x, flag);
 }
 
-template <typename T>
+template <typename T, bool SendToRemote = true>
 MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T* src, uint32_t srcOffsetByBytes,
-                                            T* input, uint32_t* inputOffsets, DeviceHandle<SmChannel>* smChannels,
-                                            uint8_t* outputChannelIndexes, uint32_t* outputOffsets, int nOutChannels,
-                                            uint32_t size) {
+                                            T* input, uint32_t* inputOffsets, int nInputs,
+                                            DeviceHandle<SmChannel>* smChannels, uint8_t* outputChannelIndexes,
+                                            uint32_t* outputOffsets, int nOutChannels, uint32_t size) {
   const size_t nInt4 = size / sizeof(int4);
   const size_t srcOffset4 = srcOffsetByBytes / sizeof(int4);
   const size_t dstOffset4 = dstOffsetByBytes / sizeof(int4);
@@ -362,15 +362,17 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
   int4* input4 = (int4*)input;
   for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
     int4 tmp = src4[srcOffset4 + idx];
-    for (int index = 0; index < nOutChannels; ++index) {
+    for (int index = 0; index < nInputs; ++index) {
       size_t offset = inputOffsets[index] / sizeof(int4);
       int4 val = input4[offset + idx];
       tmp = add_vectors<T>(tmp, val);
     }
     dst4[dstOffset4 + idx] = tmp;
-    for (int index = 0; index < nOutChannels; ++index) {
-      size_t offset = outputOffsets[index] / sizeof(int4);
-      smChannels[outputChannelIndexes[index]].write<int4>(offset + idx, tmp);
+    if constexpr (SendToRemote) {
+      for (int index = 0; index < nOutChannels; ++index) {
+        size_t offset = outputOffsets[index] / sizeof(int4);
+        smChannels[outputChannelIndexes[index]].write<int4>(offset + idx, tmp);
+      }
     }
   }
   // handle rest of data
@@ -379,14 +381,16 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
   const size_t endIdx = (srcOffsetByBytes + size) / sizeof(T);
   for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
     T tmp = src[idx];
-    for (int index = 0; index < nOutChannels; ++index) {
+    for (int index = 0; index < nInputs; ++index) {
       size_t offset = inputOffsets[index] / sizeof(T);
       tmp = add_elements(tmp, input[offset + idx]);
     }
     dst[idx] = tmp;
-    for (int index = 0; index < nOutChannels; ++index) {
-      size_t offset = outputOffsets[index] / sizeof(T);
-      smChannels[outputChannelIndexes[index]].write<T>(offset + idx, tmp);
+    if constexpr (SendToRemote) {
+      for (int index = 0; index < nOutChannels; ++index) {
+        size_t offset = outputOffsets[index] / sizeof(T);
+        smChannels[outputChannelIndexes[index]].write<T>(offset + idx, tmp);
+      }
     }
   }
 }
@@ -523,8 +527,14 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       T* tmp = getBuffer(input, output, scratch, op.inputBufferType);
-      handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, smChannels, op.outputChannelIndexes,
-                       op.outputOffsets, op.nOutputs, op.size);
+      handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, op.nInputs, smChannels,
+                       op.outputChannelIndexes, op.outputOffsets, op.nOutputs, op.size);
+    } else if (op.type == OperationType::REDUCE) {
+      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
+      T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      T* tmp = getBuffer(input, output, scratch, op.inputBufferType);
+      handleReduceSend<T, false>(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, op.nInputs, smChannels,
+                                 op.outputChannelIndexes, op.outputOffsets, op.nOutputs, op.size);
     }
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT)

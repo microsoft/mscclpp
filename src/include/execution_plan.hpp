@@ -108,6 +108,7 @@ struct ExecutionPlan::Impl {
   size_t getNChunkSize(int rank, size_t inputSize, size_t outputSize, uint32_t nChunks,
                        const std::vector<uint32_t> offsets) const;
   void calcScratchBufferSizeAndOffset(int rank, size_t inputSize, size_t outputSize, int flag);
+  void checkChannelsPerOperation(int channels);
 };
 
 }  // namespace mscclpp
