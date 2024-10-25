@@ -8,7 +8,6 @@
 #if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.hpp>
 #endif
-#include <mscclpp/nvls_device.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
@@ -17,6 +16,7 @@
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
 #include "gpu_data_types.hpp"
+#include <mscclpp/nvls_device.hpp>
 
 namespace {
 template <typename To, typename From>
@@ -138,6 +138,34 @@ template <>
 MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
   return add_vectors_helper<__bfloat162>(a, b);
 }
+
+template <typename T>
+struct VectorType {
+  using type = T;
+  using nvls_type = T;
+  using nvls_type2 = T;
+};
+
+template <>
+struct VectorType<__half> {
+  using type = __half2;
+  using nvls_type = uint4;
+  using nvls_type2 = uint1;
+};
+
+template <>
+struct VectorType<__bfloat16> {
+  using type = __bfloat162;
+  using nvls_type = uint4;
+  using nvls_type2 = uint1;
+};
+
+template<>
+struct VectorType<float> {
+  using type = float;
+  using nvls_type = uint4;
+  using nvls_type2 = uint1;
+};
 
 }  // namespace
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
@@ -403,25 +431,30 @@ MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, 
 }
 
 template <typename T>
-MSCCLPP_DEVICE_INLINE void handleMultiAllreduce(T* dst, T* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
-  const size_t nInt4 = size / sizeof(int4);
-  const size_t srcOffset4 = srcOffsetByBytes / sizeof(int4);
-  const size_t dstOffset4 = dstOffsetByBytes / sizeof(int4);
-  int4* src4 = (int4*)src;
-  int4* dst4 = (int4*)dst;
+MSCCLPP_DEVICE_INLINE void handleMultiAllReduce(T* dst, T* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
+  using vectorType = typename VectorType<T>::type;
+  using nvlsType = typename VectorType<T>::nvls_type;
+  // nvls can only handle 4 bytes alignment
+  assert(size % sizeof(vectorType) == 0);
+  const size_t nInt4 = size / sizeof(nvlsType);
+  const size_t srcOffset4 = srcOffset / sizeof(nvlsType);
+  const size_t dstOffset4 = dstOffset / sizeof(nvlsType);
+  nvlsType* src4 = (nvlsType*)src;
+  nvlsType* dst4 = (nvlsType*)dst;
   for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
-    int4 val;
-    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (T*)(src4 + srcOffset4 + idx));
-    DeviceMulticastPointerDeviceHandle::multimemStore(val, (T*)(dst4 + dstOffset4 + idx));
+    nvlsType val;
+    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)(src4 + srcOffset4 + idx));
+    DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)(dst4 + dstOffset4 + idx));
   }
   // handle rest of data
-  size_t processed = nInt4 * sizeof(int4);
-  const size_t startIdx = (srcOffset + processed) / sizeof(T);
-  const size_t endIdx = (dstOffset + size) / sizeof(T);
+  size_t processed = nInt4 * sizeof(nvlsType);
+  using nvlsType2 = typename VectorType<T>::nvls_type2;
+  const size_t startIdx = (srcOffset + processed) / sizeof(nvlsType2);
+  const size_t endIdx = (dstOffset + size) / sizeof(nvlsType2);
   for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
-    T val;
-    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, src + idx);
-    DeviceMulticastPointerDeviceHandle::multimemStore(val, dst + idx);
+    nvlsType2 val;
+    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)src + idx);
+    DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)dst + idx);
   }
 }
 
@@ -554,12 +587,12 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, smChannels, op.outputChannelIndexes,
                        op.outputOffsets, op.nOutputs, op.size);
     }
-if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
     else if (op.type == OperationType::MULTI_ALL_REDUCE) {
       // The pointers should be nvls ptr
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      handleMultiAllReduce(dst, op.dstOffset, src, op.srcOffset, op.size, op.outputOffsets);
+      handleMultiAllReduce(dst, src, op.dstOffset, op.srcOffset, op.size);
     }
 #endif
 
