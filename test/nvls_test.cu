@@ -3,7 +3,6 @@
 
 #include <stdio.h>
 
-#if (USE_NVLS)
 #include <cuda.h>
 #include <cudaTypedefs.h>
 #include <cuda_runtime.h>
@@ -13,6 +12,7 @@
 #include <unistd.h>
 
 #include <mscclpp/gpu.hpp>
+#if (USE_NVLS)
 
 #define CUCHECK(cmd)                                     \
   do {                                                   \
@@ -41,31 +41,31 @@
 #define MULTIMEM_LD(val, ptr)
 #endif
 
-__global__ void init_kernel(float* uc_ptr, int size, int myrank, int nranks) {
-  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < size; idx += blockDim.x * gridDim.x) {
+__global__ void init_kernel(float* uc_ptr, size_t size, int myrank, int nranks) {
+  for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < size; idx += blockDim.x * gridDim.x) {
     uc_ptr[idx] = myrank + idx;
   }
 }
 
-__global__ void check_correctness(float* uc_ptr, int size, int myrank, int nranks) {
-  for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < size; idx += blockDim.x * gridDim.x) {
+__global__ void check_correctness(float* uc_ptr, size_t size, int myrank, int nranks) {
+  for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < size; idx += blockDim.x * gridDim.x) {
     float expected = (float)((nranks * (nranks - 1)) / 2 + nranks * idx);
     if (abs(uc_ptr[idx] - expected) > 0.01 * expected) {
-      printf("error! idx %d: %f != %f\n", idx, uc_ptr[idx], expected);
+      printf("error! idx %ld: %f != %f\n", idx, uc_ptr[idx], expected);
     }
   }
 }
 
-__global__ void testing(float* mc_ptr, int size, int myrank, int nranks) {
+__global__ void testing(float* mc_ptr, size_t size, int myrank, int nranks) {
   // for allreduce we dont even need an UC pointer. just using same mc_ptr for in-place reduction
   // line is assumed to be 16B 4 ints of 8 halves
-  int my_st = ((int64_t)size * (int64_t)myrank) / (int64_t)nranks;
-  int my_en = ((int64_t)size * (int64_t)(myrank + 1)) / (int64_t)nranks;
+  size_t my_st = ((int64_t)size * (int64_t)myrank) / (int64_t)nranks;
+  size_t my_en = ((int64_t)size * (int64_t)(myrank + 1)) / (int64_t)nranks;
 
-  int my_offset = (threadIdx.x + blockIdx.x * blockDim.x) * 4;
-  int my_step = blockDim.x * gridDim.x * 4;
+  size_t my_offset = (threadIdx.x + blockIdx.x * blockDim.x) * 4;
+  size_t my_step = blockDim.x * gridDim.x * 4;
 
-  for (int idx = my_st + my_offset; idx < my_en; idx += my_step) {
+  for (size_t idx = my_st + my_offset; idx < my_en; idx += my_step) {
     [[maybe_unused]] uint4 val;
     MULTIMEM_LD(val, mc_ptr + idx);
     MULTIMEM_ST(val, mc_ptr + idx);
@@ -80,7 +80,7 @@ int main() {
 
   cudaSetDevice(myrank);
 
-  size_t size = 1024 * 1024 * 512;
+  size_t size = 1024ULL * 1024ULL * 512ULL * 16;
   CUmemAllocationHandleType handleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
 
   CUmulticastObjectProp mcProp = {};
@@ -138,7 +138,7 @@ int main() {
   prop.requestedHandleTypes = handleType;
 
   // allocate physical memory (data buffer)
-  CUCHECK(cuMemCreate(&memhandle, size, &prop, 0 /*flags*/));
+  CUCHECK(cuMemCreate(&memhandle, mcSize, &prop, 0 /*flags*/));
 
   void* uc_va;
   void* mc_va;
@@ -148,14 +148,14 @@ int main() {
   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
 
   // Map a VA to UC space
-  CUCHECK(cuMemAddressReserve((CUdeviceptr*)&uc_va, size, minGran, 0U, 0));
-  cudaMemset(uc_va, 0, size);
-  CUCHECK(cuMemMap((CUdeviceptr)uc_va, size, 0, memhandle, 0));
+  CUCHECK(cuMemAddressReserve((CUdeviceptr*)&uc_va, mcSize, minGran, 0U, 0));
+  cudaMemset(uc_va, 0, mcSize);
+  CUCHECK(cuMemMap((CUdeviceptr)uc_va, mcSize, 0, memhandle, 0));
   // set access on UC address
-  CUCHECK(cuMemSetAccess((CUdeviceptr)uc_va, size, &accessDesc, 1));
+  CUCHECK(cuMemSetAccess((CUdeviceptr)uc_va, mcSize, &accessDesc, 1));
 
   // everyone binds memory to the multicast
-  CUCHECK(cuMulticastBindMem(handle, 0 /*mcOffset*/, memhandle, 0 /*memOffset*/, size, 0));
+  CUCHECK(cuMulticastBindAddr(handle, 0 /*mcOffset*/, (CUdeviceptr)uc_va, mcSize, 0));
   MPI_Barrier(MPI_COMM_WORLD);
   // usual VA business: map both MC and PA to two different VA addresses
 
