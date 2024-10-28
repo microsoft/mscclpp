@@ -431,7 +431,8 @@ MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, 
 }
 
 template <typename T>
-MSCCLPP_DEVICE_INLINE void handleMultiAllReduce(T* dst, T* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
+MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* dst, T* src, uint32_t dstOffset, uint32_t srcOffset,
+                                                      size_t size) {
   using vectorType = typename VectorType<T>::type;
   using nvlsType = typename VectorType<T>::nvls_type;
   // nvls can only handle 4 bytes alignment
@@ -588,11 +589,11 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                        op.outputOffsets, op.nOutputs, op.size);
     }
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
-    else if (op.type == OperationType::MULTI_ALL_REDUCE) {
+    else if (op.type == OperationType::MULTI_LOAD_REDUCE_STORE) {
       // The pointers should be nvls ptr
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      handleMultiAllReduce(dst, src, op.dstOffset, op.srcOffset, op.size);
+      handleMultiLoadReduceStore(dst, src, op.dstOffset, op.srcOffset, op.size);
     }
 #endif
 

@@ -46,7 +46,7 @@ enum class OperationType : uint8_t {
   REDUCE_SEND_PACKET,
   READ_REDUCE_COPY,
   READ_REDUCE_COPY_SEND,
-  MULTI_ALL_REDUCE
+  MULTI_LOAD_REDUCE_STORE,
 };
 
 struct Channels {
@@ -62,12 +62,18 @@ struct Operation {
   uint8_t nInputs;
   uint8_t nOutputs;
   union {
+    // For ops which require reading from multiple remote sources
     uint8_t inputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
+    // For ops which require reading from multiple local sources
     BufferType inputBufferType;
+    void* nvlsInputPtr;
   };
   union {
+    // For ops which require writing to multiple remote destinations
     uint8_t outputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
+    // For ops which require writing to multiple local destinations
     BufferType outputBufferType;
+    void* nvlsOutputPtr;
   };
   uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
   uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
