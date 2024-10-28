@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <mscclpp/executor.hpp>
+#include <mscclpp/nvls.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <set>
@@ -56,11 +57,13 @@ namespace mscclpp {
 struct ExecutionContext {
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<int, std::shared_ptr<Connection>> connections;
+  std::unordered_map<NvlsInfo, std::shared_ptr<NvlsConnection>> nvlsConnections;
   std::unordered_map<std::pair<BufferType, int>, mscclpp::RegisteredMemory> registeredMemories;
   std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
   std::vector<mscclpp::SemaphoreId> proxySemaphores;
   std::vector<mscclpp::SmChannel> smChannels;
   std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
   std::vector<DeviceExecutionPlan> deviceExecutionPlans;
   std::shared_ptr<char> scratchBuffer;
   size_t scratchBufferSize;
@@ -148,6 +151,13 @@ struct Executor::Impl {
     for (size_t i = 0; i < connectionFutures.size(); i++) {
       context.connections[connectedPeers[i]] = connectionFutures[i].get();
     }
+
+    // std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank);
+    // for (const NvlsInfo& info : nvlsInfos) {
+    //   std::shared_ptr<NvlsConnection> nvlsConnection =
+    //       this->comm->connectNvlsCollective(this->comm, info.localPeers, info.bufferSize);
+    //   context.nvlsConnections[info] = nvlsConnection;
+    // }
   }
 
   void setupRegisteredMemories(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
@@ -277,6 +287,36 @@ struct Executor::Impl {
       }
     }
   }
+
+  // void setupNvlsChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
+  //                    size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
+  //   auto getBuffer = [&](BufferType type) {
+  //     switch (type) {
+  //       case BufferType::INPUT:
+  //         return sendbuff;
+  //       case BufferType::OUTPUT:
+  //         return recvbuff;
+  //       case BufferType::SCRATCH:
+  //         return (void*)context.scratchBuffer.get();
+  //       default:
+  //         throw Error("Invalid buffer type", ErrorCode::ExecutorError);
+  //     }
+  //   };
+  //   std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank);
+  //   for (const NvlsInfo& info : nvlsInfos) {
+  //     std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[info];
+  //     void* buffer = getBuffer(info.bufferType);
+  //     nvlsConnection->bindAllocatedCuda();
+  //     // std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfosByDstRank(rank, BufferType::SCRATCH);
+  //     // std::vector<int> connectedPeers = plan.impl_->getConnectedPeers(rank);
+  //     // std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
+  //     // for (int peer : connectedPeers) {
+  //     //   nvlsChannels.push_back(context.nvlsConnections[info]->addDeviceMulticastPointer(
+  //     //       context.registeredMemories[{BufferType::SCRATCH, peer}].get(), context.registeredMemories[{BufferType::SCRATCH, rank}].get()));
+  //     // }
+  //     // context.nvlsChannels = std::move(nvlsChannels);
+  //   }
+  // }
 
   void setupDeviceExecutionPlan(ExecutionContext& context, int rank, const ExecutionPlan& plan) {
     std::vector<DeviceExecutionPlan> deviceExecutionPlans;

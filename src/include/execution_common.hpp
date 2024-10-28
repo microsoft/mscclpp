@@ -12,6 +12,8 @@ namespace mscclpp {
 constexpr int MAX_CHANNEL = 16;
 constexpr int MAX_CHANNEL_PER_OPERATION = 8;
 constexpr int MAX_OPERATION = 64;
+// input-input, output-output, scratch-scratch
+constexpr int MAX_NLVS_CHANNELS = 3;
 
 enum class BufferType : uint8_t {
   NONE,
@@ -52,6 +54,7 @@ enum class OperationType : uint8_t {
 struct Channels {
   mscclpp::DeviceHandle<mscclpp::SmChannel> smChannels[MAX_CHANNEL];
   mscclpp::DeviceHandle<mscclpp::SimpleProxyChannel> proxyChannels[MAX_CHANNEL];
+  void* nvlsChannels[MAX_NLVS_CHANNELS];
 };
 
 struct Operation {
@@ -66,14 +69,14 @@ struct Operation {
     uint8_t inputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
     // For ops which require reading from multiple local sources
     BufferType inputBufferType;
-    void* nvlsInputPtr;
+    uint8_t nvlsInputIndex;
   };
   union {
     // For ops which require writing to multiple remote destinations
     uint8_t outputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
     // For ops which require writing to multiple local destinations
     BufferType outputBufferType;
-    void* nvlsOutputPtr;
+    uint8_t nvlsOutputIndex;
   };
   uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
   uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
@@ -82,12 +85,13 @@ struct Operation {
   uint32_t size;
 };
 
-// total size = 1920 + 6400 + 4 + 4(padding) + 12(align) = 8336 bytes
+// TODO(binyli): update it
+// total size = 1944 + 6400 + 4 + 4(padding) + 12(align) = 8336 bytes
 struct __attribute__((aligned(16))) DeviceExecutionPlan {
   uint8_t nSmChannels;                  // 1 bytes
   uint8_t nProxyChannels;               // 1 bytes
   uint16_t nOperations;                 // 2 bytes
-  Channels channels;                    // 1920 bytes
+  Channels channels;                    // 1944 bytes
   Operation operations[MAX_OPERATION];  // 64 * 100 = 6400 bytes
 };
 

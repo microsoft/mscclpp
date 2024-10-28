@@ -23,6 +23,16 @@ struct ChannelKey {
            channelType == other.channelType;
   }
 };
+
+struct NvlsInfo {
+  std::vector<int> localPeers;
+  size_t bufferSize;
+  BufferType bufferType;
+
+  bool operator==(const NvlsInfo& other) const {
+    return bufferSize == other.bufferSize && localPeers == other.localPeers && bufferType == other.bufferType;
+  }
+};
 }  // namespace mscclpp
 
 namespace std {
@@ -41,6 +51,20 @@ struct hash<std::pair<int, mscclpp::ChannelType>> {
     std::size_t h2 = std::hash<int>()(static_cast<int>(key.second));
     // Refer hash_combine from boost
     return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+  }
+};
+
+template <>
+struct hash<mscclpp::NvlsInfo> {
+  std::size_t operator()(const mscclpp::NvlsInfo& info) const {
+    std::size_t hash = std::hash<size_t>()(info.bufferSize);
+    hash ^= std::hash<int>()(static_cast<int>(info.bufferType)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+
+    for (const auto& peer : info.localPeers) {
+      hash ^= std::hash<int>()(peer) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+    }
+
+    return hash;
   }
 };
 }  // namespace std
@@ -64,6 +88,7 @@ struct ExecutionPlan::Impl {
   std::vector<ChannelInfo> getChannelInfosByDstRank(int rank, BufferType bufferType) const;
   std::vector<ChannelInfo> getUnpairedChannelInfos(int rank, int worldSize, ChannelType channelType);
   std::vector<int> getConnectedPeers(int rank) const;
+  std::vector<NvlsInfo> getNvlsInfos(int rank) const;
   std::vector<BufferType> getConnectedBufferTypes(int rank) const;
   size_t getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const;
   std::vector<Operation> getOperations(int rank, int threadblock) const;

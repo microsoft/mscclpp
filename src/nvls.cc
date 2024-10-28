@@ -32,9 +32,12 @@ class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection:
   size_t allocateBuffer(size_t size);
   void freeBuffer(size_t offset, size_t size) noexcept;
   std::shared_ptr<char> bindMemory(CUmemGenericAllocationHandle memHandle, size_t devBuffSize);
+  std::shared_ptr<char> bindMemoryWithPtr(CUdeviceptr devicePtr, size_t devBuffSize);
+  std::shared_ptr<char> bindMemoryWithMulticastHandle(size_t offset, size_t bufferSize);
 
  private:
   friend class NvlsConnection;
+
   CUmemGenericAllocationHandle mcHandle_;
   CUmulticastObjectProp mcProp_;
   size_t bufferSize_;
@@ -128,6 +131,8 @@ void NvlsConnection::Impl::addDevice(int cudaDeviceId) {
   INFO(MSCCLPP_COLL, "NVLS connection created");
 }
 
+// TODO(binyli): For cuMemMap, we can not map handle to va with offset equal to 0.
+// Then we don't need to maintain the freeRanges_ list. For different memory, we could map to different mc handle.
 size_t NvlsConnection::Impl::allocateBuffer(size_t size) {
   if (freeRanges_.empty()) {
     throw Error("This NVLS connection mapped more than it was supposed to", ErrorCode::InvalidUsage);
@@ -190,30 +195,39 @@ void NvlsConnection::Impl::freeBuffer(size_t offset, size_t size) noexcept {
 std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUmemGenericAllocationHandle memHandle, size_t devBuffSize) {
   size_t offset = allocateBuffer(devBuffSize);
   MSCCLPP_CUTHROW(cuMulticastBindMem(mcHandle_, offset /*mcOffset*/, memHandle, 0 /*memOffset*/, devBuffSize, 0));
+  return bindMemoryWithMulticastHandle(offset, devBuffSize);
+}
 
+std::shared_ptr<char> NvlsConnection::Impl::bindMemoryWithPtr(CUdeviceptr devicePtr, size_t devBuffSize) {
+  size_t offset = allocateBuffer(devBuffSize);
+  MSCCLPP_CUTHROW(cuMulticastBindAddr(mcHandle_, offset /*mcOffset*/, devicePtr, devBuffSize, 0));
+  return bindMemoryWithMulticastHandle(offset, devBuffSize);
+}
+
+std::shared_ptr<char> NvlsConnection::Impl::bindMemoryWithMulticastHandle(size_t offset, size_t bufferSize) {
   char* mcPtr;
-
   CUmemAccessDesc accessDesc = {};
   accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   int deviceId = -1;
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
   accessDesc.location.id = deviceId;
   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)(&mcPtr), devBuffSize, minMcGran_, 0U, 0));
-  MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), devBuffSize, 0, mcHandle_, 0));
-  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)(mcPtr), devBuffSize, &accessDesc, 1));
+  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)(&mcPtr), bufferSize, minMcGran_, 0U, 0));
+  MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), bufferSize, 0, mcHandle_, 0));
+  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)(mcPtr), bufferSize, &accessDesc, 1));
 
   auto deleter = [=, self = shared_from_this()](char* ptr) {
     CUdevice device;
     MSCCLPP_CUTHROW(cuDeviceGet(&device, deviceId));
-    MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, devBuffSize));
-    MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, devBuffSize));
-    MSCCLPP_CUTHROW(cuMulticastUnbind(mcHandle_, device, offset, devBuffSize));
-    self->freeBuffer(offset, devBuffSize);
+    MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, bufferSize));
+    MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, bufferSize));
+    MSCCLPP_CUTHROW(cuMulticastUnbind(mcHandle_, device, offset, bufferSize));
+    self->freeBuffer(offset, bufferSize);
   };
 
   return std::shared_ptr<char>(mcPtr, deleter);
 }
+
 #else   // !(USE_NVLS)
 class NvlsConnection::Impl {
  public:
@@ -228,6 +242,7 @@ class NvlsConnection::Impl {
   size_t allocateBuffer(size_t) { throw notSupportedError; }
   void freeBuffer(size_t, size_t) { throw notSupportedError; }
   std::shared_ptr<char> bindMemory(CUmemGenericAllocationHandle, size_t) { throw notSupportedError; }
+  std::shared_ptr<char> bindMemory(CUdeviceptr, size_t) { throw notSupportedError; }
   void addDevice(int) { throw notSupportedError; }
   size_t getMinMcGran() { throw notSupportedError; }
 
