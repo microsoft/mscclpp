@@ -1,12 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <stdio.h>
-
 #include <cuda.h>
 #include <cudaTypedefs.h>
 #include <cuda_runtime.h>
 #include <mpi.h>
+#include <stdio.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>

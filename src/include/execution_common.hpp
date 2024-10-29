@@ -4,6 +4,7 @@
 #ifndef MSCCLPP_EXECUTION_COMMON_HPP_
 #define MSCCLPP_EXECUTION_COMMON_HPP_
 
+#include <mscclpp/nvls.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
 
@@ -54,7 +55,7 @@ enum class OperationType : uint8_t {
 struct Channels {
   mscclpp::DeviceHandle<mscclpp::SmChannel> smChannels[MAX_CHANNEL];
   mscclpp::DeviceHandle<mscclpp::SimpleProxyChannel> proxyChannels[MAX_CHANNEL];
-  void* nvlsChannels[MAX_NLVS_CHANNELS];
+  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels[MAX_NLVS_CHANNELS];
 };
 
 struct Operation {

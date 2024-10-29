@@ -15,7 +15,7 @@
 #include "execution_common.hpp"
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-#include "gpu_data_types.hpp"
+#include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/nvls_device.hpp>
 
 namespace {
@@ -160,7 +160,7 @@ struct VectorType<__bfloat16> {
   using nvls_type2 = uint1;
 };
 
-template<>
+template <>
 struct VectorType<float> {
   using type = float;
   using nvls_type = uint4;

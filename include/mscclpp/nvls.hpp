@@ -26,6 +26,7 @@ class NvlsConnection {
   struct DeviceMulticastPointer {
    private:
     std::shared_ptr<PhysicalCudaMemory<char>> deviceMem_;
+    void* devicePtr_;
     std::shared_ptr<char> mcPtr_;
     size_t bufferSize_;
 
@@ -33,7 +34,9 @@ class NvlsConnection {
     using DeviceHandle = DeviceMulticastPointerDeviceHandle;
     DeviceMulticastPointer(std::shared_ptr<PhysicalCudaMemory<char>> deviceMem, std::shared_ptr<char> mcPtr,
                            size_t bufferSize)
-        : deviceMem_(deviceMem), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
+        : deviceMem_(deviceMem), devicePtr_(nullptr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
+    DeviceMulticastPointer(void* devicePtr, std::shared_ptr<char> mcPtr, size_t bufferSize)
+        : deviceMem_(nullptr), devicePtr_(devicePtr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
     DeviceHandle deviceHandle();
     char* getDevicePtr();
 
@@ -45,6 +48,8 @@ class NvlsConnection {
   /// The \p handle to the allocation (its lifetime is managed by the caller)
   /// and the \p size of the allocation.
   std::shared_ptr<char> bindAllocatedCuda(CUmemGenericAllocationHandle memHandle, size_t size);
+
+  std::shared_ptr<char> bindAllocatedCudaWithPtr(CUdeviceptr devicePtr, size_t size);
 
   size_t getMultiCastMinGranularity();
 

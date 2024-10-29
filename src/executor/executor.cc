@@ -288,35 +288,29 @@ struct Executor::Impl {
     }
   }
 
-  // void setupNvlsChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
-  //                    size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
-  //   auto getBuffer = [&](BufferType type) {
-  //     switch (type) {
-  //       case BufferType::INPUT:
-  //         return sendbuff;
-  //       case BufferType::OUTPUT:
-  //         return recvbuff;
-  //       case BufferType::SCRATCH:
-  //         return (void*)context.scratchBuffer.get();
-  //       default:
-  //         throw Error("Invalid buffer type", ErrorCode::ExecutorError);
-  //     }
-  //   };
-  //   std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank);
-  //   for (const NvlsInfo& info : nvlsInfos) {
-  //     std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[info];
-  //     void* buffer = getBuffer(info.bufferType);
-  //     nvlsConnection->bindAllocatedCuda();
-  //     // std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfosByDstRank(rank, BufferType::SCRATCH);
-  //     // std::vector<int> connectedPeers = plan.impl_->getConnectedPeers(rank);
-  //     // std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
-  //     // for (int peer : connectedPeers) {
-  //     //   nvlsChannels.push_back(context.nvlsConnections[info]->addDeviceMulticastPointer(
-  //     //       context.registeredMemories[{BufferType::SCRATCH, peer}].get(), context.registeredMemories[{BufferType::SCRATCH, rank}].get()));
-  //     // }
-  //     // context.nvlsChannels = std::move(nvlsChannels);
-  //   }
-  // }
+  void setupNvlsChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, int rank,
+                         const ExecutionPlan& plan) {
+    auto getBuffer = [&](BufferType type) {
+      switch (type) {
+        case BufferType::INPUT:
+          return sendbuff;
+        case BufferType::OUTPUT:
+          return recvbuff;
+        case BufferType::SCRATCH:
+          return (void*)context.scratchBuffer.get();
+        default:
+          throw Error("Invalid buffer type", ErrorCode::ExecutorError);
+      }
+    };
+    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank);
+    for (const NvlsInfo& info : nvlsInfos) {
+      std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[info];
+      void* buffer = getBuffer(info.bufferType);
+      std::shared_ptr<char> nvlsPtr = nvlsConnection->bindAllocatedCudaWithPtr((CUdeviceptr)buffer, info.bufferSize);
+      NvlsConnection::DeviceMulticastPointer deviceMulticastPointer(buffer, nvlsPtr, info.bufferSize);
+      context.nvlsChannels.push_back(deviceMulticastPointer);
+    }
+  }
 
   void setupDeviceExecutionPlan(ExecutionContext& context, int rank, const ExecutionPlan& plan) {
     std::vector<DeviceExecutionPlan> deviceExecutionPlans;
@@ -333,6 +327,9 @@ struct Executor::Impl {
       chanIndex = 0;
       for (const auto& [index, _] : plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.proxyChannels[chanIndex++] = mscclpp::deviceHandle(context.proxyChannels[index]);
+      }
+      for (const auto& [index, _] : plan.impl_->threadblockNvlsChannelMap.at(rank).at(threadblock)) {
+        deviceExecutionPlan.channels.nvlsChannels[index] = mscclpp::deviceHandle(context.nvlsChannels[index]);
       }
       for (size_t i = 0; i < ops.size(); i++) {
         deviceExecutionPlan.operations[i] = ops[i];

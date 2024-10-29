@@ -114,6 +114,7 @@ struct ExecutionPlan::Impl {
   // threadblockChannelMap[rank][threadblock] = [channelIndex, channelKey]
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockSMChannelMap;
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockProxyChannelMap;
+  std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockNvlsChannelMap;
   std::unordered_map<int, uint32_t> inputChunks;
   std::unordered_map<int, uint32_t> outputChunks;
   std::unordered_map<int, uint32_t> scratchChunks;

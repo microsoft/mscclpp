@@ -33,7 +33,7 @@ class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection:
   void freeBuffer(size_t offset, size_t size) noexcept;
   std::shared_ptr<char> bindMemory(CUmemGenericAllocationHandle memHandle, size_t devBuffSize);
   std::shared_ptr<char> bindMemoryWithPtr(CUdeviceptr devicePtr, size_t devBuffSize);
-  std::shared_ptr<char> bindMemoryWithMulticastHandle(size_t offset, size_t bufferSize);
+  std::shared_ptr<char> bindMemoryToMulticastHandle(size_t offset, size_t bufferSize);
 
  private:
   friend class NvlsConnection;
@@ -195,16 +195,16 @@ void NvlsConnection::Impl::freeBuffer(size_t offset, size_t size) noexcept {
 std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUmemGenericAllocationHandle memHandle, size_t devBuffSize) {
   size_t offset = allocateBuffer(devBuffSize);
   MSCCLPP_CUTHROW(cuMulticastBindMem(mcHandle_, offset /*mcOffset*/, memHandle, 0 /*memOffset*/, devBuffSize, 0));
-  return bindMemoryWithMulticastHandle(offset, devBuffSize);
+  return bindMemoryToMulticastHandle(offset, devBuffSize);
 }
 
 std::shared_ptr<char> NvlsConnection::Impl::bindMemoryWithPtr(CUdeviceptr devicePtr, size_t devBuffSize) {
   size_t offset = allocateBuffer(devBuffSize);
   MSCCLPP_CUTHROW(cuMulticastBindAddr(mcHandle_, offset /*mcOffset*/, devicePtr, devBuffSize, 0));
-  return bindMemoryWithMulticastHandle(offset, devBuffSize);
+  return bindMemoryToMulticastHandle(offset, devBuffSize);
 }
 
-std::shared_ptr<char> NvlsConnection::Impl::bindMemoryWithMulticastHandle(size_t offset, size_t bufferSize) {
+std::shared_ptr<char> NvlsConnection::Impl::bindMemoryToMulticastHandle(size_t offset, size_t bufferSize) {
   char* mcPtr;
   CUmemAccessDesc accessDesc = {};
   accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
@@ -242,7 +242,7 @@ class NvlsConnection::Impl {
   size_t allocateBuffer(size_t) { throw notSupportedError; }
   void freeBuffer(size_t, size_t) { throw notSupportedError; }
   std::shared_ptr<char> bindMemory(CUmemGenericAllocationHandle, size_t) { throw notSupportedError; }
-  std::shared_ptr<char> bindMemory(CUdeviceptr, size_t) { throw notSupportedError; }
+  std::shared_ptr<char> bindMemoryWithPtr(CUdeviceptr, size_t) { throw notSupportedError; }
   void addDevice(int) { throw notSupportedError; }
   size_t getMinMcGran() { throw notSupportedError; }
 
@@ -279,9 +279,17 @@ std::shared_ptr<char> NvlsConnection::bindAllocatedCuda(CUmemGenericAllocationHa
   return pimpl_->bindMemory(memHandle, size);
 }
 
+std::shared_ptr<char> NvlsConnection::bindAllocatedCudaWithPtr(CUdeviceptr devicePtr, size_t size) {
+  return pimpl_->bindMemoryWithPtr(devicePtr, size);
+}
+
 NvlsConnection::DeviceMulticastPointer::DeviceHandle NvlsConnection::DeviceMulticastPointer::deviceHandle() {
   NvlsConnection::DeviceMulticastPointer::DeviceHandle device;
-  device.devicePtr = this->deviceMem_->devicePtr_;
+  if (this->deviceMem_ != nullptr) {
+    device.devicePtr = this->deviceMem_->devicePtr_;
+  } else {
+    device.devicePtr = this->devicePtr_;
+  }
   device.mcPtr = this->mcPtr_.get();
   device.bufferSize = this->bufferSize_;
   return device;

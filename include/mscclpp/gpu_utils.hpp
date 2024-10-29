@@ -121,6 +121,47 @@ PhysicalCudaMemory<T>* cudaPhysicalCalloc(size_t nelem, size_t gran) {
 }
 
 template <class T>
+T* cudaPhysicalCallocPtr(size_t nelem, size_t gran) {
+  AvoidCudaGraphCaptureGuard cgcGuard;
+
+  int deviceId = -1;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+
+  CUmemAllocationProp prop = {};
+  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  prop.location.id = deviceId;
+#if defined(__HIP_PLATFORM_AMD__)
+  // TODO: revisit when HIP fixes this typo in the field name
+  prop.requestedHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+#else
+  prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+#endif
+
+  CUmemGenericAllocationHandle memHandle;
+  size_t bufferSize = sizeof(T) * nelem;
+  // allocate physical memory
+  MSCCLPP_CUTHROW(cuMemCreate(&memHandle, bufferSize, &prop, 0 /*flags*/));
+
+  CUmemAccessDesc accessDesc = {};
+  accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  accessDesc.location.id = deviceId;
+  accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+
+  T* devicePtr = nullptr;
+  // Map the device pointer
+  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, bufferSize, gran, 0U, 0));
+  MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, bufferSize, 0, memHandle, 0));
+  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)devicePtr, bufferSize, &accessDesc, 1));
+  CudaStreamWithFlags stream(cudaStreamNonBlocking);
+  MSCCLPP_CUDATHROW(cudaMemsetAsync(devicePtr, 0, bufferSize, stream));
+
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+
+  return devicePtr;
+}
+
+template <class T>
 T* cudaExtCalloc(size_t nelem) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   T* ptr;
@@ -214,6 +255,22 @@ struct CudaPhysicalDeleter {
   }
 };
 
+template <class T>
+struct CudaPhysicalPtrDeleter {
+  static_assert(!std::is_array_v<T>, "T must not be an array");
+  void operator()(T* ptr) {
+    AvoidCudaGraphCaptureGuard cgcGuard;
+    CUmemGenericAllocationHandle handle;
+    size_t size = 0;
+    MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, ptr));
+    MSCCLPP_CUTHROW(cuMemRelease(handle));
+    MSCCLPP_CUTHROW(cuMemGetAddressRange(NULL, &size, (CUdeviceptr)ptr));
+    MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, size));
+    MSCCLPP_CUTHROW(cuMemRelease(handle));
+    MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, size));
+  }
+};
+
 /// A deleter that calls cudaFreeHost for use with std::unique_ptr or std::shared_ptr.
 /// @tparam T Type of each element in the allocated memory.
 template <class T>
@@ -244,6 +301,12 @@ template <class T>
 std::shared_ptr<PhysicalCudaMemory<T>> allocSharedPhysicalCuda(size_t count, size_t gran) {
   return detail::safeAlloc<PhysicalCudaMemory<T>, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
                            std::shared_ptr<PhysicalCudaMemory<T>>>(count, gran);
+}
+
+template <class T>
+std::shared_ptr<T> allocSharedPhysicalCudaPtr(size_t count, size_t gran) {
+  return detail::safeAlloc<T, detail::cudaPhysicalCallocPtr<T>, CudaPhysicalPtrDeleter<T>, std::shared_ptr<T>>(count,
+                                                                                                               gran);
 }
 
 /// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
