@@ -189,6 +189,8 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
   if (protocol == "LL") {
     this->isUsingPacket = true;
   }
+  this->inputSize = inputSize;
+  this->outputSize = outputSize;
   this->nThreadsPerBlock = obj.value("num_threads_per_block", 1024);
   const auto& gpus = obj["gpus"];
 
@@ -200,9 +202,6 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
     this->chunkGroups[rank] = gpu["chunkGroups"];
   }
   this->setupChannels(gpus);
-
-  this->inputSize = inputSize;
-  this->outputSize = outputSize;
   this->setupOperations(gpus, contsSrcOffset, constDstOffset);
 }
 
@@ -242,7 +241,7 @@ void ExecutionPlan::Impl::parseChannels(
       NvlsInfo info;
       info.bufferType = convertToBufferType(channel["buff"]);
       for (const auto& group : channel["rankGroups"]) {
-        info.bufferSize = group["size"];
+        info.bufferSize = (int)group["size"] * this->getUpperBoundChunkSize(rank, this->inputSize, this->outputSize);
         for (int rank : group["ranks"]) {
           info.ranks.push_back(rank);
         }
@@ -503,11 +502,19 @@ size_t ExecutionPlan::Impl::getNChunkSize(int rank, size_t inputSize, size_t out
   return nChunkSize;
 }
 
+size_t ExecutionPlan::Impl::getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const {
+  auto sizePerRank = calcSizePerRank(rank, inputSize, outputSize);
+  uint32_t nChunks = sizePerRank.second;
+  return (sizePerRank.first + nChunks - 1) / nChunks;
+}
+
 void ExecutionPlan::Impl::reset() {
   this->operations.clear();
   this->channelInfos.clear();
+  this->nvlsInfos.clear();
   this->threadblockSMChannelMap.clear();
   this->threadblockProxyChannelMap.clear();
+  this->threadblockNvlsChannelMap.clear();
   this->inputChunks.clear();
   this->outputChunks.clear();
   this->scratchChunks.clear();

@@ -100,12 +100,6 @@ struct ExecutionPlan::Impl {
   void setupChannels(const nlohmann::json& gpus);
   void setupOperations(const nlohmann::json& gpus, size_t contsSrcOffset, size_t constDstOffset);
 
-  // helper functions to setup the channels
-  void parseChannels(
-      const nlohmann::json& gpu, std::vector<ChannelInfo>& channelInfos, std::vector<NvlsInfo>& nvlsInfos,
-      std::map<std::tuple<int, BufferType, BufferType, ChannelType>, std::vector<int>>& chanConnectedPeersMap,
-      int rank);
-
   void reset();
   void operationsReset();
 
@@ -136,6 +130,13 @@ struct ExecutionPlan::Impl {
   size_t getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex, uint32_t alignment = 16) const;
   size_t getNChunkSize(int rank, size_t inputSize, size_t outputSize, uint32_t nChunks,
                        const std::vector<uint32_t> offsets) const;
+  size_t getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const;
+
+  // helper functions to setup the channels
+  void parseChannels(
+      const nlohmann::json& gpu, std::vector<ChannelInfo>& channelInfos, std::vector<NvlsInfo>& nvlsInfos,
+      std::map<std::tuple<int, BufferType, BufferType, ChannelType>, std::vector<int>>& chanConnectedPeersMap,
+      int rank);
 };
 
 }  // namespace mscclpp

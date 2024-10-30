@@ -73,8 +73,10 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) {
     throw mscclpp::SysError("getpid() failed", errno);
   }
 
-  INFO(MSCCLPP_COLL, "NVLS handle created on root with size %ld. minGranularity %ld and recommendedGranularity %ld\n",
-       mcProp_.size, minMcGran_, mcGran_);
+  INFO(MSCCLPP_COLL,
+       "NVLS handle created on root with size %ld. minGranularity %ld and recommendedGranularity %ld buffer size is "
+       "%ld\n",
+       mcProp_.size, minMcGran_, mcGran_, bufferSize);
 }
 
 NvlsConnection::Impl::Impl(const std::vector<char>& data) {
@@ -215,6 +217,7 @@ std::shared_ptr<char> NvlsConnection::Impl::bindMemoryToMulticastHandle(size_t o
   MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)(&mcPtr), bufferSize, minMcGran_, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), bufferSize, 0, mcHandle_, 0));
   MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)(mcPtr), bufferSize, &accessDesc, 1));
+  INFO(MSCCLPP_COLL, "NVLS connection bound memory at offset %ld, size %ld", offset, bufferSize);
 
   auto deleter = [=, self = shared_from_this()](char* ptr) {
     CUdevice device;
