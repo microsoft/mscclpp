@@ -12,7 +12,7 @@
 
 A GPU-driven communication stack for scalable AI applications.
 
-See [Quick Start](docs/quickstart.md) to quickly get started.
+See [Quick Start](docs/getting-started/quickstart.md) to quickly get started.
 
 ## Overview
 
