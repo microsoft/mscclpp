@@ -1,0 +1,193 @@
+{
+    "name": "allreduce_nvls",
+    "colletive": "allreduce",
+    "protocol": "Simple",
+    "inplace": true,
+    "gpus": [
+      {
+        "id": 0,
+        "inputChunks": 2,
+        "outputChunks": 0,
+        "scratchChunks": 0,
+        "chunkGroups": 2,
+        "threadblocks": [
+          {
+            "id": 0,
+            "ops": [
+              {
+                "name": "signal",
+                "o_buff": {
+                  "src": "i",
+                  "dst": "i"
+                },
+                "o_cids": [
+                  {
+                    "id": 0,
+                    "off": 2
+                  }
+                ],
+                "ctype": "sm",
+                "cnt": 1
+              },
+              {
+                "name": "wait",
+                "i_buff": {
+                  "src": "i",
+                  "dst": "i"
+                },
+                "i_cids": [
+                  {
+                    "id": 0,
+                    "off": 0
+                  }
+                ],
+                "ctype": "sm",
+                "cnt": 1
+              },
+              {
+                "name": "nop",
+                "deps": [
+                  {
+                    "tb": 0,
+                    "step": 1
+                  }
+                ]
+              },
+              {
+                "name": "glres",
+                "src": 0,
+                "srcbuff": "i",
+                "srcoff": 0,
+                "gi_cid": 0,
+                "go_cid": 0,
+                "dst": 0,
+                "dstbuff": "i",
+                "dstoff": 0,
+                "ctype": "nvls",
+                "cnt": 1
+              }
+            ],
+            "channels": [
+              {
+                "src": "i",
+                "dst": "i",
+                "ctype": "nvls",
+                "cids": [
+                  0
+                ]
+              }
+            ]
+          }
+        ],
+        "channels": [
+          {
+            "buff": "i",
+            "type": "nvls",
+            "rankGroups": [
+              {
+                "ranks": [
+                  0,
+                  1
+                ],
+                "size": 2
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 1,
+        "inputChunks": 2,
+        "outputChunks": 0,
+        "scratchChunks": 0,
+        "chunkGroups": 2,
+        "threadblocks": [
+          {
+            "id": 0,
+            "ops": [
+              {
+                "name": "signal",
+                "o_buff": {
+                  "src": "i",
+                  "dst": "i"
+                },
+                "o_cids": [
+                  {
+                    "id": 0,
+                    "off": 0
+                  }
+                ],
+                "ctype": "sm",
+                "cnt": 1
+              },
+              {
+                "name": "wait",
+                "i_buff": {
+                  "src": "i",
+                  "dst": "i"
+                },
+                "i_cids": [
+                  {
+                    "id": 0,
+                    "off": 2
+                  }
+                ],
+                "ctype": "sm",
+                "cnt": 1
+              },
+              {
+                "name": "nop",
+                "deps": [
+                  {
+                    "tb": 0,
+                    "step": 1
+                  }
+                ]
+              },
+              {
+                "name": "glres",
+                "src": 1,
+                "srcbuff": "i",
+                "srcoff": 1,
+                "gi_cid": 0,
+                "go_cid": 0,
+                "dst": 1,
+                "dstbuff": "i",
+                "dstoff": 1,
+                "ctype": "nvls",
+                "cnt": 1
+              }
+            ],
+            "channels": [
+              {
+                "src": "i",
+                "dst": "i",
+                "ctype": "nvls",
+                "cids": [
+                  0
+                ]
+              }
+            ]
+          }
+        ],
+        "channels": [
+          {
+            "srcbuff": "i",
+            "dstbuff": "i",
+            "type": "nvls",
+            "rankGroups": [
+              {
+                "ranks": [
+                  0,
+                  1
+                ],
+                "size": 2
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "num_threads_per_block": 1024,
+    "use_double_scratch_buffer": false
+  }
