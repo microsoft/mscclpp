@@ -23,7 +23,7 @@
                 "o_cids": [
                   {
                     "id": 0,
-                    "off": 2
+                    "off": 0
                   }
                 ],
                 "ctype": "sm",
@@ -75,6 +75,14 @@
                 "cids": [
                   0
                 ]
+              },
+              {
+                "src": "i",
+                "dst": "i",
+                "ctype": "sm",
+                "cids": [
+                  0
+                ]
               }
             ]
           }
@@ -91,6 +99,14 @@
                 ],
                 "size": 2
               }
+            ]
+          },
+          {
+            "srcbuff": "i",
+            "dstbuff": "i",
+            "type": "sm",
+            "connectedTo": [
+              1
             ]
           }
         ]
@@ -166,14 +182,21 @@
                 "cids": [
                   0
                 ]
+              },
+              {
+                "src": "i",
+                "dst": "i",
+                "ctype": "sm",
+                "cids": [
+                  0
+                ]
               }
             ]
           }
         ],
         "channels": [
           {
-            "srcbuff": "i",
-            "dstbuff": "i",
+            "buff": "i",
             "type": "nvls",
             "rankGroups": [
               {
@@ -183,6 +206,14 @@
                 ],
                 "size": 2
               }
+            ]
+          },
+          {
+            "srcbuff": "i",
+            "dstbuff": "i",
+            "type": "sm",
+            "connectedTo": [
+              0
             ]
           }
         ]
