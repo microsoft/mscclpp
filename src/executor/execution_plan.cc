@@ -200,7 +200,6 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
     this->chunkGroups[rank] = gpu["chunkGroups"];
   }
   this->setupChannels(gpus);
-  this->setupNvlsChannels(gpus);
 
   this->inputSize = inputSize;
   this->outputSize = outputSize;
@@ -233,19 +232,23 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t output
   this->setupOperations(gpus, contsSrcOffset, constDstOffset);
 }
 
-// Construct the channel info. Step 1. Flatten SM and PROXY channels into separate vectors.
-// Step 2. For each threadblock, construct a vector of channel indexes and keys.
-void ExecutionPlan::Impl::setupChannels(const json& gpus) {
-  using mapKey = std::tuple<int, BufferType, BufferType, ChannelType>;
-  std::map<mapKey, std::vector<int>> chanConnectedPeersMap;
-  for (const auto& gpu : gpus) {
-    int rank = gpu["id"];
-    std::vector<ChannelInfo> channelInfos;
-    for (const auto& channel : gpu["channels"]) {
-      ChannelType chanType = convertToChannelType(channel["type"]);
-      if (groupChannelType.find(chanType) != groupChannelType.end()) {
-        continue;
+void ExecutionPlan::Impl::parseChannels(
+    const json& gpu, std::vector<ChannelInfo>& channelInfos, std::vector<NvlsInfo>& nvlsInfos,
+    std::map<std::tuple<int, BufferType, BufferType, ChannelType>, std::vector<int>>& chanConnectedPeersMap, int rank) {
+  for (const auto& channel : gpu["channels"]) {
+    ChannelType chanType = convertToChannelType(channel["type"]);
+
+    if (chanType == ChannelType::NVLS) {
+      NvlsInfo info;
+      info.bufferType = convertToBufferType(channel["buff"]);
+      for (const auto& group : channel["rankGroups"]) {
+        info.bufferSize = group["size"];
+        for (int rank : group["ranks"]) {
+          info.ranks.push_back(rank);
+        }
       }
+      nvlsInfos.push_back(info);
+    } else {
       ChannelInfo info;
       info.srcBufferType = convertToBufferType(channel["srcbuff"]);
       info.dstBufferType = convertToBufferType(channel["dstbuff"]);
@@ -257,7 +260,21 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
       }
       channelInfos.push_back(info);
     }
+  }
+}
+
+// Construct the channel info. Step 1. Flatten SM and PROXY channels into separate vectors.
+// Step 2. For each threadblock, construct a vector of channel indexes and keys.
+void ExecutionPlan::Impl::setupChannels(const json& gpus) {
+  using mapKey = std::tuple<int, BufferType, BufferType, ChannelType>;
+  std::map<mapKey, std::vector<int>> chanConnectedPeersMap;
+  for (const auto& gpu : gpus) {
+    int rank = gpu["id"];
+    std::vector<ChannelInfo> channelInfos;
+    std::vector<NvlsInfo> nvlsInfos;
+    this->parseChannels(gpu, channelInfos, nvlsInfos, chanConnectedPeersMap, rank);
     this->channelInfos[rank] = channelInfos;
+    this->nvlsInfos[rank] = nvlsInfos;
   }
 
   for (const auto& [key, connectedFrom] : chanConnectedPeersMap) {
@@ -273,10 +290,11 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   // setup threadblockChannelMap
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];
-    auto channelTypes = {ChannelType::SM, ChannelType::PROXY};
+    auto channelTypes = {ChannelType::SM, ChannelType::PROXY, ChannelType::NVLS};
     std::unordered_map<ChannelKey, std::vector<int>> channelMap;
     for (auto channelType : channelTypes) {
       const std::vector<ChannelInfo> channelInfos = this->getChannelInfos(rank, channelType);
+      const std::vector<NvlsInfo> nvlsInfos = this->getNvlsInfos(rank);
       int index = 0;
       for (const auto& info : channelInfos) {
         ChannelKey key = {info.srcBufferType, info.dstBufferType, info.channelType};
@@ -284,10 +302,17 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
           channelMap[key].push_back(index++);
         }
       }
+      for (const auto& info : nvlsInfos) {
+        ChannelKey key = {info.bufferType, info.bufferType, ChannelType::NVLS};
+        for (size_t i = 0; i < info.ranks.size(); i++) {
+          channelMap[key].push_back(index++);
+        }
+      }
     }
     int nthreadblocks = gpu["threadblocks"].size();
     this->threadblockSMChannelMap[rank].resize(nthreadblocks);
     this->threadblockProxyChannelMap[rank].resize(nthreadblocks);
+    this->threadblockNvlsChannelMap[rank].resize(nthreadblocks);
     for (const auto& threadblock : gpu["threadblocks"]) {
       for (const auto& channel : threadblock["channels"]) {
         ChannelType channelType = convertToChannelType(channel["ctype"]);
@@ -297,59 +322,7 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
             this->threadblockSMChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
           } else if (channelType == ChannelType::PROXY) {
             this->threadblockProxyChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
-          }
-        }
-      }
-    }
-  }
-}
-
-void ExecutionPlan::Impl::setupNvlsChannels(const json& gpus) {
-  using mapKey = std::tuple<int, BufferType, BufferType, ChannelType>;
-  std::map<mapKey, std::vector<int>> chanConnectedPeersMap;
-  for (const auto& gpu : gpus) {
-    int rank = gpu["id"];
-    std::vector<NvlsInfo> nvlsInfos;
-    for (const auto& channel : gpu["channels"]) {
-      ChannelType chanType = convertToChannelType(channel["type"]);
-      if (chanType != ChannelType::NVLS) {
-        continue;
-      }
-      NvlsInfo info;
-      info.bufferType = convertToBufferType(channel["buff"]);
-      for (const auto& group : channel["rankGroups"]) {
-        info.bufferSize = group["size"];
-        for (int rank : group["ranks"]) {
-          info.ranks.push_back(rank);
-        }
-      }
-      nvlsInfos.push_back(info);
-    }
-    this->nvlsInfos[rank] = nvlsInfos;
-  }
-
-  // setup threadblockChannelMap
-  for (const auto& gpu : gpus) {
-    int rank = gpu["id"];
-    std::unordered_map<ChannelKey, std::vector<int>> channelMap;
-    const std::vector<NvlsInfo> nvlsInfos = this->getNvlsInfos(rank);
-    int index = 0;
-    for (const auto& info : nvlsInfos) {
-      ChannelKey key = {info.bufferType, info.bufferType, ChannelType::NVLS};
-      for (size_t i = 0; i < info.ranks.size(); i++) {
-        channelMap[key].push_back(index++);
-      }
-    }
-
-    int nthreadblocks = gpu["threadblocks"].size();
-    this->threadblockSMChannelMap[rank].resize(nthreadblocks);
-    this->threadblockProxyChannelMap[rank].resize(nthreadblocks);
-    for (const auto& threadblock : gpu["threadblocks"]) {
-      for (const auto& channel : threadblock["channels"]) {
-        ChannelType channelType = convertToChannelType(channel["ctype"]);
-        ChannelKey key = {convertToBufferType(channel["src"]), convertToBufferType(channel["dst"]), channelType};
-        for (int id : channel["cids"]) {
-          if (channelType == ChannelType::NVLS) {
+          } else if (channelType == ChannelType::NVLS) {
             this->threadblockNvlsChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
           }
         }

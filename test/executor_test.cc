@@ -117,6 +117,7 @@ int main(int argc, char* argv[]) {
     packetType = parsePacketType(argv[6]);
   }
 
+  sleep(30);
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   mscclpp::UniqueId id;
   bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, worldSize);
@@ -131,7 +132,11 @@ int main(int argc, char* argv[]) {
   }
 
   mscclpp::ExecutionPlan plan(executionPlanName, executionPlanPath);
+#if (USE_NVLS)
+  std::shared_ptr<char> sendbuff = mscclpp::allocSharedPhysicalCudaPtr<char>(bufferSize);
+#else
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
+#endif
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
   MSCCLPP_CUDATHROW(cudaMemcpy(sendbuff.get(), dataHost.data(), bufferSize, cudaMemcpyHostToDevice));
   double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, niters, ngraphIters, packetType);

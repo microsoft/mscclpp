@@ -98,8 +98,13 @@ struct ExecutionPlan::Impl {
   void loadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
   void lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
   void setupChannels(const nlohmann::json& gpus);
-  void setupNvlsChannels(const nlohmann::json& gpus);
   void setupOperations(const nlohmann::json& gpus, size_t contsSrcOffset, size_t constDstOffset);
+
+  // helper functions to setup the channels
+  void parseChannels(
+      const nlohmann::json& gpu, std::vector<ChannelInfo>& channelInfos, std::vector<NvlsInfo>& nvlsInfos,
+      std::map<std::tuple<int, BufferType, BufferType, ChannelType>, std::vector<int>>& chanConnectedPeersMap,
+      int rank);
 
   void reset();
   void operationsReset();

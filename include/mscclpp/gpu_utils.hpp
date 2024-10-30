@@ -303,11 +303,23 @@ std::shared_ptr<PhysicalCudaMemory<T>> allocSharedPhysicalCuda(size_t count, siz
                            std::shared_ptr<PhysicalCudaMemory<T>>>(count, gran);
 }
 
+#if (USE_NVLS)
 template <class T>
-std::shared_ptr<T> allocSharedPhysicalCudaPtr(size_t count, size_t gran) {
+std::shared_ptr<T> allocSharedPhysicalCudaPtr(size_t count, size_t gran = 0) {
+  if (gran == 0) {
+    CUmulticastObjectProp mcProp = {};
+    int numDevices = 0;
+    // device count is dummy here, it may effect the granularity in future.
+    MSCCLPP_CUDATHROW(cudaGetDeviceCount(&numDevices));
+    mcProp.size = count * sizeof(T);
+    mcProp.numDevices = numDevices;
+    mcProp.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+    MSCCLPP_CUTHROW(cuMulticastGetGranularity(&gran, &mcProp, CU_MULTICAST_GRANULARITY_MINIMUM));
+  }
   return detail::safeAlloc<T, detail::cudaPhysicalCallocPtr<T>, CudaPhysicalPtrDeleter<T>, std::shared_ptr<T>>(count,
                                                                                                                gran);
 }
+#endif
 
 /// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
 /// @tparam T Type of each element in the allocated memory.
