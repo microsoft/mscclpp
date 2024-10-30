@@ -246,8 +246,8 @@ void ExecutionPlan::Impl::parseChannels(
         for (int rank : group["ranks"]) {
           info.ranks.push_back(rank);
         }
+        nvlsInfos.push_back(info);
       }
-      nvlsInfos.push_back(info);
     } else {
       ChannelInfo info;
       info.srcBufferType = convertToBufferType(channel["srcbuff"]);
@@ -294,18 +294,19 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
     std::unordered_map<ChannelKey, std::vector<int>> channelMap;
     for (auto channelType : channelTypes) {
       const std::vector<ChannelInfo> channelInfos = this->getChannelInfos(rank, channelType);
-      const std::vector<NvlsInfo> nvlsInfos = this->getNvlsInfos(rank);
       int index = 0;
-      for (const auto& info : channelInfos) {
-        ChannelKey key = {info.srcBufferType, info.dstBufferType, info.channelType};
-        for (size_t i = 0; i < info.connectedPeers.size(); i++) {
+      if (channelType == ChannelType::NVLS) {
+        const std::vector<NvlsInfo> nvlsInfos = this->getNvlsInfos(rank);
+        for (const auto& info : nvlsInfos) {
+          ChannelKey key = {info.bufferType, info.bufferType, ChannelType::NVLS};
           channelMap[key].push_back(index++);
         }
-      }
-      for (const auto& info : nvlsInfos) {
-        ChannelKey key = {info.bufferType, info.bufferType, ChannelType::NVLS};
-        for (size_t i = 0; i < info.ranks.size(); i++) {
-          channelMap[key].push_back(index++);
+      } else {
+        for (const auto& info : channelInfos) {
+          ChannelKey key = {info.srcBufferType, info.dstBufferType, info.channelType};
+          for (size_t i = 0; i < info.connectedPeers.size(); i++) {
+            channelMap[key].push_back(index++);
+          }
         }
       }
     }

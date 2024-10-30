@@ -329,8 +329,9 @@ struct Executor::Impl {
       for (const auto& [index, _] : plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.proxyChannels[chanIndex++] = mscclpp::deviceHandle(context.proxyChannels[index]);
       }
+      chanIndex = 0;
       for (const auto& [index, _] : plan.impl_->threadblockNvlsChannelMap.at(rank).at(threadblock)) {
-        deviceExecutionPlan.channels.nvlsChannels[index] = mscclpp::deviceHandle(context.nvlsChannels[index]);
+        deviceExecutionPlan.channels.nvlsChannels[chanIndex++] = mscclpp::deviceHandle(context.nvlsChannels[index]);
       }
       for (size_t i = 0; i < ops.size(); i++) {
         deviceExecutionPlan.operations[i] = ops[i];
