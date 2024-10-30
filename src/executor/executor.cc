@@ -112,6 +112,7 @@ struct Executor::Impl {
     this->setupConnections(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
     this->setupChannels(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
+    this->setupNvlsChannels(context, sendbuff, recvbuff, rank, plan);
     this->setupDeviceExecutionPlan(context, rank, plan);
     context.deviceExecutionPlansBuffer =
         allocExtSharedCuda<char>(context.deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan));
@@ -152,12 +153,12 @@ struct Executor::Impl {
       context.connections[connectedPeers[i]] = connectionFutures[i].get();
     }
 
-    // std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank);
-    // for (const NvlsInfo& info : nvlsInfos) {
-    //   std::shared_ptr<NvlsConnection> nvlsConnection =
-    //       this->comm->connectNvlsCollective(this->comm, info.localPeers, info.bufferSize);
-    //   context.nvlsConnections[info] = nvlsConnection;
-    // }
+    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank);
+    for (const NvlsInfo& info : nvlsInfos) {
+      std::shared_ptr<NvlsConnection> nvlsConnection =
+          mscclpp::connectNvlsCollective(this->comm, info.ranks, info.bufferSize);
+      context.nvlsConnections[info] = nvlsConnection;
+    }
   }
 
   void setupRegisteredMemories(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,

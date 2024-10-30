@@ -25,12 +25,12 @@ struct ChannelKey {
 };
 
 struct NvlsInfo {
-  std::vector<int> localPeers;
+  std::vector<int> ranks;
   size_t bufferSize;
   BufferType bufferType;
 
   bool operator==(const NvlsInfo& other) const {
-    return bufferSize == other.bufferSize && localPeers == other.localPeers && bufferType == other.bufferType;
+    return bufferSize == other.bufferSize && ranks == other.ranks && bufferType == other.bufferType;
   }
 };
 }  // namespace mscclpp
@@ -60,8 +60,8 @@ struct hash<mscclpp::NvlsInfo> {
     std::size_t hash = std::hash<size_t>()(info.bufferSize);
     hash ^= std::hash<int>()(static_cast<int>(info.bufferType)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 
-    for (const auto& peer : info.localPeers) {
-      hash ^= std::hash<int>()(peer) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+    for (const auto& rank : info.ranks) {
+      hash ^= std::hash<int>()(rank) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
     }
 
     return hash;
@@ -87,8 +87,8 @@ struct ExecutionPlan::Impl {
   std::vector<ChannelInfo> getChannelInfos(int rank, BufferType bufferType) const;
   std::vector<ChannelInfo> getChannelInfosByDstRank(int rank, BufferType bufferType) const;
   std::vector<ChannelInfo> getUnpairedChannelInfos(int rank, int worldSize, ChannelType channelType);
-  std::vector<int> getConnectedPeers(int rank) const;
   std::vector<NvlsInfo> getNvlsInfos(int rank) const;
+  std::vector<int> getConnectedPeers(int rank) const;
   std::vector<BufferType> getConnectedBufferTypes(int rank) const;
   size_t getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const;
   std::vector<Operation> getOperations(int rank, int threadblock) const;
@@ -98,6 +98,7 @@ struct ExecutionPlan::Impl {
   void loadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
   void lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
   void setupChannels(const nlohmann::json& gpus);
+  void setupNvlsChannels(const nlohmann::json& gpus);
   void setupOperations(const nlohmann::json& gpus, size_t contsSrcOffset, size_t constDstOffset);
 
   void reset();
@@ -111,6 +112,8 @@ struct ExecutionPlan::Impl {
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfosByDstRank;
   std::unordered_map<std::pair<int, ChannelType>, std::unordered_map<int, int>> channelCountMap;
+  // for nvls channels
+  std::unordered_map<int, std::vector<NvlsInfo>> nvlsInfos;
   // threadblockChannelMap[rank][threadblock] = [channelIndex, channelKey]
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockSMChannelMap;
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockProxyChannelMap;

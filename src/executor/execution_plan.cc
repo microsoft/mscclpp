@@ -52,6 +52,8 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::TRANSFORM_TO_PACKET;
   } else if (str == "rpkt") {
     return mscclpp::OperationType::REDUCE_PACKET;
+  } else if (str == "glres") {
+    return mscclpp::OperationType::MULTI_LOAD_REDUCE_STORE;
   } else {
     throw mscclpp::Error("Invalid operation type", mscclpp::ErrorCode::ExecutorError);
   }
@@ -76,10 +78,14 @@ auto convertToChannelType = [](const std::string& str) {
     return mscclpp::ChannelType::PROXY;
   } else if (str == "none") {
     return mscclpp::ChannelType::NONE;
+  } else if (str == "nvls") {
+    return mscclpp::ChannelType::NVLS;
   } else {
     throw mscclpp::Error("Invalid channel type", mscclpp::ErrorCode::ExecutorError);
   }
 };
+
+std::set groupChannelType{mscclpp::ChannelType::NVLS};
 
 }  // namespace
 
@@ -125,6 +131,8 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int rank, 
   }
   return unpaired;
 }
+
+std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank) const { return this->nvlsInfos.at(rank); }
 
 std::vector<int> ExecutionPlan::Impl::getConnectedPeers(int rank) const {
   std::set<int> peers;
@@ -192,6 +200,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
     this->chunkGroups[rank] = gpu["chunkGroups"];
   }
   this->setupChannels(gpus);
+  this->setupNvlsChannels(gpus);
 
   this->inputSize = inputSize;
   this->outputSize = outputSize;
@@ -233,6 +242,10 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
     int rank = gpu["id"];
     std::vector<ChannelInfo> channelInfos;
     for (const auto& channel : gpu["channels"]) {
+      ChannelType chanType = convertToChannelType(channel["type"]);
+      if (groupChannelType.find(chanType) != groupChannelType.end()) {
+        continue;
+      }
       ChannelInfo info;
       info.srcBufferType = convertToBufferType(channel["srcbuff"]);
       info.dstBufferType = convertToBufferType(channel["dstbuff"]);
@@ -291,6 +304,60 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   }
 }
 
+void ExecutionPlan::Impl::setupNvlsChannels(const json& gpus) {
+  using mapKey = std::tuple<int, BufferType, BufferType, ChannelType>;
+  std::map<mapKey, std::vector<int>> chanConnectedPeersMap;
+  for (const auto& gpu : gpus) {
+    int rank = gpu["id"];
+    std::vector<NvlsInfo> nvlsInfos;
+    for (const auto& channel : gpu["channels"]) {
+      ChannelType chanType = convertToChannelType(channel["type"]);
+      if (chanType != ChannelType::NVLS) {
+        continue;
+      }
+      NvlsInfo info;
+      info.bufferType = convertToBufferType(channel["buff"]);
+      for (const auto& group : channel["rankGroups"]) {
+        info.bufferSize = group["size"];
+        for (int rank : group["ranks"]) {
+          info.ranks.push_back(rank);
+        }
+      }
+      nvlsInfos.push_back(info);
+    }
+    this->nvlsInfos[rank] = nvlsInfos;
+  }
+
+  // setup threadblockChannelMap
+  for (const auto& gpu : gpus) {
+    int rank = gpu["id"];
+    std::unordered_map<ChannelKey, std::vector<int>> channelMap;
+    const std::vector<NvlsInfo> nvlsInfos = this->getNvlsInfos(rank);
+    int index = 0;
+    for (const auto& info : nvlsInfos) {
+      ChannelKey key = {info.bufferType, info.bufferType, ChannelType::NVLS};
+      for (size_t i = 0; i < info.ranks.size(); i++) {
+        channelMap[key].push_back(index++);
+      }
+    }
+
+    int nthreadblocks = gpu["threadblocks"].size();
+    this->threadblockSMChannelMap[rank].resize(nthreadblocks);
+    this->threadblockProxyChannelMap[rank].resize(nthreadblocks);
+    for (const auto& threadblock : gpu["threadblocks"]) {
+      for (const auto& channel : threadblock["channels"]) {
+        ChannelType channelType = convertToChannelType(channel["ctype"]);
+        ChannelKey key = {convertToBufferType(channel["src"]), convertToBufferType(channel["dst"]), channelType};
+        for (int id : channel["cids"]) {
+          if (channelType == ChannelType::NVLS) {
+            this->threadblockNvlsChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
+          }
+        }
+      }
+    }
+  }
+}
+
 void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffset, size_t constDstOffset) {
   // setup threadblocks and operations
   for (const auto& gpu : gpus) {
@@ -301,12 +368,17 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
       int threadblockId = threadblock["id"];
       const auto& smChannels = this->threadblockSMChannelMap[rank][threadblockId];
       const auto& proxyChannels = this->threadblockProxyChannelMap[rank][threadblockId];
+      const auto& nvlsChannels = this->threadblockNvlsChannelMap[rank][threadblockId];
       for (size_t i = 0; i < smChannels.size(); i++) {
         const auto& [_, key] = smChannels[i];
         channelIndexes[key].push_back(i);
       }
       for (size_t i = 0; i < proxyChannels.size(); i++) {
         const auto& [_, key] = proxyChannels[i];
+        channelIndexes[key].push_back(i);
+      }
+      for (size_t i = 0; i < nvlsChannels.size(); i++) {
+        const auto& [_, key] = nvlsChannels[i];
         channelIndexes[key].push_back(i);
       }
       for (const auto& op : threadblock["ops"]) {
@@ -329,6 +401,16 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
                 (srcBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
             chunkIndexes.push_back((uint32_t)op["i_cids"][i]["off"]);
           }
+        }
+        if (op.contains("gi_cid")) {
+          BufferType srcBufferType = convertToBufferType(op["srcbuff"]);
+          operation.nvlsInputIndex = channelIndexes[{srcBufferType, srcBufferType, ChannelType::NVLS}][op["gi_cid"]];
+          chunkIndexes.push_back((uint32_t)op["srcoff"]);
+        }
+        if (op.contains("go_cid")) {
+          BufferType dstBufferType = convertToBufferType(op["dstbuff"]);
+          operation.nvlsOutputIndex = channelIndexes[{dstBufferType, dstBufferType, ChannelType::NVLS}][op["go_cid"]];
+          chunkIndexes.push_back((uint32_t)op["dstoff"]);
         }
         // will have either srcs or i_cids
         if (op.contains("srcs")) {

@@ -491,6 +491,8 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   Operation* operations = localPlan->operations;
   DeviceHandle<SmChannel>* smChannels = localPlan->channels.smChannels;
   DeviceHandle<SimpleProxyChannel>* proxyChannels = localPlan->channels.proxyChannels;
+  [[maybe_unused]] DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels =
+      localPlan->channels.nvlsChannels;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
 #if defined(MSCCLPP_DEVICE_HIP)
@@ -590,9 +592,8 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
     }
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
     else if (op.type == OperationType::MULTI_LOAD_REDUCE_STORE) {
-      // The pointers should be nvls ptr
-      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
-      T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      T* dst = (T*)(nvlsChannels[op.nvlsOutputIndex].mcPtr);
+      T* src = (T*)(nvlsChannels[op.nvlsInputIndex].mcPtr);
       handleMultiLoadReduceStore(dst, src, op.dstOffset, op.srcOffset, op.size);
     }
 #endif

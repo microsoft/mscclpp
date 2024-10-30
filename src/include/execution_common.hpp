@@ -27,6 +27,7 @@ enum class ChannelType : uint8_t {
   NONE,
   SM,
   PROXY,
+  NVLS,
 };
 
 // NOTE(chhwang): any modification here requires corresponding updates in `tools/npkit/npkit_trace_generator.py`.
