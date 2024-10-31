@@ -135,7 +135,7 @@ T* cudaPhysicalCallocPtr(size_t nelem, size_t gran) {
   // TODO: revisit when HIP fixes this typo in the field name
   prop.requestedHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
 #else
-  prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+  prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
 #endif
 
   CUmemGenericAllocationHandle memHandle;
@@ -263,7 +263,6 @@ struct CudaPhysicalPtrDeleter {
     CUmemGenericAllocationHandle handle;
     size_t size = 0;
     MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, ptr));
-    MSCCLPP_CUTHROW(cuMemRelease(handle));
     MSCCLPP_CUTHROW(cuMemGetAddressRange(NULL, &size, (CUdeviceptr)ptr));
     MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, size));
     MSCCLPP_CUTHROW(cuMemRelease(handle));
@@ -449,6 +448,17 @@ void memcpyCuda(T* dst, const T* src, size_t count, cudaMemcpyKind kind = cudaMe
   CudaStreamWithFlags stream(cudaStreamNonBlocking);
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, count * sizeof(T), kind, stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+}
+
+bool inline isCuMemMapAllocated(void* ptr) {
+  CUmemGenericAllocationHandle handle;
+  CUresult result = cuMemRetainAllocationHandle(&handle, ptr);
+  if (result != CUDA_SUCCESS) {
+    printf("ptr is %p\n", ptr);
+    return false;
+  }
+  cuMemRelease(handle);
+  return true;
 }
 
 }  // namespace mscclpp

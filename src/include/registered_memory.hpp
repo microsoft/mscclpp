@@ -27,6 +27,10 @@ struct TransportInfo {
       const IbMr* ibMr;
       IbMrInfo ibMrInfo;
     };
+    struct {
+      char shareableHandle[64];
+      size_t offsetFromBase;
+    };
   };
 };
 
@@ -39,6 +43,7 @@ struct RegisteredMemory::Impl {
   size_t size;
   uint64_t hostHash;
   uint64_t pidHash;
+  uint32_t isCuMemMap;
   TransportFlags transports;
   std::vector<TransportInfo> transportInfos;
 
