@@ -32,11 +32,13 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       this->isCuMemMapAlloc = true;
     }
     if (this->isCuMemMapAlloc) {
+#if (USE_NVLS)
       CUmemGenericAllocationHandle handle;
       MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, baseDataPtr));
       MSCCLPP_CUTHROW(
           cuMemExportToShareableHandle(transportInfo.shareableHandle, handle, CU_MEM_HANDLE_TYPE_FABRIC, 0));
       transportInfo.offsetFromBase = (char*)data - (char*)baseDataPtr;
+#endif
     } else {
       cudaIpcMemHandle_t handle;
       MSCCLPP_CUDATHROW(cudaIpcGetMemHandle(&handle, baseDataPtr));
@@ -179,6 +181,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
     if (this->isCuMemMapAlloc) {
+#if (USE_NVLS)
       CUmemGenericAllocationHandle handle;
       MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, CU_MEM_HANDLE_TYPE_FABRIC));
       CUmemAccessDesc accessDesc = {};
@@ -192,6 +195,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
       MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, this->size, 0, handle, 0));
       MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)base, this->size, &accessDesc, 1));
       this->data = static_cast<char*>(base) + entry.offsetFromBase;
+#endif
     } else {
       MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
       this->data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
@@ -208,6 +212,7 @@ RegisteredMemory::Impl::~Impl() {
   if (data && transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash && getPidHash() != this->pidHash) {
     void* base = static_cast<char*>(data) - getTransportInfo(Transport::CudaIpc).cudaIpcOffsetFromBase;
     if (this->isCuMemMapAlloc) {
+#if (USE_NVLS)
       CUmemGenericAllocationHandle handle;
       size_t size = 0;
       MSCCLPP_CULOG_WARN(cuMemRetainAllocationHandle(&handle, base));
@@ -216,6 +221,7 @@ RegisteredMemory::Impl::~Impl() {
       MSCCLPP_CULOG_WARN(cuMemUnmap((CUdeviceptr)base, size));
       MSCCLPP_CULOG_WARN(cuMemRelease(handle));
       MSCCLPP_CULOG_WARN(cuMemAddressFree((CUdeviceptr)base, size));
+#endif
     } else {
       cudaError_t err = cudaIpcCloseMemHandle(base);
       if (err != cudaSuccess) {
