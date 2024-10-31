@@ -98,7 +98,7 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 // NVLS
 #if !defined(__HIP_PLATFORM_AMD__)
 #include <linux/version.h>
-#define USE_NVLS ((CUDART_VERSION >= 12010) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)))
+#define USE_NVLS ((CUDART_VERSION >= 12040) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)))
 #else  // !defined(__HIP_PLATFORM_AMD__)
 #define USE_NVLS 0
 #endif  // !defined(__HIP_PLATFORM_AMD__)

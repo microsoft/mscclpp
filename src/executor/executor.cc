@@ -23,6 +23,19 @@ struct ExecutionContextKey {
            recvBuffSize == other.recvBuffSize && plan == other.plan;
   }
 };
+
+void* getBuffer(BufferType type, void* sendbuff, void* recvbuff, void* scratch) {
+  switch (type) {
+    case BufferType::INPUT:
+      return sendbuff;
+    case BufferType::OUTPUT:
+      return recvbuff;
+    case BufferType::SCRATCH:
+      return scratch;
+    default:
+      throw Error("Invalid buffer type", ErrorCode::ExecutorError);
+  }
+};
 }  // namespace mscclpp
 
 namespace std {
@@ -241,18 +254,6 @@ struct Executor::Impl {
     context.smSemaphores = std::move(smSemaphores);
     context.proxySemaphores = std::move(proxySemaphores);
 
-    auto getBuffer = [&](BufferType type) {
-      switch (type) {
-        case BufferType::INPUT:
-          return sendbuff;
-        case BufferType::OUTPUT:
-          return recvbuff;
-        case BufferType::SCRATCH:
-          return (void*)context.scratchBuffer.get();
-        default:
-          throw Error("Invalid buffer type", ErrorCode::ExecutorError);
-      }
-    };
     auto getBufferSize = [&](BufferType type) {
       switch (type) {
         case BufferType::INPUT:
@@ -270,7 +271,7 @@ struct Executor::Impl {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(rank, channelType);
       int index = 0;
       for (ChannelInfo& info : channelInfos) {
-        void* src = getBuffer(info.srcBufferType);
+        void* src = getBuffer(info.srcBufferType, sendbuff, recvbuff, context.scratchBuffer.get());
         size_t bufferSize = getBufferSize(info.srcBufferType);
         TransportFlags transport = getTransportFlags(channelInfos, rank);
         RegisteredMemory localMemory = this->comm->registerMemory(src, bufferSize, transport);
@@ -291,22 +292,10 @@ struct Executor::Impl {
 
   void setupNvlsChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, int rank,
                          const ExecutionPlan& plan) {
-    auto getBuffer = [&](BufferType type) {
-      switch (type) {
-        case BufferType::INPUT:
-          return sendbuff;
-        case BufferType::OUTPUT:
-          return recvbuff;
-        case BufferType::SCRATCH:
-          return (void*)context.scratchBuffer.get();
-        default:
-          throw Error("Invalid buffer type", ErrorCode::ExecutorError);
-      }
-    };
     std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank);
     for (const NvlsInfo& info : nvlsInfos) {
       std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[info];
-      void* buffer = getBuffer(info.bufferType);
+      void* buffer = getBuffer(info.bufferType, sendbuff, recvbuff, context.scratchBuffer.get());
       std::shared_ptr<char> nvlsPtr = nvlsConnection->bindAllocatedCudaWithPtr((CUdeviceptr)buffer, info.bufferSize);
       NvlsConnection::DeviceMulticastPointer deviceMulticastPointer(buffer, nvlsPtr, info.bufferSize);
       context.nvlsChannels.push_back(deviceMulticastPointer);

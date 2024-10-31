@@ -32,6 +32,18 @@
     }                                                                                                             \
   } while (false)
 
+#define MSCCLPP_CULOG_WARN(cmd)                             \
+  do {                                                      \
+    CUresult err = cmd;                                     \
+    if (err != CUDA_SUCCESS) {                              \
+      const char* errStr;                                   \
+      if (cuGetErrorString(err, &errStr) != CUDA_SUCCESS) { \
+        errStr = "failed to get error string";              \
+      }                                                     \
+      WARN("Call to " #cmd " failed, error is %s", errStr); \
+    }                                                       \
+  } while (false)
+
 namespace mscclpp {
 
 /// A RAII guard that will cudaThreadExchangeStreamCaptureMode to cudaStreamCaptureModeRelaxed on construction and
@@ -121,24 +133,12 @@ PhysicalCudaMemory<T>* cudaPhysicalCalloc(size_t nelem, size_t gran) {
 }
 
 template <class T>
-T* cudaPhysicalCallocPtr(size_t nelem, size_t gran) {
+T* cudaPhysicalCallocPtr(size_t nelem, CUmemAllocationProp prop, size_t gran) {
   AvoidCudaGraphCaptureGuard cgcGuard;
-
+  CUmemGenericAllocationHandle memHandle;
   int deviceId = -1;
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
 
-  CUmemAllocationProp prop = {};
-  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  prop.location.id = deviceId;
-#if defined(__HIP_PLATFORM_AMD__)
-  // TODO: revisit when HIP fixes this typo in the field name
-  prop.requestedHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-#else
-  prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
-#endif
-
-  CUmemGenericAllocationHandle memHandle;
   size_t bufferSize = sizeof(T) * nelem;
   // allocate physical memory
   MSCCLPP_CUTHROW(cuMemCreate(&memHandle, bufferSize, &prop, 0 /*flags*/));
@@ -231,6 +231,25 @@ Memory safeAlloc(size_t nelem, size_t gran) {
   return Memory(ptr, Deleter());
 }
 
+template <class T, T*(alloc)(size_t, CUmemAllocationProp, size_t), class Deleter, class Memory>
+Memory safeAlloc(size_t nelem, CUmemAllocationProp memProp, size_t gran) {
+  if ((nelem * sizeof(T)) % gran) {
+    throw Error("The request allocation size is not divisible by the required granularity:" +
+                    std::to_string(nelem * sizeof(T)) + " vs " + std::to_string(gran),
+                ErrorCode::InvalidUsage);
+  }
+  T* ptr = nullptr;
+  try {
+    ptr = alloc(nelem, memProp, gran);
+  } catch (...) {
+    if (ptr) {
+      Deleter()(ptr);
+    }
+    throw;
+  }
+  return Memory(ptr, Deleter());
+}
+
 }  // namespace detail
 
 /// A deleter that calls cudaFree for use with std::unique_ptr or std::shared_ptr.
@@ -303,20 +322,33 @@ std::shared_ptr<PhysicalCudaMemory<T>> allocSharedPhysicalCuda(size_t count, siz
 }
 
 #if (USE_NVLS)
+/// Allocates physical memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
+/// @tparam T Type of each element in the allocated memory.
+/// @param count Number of elements to allocate.
+/// @return A std::shared_ptr to the allocated memory.
 template <class T>
-std::shared_ptr<T> allocSharedPhysicalCudaPtr(size_t count, size_t gran = 0) {
-  if (gran == 0) {
-    CUmulticastObjectProp mcProp = {};
-    int numDevices = 0;
-    // device count is dummy here, it may effect the granularity in future.
-    MSCCLPP_CUDATHROW(cudaGetDeviceCount(&numDevices));
-    mcProp.size = count * sizeof(T);
-    mcProp.numDevices = numDevices;
-    mcProp.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-    MSCCLPP_CUTHROW(cuMulticastGetGranularity(&gran, &mcProp, CU_MULTICAST_GRANULARITY_MINIMUM));
-  }
-  return detail::safeAlloc<T, detail::cudaPhysicalCallocPtr<T>, CudaPhysicalPtrDeleter<T>, std::shared_ptr<T>>(count,
-                                                                                                               gran);
+std::shared_ptr<T> allocSharedPhysicalCudaPtr(size_t count) {
+  size_t gran = 0;
+  CUdevice currentDev;
+  int cudaDev;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDev));
+  MSCCLPP_CUTHROW(cuDeviceGet(&currentDev, cudaDev));
+
+  int requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC;
+  CUmemAllocationProp memProp = {};
+  memProp.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  memProp.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+#if defined(__HIP_PLATFORM_AMD__)
+  // TODO: revisit when HIP fixes this typo in the field name
+  memProp.requestedHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+#else
+  memProp.requestedHandleTypes = (CUmemAllocationHandleType)requestedHandleTypes;
+#endif
+  memProp.location.id = currentDev;
+  MSCCLPP_CUTHROW(cuMemGetAllocationGranularity(&gran, &memProp, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
+  count = ((count * sizeof(T) + gran - 1) / gran * gran) / sizeof(T);
+  return detail::safeAlloc<T, detail::cudaPhysicalCallocPtr<T>, CudaPhysicalPtrDeleter<T>, std::shared_ptr<T>>(
+      count, memProp, gran);
 }
 #endif
 
@@ -450,6 +482,9 @@ void memcpyCuda(T* dst, const T* src, size_t count, cudaMemcpyKind kind = cudaMe
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 }
 
+/// Check if ptr is allocaed by cuMemMap
+/// @param ptr Pointer to check
+/// @return true if ptr is allocated by cuMemMap, false otherwise
 bool inline isCuMemMapAllocated(void* ptr) {
   CUmemGenericAllocationHandle handle;
   CUresult result = cuMemRetainAllocationHandle(&handle, ptr);

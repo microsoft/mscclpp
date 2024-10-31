@@ -19,7 +19,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       size(size),
       hostHash(getHostHash()),
       pidHash(getPidHash()),
-      isCuMemMap(0),
+      isCuMemMapAlloc(false),
       transports(transports) {
   if (transports.has(Transport::CudaIpc)) {
     TransportInfo transportInfo;
@@ -29,12 +29,10 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     size_t baseDataSize;  // dummy
     MSCCLPP_CUTHROW(cuMemGetAddressRange((CUdeviceptr*)&baseDataPtr, &baseDataSize, (CUdeviceptr)data));
     if (isCuMemMapAllocated(data)) {
-      this->isCuMemMap = 1;
+      this->isCuMemMapAlloc = true;
     }
-    if (this->isCuMemMap) {
+    if (this->isCuMemMapAlloc) {
       CUmemGenericAllocationHandle handle;
-      printf("baseDataPtr: %p\n", baseDataPtr);
-      printf("data: %p\n", data);
       MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, baseDataPtr));
       MSCCLPP_CUTHROW(
           cuMemExportToShareableHandle(transportInfo.shareableHandle, handle, CU_MEM_HANDLE_TYPE_FABRIC, 0));
@@ -89,7 +87,8 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
   std::copy_n(reinterpret_cast<char*>(&pimpl_->size), sizeof(pimpl_->size), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->hostHash), sizeof(pimpl_->hostHash), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->pidHash), sizeof(pimpl_->pidHash), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl_->isCuMemMap), sizeof(pimpl_->isCuMemMap), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->isCuMemMapAlloc), sizeof(pimpl_->isCuMemMapAlloc),
+              std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->transports), sizeof(pimpl_->transports), std::back_inserter(result));
   if (pimpl_->transportInfos.size() > static_cast<size_t>(std::numeric_limits<int8_t>::max())) {
     throw mscclpp::Error("Too many transport info entries", ErrorCode::InternalError);
@@ -99,7 +98,7 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
   for (auto& entry : pimpl_->transportInfos) {
     std::copy_n(reinterpret_cast<char*>(&entry.transport), sizeof(entry.transport), std::back_inserter(result));
     if (entry.transport == Transport::CudaIpc) {
-      if (pimpl_->isCuMemMap) {
+      if (pimpl_->isCuMemMapAlloc) {
         std::copy_n(reinterpret_cast<char*>(&entry.shareableHandle), sizeof(entry.shareableHandle),
                     std::back_inserter(result));
         std::copy_n(reinterpret_cast<char*>(&entry.offsetFromBase), sizeof(entry.offsetFromBase),
@@ -133,8 +132,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
   it += sizeof(this->hostHash);
   std::copy_n(it, sizeof(this->pidHash), reinterpret_cast<char*>(&this->pidHash));
   it += sizeof(this->pidHash);
-  std::copy_n(it, sizeof(this->isCuMemMap), reinterpret_cast<char*>(&this->isCuMemMap));
-  it += sizeof(this->isCuMemMap);
+  std::copy_n(it, sizeof(this->isCuMemMapAlloc), reinterpret_cast<char*>(&this->isCuMemMapAlloc));
+  it += sizeof(this->isCuMemMapAlloc);
   std::copy_n(it, sizeof(this->transports), reinterpret_cast<char*>(&this->transports));
   it += sizeof(this->transports);
   int8_t transportCount;
@@ -145,7 +144,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     std::copy_n(it, sizeof(transportInfo.transport), reinterpret_cast<char*>(&transportInfo.transport));
     it += sizeof(transportInfo.transport);
     if (transportInfo.transport == Transport::CudaIpc) {
-      if (this->isCuMemMap) {
+      if (this->isCuMemMapAlloc) {
         std::copy_n(it, sizeof(transportInfo.shareableHandle), reinterpret_cast<char*>(&transportInfo.shareableHandle));
         it += sizeof(transportInfo.shareableHandle);
         std::copy_n(it, sizeof(transportInfo.offsetFromBase), reinterpret_cast<char*>(&transportInfo.offsetFromBase));
@@ -179,7 +178,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     // The memory is local to the machine but not to the process, so we need to open the CUDA IPC handle
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
-    if (this->isCuMemMap) {
+    if (this->isCuMemMapAlloc) {
       CUmemGenericAllocationHandle handle;
       MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, CU_MEM_HANDLE_TYPE_FABRIC));
       CUmemAccessDesc accessDesc = {};
@@ -208,15 +207,15 @@ RegisteredMemory::Impl::~Impl() {
   // Close the CUDA IPC handle if it was opened during deserialization
   if (data && transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash && getPidHash() != this->pidHash) {
     void* base = static_cast<char*>(data) - getTransportInfo(Transport::CudaIpc).cudaIpcOffsetFromBase;
-    if (this->isCuMemMap) {
+    if (this->isCuMemMapAlloc) {
       CUmemGenericAllocationHandle handle;
       size_t size = 0;
-      cuMemRetainAllocationHandle(&handle, base);
-      cuMemRelease(handle);
-      cuMemGetAddressRange(NULL, &size, (CUdeviceptr)base);
-      cuMemUnmap((CUdeviceptr)base, size);
-      cuMemRelease(handle);
-      cuMemAddressFree((CUdeviceptr)base, size);
+      MSCCLPP_CULOG_WARN(cuMemRetainAllocationHandle(&handle, base));
+      MSCCLPP_CULOG_WARN(cuMemRelease(handle));
+      MSCCLPP_CULOG_WARN(cuMemGetAddressRange(NULL, &size, (CUdeviceptr)base));
+      MSCCLPP_CULOG_WARN(cuMemUnmap((CUdeviceptr)base, size));
+      MSCCLPP_CULOG_WARN(cuMemRelease(handle));
+      MSCCLPP_CULOG_WARN(cuMemAddressFree((CUdeviceptr)base, size));
     } else {
       cudaError_t err = cudaIpcCloseMemHandle(base);
       if (err != cudaSuccess) {
