@@ -11,6 +11,42 @@
 #include "debug.h"
 #include "utils_internal.hpp"
 
+namespace {
+// Check if ptr is allocaed by cuMemMap
+bool isCuMemMapAllocated(void* ptr) {
+  CUmemGenericAllocationHandle handle;
+  CUresult result = cuMemRetainAllocationHandle(&handle, ptr);
+  if (result != CUDA_SUCCESS) {
+    printf("ptr is %p\n", ptr);
+    return false;
+  }
+  cuMemRelease(handle);
+  return true;
+}
+
+// Get the recommended granularity for cuMemAddressReserve
+size_t getRecommendedGranularity() {
+  size_t gran = 0;
+  int deviceId = -1;
+  int currentDevice = -1;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+  MSCCLPP_CUTHROW(cuDeviceGet(&currentDevice, deviceId));
+
+  CUmemAllocationProp prop = {};
+  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+#if defined(__HIP_PLATFORM_AMD__)
+  prop.requestedHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+#else
+  prop.requestedHandleTypes =
+      (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
+#endif
+  prop.location.id = currentDevice;
+  MSCCLPP_CUTHROW(cuMemGetAllocationGranularity(&gran, &prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
+  return gran;
+}
+}  // namespace
+
 namespace mscclpp {
 
 RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports, Context::Impl& contextImpl)
@@ -190,7 +226,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
       accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
       accessDesc.location.id = deviceId;
       accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-      size_t gran = 2 * 1024 * 1024;
+      size_t gran = getRecommendedGranularity();
       MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&base, this->size, gran, 0, 0));
       MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, this->size, 0, handle, 0));
       MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)base, this->size, &accessDesc, 1));
