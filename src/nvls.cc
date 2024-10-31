@@ -208,19 +208,15 @@ std::shared_ptr<char> NvlsConnection::Impl::bindMemoryWithPtr(CUdeviceptr device
 
 std::shared_ptr<char> NvlsConnection::Impl::bindMemoryToMulticastHandle(size_t offset, size_t bufferSize) {
   char* mcPtr;
-  CUmemAccessDesc accessDesc = {};
-  accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  int deviceId = -1;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
-  accessDesc.location.id = deviceId;
-  accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
   MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)(&mcPtr), bufferSize, minMcGran_, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), bufferSize, 0, mcHandle_, 0));
-  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)(mcPtr), bufferSize, &accessDesc, 1));
+  setReadWriteMemoryAccess(mcPtr, bufferSize);
   INFO(MSCCLPP_COLL, "NVLS connection bound memory at offset %ld, size %ld", offset, bufferSize);
 
   auto deleter = [=, self = shared_from_this()](char* ptr) {
+    int deviceId;
     CUdevice device;
+    MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
     MSCCLPP_CUTHROW(cuDeviceGet(&device, deviceId));
     MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, bufferSize));
     MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, bufferSize));

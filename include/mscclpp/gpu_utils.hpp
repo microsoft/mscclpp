@@ -46,6 +46,19 @@
 
 namespace mscclpp {
 
+/// set memory access permission to read-write
+/// @param base Base memory pointer.
+/// @param size Size of the memory.
+inline void setReadWriteMemoryAccess(void* base, size_t size) {
+  CUmemAccessDesc accessDesc = {};
+  int deviceId;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+  accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  accessDesc.location.id = deviceId;
+  accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)base, size, &accessDesc, 1));
+}
+
 /// A RAII guard that will cudaThreadExchangeStreamCaptureMode to cudaStreamCaptureModeRelaxed on construction and
 /// restore the previous mode on destruction. This is helpful when we want to avoid CUDA graph capture.
 struct AvoidCudaGraphCaptureGuard {
@@ -114,16 +127,11 @@ PhysicalCudaMemory<T>* cudaPhysicalCalloc(size_t nelem, size_t gran) {
   // allocate physical memory
   MSCCLPP_CUTHROW(cuMemCreate(&memHandle, bufferSize, &prop, 0 /*flags*/));
 
-  CUmemAccessDesc accessDesc = {};
-  accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  accessDesc.location.id = deviceId;
-  accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-
   T* devicePtr = nullptr;
   // Map the device pointer
   MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, bufferSize, gran, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, bufferSize, 0, memHandle, 0));
-  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)devicePtr, bufferSize, &accessDesc, 1));
+  setReadWriteMemoryAccess(devicePtr, bufferSize);
   CudaStreamWithFlags stream(cudaStreamNonBlocking);
   MSCCLPP_CUDATHROW(cudaMemsetAsync(devicePtr, 0, bufferSize, stream));
 
@@ -155,18 +163,13 @@ T* cudaPhysicalCallocPtr(size_t nbytes) {
   CUmemGenericAllocationHandle memHandle;
   MSCCLPP_CUTHROW(cuMemCreate(&memHandle, nbytes, &prop, 0 /*flags*/));
 
-  CUmemAccessDesc accessDesc = {};
-  accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  accessDesc.location.id = deviceId;
-  accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-
   T* devicePtr = nullptr;
   size_t gran = 0;
   // Map the device pointer
   MSCCLPP_CUTHROW(cuMemGetAllocationGranularity(&gran, &prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
   MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, nbytes, gran, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, nbytes, 0, memHandle, 0));
-  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)devicePtr, nbytes, &accessDesc, 1));
+  setReadWriteMemoryAccess(devicePtr, nbytes);
   CudaStreamWithFlags stream(cudaStreamNonBlocking);
   MSCCLPP_CUDATHROW(cudaMemsetAsync(devicePtr, 0, nbytes, stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
@@ -471,20 +474,6 @@ void memcpyCuda(T* dst, const T* src, size_t count, cudaMemcpyKind kind = cudaMe
   CudaStreamWithFlags stream(cudaStreamNonBlocking);
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, count * sizeof(T), kind, stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-}
-
-/// Check if ptr is allocaed by cuMemMap
-/// @param ptr Pointer to check
-/// @return true if ptr is allocated by cuMemMap, false otherwise
-bool inline isCuMemMapAllocated(void* ptr) {
-  CUmemGenericAllocationHandle handle;
-  CUresult result = cuMemRetainAllocationHandle(&handle, ptr);
-  if (result != CUDA_SUCCESS) {
-    printf("ptr is %p\n", ptr);
-    return false;
-  }
-  cuMemRelease(handle);
-  return true;
 }
 
 }  // namespace mscclpp

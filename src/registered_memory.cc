@@ -220,16 +220,10 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
 #if (USE_NVLS)
       CUmemGenericAllocationHandle handle;
       MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, CU_MEM_HANDLE_TYPE_FABRIC));
-      CUmemAccessDesc accessDesc = {};
-      int deviceId;
-      MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
-      accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-      accessDesc.location.id = deviceId;
-      accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
       size_t gran = getRecommendedGranularity();
       MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&base, this->size, gran, 0, 0));
       MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, this->size, 0, handle, 0));
-      MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)base, this->size, &accessDesc, 1));
+      setReadWriteMemoryAccess(base, this->size);
       this->data = static_cast<char*>(base) + entry.offsetFromBase;
 #endif
     } else {
