@@ -68,7 +68,7 @@ std::string getHostName(int maxlen, const char delim) {
 }
 
 bool isNvlsSupported() {
-#if (CUDART_VERSION >= 12010)
+#if (CUDART_VERSION >= 12040)
   CUdevice dev;
   int isNvlsSupported;
   MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));

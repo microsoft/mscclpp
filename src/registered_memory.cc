@@ -17,7 +17,6 @@ bool isCuMemMapAllocated(void* ptr) {
   CUmemGenericAllocationHandle handle;
   CUresult result = cuMemRetainAllocationHandle(&handle, ptr);
   if (result != CUDA_SUCCESS) {
-    printf("ptr is %p\n", ptr);
     return false;
   }
   cuMemRelease(handle);

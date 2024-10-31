@@ -839,7 +839,7 @@ MSCCLPP_DEVICE_INLINE void allreduce6_helper(mscclpp::SmDevice2DeviceSemaphoreDe
       mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (float*)(mc_ptr + idx));
       mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (float*)(mc_ptr + idx));
     } else if constexpr (std::is_same_v<DataType, float> && (kVecSize == 1)) {
-      float val;  // fits 1 float element
+      uint1 val;  // fits 1 float element
       mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (float*)(mc_ptr + idx));
       mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (float*)(mc_ptr + idx));
     } else if constexpr (std::is_same_v<DataType, __half> && (kVecSize == 8)) {

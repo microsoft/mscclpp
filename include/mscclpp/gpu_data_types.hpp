@@ -28,4 +28,16 @@ using __bfloat162 = __nv_bfloat162;
 
 #endif
 
+namespace mscclpp {
+
+enum class DataType {
+  INT32,
+  UINT32,
+  FLOAT16,
+  FLOAT32,
+  BFLOAT16,
+};
+
+}  // namespace mscclpp
+
 #endif  // MSCCLPP_GPU_DATA_TYPES_HPP_

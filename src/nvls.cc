@@ -133,7 +133,7 @@ void NvlsConnection::Impl::addDevice(int cudaDeviceId) {
   INFO(MSCCLPP_COLL, "NVLS connection created");
 }
 
-// TODO(binyli): For cuMemMap, we can not map handle to va with offset equal to 0.
+// TODO(binyli): For cuMemMap, we can not map handle to va with offset not equal to 0.
 // Then we don't need to maintain the freeRanges_ list. For different memory, we could map to different mc handle.
 size_t NvlsConnection::Impl::allocateBuffer(size_t size) {
   if (freeRanges_.empty()) {
