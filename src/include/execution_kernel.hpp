@@ -430,6 +430,7 @@ MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, 
   Element::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
 }
 
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 template <typename T>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* dst, T* src, uint32_t dstOffset, uint32_t srcOffset,
                                                       size_t size) {
@@ -458,6 +459,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* dst, T* src, uint32_t d
     DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)dst + idx);
   }
 }
+#endif
 
 template <typename T, typename PacketType = LL16Packet>
 __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,

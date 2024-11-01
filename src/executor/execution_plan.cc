@@ -106,7 +106,7 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, BufferTy
 }
 
 std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfosByDstRank(int rank, BufferType bufferType) const {
-  auto pred = [rank, bufferType](const ChannelInfo& info) { return info.dstBufferType == bufferType; };
+  auto pred = [bufferType](const ChannelInfo& info) { return info.dstBufferType == bufferType; };
   return filter(this->channelInfosByDstRank.at(rank), pred);
 }
 

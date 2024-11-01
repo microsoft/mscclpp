@@ -19,7 +19,7 @@ bool isCuMemMapAllocated(void* ptr) {
   if (result != CUDA_SUCCESS) {
     return false;
   }
-  cuMemRelease(handle);
+  MSCCLPP_CUTHROW(cuMemRelease(handle));
   return true;
 }
 

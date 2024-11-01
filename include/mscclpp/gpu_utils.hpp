@@ -386,7 +386,7 @@ UniqueCudaHostPtr<T> makeUniqueCudaHost(size_t count) {
 /// @param gran the granularity of the allocation.
 /// @return A std::unique_ptr to the allocated memory.
 template <class T>
-std::unique_ptr<T> allocUniquePhysicalCuda(size_t count, size_t gran = 0) {
+std::unique_ptr<T> allocUniquePhysicalCuda([[maybe_unused]] size_t count, [[maybe_unused]] size_t gran = 0) {
 #if (CUDA_FABRIC_SUPPORTED)
   if (!isFabricSupported()) {
     throw Error("Only suupport GPU with Fabric support", ErrorCode::InvalidUsage);
