@@ -301,7 +301,7 @@ struct Executor::Impl {
     for (const NvlsInfo& info : nvlsInfos) {
       std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[info];
       void* buffer = getBuffer(info.bufferType, sendbuff, recvbuff, context.scratchBuffer.get());
-      std::shared_ptr<char> nvlsPtr = nvlsConnection->bindAllocatedCudaWithPtr((CUdeviceptr)buffer, info.bufferSize);
+      std::shared_ptr<char> nvlsPtr = nvlsConnection->bindAllocatedCuda((CUdeviceptr)buffer, info.bufferSize);
       NvlsConnection::DeviceMulticastPointer deviceMulticastPointer(buffer, nvlsPtr, info.bufferSize);
       context.nvlsChannels.push_back(deviceMulticastPointer);
     }
