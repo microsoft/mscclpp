@@ -117,7 +117,12 @@ struct Executor::Impl {
 
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize, recvBufferSize);
-    std::shared_ptr<char> scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
+    std::shared_ptr<char> scratchBuffer;
+    if (isNvlsSupported()) {
+      scratchBuffer = allocSharedPhysicalCuda<char>(scratchBufferSize);
+    } else {
+      scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
+    }
     context.scratchBuffer = scratchBuffer;
     context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
