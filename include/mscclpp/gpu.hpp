@@ -103,6 +103,13 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define CUDA_NVLS_SUPPORTED 0
 #endif  // !defined(__HIP_PLATFORM_AMD__)
 
+// Fabric
+#if !defined(__HIP_PLATFORM_AMD__)
+#define CUDA_FABRIC_SUPPORTED ((CUDART_VERSION >= 12040))
+#else  // !defined(__HIP_PLATFORM_AMD__)
+#define CUDA_FABRIC_SUPPORTED 0
+#endif  // !defined(__HIP_PLATFORM_AMD__)
+
 // GPU sync threads
 #if defined(__HIP_PLATFORM_AMD__)
 #define __syncshm() asm volatile("s_waitcnt lgkmcnt(0) \n s_barrier");

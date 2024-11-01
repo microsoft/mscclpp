@@ -23,6 +23,7 @@ bool isCuMemMapAllocated(void* ptr) {
   return true;
 }
 
+#if (CUDA_FABRIC_SUPPORTED)
 // Get the recommended granularity for cuMemAddressReserve
 size_t getRecommendedGranularity() {
   size_t gran = 0;
@@ -34,16 +35,13 @@ size_t getRecommendedGranularity() {
   CUmemAllocationProp prop = {};
   prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-#if defined(__HIP_PLATFORM_AMD__)
-  prop.requestedHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-#else
   prop.requestedHandleTypes =
       (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
-#endif
   prop.location.id = currentDevice;
   MSCCLPP_CUTHROW(cuMemGetAllocationGranularity(&gran, &prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
   return gran;
 }
+#endif
 }  // namespace
 
 namespace mscclpp {
@@ -67,6 +65,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       this->isCuMemMapAlloc = true;
     }
     if (this->isCuMemMapAlloc) {
+#if (CUDA_FABRIC_SUPPORTED)
       if (isFabricSupported()) {
         CUmemGenericAllocationHandle handle;
         MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, baseDataPtr));
@@ -76,6 +75,9 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       } else {
         throw Error("Fabric is not supported", ErrorCode::InvalidUsage);
       }
+#else
+      throw Error("Only support cuMemMap with CUDA 12.4 or later", ErrorCode::InvalidUsage);
+#endif
     } else {
       cudaIpcMemHandle_t handle;
       MSCCLPP_CUDATHROW(cudaIpcGetMemHandle(&handle, baseDataPtr));
@@ -218,6 +220,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
     if (this->isCuMemMapAlloc) {
+#if (CUDA_FABRIC_SUPPORTED)
       if (isFabricSupported()) {
         CUmemGenericAllocationHandle handle;
         MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, CU_MEM_HANDLE_TYPE_FABRIC));
@@ -229,6 +232,9 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
       } else {
         throw Error("Fabric is not supported", ErrorCode::InvalidUsage);
       }
+#else
+      throw Error("Only support cuMemMap with CUDA 12.4 or later", ErrorCode::InvalidUsage);
+#endif
     } else {
       MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
       this->data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;

@@ -109,9 +109,11 @@ T* cudaPhysicalCalloc(size_t nbytes, size_t gran) {
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
 #if defined(__HIP_PLATFORM_AMD__)
   prop.requestedHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-#else
+#elif (CUDA_FABRIC_SUPPORTED)
   prop.requestedHandleTypes =
       (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
+#else
+  prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
 #endif
   prop.location.id = currentDevice;
 
@@ -260,7 +262,7 @@ static inline size_t getMulticastGranularity(size_t size, CUmulticastGranularity
 #if defined(__HIP_PLATFORM_AMD__)
   // TODO: revisit when HIP fixes this typo in the field name
   prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-#elif (CUDA_NVLS_SUPPORTED)
+#elif (CUDA_FABRIC_SUPPORTED)
   prop.handleTypes = (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
 #else
   prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;

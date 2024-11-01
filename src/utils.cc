@@ -68,9 +68,9 @@ std::string getHostName(int maxlen, const char delim) {
 }
 
 bool isNvlsSupported() {
-  static bool result = false;
-  static bool isChecked = false;
-#if (CUDART_VERSION >= 12040)
+  [[maybe_unused]] static bool result = false;
+  [[maybe_unused]] static bool isChecked = false;
+#if (CUDA_FABRIC_SUPPORTED)
   if (!isChecked) {
     int isMulticastSupported;
     int isFabricSupported;
@@ -86,9 +86,9 @@ bool isNvlsSupported() {
 }
 
 bool isFabricSupported() {
-  static bool result = false;
-  static bool isChecked = false;
-#if (CUDART_VERSION >= 12040)
+  [[maybe_unused]] static bool result = false;
+  [[maybe_unused]] static bool isChecked = false;
+#if (CUDA_FABRIC_SUPPORTED)
   if (!isChecked) {
     int isFabricSupported;
     CUdevice dev;
