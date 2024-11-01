@@ -11,7 +11,7 @@
 #include <unistd.h>
 
 #include <mscclpp/gpu.hpp>
-#if (USE_NVLS)
+#if (CUDA_NVLS_SUPPORTED)
 
 #define CUCHECK(cmd)                                     \
   do {                                                   \
@@ -202,11 +202,11 @@ int main() {
   return 0;
 }
 
-#else  // !(USE_NVLS)
+#else  // !(CUDA_NVLS_SUPPORTED)
 
 int main() {
   printf("This test requires NVLS to be enabled\n");
   return 0;
 }
 
-#endif  // !(USE_NVLS)
+#endif  // !(CUDA_NVLS_SUPPORTED)

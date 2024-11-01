@@ -260,8 +260,10 @@ static inline size_t getMulticastGranularity(size_t size, CUmulticastGranularity
 #if defined(__HIP_PLATFORM_AMD__)
   // TODO: revisit when HIP fixes this typo in the field name
   prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-#else
+#elif (CUDA_NVLS_SUPPORTED)
   prop.handleTypes = (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
+#else
+  prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
 #endif
   prop.flags = 0;
   MSCCLPP_CUTHROW(cuMulticastGetGranularity(&gran, &prop, granFlag));
@@ -277,6 +279,9 @@ template <class T>
 std::shared_ptr<T> allocSharedPhysicalCuda(size_t count, size_t gran = 0) {
   if (!isFabricSupported()) {
     throw Error("Only suupport GPU with Fabric support", ErrorCode::InvalidUsage);
+  }
+  if (count == 0) {
+    return nullptr;
   }
 
   if (gran == 0) {
@@ -384,7 +389,17 @@ UniqueCudaHostPtr<T> makeUniqueCudaHost(size_t count) {
 /// @param gran the granularity of the allocation.
 /// @return A std::unique_ptr to the allocated memory.
 template <class T>
-std::unique_ptr<T> allocUniquePhysicalCuda(size_t count, size_t gran) {
+std::unique_ptr<T> allocUniquePhysicalCuda(size_t count, size_t gran = 0) {
+  if (!isFabricSupported()) {
+    throw Error("Only suupport GPU with Fabric support", ErrorCode::InvalidUsage);
+  }
+  if (count == 0) {
+    return nullptr;
+  }
+
+  if (gran == 0) {
+    gran = getMulticastGranularity(count * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
+  }
   return detail::safeAlloc<T, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
                            std::unique_ptr<CudaPhysicalDeleter<T>, CudaDeleter<CudaPhysicalDeleter<T>>>>(count, gran);
 }

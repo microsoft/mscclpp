@@ -15,7 +15,7 @@
 
 namespace mscclpp {
 
-#if (USE_NVLS)
+#if (CUDA_NVLS_SUPPORTED)
 class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection::Impl> {
  public:
   // use this only for the root of the NVLS
@@ -229,7 +229,7 @@ std::shared_ptr<char> NvlsConnection::Impl::bindMemoryToMulticastHandle(size_t o
   return std::shared_ptr<char>(mcPtr, deleter);
 }
 
-#else   // !(USE_NVLS)
+#else   // !(CUDA_NVLS_SUPPORTED)
 class NvlsConnection::Impl {
  public:
   // use this only for the root of the NVLS
@@ -251,7 +251,7 @@ class NvlsConnection::Impl {
   Error notSupportedError =
       Error("NVLS is not supported on this CUDA version (< 12.1) or kernel version (< 5.6.0)", ErrorCode::InvalidUsage);
 };
-#endif  // !(USE_NVLS)
+#endif  // !(CUDA_NVLS_SUPPORTED)
 
 const int NvlsConnection::DefaultNvlsBufferSize = (1 << 29);
 
