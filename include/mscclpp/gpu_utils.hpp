@@ -96,6 +96,7 @@ T* cudaCalloc(size_t nelem) {
   return ptr;
 }
 
+#if (CUDA_FABRIC_SUPPORTED)
 template <class T>
 T* cudaPhysicalCalloc(size_t nbytes, size_t gran) {
   AvoidCudaGraphCaptureGuard cgcGuard;
@@ -107,14 +108,8 @@ T* cudaPhysicalCalloc(size_t nbytes, size_t gran) {
   CUmemAllocationProp prop = {};
   prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-#if defined(__HIP_PLATFORM_AMD__)
-  prop.requestedHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-#elif (CUDA_FABRIC_SUPPORTED)
   prop.requestedHandleTypes =
       (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
-#else
-  prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-#endif
   prop.location.id = currentDevice;
 
   // allocate physical memory
@@ -131,6 +126,7 @@ T* cudaPhysicalCalloc(size_t nbytes, size_t gran) {
 
   return devicePtr;
 }
+#endif
 
 template <class T>
 T* cudaExtCalloc(size_t nelem) {
@@ -273,7 +269,7 @@ static inline size_t getMulticastGranularity(size_t size, CUmulticastGranularity
 /// @param gran the granularity of the allocation.
 /// @return A std::shared_ptr to the allocated memory.
 template <class T>
-std::shared_ptr<T> allocSharedPhysicalCuda(size_t count, size_t gran = 0) {
+std::shared_ptr<T> allocSharedPhysicalCuda([[maybe_unused]] size_t count, [[maybe_unused]] size_t gran = 0) {
 #if (CUDA_FABRIC_SUPPORTED)
   if (!isFabricSupported()) {
     throw Error("Only suupport GPU with Fabric support", ErrorCode::InvalidUsage);
