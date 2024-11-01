@@ -250,6 +250,7 @@ std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, std::shared_ptr<T>>(count);
 }
 
+#if (CUDA_FABRIC_SUPPORTED)
 static inline size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
   size_t gran = 0;
   int numDevices = 0;
@@ -259,18 +260,12 @@ static inline size_t getMulticastGranularity(size_t size, CUmulticastGranularity
   prop.size = size;
   // This is a dummy value, it might affect the granularity in the future
   prop.numDevices = numDevices;
-#if defined(__HIP_PLATFORM_AMD__)
-  // TODO: revisit when HIP fixes this typo in the field name
-  prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-#elif (CUDA_FABRIC_SUPPORTED)
   prop.handleTypes = (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
-#else
-  prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-#endif
   prop.flags = 0;
   MSCCLPP_CUTHROW(cuMulticastGetGranularity(&gran, &prop, granFlag));
   return gran;
 }
+#endif
 
 /// Allocates physical memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
 /// @tparam T Type of each element in the allocated memory.
@@ -279,6 +274,7 @@ static inline size_t getMulticastGranularity(size_t size, CUmulticastGranularity
 /// @return A std::shared_ptr to the allocated memory.
 template <class T>
 std::shared_ptr<T> allocSharedPhysicalCuda(size_t count, size_t gran = 0) {
+#if (CUDA_FABRIC_SUPPORTED)
   if (!isFabricSupported()) {
     throw Error("Only suupport GPU with Fabric support", ErrorCode::InvalidUsage);
   }
@@ -291,6 +287,9 @@ std::shared_ptr<T> allocSharedPhysicalCuda(size_t count, size_t gran = 0) {
   }
   size_t nbytes = (count * sizeof(T) + gran - 1) / gran * gran;
   return detail::safeAlloc<T, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>, std::shared_ptr<T>>(nbytes, gran);
+#else
+  throw Error("Only support GPU with Fabric support", ErrorCode::InvalidUsage);
+#endif
 }
 
 /// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
@@ -392,6 +391,7 @@ UniqueCudaHostPtr<T> makeUniqueCudaHost(size_t count) {
 /// @return A std::unique_ptr to the allocated memory.
 template <class T>
 std::unique_ptr<T> allocUniquePhysicalCuda(size_t count, size_t gran = 0) {
+#if (CUDA_FABRIC_SUPPORTED)
   if (!isFabricSupported()) {
     throw Error("Only suupport GPU with Fabric support", ErrorCode::InvalidUsage);
   }
@@ -404,6 +404,9 @@ std::unique_ptr<T> allocUniquePhysicalCuda(size_t count, size_t gran = 0) {
   }
   return detail::safeAlloc<T, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
                            std::unique_ptr<CudaPhysicalDeleter<T>, CudaDeleter<CudaPhysicalDeleter<T>>>>(count, gran);
+#else
+  throw Error("Only support GPU with Fabric support", ErrorCode::InvalidUsage);
+#endif
 }
 
 /// Asynchronous cudaMemcpy without capture into a CUDA graph.
