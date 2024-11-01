@@ -141,7 +141,7 @@ PhysicalCudaMemory<T>* cudaPhysicalCalloc(size_t nelem, size_t gran) {
 }
 
 template <class T>
-T* cudaPhysicalCallocPtr(size_t nbytes) {
+T* cudaPhysicalCallocPtr(size_t nbytes, size_t gran) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   int deviceId = -1;
   CUdevice currentDevice;
@@ -164,9 +164,6 @@ T* cudaPhysicalCallocPtr(size_t nbytes) {
   MSCCLPP_CUTHROW(cuMemCreate(&memHandle, nbytes, &prop, 0 /*flags*/));
 
   T* devicePtr = nullptr;
-  size_t gran = 0;
-  // Map the device pointer
-  MSCCLPP_CUTHROW(cuMemGetAllocationGranularity(&gran, &prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
   MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, nbytes, gran, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, nbytes, 0, memHandle, 0));
   setReadWriteMemoryAccess(devicePtr, nbytes);
@@ -342,7 +339,8 @@ std::shared_ptr<T> allocSharedPhysicalCudaPtr(size_t count) {
   prop.flags = 0;
   MSCCLPP_CUTHROW(cuMulticastGetGranularity(&gran, &prop, CU_MULTICAST_GRANULARITY_RECOMMENDED));
   size_t nbytes = (count * sizeof(T) + gran - 1) / gran * gran;
-  return detail::safeAlloc<T, detail::cudaPhysicalCallocPtr<T>, CudaPhysicalPtrDeleter<T>, std::shared_ptr<T>>(nbytes);
+  return detail::safeAlloc<T, detail::cudaPhysicalCallocPtr<T>, CudaPhysicalPtrDeleter<T>, std::shared_ptr<T>>(nbytes,
+                                                                                                               gran);
 }
 #endif
 

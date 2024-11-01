@@ -75,8 +75,8 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) {
 
   INFO(MSCCLPP_COLL,
        "NVLS handle created on root with size %ld. minGranularity %ld and recommendedGranularity %ld buffer size is "
-       "%ld\n",
-       mcProp_.size, minMcGran_, mcGran_, bufferSize);
+       "%ld, adjusted size is %ld",
+       mcProp_.size, minMcGran_, mcGran_, bufferSize, bufferSize_);
 }
 
 NvlsConnection::Impl::Impl(const std::vector<char>& data) {
@@ -195,12 +195,14 @@ void NvlsConnection::Impl::freeBuffer(size_t offset, size_t size) noexcept {
 }
 
 std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUmemGenericAllocationHandle memHandle, size_t devBuffSize) {
+  devBuffSize = ((devBuffSize + minMcGran_ - 1) / minMcGran_) * minMcGran_;
   size_t offset = allocateBuffer(devBuffSize);
   MSCCLPP_CUTHROW(cuMulticastBindMem(mcHandle_, offset /*mcOffset*/, memHandle, 0 /*memOffset*/, devBuffSize, 0));
   return bindMemoryToMulticastHandle(offset, devBuffSize);
 }
 
 std::shared_ptr<char> NvlsConnection::Impl::bindMemoryWithPtr(CUdeviceptr devicePtr, size_t devBuffSize) {
+  devBuffSize = ((devBuffSize + minMcGran_ - 1) / minMcGran_) * minMcGran_;
   size_t offset = allocateBuffer(devBuffSize);
   MSCCLPP_CUTHROW(cuMulticastBindAddr(mcHandle_, offset /*mcOffset*/, devicePtr, devBuffSize, 0));
   return bindMemoryToMulticastHandle(offset, devBuffSize);

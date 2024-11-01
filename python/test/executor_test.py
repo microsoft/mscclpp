@@ -8,6 +8,8 @@ from mscclpp import (
     ExecutionPlan,
     PacketType,
     npkit,
+    alloc_shared_physical_cuda_ptr,
+    is_nvls_supported,
 )
 import mscclpp.comm as mscclpp_comm
 import os
@@ -93,6 +95,18 @@ def determine_result_buf(sendbuf, recvbuf, in_place, execution_plan_name):
         return recvbuf
 
 
+def allocate_buffer(nelems, dtype):
+    if is_nvls_supported:
+        buffer_raw = alloc_shared_physical_cuda_ptr(nelems, dtype=dtype_to_mscclpp_dtype(dtype))
+        buffer_ptr = cp.cuda.MemoryPointer(
+            cp.cuda.UnownedMemory(buffer_raw.get_ptr(), buffer_raw.size(), buffer_raw), 0
+        )
+        buffer = cp.ndarray(nelems, dtype=dtype, memptr=buffer_ptr)
+        return buffer
+    else:
+        return cp.zeros(nelems, dtype=dtype)
+
+
 def main(
     execution_plan_name: str,
     execution_plan_path: str,
@@ -114,18 +128,18 @@ def main(
     nelems = size // cp.dtype(dtype).itemsize
     buffer = cp.random.random(nelems * mscclpp_group.nranks, dtype=cp.float32).astype(dtype)
     sub_arrays = cp.split(buffer, MPI.COMM_WORLD.size)
-    sendbuf = cp.zeros(nelems, dtype=dtype)
+    sendbuf = allocate_buffer(nelems, dtype)
     for i in range(nelems):
         sendbuf[i] = sub_arrays[MPI.COMM_WORLD.rank][i]
 
     if "allgather" in execution_plan_name:
-        recvbuf = cp.zeros(nelems * mscclpp_group.nranks, dtype=dtype)
+        recvbuf = allocate_buffer(nelems * mscclpp_group.nranks, dtype)
         if in_place:
             for i in range(nelems):
                 recvbuf[mscclpp_group.my_rank * nelems + i] = sendbuf[i]
         expected = buffer
     else:
-        recvbuf = cp.zeros(nelems, dtype=dtype)
+        recvbuf = allocate_buffer(nelems, dtype)
         expected = cp.zeros_like(sendbuf, dtype=dtype)
         for i in range(mscclpp_group.nranks):
             expected += sub_arrays[i]
@@ -172,7 +186,7 @@ if __name__ == "__main__":
     parser.add_argument("-n", "--execution_plan_name", type=str, required=True)
     parser.add_argument("-path", "--execution_plan_path", type=str, required=True)
     parser.add_argument("--size", type=str, required=True)
-    parser.add_argument("--in_place", action="store_true", help="flag to define an in-place operation")
+    parser.add_argument("--in_place", action="store_true", help="flag to define an in-place operation", default=True)
     parser.add_argument("--dtype", type=str, default="float16", help="Choose from float16, float32, int32")
     parser.add_argument("--packet_type", type=str, default="LL16", help="Choose from LL8, LL16")
     parser.add_argument("--seed", type=int, default=42)
