@@ -271,9 +271,11 @@ NvlsConnection::NvlsConnection(const std::vector<char>& data) : pimpl_(std::make
 std::vector<char> NvlsConnection::serialize() { return pimpl_->serialize(); }
 
 std::shared_ptr<NvlsConnection::DeviceMulticastPointer> NvlsConnection::allocateAndBindCuda(size_t size) {
-  auto mem = allocSharedPhysicalCuda<char>(size, pimpl_->getMinMcGran());
-  auto mcPtr = pimpl_->bindMemory(mem->memHandle_, size);
-  return std::make_shared<DeviceMulticastPointer>(mem, mcPtr, size);
+  CUmemGenericAllocationHandle handle;
+  auto ptr = allocSharedPhysicalCuda<char>(size, pimpl_->getMinMcGran());
+  MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, ptr.get()));
+  auto mcPtr = pimpl_->bindMemory(handle, size);
+  return std::make_shared<DeviceMulticastPointer>(ptr, mcPtr, size);
 }
 
 std::shared_ptr<char> NvlsConnection::bindAllocatedCuda(CUmemGenericAllocationHandle memHandle, size_t size) {
@@ -286,17 +288,13 @@ std::shared_ptr<char> NvlsConnection::bindAllocatedCudaWithPtr(CUdeviceptr devic
 
 NvlsConnection::DeviceMulticastPointer::DeviceHandle NvlsConnection::DeviceMulticastPointer::deviceHandle() {
   NvlsConnection::DeviceMulticastPointer::DeviceHandle device;
-  if (this->deviceMem_ != nullptr) {
-    device.devicePtr = this->deviceMem_->devicePtr_;
-  } else {
-    device.devicePtr = this->devicePtr_;
-  }
+  device.devicePtr = this->devicePtr_;
   device.mcPtr = this->mcPtr_.get();
   device.bufferSize = this->bufferSize_;
   return device;
 };
 
-char* NvlsConnection::DeviceMulticastPointer::getDevicePtr() { return deviceMem_->devicePtr_; };
+void* NvlsConnection::DeviceMulticastPointer::getDevicePtr() { return devicePtr_; };
 
 size_t NvlsConnection::getMultiCastMinGranularity() { return pimpl_->getMinMcGran(); }
 

@@ -26,7 +26,7 @@ from ._mscclpp import (
     PacketType,
     version,
     is_nvls_supported,
-    alloc_shared_physical_cuda_ptr,
+    alloc_shared_physical_cuda,
     npkit,
 )
 

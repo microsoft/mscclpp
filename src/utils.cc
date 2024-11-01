@@ -68,12 +68,35 @@ std::string getHostName(int maxlen, const char delim) {
 }
 
 bool isNvlsSupported() {
+  static bool result = false;
+  static bool isChecked = false;
 #if (CUDART_VERSION >= 12040)
-  CUdevice dev;
-  int isNvlsSupported;
-  MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
-  MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isNvlsSupported, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
-  return isNvlsSupported == 1;
+  if (!isChecked) {
+    int isMulticastSupported;
+    int isFabricSupported;
+    CUdevice dev;
+    MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
+    MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isMulticastSupported, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
+    MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isFabricSupported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, dev));
+    result = (isMulticastSupported == 1 && isFabricSupported == 1);
+  }
+  return result;
+#endif
+  return false;
+}
+
+bool isFabricSupported() {
+  static bool result = false;
+  static bool isChecked = false;
+#if (CUDART_VERSION >= 12040)
+  if (!isChecked) {
+    int isFabricSupported;
+    CUdevice dev;
+    MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
+    MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isFabricSupported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, dev));
+    result = (isFabricSupported == 1);
+  }
+  return result;
 #endif
   return false;
 }

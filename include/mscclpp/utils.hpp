@@ -38,6 +38,7 @@ struct ScopedTimer : public Timer {
 std::string getHostName(int maxlen, const char delim);
 
 bool isNvlsSupported();
+bool isFabricSupported();
 
 }  // namespace mscclpp
 

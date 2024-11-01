@@ -8,7 +8,7 @@ from mscclpp import (
     ExecutionPlan,
     PacketType,
     npkit,
-    alloc_shared_physical_cuda_ptr,
+    alloc_shared_physical_cuda,
     is_nvls_supported,
 )
 import mscclpp.comm as mscclpp_comm
@@ -97,7 +97,7 @@ def determine_result_buf(sendbuf, recvbuf, in_place, execution_plan_name):
 
 def allocate_buffer(nelems, dtype):
     if is_nvls_supported:
-        buffer_raw = alloc_shared_physical_cuda_ptr(nelems, dtype=dtype_to_mscclpp_dtype(dtype))
+        buffer_raw = alloc_shared_physical_cuda(nelems, dtype=dtype_to_mscclpp_dtype(dtype))
         buffer_ptr = cp.cuda.MemoryPointer(
             cp.cuda.UnownedMemory(buffer_raw.get_ptr(), buffer_raw.size(), buffer_raw), 0
         )

@@ -25,20 +25,19 @@ class NvlsConnection {
 
   struct DeviceMulticastPointer {
    private:
-    std::shared_ptr<PhysicalCudaMemory<char>> deviceMem_;
     void* devicePtr_;
+    std::shared_ptr<char> ptr_;
     std::shared_ptr<char> mcPtr_;
     size_t bufferSize_;
 
    public:
     using DeviceHandle = DeviceMulticastPointerDeviceHandle;
-    DeviceMulticastPointer(std::shared_ptr<PhysicalCudaMemory<char>> deviceMem, std::shared_ptr<char> mcPtr,
-                           size_t bufferSize)
-        : deviceMem_(deviceMem), devicePtr_(nullptr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
+    DeviceMulticastPointer(std::shared_ptr<char> ptr, std::shared_ptr<char> mcPtr, size_t bufferSize)
+        : devicePtr_(ptr.get()), ptr_(ptr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
     DeviceMulticastPointer(void* devicePtr, std::shared_ptr<char> mcPtr, size_t bufferSize)
-        : deviceMem_(nullptr), devicePtr_(devicePtr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
+        : devicePtr_(devicePtr), ptr_(nullptr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
     DeviceHandle deviceHandle();
-    char* getDevicePtr();
+    void* getDevicePtr();
 
     friend class NvlsConnection;
   };

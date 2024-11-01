@@ -10,9 +10,7 @@ using namespace mscclpp;
 
 class PyCudaMemory {
  public:
-  PyCudaMemory(size_t size, DataType dtype) : size_(size), dtype_(dtype) {
-    ptr_ = allocSharedPhysicalCudaPtr<char>(size);
-  }
+  PyCudaMemory(size_t size, DataType dtype) : size_(size), dtype_(dtype) { ptr_ = allocSharedPhysicalCuda<char>(size); }
 
   uintptr_t getPtr() const { return (uintptr_t)(ptr_.get()); }
   size_t size() const { return size_; }
@@ -24,7 +22,7 @@ class PyCudaMemory {
   DataType dtype_;
 };
 
-std::shared_ptr<PyCudaMemory> allocSharedPhysicalCudaPtrDispatcher(size_t count, DataType dtype) {
+std::shared_ptr<PyCudaMemory> allocSharedPhysicalCudaDispatcher(size_t count, DataType dtype) {
   size_t size = 0;
   switch (dtype) {
     case DataType::FLOAT32:
@@ -52,5 +50,5 @@ void register_gpu_utils(nb::module_& m) {
       .def("get_ptr", &PyCudaMemory::getPtr, "Get the raw pointer")
       .def("size", &PyCudaMemory::size, "Get the size of the allocated memory")
       .def("dtype", &PyCudaMemory::dtype, "Get the data type of the memory");
-  m.def("alloc_shared_physical_cuda_ptr", &allocSharedPhysicalCudaPtrDispatcher, nb::arg("count"), nb::arg("dtype"));
+  m.def("alloc_shared_physical_cuda", &allocSharedPhysicalCudaDispatcher, nb::arg("count"), nb::arg("dtype"));
 }
