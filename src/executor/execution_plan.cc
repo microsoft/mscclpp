@@ -362,28 +362,25 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
           operation.channelType = convertToChannelType(op["ctype"]);
         }
         if (op.contains("i_cids")) {
-          operation.nInputs = op["i_cids"].size();
-          for (int i = 0; i < operation.nInputs; i++) {
-            BufferType srcBufferType = convertToBufferType(op["i_buff"]["src"]);
-            BufferType dstBufferType = convertToBufferType(op["i_buff"]["dst"]);
-            // Get the relevant channel index in rank channelInfos
-            operation.inputChannelIndexes[i] =
-                channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
-            operation.inputOffsets[i] =
-                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["i_cids"][i]["off"]) +
-                (srcBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
-            chunkIndexes.push_back((uint32_t)op["i_cids"][i]["off"]);
+          if (operation.channelType == mscclpp::ChannelType::NVLS) {
+            BufferType srcBufferType = convertToBufferType(op["srcbuff"]);
+            operation.nvlsInputIndex =
+                channelIndexes[{srcBufferType, srcBufferType, ChannelType::NVLS}][op["i_cids"][0]["id"]];
+            chunkIndexes.push_back((uint32_t)op["srcoff"]);
+          } else {
+            operation.nInputs = op["i_cids"].size();
+            for (int i = 0; i < operation.nInputs; i++) {
+              BufferType srcBufferType = convertToBufferType(op["i_buff"]["src"]);
+              BufferType dstBufferType = convertToBufferType(op["i_buff"]["dst"]);
+              // Get the relevant channel index in rank channelInfos
+              operation.inputChannelIndexes[i] =
+                  channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
+              operation.inputOffsets[i] =
+                  this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["i_cids"][i]["off"]) +
+                  (srcBufferType != BufferType::SCRATCH ? contsSrcOffset : 0);
+              chunkIndexes.push_back((uint32_t)op["i_cids"][i]["off"]);
+            }
           }
-        }
-        if (op.contains("gi_cid")) {
-          BufferType srcBufferType = convertToBufferType(op["srcbuff"]);
-          operation.nvlsInputIndex = channelIndexes[{srcBufferType, srcBufferType, ChannelType::NVLS}][op["gi_cid"]];
-          chunkIndexes.push_back((uint32_t)op["srcoff"]);
-        }
-        if (op.contains("go_cid")) {
-          BufferType dstBufferType = convertToBufferType(op["dstbuff"]);
-          operation.nvlsOutputIndex = channelIndexes[{dstBufferType, dstBufferType, ChannelType::NVLS}][op["go_cid"]];
-          chunkIndexes.push_back((uint32_t)op["dstoff"]);
         }
         // will have either srcs or i_cids
         if (op.contains("srcs")) {
@@ -399,14 +396,21 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffse
         if (op.contains("o_cids")) {
           operation.nOutputs = op["o_cids"].size();
           for (int i = 0; i < operation.nOutputs; i++) {
-            BufferType srcBufferType = convertToBufferType(op["o_buff"]["src"]);
-            BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
-            operation.outputChannelIndexes[i] =
-                channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["o_cids"][i]["id"]];
-            operation.outputOffsets[i] =
-                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["o_cids"][i]["off"]) +
-                (dstBufferType != BufferType::SCRATCH ? constDstOffset : 0);
-            chunkIndexes.push_back((uint32_t)op["o_cids"][i]["off"]);
+            if (operation.channelType == mscclpp::ChannelType::NVLS) {
+              BufferType dstBufferType = convertToBufferType(op["dstbuff"]);
+              operation.nvlsInputIndex =
+                  channelIndexes[{dstBufferType, dstBufferType, ChannelType::NVLS}][op["o_cids"][0]["id"]];
+              chunkIndexes.push_back((uint32_t)op["dstoff"]);
+            } else {
+              BufferType srcBufferType = convertToBufferType(op["o_buff"]["src"]);
+              BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
+              operation.outputChannelIndexes[i] =
+                  channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["o_cids"][i]["id"]];
+              operation.outputOffsets[i] =
+                  this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["o_cids"][i]["off"]) +
+                  (dstBufferType != BufferType::SCRATCH ? constDstOffset : 0);
+              chunkIndexes.push_back((uint32_t)op["o_cids"][i]["off"]);
+            }
           }
         }
         // will have either dsts or o_cids
