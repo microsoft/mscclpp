@@ -129,8 +129,7 @@ def main(
     buffer = cp.random.random(nelems * mscclpp_group.nranks, dtype=cp.float32).astype(dtype)
     sub_arrays = cp.split(buffer, MPI.COMM_WORLD.size)
     sendbuf = allocate_buffer(nelems, dtype)
-    for i in range(nelems):
-        sendbuf[i] = sub_arrays[MPI.COMM_WORLD.rank][i]
+    sendbuf[:] = sub_arrays[MPI.COMM_WORLD.rank]
 
     if "allgather" in execution_plan_name:
         recvbuf = allocate_buffer(nelems * mscclpp_group.nranks, dtype)

@@ -242,6 +242,7 @@ void ExecutionPlan::Impl::parseChannels(
       info.bufferType = convertToBufferType(channel["buff"]);
       for (const auto& group : channel["rankGroups"]) {
         info.bufferSize = (int)group["size"] * this->getUpperBoundChunkSize(rank, this->inputSize, this->outputSize);
+        info.ranks.clear();
         for (int rank : group["ranks"]) {
           info.ranks.push_back(rank);
         }

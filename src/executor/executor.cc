@@ -70,7 +70,7 @@ namespace mscclpp {
 struct ExecutionContext {
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<int, std::shared_ptr<Connection>> connections;
-  std::unordered_map<NvlsInfo, std::shared_ptr<NvlsConnection>> nvlsConnections;
+  std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
   std::unordered_map<std::pair<BufferType, int>, mscclpp::RegisteredMemory> registeredMemories;
   std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
   std::vector<mscclpp::SemaphoreId> proxySemaphores;
@@ -175,7 +175,7 @@ struct Executor::Impl {
     for (const NvlsInfo& info : nvlsInfos) {
       std::shared_ptr<NvlsConnection> nvlsConnection =
           mscclpp::connectNvlsCollective(this->comm, info.ranks, info.bufferSize);
-      context.nvlsConnections[info] = nvlsConnection;
+      context.nvlsConnections.push_back(nvlsConnection);
     }
   }
 
@@ -298,8 +298,9 @@ struct Executor::Impl {
   void setupNvlsChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, int rank,
                          const ExecutionPlan& plan) {
     std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank);
-    for (const NvlsInfo& info : nvlsInfos) {
-      std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[info];
+    for (size_t i = 0; i < nvlsInfos.size(); i++) {
+      std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[i];
+      NvlsInfo info = nvlsInfos[i];
       void* buffer = getBuffer(info.bufferType, sendbuff, recvbuff, context.scratchBuffer.get());
       std::shared_ptr<char> nvlsPtr = nvlsConnection->bindAllocatedCuda((CUdeviceptr)buffer, info.bufferSize);
       NvlsConnection::DeviceMulticastPointer deviceMulticastPointer(buffer, nvlsPtr, info.bufferSize);

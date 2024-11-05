@@ -13,8 +13,6 @@ namespace mscclpp {
 constexpr int MAX_CHANNEL = 16;
 constexpr int MAX_CHANNEL_PER_OPERATION = 8;
 constexpr int MAX_OPERATION = 64;
-// input-input, output-output, scratch-scratch
-constexpr int MAX_NLVS_CHANNELS = 3;
 
 enum class BufferType : uint8_t {
   NONE,
@@ -56,7 +54,7 @@ enum class OperationType : uint8_t {
 struct Channels {
   mscclpp::DeviceHandle<mscclpp::SmChannel> smChannels[MAX_CHANNEL];
   mscclpp::DeviceHandle<mscclpp::SimpleProxyChannel> proxyChannels[MAX_CHANNEL];
-  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels[MAX_NLVS_CHANNELS];
+  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels[MAX_CHANNEL];
 };
 
 struct Operation {
