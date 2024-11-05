@@ -58,7 +58,7 @@ struct ncclComm {
   std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
   std::shared_ptr<mscclpp::Executor> executor;
   std::shared_ptr<mscclpp::ExecutionPlan> allReducePacketIPPlan, allReducePacketOPPlan, allReduceIPPlan,
-      allReduceOPPlan;
+      allReduceOPPlan, allGatherIPPlan, allGatherOPPlan;
 
   std::unordered_map<channelKey, ChannelInfo> channelInInfos;
   std::unordered_map<channelKey, ChannelInfo> channelOutInfos;
@@ -279,6 +279,46 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   return ncclSuccess;
 }
 
+static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, size_t sendcount,
+                                          ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream) {
+  size_t bytes = sendcount * ncclTypeSize(datatype);
+  if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
+
+  // Declarating variables
+  size_t recvBytes;
+  CUdeviceptr recvBasePtr;
+  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)recvbuff));
+  size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
+  channelKey recvKey{(void*)recvBasePtr, recvBytes};
+  int rank = comm->comm->bootstrap()->getRank();
+  int nRank = comm->comm->bootstrap()->getNranks();
+  mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels = nullptr;
+
+  auto it = comm->channelOutInfos.find(recvKey);
+  if (it == comm->channelOutInfos.end()) {
+    std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
+        comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
+    std::vector<mscclpp::SmChannel> channels =
+        setupSmChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
+    std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
+    std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
+                   [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
+    ChannelInfo channelInfo{channels, setupSmChannelDeviceHandles(channels)};
+    it = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
+  }
+
+  smChannels = it->second.smChannelDeviceHandles.get();
+  if ((char*)sendbuff == (char*)recvbuff + rank * sendcount) {
+    CUDACHECK(allgather<false>((int*)sendbuff, (int*)nullptr, (int*)recvbuff, smChannels, offsetOut, rank,
+                               NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
+  } else {
+    CUDACHECK(allgather<true>((int*)sendbuff, (int*)nullptr, (int*)recvbuff, smChannels, offsetOut, rank,
+                              NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
+  }
+
+  return ncclSuccess;
+}
+
 NCCL_API ncclResult_t ncclGetVersion(int* version) {
   if (version == nullptr) return ncclInvalidArgument;
   *version = MSCCLPP_VERSION;
@@ -362,6 +402,13 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     commPtr->largeMessageSizeBoundary = parseSize(getenv("ALLREDUCE_LARGE_MSG_BOUNDARY"));
   else
     commPtr->largeMessageSizeBoundary = 1 << 20;
+
+  if (getenv("ALLGATHER_IP_JSON_FILE"))
+    commPtr->allGatherIPPlan = std::make_shared<mscclpp::ExecutionPlan>(
+        mscclpp::ExecutionPlan("allgather_test", getenv("ALLGATHER_IP_JSON_FILE")));
+  if (getenv("ALLGATHER_OP_JSON_FILE"))
+    commPtr->allGatherOPPlan = std::make_shared<mscclpp::ExecutionPlan>(
+        mscclpp::ExecutionPlan("allgather_test", getenv("ALLGATHER_OP_JSON_FILE")));
 
   if (commPtr->smallMessageSizeBoundary > commPtr->largeMessageSizeBoundary) return ncclInvalidArgument;
 
@@ -533,36 +580,34 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   size_t bytes = sendcount * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
 
-  // Declarating variables
-  size_t recvBytes;
-  CUdeviceptr recvBasePtr;
-  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)recvbuff));
-  size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
-  channelKey recvKey{(void*)recvBasePtr, recvBytes};
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
-  mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels = nullptr;
 
-  auto it = comm->channelOutInfos.find(recvKey);
-  if (it == comm->channelOutInfos.end()) {
-    std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
-        comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
-    std::vector<mscclpp::SmChannel> channels =
-        setupSmChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
-    std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
-    std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
-                   [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
-    ChannelInfo channelInfo{channels, setupSmChannelDeviceHandles(channels)};
-    it = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
-  }
+  std::shared_ptr<mscclpp::ExecutionPlan> plan =
+      (sendbuff == recvbuff + rank * bytes) ? comm->allGatherIPPlan : comm->allGatherOPPlan;
 
-  smChannels = it->second.smChannelDeviceHandles.get();
-  if ((char*)sendbuff == (char*)recvbuff + rank * sendcount) {
-    CUDACHECK(allgather<false>((int*)sendbuff, (int*)nullptr, (int*)recvbuff, smChannels, offsetOut, rank,
-                               NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
-  } else {
-    CUDACHECK(allgather<true>((int*)sendbuff, (int*)nullptr, (int*)recvbuff, smChannels, offsetOut, rank,
-                              NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
+  if (plan == nullptr) return ncclAllGatherFallback(sendbuff, recvbuff, sendcount, datatype, comm, stream);
+
+  switch (datatype) {
+    case ncclFloat16:
+      comm->executor->execute(rank, (half*)recvbuff, (half*)recvbuff, bytes * nRank, bytes * nRank,
+                              mscclpp::DataType::FLOAT16, *plan, stream);
+      break;
+    case ncclFloat32:
+      comm->executor->execute(rank, (float*)recvbuff, (float*)recvbuff, bytes * nRank, bytes * nRank,
+                              mscclpp::DataType::FLOAT32, *plan, stream);
+      break;
+    case ncclBfloat16:
+      comm->executor->execute(rank, (__bfloat16*)recvbuff, (__bfloat16*)recvbuff, bytes * nRank, bytes * nRank,
+                              mscclpp::DataType::BFLOAT16, *plan, stream);
+      break;
+    case ncclInt32:
+    case ncclUint32:
+      comm->executor->execute(rank, (int*)recvbuff, (int*)recvbuff, bytes * nRank, bytes * nRank,
+                              mscclpp::DataType::UINT32, *plan, stream);
+      break;
+    default:
+      return ncclInvalidArgument;
   }
 
   return ncclSuccess;
