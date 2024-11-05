@@ -85,13 +85,12 @@ struct Operation {
   uint32_t size;
 };
 
-// TODO(binyli): update it
-// total size = 1944 + 6400 + 4 + 4(padding) + 12(align) = 8336 bytes
+// total size = 2304 + 6400 + 4 + 12(padding) = 8720 bytes
 struct __attribute__((aligned(16))) DeviceExecutionPlan {
   uint8_t nSmChannels;                  // 1 bytes
   uint8_t nProxyChannels;               // 1 bytes
   uint16_t nOperations;                 // 2 bytes
-  Channels channels;                    // 1944 bytes
+  Channels channels;                    // 2304 bytes
   Operation operations[MAX_OPERATION];  // 64 * 100 = 6400 bytes
 };
 
