@@ -28,10 +28,6 @@ struct NvlsInfo {
   std::vector<int> ranks;
   size_t bufferSize;
   BufferType bufferType;
-
-  bool operator==(const NvlsInfo& other) const {
-    return bufferSize == other.bufferSize && ranks == other.ranks && bufferType == other.bufferType;
-  }
 };
 }  // namespace mscclpp
 
@@ -51,20 +47,6 @@ struct hash<std::pair<int, mscclpp::ChannelType>> {
     std::size_t h2 = std::hash<int>()(static_cast<int>(key.second));
     // Refer hash_combine from boost
     return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
-  }
-};
-
-template <>
-struct hash<mscclpp::NvlsInfo> {
-  std::size_t operator()(const mscclpp::NvlsInfo& info) const {
-    std::size_t hash = std::hash<size_t>()(info.bufferSize);
-    hash ^= std::hash<int>()(static_cast<int>(info.bufferType)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-
-    for (const auto& rank : info.ranks) {
-      hash ^= std::hash<int>()(rank) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-    }
-
-    return hash;
   }
 };
 }  // namespace std
