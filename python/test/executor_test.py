@@ -90,17 +90,11 @@ def bench_correctness(
     with stream:
         stream.begin_capture()
         for i in range(n_iters):
-            fill_data_params = (
-                pack(input_buf)
-                + struct.pack("Q", input_buf.nbytes // type_size)
-                + pack(rank, i)
-            )
+            fill_data_params = pack(input_buf) + struct.pack("Q", input_buf.nbytes // type_size) + pack(rank, i)
             fill_data_kernel.launch_kernel(fill_data_params, nblocks, nthreads, 0, stream)
             func(stream)
             test_data_params = (
-                pack(result_buf, test_buf)
-                + struct.pack("Q", input_buf.nbytes // type_size)
-                + pack(num_ranks, i)
+                pack(result_buf, test_buf) + struct.pack("Q", input_buf.nbytes // type_size) + pack(num_ranks, i)
             )
             test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream)
         graph = stream.end_capture()
