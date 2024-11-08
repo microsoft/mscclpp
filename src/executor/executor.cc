@@ -128,18 +128,21 @@ struct Executor::Impl {
     ExecutionContextKey key = {sendbuff, recvbuff, sendBufferSize, recvBufferSize, plan.impl_->name};
     DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, contsSrcOffset, constDstOffset};
     if (this->contexts.find(key) != this->contexts.end()) {
+      auto& devicePlans = this->contexts[key].deviceExecutionPlans;
       if (this->contexts[key].currentDevicePlan == devicePlanKey) {
+        return this->contexts[key];
+      } else if (devicePlans.find(devicePlanKey) != devicePlans.end()) {
+        this->contexts[key].currentDevicePlan = devicePlanKey;
         return this->contexts[key];
       }
       plan.impl_->operationsReset();
       plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, contsSrcOffset, constDstOffset);
-      this->setupDeviceExecutionPlan(this->contexts[key], rank, plan, devicePlanKey);
+      this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, rank, plan);
       this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
-          allocExtSharedCuda<char>(this->contexts[key].deviceExecutionPlans.size() * sizeof(DeviceExecutionPlan));
+          allocExtSharedCuda<char>(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
       memcpyCuda(this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey].get(),
-                 (char*)this->contexts[key].deviceExecutionPlans[devicePlanKey].data(),
-                 this->contexts[key].deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan),
-                 cudaMemcpyHostToDevice);
+                 (char*)devicePlans[devicePlanKey].data(),
+                 devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
       this->contexts[key].currentDevicePlan = devicePlanKey;
       return this->contexts[key];
     }
@@ -157,7 +160,7 @@ struct Executor::Impl {
     this->setupConnections(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
     this->setupChannels(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
-    this->setupDeviceExecutionPlan(context, rank, plan, devicePlanKey);
+    this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
         allocExtSharedCuda<char>(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
     memcpyCuda(context.deviceExecutionPlansBuffers[devicePlanKey].get(),
@@ -329,8 +332,8 @@ struct Executor::Impl {
     }
   }
 
-  void setupDeviceExecutionPlan(ExecutionContext& context, int rank, const ExecutionPlan& plan,
-                                const DeviceExecutionPlanKey& key) {
+  void setupDeviceExecutionPlan(ExecutionContext& context, const DeviceExecutionPlanKey& key, int rank,
+                                const ExecutionPlan& plan) {
     std::vector<DeviceExecutionPlan> deviceExecutionPlans;
     for (int threadblock = 0; threadblock < plan.impl_->getThreadblockCount(rank); threadblock++) {
       DeviceExecutionPlan deviceExecutionPlan = {};
