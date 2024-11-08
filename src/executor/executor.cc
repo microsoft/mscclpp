@@ -358,7 +358,7 @@ struct Executor::Impl {
                     cudaStream_t stream, PacketType packetType) {
     static uint32_t flag = 0;
     ExecutionDevicePlanKey key = context.currentDevicePlan;
-    int nthreadblocks = context.deviceExecutionPlans.size();
+    int nthreadblocks = context.deviceExecutionPlans[key].size();
 #if defined(ENABLE_NPKIT)
 #if defined(__HIP_PLATFORM_AMD__)
     if (nthreadblocks > NPKIT_MAX_NUM_GPU_THREADBLOCKS) {
