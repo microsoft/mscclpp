@@ -291,11 +291,11 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   }
 }
 
-void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t contsSrcOffset, size_t constDstOffset) {
+void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffset, size_t constDstOffset) {
   auto getConstOffset = [&](BufferType type) -> size_t {
     switch (type) {
       case BufferType::INPUT:
-        return contsSrcOffset;
+        return constSrcOffset;
       case BufferType::OUTPUT:
         return constDstOffset;
       case BufferType::SCRATCH:
