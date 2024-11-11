@@ -584,26 +584,26 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   int nRank = comm->comm->bootstrap()->getNranks();
 
   std::shared_ptr<mscclpp::ExecutionPlan> plan =
-      (sendbuff == recvbuff + rank * bytes) ? comm->allGatherIPPlan : comm->allGatherOPPlan;
+      (sendbuff == (char*)recvbuff + rank * bytes) ? comm->allGatherIPPlan : comm->allGatherOPPlan;
 
   if (plan == nullptr) return ncclAllGatherFallback(sendbuff, recvbuff, sendcount, datatype, comm, stream);
 
   switch (datatype) {
     case ncclFloat16:
-      comm->executor->execute(rank, (half*)recvbuff, (half*)recvbuff, bytes * nRank, bytes * nRank,
+      comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes * nRank,
                               mscclpp::DataType::FLOAT16, *plan, stream);
       break;
     case ncclFloat32:
-      comm->executor->execute(rank, (float*)recvbuff, (float*)recvbuff, bytes * nRank, bytes * nRank,
+      comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, bytes, bytes * nRank,
                               mscclpp::DataType::FLOAT32, *plan, stream);
       break;
     case ncclBfloat16:
-      comm->executor->execute(rank, (__bfloat16*)recvbuff, (__bfloat16*)recvbuff, bytes * nRank, bytes * nRank,
+      comm->executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, bytes, bytes * nRank,
                               mscclpp::DataType::BFLOAT16, *plan, stream);
       break;
     case ncclInt32:
     case ncclUint32:
-      comm->executor->execute(rank, (int*)recvbuff, (int*)recvbuff, bytes * nRank, bytes * nRank,
+      comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, bytes, bytes * nRank,
                               mscclpp::DataType::UINT32, *plan, stream);
       break;
     default:
