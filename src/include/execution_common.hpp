@@ -68,11 +68,20 @@ struct Operation {
     uint8_t outputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
     BufferType outputBufferType;
   };
-  uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
-  uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
-  uint32_t srcOffset;
-  uint32_t dstOffset;
-  uint32_t size;
+  union {
+    // For Barrier operation
+    struct {
+      uint32_t deviceSyncerIndex;
+      uint32_t nThreadBlocks;
+    };
+    struct {
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t srcOffset;
+      uint32_t dstOffset;
+      uint32_t size;
+    };
+  };
 };
 
 // total size = 1920 + 6400 + 4 + 4(padding) + 12(align) = 8336 bytes
