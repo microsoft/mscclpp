@@ -20,6 +20,7 @@ option(BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(BUILD_APPS_NCCL "Build NCCL interfaces" ON)
 option(USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(USE_ROCM "Use AMD/ROCm." OFF)
+option(${NPKIT_FLAGS} "Enable NPKIT" OFF)
 option(BYPASS_GPU_CHECK "Bypass GPU check." OFF)
 
 if(BYPASS_GPU_CHECK)
