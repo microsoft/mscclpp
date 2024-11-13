@@ -131,7 +131,7 @@ int main(int argc, char* argv[]) {
   }
 
   mscclpp::ExecutionPlan plan(executionPlanName, executionPlanPath);
-#if (CUDA_FABRIC_SUPPORTED)
+#if (CUDA_NVLS_SUPPORTED)
   std::shared_ptr<char> sendbuff = mscclpp::allocSharedPhysicalCuda<char>(bufferSize);
 #else
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);

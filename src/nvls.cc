@@ -257,16 +257,9 @@ NvlsConnection::NvlsConnection(const std::vector<char>& data) : pimpl_(std::make
 
 std::vector<char> NvlsConnection::serialize() { return pimpl_->serialize(); }
 
-std::shared_ptr<NvlsConnection::DeviceMulticastPointer> NvlsConnection::allocateAndBindCuda(size_t size) {
-  CUmemGenericAllocationHandle handle;
-  auto ptr = allocSharedPhysicalCuda<char>(size, pimpl_->getMinMcGran());
-  MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, ptr.get()));
-  auto mcPtr = pimpl_->bindMemory(handle, size);
-  return std::make_shared<DeviceMulticastPointer>(ptr, mcPtr, size);
-}
-
-std::shared_ptr<char> NvlsConnection::bindAllocatedCuda(CUdeviceptr devicePtr, size_t size) {
-  return pimpl_->bindMemory(devicePtr, size);
+NvlsConnection::DeviceMulticastPointer NvlsConnection::bindAllocatedMemory(CUdeviceptr devicePtr, size_t size) {
+  auto mcPtr = pimpl_->bindMemory(devicePtr, size);
+  return DeviceMulticastPointer((void*)devicePtr, mcPtr, size);
 }
 
 NvlsConnection::DeviceMulticastPointer::DeviceHandle NvlsConnection::DeviceMulticastPointer::deviceHandle() {

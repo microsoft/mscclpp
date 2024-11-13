@@ -1,7 +1,7 @@
 import os
 import cupy as cp
 import ctypes
-from mscclpp import Transport, ProxyService, SmDevice2DeviceSemaphore
+from mscclpp import Transport, ProxyService, SmDevice2DeviceSemaphore, alloc_shared_physical_cuda
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, pack
 
@@ -443,10 +443,13 @@ class MscclppAllReduce6:
         self.nvls_connection = group.make_connection(all_ranks, Transport.Nvls)
         min_gran = self.nvls_connection.get_multicast_min_granularity()
         aligned_buffer_size = int(((buffer_size + min_gran - 1) // min_gran) * min_gran)
-        self.nvls_mem_handle = self.nvls_connection.allocate_bind_memory(
+        buffer_raw = alloc_shared_physical_cuda(aligned_buffer_size)
+        self.nvls_mem_handle = self.nvls_connection.bind_allocated_memory(
+            buffer_raw.get_ptr(),
             aligned_buffer_size
         )  # just using recommended size for now
         self.memory_ptr = self.nvls_mem_handle.get_device_ptr()
+        self.buffer_raw = buffer_raw
 
         self.cp_memory_ptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(self.memory_ptr, aligned_buffer_size, None), 0)
         self.memory = cp.ndarray(nelem, memory_dtype, self.cp_memory_ptr)

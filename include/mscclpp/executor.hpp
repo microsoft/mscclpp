@@ -6,10 +6,17 @@
 
 #include <memory>
 #include <mscclpp/core.hpp>
-#include <mscclpp/gpu_data_types.hpp>
 #include <unordered_map>
 
 namespace mscclpp {
+
+enum class DataType {
+  INT32,
+  UINT32,
+  FLOAT16,
+  FLOAT32,
+  BFLOAT16,
+};
 
 enum class PacketType {
   LL8,

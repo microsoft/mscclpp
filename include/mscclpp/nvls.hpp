@@ -26,25 +26,20 @@ class NvlsConnection {
   struct DeviceMulticastPointer {
    private:
     void* devicePtr_;
-    std::shared_ptr<char> ptr_;
     std::shared_ptr<char> mcPtr_;
     size_t bufferSize_;
 
    public:
     using DeviceHandle = DeviceMulticastPointerDeviceHandle;
-    DeviceMulticastPointer(std::shared_ptr<char> ptr, std::shared_ptr<char> mcPtr, size_t bufferSize)
-        : devicePtr_(ptr.get()), ptr_(ptr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
     DeviceMulticastPointer(void* devicePtr, std::shared_ptr<char> mcPtr, size_t bufferSize)
-        : devicePtr_(devicePtr), ptr_(nullptr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
+        : devicePtr_(devicePtr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
     DeviceHandle deviceHandle();
     void* getDevicePtr();
 
     friend class NvlsConnection;
   };
 
-  std::shared_ptr<DeviceMulticastPointer> allocateAndBindCuda(size_t size);
-
-  std::shared_ptr<char> bindAllocatedCuda(CUdeviceptr devicePtr, size_t size);
+  DeviceMulticastPointer bindAllocatedMemory(CUdeviceptr devicePtr, size_t size);
 
   size_t getMultiCastMinGranularity();
 

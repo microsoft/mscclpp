@@ -12,18 +12,7 @@
 #include "utils_internal.hpp"
 
 namespace {
-// Check if ptr is allocaed by cuMemMap
-bool isCuMemMapAllocated(void* ptr) {
-  CUmemGenericAllocationHandle handle;
-  CUresult result = cuMemRetainAllocationHandle(&handle, ptr);
-  if (result != CUDA_SUCCESS) {
-    return false;
-  }
-  MSCCLPP_CUTHROW(cuMemRelease(handle));
-  return true;
-}
-
-#if (CUDA_FABRIC_SUPPORTED)
+#if (CUDA_NVLS_SUPPORTED)
 // Get the recommended granularity for cuMemAddressReserve
 size_t getRecommendedGranularity() {
   size_t gran = 0;
@@ -52,7 +41,6 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       size(size),
       hostHash(getHostHash()),
       pidHash(getPidHash()),
-      isCuMemMapAlloc(false),
       transports(transports) {
   if (transports.has(Transport::CudaIpc)) {
     TransportInfo transportInfo;
@@ -61,23 +49,12 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     void* baseDataPtr;
     size_t baseDataSize;  // dummy
     MSCCLPP_CUTHROW(cuMemGetAddressRange((CUdeviceptr*)&baseDataPtr, &baseDataSize, (CUdeviceptr)data));
-    if (isCuMemMapAllocated(data)) {
-      this->isCuMemMapAlloc = true;
-    }
-    if (this->isCuMemMapAlloc) {
-#if (CUDA_FABRIC_SUPPORTED)
-      if (isFabricSupported()) {
-        CUmemGenericAllocationHandle handle;
-        MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, baseDataPtr));
-        MSCCLPP_CUTHROW(
-            cuMemExportToShareableHandle(transportInfo.shareableHandle, handle, CU_MEM_HANDLE_TYPE_FABRIC, 0));
-        transportInfo.offsetFromBase = (char*)data - (char*)baseDataPtr;
-      } else {
-        throw Error("Fabric is not supported", ErrorCode::InvalidUsage);
-      }
-#else
-      throw Error("Only support cuMemMap with CUDA 12.4 or later", ErrorCode::InvalidUsage);
-#endif
+    if (isNvlsSupported()) {
+      CUmemGenericAllocationHandle handle;
+      MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, baseDataPtr));
+      MSCCLPP_CUTHROW(
+          cuMemExportToShareableHandle(transportInfo.shareableHandle, handle, CU_MEM_HANDLE_TYPE_FABRIC, 0));
+      transportInfo.offsetFromBase = (char*)data - (char*)baseDataPtr;
     } else {
       cudaIpcMemHandle_t handle;
       MSCCLPP_CUDATHROW(cudaIpcGetMemHandle(&handle, baseDataPtr));
@@ -128,8 +105,6 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
   std::copy_n(reinterpret_cast<char*>(&pimpl_->size), sizeof(pimpl_->size), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->hostHash), sizeof(pimpl_->hostHash), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->pidHash), sizeof(pimpl_->pidHash), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl_->isCuMemMapAlloc), sizeof(pimpl_->isCuMemMapAlloc),
-              std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->transports), sizeof(pimpl_->transports), std::back_inserter(result));
   if (pimpl_->transportInfos.size() > static_cast<size_t>(std::numeric_limits<int8_t>::max())) {
     throw mscclpp::Error("Too many transport info entries", ErrorCode::InternalError);
@@ -139,7 +114,7 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
   for (auto& entry : pimpl_->transportInfos) {
     std::copy_n(reinterpret_cast<char*>(&entry.transport), sizeof(entry.transport), std::back_inserter(result));
     if (entry.transport == Transport::CudaIpc) {
-      if (pimpl_->isCuMemMapAlloc) {
+      if (isNvlsSupported()) {
         std::copy_n(reinterpret_cast<char*>(&entry.shareableHandle), sizeof(entry.shareableHandle),
                     std::back_inserter(result));
         std::copy_n(reinterpret_cast<char*>(&entry.offsetFromBase), sizeof(entry.offsetFromBase),
@@ -173,8 +148,6 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
   it += sizeof(this->hostHash);
   std::copy_n(it, sizeof(this->pidHash), reinterpret_cast<char*>(&this->pidHash));
   it += sizeof(this->pidHash);
-  std::copy_n(it, sizeof(this->isCuMemMapAlloc), reinterpret_cast<char*>(&this->isCuMemMapAlloc));
-  it += sizeof(this->isCuMemMapAlloc);
   std::copy_n(it, sizeof(this->transports), reinterpret_cast<char*>(&this->transports));
   it += sizeof(this->transports);
   int8_t transportCount;
@@ -185,7 +158,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     std::copy_n(it, sizeof(transportInfo.transport), reinterpret_cast<char*>(&transportInfo.transport));
     it += sizeof(transportInfo.transport);
     if (transportInfo.transport == Transport::CudaIpc) {
-      if (this->isCuMemMapAlloc) {
+      if (isNvlsSupported()) {
         std::copy_n(it, sizeof(transportInfo.shareableHandle), reinterpret_cast<char*>(&transportInfo.shareableHandle));
         it += sizeof(transportInfo.shareableHandle);
         std::copy_n(it, sizeof(transportInfo.offsetFromBase), reinterpret_cast<char*>(&transportInfo.offsetFromBase));
@@ -219,22 +192,14 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     // The memory is local to the machine but not to the process, so we need to open the CUDA IPC handle
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
-    if (this->isCuMemMapAlloc) {
-#if (CUDA_FABRIC_SUPPORTED)
-      if (isFabricSupported()) {
-        CUmemGenericAllocationHandle handle;
-        MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, CU_MEM_HANDLE_TYPE_FABRIC));
-        size_t gran = getRecommendedGranularity();
-        MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&base, this->size, gran, 0, 0));
-        MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, this->size, 0, handle, 0));
-        setReadWriteMemoryAccess(base, this->size);
-        this->data = static_cast<char*>(base) + entry.offsetFromBase;
-      } else {
-        throw Error("Fabric is not supported", ErrorCode::InvalidUsage);
-      }
-#else
-      throw Error("Only support cuMemMap with CUDA 12.4 or later", ErrorCode::InvalidUsage);
-#endif
+    if (isNvlsSupported()) {
+      CUmemGenericAllocationHandle handle;
+      MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, CU_MEM_HANDLE_TYPE_FABRIC));
+      size_t gran = getRecommendedGranularity();
+      MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&base, this->size, gran, 0, 0));
+      MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, this->size, 0, handle, 0));
+      setReadWriteMemoryAccess(base, this->size);
+      this->data = static_cast<char*>(base) + entry.offsetFromBase;
     } else {
       MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
       this->data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
@@ -250,19 +215,15 @@ RegisteredMemory::Impl::~Impl() {
   // Close the CUDA IPC handle if it was opened during deserialization
   if (data && transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash && getPidHash() != this->pidHash) {
     void* base = static_cast<char*>(data) - getTransportInfo(Transport::CudaIpc).cudaIpcOffsetFromBase;
-    if (this->isCuMemMapAlloc) {
-      if (isFabricSupported()) {
-        CUmemGenericAllocationHandle handle;
-        size_t size = 0;
-        MSCCLPP_CULOG_WARN(cuMemRetainAllocationHandle(&handle, base));
-        MSCCLPP_CULOG_WARN(cuMemRelease(handle));
-        MSCCLPP_CULOG_WARN(cuMemGetAddressRange(NULL, &size, (CUdeviceptr)base));
-        MSCCLPP_CULOG_WARN(cuMemUnmap((CUdeviceptr)base, size));
-        MSCCLPP_CULOG_WARN(cuMemRelease(handle));
-        MSCCLPP_CULOG_WARN(cuMemAddressFree((CUdeviceptr)base, size));
-      } else {
-        WARN("Fabric is not supported, skipping cleanup");
-      }
+    if (isNvlsSupported()) {
+      CUmemGenericAllocationHandle handle;
+      size_t size = 0;
+      MSCCLPP_CULOG_WARN(cuMemRetainAllocationHandle(&handle, base));
+      MSCCLPP_CULOG_WARN(cuMemRelease(handle));
+      MSCCLPP_CULOG_WARN(cuMemGetAddressRange(NULL, &size, (CUdeviceptr)base));
+      MSCCLPP_CULOG_WARN(cuMemUnmap((CUdeviceptr)base, size));
+      MSCCLPP_CULOG_WARN(cuMemRelease(handle));
+      MSCCLPP_CULOG_WARN(cuMemAddressFree((CUdeviceptr)base, size));
     } else {
       cudaError_t err = cudaIpcCloseMemHandle(base);
       if (err != cudaSuccess) {

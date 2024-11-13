@@ -96,7 +96,7 @@ T* cudaCalloc(size_t nelem) {
   return ptr;
 }
 
-#if (CUDA_FABRIC_SUPPORTED)
+#if (CUDA_NVLS_SUPPORTED)
 template <class T>
 T* cudaPhysicalCalloc(size_t nbytes, size_t gran) {
   AvoidCudaGraphCaptureGuard cgcGuard;
@@ -246,7 +246,7 @@ std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, std::shared_ptr<T>>(count);
 }
 
-#if (CUDA_FABRIC_SUPPORTED)
+#if (CUDA_NVLS_SUPPORTED)
 static inline size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
   size_t gran = 0;
   int numDevices = 0;
@@ -270,9 +270,9 @@ static inline size_t getMulticastGranularity(size_t size, CUmulticastGranularity
 /// @return A std::shared_ptr to the allocated memory.
 template <class T>
 std::shared_ptr<T> allocSharedPhysicalCuda([[maybe_unused]] size_t count, [[maybe_unused]] size_t gran = 0) {
-#if (CUDA_FABRIC_SUPPORTED)
-  if (!isFabricSupported()) {
-    throw Error("Only suupport GPU with Fabric support", ErrorCode::InvalidUsage);
+#if (CUDA_NVLS_SUPPORTED)
+  if (!isNvlsSupported()) {
+    throw Error("Only support GPU with NVLS support", ErrorCode::InvalidUsage);
   }
   if (count == 0) {
     return nullptr;
@@ -387,9 +387,9 @@ UniqueCudaHostPtr<T> makeUniqueCudaHost(size_t count) {
 /// @return A std::unique_ptr to the allocated memory.
 template <class T>
 std::unique_ptr<T> allocUniquePhysicalCuda([[maybe_unused]] size_t count, [[maybe_unused]] size_t gran = 0) {
-#if (CUDA_FABRIC_SUPPORTED)
-  if (!isFabricSupported()) {
-    throw Error("Only suupport GPU with Fabric support", ErrorCode::InvalidUsage);
+#if (CUDA_NVLS_SUPPORTED)
+  if (!isNvlsSupported()) {
+    throw Error("Only suupport GPU with NVLS support", ErrorCode::InvalidUsage);
   }
   if (count == 0) {
     return nullptr;
