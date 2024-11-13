@@ -26,12 +26,12 @@ struct ExecutionContextKey {
 struct DeviceExecutionPlanKey {
   size_t inputMessageSize;
   size_t outputMessageSize;
-  size_t contsSrcOffset;
+  size_t constSrcOffset;
   size_t constDstOffset;
 
   bool operator==(const DeviceExecutionPlanKey& other) const {
     return inputMessageSize == other.inputMessageSize && outputMessageSize == other.outputMessageSize &&
-           contsSrcOffset == other.contsSrcOffset && constDstOffset == other.constDstOffset;
+           constSrcOffset == other.constSrcOffset && constDstOffset == other.constDstOffset;
   }
 };
 
@@ -75,7 +75,7 @@ struct hash<mscclpp::DeviceExecutionPlanKey> {
     std::size_t seed = 0;
     hash_combine(seed, key.inputMessageSize);
     hash_combine(seed, key.outputMessageSize);
-    hash_combine(seed, key.contsSrcOffset);
+    hash_combine(seed, key.constSrcOffset);
     hash_combine(seed, key.constDstOffset);
     return seed;
   }
@@ -123,10 +123,10 @@ struct Executor::Impl {
   ~Impl() = default;
 
   ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t inputMessageSize,
-                                         size_t outputMessageSize, size_t contsSrcOffset, size_t constDstOffset,
+                                         size_t outputMessageSize, size_t constSrcOffset, size_t constDstOffset,
                                          size_t sendBufferSize, size_t recvBufferSize, const ExecutionPlan& plan) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendBufferSize, recvBufferSize, plan.impl_->name};
-    DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, contsSrcOffset, constDstOffset};
+    DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset};
     if (this->contexts.find(key) != this->contexts.end()) {
       auto& devicePlans = this->contexts[key].deviceExecutionPlans;
       if (this->contexts[key].currentDevicePlan == devicePlanKey) {
@@ -136,7 +136,7 @@ struct Executor::Impl {
         return this->contexts[key];
       }
       plan.impl_->operationsReset();
-      plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, contsSrcOffset, constDstOffset);
+      plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
       this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, rank, plan);
       this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
           allocExtSharedCuda<char>(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
@@ -148,7 +148,7 @@ struct Executor::Impl {
     }
 
     plan.impl_->reset();
-    plan.impl_->loadExecutionPlan(inputMessageSize, outputMessageSize, contsSrcOffset, constDstOffset);
+    plan.impl_->loadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
 
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize, recvBufferSize);
