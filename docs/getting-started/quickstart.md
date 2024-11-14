@@ -19,6 +19,10 @@
         ```
         lsmod | grep nvidia_peermem
         ```
+    * For GPU with nvls support, the IMEX channels should be set up. You can set up the channels manually via:
+        ```
+        sudo nvidia-modprobe -s -i <start:number of minors>
+        ```
 
 ## Build with Docker Images
 

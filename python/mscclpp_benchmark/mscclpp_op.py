@@ -448,9 +448,10 @@ class MscclppAllReduce6:
             buffer_raw.get_ptr(), aligned_buffer_size
         )  # just using recommended size for now
         self.memory_ptr = self.nvls_mem_handle.get_device_ptr()
-        self.buffer_raw = buffer_raw
 
-        self.cp_memory_ptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(self.memory_ptr, aligned_buffer_size, None), 0)
+        self.cp_memory_ptr = cp.cuda.MemoryPointer(
+            cp.cuda.UnownedMemory(self.memory_ptr, aligned_buffer_size, buffer_raw), 0
+        )
         self.memory = cp.ndarray(nelem, memory_dtype, self.cp_memory_ptr)
 
         # create a sm_channel for each remote neighbor

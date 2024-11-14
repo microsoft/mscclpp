@@ -33,18 +33,6 @@
     }                                                                                                             \
   } while (false)
 
-#define MSCCLPP_CULOG_WARN(cmd)                             \
-  do {                                                      \
-    CUresult err = cmd;                                     \
-    if (err != CUDA_SUCCESS) {                              \
-      const char* errStr;                                   \
-      if (cuGetErrorString(err, &errStr) != CUDA_SUCCESS) { \
-        errStr = "failed to get error string";              \
-      }                                                     \
-      WARN("Call to " #cmd " failed, error is %s", errStr); \
-    }                                                       \
-  } while (false)
-
 namespace mscclpp {
 
 /// set memory access permission to read-write

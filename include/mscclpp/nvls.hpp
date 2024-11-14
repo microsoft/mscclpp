@@ -39,6 +39,11 @@ class NvlsConnection {
     friend class NvlsConnection;
   };
 
+  /// @brief bind the allocated memory via @ref mscclpp::allocSharedPhysicalCuda to the multicast handle. The behavior
+  /// is undefined if the devicePtr is not allocated by @ref mscclpp::allocSharedPhysicalCuda.
+  /// @param devicePtr
+  /// @param size
+  /// @return DeviceMulticastPointer with devicePtr, mcPtr and bufferSize
   DeviceMulticastPointer bindAllocatedMemory(CUdeviceptr devicePtr, size_t size);
 
   size_t getMultiCastMinGranularity();

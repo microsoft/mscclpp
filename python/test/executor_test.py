@@ -243,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument("-n", "--execution_plan_name", type=str, required=True)
     parser.add_argument("-path", "--execution_plan_path", type=str, required=True)
     parser.add_argument("--size", type=str, required=True)
-    parser.add_argument("--in_place", action="store_true", help="flag to define an in-place operation", default=True)
+    parser.add_argument("--in_place", action="store_true", help="flag to define an in-place operation")
     parser.add_argument("--dtype", type=str, default="float16", help="Choose from float16, float32, int32")
     parser.add_argument("--packet_type", type=str, default="LL16", help="Choose from LL8, LL16")
     parser.add_argument("--n_iters", type=int, default=10)
