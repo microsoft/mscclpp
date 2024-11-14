@@ -43,6 +43,7 @@ struct RegisteredMemory::Impl {
   size_t size;
   uint64_t hostHash;
   uint64_t pidHash;
+  bool isCuMemMapAlloc;
   TransportFlags transports;
   std::vector<TransportInfo> transportInfos;
 
