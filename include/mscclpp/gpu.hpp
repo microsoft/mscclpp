@@ -22,6 +22,7 @@ using CUdeviceptr = hipDeviceptr_t;
 using CUmemGenericAllocationHandle = hipMemGenericAllocationHandle_t;
 using CUmemAllocationProp = hipMemAllocationProp;
 using CUmemAccessDesc = hipMemAccessDesc;
+using CUmemAllocationHandleType = hipMemAllocationHandleType;
 
 constexpr auto cudaSuccess = hipSuccess;
 constexpr auto cudaStreamNonBlocking = hipStreamNonBlocking;
@@ -87,6 +88,8 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define cuMemMap(...) hipMemMap(__VA_ARGS__)
 #define cuMemUnmap(...) hipMemUnmap(__VA_ARGS__)
 #define cuMemRetainAllocationHandle(...) hipMemRetainAllocationHandle(__VA_ARGS__)
+#define cuMemExportToShareableHandle(...) hipMemExportToShareableHandle(__VA_ARGS__)
+#define cuMemImportFromShareableHandle(...) hipMemImportFromShareableHandle(__VA_ARGS__)
 
 #else
 

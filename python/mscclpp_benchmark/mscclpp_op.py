@@ -445,8 +445,7 @@ class MscclppAllReduce6:
         aligned_buffer_size = int(((buffer_size + min_gran - 1) // min_gran) * min_gran)
         buffer_raw = alloc_shared_physical_cuda(aligned_buffer_size)
         self.nvls_mem_handle = self.nvls_connection.bind_allocated_memory(
-            buffer_raw.get_ptr(),
-            aligned_buffer_size
+            buffer_raw.get_ptr(), aligned_buffer_size
         )  # just using recommended size for now
         self.memory_ptr = self.nvls_mem_handle.get_device_ptr()
         self.buffer_raw = buffer_raw
