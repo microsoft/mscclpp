@@ -124,6 +124,68 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunk
   constSmChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
 
+// This kernel is the most performant when the number of blocks is a multiple of (nRanksPerNode - 1).
+__device__ void localAllGatherSm2(int rank, int nRanksPerNode, int startRankChunkIndex, uint64_t offsetInRankChunk,
+                                  uint64_t rankChunkSize, uint64_t size, size_t nBlocks) {
+  if (nRanksPerNode == 1) return;
+  if (blockIdx.x >= nBlocks) return;
+
+  const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+  const size_t lid = tid % WARP_SIZE;
+  const size_t wid = tid / WARP_SIZE;
+
+  const size_t localRank = startRankChunkIndex + (rank % nRanksPerNode);
+  const size_t nThread = blockDim.x * nBlocks;
+  const size_t nWarp = nThread / WARP_SIZE;
+  const size_t nPeer = nRanksPerNode - 1;
+  const size_t chanOffset = nPeer * blockIdx.x;
+  auto smChans = constSmChans + chanOffset;
+
+  if (threadIdx.x < nPeer) {
+    smChans[threadIdx.x].relaxedSignal();
+    smChans[threadIdx.x].wait();
+  }
+  __syncthreads();
+  const size_t bytesPerGPU = size;
+  const size_t bytes = bytesPerGPU * nPeer;
+  size_t unitBytesPerThread;
+  if (bytes >= nThread * 64) {
+    unitBytesPerThread = 64;
+  } else {
+    unitBytesPerThread = 16;
+  }
+  const size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
+  const size_t unitBytes = unitBytesPerWarp * nWarp;
+  const size_t nLoop = bytes / unitBytes;
+
+  if (nLoop > 0) {
+    // First loop unrolling
+    const size_t peerIdx = wid % nPeer;
+    const size_t offset = rankChunkSize * localRank + (wid / nPeer) * unitBytesPerWarp + offsetInRankChunk;
+    smChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+  }
+
+  for (size_t i = 1; i < nLoop; ++i) {
+    const size_t gWid = wid + i * nWarp;
+    const size_t peerIdx = gWid % nPeer;
+    const size_t offset = rankChunkSize * localRank + (gWid / nPeer) * unitBytesPerWarp + offsetInRankChunk;
+    smChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+  }
+
+  if (bytes % unitBytes > 0) {
+    const size_t gWid = wid + nLoop * nWarp;
+    const size_t peerIdx = gWid % nPeer;
+    const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
+    const size_t offset = rankChunkSize * localRank + offsetWithinRank + offsetInRankChunk;
+    const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
+                                   ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
+                                   : unitBytesPerWarp;
+    if (remainBytes > 0) {
+      smChans[peerIdx].put<16, true>(offset, remainBytes, lid, WARP_SIZE);
+    }
+  }
+}
+
 __global__ void __launch_bounds__(1024) allgather1(int rank, int nRanksPerNode, size_t nelemsPerGPU) {
   int warpId = threadIdx.x / WARP_SIZE;
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
@@ -354,63 +416,62 @@ __global__ void __launch_bounds__(1024, 1)
 }
 
 __global__ void __launch_bounds__(1024, 1)
-    allgather6(size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
-  const size_t nBlock = gridDim.x;
-  if (blockIdx.x >= nBlock) return;
+    allgather6(size_t rank, size_t worldSize, size_t nRanksPerNode, size_t nelemsPerGPU) {
+  // this allgather is a pipelined and hierarchical one and only works for two nodes
+  // it is implemented as follows:
+  // Step 1: each node does a local allgather and concurrently,
+  // local GPU i exchange (piplineSize-1)/pipelineSize portion of their data with
+  // its cross-node neighbor (local GPU i on the other node) via IB
+  // Step 2: each node does a local allgather again with the data just received from its
+  // cross-node neighbor in step 1, and concurrently, exchange the rest of the data with
+  // its cross-node neighbor
+  // Step 3: each node does a local allgather for the last time with the rest of the data
 
-  const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-  const size_t lid = tid % WARP_SIZE;
-  const size_t wid = tid / WARP_SIZE;
+  int pipelineSize = 3;
+  int peerRank = (rank + nRanksPerNode) % worldSize;
+  int peerNodeId = peerRank / nRanksPerNode;
+  int peer = (peerRank < rank) ? peerRank : peerRank - 1;
+  DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = constProxyChans[peer];
+  const size_t nBlocksForLocalAllGather = gridDim.x;
+  const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
+  const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
+  const int startRankIndexInPeerNode = (peerRank / nRanksPerNode) * nRanksPerNode;
 
-  const size_t nThread = blockDim.x * nBlock;
-  const size_t nWarp = nThread / WARP_SIZE;
-  const size_t nPeer = nRanksPerNode - 1;
-  const size_t chanOffset = nPeer * blockIdx.x;
-  auto smChans = constSmChans + chanOffset;
-
-  if (wid < nPeer && lid == 0) {
-    smChans[wid].relaxedSignal();
-    smChans[wid].wait();
-  }
-  __syncthreads();
-  const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
-  const size_t bytes = bytesPerGPU * nPeer;
-  size_t unitBytesPerThread;
-  if (bytes >= nThread * 64) {
-    unitBytesPerThread = 64;
-  } else {
-    unitBytesPerThread = 16;
-  }
-  const size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
-  const size_t unitBytes = unitBytesPerWarp * nWarp;
-  const size_t nLoop = bytes / unitBytes;
-
-  if (nLoop > 0) {
-    // First loop unrolling
-    const size_t peerIdx = wid % nPeer;
-    const size_t offset = bytesPerGPU * rank + (wid / nPeer) * unitBytesPerWarp;
-    smChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+  if (peerNodeId == rank / nRanksPerNode) {
+    localAllGatherSm2(rank, nRanksPerNode, 0, 0, rankChunkSize, rankChunkSize, nBlocksForLocalAllGather);
+    return;
   }
 
-  for (size_t i = 1; i < nLoop; ++i) {
-    const size_t gWid = wid + i * nWarp;
-    const size_t peerIdx = gWid % nPeer;
-    const size_t offset = bytesPerGPU * rank + (gWid / nPeer) * unitBytesPerWarp;
-    smChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
-  }
+  constexpr size_t alignment = 128;
+  size_t step1Bytes = (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int);
+  step1Bytes = step1Bytes / alignment * alignment;
+  const size_t step2Bytes = nelemsPerGPU * sizeof(int) - step1Bytes;
 
-  if (bytes % unitBytes > 0) {
-    const size_t gWid = wid + nLoop * nWarp;
-    const size_t peerIdx = gWid % nPeer;
-    const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
-    const size_t offset = bytesPerGPU * rank + offsetWithinRank;
-    const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
-                                   ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
-                                   : unitBytesPerWarp;
-    if (remainBytes > 0) {
-      smChans[peerIdx].put<16, true>(offset, remainBytes, lid, WARP_SIZE);
-    }
+  // Step 1
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
   }
+  localAllGatherSm2(rank, nRanksPerNode, startRankIndexInLocalNode, 0, rankChunkSize, rankChunkSize,
+                   nBlocksForLocalAllGather);
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    proxyChan.wait();
+    proxyChan.flush();
+  }
+  deviceSyncer.sync(nBlocksForLocalAllGather);
+  // Step 2
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
+  }
+  localAllGatherSm2(rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
+                   nBlocksForLocalAllGather);
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    proxyChan.wait();
+    proxyChan.flush();
+  }
+  deviceSyncer.sync(nBlocksForLocalAllGather);
+  // Step 3
+  localAllGatherSm2(rank, nRanksPerNode, startRankIndexInPeerNode, step1Bytes, rankChunkSize, step2Bytes,
+                   nBlocksForLocalAllGather);
 }
 
 __global__ void __launch_bounds__(1024, 1)
@@ -602,7 +663,7 @@ void AllGatherTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     nBlocks = 24;
     nThreads = 1024;
   } else if (kernelNum == 6) {
-    nBlocks = 24;
+    nBlocks = 21;
     nThreads = 1024;
   } else if (kernelNum == 7) {
     nBlocks = 4;
@@ -681,7 +742,7 @@ std::vector<KernelRestriction> AllGatherTestColl::getKernelRestrictions() {
           {3, "allgather3", true, 1, 4 * worldSize_},
           {4, "allgather4", true, 3, 16 * worldSize_ /*use ulong2 to transfer data*/},
           {5, "allgather5", false, 1, 16 * worldSize_ /*use ulong2 to transfer data*/},
-          {6, "allgather6", false, 1, 16 * worldSize_ /*use ulong2 to transfer data*/},
+          {6, "allgather6", true, 3, 16 * worldSize_ /*use ulong2 to transfer data*/},
           {7, "allgather7", false, 1, 16 * worldSize_ /*use ulong2 to transfer data*/}};
 }
 
