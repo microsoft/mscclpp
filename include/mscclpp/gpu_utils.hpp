@@ -86,7 +86,7 @@ T* cudaCalloc(size_t nelem) {
 
 #if (CUDA_NVLS_SUPPORTED)
 template <class T>
-T* cudaPhysicalCalloc(size_t nbytes, size_t gran) {
+T* cudaPhysicalCalloc(size_t nelems, size_t gran) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   int deviceId = -1;
   CUdevice currentDevice;
@@ -102,6 +102,7 @@ T* cudaPhysicalCalloc(size_t nbytes, size_t gran) {
 
   // allocate physical memory
   CUmemGenericAllocationHandle memHandle;
+  size_t nbytes = (nelems * sizeof(T) + gran - 1) / gran * gran;
   MSCCLPP_CUTHROW(cuMemCreate(&memHandle, nbytes, &prop, 0 /*flags*/));
 
   T* devicePtr = nullptr;
@@ -269,8 +270,7 @@ std::shared_ptr<T> allocSharedPhysicalCuda([[maybe_unused]] size_t count, [[mayb
   if (gran == 0) {
     gran = getMulticastGranularity(count * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
   }
-  size_t nbytes = (count * sizeof(T) + gran - 1) / gran * gran;
-  return detail::safeAlloc<T, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>, std::shared_ptr<T>>(nbytes, gran);
+  return detail::safeAlloc<T, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>, std::shared_ptr<T>>(count, gran);
 #else
   throw Error("Only support GPU with Fabric support", ErrorCode::InvalidUsage);
 #endif
