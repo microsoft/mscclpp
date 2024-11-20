@@ -236,7 +236,7 @@ class NvlsConnection::Impl {
 
  private:
   Error notSupportedError =
-      Error("NVLS is not supported on this CUDA version (< 12.1) or kernel version (< 5.6.0)", ErrorCode::InvalidUsage);
+      Error("NVLS is not supported on this CUDA version (< 12.3) or kernel version (< 5.6.0)", ErrorCode::InvalidUsage);
 };
 #endif  // !(CUDA_NVLS_SUPPORTED)
 
