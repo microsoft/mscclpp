@@ -270,7 +270,8 @@ std::shared_ptr<T> allocSharedPhysicalCuda([[maybe_unused]] size_t count, [[mayb
   if (gran == 0) {
     gran = getMulticastGranularity(count * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
   }
-  return detail::safeAlloc<T, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>, std::shared_ptr<T>>(count, gran);
+  size_t nelems = ((count * sizeof(T) + gran - 1) / gran * gran) / sizeof(T);
+  return detail::safeAlloc<T, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>, std::shared_ptr<T>>(nelems, gran);
 #else
   throw Error("Only support GPU with Fabric support", ErrorCode::InvalidUsage);
 #endif
