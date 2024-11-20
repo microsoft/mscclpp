@@ -68,12 +68,19 @@ std::string getHostName(int maxlen, const char delim) {
 }
 
 bool isNvlsSupported() {
-#if (CUDART_VERSION >= 12010)
-  CUdevice dev;
-  int isNvlsSupported;
-  MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
-  MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isNvlsSupported, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
-  return isNvlsSupported == 1;
+  [[maybe_unused]] static bool result = false;
+  [[maybe_unused]] static bool isChecked = false;
+#if (CUDA_NVLS_SUPPORTED)
+  if (!isChecked) {
+    int isMulticastSupported;
+    int isFabricSupported;
+    CUdevice dev;
+    MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
+    MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isMulticastSupported, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
+    MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isFabricSupported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, dev));
+    result = (isMulticastSupported == 1 && isFabricSupported == 1);
+  }
+  return result;
 #endif
   return false;
 }
