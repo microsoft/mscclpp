@@ -72,6 +72,8 @@ def bench_correctness(
     fill_data_kernel_name = "fill_data_%s" % dtype_str
     if "allgather" in execution_plan_name:
         coll = "all_gather"
+    elif "reducescatter" in execution_plan_name:
+        coll = "reduce_scatter"
     else:
         coll = "all_reduce"
     test_data_kernel_name = "test_data_%s_%s" % (coll, dtype_str)
@@ -94,7 +96,7 @@ def bench_correctness(
             fill_data_kernel.launch_kernel(fill_data_params, nblocks, nthreads, 0, stream)
             func(stream)
             test_data_params = (
-                pack(result_buf, test_buf) + struct.pack("Q", input_buf.nbytes // type_size) + pack(num_ranks, i)
+                pack(result_buf, test_buf) + struct.pack("Q", input_buf.nbytes // type_size) + pack(num_ranks, rank, i)
             )
             test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream)
         graph = stream.end_capture()
