@@ -378,7 +378,7 @@ template <class T>
 std::unique_ptr<T> allocUniquePhysicalCuda([[maybe_unused]] size_t count, [[maybe_unused]] size_t gran = 0) {
 #if (CUDA_NVLS_SUPPORTED)
   if (!isNvlsSupported()) {
-    throw Error("Only suupport GPU with NVLS support", ErrorCode::InvalidUsage);
+    throw Error("Only support GPU with NVLS support", ErrorCode::InvalidUsage);
   }
   if (count == 0) {
     return nullptr;
