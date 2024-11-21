@@ -29,6 +29,10 @@
         ```
         lsmod | grep nvidia_peermem
         ```
+    * For GPU with nvls support, the IMEX channels should be set up (refer [cuMemCreate](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__VA.html#group__CUDA__VA_1g899d69a862bba36449789c64b430dc7c)). You can set up the channels manually via:
+        ```
+        sudo nvidia-modprobe -s -i <start:number of minors>
+        ```
 
 ## Build with Docker Images
 
