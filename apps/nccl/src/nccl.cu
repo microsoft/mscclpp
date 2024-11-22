@@ -199,7 +199,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   // Checking if the parameters are valids
   if (sendbuff == nullptr || recvbuff == nullptr || count == 0 || ncclTypeSize(datatype) == 0 || comm == nullptr)
     return ncclInvalidArgument;
-
+  
   // Declarating variables
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;
@@ -216,7 +216,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels = nullptr;
 
   // Creating the channels
-  if (count * ncclTypeSize(datatype) <= comm->largeMessageSizeBoundary) {
+  if (count * ncclTypeSize(datatype) <= (1 << 20)) {
     auto sendIt = comm->channelScratchInfos.find(sendKey);
     if (sendIt == comm->channelScratchInfos.end()) {
       std::vector<mscclpp::SmChannel> channels =
@@ -495,7 +495,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
 
     if (plan == nullptr)
       return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
-
+    
     switch (datatype) {
       case ncclFloat16:
         comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT16, *plan,
