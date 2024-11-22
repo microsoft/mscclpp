@@ -43,7 +43,7 @@ FILL_DATA(int32, int)
       for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < num_elems; i += blockDim.x * gridDim.x) { \
         seed = ranqd1(seed);                                                                               \
         test_buf[rank_offset + i] = DataType(seed % blockDim.x) / DataType(blockDim.x);                    \
-        assert(result_buf[i] == test_buf[i]);                                                              \
+        assert(result_buf[rank_offset + i] == test_buf[rank_offset + i]);                                  \
       }                                                                                                    \
     }                                                                                                      \
   }

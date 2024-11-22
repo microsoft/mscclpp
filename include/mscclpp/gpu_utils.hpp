@@ -9,6 +9,7 @@
 
 #include "errors.hpp"
 #include "gpu.hpp"
+#include "utils.hpp"
 
 /// Throw @ref mscclpp::CudaError if @p cmd does not return cudaSuccess.
 /// @param cmd The command to execute.
@@ -34,6 +35,19 @@
 
 namespace mscclpp {
 
+/// set memory access permission to read-write
+/// @param base Base memory pointer.
+/// @param size Size of the memory.
+inline void setReadWriteMemoryAccess(void* base, size_t size) {
+  CUmemAccessDesc accessDesc = {};
+  int deviceId;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+  accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  accessDesc.location.id = deviceId;
+  accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)base, size, &accessDesc, 1));
+}
+
 /// A RAII guard that will cudaThreadExchangeStreamCaptureMode to cudaStreamCaptureModeRelaxed on construction and
 /// restore the previous mode on destruction. This is helpful when we want to avoid CUDA graph capture.
 struct AvoidCudaGraphCaptureGuard {
@@ -53,15 +67,6 @@ struct CudaStreamWithFlags {
 template <class T>
 struct CudaDeleter;
 
-template <class T>
-struct PhysicalCudaMemory {
-  CUmemGenericAllocationHandle memHandle_;
-  T* devicePtr_;
-  size_t size_;
-  PhysicalCudaMemory(CUmemGenericAllocationHandle memHandle, T* devicePtr, size_t size)
-      : memHandle_(memHandle), devicePtr_(devicePtr), size_(size) {}
-};
-
 namespace detail {
 
 /// A wrapper of cudaMalloc that sets the allocated memory to zero.
@@ -79,46 +84,38 @@ T* cudaCalloc(size_t nelem) {
   return ptr;
 }
 
+#if (CUDA_NVLS_SUPPORTED)
 template <class T>
-PhysicalCudaMemory<T>* cudaPhysicalCalloc(size_t nelem, size_t gran) {
+T* cudaPhysicalCalloc(size_t nelems, size_t gran) {
   AvoidCudaGraphCaptureGuard cgcGuard;
-
   int deviceId = -1;
+  CUdevice currentDevice;
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+  MSCCLPP_CUTHROW(cuDeviceGet(&currentDevice, deviceId));
 
   CUmemAllocationProp prop = {};
   prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  prop.location.id = deviceId;
-#if defined(__HIP_PLATFORM_AMD__)
-  // TODO: revisit when HIP fixes this typo in the field name
-  prop.requestedHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-#else
-  prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-#endif
+  prop.requestedHandleTypes =
+      (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
+  prop.location.id = currentDevice;
 
-  CUmemGenericAllocationHandle memHandle;
-  size_t bufferSize = sizeof(T) * nelem;
   // allocate physical memory
-  MSCCLPP_CUTHROW(cuMemCreate(&memHandle, bufferSize, &prop, 0 /*flags*/));
-
-  CUmemAccessDesc accessDesc = {};
-  accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  accessDesc.location.id = deviceId;
-  accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+  CUmemGenericAllocationHandle memHandle;
+  size_t nbytes = (nelems * sizeof(T) + gran - 1) / gran * gran;
+  MSCCLPP_CUTHROW(cuMemCreate(&memHandle, nbytes, &prop, 0 /*flags*/));
 
   T* devicePtr = nullptr;
-  // Map the device pointer
-  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, bufferSize, gran, 0U, 0));
-  MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, bufferSize, 0, memHandle, 0));
-  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)devicePtr, bufferSize, &accessDesc, 1));
+  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, nbytes, gran, 0U, 0));
+  MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, nbytes, 0, memHandle, 0));
+  setReadWriteMemoryAccess(devicePtr, nbytes);
   CudaStreamWithFlags stream(cudaStreamNonBlocking);
-  MSCCLPP_CUDATHROW(cudaMemsetAsync(devicePtr, 0, bufferSize, stream));
-
+  MSCCLPP_CUDATHROW(cudaMemsetAsync(devicePtr, 0, nbytes, stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
-  return new PhysicalCudaMemory<T>(memHandle, devicePtr, bufferSize);
+  return devicePtr;
 }
+#endif
 
 template <class T>
 T* cudaExtCalloc(size_t nelem) {
@@ -206,11 +203,15 @@ struct CudaDeleter {
 template <class T>
 struct CudaPhysicalDeleter {
   static_assert(!std::is_array_v<T>, "T must not be an array");
-  void operator()(PhysicalCudaMemory<T>* ptr) {
+  void operator()(T* ptr) {
     AvoidCudaGraphCaptureGuard cgcGuard;
-    MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr->devicePtr_, ptr->size_));
-    MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr->devicePtr_, ptr->size_));
-    MSCCLPP_CUTHROW(cuMemRelease(ptr->memHandle_));
+    CUmemGenericAllocationHandle handle;
+    size_t size = 0;
+    MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, ptr));
+    MSCCLPP_CUTHROW(cuMemGetAddressRange(NULL, &size, (CUdeviceptr)ptr));
+    MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, size));
+    MSCCLPP_CUTHROW(cuMemRelease(handle));
+    MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, size));
   }
 };
 
@@ -234,16 +235,46 @@ std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, std::shared_ptr<T>>(count);
 }
 
-/// Allocated physical memory on the device and returns a memory handle along with a memory handle for it.
-/// The deallocation only happens PhysicalCudaMemory goes out of scope.
+#if (CUDA_NVLS_SUPPORTED)
+static inline size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
+  size_t gran = 0;
+  int numDevices = 0;
+  MSCCLPP_CUDATHROW(cudaGetDeviceCount(&numDevices));
+
+  CUmulticastObjectProp prop = {};
+  prop.size = size;
+  // This is a dummy value, it might affect the granularity in the future
+  prop.numDevices = numDevices;
+  prop.handleTypes = (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
+  prop.flags = 0;
+  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&gran, &prop, granFlag));
+  return gran;
+}
+#endif
+
+/// Allocates physical memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
 /// @tparam T Type of each element in the allocated memory.
 /// @param count Number of elements to allocate.
 /// @param gran the granularity of the allocation.
-/// @return A std::shared_ptr to the memory handle and a device pointer for that memory.
+/// @return A std::shared_ptr to the allocated memory.
 template <class T>
-std::shared_ptr<PhysicalCudaMemory<T>> allocSharedPhysicalCuda(size_t count, size_t gran) {
-  return detail::safeAlloc<PhysicalCudaMemory<T>, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
-                           std::shared_ptr<PhysicalCudaMemory<T>>>(count, gran);
+std::shared_ptr<T> allocSharedPhysicalCuda([[maybe_unused]] size_t count, [[maybe_unused]] size_t gran = 0) {
+#if (CUDA_NVLS_SUPPORTED)
+  if (!isNvlsSupported()) {
+    throw Error("Only support GPU with NVLS support", ErrorCode::InvalidUsage);
+  }
+  if (count == 0) {
+    return nullptr;
+  }
+
+  if (gran == 0) {
+    gran = getMulticastGranularity(count * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
+  }
+  size_t nelems = ((count * sizeof(T) + gran - 1) / gran * gran) / sizeof(T);
+  return detail::safeAlloc<T, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>, std::shared_ptr<T>>(nelems, gran);
+#else
+  throw Error("Only support GPU with Fabric support", ErrorCode::InvalidUsage);
+#endif
 }
 
 /// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
@@ -267,18 +298,6 @@ using UniqueCudaPtr = std::unique_ptr<T, CudaDeleter<T>>;
 template <class T>
 UniqueCudaPtr<T> allocUniqueCuda(size_t count = 1) {
   return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, UniqueCudaPtr<T>>(count);
-}
-
-/// Allocated physical memory on the device and returns a memory handle along with a virtual memory handle for it.
-/// The memory is zeroed out.
-/// @tparam T Type of each element in the allocated memory.
-/// @param count Number of elements to allocate.
-/// @param gran the granularity of the allocation.
-/// @return A std::unique_ptr to the memory handle and a device pointer for that memory.
-template <class T>
-std::unique_ptr<PhysicalCudaMemory<T>> allocUniquePhysicalCuda(size_t count, size_t gran) {
-  return detail::safeAlloc<PhysicalCudaMemory<T>, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
-                           std::unique_ptr<CudaPhysicalDeleter<T>, CudaDeleter<CudaPhysicalDeleter<T>>>>(count, gran);
 }
 
 /// Allocates memory on the device and returns a std::unique_ptr to it. The memory is zeroed out.
@@ -347,6 +366,32 @@ UniqueCudaHostPtr<T> makeUniqueCudaHost(size_t count) {
     new (&ptr[i]) TElem();
   }
   return ptr;
+}
+
+/// Allocated physical memory on the device and returns a memory handle along with a virtual memory handle for it.
+/// The memory is zeroed out.
+/// @tparam T Type of each element in the allocated memory.
+/// @param count Number of elements to allocate.
+/// @param gran the granularity of the allocation.
+/// @return A std::unique_ptr to the allocated memory.
+template <class T>
+std::unique_ptr<T> allocUniquePhysicalCuda([[maybe_unused]] size_t count, [[maybe_unused]] size_t gran = 0) {
+#if (CUDA_NVLS_SUPPORTED)
+  if (!isNvlsSupported()) {
+    throw Error("Only support GPU with NVLS support", ErrorCode::InvalidUsage);
+  }
+  if (count == 0) {
+    return nullptr;
+  }
+
+  if (gran == 0) {
+    gran = getMulticastGranularity(count * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
+  }
+  return detail::safeAlloc<T, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
+                           std::unique_ptr<CudaPhysicalDeleter<T>, CudaDeleter<CudaPhysicalDeleter<T>>>>(count, gran);
+#else
+  throw Error("Only support GPU with Fabric support", ErrorCode::InvalidUsage);
+#endif
 }
 
 /// Asynchronous cudaMemcpy without capture into a CUDA graph.

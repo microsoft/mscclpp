@@ -4,6 +4,7 @@
 #ifndef MSCCLPP_EXECUTION_COMMON_HPP_
 #define MSCCLPP_EXECUTION_COMMON_HPP_
 
+#include <mscclpp/nvls.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
 
@@ -24,6 +25,7 @@ enum class ChannelType : uint8_t {
   NONE,
   SM,
   PROXY,
+  NVLS,
 };
 
 // NOTE(chhwang): any modification here requires corresponding updates in `tools/npkit/npkit_trace_generator.py`.
@@ -46,11 +48,13 @@ enum class OperationType : uint8_t {
   REDUCE_SEND_PACKET,
   READ_REDUCE_COPY,
   READ_REDUCE_COPY_SEND,
+  MULTI_LOAD_REDUCE_STORE,
 };
 
 struct Channels {
   mscclpp::DeviceHandle<mscclpp::SmChannel> smChannels[MAX_CHANNEL];
   mscclpp::DeviceHandle<mscclpp::SimpleProxyChannel> proxyChannels[MAX_CHANNEL];
+  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels[MAX_CHANNEL];
 };
 
 struct Operation {
@@ -61,12 +65,18 @@ struct Operation {
   uint8_t nInputs;
   uint8_t nOutputs;
   union {
+    // For ops which require reading from multiple remote sources
     uint8_t inputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
+    // For ops which require reading from multiple local sources
     BufferType inputBufferType;
+    uint8_t nvlsInputIndex;
   };
   union {
+    // For ops which require writing to multiple remote destinations
     uint8_t outputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
+    // For ops which require writing to multiple local destinations
     BufferType outputBufferType;
+    uint8_t nvlsOutputIndex;
   };
   union {
     // For Barrier operation
@@ -84,12 +94,12 @@ struct Operation {
   };
 };
 
-// total size = 1920 + 6400 + 4 + 4(padding) + 12(align) = 8336 bytes
+// total size = 2304 + 6400 + 4 + 12(padding) = 8720 bytes
 struct __attribute__((aligned(16))) DeviceExecutionPlan {
   uint8_t nSmChannels;                  // 1 bytes
   uint8_t nProxyChannels;               // 1 bytes
   uint16_t nOperations;                 // 2 bytes
-  Channels channels;                    // 1920 bytes
+  Channels channels;                    // 2304 bytes
   Operation operations[MAX_OPERATION];  // 64 * 100 = 6400 bytes
 };
 
