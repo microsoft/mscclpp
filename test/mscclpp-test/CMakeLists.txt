@@ -5,7 +5,7 @@ FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download
 FetchContent_MakeAvailable(json)
 
 function(add_mscclpp_test_executable name sources)
-    if(USE_ROCM)
+    if(MSCCLPP_USE_ROCM)
         set_source_files_properties(${sources} PROPERTIES LANGUAGE CXX)
     endif()
     add_executable(${name} ${sources} common.cc)
