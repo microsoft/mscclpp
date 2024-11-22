@@ -130,7 +130,7 @@ def dtype_to_mscclpp_dtype(dtype):
 
 
 def allocate_buffer(nelems, dtype):
-    if is_nvls_supported:
+    if is_nvls_supported():
         buffer_raw = alloc_shared_physical_cuda(nelems * cp.dtype(dtype).itemsize)
         buffer_ptr = cp.cuda.MemoryPointer(
             cp.cuda.UnownedMemory(buffer_raw.get_ptr(), buffer_raw.size(), buffer_raw), 0
