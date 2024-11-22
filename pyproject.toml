@@ -16,8 +16,8 @@ wheel.packages = ["python/mscclpp", "python/mscclpp_benchmark"]
 wheel.install-dir = "mscclpp"
 
 [tool.scikit-build.cmake.define]
-BUILD_PYTHON_BINDINGS = "ON"
-BUILD_TESTS = "OFF"
+MSCCLPP_BUILD_PYTHON_BINDINGS = "ON"
+MSCCLPP_BUILD_TESTS = "OFF"
 
 [tool.black]
 line-length = 120
