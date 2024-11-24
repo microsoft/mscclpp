@@ -17,6 +17,8 @@ std::vector<T> filter(const std::vector<T>& vec, Predicate pred) {
 
 auto getOpType = [](const std::string& str) {
   if (str == "nop") {
+    return mscclpp::OperationType::THREADBLOCK_BARRIER;
+  } else if (str == "barrier") {
     return mscclpp::OperationType::BARRIER;
   } else if (str == "put") {
     return mscclpp::OperationType::PUT;
@@ -455,6 +457,12 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
         if (op.contains("cnt")) {
           operation.size =
               this->getNChunkSize(rank, this->inputSize, this->outputSize, (uint32_t)op["cnt"], chunkIndexes);
+        }
+        if (op.contains("barrier_id")) {
+          operation.deviceSyncerIndex = op["barrier_id"];
+        }
+        if (op.contains("nthread_blocks")) {
+          operation.nThreadBlocks = op["nthread_blocks"];
         }
         ops.push_back(operation);
       }

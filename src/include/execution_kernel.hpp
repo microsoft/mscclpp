@@ -530,7 +530,9 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                               event_buffer, &event_buffer_head);
 #endif
 
-    if (op.type == OperationType::BARRIER) {
+    if (op.type == OperationType::THREADBLOCK_BARRIER) {
+      __syncthreads();
+    } else if (op.type == OperationType::BARRIER) {
       int nThreadBlocks = op.nThreadBlocks;
       int syncStateIndex = op.deviceSyncerIndex;
       deviceSyncers[syncStateIndex].sync(nThreadBlocks);
