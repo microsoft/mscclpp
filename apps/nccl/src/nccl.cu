@@ -216,7 +216,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels = nullptr;
 
   // Creating the channels
-  if (count * ncclTypeSize(datatype) <= comm->largeMessageSizeBoundary) {
+  if (count * ncclTypeSize(datatype) <= (1 << 20)) {
     auto sendIt = comm->channelScratchInfos.find(sendKey);
     if (sendIt == comm->channelScratchInfos.end()) {
       std::vector<mscclpp::SmChannel> channels =
