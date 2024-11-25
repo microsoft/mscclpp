@@ -17,7 +17,7 @@ std::vector<T> filter(const std::vector<T>& vec, Predicate pred) {
 
 auto getOpType = [](const std::string& str) {
   if (str == "nop") {
-    return mscclpp::OperationType::THREADBLOCK_BARRIER;
+    return mscclpp::OperationType::NOP;
   } else if (str == "barrier") {
     return mscclpp::OperationType::BARRIER;
   } else if (str == "put") {
