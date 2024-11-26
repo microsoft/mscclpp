@@ -23,6 +23,7 @@ extern void register_numa(nb::module_& m);
 extern void register_nvls(nb::module_& m);
 extern void register_executor(nb::module_& m);
 extern void register_npkit(nb::module_& m);
+extern void register_gpu_utils(nb::module_& m);
 
 template <typename T>
 void def_nonblocking_future(nb::handle& m, const std::string& typestr) {
@@ -194,4 +195,5 @@ NB_MODULE(_mscclpp, m) {
   register_nvls(m);
   register_executor(m);
   register_npkit(m);
+  register_gpu_utils(m);
 }

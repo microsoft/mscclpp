@@ -7,12 +7,12 @@
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
+#include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <mscclpp/sm_channel_device.hpp>
 
 #include "common.hpp"
-#include "gpu_data_types.hpp"
 
 template <typename To, typename From>
 __forceinline__ __device__ To bit_cast(const From& src) {

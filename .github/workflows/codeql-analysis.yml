@@ -46,7 +46,7 @@ jobs:
     - name: Build
       run: |
         rm -rf build && mkdir build && cd build
-        cmake -DBYPASS_GPU_CHECK=ON -DUSE_CUDA=ON ..
+        cmake -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
         make -j
 
     - name: Perform CodeQL Analysis
@@ -91,7 +91,7 @@ jobs:
     - name: Build
       run: |
         rm -rf build && mkdir build && cd build
-        CXX=/opt/rocm/bin/hipcc cmake -DBYPASS_GPU_CHECK=ON -DUSE_ROCM=ON ..
+        CXX=/opt/rocm/bin/hipcc cmake -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON ..
         make -j
 
     - name: Perform CodeQL Analysis

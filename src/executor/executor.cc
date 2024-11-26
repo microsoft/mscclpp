@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <mscclpp/executor.hpp>
+#include <mscclpp/nvls.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <set>
@@ -20,6 +21,19 @@ struct ExecutionContextKey {
   bool operator==(const ExecutionContextKey& other) const {
     return sendBuff == other.sendBuff && recvBuff == other.recvBuff && sendBuffSize == other.sendBuffSize &&
            recvBuffSize == other.recvBuffSize && plan == other.plan;
+  }
+};
+
+void* getBuffer(BufferType type, void* sendbuff, void* recvbuff, void* scratch) {
+  switch (type) {
+    case BufferType::INPUT:
+      return sendbuff;
+    case BufferType::OUTPUT:
+      return recvbuff;
+    case BufferType::SCRATCH:
+      return scratch;
+    default:
+      throw Error("Invalid buffer type", ErrorCode::ExecutorError);
   }
 };
 
@@ -97,11 +111,13 @@ namespace mscclpp {
 struct ExecutionContext {
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<int, std::shared_ptr<Connection>> connections;
+  std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
   std::unordered_map<std::pair<BufferType, int>, mscclpp::RegisteredMemory> registeredMemories;
   std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
   std::vector<mscclpp::SemaphoreId> proxySemaphores;
   std::vector<mscclpp::SmChannel> smChannels;
   std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
   std::shared_ptr<char> scratchBuffer;
@@ -152,7 +168,12 @@ struct Executor::Impl {
 
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->getScratchBufferSize(rank, sendBufferSize, recvBufferSize);
-    std::shared_ptr<char> scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
+    std::shared_ptr<char> scratchBuffer;
+    if (isNvlsSupported()) {
+      scratchBuffer = allocSharedPhysicalCuda<char>(scratchBufferSize);
+    } else {
+      scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
+    }
     context.scratchBuffer = scratchBuffer;
     context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
@@ -160,6 +181,7 @@ struct Executor::Impl {
     this->setupConnections(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
     this->setupChannels(context, sendbuff, recvbuff, sendBufferSize, recvBufferSize, rank, plan);
+    this->setupNvlsChannels(context, sendbuff, recvbuff, rank, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
         allocExtSharedCuda<char>(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
@@ -201,6 +223,13 @@ struct Executor::Impl {
     this->comm->setup();
     for (size_t i = 0; i < connectionFutures.size(); i++) {
       context.connections[connectedPeers[i]] = connectionFutures[i].get();
+    }
+
+    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank);
+    for (const NvlsInfo& info : nvlsInfos) {
+      std::shared_ptr<NvlsConnection> nvlsConnection =
+          mscclpp::connectNvlsCollective(this->comm, info.ranks, info.bufferSize);
+      context.nvlsConnections.push_back(nvlsConnection);
     }
   }
 
@@ -284,18 +313,6 @@ struct Executor::Impl {
     context.smSemaphores = std::move(smSemaphores);
     context.proxySemaphores = std::move(proxySemaphores);
 
-    auto getBuffer = [&](BufferType type) {
-      switch (type) {
-        case BufferType::INPUT:
-          return sendbuff;
-        case BufferType::OUTPUT:
-          return recvbuff;
-        case BufferType::SCRATCH:
-          return (void*)context.scratchBuffer.get();
-        default:
-          throw Error("Invalid buffer type", ErrorCode::ExecutorError);
-      }
-    };
     auto getBufferSize = [&](BufferType type) {
       switch (type) {
         case BufferType::INPUT:
@@ -313,7 +330,7 @@ struct Executor::Impl {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(rank, channelType);
       int index = 0;
       for (ChannelInfo& info : channelInfos) {
-        void* src = getBuffer(info.srcBufferType);
+        void* src = getBuffer(info.srcBufferType, sendbuff, recvbuff, context.scratchBuffer.get());
         size_t bufferSize = getBufferSize(info.srcBufferType);
         TransportFlags transport = getTransportFlags(channelInfos, rank);
         RegisteredMemory localMemory = this->comm->registerMemory(src, bufferSize, transport);
@@ -329,6 +346,19 @@ struct Executor::Impl {
           }
         }
       }
+    }
+  }
+
+  void setupNvlsChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, int rank,
+                         const ExecutionPlan& plan) {
+    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank);
+    for (size_t i = 0; i < nvlsInfos.size(); i++) {
+      std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[i];
+      NvlsInfo info = nvlsInfos[i];
+      void* buffer = getBuffer(info.bufferType, sendbuff, recvbuff, context.scratchBuffer.get());
+      NvlsConnection::DeviceMulticastPointer deviceMulticastPointer =
+          nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, info.bufferSize);
+      context.nvlsChannels.push_back(deviceMulticastPointer);
     }
   }
 
@@ -348,6 +378,10 @@ struct Executor::Impl {
       chanIndex = 0;
       for (const auto& [index, _] : plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.proxyChannels[chanIndex++] = mscclpp::deviceHandle(context.proxyChannels[index]);
+      }
+      chanIndex = 0;
+      for (const auto& [index, _] : plan.impl_->threadblockNvlsChannelMap.at(rank).at(threadblock)) {
+        deviceExecutionPlan.channels.nvlsChannels[chanIndex++] = mscclpp::deviceHandle(context.nvlsChannels[index]);
       }
       for (size_t i = 0; i < ops.size(); i++) {
         deviceExecutionPlan.operations[i] = ops[i];

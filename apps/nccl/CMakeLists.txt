@@ -4,7 +4,7 @@
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*)
 file(GLOB_RECURSE HEADERS CONFIGURE_DEPENDS include/nccl.h)
 
-if(USE_ROCM)
+if(MSCCLPP_USE_ROCM)
     set_source_files_properties(${SOURCES} PROPERTIES LANGUAGE CXX)
 endif()
 
@@ -14,10 +14,10 @@ target_sources(mscclpp_nccl_obj PUBLIC FILE_SET HEADERS FILES ${HEADERS})
 target_include_directories(mscclpp_nccl_obj PRIVATE include ${PROJECT_SOURCE_DIR}/src/include SYSTEM PRIVATE ${GPU_INCLUDE_DIRS})
 target_link_libraries(mscclpp_nccl_obj PRIVATE ${GPU_LIBRARIES} PUBLIC mscclpp_obj)
 set_target_properties(mscclpp_nccl_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
-if(USE_CUDA)
-    target_compile_definitions(mscclpp_nccl_obj PRIVATE USE_CUDA)
-elseif(USE_ROCM)
-    target_compile_definitions(mscclpp_nccl_obj PRIVATE USE_ROCM)
+if(MSCCLPP_USE_CUDA)
+    target_compile_definitions(mscclpp_nccl_obj PRIVATE MSCCLPP_USE_CUDA)
+elseif(MSCCLPP_USE_ROCM)
+    target_compile_definitions(mscclpp_nccl_obj PRIVATE MSCCLPP_USE_ROCM)
 endif()
 
 add_library(mscclpp_nccl SHARED)
@@ -34,6 +34,6 @@ install(TARGETS mscclpp_nccl
 install(TARGETS mscclpp_nccl_static
     ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
 
-if(BUILD_TESTS)
+if(MSCCLPP_BUILD_TESTS)
     add_subdirectory(test)
 endif()
