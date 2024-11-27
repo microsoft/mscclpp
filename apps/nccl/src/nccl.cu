@@ -590,8 +590,8 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
 
   switch (datatype) {
     case ncclFloat16:
-      comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes * nRank,
-                              mscclpp::DataType::FLOAT16, *plan, stream);
+      comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes * nRank, mscclpp::DataType::FLOAT16,
+                              *plan, stream);
       break;
     case ncclFloat32:
       comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, bytes, bytes * nRank,
@@ -603,8 +603,8 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
       break;
     case ncclInt32:
     case ncclUint32:
-      comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, bytes, bytes * nRank,
-                              mscclpp::DataType::UINT32, *plan, stream);
+      comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, bytes, bytes * nRank, mscclpp::DataType::UINT32,
+                              *plan, stream);
       break;
     default:
       return ncclInvalidArgument;
