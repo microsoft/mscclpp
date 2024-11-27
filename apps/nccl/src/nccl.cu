@@ -411,11 +411,11 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     commPtr->allGatherPacketOPPlan = std::make_shared<mscclpp::ExecutionPlan>(
         mscclpp::ExecutionPlan("allgather_pkt", getenv("ALLGATHERPKT_OP_JSON_FILE")));
   if (getenv("ALLGATHER_IP_JSON_FILE"))
-    commPtr->allGatherIPPlan = std::make_shared<mscclpp::ExecutionPlan>(
-        mscclpp::ExecutionPlan("allgather", getenv("ALLGATHER_IP_JSON_FILE")));
+    commPtr->allGatherIPPlan =
+        std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allgather", getenv("ALLGATHER_IP_JSON_FILE")));
   if (getenv("ALLGATHER_OP_JSON_FILE"))
-    commPtr->allGatherOPPlan = std::make_shared<mscclpp::ExecutionPlan>(
-        mscclpp::ExecutionPlan("allgather", getenv("ALLGATHER_OP_JSON_FILE")));
+    commPtr->allGatherOPPlan =
+        std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allgather", getenv("ALLGATHER_OP_JSON_FILE")));
   if (getenv("ALLGATHER_SMALL_MSG_BOUNDARY"))
     commPtr->allGatherSmallMessageSizeBoundary = parseSize(getenv("ALLGATHER_SMALL_MSG_BOUNDARY"));
   else
@@ -425,9 +425,10 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   else
     commPtr->allGatherLargeMessageSizeBoundary = 1 << 20;
 
-
-  if (commPtr->allReduceSmallMessageSizeBoundary > commPtr->allReduceLargeMessageSizeBoundary) return ncclInvalidArgument;
-  if (commPtr->allGatherSmallMessageSizeBoundary > commPtr->allGatherLargeMessageSizeBoundary) return ncclInvalidArgument;
+  if (commPtr->allReduceSmallMessageSizeBoundary > commPtr->allReduceLargeMessageSizeBoundary)
+    return ncclInvalidArgument;
+  if (commPtr->allGatherSmallMessageSizeBoundary > commPtr->allGatherLargeMessageSizeBoundary)
+    return ncclInvalidArgument;
 
   *comm = commPtr;
   return ncclSuccess;
