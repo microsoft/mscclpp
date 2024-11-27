@@ -58,7 +58,7 @@ struct ncclComm {
   std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
   std::shared_ptr<mscclpp::Executor> executor;
   std::shared_ptr<mscclpp::ExecutionPlan> allReducePacketIPPlan, allReducePacketOPPlan, allReduceIPPlan,
-      allReduceOPPlan, allGatherIPPlan, allGatherOPPlan;
+      allReduceOPPlan, allGatherIPPlan, allGatherOPPlan, allGatherPacketIPPlan, allGatherPacketOPPlan;
 
   std::unordered_map<channelKey, ChannelInfo> channelInInfos;
   std::unordered_map<channelKey, ChannelInfo> channelOutInfos;
@@ -66,7 +66,8 @@ struct ncclComm {
   std::shared_ptr<char> scratchBuff;
   std::vector<mscclpp::RegisteredMemory> remoteScratchRegMemories;
 
-  size_t smallMessageSizeBoundary, largeMessageSizeBoundary;
+  size_t allReduceSmallMessageSizeBoundary, allReduceLargeMessageSizeBoundary;
+  size_t allGatherSmallMessageSizeBoundary, allGatherLargeMessageSizeBoundary;
   uint32_t numScratchBuff;
   uint32_t buffFlag;
 };
@@ -395,22 +396,38 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     commPtr->allReduceOPPlan =
         std::make_shared<mscclpp::ExecutionPlan>(mscclpp::ExecutionPlan("allreduce", getenv("ALLREDUCE_OP_JSON_FILE")));
   if (getenv("ALLREDUCE_SMALL_MSG_BOUNDARY"))
-    commPtr->smallMessageSizeBoundary = parseSize(getenv("ALLREDUCE_SMALL_MSG_BOUNDARY"));
+    commPtr->allReduceSmallMessageSizeBoundary = parseSize(getenv("ALLREDUCE_SMALL_MSG_BOUNDARY"));
   else
-    commPtr->smallMessageSizeBoundary = 16 * (1 << 10);
+    commPtr->allReduceSmallMessageSizeBoundary = 16 * (1 << 10);
   if (getenv("ALLREDUCE_LARGE_MSG_BOUNDARY"))
-    commPtr->largeMessageSizeBoundary = parseSize(getenv("ALLREDUCE_LARGE_MSG_BOUNDARY"));
+    commPtr->allReduceLargeMessageSizeBoundary = parseSize(getenv("ALLREDUCE_LARGE_MSG_BOUNDARY"));
   else
-    commPtr->largeMessageSizeBoundary = 1 << 20;
+    commPtr->allReduceLargeMessageSizeBoundary = 1 << 20;
 
+  if (getenv("ALLGATHERPKT_IP_JSON_FILE"))
+    commPtr->allGatherPacketIPPlan = std::make_shared<mscclpp::ExecutionPlan>(
+        mscclpp::ExecutionPlan("allgather_pkt", getenv("ALLGATHERPKT_IP_JSON_FILE")));
+  if (getenv("ALLGATHERPKT_OP_JSON_FILE"))
+    commPtr->allGatherPacketOPPlan = std::make_shared<mscclpp::ExecutionPlan>(
+        mscclpp::ExecutionPlan("allgather_pkt", getenv("ALLGATHERPKT_OP_JSON_FILE")));
   if (getenv("ALLGATHER_IP_JSON_FILE"))
     commPtr->allGatherIPPlan = std::make_shared<mscclpp::ExecutionPlan>(
-        mscclpp::ExecutionPlan("allgather_test", getenv("ALLGATHER_IP_JSON_FILE")));
+        mscclpp::ExecutionPlan("allgather", getenv("ALLGATHER_IP_JSON_FILE")));
   if (getenv("ALLGATHER_OP_JSON_FILE"))
     commPtr->allGatherOPPlan = std::make_shared<mscclpp::ExecutionPlan>(
-        mscclpp::ExecutionPlan("allgather_test", getenv("ALLGATHER_OP_JSON_FILE")));
+        mscclpp::ExecutionPlan("allgather", getenv("ALLGATHER_OP_JSON_FILE")));
+  if (getenv("ALLGATHER_SMALL_MSG_BOUNDARY"))
+    commPtr->allGatherSmallMessageSizeBoundary = parseSize(getenv("ALLGATHER_SMALL_MSG_BOUNDARY"));
+  else
+    commPtr->allGatherSmallMessageSizeBoundary = (1 << 10);
+  if (getenv("ALLGATHER_LARGE_MSG_BOUNDARY"))
+    commPtr->allGatherLargeMessageSizeBoundary = parseSize(getenv("ALLGATHER_LARGE_MSG_BOUNDARY"));
+  else
+    commPtr->allGatherLargeMessageSizeBoundary = 1 << 20;
 
-  if (commPtr->smallMessageSizeBoundary > commPtr->largeMessageSizeBoundary) return ncclInvalidArgument;
+
+  if (commPtr->allReduceSmallMessageSizeBoundary > commPtr->allReduceLargeMessageSizeBoundary) return ncclInvalidArgument;
+  if (commPtr->allGatherSmallMessageSizeBoundary > commPtr->allGatherLargeMessageSizeBoundary) return ncclInvalidArgument;
 
   *comm = commPtr;
   return ncclSuccess;
@@ -530,11 +547,11 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   size_t bytes = count * ncclTypeSize(datatype);
   int rank = comm->comm->bootstrap()->getRank();
 
-  if (bytes < comm->smallMessageSizeBoundary) {
+  if (bytes < comm->allReduceSmallMessageSizeBoundary) {
     return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
   } else {
     std::shared_ptr<mscclpp::ExecutionPlan> plan;
-    if (bytes <= comm->largeMessageSizeBoundary)
+    if (bytes <= comm->allReduceLargeMessageSizeBoundary)
       plan = (sendbuff == recvbuff) ? comm->allReducePacketIPPlan : comm->allReducePacketOPPlan;
     else {
       plan = (sendbuff == recvbuff) ? comm->allReduceIPPlan : comm->allReduceOPPlan;
@@ -583,8 +600,15 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
 
-  std::shared_ptr<mscclpp::ExecutionPlan> plan =
-      (sendbuff == (char*)recvbuff + rank * bytes) ? comm->allGatherIPPlan : comm->allGatherOPPlan;
+  if (bytes * nRank < comm->allGatherSmallMessageSizeBoundary)
+    return ncclAllGatherFallback(sendbuff, recvbuff, sendcount, datatype, comm, stream);
+
+  std::shared_ptr<mscclpp::ExecutionPlan> plan;
+  if (bytes * nRank <= comm->allGatherLargeMessageSizeBoundary)
+    plan = (sendbuff == (char*)recvbuff + rank * bytes) ? comm->allGatherPacketIPPlan : comm->allGatherPacketOPPlan;
+  else {
+    plan = (sendbuff == (char*)recvbuff + rank * bytes) ? comm->allGatherIPPlan : comm->allGatherOPPlan;
+  }
 
   if (plan == nullptr) return ncclAllGatherFallback(sendbuff, recvbuff, sendcount, datatype, comm, stream);
 
