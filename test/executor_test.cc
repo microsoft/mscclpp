@@ -131,11 +131,12 @@ int main(int argc, char* argv[]) {
   }
 
   mscclpp::ExecutionPlan plan(executionPlanName, executionPlanPath);
-#if (CUDA_NVLS_SUPPORTED)
-  std::shared_ptr<char> sendbuff = mscclpp::allocSharedPhysicalCuda<char>(bufferSize);
-#else
-  std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
-#endif
+  std::shared_ptr<char> sendbuff;
+  if (mscclpp::isNvlsSupported()) {
+    sendbuff = mscclpp::allocSharedPhysicalCuda<char>(bufferSize);
+  } else {
+    sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
+  }
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
   MSCCLPP_CUDATHROW(cudaMemcpy(sendbuff.get(), dataHost.data(), bufferSize, cudaMemcpyHostToDevice));
   double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, niters, ngraphIters, packetType);

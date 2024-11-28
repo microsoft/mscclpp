@@ -30,6 +30,7 @@ enum class ChannelType : uint8_t {
 
 // NOTE(chhwang): any modification here requires corresponding updates in `tools/npkit/npkit_trace_generator.py`.
 enum class OperationType : uint8_t {
+  NOP,
   BARRIER,
   PUT,
   PUT_PACKET,
@@ -78,11 +79,20 @@ struct Operation {
     BufferType outputBufferType;
     uint8_t nvlsOutputIndex;
   };
-  uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
-  uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
-  uint32_t srcOffset;
-  uint32_t dstOffset;
-  uint32_t size;
+  union {
+    // For Barrier operation
+    struct {
+      uint32_t deviceSyncerIndex;
+      uint32_t nThreadBlocks;
+    };
+    struct {
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t srcOffset;
+      uint32_t dstOffset;
+      uint32_t size;
+    };
+  };
 };
 
 // total size = 2304 + 6400 + 4 + 12(padding) = 8720 bytes
