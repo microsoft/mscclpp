@@ -26,6 +26,7 @@ enum class PacketType {
 class ExecutionPlan {
  public:
   ExecutionPlan(const std::string& name, const std::string& planPath);
+  ExecutionPlan(const std::string& planPath);
   ~ExecutionPlan() = default;
 
  private:
