@@ -108,8 +108,8 @@ struct ExecutionPlan::Impl {
   size_t inputSize;
   size_t outputSize;
   int nThreadsPerBlock;
-  uint64_t minMessageSize;
-  uint64_t maxMessageSize;
+  size_t minMessageSize;
+  size_t maxMessageSize;
   bool isInPlace;
 
  private:

@@ -41,8 +41,8 @@ struct channelKey {
 };
 
 struct planKey {
-  uint64_t minMessageBytes;
-  uint64_t maxMessageBytes;
+  size_t minMessageSize;
+  size_t maxMessageSize;
   bool isInPlace;
 };
 
@@ -194,7 +194,10 @@ static std::vector<mscclpp::SmChannel> setupSmChannels(ncclComm_t comm,
 }
 
 static std::pair<std::string, executionPlanInstance> load_execution_plan(const char* filename) {
-  return std::make_pair(std::string(filename), executionPlanInstance{});
+  std::shared_ptr<mscclpp::ExecutionPlan> plan = std::make_shared<mscclpp::ExecutionPlan>(filename);
+  std::string collective = plan->collective();
+  planKey key{plan->minMessageSize(), plan->maxMessageSize(), plan->isInPlace()};
+  return std::make_pair(collective, executionPlanInstance{key, plan});
 }
 
 static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> setupSmChannelDeviceHandles(
@@ -530,7 +533,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
   bool inPlace = sendbuff == recvbuff;
   for (const auto& p : plans) {
-    if (bytes >= p.key.minMessageBytes && bytes < p.key.maxMessageBytes && inPlace == p.key.isInPlace) {
+    if (bytes >= p.key.minMessageSize && bytes < p.key.maxMessageSize && inPlace == p.key.isInPlace) {
       plan = p.plan;
       break;
     }
@@ -582,7 +585,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
   bool inPlace = sendbuff == recvbuff;
   for (const auto& p : plans) {
-    if (bytes >= p.key.minMessageBytes && bytes < p.key.maxMessageBytes && inPlace == p.key.isInPlace) {
+    if (bytes >= p.key.minMessageSize && bytes < p.key.maxMessageSize && inPlace == p.key.isInPlace) {
       plan = p.plan;
       break;
     }

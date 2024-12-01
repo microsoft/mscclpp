@@ -560,4 +560,16 @@ void ExecutionPlan::Impl::operationsReset() { this->operations.clear(); }
 ExecutionPlan::ExecutionPlan(const std::string& name, const std::string& planPath)
     : impl_(std::make_shared<Impl>(name, planPath)) {}
 
+ExecutionPlan::ExecutionPlan(const std::string& planPath) : impl_(std::make_shared<Impl>(planPath)) {}
+
+std::string ExecutionPlan::name() const { return this->impl_->name; }
+
+std::string ExecutionPlan::collective() const { return this->impl_->collective; }
+
+size_t ExecutionPlan::minMessageSize() const { return this->impl_->minMessageSize; }
+
+size_t ExecutionPlan::maxMessageSize() const { return this->impl_->maxMessageSize; }
+
+bool ExecutionPlan::isInPlace() const { return this->impl_->isInPlace; }
+
 }  // namespace mscclpp
