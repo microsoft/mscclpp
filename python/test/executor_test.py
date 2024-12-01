@@ -74,6 +74,8 @@ def bench_correctness(
     fill_data_kernel_name = "fill_data_%s" % dtype_str
     if "allgather" in execution_plan_name:
         coll = "all_gather"
+    elif "reducescatter" in execution_plan_name:
+        coll = "reduce_scatter"
     else:
         coll = "all_reduce"
     test_data_kernel_name = "test_data_%s_%s" % (coll, dtype_str)
@@ -96,7 +98,7 @@ def bench_correctness(
             fill_data_kernel.launch_kernel(fill_data_params, nblocks, nthreads, 0, stream)
             func(stream)
             test_data_params = (
-                pack(result_buf, test_buf) + struct.pack("Q", input_buf.nbytes // type_size) + pack(num_ranks, i)
+                pack(result_buf, test_buf) + struct.pack("Q", input_buf.nbytes // type_size) + pack(num_ranks, rank, i)
             )
             test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream)
         graph = stream.end_capture()
@@ -128,7 +130,7 @@ def dtype_to_mscclpp_dtype(dtype):
 
 
 def allocate_buffer(nelems, dtype):
-    if is_nvls_supported:
+    if is_nvls_supported():
         buffer_raw = alloc_shared_physical_cuda(nelems * cp.dtype(dtype).itemsize)
         buffer_ptr = cp.cuda.MemoryPointer(
             cp.cuda.UnownedMemory(buffer_raw.get_ptr(), buffer_raw.size(), buffer_raw), 0
