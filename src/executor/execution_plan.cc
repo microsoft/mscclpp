@@ -94,9 +94,6 @@ std::set groupChannelType{mscclpp::ChannelType::NVLS};
 namespace mscclpp {
 using json = nlohmann::json;
 
-ExecutionPlan::Impl::Impl(const std::string name, const std::string planPath)
-    : name(name), planPath(planPath), isUsingPacket(false) {}
-
 ExecutionPlan::Impl::Impl(const std::string planPath) : planPath(planPath), isUsingPacket(false) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
@@ -562,9 +559,6 @@ void ExecutionPlan::Impl::reset() {
 }
 
 void ExecutionPlan::Impl::operationsReset() { this->operations.clear(); }
-
-ExecutionPlan::ExecutionPlan(const std::string& name, const std::string& planPath)
-    : impl_(std::make_shared<Impl>(name, planPath)) {}
 
 ExecutionPlan::ExecutionPlan(const std::string& planPath) : impl_(std::make_shared<Impl>(planPath)) {}
 

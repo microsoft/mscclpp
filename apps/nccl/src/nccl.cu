@@ -585,8 +585,9 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
   void* basePtr = (char*)sendbuff - rank * bytes;
   bool inPlace = basePtr == recvbuff;
+  const size_t totalBytes = bytes * nRank;
   for (const auto& p : plans) {
-    if (bytes * nRank >= p.key.minMessageSize && bytes < p.key.maxMessageSize && inPlace == p.key.isInPlace) {
+    if (totalBytes >= p.key.minMessageSize && totalBytes < p.key.maxMessageSize && inPlace == p.key.isInPlace) {
       plan = p.plan;
       break;
     }
