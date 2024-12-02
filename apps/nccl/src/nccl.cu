@@ -2,7 +2,6 @@
 // Licensed under the MIT license.
 
 #include <algorithm>
-#include <cstdlib>
 #include <filesystem>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
