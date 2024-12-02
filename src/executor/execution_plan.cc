@@ -97,7 +97,15 @@ using json = nlohmann::json;
 ExecutionPlan::Impl::Impl(const std::string name, const std::string planPath)
     : name(name), planPath(planPath), isUsingPacket(false) {}
 
-ExecutionPlan::Impl::Impl(const std::string planPath) : planPath(planPath), isUsingPacket(false) {}
+ExecutionPlan::Impl::Impl(const std::string planPath) : planPath(planPath), isUsingPacket(false) {
+  std::ifstream file(this->planPath);
+  json obj = json::parse(file);
+  this->name = obj["name"];
+  this->collective = obj["collective"];
+  this->isInPlace = obj["inplace"];
+  this->minMessageSize = obj.value("min_message_size", 0);
+  this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
+}
 
 std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, ChannelType channelType) const {
   auto pred = [channelType](const ChannelInfo& info) { return info.channelType == channelType; };
@@ -186,9 +194,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
                                             size_t constDstOffset) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
-  if (this->name.empty()) {
-    this->name = obj["name"];
-  } else if (this->name != obj["name"]) {
+  if (this->name != obj["name"]) {
     throw Error("Plan name does not match", ErrorCode::ExecutorError);
   }
   this->collective = obj["collective"];
@@ -201,7 +207,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
   this->nThreadsPerBlock = obj.value("num_threads_per_block", 1024);
   this->minMessageSize = obj.value("min_message_size", 0);
   this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
-  this->isInPlace = obj["in_place"];
+  this->isInPlace = obj["inplace"];
   const auto& gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {

@@ -400,8 +400,8 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
 
-  if (getenv("COMMUNICATION_COLLECTIVE_DIR")) {
-    std::string collectiveDir = getenv("COMMUNICATION_COLLECTIVE_DIR");
+  if (getenv("MSCCLPP_EXECUTION_PLAN_DIR")) {
+    std::string collectiveDir = getenv("MSCCLPP_EXECUTION_PLAN_DIR");
     for (const auto& entry : std::filesystem::directory_iterator(collectiveDir)) {
       if (entry.is_regular_file()) {
         std::string filename = entry.path().filename().string();
@@ -583,9 +583,10 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
 
   std::vector<executionPlanInstance>& plans = comm->executionPlans["allgather"];
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
-  bool inPlace = sendbuff == recvbuff;
+  void* basePtr = (char*)sendbuff - rank * bytes;
+  bool inPlace = basePtr == recvbuff;
   for (const auto& p : plans) {
-    if (bytes >= p.key.minMessageSize && bytes < p.key.maxMessageSize && inPlace == p.key.isInPlace) {
+    if (bytes * nRank >= p.key.minMessageSize && bytes < p.key.maxMessageSize && inPlace == p.key.isInPlace) {
       plan = p.plan;
       break;
     }
