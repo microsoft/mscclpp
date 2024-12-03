@@ -607,7 +607,7 @@ def test_executor(mpi_group: MpiGroup, filename: str):
     npkit_dump_dir = os.getenv("NPKIT_DUMP_DIR")
     if npkit_dump_dir is not None:
         npkit.init(mscclpp_group.my_rank)
-    execution_plan = ExecutionPlan("allreduce_pairs", os.path.join(project_dir, "test", "execution-files", filename))
+    execution_plan = ExecutionPlan(os.path.join(project_dir, "test", "execution-files", filename))
 
     nelems = 1024 * 1024
     cp.random.seed(42)
