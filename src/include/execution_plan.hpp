@@ -62,7 +62,7 @@ struct ChannelInfo {
 
 struct ExecutionPlan::Impl {
  public:
-  Impl(const std::string name, const std::string planPath);
+  Impl(const std::string planPath);
   ~Impl() = default;
 
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
@@ -85,7 +85,8 @@ struct ExecutionPlan::Impl {
   void reset();
   void operationsReset();
 
-  const std::string name;
+  std::string name;
+  std::string collective;
   const std::string planPath;
   bool isUsingPacket;
   // operations for [rank][threadblock] = [operations]
@@ -106,6 +107,9 @@ struct ExecutionPlan::Impl {
   size_t inputSize;
   size_t outputSize;
   int nThreadsPerBlock;
+  size_t minMessageSize;
+  size_t maxMessageSize;
+  bool isInPlace;
 
  private:
   std::pair<size_t, u_int32_t> calcSizePerRank(int rank, size_t inputSize, size_t outputSize) const;

@@ -1,6 +1,6 @@
 {
   "name": "allreduce_pairs",
-  "colletive": "allreduce",
+  "collective": "allreduce",
   "protocol": "Simple",
   "inplace": true,
   "num_threads_per_block": 512,

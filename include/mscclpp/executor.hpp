@@ -25,8 +25,14 @@ enum class PacketType {
 
 class ExecutionPlan {
  public:
-  ExecutionPlan(const std::string& name, const std::string& planPath);
+  ExecutionPlan(const std::string& planPath);
   ~ExecutionPlan() = default;
+
+  std::string name() const;
+  std::string collective() const;
+  size_t minMessageSize() const;
+  size_t maxMessageSize() const;
+  bool isInPlace() const;
 
  private:
   struct Impl;
