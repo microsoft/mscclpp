@@ -62,7 +62,6 @@ struct ChannelInfo {
 
 struct ExecutionPlan::Impl {
  public:
-  Impl(const std::string name, const std::string planPath);
   Impl(const std::string planPath);
   ~Impl() = default;
 

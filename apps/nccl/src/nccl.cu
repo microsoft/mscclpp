@@ -192,7 +192,7 @@ static std::vector<mscclpp::SmChannel> setupSmChannels(ncclComm_t comm,
   return channels;
 }
 
-static std::pair<std::string, executionPlanInstance> loadExecutionPlan(const char* filename) {
+static std::pair<std::string, executionPlanInstance> loadExecutionPlan(const std::string& filename) {
   std::shared_ptr<mscclpp::ExecutionPlan> plan = std::make_shared<mscclpp::ExecutionPlan>(filename);
   std::string collective = plan->collective();
   planKey key{plan->minMessageSize(), plan->maxMessageSize(), plan->isInPlace()};
@@ -401,10 +401,13 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 
   if (getenv("MSCCLPP_EXECUTION_PLAN_DIR")) {
     std::string collectiveDir = getenv("MSCCLPP_EXECUTION_PLAN_DIR");
+    if (!std::filesystem::is_directory(collectiveDir)) {
+      return ncclInvalidArgument;
+    }
     for (const auto& entry : std::filesystem::directory_iterator(collectiveDir)) {
       if (entry.is_regular_file()) {
         std::string filename = entry.path().filename().string();
-        auto plan = loadExecutionPlan(entry.path().c_str());
+        auto plan = loadExecutionPlan(entry.path());
         commPtr->executionPlans[plan.first].push_back(plan.second);
       }
     }
