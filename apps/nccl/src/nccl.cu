@@ -406,7 +406,6 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     }
     for (const auto& entry : std::filesystem::directory_iterator(collectiveDir)) {
       if (entry.is_regular_file()) {
-        std::string filename = entry.path().filename().string();
         auto plan = loadExecutionPlan(entry.path());
         commPtr->executionPlans[plan.first].push_back(plan.second);
       }
