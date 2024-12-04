@@ -9,7 +9,7 @@ pr:
 
 jobs:
 - job: NcclTest
-  displayName: MSCCLPP over NCCL test
+  displayName: Run MSCCLPP over NCCL Test
   strategy:
     matrix:
       cuda11:
@@ -22,6 +22,8 @@ jobs:
     image: $[ variables['containerImage'] ]
 
   steps:
+  - checkout: self
+  - checkout: git://One/msccl-users
   - task: Bash@3
     name: Build
     displayName: Build
@@ -66,6 +68,21 @@ jobs:
       targetType: filePath
       filePath: test/deploy/deploy.sh
       arguments: "single"
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: CloneMscclUsers
+    displayName: Clone msccl-users
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile_ci
+        SH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        rm -rf ci-output
+        touch ci-output
+        tail -f ci-output &
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: AzureCLI@2
