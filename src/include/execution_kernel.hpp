@@ -8,6 +8,7 @@
 #if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.hpp>
 #endif
+#include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
@@ -171,6 +172,9 @@ struct VectorType<float> {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace mscclpp {
+
+#define MAX_DEVICE_SYNCERS 16
+__device__ DeviceSyncer deviceSyncers[MAX_DEVICE_SYNCERS];
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
 
@@ -526,8 +530,12 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                               event_buffer, &event_buffer_head);
 #endif
 
-    if (op.type == OperationType::BARRIER) {
+    if (op.type == OperationType::NOP) {
       __syncthreads();
+    } else if (op.type == OperationType::BARRIER) {
+      int nThreadBlocks = op.nThreadBlocks;
+      int syncStateIndex = op.deviceSyncerIndex;
+      deviceSyncers[syncStateIndex].sync(nThreadBlocks);
     } else if (op.type == OperationType::SIGNAL) {
       handleSignal(smChannels, proxyChannels, op.outputChannelIndexes, op.nOutputs, op.channelType);
     } else if (op.type == OperationType::WAIT) {

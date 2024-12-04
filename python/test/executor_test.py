@@ -59,7 +59,7 @@ def bench_time(n_iters: int, n_graph_iters: int, func):
 
 
 def bench_correctness(
-    execution_plan_name: str,
+    collective: str,
     input_buf: cp.ndarray,
     result_buf: cp.ndarray,
     test_buf: cp.ndarray,
@@ -72,8 +72,10 @@ def bench_correctness(
     type_size = cp.dtype(parse_dtype(dtype_str)).itemsize
 
     fill_data_kernel_name = "fill_data_%s" % dtype_str
-    if "allgather" in execution_plan_name:
+    if "allgather" in collective:
         coll = "all_gather"
+    elif "reducescatter" in collective:
+        coll = "reduce_scatter"
     else:
         coll = "all_reduce"
     test_data_kernel_name = "test_data_%s_%s" % (coll, dtype_str)
@@ -96,7 +98,7 @@ def bench_correctness(
             fill_data_kernel.launch_kernel(fill_data_params, nblocks, nthreads, 0, stream)
             func(stream)
             test_data_params = (
-                pack(result_buf, test_buf) + struct.pack("Q", input_buf.nbytes // type_size) + pack(num_ranks, i)
+                pack(result_buf, test_buf) + struct.pack("Q", input_buf.nbytes // type_size) + pack(num_ranks, rank, i)
             )
             test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream)
         graph = stream.end_capture()
@@ -128,7 +130,7 @@ def dtype_to_mscclpp_dtype(dtype):
 
 
 def allocate_buffer(nelems, dtype):
-    if is_nvls_supported:
+    if is_nvls_supported():
         buffer_raw = alloc_shared_physical_cuda(nelems * cp.dtype(dtype).itemsize)
         buffer_ptr = cp.cuda.MemoryPointer(
             cp.cuda.UnownedMemory(buffer_raw.get_ptr(), buffer_raw.size(), buffer_raw), 0
@@ -140,7 +142,7 @@ def allocate_buffer(nelems, dtype):
 
 
 def build_bufs(
-    execution_plan_name: str,
+    collective: str,
     size: int,
     in_place: bool,
     dtype: cp.dtype,
@@ -151,7 +153,7 @@ def build_bufs(
     assert (size % type_size) == 0, "size %d not multiple of type size %d" % (size, type_size)
     nelems = size // type_size
 
-    if "allgather" in execution_plan_name:
+    if "allgather" in collective:
         assert (nelems % num_ranks) == 0, "nelems %d not multiple of num_ranks %d" % (nelems, num_ranks)
         nelems_input = nelems if in_place else nelems // num_ranks
     else:
@@ -160,7 +162,7 @@ def build_bufs(
 
     result_buf = allocate_buffer(nelems_output, dtype=dtype)
     if in_place:
-        if "allgather" in execution_plan_name:
+        if "allgather" in collective:
             input_buf = cp.split(result_buf, num_ranks)[rank]
         else:
             input_buf = result_buf
@@ -172,7 +174,6 @@ def build_bufs(
 
 
 def main(
-    execution_plan_name: str,
     execution_plan_path: str,
     size: int,
     in_place: bool = True,
@@ -187,11 +188,12 @@ def main(
     npkit_dump_dir = os.getenv("NPKIT_DUMP_DIR")
     if npkit_dump_dir is not None:
         npkit.init(mscclpp_group.my_rank)
-    execution_plan = ExecutionPlan(execution_plan_name, execution_plan_path)
+    execution_plan = ExecutionPlan(execution_plan_path)
+    collective = execution_plan.collective()
 
     dtype = parse_dtype(dtype_str)
     input_buf, result_buf, test_buf = build_bufs(
-        execution_plan_name,
+        collective,
         size,
         in_place,
         dtype,
@@ -213,7 +215,7 @@ def main(
 
     mscclpp_group.barrier()
     bench_correctness(
-        execution_plan_name,
+        collective,
         input_buf,
         result_buf,
         test_buf,
@@ -240,7 +242,6 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-n", "--execution_plan_name", type=str, required=True)
     parser.add_argument("-path", "--execution_plan_path", type=str, required=True)
     parser.add_argument("--size", type=str, required=True)
     parser.add_argument("--in_place", action="store_true", help="flag to define an in-place operation")
@@ -256,7 +257,6 @@ if __name__ == "__main__":
 
     buffer_size = parse_size(args.size)
     main(
-        args.execution_plan_name,
         args.execution_plan_path,
         buffer_size,
         args.in_place,

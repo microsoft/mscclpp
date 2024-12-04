@@ -1,6 +1,6 @@
 {
   "name": "allreduce_nvls",
-  "colletive": "allreduce",
+  "collective": "allreduce",
   "protocol": "Simple",
   "inplace": true,
   "gpus": [

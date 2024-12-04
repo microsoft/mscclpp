@@ -17,6 +17,8 @@ std::vector<T> filter(const std::vector<T>& vec, Predicate pred) {
 
 auto getOpType = [](const std::string& str) {
   if (str == "nop") {
+    return mscclpp::OperationType::NOP;
+  } else if (str == "barrier") {
     return mscclpp::OperationType::BARRIER;
   } else if (str == "put") {
     return mscclpp::OperationType::PUT;
@@ -92,8 +94,15 @@ std::set groupChannelType{mscclpp::ChannelType::NVLS};
 namespace mscclpp {
 using json = nlohmann::json;
 
-ExecutionPlan::Impl::Impl(const std::string name, const std::string planPath)
-    : name(name), planPath(planPath), isUsingPacket(false) {}
+ExecutionPlan::Impl::Impl(const std::string planPath) : planPath(planPath), isUsingPacket(false) {
+  std::ifstream file(this->planPath);
+  json obj = json::parse(file);
+  this->name = obj["name"];
+  this->collective = obj["collective"];
+  this->isInPlace = obj["inplace"];
+  this->minMessageSize = obj.value("min_message_size", 0);
+  this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
+}
 
 std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, ChannelType channelType) const {
   auto pred = [channelType](const ChannelInfo& info) { return info.channelType == channelType; };
@@ -185,6 +194,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
   if (this->name != obj["name"]) {
     throw Error("Plan name does not match", ErrorCode::ExecutorError);
   }
+  this->collective = obj["collective"];
   std::string protocol = obj["protocol"];
   if (protocol == "LL") {
     this->isUsingPacket = true;
@@ -192,6 +202,9 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
   this->inputSize = inputSize;
   this->outputSize = outputSize;
   this->nThreadsPerBlock = obj.value("num_threads_per_block", 1024);
+  this->minMessageSize = obj.value("min_message_size", 0);
+  this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
+  this->isInPlace = obj["inplace"];
   const auto& gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {
@@ -456,6 +469,12 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
           operation.size =
               this->getNChunkSize(rank, this->inputSize, this->outputSize, (uint32_t)op["cnt"], chunkIndexes);
         }
+        if (op.contains("barrier_id")) {
+          operation.deviceSyncerIndex = op["barrier_id"];
+        }
+        if (op.contains("nthread_blocks")) {
+          operation.nThreadBlocks = op["nthread_blocks"];
+        }
         ops.push_back(operation);
       }
       this->operations[rank].push_back(ops);
@@ -541,7 +560,16 @@ void ExecutionPlan::Impl::reset() {
 
 void ExecutionPlan::Impl::operationsReset() { this->operations.clear(); }
 
-ExecutionPlan::ExecutionPlan(const std::string& name, const std::string& planPath)
-    : impl_(std::make_shared<Impl>(name, planPath)) {}
+ExecutionPlan::ExecutionPlan(const std::string& planPath) : impl_(std::make_shared<Impl>(planPath)) {}
+
+std::string ExecutionPlan::name() const { return this->impl_->name; }
+
+std::string ExecutionPlan::collective() const { return this->impl_->collective; }
+
+size_t ExecutionPlan::minMessageSize() const { return this->impl_->minMessageSize; }
+
+size_t ExecutionPlan::maxMessageSize() const { return this->impl_->maxMessageSize; }
+
+bool ExecutionPlan::isInPlace() const { return this->impl_->isInPlace; }
 
 }  // namespace mscclpp
