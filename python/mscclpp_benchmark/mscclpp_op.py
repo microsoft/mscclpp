@@ -75,11 +75,18 @@ class MscclppAllReduce1:
                 self.device_handles.append(self.sm_channels[rank].device_handle().raw)
 
         self.device_handles_cp = cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8)
+        self.params1 = pack(
+            self.device_handles_cp,
+            self.memory,
+            self.group.my_rank,
+            self.group.nranks,
+            # ctypes.c_size_t(self.memory.size),
+        )
 
         self.set_params(nblocks, block_size, read_only)
 
     def __call__(self, stream_ptr, num_elements):
-        params = self.params1 + pack(ctypes.c_size_t(num_elements)) + self.params2
+        params = self.params1 + pack(ctypes.c_size_t(num_elements), self.read_only)
         self.kernel.launch_kernel(params, self.nblocks, self.block_size, 0, stream_ptr)
         return self.memory
 
@@ -87,18 +94,6 @@ class MscclppAllReduce1:
         self.nblocks = nblocks
         self.block_size = block_size
         self.read_only = read_only
-        self.params1 = b""
-        self.params1 += pack(
-            self.device_handles_cp,
-            self.memory,
-            self.group.my_rank,
-            self.group.nranks,
-            # ctypes.c_size_t(self.memory.size),
-        )
-        self.params2 = b""
-        self.params2 += pack(
-            self.read_only,
-        )
 
     def auto_tune(self):
         nblocks_to_try = [8, 12, 16, 24, 32, 48, 64, 72, 96, 108]
@@ -116,13 +111,13 @@ class MscclppAllReduce2:
         self,
         group: mscclpp_comm.CommGroup,
         memory: cp.ndarray or torch.Tensor,
-        # memory_out: cp.ndarray,
+        memory_out: cp.ndarray,
         block_size: int = 512,
         nblocks: int = 21,
     ):
         self.group = group
         self.memory = memory
-        # self.memory_out = memory_out
+        self.memory_out = memory_out
         remote_nghrs = list(range(self.group.nranks))
         remote_nghrs.remove(self.group.my_rank)
 
@@ -150,30 +145,27 @@ class MscclppAllReduce2:
                 self.device_handles.append(self.sm_channels[rank].device_handle().raw)
 
         self.device_handles_cp = cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8)
-
-        self.set_params(nblocks, block_size)
-
-    def __call__(self, stream_ptr, memory_out, num_elements):
-        params = self.params1 + pack(memory_out) + self.params2 + pack(ctypes.c_size_t(num_elements))
-        self.kernel.launch_kernel(params, self.nblocks, self.block_size, 0, stream_ptr)
-        return memory_out
-
-    def set_params(self, nblocks, block_size):
-        self.nblocks = nblocks
-        self.block_size = block_size
-
-        self.params1 = b""
-        self.params2 = b""
-        self.params1 += pack(
+        self.params = pack(
             self.device_handles_cp,
             self.memory,
-            self.scratch)
-        self.params2 += pack(
-            # self.memory_out,
+            self.scratch,
+            self.memory_out,
             self.group.my_rank,
             self.group.nranks,
             # ctypes.c_size_t(self.memory.size),
         )
+
+        self.set_params(nblocks, block_size)
+
+    def __call__(self, stream_ptr, num_elements):
+        # params = self.params1 + pack(memory_out) + self.params2 + pack(ctypes.c_size_t(num_elements))
+        params = self.params + pack(ctypes.c_size_t(num_elements))
+        self.kernel.launch_kernel(params, self.nblocks, self.block_size, 0, stream_ptr)
+        return self.memory_out
+
+    def set_params(self, nblocks, block_size):
+        self.nblocks = nblocks
+        self.block_size = block_size
 
     def auto_tune(self):
         nblocks_to_try = [21, 42, 63, 84, 105]
@@ -204,7 +196,13 @@ class MscclppAllReduce3:
         type_str = type_to_str(memory.dtype)
 
         self.proxy_service = proxy_service
-        self.scratch = cp.zeros(self.memory.size, dtype=self.memory.dtype)
+        # self.scratch = cp.zeros(self.memory.size, dtype=self.memory.dtype)
+
+        num_elements = self.memory.size if isinstance(memory, cp.ndarray) else self.memory.numel()
+        if isinstance(memory, cp.ndarray):
+            self.scratch = cp.zeros(num_elements, dtype=self.memory.dtype)
+        else:
+            self.scratch = cp.zeros(num_elements, dtype=torch_to_cupy_dtype[self.memory.dtype])
 
         # create a sm_channel for each remote neighbor
         self.fst_round_proxy_chans = self.group.make_proxy_channels_with_scratch(
@@ -224,25 +222,25 @@ class MscclppAllReduce3:
         self.fst_device_handles_cp = cp.asarray(memoryview(b"".join(self.fst_device_handles)), dtype=cp.uint8)
         self.snd_device_handles_cp = cp.asarray(memoryview(b"".join(self.snd_device_handles)), dtype=cp.uint8)
 
-        self.set_params(nblocks, block_size)
-
-    def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, 24, 1024, 0, stream_ptr)
-        return self.memory
-
-    def set_params(self, nblocks, block_size):
-        self.nblocks = nblocks
-        self.block_size = block_size
-        self.params = b""
-        self.params += pack(
+        self.params = pack(
             self.fst_device_handles_cp,
             self.snd_device_handles_cp,
             self.memory,
             self.scratch,
             self.group.my_rank,
             self.group.nranks,
-            ctypes.c_size_t(self.memory.size),
         )
+        self.set_params(nblocks, block_size)
+
+    def __call__(self, stream_ptr, num_elements):
+        params = self.params + pack(ctypes.c_size_t(num_elements))
+        self.kernel.launch_kernel(params, 24, 1024, 0, stream_ptr)
+        return self.memory
+
+    def set_params(self, nblocks, block_size):
+        self.nblocks = nblocks
+        self.block_size = block_size
+
 
     def auto_tune(self):
         nblocks_to_try = [8, 12, 16, 24, 32, 48, 64, 72, 96, 108]
