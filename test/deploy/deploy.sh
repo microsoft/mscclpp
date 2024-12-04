@@ -1,9 +1,16 @@
 set -e
 
+# get parameter form $1
+NODE_SCALE=$1
+
 KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
 ROOT_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/"
 DST_DIR="/tmp/mscclpp"
-HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile"
+if [ "${NODE_SCALE}" == "single" ]; then
+  HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile_ci"
+else
+  HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile"
+fi
 SSH_OPTION="StrictHostKeyChecking=no"
 
 chmod 400 ${KeyFilePath}
