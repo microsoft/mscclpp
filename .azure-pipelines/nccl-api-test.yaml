@@ -1,0 +1,34 @@
+trigger:
+- main
+
+pr:
+  branches:
+    include:
+    - main
+  drafts: false
+
+jobs:
+- job: MultiNodesTest
+  displayName: Multi nodes test
+  strategy:
+    matrix:
+      cuda11:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+  pool:
+    name: mscclpp-it
+  container:
+    image: $[ variables['containerImage'] ]
+
+  steps:
+  - task: Bash@3
+    name: Build
+    displayName: Build
+    inputs:
+      targetType: 'inline'
+      script: |
+        mkdir build && cd build
+        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
+        make -j
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
