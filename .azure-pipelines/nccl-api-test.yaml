@@ -24,16 +24,16 @@ jobs:
   steps:
   - checkout: self
   - checkout: git://One/msccl-users
-  - task: Bash@3
-    name: Build
-    displayName: Build
-    inputs:
-      targetType: 'inline'
-      script: |
-        mkdir build && cd build
-        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
-        make -j
-      workingDirectory: '$(System.DefaultWorkingDirectory)/mscclpp'
+  # - task: Bash@3
+  #   name: Build
+  #   displayName: Build
+  #   inputs:
+  #     targetType: 'inline'
+  #     script: |
+  #       mkdir build && cd build
+  #       cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
+  #       make -j
+  #     workingDirectory: '$(System.DefaultWorkingDirectory)/mscclpp'
   
   - task: DownloadSecureFile@1
     name: SshKeyFile
@@ -66,10 +66,9 @@ jobs:
     displayName: Deploy Test Env
     inputs:
       targetType: filePath
-      filePath: mscclpp/test/deploy/deploy.sh
+      filePath: test/deploy/deploy.sh
       arguments: "single"
-    env:
-      SYSTEM_DEFAULTWORKINGDIRECTORY: $(System.DefaultWorkingDirectory)/mscclpp
+    workingDirectory: $(System.DefaultWorkingDirectory)/mscclpp
 
   # - task: Bash@3
   #   name: CloneMscclUsers
