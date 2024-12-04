@@ -12,7 +12,7 @@ if [ "${TEST_NAME}" == "nccl-single" ]; then
 fi
 DST_DIR="/tmp/mscclpp"
 if [ "${TEST_NAME}" == "nccl-single" ]; then
-  HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile_ci"
+  HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/mscclpp/test/deploy/hostfile_ci"
 else
   HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile"
 fi
