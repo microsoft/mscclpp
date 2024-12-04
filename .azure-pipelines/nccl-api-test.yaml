@@ -9,7 +9,7 @@ pr:
 
 jobs:
 - job: NcclTest
-  displayName: Multi nodes test
+  displayName: MSCCLPP over NCCL test
   strategy:
     matrix:
       cuda11:
@@ -58,6 +58,15 @@ jobs:
       scriptLocation: inlineScript
       inlineScript: |
         az vmss start --name mscclpp-ci --resource-group mscclpp
+
+  - task: Bash@3
+    name: DeployTestEnv
+    displayName: Deploy Test Env
+    inputs:
+      targetType: filePath
+      filePath: test/deploy/deploy.sh
+      arguments: "single"
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: AzureCLI@2
     name: StopVMSS
