@@ -17,7 +17,7 @@ jobs:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
   pool:
-    name: mscclpp-it
+    name: msccl-ci
   container:
     image: $[ variables['containerImage'] ]
 
