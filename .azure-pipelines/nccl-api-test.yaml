@@ -66,9 +66,10 @@ jobs:
     displayName: Deploy Test Env
     inputs:
       targetType: filePath
-      filePath: test/deploy/deploy.sh
+      filePath: mscclpp/test/deploy/deploy.sh
       arguments: "single"
-      workingDirectory: '$(System.DefaultWorkingDirectory)/mscclpp'
+    env:
+      SYSTEM_DEFAULTWORKINGDIRECTORY: $(System.DefaultWorkingDirectory)/mscclpp
 
   # - task: Bash@3
   #   name: CloneMscclUsers
