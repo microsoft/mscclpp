@@ -5,3 +5,4 @@ netifaces
 pytest
 numpy
 matplotlib
+ninja

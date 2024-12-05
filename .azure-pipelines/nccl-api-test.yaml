@@ -24,16 +24,16 @@ jobs:
   steps:
   - checkout: self
   - checkout: git://One/msccl-users
-  # - task: Bash@3
-  #   name: Build
-  #   displayName: Build
-  #   inputs:
-  #     targetType: 'inline'
-  #     script: |
-  #       mkdir build && cd build
-  #       cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
-  #       make -j
-  #     workingDirectory: '$(System.DefaultWorkingDirectory)/mscclpp'
+  - task: Bash@3
+    name: Build
+    displayName: Build
+    inputs:
+      targetType: 'inline'
+      script: |
+        mkdir build && cd build
+        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
+        make -j
+      workingDirectory: '$(System.DefaultWorkingDirectory)/mscclpp'
   
   - task: DownloadSecureFile@1
     name: SshKeyFile
@@ -70,20 +70,54 @@ jobs:
       arguments: "nccl-single"
       workingDirectory: $(System.DefaultWorkingDirectory)/mscclpp
 
-  # - task: Bash@3
-  #   name: CloneMscclUsers
-  #   displayName: Clone msccl-users
-  #   inputs:
-  #     targetType: 'inline'
-  #     script: |
-  #       set -e
-  #       HOSTFILE=$(System.DefaultWorkingDirectory)/test/mscclpp-test/deploy/hostfile_ci
-  #       SH_OPTION="StrictHostKeyChecking=no"
-  #       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-  #       rm -rf ci-output
-  #       touch ci-output
-  #       tail -f ci-output &
-  #     workingDirectory: '$(System.DefaultWorkingDirectory)'
+  - task: Bash@3
+    name: CopyMscclUsers
+    displayName: Copy msccl-users
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/mscclpp-test/deploy/hostfile_ci
+        ROOT_DIR=$(System.DefaultWorkingDirectory)/msccl-users
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        DST_DIR="/tmp/mscclpp/msccl-users"
+        parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${ROOT_DIR} ${DST_DIR}
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: InstallMscclTools
+    displayName: Install msccl-tools
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/mscclpp-test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        parallel-ssh -t 0 -H mscclpp-ci-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp; git clone https://github.com/Azure/msccl-tools.git"'
+        parallel-ssh -t 0 -H mscclpp-ci-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp/msccl-tools; pip3 install ."'
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: GenerateExecutionFile
+    displayName: Generate execution file
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/mscclpp-test/deploy/hostfile_ci
+        ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        parallel-ssh -t 0 -H mscclpp-ci-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp/msccl-users; mkdir -p execution-files"'
+        parallel-ssh -t 0 -H mscclpp-ci-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp/msccl-users; bash algos/mscclpp_a100/generate_execution_plan.sh"'
+        sleep 30m
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: AzureCLI@2
     name: StopVMSS
