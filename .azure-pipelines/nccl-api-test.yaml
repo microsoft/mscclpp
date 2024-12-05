@@ -146,7 +146,6 @@ jobs:
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp; mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/apps/nccl/libmscclpp_nccl.so -x NCCL_DEBUG=WARN  -x MSCCLPP_EXECUTION_PLAN_DIR=/root/mscclpp/msccl-users/execution-files /root/nccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20"'
-        sleep 30m
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: AzureCLI@2
