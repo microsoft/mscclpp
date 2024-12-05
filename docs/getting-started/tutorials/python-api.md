@@ -77,7 +77,7 @@ The test kernel is defined in `test.cu` as follows:
 
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    simple_proxy_channel(mscclpp::ProxyChannelDeviceHandle* channels, int my_rank, int nranks,
+    proxy_channel(mscclpp::ProxyChannelDeviceHandle* channels, int my_rank, int nranks,
                          int num_elements) {
     int tid = threadIdx.x;
     int nthreads = blockDim.x;

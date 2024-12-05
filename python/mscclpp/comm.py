@@ -180,9 +180,7 @@ class CommGroup:
             semaphore_ids[rank] = proxy_service.add_semaphore(semaphores[rank])
         channels = {}
         for rank in semaphores:
-            channels[rank] = ProxyChannel(
-                proxy_service.proxy_channel(semaphore_ids[rank]), memory_ids[rank], memory_ids[self.my_rank]
-            )
+            channels[rank] = proxy_service.proxy_channel(semaphore_ids[rank], memory_ids[rank], memory_ids[self.my_rank])
         return channels
 
     def make_proxy_channels_with_scratch(
@@ -218,9 +216,7 @@ class CommGroup:
             semaphore_ids[rank] = proxy_service.add_semaphore(semaphores[rank])
         channels = {}
         for rank in semaphores:
-            channels[rank] = ProxyChannel(
-                proxy_service.proxy_channel(semaphore_ids[rank]), memory_ids[rank], memory_ids[self.my_rank]
-            )
+            channels[rank] = proxy_service.proxy_channel(semaphore_ids[rank], memory_ids[rank], memory_ids[self.my_rank])
         return channels
 
     def register_semaphore_with_proxy(
@@ -232,7 +228,7 @@ class CommGroup:
             semaphore_ids[rank] = proxy_service.add_semaphore(semaphores[rank])
         channels = {}
         for rank in semaphores:
-            channels[rank] = proxy_service.proxy_channel(semaphore_ids[rank])
+            channels[rank] = proxy_service.base_proxy_channel(semaphore_ids[rank])
         return channels
 
     def register_memory_with_proxy(
