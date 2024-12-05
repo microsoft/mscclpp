@@ -115,6 +115,7 @@ jobs:
         parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp/msccl-users; mkdir -p execution-files"'
         parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp/msccl-users; bash algos/mscclpp_a100/generate_execution_plan.sh"'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
