@@ -3,7 +3,6 @@ set -e
 # get parameter form $1
 TEST_NAME=$1
 
-pwd
 KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
 ROOT_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/"
 if [ "${TEST_NAME}" == "nccltest-single-node" ]; then
