@@ -26,16 +26,15 @@ jobs:
       targetType: 'inline'
       script: |
         mkdir build && cd build
-        cmake -DCMAKE_BUILD_TYPE=Release -DBYPASS_PEERMEM_CHECK=ON -DBYPASS_GPU_CHECK=ON -DUSE_CUDA=ON ..
+        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
         make -j
-        make pylib-copy
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: DownloadSecureFile@1
     name: SshKeyFile
     displayName: Download key file
     inputs:
-      secureFile: ssh.key
+      secureFile: mscclpp-ssh.key
 
   - task: Bash@3
     name: InstallPackages

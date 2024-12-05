@@ -5,7 +5,6 @@
 
 #include <mscclpp/gpu_utils.hpp>
 
-#include "infiniband/verbs.h"
 #include "mp_unit_tests.hpp"
 
 void IbTestBase::SetUp() {
@@ -98,8 +97,8 @@ TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
         int wcNum = qp->pollCq();
         ASSERT_GE(wcNum, 0);
         for (int i = 0; i < wcNum; ++i) {
-          const ibv_wc* wc = qp->getWc(i);
-          EXPECT_EQ(wc->status, IBV_WC_SUCCESS);
+          int status = qp->getWcStatus(i);
+          EXPECT_EQ(status, static_cast<int>(mscclpp::WsStatus::Success));
           waiting = false;
           break;
         }
@@ -272,8 +271,8 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
           wcNum = qp->pollCq();
         }
         ASSERT_EQ(wcNum, 1);
-        const ibv_wc* wc = qp->getWc(0);
-        ASSERT_EQ(wc->status, IBV_WC_SUCCESS);
+        int status = qp->getWcStatus(0);
+        ASSERT_EQ(status, static_cast<int>(mscclpp::WsStatus::Success));
       }
 
       // Get the result from the receiver
@@ -319,8 +318,8 @@ TEST_F(IbPeerToPeerTest, SimpleAtomicAdd) {
         int wcNum = qp->pollCq();
         ASSERT_GE(wcNum, 0);
         for (int i = 0; i < wcNum; ++i) {
-          const ibv_wc* wc = qp->getWc(i);
-          EXPECT_EQ(wc->status, IBV_WC_SUCCESS);
+          int status = qp->getWcStatus(i);
+          EXPECT_EQ(status, static_cast<int>(mscclpp::WsStatus::Success));
           waiting = false;
           break;
         }

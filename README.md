@@ -8,12 +8,11 @@
 |--------------------------|-------------------|
 | Unit Tests (CUDA)        | [![Build Status](https://dev.azure.com/binyli/HPC/_apis/build/status%2Fmscclpp-ut?branchName=main)](https://dev.azure.com/binyli/HPC/_build/latest?definitionId=4&branchName=main) |
 | Integration Tests (CUDA) | [![Build Status](https://dev.azure.com/binyli/HPC/_apis/build/status%2Fmscclpp-test?branchName=main)](https://dev.azure.com/binyli/HPC/_build/latest?definitionId=3&branchName=main) |
-
-*NOTE (Nov 2023): Azure pipelines for ROCm will be added soon.*
+| Integration Tests (ROCm) | [![Build Status](https://dev.azure.com/binyli/HPC/_apis/build/status%2Fmscclpp-test-rocm?branchName=main)](https://dev.azure.com/binyli/HPC/_build/latest?definitionId=7&branchName=main) |
 
 A GPU-driven communication stack for scalable AI applications.
 
-See [Quick Start](docs/quickstart.md) to quickly get started.
+See [Quick Start](docs/getting-started/quickstart.md) to quickly get started.
 
 ## Overview
 

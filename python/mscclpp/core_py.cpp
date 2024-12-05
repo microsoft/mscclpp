@@ -6,6 +6,7 @@
 #include <nanobind/stl/array.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include <mscclpp/core.hpp>
 
@@ -19,6 +20,10 @@ extern void register_fifo(nb::module_& m);
 extern void register_semaphore(nb::module_& m);
 extern void register_utils(nb::module_& m);
 extern void register_numa(nb::module_& m);
+extern void register_nvls(nb::module_& m);
+extern void register_executor(nb::module_& m);
+extern void register_npkit(nb::module_& m);
+extern void register_gpu_utils(nb::module_& m);
 
 template <typename T>
 void def_nonblocking_future(nb::handle& m, const std::string& typestr) {
@@ -34,6 +39,7 @@ void register_core(nb::module_& m) {
   nb::class_<Bootstrap>(m, "Bootstrap")
       .def("get_rank", &Bootstrap::getRank)
       .def("get_n_ranks", &Bootstrap::getNranks)
+      .def("get_n_ranks_per_node", &Bootstrap::getNranksPerNode)
       .def(
           "send",
           [](Bootstrap* self, uintptr_t ptr, size_t size, int peer, int tag) {
@@ -62,7 +68,7 @@ void register_core(nb::module_& m) {
       .def_static(
           "create", [](int rank, int nRanks) { return std::make_shared<TcpBootstrap>(rank, nRanks); }, nb::arg("rank"),
           nb::arg("nRanks"))
-      .def("create_unique_id", &TcpBootstrap::createUniqueId)
+      .def_static("create_unique_id", &TcpBootstrap::createUniqueId)
       .def("get_unique_id", &TcpBootstrap::getUniqueId)
       .def("initialize", static_cast<void (TcpBootstrap::*)(UniqueId, int64_t)>(&TcpBootstrap::initialize),
            nb::call_guard<nb::gil_scoped_release>(), nb::arg("uniqueId"), nb::arg("timeoutSec") = 30)
@@ -72,6 +78,7 @@ void register_core(nb::module_& m) {
   nb::enum_<Transport>(m, "Transport")
       .value("Unknown", Transport::Unknown)
       .value("CudaIpc", Transport::CudaIpc)
+      .value("Nvls", Transport::Nvls)
       .value("IB0", Transport::IB0)
       .value("IB1", Transport::IB1)
       .value("IB2", Transport::IB2)
@@ -90,15 +97,18 @@ void register_core(nb::module_& m) {
       .def("any", &TransportFlags::any)
       .def("all", &TransportFlags::all)
       .def("count", &TransportFlags::count)
-      .def(nb::self |= nb::self)
       .def(nb::self | nb::self)
       .def(nb::self | Transport())
-      .def(nb::self &= nb::self)
       .def(nb::self & nb::self)
       .def(nb::self & Transport())
-      .def(nb::self ^= nb::self)
       .def(nb::self ^ nb::self)
       .def(nb::self ^ Transport())
+      .def(
+          "__ior__", [](TransportFlags& lhs, const TransportFlags& rhs) { return lhs |= rhs; }, nb::is_operator())
+      .def(
+          "__iand__", [](TransportFlags& lhs, const TransportFlags& rhs) { return lhs &= rhs; }, nb::is_operator())
+      .def(
+          "__ixor__", [](TransportFlags& lhs, const TransportFlags& rhs) { return lhs ^= rhs; }, nb::is_operator())
       .def(~nb::self)
       .def(nb::self == nb::self)
       .def(nb::self != nb::self);
@@ -182,4 +192,8 @@ NB_MODULE(_mscclpp, m) {
   register_utils(m);
   register_core(m);
   register_numa(m);
+  register_nvls(m);
+  register_executor(m);
+  register_npkit(m);
+  register_gpu_utils(m);
 }

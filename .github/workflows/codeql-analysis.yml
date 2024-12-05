@@ -9,11 +9,11 @@ on:
     - cron: "30 1 * * 1"
 
 jobs:
-  analyze:
-    name: Analyze
+  analyze-cuda:
+    name: Analyze (CUDA)
     runs-on: 'ubuntu-latest'
     container:
-      image: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-${{ matrix.cuda-version }}
+      image: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-${{ matrix.version }}
 
     permissions:
       actions: read
@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         language: [ 'cpp', 'python' ]
-        cuda-version: [ 'cuda11.8', 'cuda12.2' ]
+        version: [ 'cuda11.8', 'cuda12.2' ]
 
     steps:
     - name: Checkout repository
@@ -45,10 +45,56 @@ jobs:
 
     - name: Build
       run: |
-        cmake -DBYPASS_PEERMEM_CHECK=ON -DBYPASS_GPU_CHECK=ON -DUSE_CUDA=ON .
+        rm -rf build && mkdir build && cd build
+        cmake -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
         make -j
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v2
       with:
-        category: "/language:${{matrix.language}}/cuda-version:${{matrix.cuda-version}}"
+        category: "/language:${{matrix.language}}/version:${{matrix.version}}"
+
+  analyze-rocm:
+    name: Analyze (ROCm)
+    runs-on: 'ubuntu-latest'
+    container:
+      image: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-${{ matrix.version }}
+
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'cpp', 'python' ]
+        version: [ 'rocm6.2' ]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Check disk space
+      run: |
+        df -h
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+        languages: ${{ matrix.language }}
+
+    - name: Dubious ownership exception
+      run: |
+        git config --global --add safe.directory /__w/mscclpp/mscclpp
+
+    - name: Build
+      run: |
+        rm -rf build && mkdir build && cd build
+        CXX=/opt/rocm/bin/hipcc cmake -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON ..
+        make -j
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+      with:
+        category: "/language:${{matrix.language}}/version:${{matrix.version}}"

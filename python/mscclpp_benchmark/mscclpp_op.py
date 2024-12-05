@@ -1,7 +1,7 @@
 import os
 import cupy as cp
 import ctypes
-from mscclpp import Transport, ProxyService
+from mscclpp import Transport, ProxyService, SmDevice2DeviceSemaphore, alloc_shared_physical_cuda
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, pack
 import torch
@@ -318,8 +318,8 @@ class MscclppAllReduce4:
 
         self.set_params(nblocks, block_size, pipeline_depth)
 
-    def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
+    def __call__(self, stream):
+        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream)
         return self.memory
 
     def set_params(self, nblocks, block_size, pipeline_depth):
@@ -411,8 +411,8 @@ class MscclppAllReduce5:
 
         self.set_params(nblocks, block_size)
 
-    def __call__(self, stream_ptr):
-        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
+    def __call__(self, stream):
+        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream)
         return self.memory_out
 
     def set_params(self, nblocks, block_size):
@@ -441,3 +441,102 @@ class MscclppAllReduce5:
             for block_size in block_size_to_try:
                 self.set_params(nblocks, block_size)
                 yield nblocks, block_size
+
+
+class MscclppAllReduce6:
+    def __init__(
+        self,
+        group: mscclpp_comm.CommGroup,
+        nelem: int,
+        memory_dtype: cp.dtype,
+        block_size: int = 1024,
+        nblocks: int = 32,
+    ):
+        self.group = group
+        datatype_size = memory_dtype().itemsize
+        buffer_size = nelem * datatype_size
+        type_str = type_to_str(memory_dtype)
+        all_ranks = list(range(group.nranks))
+        remote_nghrs = all_ranks.copy()
+        remote_nghrs.remove(self.group.my_rank)
+
+        self.group.barrier()
+        # create a connection for each remote neighbor
+        self.nvlink_connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
+        self.nvls_connection = group.make_connection(all_ranks, Transport.Nvls)
+        min_gran = self.nvls_connection.get_multicast_min_granularity()
+        aligned_buffer_size = int(((buffer_size + min_gran - 1) // min_gran) * min_gran)
+        buffer_raw = alloc_shared_physical_cuda(aligned_buffer_size)
+        self.nvls_mem_handle = self.nvls_connection.bind_allocated_memory(
+            buffer_raw.get_ptr(), aligned_buffer_size
+        )  # just using recommended size for now
+        self.memory_ptr = self.nvls_mem_handle.get_device_ptr()
+
+        self.cp_memory_ptr = cp.cuda.MemoryPointer(
+            cp.cuda.UnownedMemory(self.memory_ptr, aligned_buffer_size, buffer_raw), 0
+        )
+        self.memory = cp.ndarray(nelem, memory_dtype, self.cp_memory_ptr)
+
+        # create a sm_channel for each remote neighbor
+        self.semaphores = group.make_semaphore(self.nvlink_connections, SmDevice2DeviceSemaphore)
+        file_dir = os.path.dirname(os.path.abspath(__file__))
+        self.kernel = KernelBuilder(
+            file="allreduce.cu",
+            kernel_name="allreduce6",
+            file_dir=file_dir,
+            macro_dict={"TYPE": type_str},
+        ).get_compiled_kernel()
+        self.device_handles = []
+        for rank in range(self.group.nranks):
+            if rank != self.group.my_rank:
+                self.device_handles.append(self.semaphores[rank].device_handle().raw)
+
+        self.device_handles_cp = cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8)
+        self.nvls_handle = self.nvls_mem_handle.device_handle().raw
+
+        if self.memory.dtype != cp.float16 and self.memory.dtype != cp.float32:
+            raise RuntimeError("Unsupported data type")
+
+        if self.memory.dtype == cp.float16:
+            vector_size = 8
+        elif self.memory.dtype == cp.float32:
+            vector_size = 4
+        else:
+            vector_size = 1
+        self.set_params(nblocks, block_size, vector_size)
+
+    def get_memory(self):
+        return self.memory
+
+    def __call__(self, stream_ptr):
+        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream_ptr)
+        return self.memory
+
+    def set_params(self, nblocks, block_size, vector_size):
+        self.nblocks = nblocks
+        self.block_size = block_size
+        self.vector_size = vector_size
+        self.params = b""
+        self.params += pack(
+            self.device_handles_cp,
+            self.nvls_handle,
+            self.group.my_rank,
+            self.group.nranks,
+            ctypes.c_size_t(self.memory.size),
+            self.vector_size,
+        )
+
+    def auto_tune(self):
+        nblocks_to_try = [8, 12, 16, 24, 32, 48, 64, 72, 96, 108]
+        block_size_to_try = [256, 512, 1024]
+        if self.memory.dtype == cp.float16:
+            vector_size_to_try = [8, 4, 2]
+        elif self.memory.dtype == cp.float32:
+            vector_size_to_try = [4, 2, 1]
+        else:
+            vector_size_to_try = [1]
+        for nblocks in nblocks_to_try:
+            for block_size in block_size_to_try:
+                for vector_size in vector_size_to_try:
+                    self.set_params(nblocks, block_size, vector_size)
+                    yield nblocks, block_size, vector_size

@@ -17,7 +17,7 @@ struct Timer {
 
   ~Timer();
 
-  /// Returns the elapsed time in milliseconds.
+  /// Returns the elapsed time in microseconds.
   int64_t elapsed() const;
 
   void set(int timeout);
@@ -36,6 +36,8 @@ struct ScopedTimer : public Timer {
 };
 
 std::string getHostName(int maxlen, const char delim);
+
+bool isNvlsSupported();
 
 }  // namespace mscclpp
 

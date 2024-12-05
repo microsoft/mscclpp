@@ -2,14 +2,22 @@
 # Licensed under the MIT license.
 
 import cupy as cp
-from mscclpp_op import MscclppAllReduce1, MscclppAllReduce2, MscclppAllReduce3, MscclppAllReduce4, MscclppAllReduce5
+from mscclpp_op import (
+    MscclppAllReduce1,
+    MscclppAllReduce2,
+    MscclppAllReduce3,
+    MscclppAllReduce4,
+    MscclppAllReduce5,
+    MscclppAllReduce6,
+)
 from nccl_op import NcclAllReduce
 from mpi4py import MPI
 import cupy.cuda.nccl as nccl
 import mscclpp.comm as mscclpp_comm
-from mscclpp import ProxyService
+from mscclpp import ProxyService, is_nvls_supported
 from prettytable import PrettyTable
 import netifaces as ni
+import ipaddress
 
 data_type = cp.float32
 
@@ -77,7 +85,7 @@ def check_correctness(memory, func, niter=100):
     for p in range(niter):
         memory[:] = cp.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + MPI.COMM_WORLD.rank)
         cp.cuda.runtime.deviceSynchronize()
-        output_memory = func(0)
+        output_memory = func(None)
         cp.cuda.runtime.deviceSynchronize()
         expected = cp.zeros_like(memory)
         for i in range(MPI.COMM_WORLD.size):
@@ -103,7 +111,7 @@ def bench_time(niter: int, func):
     with stream:
         stream.begin_capture()
         for i in range(niter):
-            func(stream.ptr)
+            func(stream)
         graph = stream.end_capture()
 
     # now run a warm up round
@@ -121,6 +129,21 @@ def bench_time(niter: int, func):
     return cp.cuda.get_elapsed_time(start, end) / niter * 1000.0
 
 
+def find_best_algo(mscclpp_algos, niter):
+    assert len(mscclpp_algos) > 0
+    best_time = 10000000.0
+    best_algo = None
+    for algo in mscclpp_algos:
+        config, cur_time = find_best_config(algo, niter)
+        if cur_time < best_time:
+            best_time = cur_time
+            best_algo = algo
+            algo.set_params(*config)
+    if MPI.COMM_WORLD.rank == 0:
+        print(best_algo, end="", flush=True)
+    return best_algo
+
+
 def find_best_config(mscclpp_call, niter):
     best_time = 10000000.0
     for config in mscclpp_call.auto_tune():
@@ -133,7 +156,7 @@ def find_best_config(mscclpp_call, niter):
     best_config = MPI.COMM_WORLD.bcast(best_config, root=0)
     if MPI.COMM_WORLD.rank == 0:
         print(best_config, end="", flush=True)
-    return best_config
+    return best_config, best_time
 
 
 def run_benchmark(
@@ -143,28 +166,28 @@ def run_benchmark(
     memory_out = cp.zeros(nelem, dtype=data_type)
     cp.cuda.runtime.deviceSynchronize()
 
-    proxy_service = None
+    proxy_service = ProxyService()
     if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
         if memory.nbytes < 2**20:
-            mscclpp_call = MscclppAllReduce2(mscclpp_group, memory, memory_out)
-        elif memory.nbytes < 2**29:
-            mscclpp_call = MscclppAllReduce1(mscclpp_group, memory)
+            mscclpp_algos = [MscclppAllReduce2(mscclpp_group, memory, memory_out)]
         else:
-            proxy_service = ProxyService()
-            mscclpp_call = MscclppAllReduce3(mscclpp_group, memory, proxy_service)
-            proxy_service.start_proxy()
+            mscclpp_algos = [
+                MscclppAllReduce1(mscclpp_group, memory),
+                MscclppAllReduce3(mscclpp_group, memory, proxy_service),
+            ]
+            if is_nvls_supported() and (data_type == cp.float32 or data_type == cp.float16):
+                mscclpp_algos.append(MscclppAllReduce6(mscclpp_group, nelem, data_type))
     else:
         if memory.nbytes < 2**22:
-            proxy_service = ProxyService()
-            mscclpp_call = MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)
-            proxy_service.start_proxy()
+            mscclpp_algos = [MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)]
         else:
-            proxy_service = ProxyService()
-            mscclpp_call = MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)
-            proxy_service.start_proxy()
+            mscclpp_algos = [MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)]
 
-    best_config = find_best_config(mscclpp_call, 20)
-    mscclpp_call.set_params(*best_config)
+    proxy_service.start_proxy()
+    MPI.COMM_WORLD.barrier()
+    mscclpp_call = find_best_algo(mscclpp_algos, 20)
+    if isinstance(mscclpp_call, MscclppAllReduce6):
+        memory = mscclpp_call.get_memory()
 
     nccl_call = NcclAllReduce(nccl_op, memory)
 
@@ -177,13 +200,8 @@ def run_benchmark(
     nccl_algBw = memory_nbytes / nccl_time / 1e3
     nccl_check = "PASS" if check_correctness(memory, nccl_call) else "FAIL"
 
-    if (
-        isinstance(mscclpp_call, MscclppAllReduce3)
-        or isinstance(mscclpp_call, MscclppAllReduce5)
-        or isinstance(mscclpp_call, MscclppAllReduce4)
-    ):
-        MPI.COMM_WORLD.barrier()
-        proxy_service.stop_proxy()
+    MPI.COMM_WORLD.barrier()
+    proxy_service.stop_proxy()
 
     speed_up = nccl_time / mscclpp_time
     if MPI.COMM_WORLD.rank == 0:
@@ -205,6 +223,31 @@ def run_benchmark(
     return memory.nbytes, mscclpp_algBw, nccl_algBw, speed_up
 
 
+def is_valid(ip):
+    """
+    Check if the IP address is valid for connecting to other devices.
+    This excludes loopback (127.0.0.1) and link-local (169.254.x.x) addresses.
+    """
+    ip_obj = ipaddress.ip_address(ip)
+    return not (ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast)
+
+
+def get_netinterface_info():
+    """
+    Returns the name of the first network interface with a valid IP address that it finds.
+    """
+    interfaces = ni.interfaces()
+    for interface in interfaces:
+        addresses = ni.ifaddresses(interface)
+        if ni.AF_INET in addresses:
+            for addr in addresses[ni.AF_INET]:
+                ip_address = addr["addr"]
+                if is_valid(ip_address):
+                    print(f"Selected Interface: {interface}, IP Address: {ip_address}")
+                    return interface, ip_address
+    return None, None
+
+
 if __name__ == "__main__":
     shm_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
     N_GPUS_PER_NODE = shm_comm.size
@@ -212,8 +255,7 @@ if __name__ == "__main__":
     cp.cuda.Device(MPI.COMM_WORLD.rank % N_GPUS_PER_NODE).use()
 
     # create a MscclppGroup
-    network_interface = "eth0"
-    my_ip = ni.ifaddresses(network_interface)[ni.AF_INET][0]["addr"]
+    network_interface, my_ip = get_netinterface_info()
     root_ip = MPI.COMM_WORLD.bcast(my_ip, root=0)
     ifIpPortTrio = network_interface + ":" + root_ip + ":50000"  # some random port
     mscclpp_group = mscclpp_comm.CommGroup(
@@ -247,7 +289,8 @@ if __name__ == "__main__":
     mscclpp_algbw = []
     nccl_algbw = []
     speed_ups = []
-    for i in range(10, 29):
+    end_range = 29
+    for i in range(10, end_range):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
             nelems = 2**i
         elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:

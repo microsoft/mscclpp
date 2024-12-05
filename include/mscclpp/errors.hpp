@@ -16,6 +16,7 @@ enum class ErrorCode {
   InvalidUsage,   // The function was used incorrectly.
   Timeout,        // The operation timed out.
   Aborted,        // The operation was aborted.
+  ExecutorError,  // An error occurred in the MSCCL++ executor.
 };
 
 /// Convert an error code to a string.

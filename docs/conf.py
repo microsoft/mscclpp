@@ -7,19 +7,20 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = "mscclpp"
-copyright = "2023, MSCCL++ Team"
+copyright = "2024, MSCCL++ Team"
 author = "MSCCL++ Team"
-release = "v0.4.0"
+release = "v0.5.2"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ["breathe"]
+extensions = ["breathe", "myst_parser"]
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 # Breathe configuration
+breathe_projects = {"mscclpp": "./doxygen/xml"}
 breathe_default_project = "mscclpp"
 
 # -- Options for HTML output -------------------------------------------------

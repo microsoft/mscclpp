@@ -1,0 +1,281 @@
+{
+  "name": "allreduce_pairs",
+  "collective": "allreduce",
+  "protocol": "LL",
+  "inplace": true,
+  "num_threads_per_block": 768,
+  "gpus": [
+    {
+      "id": 0,
+      "inputChunks": 4,
+      "outputChunks": 0,
+      "scratchChunks": 8,
+      "chunkGroups": 2,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 4
+                }
+              ],
+              "src": 0,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 2
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 0,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 0,
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 0
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 2
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 2
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 5
+                }
+              ],
+              "src": 0,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 3
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 1,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 1,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 0,
+              "srcbuff": "s",
+              "srcoff": 6,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 2,
+              "ctype": "none",
+              "cnt": 2
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                1
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "s",
+          "type": "sm",
+          "connectedTo": [
+            1,
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "inputChunks": 4,
+      "outputChunks": 0,
+      "scratchChunks": 8,
+      "chunkGroups": 2,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "ppkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 2
+                }
+              ],
+              "srcs": [
+                {
+                  "buff": "i",
+                  "off": 0
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 2
+            },
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 6
+                }
+              ],
+              "src": 1,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 0
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 2,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 2,
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "cpkt",
+              "src": 1,
+              "srcbuff": "s",
+              "srcoff": 4,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 0,
+              "ctype": "none",
+              "cnt": 2
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "rspkt",
+              "o_buff": {
+                "src": "i",
+                "dst": "s"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 7
+                }
+              ],
+              "src": 1,
+              "srcs": [
+                {
+                  "buff": "s",
+                  "off": 1
+                }
+              ],
+              "srcbuff": "i",
+              "srcoff": 3,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 3,
+              "ctype": "sm",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "s",
+              "ctype": "sm",
+              "cids": [
+                1
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "s",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            0
+          ]
+        }
+      ]
+    }
+  ]
+}

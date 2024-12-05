@@ -1,0 +1,1458 @@
+{
+  "name": "allreduce_nvls",
+  "collective": "allreduce",
+  "protocol": "Simple",
+  "inplace": true,
+  "gpus": [
+    {
+      "id": 0,
+      "inputChunks": 8,
+      "outputChunks": 0,
+      "scratchChunks": 0,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 0
+                },
+                {
+                  "id": 1,
+                  "off": 0
+                },
+                {
+                  "id": 2,
+                  "off": 0
+                },
+                {
+                  "id": 3,
+                  "off": 0
+                },
+                {
+                  "id": 4,
+                  "off": 0
+                },
+                {
+                  "id": 5,
+                  "off": 0
+                },
+                {
+                  "id": 6,
+                  "off": 0
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 0
+                },
+                {
+                  "id": 1,
+                  "off": 0
+                },
+                {
+                  "id": 2,
+                  "off": 0
+                },
+                {
+                  "id": 3,
+                  "off": 0
+                },
+                {
+                  "id": 4,
+                  "off": 0
+                },
+                {
+                  "id": 5,
+                  "off": 0
+                },
+                {
+                  "id": 6,
+                  "off": 0
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 0,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "name": "glres",
+              "i_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "src": 0,
+              "srcbuff": "i",
+              "srcoff": 0,
+              "dst": 0,
+              "dstbuff": "i",
+              "dstoff": 0,
+              "ctype": "nvls",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "nvls",
+              "cids": [
+                0
+              ]
+            },
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "buff": "i",
+          "type": "nvls",
+          "rankGroups": [
+            {
+              "size": 8,
+              "ranks": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ]
+            }
+          ]
+        },
+        {
+          "srcbuff": "i",
+          "dstbuff": "i",
+          "type": "sm",
+          "connectedTo": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "inputChunks": 8,
+      "outputChunks": 0,
+      "scratchChunks": 0,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 1
+                },
+                {
+                  "id": 1,
+                  "off": 1
+                },
+                {
+                  "id": 2,
+                  "off": 1
+                },
+                {
+                  "id": 3,
+                  "off": 1
+                },
+                {
+                  "id": 4,
+                  "off": 1
+                },
+                {
+                  "id": 5,
+                  "off": 1
+                },
+                {
+                  "id": 6,
+                  "off": 1
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 1
+                },
+                {
+                  "id": 1,
+                  "off": 1
+                },
+                {
+                  "id": 2,
+                  "off": 1
+                },
+                {
+                  "id": 3,
+                  "off": 1
+                },
+                {
+                  "id": 4,
+                  "off": 1
+                },
+                {
+                  "id": 5,
+                  "off": 1
+                },
+                {
+                  "id": 6,
+                  "off": 1
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 0,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "name": "glres",
+              "i_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "src": 1,
+              "srcbuff": "i",
+              "srcoff": 1,
+              "dst": 1,
+              "dstbuff": "i",
+              "dstoff": 1,
+              "ctype": "nvls",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "nvls",
+              "cids": [
+                0
+              ]
+            },
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "buff": "i",
+          "type": "nvls",
+          "rankGroups": [
+            {
+              "size": 8,
+              "ranks": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ]
+            }
+          ]
+        },
+        {
+          "srcbuff": "i",
+          "dstbuff": "i",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "inputChunks": 8,
+      "outputChunks": 0,
+      "scratchChunks": 0,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 2
+                },
+                {
+                  "id": 1,
+                  "off": 2
+                },
+                {
+                  "id": 2,
+                  "off": 2
+                },
+                {
+                  "id": 3,
+                  "off": 2
+                },
+                {
+                  "id": 4,
+                  "off": 2
+                },
+                {
+                  "id": 5,
+                  "off": 2
+                },
+                {
+                  "id": 6,
+                  "off": 2
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 2
+                },
+                {
+                  "id": 1,
+                  "off": 2
+                },
+                {
+                  "id": 2,
+                  "off": 2
+                },
+                {
+                  "id": 3,
+                  "off": 2
+                },
+                {
+                  "id": 4,
+                  "off": 2
+                },
+                {
+                  "id": 5,
+                  "off": 2
+                },
+                {
+                  "id": 6,
+                  "off": 2
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 0,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "name": "glres",
+              "i_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "src": 2,
+              "srcbuff": "i",
+              "srcoff": 2,
+              "dst": 2,
+              "dstbuff": "i",
+              "dstoff": 2,
+              "ctype": "nvls",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            },
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "nvls",
+              "cids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "i",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        },
+        {
+          "buff": "i",
+          "type": "nvls",
+          "rankGroups": [
+            {
+              "size": 8,
+              "ranks": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "inputChunks": 8,
+      "outputChunks": 0,
+      "scratchChunks": 0,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 3
+                },
+                {
+                  "id": 1,
+                  "off": 3
+                },
+                {
+                  "id": 2,
+                  "off": 3
+                },
+                {
+                  "id": 3,
+                  "off": 3
+                },
+                {
+                  "id": 4,
+                  "off": 3
+                },
+                {
+                  "id": 5,
+                  "off": 3
+                },
+                {
+                  "id": 6,
+                  "off": 3
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 3
+                },
+                {
+                  "id": 1,
+                  "off": 3
+                },
+                {
+                  "id": 2,
+                  "off": 3
+                },
+                {
+                  "id": 3,
+                  "off": 3
+                },
+                {
+                  "id": 4,
+                  "off": 3
+                },
+                {
+                  "id": 5,
+                  "off": 3
+                },
+                {
+                  "id": 6,
+                  "off": 3
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 0,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "name": "glres",
+              "i_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "src": 3,
+              "srcbuff": "i",
+              "srcoff": 3,
+              "dst": 3,
+              "dstbuff": "i",
+              "dstoff": 3,
+              "ctype": "nvls",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            },
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "nvls",
+              "cids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "i",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            7
+          ]
+        },
+        {
+          "buff": "i",
+          "type": "nvls",
+          "rankGroups": [
+            {
+              "size": 8,
+              "ranks": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "inputChunks": 8,
+      "outputChunks": 0,
+      "scratchChunks": 0,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 4
+                },
+                {
+                  "id": 1,
+                  "off": 4
+                },
+                {
+                  "id": 2,
+                  "off": 4
+                },
+                {
+                  "id": 3,
+                  "off": 4
+                },
+                {
+                  "id": 4,
+                  "off": 4
+                },
+                {
+                  "id": 5,
+                  "off": 4
+                },
+                {
+                  "id": 6,
+                  "off": 4
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 4
+                },
+                {
+                  "id": 1,
+                  "off": 4
+                },
+                {
+                  "id": 2,
+                  "off": 4
+                },
+                {
+                  "id": 3,
+                  "off": 4
+                },
+                {
+                  "id": 4,
+                  "off": 4
+                },
+                {
+                  "id": 5,
+                  "off": 4
+                },
+                {
+                  "id": 6,
+                  "off": 4
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 0,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "name": "glres",
+              "i_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "src": 4,
+              "srcbuff": "i",
+              "srcoff": 4,
+              "dst": 4,
+              "dstbuff": "i",
+              "dstoff": 4,
+              "ctype": "nvls",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            },
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "nvls",
+              "cids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "i",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            1,
+            2,
+            3,
+            5,
+            6,
+            7
+          ]
+        },
+        {
+          "buff": "i",
+          "type": "nvls",
+          "rankGroups": [
+            {
+              "size": 8,
+              "ranks": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "inputChunks": 8,
+      "outputChunks": 0,
+      "scratchChunks": 0,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 5
+                },
+                {
+                  "id": 1,
+                  "off": 5
+                },
+                {
+                  "id": 2,
+                  "off": 5
+                },
+                {
+                  "id": 3,
+                  "off": 5
+                },
+                {
+                  "id": 4,
+                  "off": 5
+                },
+                {
+                  "id": 5,
+                  "off": 5
+                },
+                {
+                  "id": 6,
+                  "off": 5
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 5
+                },
+                {
+                  "id": 1,
+                  "off": 5
+                },
+                {
+                  "id": 2,
+                  "off": 5
+                },
+                {
+                  "id": 3,
+                  "off": 5
+                },
+                {
+                  "id": 4,
+                  "off": 5
+                },
+                {
+                  "id": 5,
+                  "off": 5
+                },
+                {
+                  "id": 6,
+                  "off": 5
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 0,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "name": "glres",
+              "i_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "src": 5,
+              "srcbuff": "i",
+              "srcoff": 5,
+              "dst": 5,
+              "dstbuff": "i",
+              "dstoff": 5,
+              "ctype": "nvls",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            },
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "nvls",
+              "cids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "i",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            6,
+            7
+          ]
+        },
+        {
+          "buff": "i",
+          "type": "nvls",
+          "rankGroups": [
+            {
+              "size": 8,
+              "ranks": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "inputChunks": 8,
+      "outputChunks": 0,
+      "scratchChunks": 0,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 6
+                },
+                {
+                  "id": 1,
+                  "off": 6
+                },
+                {
+                  "id": 2,
+                  "off": 6
+                },
+                {
+                  "id": 3,
+                  "off": 6
+                },
+                {
+                  "id": 4,
+                  "off": 6
+                },
+                {
+                  "id": 5,
+                  "off": 6
+                },
+                {
+                  "id": 6,
+                  "off": 6
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 6
+                },
+                {
+                  "id": 1,
+                  "off": 6
+                },
+                {
+                  "id": 2,
+                  "off": 6
+                },
+                {
+                  "id": 3,
+                  "off": 6
+                },
+                {
+                  "id": 4,
+                  "off": 6
+                },
+                {
+                  "id": 5,
+                  "off": 6
+                },
+                {
+                  "id": 6,
+                  "off": 6
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 0,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "name": "glres",
+              "i_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "src": 6,
+              "srcbuff": "i",
+              "srcoff": 6,
+              "dst": 6,
+              "dstbuff": "i",
+              "dstoff": 6,
+              "ctype": "nvls",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            },
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "nvls",
+              "cids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "i",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            7
+          ]
+        },
+        {
+          "buff": "i",
+          "type": "nvls",
+          "rankGroups": [
+            {
+              "size": 8,
+              "ranks": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "inputChunks": 8,
+      "outputChunks": 0,
+      "scratchChunks": 0,
+      "chunkGroups": 8,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "o_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "o_cids": [
+                {
+                  "id": 0,
+                  "off": 7
+                },
+                {
+                  "id": 1,
+                  "off": 7
+                },
+                {
+                  "id": 2,
+                  "off": 7
+                },
+                {
+                  "id": 3,
+                  "off": 7
+                },
+                {
+                  "id": 4,
+                  "off": 7
+                },
+                {
+                  "id": 5,
+                  "off": 7
+                },
+                {
+                  "id": 6,
+                  "off": 7
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "wait",
+              "i_buff": {
+                "src": "i",
+                "dst": "i"
+              },
+              "i_cids": [
+                {
+                  "id": 0,
+                  "off": 7
+                },
+                {
+                  "id": 1,
+                  "off": 7
+                },
+                {
+                  "id": 2,
+                  "off": 7
+                },
+                {
+                  "id": 3,
+                  "off": 7
+                },
+                {
+                  "id": 4,
+                  "off": 7
+                },
+                {
+                  "id": 5,
+                  "off": 7
+                },
+                {
+                  "id": 6,
+                  "off": 7
+                }
+              ],
+              "ctype": "sm",
+              "cnt": 1
+            },
+            {
+              "name": "nop",
+              "deps": [
+                {
+                  "tb": 0,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "name": "glres",
+              "i_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "src": 7,
+              "srcbuff": "i",
+              "srcoff": 7,
+              "dst": 7,
+              "dstbuff": "i",
+              "dstoff": 7,
+              "ctype": "nvls",
+              "cnt": 1
+            }
+          ],
+          "channels": [
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "sm",
+              "cids": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            },
+            {
+              "src": "i",
+              "dst": "i",
+              "ctype": "nvls",
+              "cids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "srcbuff": "i",
+          "dstbuff": "i",
+          "type": "sm",
+          "connectedTo": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ]
+        },
+        {
+          "buff": "i",
+          "type": "nvls",
+          "rankGroups": [
+            {
+              "size": 8,
+              "ranks": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false
+}

@@ -36,7 +36,7 @@ inline mscclpp::Transport getTransport(int rank, int peerRank, int nRanksPerNode
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
-__global__ void kernel(size_t dataSize, size_t dataPerBlock) {
+__global__ void __launch_bounds__(1024) kernel(size_t dataSize, size_t dataPerBlock) {
   size_t startIndex = blockIdx.x * dataPerBlock;
   size_t blockDataSize = min(dataSize - startIndex, dataPerBlock);
   int globalIndex = blockIdx.x * blockDim.x + threadIdx.x;

@@ -16,7 +16,7 @@ void register_proxy_channel(nb::module_& m) {
       .def("stop_proxy", &BaseProxyService::stopProxy);
 
   nb::class_<ProxyService, BaseProxyService>(m, "ProxyService")
-      .def(nb::init<>())
+      .def(nb::init<size_t>(), nb::arg("fifoSize") = DEFAULT_FIFO_SIZE)
       .def("start_proxy", &ProxyService::startProxy)
       .def("stop_proxy", &ProxyService::stopProxy)
       .def("build_and_add_semaphore", &ProxyService::buildAndAddSemaphore, nb::arg("comm"), nb::arg("connection"))
