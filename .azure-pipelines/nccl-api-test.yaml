@@ -95,9 +95,9 @@ jobs:
         HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp; git clone https://github.com/Azure/msccl-tools.git"'
-        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp/msccl-tools; pip3 install ."'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -112,11 +112,9 @@ jobs:
         ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp/msccl-users; mkdir -p execution-files"'
-        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp/msccl-users; bash algos/mscclpp_a100/generate_execution_plan.sh"'
-        sleep 30m
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -130,7 +128,7 @@ jobs:
         ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd; git clone https://github.com/NVIDIA/nccl-tests.git; cd nccl-tests; MPI=1 MPI_HOME=/usr/local/mpi make -j"'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -145,7 +143,7 @@ jobs:
         ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp; mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$(pwd)/build/apps/nccl/libmscclpp_nccl.so -x NCCL_DEBUG=WARN  -x MSCCLPP_EXECUTION_PLAN_DIR=/root/mscclpp/msccl-users/execution-files /root/nccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20"'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
