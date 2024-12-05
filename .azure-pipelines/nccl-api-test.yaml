@@ -77,7 +77,7 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
-        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/mscclpp-test/deploy/hostfile_ci
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
         ROOT_DIR=$(System.DefaultWorkingDirectory)/msccl-users
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
@@ -92,7 +92,7 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
-        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/mscclpp-test/deploy/hostfile_ci
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
@@ -108,7 +108,7 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
-        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/mscclpp-test/deploy/hostfile_ci
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
         ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
@@ -117,6 +117,36 @@ jobs:
         parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp/msccl-users; bash algos/mscclpp_a100/generate_execution_plan.sh"'
         sleep 30m
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: Install NCCL Tests
+    displayName: Install NCCL Tests
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+        ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd; git clone https://github.com/NVIDIA/nccl-tests.git; cd nccl-tests; MPI=1 MPI_HOME=/usr/local/mpi make -j"'
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: RunNcclAllreduceTest
+    displayName: Run NCCL Allreduce Test
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+        ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp; mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$(pwd)/build/apps/nccl/libmscclpp_nccl.so -x NCCL_DEBUG=WARN  -x MSCCLPP_EXECUTION_PLAN_DIR=/root/mscclpp/msccl-users/execution-files /root/nccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20"'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: AzureCLI@2
