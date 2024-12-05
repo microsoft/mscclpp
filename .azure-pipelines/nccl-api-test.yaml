@@ -120,7 +120,7 @@ jobs:
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
-    name: Install NCCL Tests
+    name: InstallNcclTests
     displayName: Install NCCL Tests
     inputs:
       targetType: 'inline'
