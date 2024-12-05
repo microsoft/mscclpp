@@ -301,9 +301,8 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 // -------------------------------------------
 
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    allreduce3(mscclpp::SimpleProxyChannelDeviceHandle* fstRoundChans,
-               mscclpp::SimpleProxyChannelDeviceHandle* sndRoundChans, TYPE* buff, TYPE* scratch, int rank,
-               int worldSize, size_t nelems) {
+    allreduce3(mscclpp::ProxyChannelDeviceHandle* fstRoundChans, mscclpp::ProxyChannelDeviceHandle* sndRoundChans,
+               TYPE* buff, TYPE* scratch, int rank, int worldSize, size_t nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
 
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
@@ -312,10 +311,10 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   int peerSendId = (remoteSendRank < rank) ? remoteSendRank : remoteSendRank - 1;
   int peerRecvId = (remoteRecvRank < rank) ? remoteRecvRank : remoteRecvRank - 1;
 
-  mscclpp::SimpleProxyChannelDeviceHandle& devFstSendChan = fstRoundChans[peerSendId];
-  mscclpp::SimpleProxyChannelDeviceHandle& devFstRecvChan = fstRoundChans[peerRecvId];
-  mscclpp::SimpleProxyChannelDeviceHandle& devSndSendChan = sndRoundChans[peerSendId];
-  mscclpp::SimpleProxyChannelDeviceHandle& devSndRecvChan = sndRoundChans[peerRecvId];
+  mscclpp::ProxyChannelDeviceHandle& devFstSendChan = fstRoundChans[peerSendId];
+  mscclpp::ProxyChannelDeviceHandle& devFstRecvChan = fstRoundChans[peerRecvId];
+  mscclpp::ProxyChannelDeviceHandle& devSndSendChan = sndRoundChans[peerSendId];
+  mscclpp::ProxyChannelDeviceHandle& devSndRecvChan = sndRoundChans[peerRecvId];
 
   // Step 1
   size_t chunkIndex = (rank + worldSize - 1) % worldSize;
@@ -529,9 +528,8 @@ __device__ void localAllGatherAllPairsSm(mscclpp::SmChannelDeviceHandle* smChans
 }
 
 // This is an allgather4 equivalent
-__device__ void allGatherSm(mscclpp::SmChannelDeviceHandle* smChans,
-                            mscclpp::SimpleProxyChannelDeviceHandle* proxyChans, int rank, int worldSize,
-                            int nRanksPerNode, size_t nelemsPerGPU, int pipelineDepth) {
+__device__ void allGatherSm(mscclpp::SmChannelDeviceHandle* smChans, mscclpp::ProxyChannelDeviceHandle* proxyChans,
+                            int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU, int pipelineDepth) {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
   // Step 1: each node does a local allgather and concurrently,
@@ -546,7 +544,7 @@ __device__ void allGatherSm(mscclpp::SmChannelDeviceHandle* smChans,
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  mscclpp::SimpleProxyChannelDeviceHandle proxyChan = proxyChans[peer];
+  mscclpp::ProxyChannelDeviceHandle proxyChan = proxyChans[peer];
   const size_t nBlocksForLocalAllGather = gridDim.x / (nRanksPerNode - 1) * (nRanksPerNode - 1);
   const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
   const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
@@ -590,9 +588,8 @@ __device__ void allGatherSm(mscclpp::SmChannelDeviceHandle* smChans,
                    nBlocksForLocalAllGather);
 }
 
-__device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
-                                mscclpp::SimpleProxyChannelDeviceHandle* proxyChans, TYPE* buff, TYPE* scratch,
-                                int rank, int nRanksPerNode, int worldSize,
+__device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans, mscclpp::ProxyChannelDeviceHandle* proxyChans,
+                                TYPE* buff, TYPE* scratch, int rank, int nRanksPerNode, int worldSize,
                                 size_t nelems,  // must be divisible by 3
                                 int pipelineDepth) {
   // this reduce-scatter algorithm works as follows:
@@ -615,7 +612,7 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
   int isComm = (threadIdx.x == 0) && (blockIdx.x == nBlocksForReduceScatter);
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   int nBlocksRemain = gridDim.x - nBlocksForReduceScatter;
-  mscclpp::SimpleProxyChannelDeviceHandle proxyChan = proxyChans[peer];
+  mscclpp::ProxyChannelDeviceHandle proxyChan = proxyChans[peer];
   if (peerNodeId == rank / nRanksPerNode) {
     localReduceScatterSm(smChans, buff, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, gridDim.x);
     return;
@@ -675,9 +672,8 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans,
 }
 
 extern "C" __global__ void __launch_bounds__(1024, 1) __global__
-    allreduce4(mscclpp::SmChannelDeviceHandle* smChans,
-               mscclpp::SimpleProxyChannelDeviceHandle* reduceScatterProxyChans,
-               mscclpp::SimpleProxyChannelDeviceHandle* allGatherProxyChans, TYPE* buff, TYPE* scratch, int rank,
+    allreduce4(mscclpp::SmChannelDeviceHandle* smChans, mscclpp::ProxyChannelDeviceHandle* reduceScatterProxyChans,
+               mscclpp::ProxyChannelDeviceHandle* allGatherProxyChans, TYPE* buff, TYPE* scratch, int rank,
                int nRanksPerNode, int worldSize, size_t nelems, int pipelineDepth) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
   reduceScatterSm(smChans, reduceScatterProxyChans, buff, scratch, rank, nRanksPerNode, worldSize, nelems,
@@ -688,7 +684,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1) __global__
 
 // allreduce 5 for 2-nodes
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    allreduce5(mscclpp::SmChannelDeviceHandle* smChans, mscclpp::SimpleProxyChannelDeviceHandle* proxyChans, TYPE* buff,
+    allreduce5(mscclpp::SmChannelDeviceHandle* smChans, mscclpp::ProxyChannelDeviceHandle* proxyChans, TYPE* buff,
                TYPE* scratch, TYPE* putBuff, TYPE* resultBuff, int rank, int nRanksPerNode, int worldSize,
                size_t nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
@@ -706,7 +702,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   const int peerIdx = blockIdx.x / nBlocksPerPeer;
   const int remoteRankIdx = peerIdx < localRankId ? peerIdx : peerIdx + 1;
   mscclpp::SmChannelDeviceHandle smChan = smChans[peerIdx];
-  mscclpp::SimpleProxyChannelDeviceHandle proxyChan = proxyChans[localRankId];
+  mscclpp::ProxyChannelDeviceHandle proxyChan = proxyChans[localRankId];
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   // double buffering
   size_t scratchBaseOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LLPacket);

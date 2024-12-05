@@ -14,7 +14,7 @@ from ._mscclpp import (
     Host2HostSemaphore,
     ProxyService,
     RegisteredMemory,
-    SimpleProxyChannel,
+    ProxyChannel,
     SmChannel,
     SmDevice2DeviceSemaphore,
     TcpBootstrap,
@@ -180,7 +180,7 @@ class CommGroup:
             semaphore_ids[rank] = proxy_service.add_semaphore(semaphores[rank])
         channels = {}
         for rank in semaphores:
-            channels[rank] = SimpleProxyChannel(
+            channels[rank] = ProxyChannel(
                 proxy_service.proxy_channel(semaphore_ids[rank]), memory_ids[rank], memory_ids[self.my_rank]
             )
         return channels
@@ -218,7 +218,7 @@ class CommGroup:
             semaphore_ids[rank] = proxy_service.add_semaphore(semaphores[rank])
         channels = {}
         for rank in semaphores:
-            channels[rank] = SimpleProxyChannel(
+            channels[rank] = ProxyChannel(
                 proxy_service.proxy_channel(semaphore_ids[rank]), memory_ids[rank], memory_ids[self.my_rank]
             )
         return channels
