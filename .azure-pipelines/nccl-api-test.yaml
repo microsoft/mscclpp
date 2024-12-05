@@ -95,9 +95,9 @@ jobs:
         HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/mscclpp-test/deploy/hostfile_ci
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        parallel-ssh -t 0 -H mscclpp-ci-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp; git clone https://github.com/Azure/msccl-tools.git"'
-        parallel-ssh -t 0 -H mscclpp-ci-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp/msccl-tools; pip3 install ."'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -112,9 +112,9 @@ jobs:
         ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        parallel-ssh -t 0 -H mscclpp-ci-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp/msccl-users; mkdir -p execution-files"'
-        parallel-ssh -t 0 -H mscclpp-ci-000000 -l azureuser -x "-i ${KeyFilePath}" \
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "cd /root/mscclpp/msccl-users; bash algos/mscclpp_a100/generate_execution_plan.sh"'
         sleep 30m
       workingDirectory: '$(System.DefaultWorkingDirectory)'
