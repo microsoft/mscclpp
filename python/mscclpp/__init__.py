@@ -14,7 +14,7 @@ from ._mscclpp import (
     numa,
     ProxyService,
     RegisteredMemory,
-    SimpleProxyChannel,
+    ProxyChannel,
     SmChannel,
     SmDevice2DeviceSemaphore,
     TcpBootstrap,

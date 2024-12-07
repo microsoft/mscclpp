@@ -15,9 +15,9 @@ void ProxyChannelOneToOneTest::SetUp() {
 
 void ProxyChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
-void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleProxyChannel>& proxyChannels,
-                                                    bool useIPC, bool useIb, bool useEthernet, void* sendBuff,
-                                                    size_t sendBuffBytes, void* recvBuff, size_t recvBuffBytes) {
+void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::ProxyChannel>& proxyChannels, bool useIPC,
+                                                    bool useIb, bool useEthernet, void* sendBuff, size_t sendBuffBytes,
+                                                    void* recvBuff, size_t recvBuffBytes) {
   const int rank = communicator->bootstrap()->getRank();
   const int worldSize = communicator->bootstrap()->getNranks();
   const bool isInPlace = (recvBuff == nullptr);
@@ -64,17 +64,17 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::SimpleP
     }
     mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, connectionFutures[r].get());
 
-    proxyChannels.emplace_back(proxyService->proxyChannel(cid), proxyService->addMemory(remoteMemFutures[r].get()),
-                               proxyService->addMemory(sendBufRegMem));
+    proxyChannels.emplace_back(proxyService->proxyChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
+                                                          proxyService->addMemory(sendBufRegMem)));
   }
 
   communicator->setup();
 }
 
-__constant__ DeviceHandle<mscclpp::SimpleProxyChannel> gChannelOneToOneTestConstProxyChans;
+__constant__ DeviceHandle<mscclpp::ProxyChannel> gChannelOneToOneTestConstProxyChans;
 
 __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWithPoll, int nTries, int* ret) {
-  DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = gChannelOneToOneTestConstProxyChans;
+  DeviceHandle<mscclpp::ProxyChannel>& proxyChan = gChannelOneToOneTestConstProxyChans;
   volatile int* sendBuff = (volatile int*)buff;
   int flusher = 0;
   int rank1Offset = 10000000;
@@ -156,16 +156,16 @@ void ProxyChannelOneToOneTest::testPingPong(PingPongTestParams params) {
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  std::vector<mscclpp::ProxyChannel> proxyChannels;
   std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
   setupMeshConnections(proxyChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
 
-  std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannelHandles;
+  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannelHandles;
   for (auto& ch : proxyChannels) proxyChannelHandles.push_back(ch.deviceHandle());
 
   ASSERT_EQ(proxyChannels.size(), 1);
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstProxyChans, proxyChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)));
+                                       sizeof(DeviceHandle<mscclpp::ProxyChannel>)));
 
   proxyService->startProxy();
 
@@ -201,16 +201,16 @@ void ProxyChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  std::vector<mscclpp::ProxyChannel> proxyChannels;
   std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
   setupMeshConnections(proxyChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
 
-  std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannelHandles;
+  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannelHandles;
   for (auto& ch : proxyChannels) proxyChannelHandles.push_back(ch.deviceHandle());
 
   ASSERT_EQ(proxyChannels.size(), 1);
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstProxyChans, proxyChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)));
+                                       sizeof(DeviceHandle<mscclpp::ProxyChannel>)));
 
   proxyService->startProxy();
 
@@ -279,7 +279,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
                                       int nElem, int nTries, int* ret) {
   if (rank > 1) return;
 
-  DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = gChannelOneToOneTestConstProxyChans;
+  DeviceHandle<mscclpp::ProxyChannel>& proxyChan = gChannelOneToOneTestConstProxyChans;
   volatile int* buffPtr = (volatile int*)buff;
   int putOffset = (rank == 0) ? 0 : 10000000;
   int getOffset = (rank == 0) ? 10000000 : 0;
@@ -343,7 +343,7 @@ void ProxyChannelOneToOneTest::testPacketPingPong(bool useIbOnly) {
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  std::vector<mscclpp::ProxyChannel> proxyChannels;
   std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
 
   const size_t nPacket = (nElem * sizeof(int) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
@@ -355,13 +355,13 @@ void ProxyChannelOneToOneTest::testPacketPingPong(bool useIbOnly) {
 
   ASSERT_EQ(proxyChannels.size(), 1);
 
-  std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannelHandles;
+  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannelHandles;
   for (auto& proxyChannel : proxyChannels) {
     proxyChannelHandles.push_back(proxyChannel.deviceHandle());
   }
 
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstProxyChans, proxyChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)));
+                                       sizeof(DeviceHandle<mscclpp::ProxyChannel>)));
 
   mscclpp::DeviceSyncer syncer = {};
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestProxyChansSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
@@ -410,7 +410,7 @@ void ProxyChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  std::vector<mscclpp::ProxyChannel> proxyChannels;
   std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
 
   const size_t nPacket = (nElem * sizeof(int) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
@@ -422,13 +422,13 @@ void ProxyChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
 
   ASSERT_EQ(proxyChannels.size(), 1);
 
-  std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannelHandles;
+  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannelHandles;
   for (auto& proxyChannel : proxyChannels) {
     proxyChannelHandles.push_back(proxyChannel.deviceHandle());
   }
 
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstProxyChans, proxyChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)));
+                                       sizeof(DeviceHandle<mscclpp::ProxyChannel>)));
 
   mscclpp::DeviceSyncer syncer = {};
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestProxyChansSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
