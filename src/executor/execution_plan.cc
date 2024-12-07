@@ -165,20 +165,31 @@ std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) c
   }
   return std::vector<BufferType>(bufferTypes.begin(), bufferTypes.end());
 }
+
 size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const {
-  size_t sizePerRank;
+  size_t sizePerChunk = 0;
   if (this->inputChunks.at(rank) != 0)
-    sizePerRank = inputSize / this->inputChunks.at(rank);
-  else if (this->outputChunks.at(rank) != 0)
-    sizePerRank = outputSize / this->outputChunks.at(rank);
+    sizePerChunk = inputSize / this->inputChunks.at(rank);
   else
-    throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
+    throw mscclpp::Error("Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
 
   if (this->isUsingPacket) {
-    return sizePerRank * this->scratchChunks.at(rank) * 2 /* data + flag*/ * 2 /*double buffer*/;
+    return sizePerChunk * this->scratchChunks.at(rank) * 2 /* data + flag*/ * 2 /*double buffer*/;
   }
-  return sizePerRank * this->scratchChunks.at(rank);
+  return sizePerChunk * this->scratchChunks.at(rank);
 }
+
+size_t ExecutionPlan::Impl::getMaxScratchBufferSize(int rank) const {
+  size_t sizePerChunk = 0;
+  size_t inputChunks = this->inputChunks.at(rank);
+  if (inputChunks != 0)
+    sizePerChunk = this->maxMessageSize + inputChunks - 1 / inputChunks;
+  else
+    throw mscclpp::Error("Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
+
+  return this->getScratchBufferSize(rank, this->maxMessageSize, sizePerChunk * this->outputChunks.at(rank));
+}
+
 std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadblock) const {
   return this->operations.at(rank)[threadblock];
 }
