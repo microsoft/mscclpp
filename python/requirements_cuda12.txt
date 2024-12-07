@@ -5,4 +5,5 @@ netifaces
 pytest
 numpy
 matplotlib
+# scikit-build issue, need to fix
 ninja
