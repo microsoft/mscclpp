@@ -181,6 +181,9 @@ size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize) con
 }
 
 size_t ExecutionPlan::Impl::getMaxScratchBufferSize(int rank) const {
+  if (this->maxMessageSize == std::numeric_limits<uint64_t>::max()) {
+    return std::numeric_limits<size_t>::max();
+  }
   size_t sizePerChunk = 0;
   size_t inputChunks = this->inputChunks.at(rank);
   if (inputChunks != 0)
