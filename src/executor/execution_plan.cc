@@ -168,8 +168,9 @@ std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) c
 
 size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize) const {
   size_t sizePerChunk = 0;
-  if (this->inputChunks.at(rank) != 0)
-    sizePerChunk = inputSize / this->inputChunks.at(rank);
+  size_t inputChunks = this->inputChunks.at(rank);
+  if (inputChunks != 0)
+    sizePerChunk = (inputSize + inputChunks - 1) / this->inputChunks.at(rank);
   else
     throw mscclpp::Error("Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
 

@@ -168,8 +168,7 @@ struct Executor::Impl {
 
     ExecutionContext context;
     size_t maxScratchBufferSize = plan.impl_->getMaxScratchBufferSize(rank);
-    size_t scratchBufferSize =
-        std::min(plan.impl_->getScratchBufferSize(rank, sendMemRange), maxScratchBufferSize);
+    size_t scratchBufferSize = std::min(plan.impl_->getScratchBufferSize(rank, sendMemRange), maxScratchBufferSize);
     std::shared_ptr<char> scratchBuffer;
     if (isNvlsSupported()) {
       scratchBuffer = allocSharedPhysicalCuda<char>(scratchBufferSize);
