@@ -51,13 +51,13 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t peerIdx = wid % nPeer;
     const size_t offset = (wid / nPeer) * unitBytesPerWarp;
     if constexpr (IsOutOfPlace) {
-//        char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
-//        char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
-//        char* buff = reinterpret_cast<char*>(sendbuff);
-//        smChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offset + channelOutOffset, unitBytesPerWarp, lid,
-//                                         WARP_SIZE);
-//        smChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offset + channelOutOffset, unitBytesPerWarp, lid,
-//                                         WARP_SIZE);
+        char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
+        char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
+        char* buff = reinterpret_cast<char*>(sendbuff);
+        smChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offset + channelOutOffset, unitBytesPerWarp, lid,
+                                         WARP_SIZE);
+        smChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offset + channelOutOffset, unitBytesPerWarp, lid,
+                                         WARP_SIZE);
     } else {
           smChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
     }
@@ -70,13 +70,13 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t peerIdx = gWid % nPeer;
     const size_t offset = (gWid / nPeer) * unitBytesPerWarp;
     if constexpr (IsOutOfPlace) {
-//        char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
-//        char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
-//        char* buff = reinterpret_cast<char*>(sendbuff);
-//        smChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offset + channelOutOffset, unitBytesPerWarp, lid,
-//                                         WARP_SIZE);
-//        smChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offset + channelOutOffset, unitBytesPerWarp, lid,
-//                                         WARP_SIZE);
+        char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
+        char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
+        char* buff = reinterpret_cast<char*>(sendbuff);
+        smChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offset + channelOutOffset, unitBytesPerWarp, lid,
+                                         WARP_SIZE);
+        smChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offset + channelOutOffset, unitBytesPerWarp, lid,
+                                         WARP_SIZE);
     } else {
          smChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
     }
@@ -94,13 +94,13 @@ __global__ void __launch_bounds__(1024, 1)
                                    : unitBytesPerWarp;
     if (remainBytes > 0) {
       if constexpr (IsOutOfPlace) {
-//        char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
-//        char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
-//        char* buff = reinterpret_cast<char*>(sendbuff);
-//        smChans[peerIdx].copy<16, true>(src + offset + channelOutOffset, buff + offset + channelOutOffset, remainBytes, lid,
-//                                        WARP_SIZE);
-//        smChans[peerIdx].copy<16, true>(dst + offset + channelOutOffset, buff + offset + channelOutOffset, remainBytes, lid,
-//                                        WARP_SIZE);
+        char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
+        char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
+        char* buff = reinterpret_cast<char*>(sendbuff);
+        smChans[peerIdx].copy<16, true>(src + offset + channelOutOffset, buff + offset + channelOutOffset, remainBytes, lid,
+                                        WARP_SIZE);
+        smChans[peerIdx].copy<16, true>(dst + offset + channelOutOffset, buff + offset + channelOutOffset, remainBytes, lid,
+                                        WARP_SIZE);
       } else {
         smChans[peerIdx].put<16, true>(offset + channelOutOffset, remainBytes, lid, WARP_SIZE);
       }
