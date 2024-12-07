@@ -28,6 +28,7 @@ ADD . /tmp/mscclpp
 WORKDIR /tmp/mscclpp
 ARG TARGET="cuda12.1"
 RUN target_type=$(echo $TARGET | sed 's/\.[0-9]*$//') && \
+    python3 -m pip install --no-cache-dir --upgrade pip && \
     python3 -m pip install --no-cache-dir -r python/requirements_${target_type}.txt
 
 # Set PATH
