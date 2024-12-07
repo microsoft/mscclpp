@@ -183,7 +183,7 @@ size_t ExecutionPlan::Impl::getMaxScratchBufferSize(int rank) const {
   size_t sizePerChunk = 0;
   size_t inputChunks = this->inputChunks.at(rank);
   if (inputChunks != 0)
-    sizePerChunk = this->maxMessageSize + inputChunks - 1 / inputChunks;
+    sizePerChunk = (this->maxMessageSize + inputChunks - 1) / inputChunks;
   else
     throw mscclpp::Error("Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
 
