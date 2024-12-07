@@ -13,6 +13,7 @@
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
+#include "broadcast.hpp"
 #include "nccl.h"
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
@@ -468,9 +469,47 @@ NCCL_API ncclResult_t ncclBcast(void*, size_t, ncclDataType_t, int, ncclComm_t, 
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclBroadcast(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t) {
-  // TODO: implement this function
-  return ncclInternalError;
+NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype, int root,
+                           ncclComm_t comm, cudaStream_t stream) {
+
+  size_t bytes = sendcount * ncclTypeSize(datatype);
+  if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
+
+  // Declarating variables
+  size_t recvBytes;
+  CUdeviceptr recvBasePtr;
+  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)recvbuff));
+  size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
+  channelKey recvKey{(void*)recvBasePtr, recvBytes};
+  int rank = comm->comm->bootstrap()->getRank();
+  int nRank = comm->comm->bootstrap()->getNranks();
+  mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels = nullptr;
+
+  auto it = comm->channelOutInfos.find(recvKey);
+  if (it == comm->channelOutInfos.end()) {
+    std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
+        comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
+    std::vector<mscclpp::SmChannel> channels =
+        setupSmChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
+    std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
+    std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
+                   [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
+    ChannelInfo channelInfo{channels, setupSmChannelDeviceHandles(channels)};
+    it = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
+  }
+
+  smChannels = it->second.smChannelDeviceHandles.get();
+  if ((char*)sendbuff == (char*)recvbuff) {
+    CUDACHECK(broadcast<false>((int*)sendbuff, (int*)nullptr, (int*)recvbuff, smChannels, offsetOut, rank,
+                               NRANKS_PER_NODE, root, nRank, bytes / sizeof(int), stream));
+  } else {
+    CUDACHECK(broadcast<true>((int*)sendbuff, (int*)nullptr, (int*)recvbuff, smChannels, offsetOut, rank,
+                              NRANKS_PER_NODE, root, nRank, bytes / sizeof(int), stream));
+  }
+
+  return ncclSuccess;
+
+
 }
 
 NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
