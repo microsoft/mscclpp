@@ -412,6 +412,9 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     }
   }
 
+  // Register the communicator
+  setCurrentNcclComm(commId, commPtr);
+
   *comm = commPtr;
   return ncclSuccess;
 }
@@ -717,9 +720,12 @@ ncclResult_t ncclMemFree(void* ptr) {
 //Leveraging a global or thread-local map that associates communicators with their allocated shared pointers.
 //Create a global map to store associations between ncclComm and the shared pointers. This map should be thread-safe.
 
-// Global map to store the communicator and shared pointer associations
-std::unordered_map<ncclComm*, std::unordered_map<void*, std::shared_ptr<char>>> commPtrMap;
-std::mutex commPtrMapMutex;
+// Thread-local variable for current communicator
+thread_local ncclComm* currentNcclComm = nullptr;
+
+// Declare the global map and mutex
+std::unordered_map<ncclUniqueId, ncclComm*> communicatorMap;
+std::mutex communicatorMapMutex;
 
 // Custom deleter for CUDA memory
 void cudaDeleter(char* ptr) {
@@ -735,14 +741,17 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
         return ncclError;
     }
 
-    // Obtaine current communicator (assumed to be thread-local or global)
-    ncclComm* currentComm = getCurrentNcclComm(); // You need to implement this function based on your setup
+    // Obtain current communicator
+    ncclComm* currentComm = getCurrentNcclComm();
+    if (currentComm == nullptr) {
+        return ncclError;
+    }
 
     // Create a shared pointer and store it in the global map
     std::shared_ptr<char> sharedPtr(rawPtr, cudaDeleter);
     {
-        std::lock_guard<std::mutex> lock(commPtrMapMutex);
-        commPtrMap[currentComm][rawPtr] = sharedPtr;
+        std::lock_guard<std::mutex> lock(communicatorMapMutex);
+	communicatorMap[comm->commId][rawPtr] = sharedPtr;
     }
 
     // Return the raw pointer
@@ -751,11 +760,14 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
 }
 
 ncclResult_t ncclMemFree(void* ptr) {
-    // Obtaine current communicator (assumed to be thread-local or global)
-    ncclComm* currentComm = getCurrentNcclComm(); // You need to implement this function based on your setup
+    // Obtain current communicator
+    ncclComm* currentComm = getCurrentNcclComm();
+    if (currentComm == nullptr) {
+        return ncclError;
+    }
 
-    std::lock_guard<std::mutex> lock(commPtrMapMutex);
-    auto commIt = commPtrMap.find(currentComm);
+    std::lock_guard<std::mutex> lock(communicatorMapMutex);
+    auto commIt = commPtrMap.find(currentComm->commId);
     if (commIt != commPtrMap.end()) {
         auto ptrIt = commIt->second.find(ptr);
         if (ptrIt != commIt->second.end()) {
@@ -766,20 +778,18 @@ ncclResult_t ncclMemFree(void* ptr) {
     return ncclError; // Pointer not found
 }
 
-// Create setCurrentNcclComm and getCurrentNcclComm
-#include <unordered_map>
-#include <mutex>
-
-// Declare the global map and mutex
-std::unordered_map<ncclUniqueId, ncclComm*> communicatorMap;
-std::mutex communicatorMapMutex;
-
 // Function to set the current communicator
 void setCurrentNcclComm(ncclUniqueId commId, ncclComm* comm) {
     std::lock_guard<std::mutex> lock(communicatorMapMutex);
     communicatorMap[commId] = comm;
 }
 
+// Function to get the current communicator
+ncclComm* getCurrentNcclComm() {
+    return currentNcclComm;
+}
+
+/*
 // Function to get the current communicator
 ncclComm* getCurrentNcclComm(ncclUniqueId commId) {
     std::lock_guard<std::mutex> lock(communicatorMapMutex);
@@ -789,18 +799,4 @@ ncclComm* getCurrentNcclComm(ncclUniqueId commId) {
     }
     return nullptr; // Return nullptr if the communicator is not found
 }
-
-// Modify the ncclCommInitRank function
-NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
-    ncclComm* commPtr = new ncclComm();
-    // Perform the existing initialization logic
-    // ...
-
-    // Register the communicator
-    setCurrentNcclComm(commId, commPtr);
-
-    *comm = commPtr;
-    return ncclSuccess;
-}
-
-// Get commId
+*/
