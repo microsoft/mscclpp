@@ -644,3 +644,163 @@ NCCL_API ncclResult_t ncclGroupEnd() {
   // Do nothing
   return ncclSuccess;
 }
+
+/****************************************************/
+ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
+  if (!isNvlsSupported()) {
+    throw Error("Only support GPU with NVLS support", ErrorCode::InvalidUsage);
+  }
+  std::shared_ptr<char> scratchBuffer;
+  scratchBuffer = mscclpp::allocSharedPhysicalCuda<char>(size);
+  //TODO: Assign the scratchBuffer to ncclComm->scratchBuff
+  if (scratchBuffer == nullptr) {
+    return ncclError;
+  }
+  *ptr = scratchBuffer;
+  return ncclSuccess;
+}
+
+ncclResult_t  ncclMemFree(void *ptr) {
+  if (!isNvlsSupported()) {
+    throw Error("Only support GPU with NVLS support", ErrorCode::InvalidUsage);
+  }
+  *ptr = mscclpp::allocSharedPhysicalCuda(size);
+  if (*ptr == nullptr) {
+    return ncclError;
+  }
+  //TODO: Free ncclComm->scratchBuff
+  return ncclSuccess;
+}
+
+/****************************************************/
+#include <memory>
+#include <mutex>
+
+// Global map to store the pointer associations
+std::unordered_map<void*, std::shared_ptr<char>> ptrMap;
+std::mutex ptrMapMutex;
+
+ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
+    // Allocate memory using mscclpp::allocSharedPhysicalCuda
+    char* rawPtr = mscclpp::allocSharedPhysicalCuda(size);
+    if (rawPtr == nullptr) {
+        return ncclError;
+    }
+
+    // Create a shared pointer and store it in the global map
+    std::shared_ptr<char> sharedPtr(rawPtr, cudaDeleter);
+    {
+        std::lock_guard<std::mutex> lock(ptrMapMutex);
+        ptrMap[rawPtr] = sharedPtr;
+    }
+
+    // Return the raw pointer
+    *ptr = rawPtr;
+    return ncclSuccess;
+}
+
+ncclResult_t ncclMemFree(void* ptr) {
+    // Remove the shared pointer from the global map
+    std::lock_guard<std::mutex> lock(ptrMapMutex);
+    auto it = ptrMap.find(ptr);
+    if (it != ptrMap.end()) {
+        ptrMap.erase(it); // Shared pointer is automatically deleted
+        return ncclSuccess;
+    }
+    return ncclError; // Pointer not found
+}
+
+/*************************************************************/
+#include <memory>
+#include <mutex>
+
+//Leveraging a global or thread-local map that associates communicators with their allocated shared pointers.
+//Create a global map to store associations between ncclComm and the shared pointers. This map should be thread-safe.
+
+// Global map to store the communicator and shared pointer associations
+std::unordered_map<ncclComm*, std::unordered_map<void*, std::shared_ptr<char>>> commPtrMap;
+std::mutex commPtrMapMutex;
+
+// Custom deleter for CUDA memory
+void cudaDeleter(char* ptr) {
+    if (ptr) {
+        cudaFree(ptr);
+    }
+}
+
+ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
+    // Allocate memory using mscclpp::allocSharedPhysicalCuda
+    char* rawPtr = mscclpp::allocSharedPhysicalCuda(size);
+    if (rawPtr == nullptr) {
+        return ncclError;
+    }
+
+    // Obtaine current communicator (assumed to be thread-local or global)
+    ncclComm* currentComm = getCurrentNcclComm(); // You need to implement this function based on your setup
+
+    // Create a shared pointer and store it in the global map
+    std::shared_ptr<char> sharedPtr(rawPtr, cudaDeleter);
+    {
+        std::lock_guard<std::mutex> lock(commPtrMapMutex);
+        commPtrMap[currentComm][rawPtr] = sharedPtr;
+    }
+
+    // Return the raw pointer
+    *ptr = rawPtr;
+    return ncclSuccess;
+}
+
+ncclResult_t ncclMemFree(void* ptr) {
+    // Obtaine current communicator (assumed to be thread-local or global)
+    ncclComm* currentComm = getCurrentNcclComm(); // You need to implement this function based on your setup
+
+    std::lock_guard<std::mutex> lock(commPtrMapMutex);
+    auto commIt = commPtrMap.find(currentComm);
+    if (commIt != commPtrMap.end()) {
+        auto ptrIt = commIt->second.find(ptr);
+        if (ptrIt != commIt->second.end()) {
+            commIt->second.erase(ptrIt); // Shared pointer is automatically deleted
+            return ncclSuccess;
+        }
+    }
+    return ncclError; // Pointer not found
+}
+
+// Create setCurrentNcclComm and getCurrentNcclComm
+#include <unordered_map>
+#include <mutex>
+
+// Declare the global map and mutex
+std::unordered_map<ncclUniqueId, ncclComm*> communicatorMap;
+std::mutex communicatorMapMutex;
+
+// Function to set the current communicator
+void setCurrentNcclComm(ncclUniqueId commId, ncclComm* comm) {
+    std::lock_guard<std::mutex> lock(communicatorMapMutex);
+    communicatorMap[commId] = comm;
+}
+
+// Function to get the current communicator
+ncclComm* getCurrentNcclComm(ncclUniqueId commId) {
+    std::lock_guard<std::mutex> lock(communicatorMapMutex);
+    auto it = communicatorMap.find(commId);
+    if (it != communicatorMap.end()) {
+        return it->second;
+    }
+    return nullptr; // Return nullptr if the communicator is not found
+}
+
+// Modify the ncclCommInitRank function
+NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
+    ncclComm* commPtr = new ncclComm();
+    // Perform the existing initialization logic
+    // ...
+
+    // Register the communicator
+    setCurrentNcclComm(commId, commPtr);
+
+    *comm = commPtr;
+    return ncclSuccess;
+}
+
+// Get commId
