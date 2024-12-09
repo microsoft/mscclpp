@@ -53,9 +53,9 @@ __global__ void __launch_bounds__(1024, 1)
         char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
         char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
         char* buff = reinterpret_cast<char*>(sendbuff);
-        smChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offset + channelOutOffset, unitBytesPerWarp, lid,
+        smChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offset, unitBytesPerWarp, lid,
                                          WARP_SIZE);
-        smChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offset + channelOutOffset, unitBytesPerWarp, lid,
+        smChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offset, unitBytesPerWarp, lid,
                                          WARP_SIZE);
       }
     } else {
@@ -74,9 +74,9 @@ __global__ void __launch_bounds__(1024, 1)
         char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
         char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
         char* buff = reinterpret_cast<char*>(sendbuff);
-        smChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offset + channelOutOffset, unitBytesPerWarp, lid,
+        smChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offset, unitBytesPerWarp, lid,
                                          WARP_SIZE);
-        smChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offset + channelOutOffset, unitBytesPerWarp, lid,
+        smChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offset, unitBytesPerWarp, lid,
                                          WARP_SIZE);
       } 
     } else {
@@ -99,9 +99,9 @@ __global__ void __launch_bounds__(1024, 1)
         char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
         char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
         char* buff = reinterpret_cast<char*>(sendbuff);
-        smChans[peerIdx].copy<16, true>(src + offset + channelOutOffset, buff + offset + channelOutOffset, remainBytes, lid,
+        smChans[peerIdx].copy<16, true>(src + offset + channelOutOffset, buff + offset, remainBytes, lid,
                                         WARP_SIZE);
-        smChans[peerIdx].copy<16, true>(dst + offset + channelOutOffset, buff + offset + channelOutOffset, remainBytes, lid,
+        smChans[peerIdx].copy<16, true>(dst + offset + channelOutOffset, buff + offset, remainBytes, lid,
                                         WARP_SIZE);
       } else {
         smChans[peerIdx].put<16, true>(offset + channelOutOffset, remainBytes, lid, WARP_SIZE);
