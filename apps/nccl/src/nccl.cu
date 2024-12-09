@@ -11,8 +11,6 @@
 #include <sstream>
 #include <unordered_map>
 #include <vector>
-#include <memory>
-#include <mutex>
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
@@ -673,4 +671,9 @@ ncclResult_t ncclMemFree(void* ptr) {
 
   // Pointer not found
   return ncclInternalError;
+}
+
+ncclResult_t ncclCommRegister() {
+  //TODO: Implemention
+  return ncclSuccess;
 }
