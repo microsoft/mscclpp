@@ -648,6 +648,11 @@ NCCL_API ncclResult_t ncclGroupEnd() {
   return ncclSuccess;
 }
 
+NCCL_API ncclResult_t ncclCommRegister(const ncclComm_t, void*, size_t, void**) {
+  //TODO: Implementation
+  return ncclSuccess;
+}
+
 ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
   // Allocate memory using mscclpp::allocSharedPhysicalCuda
   auto rawPtr = mscclpp::allocSharedPhysicalCuda<char>(size);
@@ -671,9 +676,4 @@ ncclResult_t ncclMemFree(void* ptr) {
 
   // Pointer not found
   return ncclInternalError;
-}
-
-ncclResult_t ncclCommRegister() {
-  //TODO: Implemention
-  return ncclSuccess;
 }
