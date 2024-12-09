@@ -192,9 +192,8 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
   return nullptr;
 }
 
-MSCCLPP_DEVICE_INLINE void handleSignal(DeviceHandle<SmChannel>* smChannels,
-                                        DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* channelIndex,
-                                        int nChannels, ChannelType chType) {
+MSCCLPP_DEVICE_INLINE void handleSignal(DeviceHandle<SmChannel>* smChannels, DeviceHandle<ProxyChannel>* proxyChannels,
+                                        uint8_t* channelIndex, int nChannels, ChannelType chType) {
   int tid = threadIdx.x;
   if (tid < nChannels && chType == ChannelType::SM) {
     smChannels[channelIndex[tid]].signal();
@@ -205,9 +204,8 @@ MSCCLPP_DEVICE_INLINE void handleSignal(DeviceHandle<SmChannel>* smChannels,
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleWait(DeviceHandle<SmChannel>* smChannels,
-                                      DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* channelIndexes,
-                                      int nChannels, ChannelType chType) {
+MSCCLPP_DEVICE_INLINE void handleWait(DeviceHandle<SmChannel>* smChannels, DeviceHandle<ProxyChannel>* proxyChannels,
+                                      uint8_t* channelIndexes, int nChannels, ChannelType chType) {
   int tid = threadIdx.x;
   if (tid < nChannels && chType == ChannelType::SM) {
     smChannels[channelIndexes[tid]].wait();
@@ -218,7 +216,7 @@ MSCCLPP_DEVICE_INLINE void handleWait(DeviceHandle<SmChannel>* smChannels,
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleFlush(DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* channelIndexes,
+MSCCLPP_DEVICE_INLINE void handleFlush(DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* channelIndexes,
                                        int nChannels) {
   int tid = threadIdx.x;
   if (tid < nChannels) {
@@ -236,10 +234,9 @@ MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<SmChannel>* smChannel, uint8_t
 }
 
 template <bool PutWithSignal = false, bool PutWithSignalAndFlush = false>
-MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<SmChannel>* smChannel,
-                                     DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
-                                     uint32_t* dstOffsets, uint32_t* srcOffsets, int count, uint32_t size,
-                                     ChannelType chType) {
+MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<SmChannel>* smChannel, DeviceHandle<ProxyChannel>* proxyChannels,
+                                     uint8_t* dstChannelIndexes, uint32_t* dstOffsets, uint32_t* srcOffsets, int count,
+                                     uint32_t size, ChannelType chType) {
   if (chType == ChannelType::SM) {
     for (int i = 0; i < count; i++) {
       uint32_t dstOffset = dstOffsets[i];
@@ -311,7 +308,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* output, uint32_t outputOf
 
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<SmChannel>* smChannels,
-                                           DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
+                                           DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
                                            uint32_t* dstOffsets, uint32_t* srcOffsets, int nDstChannels, uint32_t size,
                                            ChannelType chType, uint32_t flag) {
   const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
@@ -496,7 +493,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   int nOperations = localPlan->nOperations;
   Operation* operations = localPlan->operations;
   DeviceHandle<SmChannel>* smChannels = localPlan->channels.smChannels;
-  DeviceHandle<SimpleProxyChannel>* proxyChannels = localPlan->channels.proxyChannels;
+  DeviceHandle<ProxyChannel>* proxyChannels = localPlan->channels.proxyChannels;
   [[maybe_unused]] DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels =
       localPlan->channels.nvlsChannels;
 

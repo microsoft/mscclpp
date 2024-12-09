@@ -116,7 +116,7 @@ struct ExecutionContext {
   std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
   std::vector<mscclpp::SemaphoreId> proxySemaphores;
   std::vector<mscclpp::SmChannel> smChannels;
-  std::vector<mscclpp::SimpleProxyChannel> proxyChannels;
+  std::vector<mscclpp::ProxyChannel> proxyChannels;
   std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
@@ -339,10 +339,10 @@ struct Executor::Impl {
             context.smChannels.emplace_back(context.smSemaphores[index++],
                                             context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
           } else if (channelType == ChannelType::PROXY) {
-            context.proxyChannels.emplace_back(
-                context.proxyService->proxyChannel(context.proxySemaphores[index++]),
+            context.proxyChannels.emplace_back(context.proxyService->proxyChannel(
+                context.proxySemaphores[index++],
                 context.proxyService->addMemory(context.registeredMemories[{info.dstBufferType, peer}]),
-                context.proxyService->addMemory(localMemory));
+                context.proxyService->addMemory(localMemory)));
           }
         }
       }

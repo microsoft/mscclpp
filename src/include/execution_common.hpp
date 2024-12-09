@@ -54,7 +54,7 @@ enum class OperationType : uint8_t {
 
 struct Channels {
   mscclpp::DeviceHandle<mscclpp::SmChannel> smChannels[MAX_CHANNEL];
-  mscclpp::DeviceHandle<mscclpp::SimpleProxyChannel> proxyChannels[MAX_CHANNEL];
+  mscclpp::DeviceHandle<mscclpp::ProxyChannel> proxyChannels[MAX_CHANNEL];
   mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels[MAX_CHANNEL];
 };
 
