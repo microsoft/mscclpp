@@ -35,6 +35,24 @@
 //                             mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
 //                             mscclpp::Transport::IB6, mscclpp::Transport::IB7};
 
+// Declare the global map and mutex to store associations between ncclComm and the shared pointers.
+std::unordered_map<ncclUniqueId, ncclComm*> communicatorMap;
+std::mutex communicatorMapMutex;
+
+// Thread-local variable for current communicator
+thread_local ncclComm* currentNcclComm = nullptr;
+
+// Function to set the current communicator
+void setCurrentNcclComm(ncclUniqueId commId, ncclComm* comm) {
+  std::lock_guard<std::mutex> lock(communicatorMapMutex);
+  communicatorMap[commId] = comm;
+}
+
+// Function to get the current communicator
+ncclComm* getCurrentNcclComm() {
+  return currentNcclComm;
+}
+
 struct channelKey {
   const void* buff;
   size_t bytes;
@@ -78,6 +96,8 @@ struct ncclComm {
   std::unordered_map<channelKey, ChannelInfo> channelScratchInfos;
   std::shared_ptr<char> scratchBuff;
   std::vector<mscclpp::RegisteredMemory> remoteScratchRegMemories;
+
+  ncclUniqueId commId; // Add commId to ncclComm
 
   uint32_t numScratchBuff;
   uint32_t buffFlag;
@@ -650,13 +670,6 @@ NCCL_API ncclResult_t ncclGroupEnd() {
   return ncclSuccess;
 }
 
-// Declare the global map and mutex to store associations between ncclComm and the shared pointers.
-std::unordered_map<ncclUniqueId, ncclComm*> communicatorMap;
-std::mutex communicatorMapMutex;
-
-// Thread-local variable for current communicator
-thread_local ncclComm* currentNcclComm = nullptr;
-
 // Custom deleter for CUDA memory
 void cudaDeleter(char* ptr) {
   if (ptr) {
@@ -665,9 +678,6 @@ void cudaDeleter(char* ptr) {
 }
 
 ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
-  if (!isNvlsSupported()) {
-    throw Error("Only support GPU with NVLS support", ErrorCode::InvalidUsage);
-  }
   // Allocate memory using mscclpp::allocSharedPhysicalCuda
   char* rawPtr = mscclpp::allocSharedPhysicalCuda(size);
   if (rawPtr == nullptr) {
@@ -684,7 +694,7 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
   std::shared_ptr<char> sharedPtr(rawPtr, cudaDeleter);
   {
     std::lock_guard<std::mutex> lock(communicatorMapMutex);
-    communicatorMap[comm->commId][rawPtr] = sharedPtr;
+    communicatorMap[currentComm->commId][rawPtr] = sharedPtr;
   }
 
   // Return the raw pointer
@@ -693,9 +703,6 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
 }
 
 ncclResult_t ncclMemFree(void* ptr) {
-  if (!isNvlsSupported()) {
-    throw Error("Only support GPU with NVLS support", ErrorCode::InvalidUsage);
-  }
   // Obtain current communicator
   ncclComm* currentComm = getCurrentNcclComm();
   if (currentComm == nullptr) {
@@ -703,8 +710,8 @@ ncclResult_t ncclMemFree(void* ptr) {
   }
 
   std::lock_guard<std::mutex> lock(communicatorMapMutex);
-  auto commIt = commPtrMap.find(currentComm->commId);
-  if (commIt != commPtrMap.end()) {
+  auto commIt = communicatorMap.find(currentComm->commId);
+  if (commIt != communicatorMap.end()) {
     auto ptrIt = commIt->second.find(ptr);
     if (ptrIt != commIt->second.end()) {
       // Shared pointer is automatically deleted
@@ -714,15 +721,4 @@ ncclResult_t ncclMemFree(void* ptr) {
   }
   // Pointer not found
   return ncclError;
-}
-
-// Function to set the current communicator
-void setCurrentNcclComm(ncclUniqueId commId, ncclComm* comm) {
-  std::lock_guard<std::mutex> lock(communicatorMapMutex);
-  communicatorMap[commId] = comm;
-}
-
-// Function to get the current communicator
-ncclComm* getCurrentNcclComm() {
-  return currentNcclComm;
 }
