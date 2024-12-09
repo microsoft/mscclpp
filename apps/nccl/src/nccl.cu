@@ -653,6 +653,11 @@ NCCL_API ncclResult_t ncclCommRegister(const ncclComm_t, void*, size_t, void**) 
   return ncclSuccess;
 }
 
+NCCL_API ncclResult_t ncclCommDeregister(const ncclComm_t, void*) {
+  //TODO: Implementation
+  return ncclSuccess;
+}
+
 ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
   // Allocate memory using mscclpp::allocSharedPhysicalCuda
   auto rawPtr = mscclpp::allocSharedPhysicalCuda<char>(size);
