@@ -67,7 +67,7 @@ jobs:
     inputs:
       targetType: filePath
       filePath: mscclpp/test/deploy/deploy.sh
-      arguments: "single-node-test"
+      arguments: "nccltest-single-node"
       workingDirectory: $(System.DefaultWorkingDirectory)/mscclpp
 
   - task: Bash@3
