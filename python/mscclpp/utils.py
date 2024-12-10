@@ -84,6 +84,7 @@ class KernelBuilder:
     def _compile_cuda(self, source_file, output_file, std_version="c++17"):
         mscclpp_home = os.environ.get("MSCCLPP_HOME", "/usr/local/mscclpp")
         include_dir = os.path.join(mscclpp_home, "include")
+        home_include_dir = os.path.join(mscclpp_home, "../../include")
         if not cp.cuda.runtime.is_hip:
             compute_capability = cp.cuda.Device().compute_capability
             cuda_home = os.environ.get("CUDA_HOME")
@@ -95,6 +96,7 @@ class KernelBuilder:
                 "-Xcompiler",
                 "-Wall,-Wextra",
                 f"-I{include_dir}",
+                f"-I{home_include_dir}",
                 f"{source_file}",
                 f"--gpu-architecture=compute_{compute_capability}",
                 f"--gpu-code=sm_{compute_capability},compute_{compute_capability}",
