@@ -122,6 +122,17 @@ jobs:
           mpirun -tag-output -x MSCCLPP_HOME=$(System.DefaultWorkingDirectory) -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
+  - task: AzureCLI@2
+    name: StopVMSS
+    displayName: Deallocate VMSS
+    condition: always()
+    inputs:
+      azureSubscription: mscclpp-ci
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss deallocate --name mscclpp-ci --resource-group mscclpp
+
 - job: UnitTestWithNpKit
   timeoutInMinutes: 30
   pool:
@@ -230,3 +241,14 @@ jobs:
           grep -q NPKIT_EVENT_EXECUTOR_PUT_PACKET_ENTRY ./npkit_output/npkit_event_trace.json    \
           grep -q NPKIT_EVENT_EXECUTOR_REDUCE_SEND_PACKET_ENTRY ./npkit_output/npkit_event_trace.json"'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: AzureCLI@2
+    name: StopVMSS
+    displayName: Deallocate VMSS
+    condition: always()
+    inputs:
+      azureSubscription: mscclpp-ci
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss deallocate --name mscclpp-ci --resource-group mscclpp
