@@ -67,7 +67,7 @@ jobs:
       targetType: filePath
       filePath: test/deploy/deploy.sh
       arguments: "single-node-test"
-      workingDirectory: $(System.DefaultWorkingDirectory)
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 
   - task: Bash@3
@@ -175,7 +175,7 @@ jobs:
       targetType: filePath
       filePath: test/deploy/deploy.sh
       arguments: "single-node-test"
-      workingDirectory: $(System.DefaultWorkingDirectory)
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
     name: MpUnitTests
