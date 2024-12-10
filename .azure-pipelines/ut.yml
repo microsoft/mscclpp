@@ -80,9 +80,10 @@ jobs:
         HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"  \
-          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
-          cd /root/mscclpp;                                         \
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"     \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "   \
+          cd /root/mscclpp;                                            \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH; \
           ./build/test/unit_tests"'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -96,12 +97,13 @@ jobs:
         HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"  \
-          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
-          export PATH=/usr/local/mpi/bin:$PATH;                     \
-          cd /root/mscclpp;                                         \
-          mpirun -tag-output -np 2 ./build/test/mp_unit_tests       \
-          mpirun -tag-output -np 4 ./build/test/mp_unit_tests       \
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"      \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+          export PATH=/usr/local/mpi/bin:$PATH;                         \
+          cd /root/mscclpp;                                             \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH;  \
+          mpirun -tag-output -np 2 ./build/test/mp_unit_tests;          \
+          mpirun -tag-output -np 4 ./build/test/mp_unit_tests;          \
           mpirun -tag-output -np 8 ./build/test/mp_unit_tests"'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -115,10 +117,11 @@ jobs:
         HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"  \
-          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
-          export PATH=/usr/local/mpi/bin:$PATH                      \
-          cd /root/mscclpp;                                         \
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"      \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+          export PATH=/usr/local/mpi/bin:$PATH                          \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH;  \
+          cd /root/mscclpp;                                             \
           mpirun -tag-output -x MSCCLPP_HOME=$(System.DefaultWorkingDirectory) -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -204,6 +207,7 @@ jobs:
           rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output \
           export PATH=/usr/local/mpi/bin:$PATH \
           export NPKIT_DUMP_DIR=./npkit_dump   \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH;  \
           mpirun -tag-output -np 2 ./build/test/mp_unit_tests --gtest_filter="ExecutorTest.TwoNodesAllreduce"\
           python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output \
           grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json    \
@@ -227,6 +231,7 @@ jobs:
           rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output \
           export PATH=/usr/local/mpi/bin:$PATH \
           export NPKIT_DUMP_DIR=./npkit_dump   \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH;  \
           mpirun -tag-output -x MSCCLPP_HOME=$(System.DefaultWorkingDirectory) -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x -k 'test_executor[allreduce.json'            \
           python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output \
           grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json    \
