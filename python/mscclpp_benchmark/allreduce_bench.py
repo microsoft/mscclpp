@@ -97,9 +97,10 @@ def check_correctness(memory, func, niter=100):
         ac = ac and all_close
         if not all_close:
             print(
-                f"not close: p={p}, rank={MPI.COMM_WORLD.rank}, output={output_memory[icf][0]}, expected={expected[icf][0]}",
+                f"not close: p={p}, rank={MPI.COMM_WORLD.rank}, output={output_memory[icf][0]}, expected={expected[icf][0]}, output[0]={output_memory[0]}",
                 flush=True,
             )
+            break
 
     ac = MPI.COMM_WORLD.allreduce(ac, op=MPI.SUM)
     return ac
@@ -131,7 +132,7 @@ def bench_time(niter: int, func):
 
 def find_best_algo(mscclpp_algos, niter):
     assert len(mscclpp_algos) > 0
-    best_time = 10000000.0
+    best_time = float('inf')
     best_algo = None
     for algo in mscclpp_algos:
         config, cur_time = find_best_config(algo, niter)
@@ -145,7 +146,7 @@ def find_best_algo(mscclpp_algos, niter):
 
 
 def find_best_config(mscclpp_call, niter):
-    best_time = 10000000.0
+    best_time = float('inf')
     for config in mscclpp_call.auto_tune():
         cur_time = bench_time(niter, mscclpp_call)
         if cur_time < best_time:
@@ -167,21 +168,23 @@ def run_benchmark(
     cp.cuda.runtime.deviceSynchronize()
 
     proxy_service = ProxyService()
-    if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
-        if memory.nbytes < 2**20:
-            mscclpp_algos = [MscclppAllReduce2(mscclpp_group, memory, memory_out)]
-        else:
-            mscclpp_algos = [
-                MscclppAllReduce1(mscclpp_group, memory),
-                MscclppAllReduce3(mscclpp_group, memory, proxy_service),
-            ]
-            if is_nvls_supported() and (data_type == cp.float32 or data_type == cp.float16):
-                mscclpp_algos.append(MscclppAllReduce6(mscclpp_group, nelem, data_type))
-    else:
-        if memory.nbytes < 2**22:
-            mscclpp_algos = [MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)]
-        else:
-            mscclpp_algos = [MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)]
+    # if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
+    #     if memory.nbytes < 2**20:
+    #         mscclpp_algos = [MscclppAllReduce2(mscclpp_group, memory, memory_out)]
+    #     else:
+    #         mscclpp_algos = [
+    #             MscclppAllReduce1(mscclpp_group, memory),
+    #             MscclppAllReduce3(mscclpp_group, memory, proxy_service),
+    #         ]
+    #         if is_nvls_supported() and (data_type == cp.float32 or data_type == cp.float16):
+    #             mscclpp_algos.append(MscclppAllReduce6(mscclpp_group, nelem, data_type))
+    # else:
+        # if memory.nbytes < 2**22:
+        #     mscclpp_algos = [MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)]
+        # else:
+        #     mscclpp_algos = [MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)]
+    # mscclpp_algos = [MscclppAllReduce5(mscclpp_group, memory, memory_out, N_GPUS_PER_NODE, proxy_service)]
+    mscclpp_algos = [MscclppAllReduce4(mscclpp_group, memory, N_GPUS_PER_NODE, proxy_service)]
 
     proxy_service.start_proxy()
     MPI.COMM_WORLD.barrier()
@@ -290,18 +293,20 @@ if __name__ == "__main__":
     nccl_algbw = []
     speed_ups = []
     end_range = 29
-    for i in range(10, end_range):
-        if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
-            nelems = 2**i
-        elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:
-            nelems = 3 * 2**i
-        else:
-            raise RuntimeError("Only support one node/two nodes communication")
+    for i in range(16, end_range):
+        # if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
+        #     nelems = 2**i
+        # elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:
+        #     nelems = 3 * 2**i
+        # else:
+        #     raise RuntimeError("Only support one node/two nodes communication")
+        nelems = (2**i // 768) * 768
+        # nelems = 2**i
 
         if nelems * data_type().itemsize > 2**32:
             break  # due to trigger bit width limitation, we can only support up to 2**32
 
-        size, mscclpp_algBw, nccl_algBw, speed_up = run_benchmark(mscclpp_group, nccl_comm, table, 100, nelems)
+        size, mscclpp_algBw, nccl_algBw, speed_up = run_benchmark(mscclpp_group, nccl_comm, table, 1000, nelems)
         sizes.append(size)
         mscclpp_algbw.append(mscclpp_algBw)
         nccl_algbw.append(nccl_algBw)

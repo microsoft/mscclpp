@@ -320,7 +320,7 @@ class MscclppAllReduce4:
         )
 
     def auto_tune(self):
-        nblocks_to_try = [24, 32, 40, 45, 48, 64, 72, 90, 96, 108]
+        nblocks_to_try = [24, 32, 40, 45, 48, 64, 72]
         block_size_to_try = [256, 512, 1024]
         pipeline_depth_to_try = [1, 2, 3, 4]
         for nblocks in nblocks_to_try:
@@ -338,7 +338,7 @@ class MscclppAllReduce5:
         memory_out: cp.ndarray,
         nranks_per_node: int,
         proxy_service: ProxyService,
-        nblocks: int = 21,
+        nblocks: int = 7,
         block_size: int = 512,
     ):
         self.group = group
@@ -362,7 +362,9 @@ class MscclppAllReduce5:
         type_str = type_to_str(memory.dtype)
 
         self.proxy_service = proxy_service
-        self.scratch = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
+        # (2*4 + 2) * 2 = 20
+        self.scratch = cp.zeros(self.memory.size * 20, dtype=self.memory.dtype)
+        # (2*1 + 2) * 2 = 8
         self.put_buff = cp.zeros(self.memory.size * 8 // nranks_per_node, dtype=self.memory.dtype)
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         across_node_connections = {rank: conn for rank, conn in self.connections.items() if not in_same_node(rank)}
@@ -412,7 +414,7 @@ class MscclppAllReduce5:
         )
 
     def auto_tune(self):
-        nblocks_to_try = [21, 42, 84]
+        nblocks_to_try = [7,]
         block_size_to_try = [256, 512, 1024]
         for nblocks in nblocks_to_try:
             for block_size in block_size_to_try:
