@@ -39,7 +39,7 @@ parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker pull ${CONTAINERIMAGE}"
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker run --rm -itd --privileged --net=host --ipc=host --gpus=all \
-  -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --name=mscclpp-test \
+  -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=mscclpp-test \
   --entrypoint /bin/bash ${CONTAINERIMAGE}"
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker exec -t --user root mscclpp-test bash '/root/mscclpp/test/deploy/setup.sh'"
