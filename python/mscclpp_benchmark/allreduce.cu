@@ -605,13 +605,9 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans, mscclpp
   const int nodeId = rank / nRanksPerNode;
   const int numNodes = worldSize / nRanksPerNode;
   const int numStages = pipelineDepth;
-  const float nBlocksForReduceScatterRatio = 0.8;
   const size_t chunkElems = nelems / worldSize;
   const size_t chunkElemsPerStage = chunkElems / numStages;
-  int nBlocksForReduceScatter =
-      (int)(nBlocksForReduceScatterRatio * gridDim.x) / (nRanksPerNode - 1) * (nRanksPerNode - 1);
-  int isComm = (threadIdx.x == 0) && (blockIdx.x == nBlocksForReduceScatter);
-  int nBlocksRemain = gridDim.x - nBlocksForReduceScatter;
+  int isComm = (threadIdx.x == 0) && (blockIdx.x == gridDim.x - 1);
   const int nextPeer0Rank = (rank + nRanksPerNode) % worldSize;
   const int prevPeer0Rank = (rank + worldSize - nRanksPerNode) % worldSize;
   // const int peer1Rank = (rank + 2 * nRanksPerNode) % worldSize;
@@ -628,7 +624,7 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans, mscclpp
   // stage 0
   int startChunkIndex = (nextPeer0Rank / nRanksPerNode) * nRanksPerNode;
   localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, 0, chunkElems, chunkElemsPerStage,
-                       nBlocksForReduceScatter);
+                       gridDim.x);
   deviceSyncer.sync(gridDim.x);
   if (isComm) {
     // send results to the next peer
@@ -639,20 +635,12 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans, mscclpp
   // stage 1 to numStages-1
   for (size_t stage = 1; stage < numStages; ++stage) {
     localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, chunkElemsPerStage * stage, chunkElems,
-                         chunkElemsPerStage, nBlocksForReduceScatter);
+                         chunkElemsPerStage, gridDim.x);
+    localReduceScatterSm(smChans, buff, rank, nRanksPerNode, nodeId * nRanksPerNode, chunkElemsPerStage * (stage - 1),
+                         chunkElems, chunkElemsPerStage, gridDim.x);
     if (isComm) {
       // wait for the previous stage's send to complete
       proxyChans[prevPeer0Idx].wait();
-    }
-    if (blockIdx.x >= nBlocksForReduceScatter) {
-      ibDeviceSyncer.sync(nBlocksRemain);
-      // reduce data received from prev peer to related rank
-      size_t offset = (rank * chunkElems + chunkElemsPerStage * (stage - 1)) * sizeof(int);
-      TYPE* dst = (TYPE*)((char*)buff + offset);
-      TYPE* src = (TYPE*)((char*)scratch + offset);
-      vectorSum(dst, src, chunkElemsPerStage, blockIdx.x - nBlocksForReduceScatter, nBlocksRemain);
-    }
-    if (isComm) {
       proxyChans[nextPeer0Idx].flush();
     }
     deviceSyncer.sync(gridDim.x);
@@ -660,11 +648,15 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans, mscclpp
       size_t offset = (nextPeer0Rank * chunkElems + chunkElemsPerStage * stage) * sizeof(int);
       proxyChans[nextPeer0Idx].putWithSignal(offset, chunkElemsPerStage * sizeof(int));
     }
+    // reduce data received from prev peer to related rank
+    size_t offset = (rank * chunkElems + chunkElemsPerStage * (stage - 1)) * sizeof(int);
+    TYPE* dst = (TYPE*)((char*)buff + offset);
+    TYPE* src = (TYPE*)((char*)scratch + offset);
+    vectorSum(dst, src, chunkElemsPerStage);
+    // local data reduce
   }
-
-  // local data reduce
-  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, nodeId * nRanksPerNode, 0, chunkElems, chunkElems,
-                       gridDim.x);
+  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, nodeId * nRanksPerNode, chunkElemsPerStage * (numStages - 1),
+                       chunkElems, chunkElemsPerStage, gridDim.x);
   if (isComm) {
     proxyChans[prevPeer0Idx].wait();
   }
