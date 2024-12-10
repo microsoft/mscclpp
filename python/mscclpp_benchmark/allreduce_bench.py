@@ -293,7 +293,7 @@ if __name__ == "__main__":
     nccl_algbw = []
     speed_ups = []
     end_range = 29
-    for i in range(16, end_range):
+    for i in range(28, end_range):
         # if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
         #     nelems = 2**i
         # elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:
@@ -306,7 +306,7 @@ if __name__ == "__main__":
         if nelems * data_type().itemsize > 2**32:
             break  # due to trigger bit width limitation, we can only support up to 2**32
 
-        size, mscclpp_algBw, nccl_algBw, speed_up = run_benchmark(mscclpp_group, nccl_comm, table, 1000, nelems)
+        size, mscclpp_algBw, nccl_algBw, speed_up = run_benchmark(mscclpp_group, nccl_comm, table, 100, nelems)
         sizes.append(size)
         mscclpp_algbw.append(mscclpp_algBw)
         nccl_algbw.append(nccl_algBw)

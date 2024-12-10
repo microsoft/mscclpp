@@ -322,7 +322,7 @@ class MscclppAllReduce4:
     def auto_tune(self):
         nblocks_to_try = [8, 16, 24, 32, 40, 45, 48, 64, 72]
         block_size_to_try = [256, 512, 1024]
-        pipeline_depth_to_try = [1, 2, 3, 4]
+        pipeline_depth_to_try = [4,]
         for nblocks in nblocks_to_try:
             for block_size in block_size_to_try:
                 for pipeline_depth in pipeline_depth_to_try:

@@ -460,6 +460,7 @@ __device__ void localReduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans, TY
 }
 
 // This kernel is the most performant when the number of blocks is a multiple of (nRanksPerNode - 1).
+template <bool SkipSync = false>
 __device__ void localAllGatherSm(mscclpp::SmChannelDeviceHandle* smChans, int rank, int nRanksPerNode,
                                  int startRankChunkIndex, uint64_t offsetInRankChunk, uint64_t rankChunkSize,
                                  uint64_t size, size_t nBlocks) {
@@ -497,11 +498,13 @@ __device__ void localAllGatherSm(mscclpp::SmChannelDeviceHandle* smChans, int ra
   if (lastChunkSize > 0 && peerLocalBlockIdx == nBlockForThisPeer - 1) {
     sizeForThisBlock += lastChunkSize;
   }
-  if (threadIdx.x == 0 && peerLocalBlockIdx == 0) {
-    smChans[peerIdx].relaxedSignal();
-    smChans[peerIdx].wait();
+  if constexpr (!SkipSync) {
+    if (threadIdx.x == 0 && peerLocalBlockIdx == 0) {
+      smChans[peerIdx].relaxedSignal();
+      smChans[peerIdx].wait();
+    }
+    allGatherDeviceSyncer.sync(nBlocks);
   }
-  allGatherDeviceSyncer.sync(nBlocks);
   size_t offset = rankChunkSize * (startRankChunkIndex + remoteRankLocalIndex) + offsetInRankChunk;
   smChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
@@ -543,52 +546,77 @@ __device__ void allGatherSm(mscclpp::SmChannelDeviceHandle* smChans, mscclpp::Pr
   // its cross-node neighbor
   // Step 3: each node does a local allgather for the last time with the rest of the data
 
-  int pipelineSize = pipelineDepth;
-  int peerRank = (rank + nRanksPerNode) % worldSize;
-  int peerNodeId = peerRank / nRanksPerNode;
-  int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  mscclpp::ProxyChannelDeviceHandle proxyChan = proxyChans[peer];
+  int numStages = pipelineDepth;
+  const int nextPeer0Rank = (rank + nRanksPerNode) % worldSize;
+  const int nextPeer1Rank = (rank + 2 * nRanksPerNode) % worldSize;
+  const int nextPeer2Rank = (rank + 3 * nRanksPerNode) % worldSize;
+  const int prevPeer0Rank = (rank + worldSize - nRanksPerNode) % worldSize;
+  const int prevPeer1Rank = (rank + worldSize - 2 * nRanksPerNode) % worldSize;
+  const int prevPeer2Rank = (rank + worldSize - 3 * nRanksPerNode) % worldSize;
+  const int nextPeer0Idx = (nextPeer0Rank < rank) ? nextPeer0Rank : nextPeer0Rank - 1;
+  const int prevPeer0Idx = (prevPeer0Rank < rank) ? prevPeer0Rank : prevPeer0Rank - 1;
+  const int nextPeer1Idx = (nextPeer1Rank < rank) ? nextPeer1Rank : nextPeer1Rank - 1;
+  const int prevPeer1Idx = (prevPeer1Rank < rank) ? prevPeer1Rank : prevPeer1Rank - 1;
+  const int nextPeer2Idx = (nextPeer2Rank < rank) ? nextPeer2Rank : nextPeer2Rank - 1;
+  const int prevPeer2Idx = (prevPeer2Rank < rank) ? prevPeer2Rank : prevPeer2Rank - 1;
+
   const size_t nBlocksForLocalAllGather = gridDim.x / (nRanksPerNode - 1) * (nRanksPerNode - 1);
   const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
-  const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
-  const int startRankIndexInPeerNode = (peerRank / nRanksPerNode) * nRanksPerNode;
 
-  if (peerNodeId == rank / nRanksPerNode) {
+  if (nRanksPerNode == worldSize) {
     localAllGatherSm(smChans, rank, nRanksPerNode, 0, 0, rankChunkSize, rankChunkSize, gridDim.x);
     return;
   }
 
   constexpr size_t alignment = 128;
-  size_t step1Bytes = (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int);
-  step1Bytes = step1Bytes / alignment * alignment;
-  const size_t step2Bytes = nelemsPerGPU * sizeof(int) - step1Bytes;
+  size_t rankChunkSizePerStage = rankChunkSize / numStages;
+  // rankChunkSizePerStage = ((rankChunkSizePerStage + alignment - 1) / alignment) * alignment;
 
-  // Step 1
-  if (threadIdx.x == 0 && blockIdx.x == 0 && step1Bytes > 0) {
-    proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    proxyChans[nextPeer0Idx].putWithSignal(rank * rankChunkSize, rankChunkSizePerStage);
+    proxyChans[nextPeer1Idx].putWithSignal(rank * rankChunkSize, rankChunkSizePerStage);
+    proxyChans[nextPeer2Idx].putWithSignal(rank * rankChunkSize, rankChunkSizePerStage);
   }
-  localAllGatherSm(smChans, rank, nRanksPerNode, startRankIndexInLocalNode, 0, rankChunkSize, rankChunkSize,
-                   nBlocksForLocalAllGather);
-  if (threadIdx.x == 0 && blockIdx.x == 0 && step1Bytes > 0) {
-    proxyChan.wait();
-    proxyChan.flush();
+  localAllGatherSm(smChans, rank, nRanksPerNode, (rank / nRanksPerNode) * nRanksPerNode,
+                    0, rankChunkSize, rankChunkSize, nBlocksForLocalAllGather);
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    proxyChans[prevPeer0Idx].wait();
+    proxyChans[prevPeer1Idx].wait();
+    proxyChans[prevPeer2Idx].wait();
+    proxyChans[nextPeer0Idx].flush();
+    proxyChans[nextPeer1Idx].flush();
+    proxyChans[nextPeer2Idx].flush();
   }
   deviceSyncer.sync(gridDim.x);
-  // Step 2
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
-    proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
+  for (size_t stage = 1; stage < numStages; stage++) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+      proxyChans[nextPeer0Idx].putWithSignal(rank * rankChunkSize + rankChunkSizePerStage * stage, rankChunkSizePerStage);
+      proxyChans[nextPeer1Idx].putWithSignal(rank * rankChunkSize + rankChunkSizePerStage * stage, rankChunkSizePerStage);
+      proxyChans[nextPeer2Idx].putWithSignal(rank * rankChunkSize + rankChunkSizePerStage * stage, rankChunkSizePerStage);
+    }
+    localAllGatherSm(smChans, rank, nRanksPerNode, (prevPeer0Rank / nRanksPerNode) * nRanksPerNode,
+                    rankChunkSizePerStage * (stage - 1), rankChunkSize, rankChunkSizePerStage, nBlocksForLocalAllGather);
+    localAllGatherSm(smChans, rank, nRanksPerNode, (prevPeer1Rank / nRanksPerNode) * nRanksPerNode,
+                    rankChunkSizePerStage * (stage - 1), rankChunkSize, rankChunkSizePerStage, nBlocksForLocalAllGather);
+    localAllGatherSm(smChans, rank, nRanksPerNode, (prevPeer2Rank / nRanksPerNode) * nRanksPerNode,
+                    rankChunkSizePerStage * (stage - 1), rankChunkSize, rankChunkSizePerStage, nBlocksForLocalAllGather);
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+      proxyChans[prevPeer0Idx].wait();
+      proxyChans[prevPeer1Idx].wait();
+      proxyChans[prevPeer2Idx].wait();
+      proxyChans[nextPeer0Idx].flush();
+      proxyChans[nextPeer1Idx].flush();
+      proxyChans[nextPeer2Idx].flush();
+    }
+    deviceSyncer.sync(gridDim.x);
   }
-  if (step1Bytes > 0)
-    localAllGatherSm(smChans, rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
-                     nBlocksForLocalAllGather);
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
-    proxyChan.wait();
-    proxyChan.flush();
-  }
-  deviceSyncer.sync(gridDim.x);
-  // Step 3
-  localAllGatherSm(smChans, rank, nRanksPerNode, startRankIndexInPeerNode, step1Bytes, rankChunkSize, step2Bytes,
-                   nBlocksForLocalAllGather);
+
+  localAllGatherSm(smChans, rank, nRanksPerNode, (prevPeer0Rank / nRanksPerNode) * nRanksPerNode,
+                    (numStages - 1) * rankChunkSizePerStage, rankChunkSize, rankChunkSize - (numStages - 1) * rankChunkSizePerStage, nBlocksForLocalAllGather);
+  localAllGatherSm(smChans, rank, nRanksPerNode, (prevPeer1Rank / nRanksPerNode) * nRanksPerNode,
+                    (numStages - 1) * rankChunkSizePerStage, rankChunkSize, rankChunkSize - (numStages - 1) * rankChunkSizePerStage, nBlocksForLocalAllGather);
+  localAllGatherSm(smChans, rank, nRanksPerNode, (prevPeer2Rank / nRanksPerNode) * nRanksPerNode,
+                    (numStages - 1) * rankChunkSizePerStage, rankChunkSize, rankChunkSize - (numStages - 1) * rankChunkSizePerStage, nBlocksForLocalAllGather);
 }
 
 __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans, mscclpp::ProxyChannelDeviceHandle* proxyChans,
@@ -612,66 +640,138 @@ __device__ void reduceScatterSm(mscclpp::SmChannelDeviceHandle* smChans, mscclpp
   const size_t chunkElemsPerStage = chunkElems / numStages;
   int isComm = (threadIdx.x == 0) && (blockIdx.x == gridDim.x - 1);
   const int nextPeer0Rank = (rank + nRanksPerNode) % worldSize;
+  const int nextPeer1Rank = (rank + 2 * nRanksPerNode) % worldSize;
+  const int nextPeer2Rank = (rank + 3 * nRanksPerNode) % worldSize;
   const int prevPeer0Rank = (rank + worldSize - nRanksPerNode) % worldSize;
-  // const int peer1Rank = (rank + 2 * nRanksPerNode) % worldSize;
-  // const int peer2Rank = (rank + 3 * nRanksPerNode) % worldSize;
+  const int prevPeer1Rank = (rank + worldSize - 2 * nRanksPerNode) % worldSize;
+  const int prevPeer2Rank = (rank + worldSize - 3 * nRanksPerNode) % worldSize;
   const int nextPeer0Idx = (nextPeer0Rank < rank) ? nextPeer0Rank : nextPeer0Rank - 1;
+  const int nextPeer1Idx = (nextPeer1Rank < rank) ? nextPeer1Rank : nextPeer1Rank - 1;
+  const int nextPeer2Idx = (nextPeer2Rank < rank) ? nextPeer2Rank : nextPeer2Rank - 1;
   const int prevPeer0Idx = (prevPeer0Rank < rank) ? prevPeer0Rank : prevPeer0Rank - 1;
-  // const int peer1Idx = (peer1Rank < rank) ? peer1Rank : peer1Rank - 1;
-  // const int peer2Idx = (peer2Rank < rank) ? peer2Rank : peer2Rank - 1;
+  const int prevPeer1Idx = (prevPeer1Rank < rank) ? prevPeer1Rank : prevPeer1Rank - 1;
+  const int prevPeer2Idx = (prevPeer2Rank < rank) ? prevPeer2Rank : prevPeer2Rank - 1;
   if (nRanksPerNode == worldSize) {
     localReduceScatterSm(smChans, buff, rank, nRanksPerNode, 0, 0, chunkElems, chunkElems, gridDim.x);
     return;
   }
 
   // stage 0
-  int startChunkIndex = (nextPeer0Rank / nRanksPerNode) * nRanksPerNode;
-  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, startChunkIndex, 0, chunkElems, chunkElemsPerStage,
-                       gridDim.x);
+  localReduceScatterSm(smChans, buff, rank, nRanksPerNode, (nextPeer0Rank / nRanksPerNode) * nRanksPerNode,
+                       0, chunkElems, chunkElemsPerStage, gridDim.x);
+  localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer1Rank / nRanksPerNode) * nRanksPerNode,
+                       0, chunkElems, chunkElemsPerStage, gridDim.x);
+  localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer2Rank / nRanksPerNode) * nRanksPerNode,
+                       0, chunkElems, chunkElemsPerStage, gridDim.x);
   deviceSyncer.sync(gridDim.x);
+  // for (size_t stage = 1; stage < numStages; stage++) {
+  //   if (isComm) {
+  //     proxyChans[nextPeer0Idx].putWithSignal((nextPeer0Rank * chunkElems + chunkElemsPerStage * (stage - 1)) * sizeof(int), chunkElemsPerStage * sizeof(int));
+  //     proxyChans[nextPeer1Idx].putWithSignal((nextPeer1Rank * chunkElems + chunkElemsPerStage * (stage - 1)) * sizeof(int), chunkElemsPerStage * sizeof(int));
+  //     proxyChans[nextPeer2Idx].putWithSignal((nextPeer2Rank * chunkElems + chunkElemsPerStage * (stage - 1)) * sizeof(int), chunkElemsPerStage * sizeof(int));
+  //   }
+  //   localReduceScatterSm(smChans, buff, rank, nRanksPerNode, (nextPeer0Rank / nRanksPerNode) * nRanksPerNode,
+  //                        chunkElemsPerStage * stage, chunkElems, chunkElemsPerStage, gridDim.x);
+  //   localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer1Rank / nRanksPerNode) * nRanksPerNode,
+  //                        chunkElemsPerStage * stage, chunkElems, chunkElemsPerStage, gridDim.x);
+  //   localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer2Rank / nRanksPerNode) * nRanksPerNode,
+  //                        chunkElemsPerStage * stage, chunkElems, chunkElemsPerStage, gridDim.x);
+  //   if (isComm) {
+  //     proxyChans[prevPeer0Idx].wait();
+  //     proxyChans[prevPeer1Idx].wait();
+  //     proxyChans[prevPeer2Idx].wait();
+  //     proxyChans[nextPeer0Idx].flush();
+  //     proxyChans[nextPeer1Idx].flush();
+  //     proxyChans[nextPeer2Idx].flush();
+  //   }
+  //   deviceSyncer.sync(gridDim.x);
+  // }
   if (isComm) {
     // send results to the next peer
-    size_t offset = nextPeer0Rank * chunkElems * sizeof(int);
-    proxyChans[nextPeer0Idx].putWithSignal(offset, chunkElemsPerStage * sizeof(int));
+    proxyChans[nextPeer0Idx].putWithSignal((nextPeer0Rank * chunkElems + chunkElemsPerStage * 0) * sizeof(int), chunkElemsPerStage * sizeof(int));
+    proxyChans[nextPeer1Idx].putWithSignal((nextPeer1Rank * chunkElems + chunkElemsPerStage * 0) * sizeof(int), chunkElemsPerStage * sizeof(int));
+    proxyChans[nextPeer2Idx].putWithSignal((nextPeer2Rank * chunkElems + chunkElemsPerStage * 0) * sizeof(int), chunkElemsPerStage * sizeof(int));
   }
-
-  // stage 1 to numStages-1
-  for (size_t stage = 1; stage < numStages; ++stage) {
-    localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, startChunkIndex, chunkElemsPerStage * stage,
-                               chunkElems, chunkElemsPerStage, gridDim.x);
-    localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, nodeId * nRanksPerNode, chunkElemsPerStage * (stage - 1),
-                               chunkElems, chunkElemsPerStage, gridDim.x);
-    if (isComm) {
-      // wait for the previous stage's send to complete
-      proxyChans[prevPeer0Idx].wait();
-      proxyChans[nextPeer0Idx].flush();
-    }
-    deviceSyncer.sync(gridDim.x);
-    if (isComm) {
-      size_t offset = (nextPeer0Rank * chunkElems + chunkElemsPerStage * stage) * sizeof(int);
-      proxyChans[nextPeer0Idx].putWithSignal(offset, chunkElemsPerStage * sizeof(int));
-    }
-    // reduce data received from prev peer to related rank
-    size_t offset = (rank * chunkElems + chunkElemsPerStage * (stage - 1)) * sizeof(int);
-    TYPE* dst = (TYPE*)((char*)buff + offset);
-    TYPE* src = (TYPE*)((char*)scratch + offset);
-    vectorSum(dst, src, chunkElemsPerStage);
-    // local data reduce
-  }
-  localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, nodeId * nRanksPerNode, chunkElemsPerStage * (numStages - 1),
-                             chunkElems, chunkElems - chunkElemsPerStage * (numStages - 1), gridDim.x);
+  localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer0Rank / nRanksPerNode) * nRanksPerNode,
+                              chunkElemsPerStage * 1, chunkElems, chunkElemsPerStage, gridDim.x);
+  localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer1Rank / nRanksPerNode) * nRanksPerNode,
+                              chunkElemsPerStage * 1, chunkElems, chunkElemsPerStage, gridDim.x);
+  localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer2Rank / nRanksPerNode) * nRanksPerNode,
+                              chunkElemsPerStage * 1, chunkElems, chunkElemsPerStage, gridDim.x);
   if (isComm) {
+    // wait for the previous stage's send to complete
     proxyChans[prevPeer0Idx].wait();
+    proxyChans[prevPeer1Idx].wait();
+    proxyChans[prevPeer2Idx].wait();
+    proxyChans[nextPeer0Idx].flush();
+    proxyChans[nextPeer1Idx].flush();
+    proxyChans[nextPeer2Idx].flush();
   }
   deviceSyncer.sync(gridDim.x);
-  // reduce to related rank, can not overlap since localReduceScatter also calculate the sum
-  size_t offset = (rank * chunkElems + chunkElemsPerStage * (numStages - 1)) * sizeof(int);
-  TYPE* dst = (TYPE*)((char*)buff + offset);
-  TYPE* src = (TYPE*)((char*)scratch + offset);
-  vectorSum(dst, src, chunkElems - chunkElemsPerStage * (numStages - 1));
+  // // reduce data received from prev peer to related rank
+  // size_t offset = (rank * chunkElems + chunkElemsPerStage * 0) * sizeof(int);
+  // TYPE* dst = (TYPE*)((char*)buff + offset);
+  // TYPE* src = (TYPE*)((char*)scratch + offset);
+  // vectorSum(dst, src, chunkElemsPerStage);
+
   if (isComm) {
-    proxyChans[nextPeer0Idx].flush();
+    // send results to the next peer
+    proxyChans[nextPeer0Idx].putWithSignal((nextPeer0Rank * chunkElems + chunkElemsPerStage * 1) * sizeof(int), chunkElemsPerStage * sizeof(int));
+    proxyChans[nextPeer1Idx].putWithSignal((nextPeer1Rank * chunkElems + chunkElemsPerStage * 1) * sizeof(int), chunkElemsPerStage * sizeof(int));
+    proxyChans[nextPeer2Idx].putWithSignal((nextPeer2Rank * chunkElems + chunkElemsPerStage * 1) * sizeof(int), chunkElemsPerStage * sizeof(int));
   }
+  localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer0Rank / nRanksPerNode) * nRanksPerNode,
+                              chunkElemsPerStage * 2, chunkElems, chunkElemsPerStage, gridDim.x);
+  localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer1Rank / nRanksPerNode) * nRanksPerNode,
+                              chunkElemsPerStage * 2, chunkElems, chunkElemsPerStage, gridDim.x);
+  localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer2Rank / nRanksPerNode) * nRanksPerNode,
+                              chunkElemsPerStage * 2, chunkElems, chunkElemsPerStage, gridDim.x);
+
+  if (isComm) {
+    // wait for the previous stage's send to complete
+    proxyChans[prevPeer0Idx].wait();
+    proxyChans[prevPeer1Idx].wait();
+    proxyChans[prevPeer2Idx].wait();
+    proxyChans[nextPeer0Idx].flush();
+    proxyChans[nextPeer1Idx].flush();
+    proxyChans[nextPeer2Idx].flush();
+  }
+  deviceSyncer.sync(gridDim.x);
+  // reduce data received from prev peer to related rank
+  // offset = (rank * chunkElems + chunkElemsPerStage * 0) * sizeof(int);
+  // dst = (TYPE*)((char*)buff + offset);
+  // src = (TYPE*)((char*)scratch + offset);
+  // vectorSum(dst, src, chunkElemsPerStage);
+
+  if (isComm) {
+    // send results to the next peer
+    proxyChans[nextPeer0Idx].putWithSignal((nextPeer0Rank * chunkElems + chunkElemsPerStage * 2) * sizeof(int), chunkElemsPerStage * sizeof(int));
+    proxyChans[nextPeer1Idx].putWithSignal((nextPeer1Rank * chunkElems + chunkElemsPerStage * 2) * sizeof(int), chunkElemsPerStage * sizeof(int));
+    proxyChans[nextPeer2Idx].putWithSignal((nextPeer2Rank * chunkElems + chunkElemsPerStage * 2) * sizeof(int), chunkElemsPerStage * sizeof(int));
+  }
+  localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer0Rank / nRanksPerNode) * nRanksPerNode,
+                              chunkElemsPerStage * 3, chunkElems, chunkElemsPerStage, gridDim.x);
+  localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer1Rank / nRanksPerNode) * nRanksPerNode,
+                              chunkElemsPerStage * 3, chunkElems, chunkElemsPerStage, gridDim.x);
+  localReduceScatterSm<true>(smChans, buff, rank, nRanksPerNode, (nextPeer2Rank / nRanksPerNode) * nRanksPerNode,
+                              chunkElemsPerStage * 3, chunkElems, chunkElemsPerStage, gridDim.x);
+
+  if (isComm) {
+    // wait for the previous stage's send to complete
+    proxyChans[prevPeer0Idx].wait();
+    proxyChans[prevPeer1Idx].wait();
+    proxyChans[prevPeer2Idx].wait();
+    proxyChans[nextPeer0Idx].flush();
+    proxyChans[nextPeer1Idx].flush();
+    proxyChans[nextPeer2Idx].flush();
+  }
+  deviceSyncer.sync(gridDim.x);
+
+  // reduce data received from prev peer to related rank
+  // offset = (rank * chunkElems + chunkElemsPerStage * 0) * sizeof(int);
+  // dst = (TYPE*)((char*)buff + offset);
+  // src = (TYPE*)((char*)scratch + offset);
+  // vectorSum(dst, src, chunkElemsPerStage);
 }
 
 extern "C" __global__ void __launch_bounds__(1024, 1) __global__
