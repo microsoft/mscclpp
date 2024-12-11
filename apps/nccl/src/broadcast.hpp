@@ -24,9 +24,11 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t nWarp = nThread / WARP_SIZE;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
-  auto smChans = smChannels + chanOffset;
-
-  if (threadIdx.x < nPeer) {
+  //auto smChans = smChannels + chanOffset;
+  
+  __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> smChans[NRANKS_PER_NODE - 1];
+  if(threadIdx.x < nPeer) {
+    smChans[threadIdx.x] = smChannels[chanOffset+threadIdx.x];
     smChans[threadIdx.x].relaxedSignal();
     smChans[threadIdx.x].wait();
   }
