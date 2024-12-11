@@ -80,11 +80,15 @@ jobs:
         HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"     \
-          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "   \
-          cd /root/mscclpp;                                            \
-          export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH; \
+        rm -rf 10.0.0.4
+        tail -f 10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"      \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+          cd /root/mscclpp;                                             \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
           ./build/test/unit_tests"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -97,14 +101,18 @@ jobs:
         HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        rm -rf 10.0.0.4
+        tail -f 10.0.0.4 &
+        CHILD_PID=$!
         parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"      \
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
-          export PATH=/usr/local/mpi/bin:$PATH;                         \
+          export PATH=/usr/local/mpi/bin:\$PATH;                        \
           cd /root/mscclpp;                                             \
-          export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH;  \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
           mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests;  \
           mpirun --allow-run-as-root -tag-output -np 4 ./build/test/mp_unit_tests;  \
           mpirun --allow-run-as-root -tag-output -np 8 ./build/test/mp_unit_tests"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -117,12 +125,16 @@ jobs:
         HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"      \
-          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
-          export PATH=/usr/local/mpi/bin:$PATH                          \
-          export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH;  \
-          cd /root/mscclpp;                                             \
+        rm -rf 10.0.0.4
+        tail -f 10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .  \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "     \
+          export PATH=/usr/local/mpi/bin:\$PATH                          \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
+          cd /root/mscclpp;                                              \
           mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: AzureCLI@2
@@ -207,19 +219,23 @@ jobs:
         HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        rm -rf 10.0.0.4
+        tail -f 10.0.0.4 &
+        CHILD_PID=$!
         parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"  \
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
           cd /root/mscclpp;                                         \
           rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output \
-          export PATH=/usr/local/mpi/bin:$PATH \
-          export NPKIT_DUMP_DIR=./npkit_dump   \
-          export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH;  \
+          export PATH=/usr/local/mpi/bin:\$PATH \
+          export NPKIT_DUMP_DIR=./npkit_dump    \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
           mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests --gtest_filter="ExecutorTest.TwoNodesAllreduce"\
           python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output \
           grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json    \
           grep -q NPKIT_EVENT_EXECUTOR_SIGNAL_ENTRY ./npkit_output/npkit_event_trace.json  \
           grep -q NPKIT_EVENT_EXECUTOR_WAIT_ENTRY ./npkit_output/npkit_event_trace.json    \
           grep -q NPKIT_EVENT_EXECUTOR_READ_REDUCE_COPY_SEND_ENTRY ./npkit_output/npkit_event_trace.json"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -232,12 +248,15 @@ jobs:
         HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        rm -rf 10.0.0.4
+        tail -f 10.0.0.4 &
+        CHILD_PID=$!
         parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"  \
           cd /root/mscclpp;                                         \
           rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output \
-          export PATH=/usr/local/mpi/bin:$PATH \
-          export NPKIT_DUMP_DIR=./npkit_dump   \
-          export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH;  \
+          export PATH=/usr/local/mpi/bin:\$PATH \
+          export NPKIT_DUMP_DIR=./npkit_dump    \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
           mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x -k 'test_executor[allreduce.json' \
           python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output \
           grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json    \
@@ -251,6 +270,7 @@ jobs:
           grep -q NPKIT_EVENT_EXECUTOR_COPY_PACKET_ENTRY ./npkit_output/npkit_event_trace.json   \
           grep -q NPKIT_EVENT_EXECUTOR_PUT_PACKET_ENTRY ./npkit_output/npkit_event_trace.json    \
           grep -q NPKIT_EVENT_EXECUTOR_REDUCE_SEND_PACKET_ENTRY ./npkit_output/npkit_event_trace.json"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: AzureCLI@2
