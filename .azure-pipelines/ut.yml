@@ -162,6 +162,12 @@ jobs:
         make -j
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
+  - task: DownloadSecureFile@1
+    name: SshKeyFile
+    displayName: Download key file
+    inputs:
+      secureFile: mscclpp.pem
+
   - task: Bash@3
     name: InstallPackages
     displayName: Install Packages
