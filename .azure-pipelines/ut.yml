@@ -83,7 +83,7 @@ jobs:
         : > azureuser@10.0.0.4
         tail -f azureuser@10.0.0.4 &
         CHILD_PID=$!
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o . \
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
           cd /root/mscclpp;                                             \
           export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
@@ -104,7 +104,7 @@ jobs:
         : > azureuser@10.0.0.4
         tail -f azureuser@10.0.0.4 &
         CHILD_PID=$!
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o . \
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
           export PATH=/usr/local/mpi/bin:\$PATH;                        \
           cd /root/mscclpp;                                             \
@@ -128,7 +128,7 @@ jobs:
         : > azureuser@10.0.0.4
         tail -f azureuser@10.0.0.4 &
         CHILD_PID=$!
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .  \
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .     \
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "     \
           export PATH=/usr/local/mpi/bin:\$PATH                          \
           export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
@@ -222,7 +222,7 @@ jobs:
         : > azureuser@10.0.0.4
         tail -f azureuser@10.0.0.4 &
         CHILD_PID=$!
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o . \
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
           cd /root/mscclpp;                                             \
           rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output; \
@@ -251,7 +251,7 @@ jobs:
         : > azureuser@10.0.0.4
         tail -f azureuser@10.0.0.4 &
         CHILD_PID=$!
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o . \
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
           cd /root/mscclpp;                                             \
           rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output; \
