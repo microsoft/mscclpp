@@ -81,6 +81,7 @@ jobs:
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         rm -rf 10.0.0.4
+        touch 10.0.0.4
         tail -f 10.0.0.4 &
         CHILD_PID=$!
         parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o . \
@@ -102,6 +103,7 @@ jobs:
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         rm -rf 10.0.0.4
+        touch 10.0.0.4
         tail -f 10.0.0.4 &
         CHILD_PID=$!
         parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o . \
@@ -126,6 +128,7 @@ jobs:
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         rm -rf 10.0.0.4
+        touch 10.0.0.4
         tail -f 10.0.0.4 &
         CHILD_PID=$!
         parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .  \
@@ -220,6 +223,7 @@ jobs:
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         rm -rf 10.0.0.4
+        touch 10.0.0.4
         tail -f 10.0.0.4 &
         CHILD_PID=$!
         parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o . \
@@ -249,6 +253,7 @@ jobs:
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
         rm -rf 10.0.0.4
+        touch 10.0.0.4
         tail -f 10.0.0.4 &
         CHILD_PID=$!
         parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o . \
