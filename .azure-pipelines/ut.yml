@@ -83,7 +83,7 @@ jobs:
         rm -rf 10.0.0.4
         tail -f 10.0.0.4 &
         CHILD_PID=$!
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"      \
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o . \
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
           cd /root/mscclpp;                                             \
           export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
@@ -104,7 +104,7 @@ jobs:
         rm -rf 10.0.0.4
         tail -f 10.0.0.4 &
         CHILD_PID=$!
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"      \
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o . \
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
           export PATH=/usr/local/mpi/bin:\$PATH;                        \
           cd /root/mscclpp;                                             \
@@ -222,9 +222,9 @@ jobs:
         rm -rf 10.0.0.4
         tail -f 10.0.0.4 &
         CHILD_PID=$!
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"  \
-          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
-          cd /root/mscclpp;                                         \
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o . \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+          cd /root/mscclpp;                                             \
           rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output \
           export PATH=/usr/local/mpi/bin:\$PATH \
           export NPKIT_DUMP_DIR=./npkit_dump    \
@@ -251,8 +251,9 @@ jobs:
         rm -rf 10.0.0.4
         tail -f 10.0.0.4 &
         CHILD_PID=$!
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"  \
-          cd /root/mscclpp;                                         \
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o . \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+          cd /root/mscclpp;                                             \
           rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output \
           export PATH=/usr/local/mpi/bin:\$PATH \
           export NPKIT_DUMP_DIR=./npkit_dump    \
