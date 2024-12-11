@@ -162,8 +162,8 @@ jobs:
         parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"\
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
           set -e;                                                   \
-          export PATH=/usr/local/mpi/bin:$PATH;                     \
-          export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH;  \
+          export PATH=/usr/local/mpi/bin:\$PATH;                    \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
           cd /root/mscclpp;                                         \
           mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -o output.jsonl; \
           mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl"'
@@ -186,8 +186,9 @@ jobs:
         parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"\
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
           set -e;                                                   \
-          export PATH=/usr/local/mpi/bin:$PATH;                     \
-          export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH;  \
+          cd /root/mscclpp;                                         \
+          export PATH=/usr/local/mpi/bin:\$PATH;                    \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
           python3 test/mscclpp-test/check_perf_result.py --perf-file output.jsonl --baseline-file test/deploy/perf_ndmv4.jsonl"'
         kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
@@ -208,6 +209,7 @@ jobs:
         parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c " \
           set -e;                                                    \
+          cd /root/mscclpp;                                          \
           export PATH=/usr/local/mpi/bin:\$PATH;                     \
           export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
           python3 -m pip install .;                                     \
