@@ -123,11 +123,11 @@ cudaError_t broadcast(T* buff, [[maybe_unused]] T* scratch, [[maybe_unused]] T* 
                       mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels, size_t channelOutOffset, int rank,
                       int nRanksPerNode, int root, int worldSize, size_t nelems, cudaStream_t stream) {
   int nBlocks = 28;
-  if (nelems <= 4096) {
+  if (nelems*nRanksPerNode <= 4096) {
     nBlocks = 7;
-  } else if (nelems <= 32768) {
+  } else if (nelems*nRanksPerNode <= 32768) {
     nBlocks = 14;
-  } else if (nelems >= 2097152) {
+  } else if (nelems*nRanksPerNode >= 2097152) {
     nBlocks = 35;
   }
   broadcast6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, smChannels, channelOutOffset, rank, worldSize,
