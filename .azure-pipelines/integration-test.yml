@@ -182,7 +182,7 @@ jobs:
           export PATH=/usr/local/mpi/bin:$PATH;                     \
           export LD_LIBRARY_PATH=/root/mscclpp/build:$LD_LIBRARY_PATH;  \
           python3 -m pip install .                                  \
-          mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=$(System.DefaultWorkingDirectory) -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py"'
+          mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py"'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: AzureCLI@2
