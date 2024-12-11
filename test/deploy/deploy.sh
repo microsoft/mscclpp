@@ -1,9 +1,20 @@
 set -e
 
+# get parameter form $1
+TEST_NAME=$1
+
 KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
 ROOT_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/"
+if [ "${TEST_NAME}" == "nccltest-single-node" ]; then
+  ROOT_DIR="${ROOT_DIR}/mscclpp"
+  SYSTEM_DEFAULTWORKINGDIRECTORY="${SYSTEM_DEFAULTWORKINGDIRECTORY}/mscclpp"
+fi
 DST_DIR="/tmp/mscclpp"
-HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile"
+if [ "${TEST_NAME}" == "nccltest-single-node" ]; then
+  HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile_ci"
+else
+  HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile"
+fi
 SSH_OPTION="StrictHostKeyChecking=no"
 
 chmod 400 ${KeyFilePath}

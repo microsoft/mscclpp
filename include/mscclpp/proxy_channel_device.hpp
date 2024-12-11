@@ -83,7 +83,7 @@ union ChannelTrigger {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-struct ProxyChannelDeviceHandle {
+struct BaseProxyChannelDeviceHandle {
   SemaphoreId semaphoreId_;
 
   Host2DeviceSemaphoreDeviceHandle semaphore_;
@@ -91,6 +91,12 @@ struct ProxyChannelDeviceHandle {
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
   FifoDeviceHandle fifo_;
+
+  BaseProxyChannelDeviceHandle() {}
+
+  BaseProxyChannelDeviceHandle(SemaphoreId semaphoreId, Host2DeviceSemaphoreDeviceHandle semaphore,
+                               FifoDeviceHandle fifo)
+      : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a @ref TriggerData to the FIFO.
@@ -175,10 +181,15 @@ struct ProxyChannelDeviceHandle {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-struct SimpleProxyChannelDeviceHandle {
-  ProxyChannelDeviceHandle proxyChan_;
+struct ProxyChannelDeviceHandle : public BaseProxyChannelDeviceHandle {
   MemoryId dst_;
   MemoryId src_;
+
+  ProxyChannelDeviceHandle(){};
+
+  ProxyChannelDeviceHandle(SemaphoreId semaphoreId, Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
+                           MemoryId dst, MemoryId src)
+      : BaseProxyChannelDeviceHandle(semaphoreId, semaphore, fifo), dst_(dst), src_(src) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a @ref TriggerData to the FIFO.
@@ -186,7 +197,7 @@ struct SimpleProxyChannelDeviceHandle {
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    proxyChan_.put(dst_, dstOffset, src_, srcOffset, size);
+    BaseProxyChannelDeviceHandle::put(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a @ref TriggerData to the FIFO.
@@ -194,15 +205,12 @@ struct SimpleProxyChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(uint64_t offset, uint64_t size) { put(offset, offset, size); }
 
-  /// Push a @ref TriggerFlag to the FIFO.
-  MSCCLPP_DEVICE_INLINE void signal() { proxyChan_.signal(); }
-
   /// Push a @ref TriggerData and a @ref TriggerFlag at the same time to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    proxyChan_.putWithSignal(dst_, dstOffset, src_, srcOffset, size);
+    BaseProxyChannelDeviceHandle::putWithSignal(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a @ref TriggerData and a @ref TriggerFlag at the same time to the FIFO.
@@ -215,7 +223,7 @@ struct SimpleProxyChannelDeviceHandle {
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    proxyChan_.putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size);
+    BaseProxyChannelDeviceHandle::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a @ref TriggerData, a @ref TriggerFlag, and a @ref TriggerSync at the same time to the FIFO.
@@ -224,17 +232,6 @@ struct SimpleProxyChannelDeviceHandle {
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
     putWithSignalAndFlush(offset, offset, size);
   }
-
-  /// Push a @ref TriggerSync to the FIFO.
-  MSCCLPP_DEVICE_INLINE void flush() { proxyChan_.flush(); }
-
-  /// Check if the proxy channel has been signaled.
-  /// @return true if the proxy channel has been signaled.
-  MSCCLPP_DEVICE_INLINE bool poll() { return proxyChan_.poll(); }
-
-  /// Wait for the proxy channel to be signaled.
-  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) { proxyChan_.wait(maxSpinCount); }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 

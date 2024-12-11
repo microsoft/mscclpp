@@ -117,7 +117,7 @@ In this section, we will discuss several use cases that demonstrate the capabili
 
 MSCCL++ enables the offloading of communication logic from the GPU to the CPU, facilitating the overlapping of communication and computation processes. The code snippet provided illustrates this overlapping technique. In the depicted scenario, the GPU emits a signal to the CPU indicating readiness for data transfer. Subsequently, while the GPU continues to execute computation tasks, the CPU initiates the data transfer to the designated target device.
 ```cpp
-__device__ void gpuKernel(mscclpp::SimpleProxyChannelDeviceHandle* proxyChannel) {
+__device__ void gpuKernel(mscclpp::ProxyChannelDeviceHandle* proxyChannel) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   // Send a trigger to the CPU
   if (tid == 0) {
@@ -138,11 +138,11 @@ Traditional communication libraries enforce a separation between communication a
 MCSCL++ offers a low-level communication API, allowing users to design customized collective communication algorithms. The following code demonstrates how to implement a customized All2All algorithm using MSCCL++.
 ```cpp
 using DeviceHandle = mscclpp::DeviceHandle<T>;
-__device__ void localAlltoall(DeviceHandle<mscclpp::SimpleProxyChannel>* proxyChans, int rank,
+__device__ void localAlltoall(DeviceHandle<mscclpp::ProxyChannel>* proxyChans, int rank,
                               int nRanksPerNode, size_t nElements) {
   int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   for (int i = 1; i < nRanksPerNode; i++) {
-    DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = proxyChans[blockIdx.x];
+    DeviceHandle<mscclpp::ProxyChannel> proxyChan = proxyChans[blockIdx.x];
     if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank + i) % nRanksPerNode) {
       proxyChan.putWithSignalAndFlush(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
                                       nElements * sizeof(int));

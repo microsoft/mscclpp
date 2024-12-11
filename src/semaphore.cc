@@ -94,7 +94,7 @@ MSCCLPP_API_CPP SmDevice2DeviceSemaphore::SmDevice2DeviceSemaphore(Communicator&
         setupInboundSemaphoreId(communicator, connection.get(), localInboundSemaphore_.get());
     isRemoteInboundSemaphoreIdSet_ = true;
   } else if (AllIBTransports.has(connection->transport())) {
-    // We don't need to really with any of the IB transports, since the values will be local
+    // Should we throw an error here?
     isRemoteInboundSemaphoreIdSet_ = false;
   }
 }
