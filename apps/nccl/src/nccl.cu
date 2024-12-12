@@ -34,7 +34,7 @@
 //                             mscclpp::Transport::IB6, mscclpp::Transport::IB7};
 
 // Declare the global map to store associations between raw pointer and shared pointer
-std::unordered_map<void*, std::shared_ptr<char>> ptrMap;
+static std::unordered_map<void*, std::shared_ptr<char>> ptrMap;
 
 struct channelKey {
   const void* buff;
@@ -660,15 +660,21 @@ NCCL_API ncclResult_t ncclCommDeregister(const ncclComm_t, void*) {
 
 ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
   // Allocate memory using mscclpp::allocSharedPhysicalCuda
-  auto rawPtr = mscclpp::allocSharedPhysicalCuda<char>(size);
-  if (rawPtr == nullptr) {
-    return ncclInternalError;
+  std::shared_ptr<char> sharedPtr;
+  try {
+    sharedPtr = mscclpp::allocSharedPhysicalCuda<char>(size);
+    if (sharedPtr == nullptr) {
+      throw mscclpp::Error("ncclMemAlloc failed", mscclpp::ErrorCode::InvalidUsage);
+    }
+  } catch (const mscclpp::Error& e) {
+    std::ostringstream oss;
+    oss << "Mscclpp failure: " << e.what() << std::endl;
+    return ncclInvalidUsage;
   }
-
-  ptrMap[rawPtr.get()] = rawPtr;
+  ptrMap[sharedPtr.get()] = sharedPtr;
 
   // Return the pointer
-  *ptr = rawPtr.get();
+  *ptr = sharedPtr.get();
   return ncclSuccess;
 }
 
@@ -680,5 +686,5 @@ ncclResult_t ncclMemFree(void* ptr) {
   }
 
   // Pointer not found
-  return ncclInternalError;
+  return ncclInvalidUsage;
 }
