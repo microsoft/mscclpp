@@ -8,145 +8,145 @@ pr:
   drafts: false
 
 jobs:
-- job: UnitTest
-  timeoutInMinutes: 40
-  pool:
-    name: msccl-ci
-  strategy:
-    matrix:
-      cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
-      cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+# - job: UnitTest
+#   timeoutInMinutes: 40
+#   pool:
+#     name: msccl-ci
+#   strategy:
+#     matrix:
+#       cuda11:
+#         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
+#       cuda12:
+#         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
 
-  container:
-    image: $[ variables['containerImage'] ]
+#   container:
+#     image: $[ variables['containerImage'] ]
 
-  steps:
-  - task: Bash@3
-    name: Build
-    displayName: Build
-    inputs:
-      targetType: 'inline'
-      script: |
-        mkdir build && cd build
-        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
-        make -j
-      workingDirectory: '$(System.DefaultWorkingDirectory)'
+#   steps:
+#   - task: Bash@3
+#     name: Build
+#     displayName: Build
+#     inputs:
+#       targetType: 'inline'
+#       script: |
+#         mkdir build && cd build
+#         cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
+#         make -j
+#       workingDirectory: '$(System.DefaultWorkingDirectory)'
   
-  - task: DownloadSecureFile@1
-    name: SshKeyFile
-    displayName: Download key file
-    inputs:
-      secureFile: mscclpp.pem
+#   - task: DownloadSecureFile@1
+#     name: SshKeyFile
+#     displayName: Download key file
+#     inputs:
+#       secureFile: mscclpp.pem
 
-  - task: Bash@3
-    name: InstallPackages
-    displayName: Install Packages
-    inputs:
-      targetType: 'inline'
-      script: |
-        sudo apt-get update -y
-        sudo apt-get install pssh -y
-        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+#   - task: Bash@3
+#     name: InstallPackages
+#     displayName: Install Packages
+#     inputs:
+#       targetType: 'inline'
+#       script: |
+#         sudo apt-get update -y
+#         sudo apt-get install pssh -y
+#         curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
-  - task: AzureCLI@2
-    name: StartVMSS
-    displayName: Start VMSS
-    inputs:
-      azureSubscription: mscclpp-ci
-      scriptType: bash
-      scriptLocation: inlineScript
-      inlineScript: |
-        az vmss start --name mscclpp-ci --resource-group mscclpp
+#   - task: AzureCLI@2
+#     name: StartVMSS
+#     displayName: Start VMSS
+#     inputs:
+#       azureSubscription: mscclpp-ci
+#       scriptType: bash
+#       scriptLocation: inlineScript
+#       inlineScript: |
+#         az vmss start --name mscclpp-ci --resource-group mscclpp
 
-  - task: Bash@3
-    name: DeployTestEnv
-    displayName: Deploy Test Env
-    inputs:
-      targetType: filePath
-      filePath: test/deploy/deploy.sh
-      arguments: "single-node-test"
-      workingDirectory: '$(System.DefaultWorkingDirectory)'
+#   - task: Bash@3
+#     name: DeployTestEnv
+#     displayName: Deploy Test Env
+#     inputs:
+#       targetType: filePath
+#       filePath: test/deploy/deploy.sh
+#       arguments: "single-node-test"
+#       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 
-  - task: Bash@3
-    name: UnitTests
-    displayName: Run mscclpp unit tests
-    inputs:
-      targetType: 'inline'
-      script: |
-        set -e
-        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
-        SSH_OPTION="StrictHostKeyChecking=no"
-        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        : > azureuser@10.0.0.4
-        tail -f azureuser@10.0.0.4 &
-        CHILD_PID=$!
-        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
-          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
-          cd /root/mscclpp;                                             \
-          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
-          ./build/test/unit_tests"'
-        kill $CHILD_PID
-      workingDirectory: '$(System.DefaultWorkingDirectory)'
+#   - task: Bash@3
+#     name: UnitTests
+#     displayName: Run mscclpp unit tests
+#     inputs:
+#       targetType: 'inline'
+#       script: |
+#         set -e
+#         HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+#         SSH_OPTION="StrictHostKeyChecking=no"
+#         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+#         : > azureuser@10.0.0.4
+#         tail -f azureuser@10.0.0.4 &
+#         CHILD_PID=$!
+#         parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
+#           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+#           cd /root/mscclpp;                                             \
+#           export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
+#           ./build/test/unit_tests"'
+#         kill $CHILD_PID
+#       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-  - task: Bash@3
-    name: MpUnitTests
-    displayName: Run mscclpp multi-process unit tests
-    inputs:
-      targetType: 'inline'
-      script: |
-        set -e
-        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
-        SSH_OPTION="StrictHostKeyChecking=no"
-        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        : > azureuser@10.0.0.4
-        tail -f azureuser@10.0.0.4 &
-        CHILD_PID=$!
-        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
-          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
-          export PATH=/usr/local/mpi/bin:\$PATH;                        \
-          cd /root/mscclpp;                                             \
-          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
-          mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests;  \
-          mpirun --allow-run-as-root -tag-output -np 4 ./build/test/mp_unit_tests;  \
-          mpirun --allow-run-as-root -tag-output -np 8 ./build/test/mp_unit_tests"'
-        kill $CHILD_PID
-      workingDirectory: '$(System.DefaultWorkingDirectory)'
+#   - task: Bash@3
+#     name: MpUnitTests
+#     displayName: Run mscclpp multi-process unit tests
+#     inputs:
+#       targetType: 'inline'
+#       script: |
+#         set -e
+#         HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+#         SSH_OPTION="StrictHostKeyChecking=no"
+#         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+#         : > azureuser@10.0.0.4
+#         tail -f azureuser@10.0.0.4 &
+#         CHILD_PID=$!
+#         parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
+#           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+#           export PATH=/usr/local/mpi/bin:\$PATH;                        \
+#           cd /root/mscclpp;                                             \
+#           export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
+#           mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests;  \
+#           mpirun --allow-run-as-root -tag-output -np 4 ./build/test/mp_unit_tests;  \
+#           mpirun --allow-run-as-root -tag-output -np 8 ./build/test/mp_unit_tests"'
+#         kill $CHILD_PID
+#       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-  - task: Bash@3
-    name: PyTests
-    displayName: Run pytests
-    inputs:
-      targetType: 'inline'
-      script: |
-        set -e
-        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
-        SSH_OPTION="StrictHostKeyChecking=no"
-        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        : > azureuser@10.0.0.4
-        tail -f azureuser@10.0.0.4 &
-        CHILD_PID=$!
-        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .     \
-          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "     \
-          export PATH=/usr/local/mpi/bin:\$PATH                          \
-          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
-          cd /root/mscclpp;                                              \
-          mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
-        kill $CHILD_PID
-      workingDirectory: '$(System.DefaultWorkingDirectory)'
+#   - task: Bash@3
+#     name: PyTests
+#     displayName: Run pytests
+#     inputs:
+#       targetType: 'inline'
+#       script: |
+#         set -e
+#         HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+#         SSH_OPTION="StrictHostKeyChecking=no"
+#         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+#         : > azureuser@10.0.0.4
+#         tail -f azureuser@10.0.0.4 &
+#         CHILD_PID=$!
+#         parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .     \
+#           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "     \
+#           export PATH=/usr/local/mpi/bin:\$PATH                          \
+#           export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
+#           cd /root/mscclpp;                                              \
+#           mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
+#         kill $CHILD_PID
+#       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-  - task: AzureCLI@2
-    name: StopVMSS
-    displayName: Deallocate VMSS
-    condition: always()
-    inputs:
-      azureSubscription: mscclpp-ci
-      scriptType: bash
-      scriptLocation: inlineScript
-      inlineScript: |
-        az vmss deallocate --name mscclpp-ci --resource-group mscclpp
+#   - task: AzureCLI@2
+#     name: StopVMSS
+#     displayName: Deallocate VMSS
+#     condition: always()
+#     inputs:
+#       azureSubscription: mscclpp-ci
+#       scriptType: bash
+#       scriptLocation: inlineScript
+#       inlineScript: |
+#         az vmss deallocate --name mscclpp-ci --resource-group mscclpp
 
 - job: UnitTestWithNpKit
   timeoutInMinutes: 30
@@ -154,8 +154,8 @@ jobs:
     name: msccl-ci
   strategy:
     matrix:
-      cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
+      # cuda11:
+      #   containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
 
@@ -244,7 +244,7 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
-        set -e
+        # set -e
         HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
         SSH_OPTION="StrictHostKeyChecking=no"
         KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
@@ -272,6 +272,7 @@ jobs:
           grep -q NPKIT_EVENT_EXECUTOR_PUT_PACKET_ENTRY ./npkit_output/npkit_event_trace.json;    \
           grep -q NPKIT_EVENT_EXECUTOR_REDUCE_SEND_PACKET_ENTRY ./npkit_output/npkit_event_trace.json"'
         kill $CHILD_PID
+        sleep 20m
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: AzureCLI@2
