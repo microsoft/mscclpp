@@ -27,15 +27,6 @@
     }                                                                                       \
   } while (0)
 
-#define NCCLCHECK(cmd)                                                                      \
-  do {                                                                                      \
-    ncclResult_t r = cmd;                                                                   \
-    if (r!= ncclSuccess) {                                                                  \
-      printf("Failed, NCCL error %s:%d '%s'\n", __FILE__ , __LINE__, ncclGetErrorString(r));\
-      exit(EXIT_FAILURE);                                                                   \
-    }                                                                                       \
-} while(0)
-
 #define NUM_CHANNELS_PER_CONNECTION 64
 
 // static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
@@ -474,8 +465,7 @@ NCCL_API ncclResult_t ncclReduce(const void*, void*, size_t, ncclDataType_t, ncc
 }
 
 NCCL_API ncclResult_t ncclBcast(void* buff, size_t count, ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream) {
-  NCCLCHECK(ncclBroadcast(buff, buff, count, datatype, root, comm, stream));
-  return ncclSuccess;
+  return ncclBroadcast(buff, buff, count, datatype, root, comm, stream);
 }
 
 NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype, int root,
