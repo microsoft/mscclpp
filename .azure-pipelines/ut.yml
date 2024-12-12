@@ -163,17 +163,6 @@ jobs:
     image: $[ variables['containerImage'] ]
 
   steps:
-  - task: Bash@3
-    name: Build
-    displayName: Build
-    inputs:
-      targetType: 'inline'
-      script: |
-        mkdir build && cd build
-        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DNPKIT_FLAGS="-DENABLE_NPKIT -DENABLE_NPKIT_EVENT_TIME_SYNC_CPU -DENABLE_NPKIT_EVENT_TIME_SYNC_GPU -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT" ..
-        make -j
-      workingDirectory: '$(System.DefaultWorkingDirectory)'
-
   - task: DownloadSecureFile@1
     name: SshKeyFile
     displayName: Download key file
