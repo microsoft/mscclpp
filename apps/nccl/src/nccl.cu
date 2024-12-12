@@ -213,6 +213,9 @@ static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> setupSmChannel
 
 static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
                                           ncclRedOp_t, ncclComm_t comm, cudaStream_t stream) {
+  // FallBack for single node
+  if (comm->comm->bootstrap()->getNranks() != comm->comm->bootstrap()->getNranksPerNode()) return ncclInvalidUsage;
+
   // Checking if the parameters are valids
   if (sendbuff == nullptr || recvbuff == nullptr || count == 0 || ncclTypeSize(datatype) == 0 || comm == nullptr)
     return ncclInvalidArgument;
@@ -298,6 +301,10 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
 
 static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, size_t sendcount,
                                           ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream) {
+  // FallBack for single node
+  if (comm->comm->bootstrap()->getNranks() != comm->comm->bootstrap()->getNranksPerNode()) return ncclInvalidUsage;
+
+  // Checking if the parameters are valids
   size_t bytes = sendcount * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
 
@@ -336,6 +343,40 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
   return ncclSuccess;
 }
 
+static void ncclCommInitRankFallBack(ncclComm* commPtr, std::shared_ptr<mscclpp::Communicator> mscclppComm, int rank) {
+  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+
+  for (int i = 0; i < mscclppComm->bootstrap()->getNranks(); i++) {
+    if (i == rank) continue;
+    mscclpp::Transport transport = getTransport(rank, i);
+    connectionFutures.push_back(mscclppComm->connectOnSetup(i, 0, transport));
+  }
+  mscclppComm->setup();
+
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
+                 [](const auto& future) { return future.get(); });
+
+  std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
+  for (size_t idx = 0; idx < NUM_CHANNELS_PER_CONNECTION; ++idx) {
+    for (size_t cid = 0; cid < connections.size(); ++cid) {
+      if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+        smSemaphores.emplace_back(
+            std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*(mscclppComm), connections[cid]));
+      }
+    }
+  }
+
+  mscclppComm->setup();
+  commPtr->connections = std::move(connections);
+  commPtr->smSemaphores = std::move(smSemaphores);
+  commPtr->buffFlag = 0;
+  commPtr->numScratchBuff = 2;
+  commPtr->scratchBuff = mscclpp::allocExtSharedCuda<char>(SCRATCH_SIZE);
+  commPtr->remoteScratchRegMemories =
+      setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
+}
+
 NCCL_API ncclResult_t ncclGetVersion(int* version) {
   if (version == nullptr) return ncclInvalidArgument;
   *version = MSCCLPP_VERSION;
@@ -364,40 +405,14 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   memcpy(id.data(), &commId, sizeof(ncclUniqueId));
   bootstrap->initialize(id);
   std::shared_ptr<mscclpp::Communicator> mscclppComm = std::make_shared<mscclpp::Communicator>(bootstrap);
-  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
-
-  for (int i = 0; i < mscclppComm->bootstrap()->getNranks(); i++) {
-    if (i == rank) continue;
-    mscclpp::Transport transport = getTransport(rank, i);
-    connectionFutures.push_back(mscclppComm->connectOnSetup(i, 0, transport));
-  }
-  mscclppComm->setup();
-
-  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
-  std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
-                 [](const auto& future) { return future.get(); });
-
-  std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
-  for (size_t idx = 0; idx < NUM_CHANNELS_PER_CONNECTION; ++idx) {
-    for (size_t cid = 0; cid < connections.size(); ++cid) {
-      if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-        smSemaphores.emplace_back(
-            std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*(mscclppComm), connections[cid]));
-      }
-    }
-  }
-  mscclppComm->setup();
-
   ncclComm* commPtr = new ncclComm();
+
   commPtr->comm = mscclppComm;
-  commPtr->connections = std::move(connections);
-  commPtr->smSemaphores = std::move(smSemaphores);
-  commPtr->buffFlag = 0;
-  commPtr->numScratchBuff = 2;
-  commPtr->scratchBuff = mscclpp::allocExtSharedCuda<char>(SCRATCH_SIZE);
-  commPtr->remoteScratchRegMemories =
-      setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
+
+  // FallBack for single node
+  if (mscclppComm->bootstrap()->getNranks() == mscclppComm->bootstrap()->getNranksPerNode())
+    ncclCommInitRankFallBack(commPtr, mscclppComm, rank);
 
   if (getenv("MSCCLPP_EXECUTION_PLAN_DIR")) {
     std::string collectiveDir = getenv("MSCCLPP_EXECUTION_PLAN_DIR");
