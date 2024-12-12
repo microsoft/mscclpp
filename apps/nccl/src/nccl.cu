@@ -649,12 +649,12 @@ NCCL_API ncclResult_t ncclGroupEnd() {
 }
 
 NCCL_API ncclResult_t ncclCommRegister(const ncclComm_t, void*, size_t, void**) {
-  //TODO: Implementation
+  // TODO: Implementation
   return ncclSuccess;
 }
 
 NCCL_API ncclResult_t ncclCommDeregister(const ncclComm_t, void*) {
-  //TODO: Implementation
+  // TODO: Implementation
   return ncclSuccess;
 }
 
