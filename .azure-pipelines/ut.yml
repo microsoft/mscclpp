@@ -213,8 +213,9 @@ jobs:
         CHILD_PID=$!
         parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+          set -e;                                                       \
           cd /root/mscclpp;                                             \
-          mkdir build && cd build;                                      \
+          mkdir -p build && cd build;                                   \
           cmake -DCMAKE_BUILD_TYPE=Release -DNPKIT_FLAGS=\"-DENABLE_NPKIT -DENABLE_NPKIT_EVENT_TIME_SYNC_CPU -DENABLE_NPKIT_EVENT_TIME_SYNC_GPU -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT\" ..; \
           make -j"'
         kill $CHILD_PID
