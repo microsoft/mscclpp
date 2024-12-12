@@ -15,13 +15,12 @@ jobs:
       cuda11:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
 
   pool:
-    name: mscclpp
+    name: msccl-ci
   container:
     image: $[ variables['containerImage'] ]
-    options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
 
   steps:
   - task: Bash@3
@@ -36,15 +35,38 @@ jobs:
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
-    name: LockGPUClock
-    displayName: Lock GPU clock frequency
+    name: InstallPackages
+    displayName: Install Packages
     inputs:
       targetType: 'inline'
       script: |
-        sudo nvidia-smi -pm 1
-        for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
-          sudo nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
-        done
+        sudo apt-get update -y
+        sudo apt-get install pssh -y
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+  
+  - task: DownloadSecureFile@1
+    name: SshKeyFile
+    displayName: Download key file
+    inputs:
+      secureFile: mscclpp.pem
+
+  - task: AzureCLI@2
+    name: StartVMSS
+    displayName: Start VMSS
+    inputs:
+      azureSubscription: mscclpp-ci
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss start --name mscclpp-ci --resource-group mscclpp
+
+  - task: Bash@3
+    name: DeployTestEnv
+    displayName: Deploy Test Env
+    inputs:
+      targetType: filePath
+      filePath: test/deploy/deploy.sh
+      arguments: "single-node-test"
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -54,11 +76,23 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
-        export PATH=/usr/local/mpi/bin:$PATH
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c " \
+          export PATH=/usr/local/mpi/bin:\$PATH;                     \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
+          cd /root/mscclpp;                                         \
+          set -e;                                                   \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -o output.jsonl;       \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl;  \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl;  \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -68,8 +102,20 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
-        export PATH=/usr/local/mpi/bin:$PATH
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2 -o output.jsonl
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"\
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
+          set -e;                                                   \
+          export PATH=/usr/local/mpi/bin:\$PATH;                    \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
+          cd /root/mscclpp;                                         \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2 -o output.jsonl"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -79,14 +125,26 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
-        export PATH=/usr/local/mpi/bin:$PATH
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 4 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 12M -e 48M -i 3145728 2 -k 5 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 24K -e 768K -i 24576 -k 6 -w 100 -n 100 -o output.jsonl
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"\
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
+          set -e;                                                   \
+          export PATH=/usr/local/mpi/bin:\$PATH;                     \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
+          cd /root/mscclpp;                                         \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -o output.jsonl;                 \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl;            \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl;            \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl;            \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 4 -o output.jsonl;            \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 12M -e 48M -i 3145728 2 -k 5 -o output.jsonl;  \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 24K -e 768K -i 24576 -k 6 -w 100 -n 100 -o output.jsonl"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -95,10 +153,21 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
-        set -e
-        export PATH=/usr/local/mpi/bin:$PATH
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -o output.jsonl
-        mpirun -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"\
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
+          set -e;                                                   \
+          export PATH=/usr/local/mpi/bin:\$PATH;                    \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
+          cd /root/mscclpp;                                         \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -o output.jsonl; \
+          mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -108,7 +177,20 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
-        python3 test/mscclpp-test/check_perf_result.py --perf-file output.jsonl --baseline-file test/deploy/perf_ndmv4.jsonl
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"\
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
+          set -e;                                                   \
+          cd /root/mscclpp;                                         \
+          export PATH=/usr/local/mpi/bin:\$PATH;                    \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
+          python3 test/mscclpp-test/check_perf_result.py --perf-file output.jsonl --baseline-file test/deploy/perf_ndmv4.jsonl"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -118,7 +200,30 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
-        export PATH=/usr/local/mpi/bin:$PATH
-        python3 -m pip install .
-        mpirun -tag-output -x MSCCLPP_HOME=$(System.DefaultWorkingDirectory) -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c " \
+          set -e;                                                    \
+          cd /root/mscclpp;                                          \
+          export PATH=/usr/local/mpi/bin:\$PATH;                     \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
+          python3 -m pip install .;                                     \
+          mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: AzureCLI@2
+    name: StopVMSS
+    displayName: Deallocate VMSS
+    condition: always()
+    inputs:
+      azureSubscription: mscclpp-ci
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss deallocate --name mscclpp-ci --resource-group mscclpp
