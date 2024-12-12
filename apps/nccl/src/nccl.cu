@@ -464,9 +464,8 @@ NCCL_API ncclResult_t ncclReduce(const void*, void*, size_t, ncclDataType_t, ncc
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclBcast(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t) {
-  // TODO: implement this function
-  return ncclInternalError;
+NCCL_API ncclResult_t ncclBcast(void* buff, size_t count, ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream) {
+  return ncclBroadcast(buff, buff, count, datatype, root, comm, stream);
 }
 
 NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype, int root,
