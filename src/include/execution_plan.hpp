@@ -72,7 +72,7 @@ struct ExecutionPlan::Impl {
   std::vector<NvlsInfo> getNvlsInfos(int rank) const;
   std::vector<int> getConnectedPeers(int rank) const;
   std::vector<BufferType> getConnectedBufferTypes(int rank) const;
-  size_t getScratchBufferSize(int rank, size_t inputSize) const;
+  size_t getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const;
   size_t getMaxScratchBufferSize(int rank) const;
   std::vector<Operation> getOperations(int rank, int threadblock) const;
   int getThreadblockCount(int rank) const;
