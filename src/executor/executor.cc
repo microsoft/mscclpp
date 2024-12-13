@@ -384,6 +384,11 @@ struct Executor::Impl {
       for (const auto& [index, _] : plan.impl_->threadblockNvlsChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.nvlsChannels[chanIndex++] = mscclpp::deviceHandle(context.nvlsChannels[index]);
       }
+      if (ops.size() > MAX_OPERATION) {
+        throw Error("Executor plan launching " + std::to_string(ops.size()) +
+                        " operations, exceeding device execution plan support (" + std::to_string(MAX_OPERATION) + ")",
+                    ErrorCode::ExecutorError);
+      }
       for (size_t i = 0; i < ops.size(); i++) {
         deviceExecutionPlan.operations[i] = ops[i];
       }
