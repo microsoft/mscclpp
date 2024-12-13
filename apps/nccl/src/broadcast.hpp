@@ -47,6 +47,12 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t unitBytes = unitBytesPerBlock * gridDim.x;
   const size_t nLoop = bytes / unitBytes;
 
+  const size_t maxScratchSizeToUse = (SCRATCH_SIZE - unitBytes);
+  const size_t nLoopToSync = (maxScratchSizeToUse / unitBytes) + 1;
+
+  size_t scratchSub = 0;
+
+  // First loop will always fit the scratch size.
   if (nLoop > 0) {
     // First loop unrolling
     const size_t offset = blockIdx.x * unitBytesPerBlock;
@@ -79,13 +85,21 @@ __global__ void __launch_bounds__(1024, 1)
 
   for (size_t i = 1; i < nLoop ; ++i) {
     const size_t offset = blockIdx.x * unitBytesPerBlock + i * unitBytes;
+    if (i % nLoopToSync == 0) { // Sync to reuse scratch buff
+      scratchSub = -i*unitBytes;
+      deviceSyncer.sync(gridDim.x);
+      if (threadIdx.x < nPeer) {
+        smChans[threadIdx.x].relaxedSignal();
+        smChans[threadIdx.x].wait();
+      }
+    }
     if(rank == root) {
       if constexpr (IsOutOfPlace) {
       } else {
 	  for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
             char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_); // Peer's scratchbuff.
             char* send_ = reinterpret_cast<char*>(sendbuff);
-            smChans[peerIdx].copy<16, false>(dst + offset, send_ + offset, unitBytesPerBlock, threadIdx.x,
+            smChans[peerIdx].copy<16, false>(dst + offset + scratchSub, send_ + offset, unitBytesPerBlock, threadIdx.x,
                                              blockDim.x);
             __syncthreads();
 	    if(threadIdx.x == peerIdx)
@@ -100,12 +114,13 @@ __global__ void __launch_bounds__(1024, 1)
 	__syncthreads();
         char *recv_ = reinterpret_cast<char*>(recvbuff);
 	char *scratch_ = reinterpret_cast<char*>(scratchbuff); // My scratchbuff.
-        smChans[peerRootIdx].copy<16, false>(recv_ + offset, scratch_ + offset, unitBytesPerBlock, threadIdx.x,
+        smChans[peerRootIdx].copy<16, false>(recv_ + offset, scratch_ + offset + scratchSub, unitBytesPerBlock, threadIdx.x,
                                          blockDim.x);
       } 
     }
   }
 
+  // Remainder loop will also fit the scratch buff since we subtract unitBytes from SCRATCH_SIZE.
   if (bytes % unitBytes > 0) { // remainder.
     const size_t offset = blockIdx.x * unitBytesPerBlock + nLoop * unitBytes;
     const size_t remainBytes = (offset < bytes ) ?  (bytes - offset) : 0;
@@ -116,7 +131,7 @@ __global__ void __launch_bounds__(1024, 1)
             for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
               char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_); // Peer's scratchbuff.
               char* send_ = reinterpret_cast<char*>(sendbuff);
-              smChans[peerIdx].copy<16, true>(dst + offset, send_ + offset, remainBytes, threadIdx.x,
+              smChans[peerIdx].copy<16, true>(dst + offset + scratchSub, send_ + offset, remainBytes, threadIdx.x,
                                                blockDim.x);
               __syncthreads();
               if(threadIdx.x == peerIdx)
@@ -131,7 +146,7 @@ __global__ void __launch_bounds__(1024, 1)
           __syncthreads();
           char *recv_ = reinterpret_cast<char*>(recvbuff);
           char *scratch_ = reinterpret_cast<char*>(scratchbuff); // My scratchbuff.
-          smChans[peerRootIdx].copy<16, true>(recv_ + offset, scratch_ + offset, remainBytes, threadIdx.x,
+          smChans[peerRootIdx].copy<16, true>(recv_ + offset, scratch_ + offset + scratchSub, remainBytes, threadIdx.x,
                                            blockDim.x);
         } 
       }
