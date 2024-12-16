@@ -55,7 +55,7 @@ CUmemAllocationHandleType getNvlsCompatibleMemHandleType() {
 }
 
 // Check if ptr is allocaed by cuMemMap
-bool isCuMemMapAllocated(void* ptr) {
+bool isCuMemMapAllocated([[maybe_unused]] void* ptr) {
 #if defined(__HIP_PLATFORM_AMD__)
   return false;
 #else
