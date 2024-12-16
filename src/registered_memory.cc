@@ -56,6 +56,9 @@ CUmemAllocationHandleType getNvlsCompatibleMemHandleType() {
 
 // Check if ptr is allocaed by cuMemMap
 bool isCuMemMapAllocated(void* ptr) {
+#if defined(__HIP_PLATFORM_AMD__)
+  return false;
+#else
   CUmemGenericAllocationHandle handle;
   CUresult result = cuMemRetainAllocationHandle(&handle, ptr);
   if (result != CUDA_SUCCESS) {
@@ -66,6 +69,7 @@ bool isCuMemMapAllocated(void* ptr) {
     throw mscclpp::Error("cuMemMap is used in env without NVLS support", mscclpp::ErrorCode::InvalidUsage);
   }
   return true;
+#endif
 }
 
 }  // namespace
