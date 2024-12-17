@@ -116,7 +116,7 @@ static size_t ncclTypeSize(ncclDataType_t type) {
   return 0;
 }
 
-double parseSize(const char* value) {
+static double parseSize(const char* value) {
   std::string valueStr(value);
   std::istringstream iss(valueStr);
   long long int units;
@@ -660,16 +660,27 @@ NCCL_API ncclResult_t ncclCommDeregister(const ncclComm_t, void*) {
 
 ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
   // Allocate memory using mscclpp::allocSharedPhysicalCuda
+  if (ptr == nullptr || size == 0) {
+    return ncclInvalidArgument;
+  }
   std::shared_ptr<char> sharedPtr;
   try {
     sharedPtr = mscclpp::allocSharedPhysicalCuda<char>(size);
     if (sharedPtr == nullptr) {
-      throw mscclpp::Error("ncclMemAlloc failed", mscclpp::ErrorCode::InvalidUsage);
+      return ncclSystemError;
     }
   } catch (const mscclpp::Error& e) {
-    return ncclInvalidUsage;
-  } catch (const std::exception& e) {
+    if (e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage) {
+      return ncclInvalidUsage;
+    } else {
+      return ncclInternalError;
+    }
+  } catch (const mscclpp::CudaError& e) {
     return ncclUnhandledCudaError;
+  } catch (const mscclpp::CuError& e) {
+    return ncclUnhandledCudaError;
+  } catch (const mscclpp::BaseError& e) {
+    return ncclInternalError;
   }
   ptrMap[sharedPtr.get()] = sharedPtr;
 
