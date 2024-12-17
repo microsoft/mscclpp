@@ -363,8 +363,8 @@ __global__ void __launch_bounds__(512, 1)
   // we can use double buffering to hide synchronization overhead
   for (size_t itr = 0; itr < nItrs; itr++) {
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
-      channels[threadIdx.x].signal();
-      channels[threadIdx.x].wait();
+      outChannels[threadIdx.x].signal();
+      outChannels[threadIdx.x].wait();
     }
     __syncthreads();
     // Starts allgather
@@ -381,8 +381,8 @@ __global__ void __launch_bounds__(512, 1)
     // Ensure that all writes of this block have been issued before issuing the signal
     __syncthreads();
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
-      channels[threadIdx.x].signal();
-      channels[threadIdx.x].wait();
+      outChannels[threadIdx.x].signal();
+      outChannels[threadIdx.x].wait();
     }
     __syncthreads();
 
@@ -405,8 +405,8 @@ __global__ void __launch_bounds__(512, 1)
   }
   if (restNInt4 > 0) {
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
-      channels[threadIdx.x].signal();
-      channels[threadIdx.x].wait();
+      outChannels[threadIdx.x].signal();
+      outChannels[threadIdx.x].wait();
     }
     __syncthreads();
     for (size_t idx = threadIdx.x; idx < restNInt4; idx += blockDim.x) {
@@ -421,8 +421,8 @@ __global__ void __launch_bounds__(512, 1)
     // Ensure that all writes of this block have been issued before issuing the signal
     __syncthreads();
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
-      channels[threadIdx.x].signal();
-      channels[threadIdx.x].wait();
+      outChannels[threadIdx.x].signal();
+      outChannels[threadIdx.x].wait();
     }
     __syncthreads();
 
