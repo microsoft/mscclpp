@@ -464,13 +464,13 @@ NCCL_API ncclResult_t ncclReduce(const void*, void*, size_t, ncclDataType_t, ncc
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclBcast(void* buff, size_t count, ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream) {
+NCCL_API ncclResult_t ncclBcast(void* buff, size_t count, ncclDataType_t datatype, int root, ncclComm_t comm,
+                                cudaStream_t stream) {
   return ncclBroadcast(buff, buff, count, datatype, root, comm, stream);
 }
 
-NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype, int root,
-                           ncclComm_t comm, cudaStream_t stream) {
-
+NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype,
+                                    int root, ncclComm_t comm, cudaStream_t stream) {
   size_t bytes = sendcount * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
 
@@ -478,20 +478,20 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)recvbuff));
-  //size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
+  // size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
   size_t offsetOut = 0;
-  //channelKey recvKey{(void*)recvBasePtr, recvBytes};
-  channelKey recvKey{(void*)0x0, 0}; // Just create the channel once.
+  // channelKey recvKey{(void*)recvBasePtr, recvBytes};
+  channelKey recvKey{(void*)0x0, 0};  // Just create the channel once.
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
   mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels = nullptr;
 
   auto it = comm->channelOutInfos.find(recvKey);
   if (it == comm->channelOutInfos.end()) {
-    //std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
-    //    comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
-    //std::vector<mscclpp::SmChannel> channels =
-    //    setupSmChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
+    // std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
+    //     comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
+    // std::vector<mscclpp::SmChannel> channels =
+    //     setupSmChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
     std::vector<mscclpp::SmChannel> channels =
         setupSmChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>((void*)recvBasePtr));
     std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
@@ -503,16 +503,14 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
 
   smChannels = it->second.smChannelDeviceHandles.get();
   if ((char*)sendbuff == (char*)recvbuff) {
-    CUDACHECK(broadcast<false>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, smChannels, offsetOut, rank,
-                               NRANKS_PER_NODE, root, nRank, bytes / sizeof(int), stream));
+    CUDACHECK(broadcast<false>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, smChannels, offsetOut,
+                               rank, NRANKS_PER_NODE, root, nRank, bytes / sizeof(int), stream));
   } else {
-    CUDACHECK(broadcast<true>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, smChannels, offsetOut, rank,
-                              NRANKS_PER_NODE, root, nRank, bytes / sizeof(int), stream));
+    CUDACHECK(broadcast<true>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, smChannels, offsetOut,
+                              rank, NRANKS_PER_NODE, root, nRank, bytes / sizeof(int), stream));
   }
 
   return ncclSuccess;
-
-
 }
 
 NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
