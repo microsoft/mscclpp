@@ -11,6 +11,8 @@
 
 namespace mscclpp {
 
+constexpr int MAX_INFLIGHT_REQUEST = 500;
+
 struct BaseProxyChannel;
 struct ProxyChannel;
 
@@ -72,6 +74,7 @@ class ProxyService : public BaseProxyService {
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
   int deviceNumaNode;
+  int inflightRequests;
 
   void bindThread();
 
