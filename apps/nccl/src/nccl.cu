@@ -343,7 +343,7 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
   return ncclSuccess;
 }
 
-static void ncclCommInitRankFallBack(ncclComm* commPtr, std::shared_ptr<mscclpp::Communicator> mscclppComm, int rank) {
+static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_ptr<mscclpp::Communicator> mscclppComm, int rank) {
   std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
 
   for (int i = 0; i < mscclppComm->bootstrap()->getNranks(); i++) {
@@ -412,7 +412,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 
   // FallBack for single node
   if (mscclppComm->bootstrap()->getNranks() == mscclppComm->bootstrap()->getNranksPerNode())
-    ncclCommInitRankFallBack(commPtr, mscclppComm, rank);
+    ncclCommInitRankFallbackSingleNode(commPtr, mscclppComm, rank);
 
   if (getenv("MSCCLPP_EXECUTION_PLAN_DIR")) {
     std::string collectiveDir = getenv("MSCCLPP_EXECUTION_PLAN_DIR");
