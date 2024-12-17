@@ -667,9 +667,9 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
       throw mscclpp::Error("ncclMemAlloc failed", mscclpp::ErrorCode::InvalidUsage);
     }
   } catch (const mscclpp::Error& e) {
-    std::ostringstream oss;
-    oss << "Mscclpp failure: " << e.what() << std::endl;
     return ncclInvalidUsage;
+  } catch (const std::exception& e) {
+    return ncclUnhandledCudaError;
   }
   ptrMap[sharedPtr.get()] = sharedPtr;
 
