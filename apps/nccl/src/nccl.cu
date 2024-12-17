@@ -343,7 +343,8 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
   return ncclSuccess;
 }
 
-static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_ptr<mscclpp::Communicator> mscclppComm, int rank) {
+static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_ptr<mscclpp::Communicator> mscclppComm,
+                                               int rank) {
   std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
 
   for (int i = 0; i < mscclppComm->bootstrap()->getNranks(); i++) {
