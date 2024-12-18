@@ -8,6 +8,7 @@
 #include <mscclpp/executor.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <mscclpp/sm_channel_device.hpp>
+#include <mscclpp/utils.hpp>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
@@ -665,7 +666,11 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
   }
   std::shared_ptr<char> sharedPtr;
   try {
-    sharedPtr = mscclpp::allocSharedPhysicalCuda<char>(size);
+    if (mscclpp::isNvlsSupported()) {
+        sharedPtr = mscclpp::allocSharedPhysicalCuda<char>(size);
+    } else {
+        sharedPtr = mscclpp::allocExtSharedCuda<char>(size);
+    }
     if (sharedPtr == nullptr) {
       return ncclSystemError;
     }
