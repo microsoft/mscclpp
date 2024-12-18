@@ -667,9 +667,9 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
   std::shared_ptr<char> sharedPtr;
   try {
     if (mscclpp::isNvlsSupported()) {
-        sharedPtr = mscclpp::allocSharedPhysicalCuda<char>(size);
+      sharedPtr = mscclpp::allocSharedPhysicalCuda<char>(size);
     } else {
-        sharedPtr = mscclpp::allocExtSharedCuda<char>(size);
+      sharedPtr = mscclpp::allocExtSharedCuda<char>(size);
     }
     if (sharedPtr == nullptr) {
       return ncclSystemError;
