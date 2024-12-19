@@ -10,7 +10,7 @@ using namespace mscclpp;
 
 class PyCudaMemory {
  public:
-  PyCudaMemory(size_t size) : size_(size) { ptr_ = allocSharedPhysicalCuda<char>(size); }
+  PyCudaMemory(size_t size) : size_(size) { ptr_ = gpuMemAlloc(size); }
 
   uintptr_t getPtr() const { return (uintptr_t)(ptr_.get()); }
   size_t size() const { return size_; }

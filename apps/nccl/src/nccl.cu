@@ -359,7 +359,7 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   commPtr->smSemaphores = std::move(smSemaphores);
   commPtr->buffFlag = 0;
   commPtr->numScratchBuff = 2;
-  commPtr->scratchBuff = mscclpp::allocExtSharedCuda<char>(SCRATCH_SIZE);
+  commPtr->scratchBuff = mscclpp::gpuMemAlloc(SCRATCH_SIZE);
   commPtr->remoteScratchRegMemories =
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
 }
@@ -816,18 +816,13 @@ NCCL_API ncclResult_t ncclCommDeregister(const ncclComm_t, void*) {
 }
 
 ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
-  // Allocate memory using mscclpp::allocSharedPhysicalCuda
   if (ptr == nullptr || size == 0) {
     WARN("ptr is nullptr or size is 0");
     return ncclInvalidArgument;
   }
   std::shared_ptr<char> sharedPtr;
   try {
-    if (mscclpp::isNvlsSupported()) {
-      sharedPtr = mscclpp::allocSharedPhysicalCuda<char>(size);
-    } else {
-      sharedPtr = mscclpp::allocExtSharedCuda<char>(size);
-    }
+    sharedPtr = mscclpp::gpuMemAlloc(size);
     if (sharedPtr == nullptr) {
       INFO(MSCCLPP_ALLOC, "Failed to allocate memory");
       return ncclSystemError;

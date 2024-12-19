@@ -155,7 +155,7 @@ struct Executor::Impl {
       plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
       this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, rank, plan);
       this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
-          allocExtSharedCuda<char>(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
+          gpuMemAlloc(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
       memcpyCuda(this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey].get(),
                  (char*)devicePlans[devicePlanKey].data(),
                  devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
@@ -170,12 +170,7 @@ struct Executor::Impl {
     size_t maxScratchBufferSize = plan.impl_->getMaxScratchBufferSize(rank);
     size_t scratchBufferSize =
         std::min(plan.impl_->getScratchBufferSize(rank, sendMemRange, recvMemRange), maxScratchBufferSize);
-    std::shared_ptr<char> scratchBuffer;
-    if (isNvlsSupported()) {
-      scratchBuffer = allocSharedPhysicalCuda<char>(scratchBufferSize);
-    } else {
-      scratchBuffer = allocExtSharedCuda<char>(scratchBufferSize);
-    }
+    std::shared_ptr<char> scratchBuffer = gpuMemAlloc(scratchBufferSize);
     context.scratchBuffer = scratchBuffer;
     context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
@@ -186,7 +181,7 @@ struct Executor::Impl {
     this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
-        allocExtSharedCuda<char>(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
+        gpuMemAlloc(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
     memcpyCuda(context.deviceExecutionPlansBuffers[devicePlanKey].get(),
                (char*)context.deviceExecutionPlans[devicePlanKey].data(),
                context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan),
