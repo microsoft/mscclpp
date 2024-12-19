@@ -394,6 +394,19 @@ std::unique_ptr<T> allocUniquePhysicalCuda([[maybe_unused]] size_t count, [[mayb
 #endif
 }
 
+/// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
+/// The allocated memory space is specialized for MSCCL++ communication.
+/// @tparam T Type of each element in the allocated memory.
+/// @param count Number of elements to allocate.
+/// @return A std::shared_ptr to the allocated memory.
+template <class T = char>
+std::shared_ptr<T> gpuMemAlloc(size_t count = 1) {
+  if (mscclpp::isNvlsSupported()) {
+    return mscclpp::allocSharedPhysicalCuda<T>(count);
+  }
+  return mscclpp::allocExtSharedCuda<T>(count);
+}
+
 /// Asynchronous cudaMemcpy without capture into a CUDA graph.
 /// @tparam T Type of each element in the allocated memory.
 /// @param dst Destination pointer.
