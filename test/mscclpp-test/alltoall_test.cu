@@ -8,7 +8,7 @@
 
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
-__constant__ DeviceHandle<mscclpp::SimpleProxyChannel> constProxyChans[16];
+__constant__ DeviceHandle<mscclpp::ProxyChannel> constProxyChans[16];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 void* localRecvBuff;
 void* localSendBuff;
@@ -16,7 +16,7 @@ void* localSendBuff;
 __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
   int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   for (int i = 1; i < nRanksPerNode; i++) {
-    DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[blockIdx.x];
+    DeviceHandle<mscclpp::ProxyChannel> proxyChan = constProxyChans[blockIdx.x];
     if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank + i) % nRanksPerNode) {
       proxyChan.putWithSignalAndFlush(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
                                       nElements * sizeof(int));
@@ -31,7 +31,7 @@ __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
 
 __global__ void __launch_bounds__(1024) alltoall0(int rank, size_t nElements) {
   int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
-  DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constProxyChans[blockIdx.x];
+  DeviceHandle<mscclpp::ProxyChannel> proxyChan = constProxyChans[blockIdx.x];
   if (threadIdx.x == 0) {
     proxyChan.putWithSignal(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
                             nElements * sizeof(int));
@@ -148,14 +148,14 @@ void AllToAllTestEngine::allocateBuffer() {
 }
 
 void AllToAllTestEngine::setupConnections() {
-  std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannels;
+  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannels;
   setupMeshConnections(proxyChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
 
-  if (proxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
+  if (proxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::ProxyChannel>)) {
     std::runtime_error("unexpected error");
   }
   CUDATHROW(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
-                               sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * proxyChannels.size()));
+                               sizeof(DeviceHandle<mscclpp::ProxyChannel>) * proxyChannels.size()));
 }
 
 std::vector<void*> AllToAllTestEngine::getSendBuff() { return {sendBuff_.get()}; }

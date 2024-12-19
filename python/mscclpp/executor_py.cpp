@@ -22,7 +22,11 @@ void register_executor(nb::module_& m) {
   nb::enum_<PacketType>(m, "PacketType").value("LL8", PacketType::LL8).value("LL16", PacketType::LL16);
 
   nb::class_<ExecutionPlan>(m, "ExecutionPlan")
-      .def(nb::init<const std::string, const std::string>(), nb::arg("name"), nb::arg("planPath"));
+      .def(nb::init<const std::string>(), nb::arg("planPath"))
+      .def("name", &ExecutionPlan::name)
+      .def("collective", &ExecutionPlan::collective)
+      .def("min_message_size", &ExecutionPlan::minMessageSize)
+      .def("max_message_size", &ExecutionPlan::maxMessageSize);
 
   nb::class_<Executor>(m, "Executor")
       .def(nb::init<std::shared_ptr<Communicator>>(), nb::arg("comm"))

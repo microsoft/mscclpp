@@ -1,6 +1,6 @@
 {
     "name": "send_recv",
-    "colletive": "sendrecv",
+    "collective": "sendrecv",
     "protocol": "Simple",
     "inplace": false,
     "gpus": [

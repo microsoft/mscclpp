@@ -14,7 +14,7 @@ from ._mscclpp import (
     numa,
     ProxyService,
     RegisteredMemory,
-    SimpleProxyChannel,
+    ProxyChannel,
     SmChannel,
     SmDevice2DeviceSemaphore,
     TcpBootstrap,
@@ -26,6 +26,7 @@ from ._mscclpp import (
     PacketType,
     version,
     is_nvls_supported,
+    alloc_shared_physical_cuda,
     npkit,
 )
 

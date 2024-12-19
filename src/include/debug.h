@@ -107,7 +107,7 @@ extern char mscclppLastError[];
 #define INFO(FLAGS, ...) mscclppDebugLog(MSCCLPP_LOG_INFO, (FLAGS), __func__, __LINE__, __VA_ARGS__)
 #define TRACE_CALL(...) mscclppDebugLog(MSCCLPP_LOG_TRACE, MSCCLPP_CALL, __func__, __LINE__, __VA_ARGS__)
 
-#ifdef ENABLE_TRACE
+#ifdef MSCCLPP_ENABLE_TRACE
 #define TRACE(FLAGS, ...) mscclppDebugLog(MSCCLPP_LOG_TRACE, (FLAGS), __func__, __LINE__, __VA_ARGS__)
 extern std::chrono::steady_clock::time_point mscclppEpoch;
 #else
