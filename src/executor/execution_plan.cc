@@ -510,8 +510,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
   }
 }
 
-std::pair<size_t, u_int32_t> ExecutionPlan::Impl::calcSizePerRank(int rank, size_t inputSize, size_t outputSize) const {
-  std::pair<size_t, u_int32_t> sizePerRank;
+std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunksForRank(int rank, size_t inputSize,
+                                                                         size_t outputSize) const {
+  std::pair<size_t, uint32_t> sizePerRank;
   if (this->inputChunks.at(rank) == 0 && this->outputChunks.at(rank) == 0) {
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
   } else if (this->inputChunks.at(rank) != 0 && this->outputChunks.at(rank) != 0) {
@@ -534,15 +535,15 @@ size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, size_t outputS
   }
 
   const int nGroups = this->chunkGroups.at(rank);
-  auto sizePerRank = calcSizePerRank(rank, inputSize, outputSize);
-  uint32_t nInputChunks = sizePerRank.second;
-  uint32_t nelems = sizePerRank.first / (alignment * sizeof(uint8_t));
+  auto rankSizeAndChunks = getSizeAndChunksForRank(rank, inputSize, outputSize);
+  uint32_t nChunks = rankSizeAndChunks.second;
+  uint32_t nelems = rankSizeAndChunks.first / (alignment * sizeof(uint8_t));
   if (nelems % nGroups != 0) {
     throw Error("Input size must be a multiple of nGroups", ErrorCode::ExecutorError);
   }
 
   int nelemsPerGroup = nelems / nGroups;
-  int nChunksPerGroup = nInputChunks / nGroups;
+  int nChunksPerGroup = nChunks / nGroups;
   uint32_t minNelems = nelemsPerGroup / nChunksPerGroup;
   uint32_t remainder = nelemsPerGroup % nChunksPerGroup;
   uint32_t groupIdx = chunkIndex / nChunksPerGroup;
@@ -568,9 +569,17 @@ size_t ExecutionPlan::Impl::getNChunkSize(int rank, size_t inputSize, size_t out
 }
 
 size_t ExecutionPlan::Impl::getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const {
-  auto sizePerRank = calcSizePerRank(rank, inputSize, outputSize);
-  uint32_t nChunks = sizePerRank.second;
-  return (sizePerRank.first + nChunks - 1) / nChunks;
+  size_t nInputChunks = this->inputChunks.at(rank);
+  size_t nOutputChunks = this->outputChunks.at(rank);
+  size_t inputChunkSize = 0;
+  size_t outputChunkSize = 0;
+  if (nInputChunks != 0) {
+    inputChunkSize = inputSize / nInputChunks;
+  }
+  if (nOutputChunks != 0) {
+    outputChunkSize = outputSize / nOutputChunks;
+  }
+  return std::max(inputChunkSize, outputChunkSize);
 }
 
 void ExecutionPlan::Impl::reset() {
