@@ -180,10 +180,10 @@ struct Executor::Impl {
     context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
     context.nthreadsPerBlock = plan.impl_->getNThreadsPerBlock();
-    this->setupConnections(context, rank, plan);
+    this->setupConnections(context, rank, plan, sendMemRange, recvMemRange);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
-    this->setupNvlsChannels(context, sendbuff, recvbuff, rank, plan);
+    this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
         allocExtSharedCuda<char>(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
@@ -214,7 +214,8 @@ struct Executor::Impl {
     return flags;
   };
 
-  void setupConnections(ExecutionContext& context, int rank, const ExecutionPlan& plan) {
+  void setupConnections(ExecutionContext& context, int rank, const ExecutionPlan& plan, size_t sendBufferSize,
+                        size_t recvBufferSize) {
     std::vector<int> connectedPeers = plan.impl_->getConnectedPeers(rank);
     std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
     for (int peer : connectedPeers) {
@@ -227,7 +228,7 @@ struct Executor::Impl {
       context.connections[connectedPeers[i]] = connectionFutures[i].get();
     }
 
-    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank);
+    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank, sendBufferSize, recvBufferSize);
     for (const NvlsInfo& info : nvlsInfos) {
       std::shared_ptr<NvlsConnection> nvlsConnection =
           mscclpp::connectNvlsCollective(this->comm, info.ranks, info.bufferSize);
@@ -351,9 +352,9 @@ struct Executor::Impl {
     }
   }
 
-  void setupNvlsChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, int rank,
-                         const ExecutionPlan& plan) {
-    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank);
+  void setupNvlsChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
+                         size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
+    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank, sendBufferSize, recvBufferSize);
     for (size_t i = 0; i < nvlsInfos.size(); i++) {
       std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[i];
       NvlsInfo info = nvlsInfos[i];
