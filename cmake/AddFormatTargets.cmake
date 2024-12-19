@@ -9,7 +9,7 @@ add_custom_target(format)
 find_program(CLANG_FORMAT clang-format)
 if(CLANG_FORMAT)
     message(STATUS "Found clang-format: ${CLANG_FORMAT}")
-    set(FIND_DIRS ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/python ${PROJECT_SOURCE_DIR}/test ${PROJECT_SOURCE_DIR}/apps)
+    set(FIND_DIRS ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/python ${PROJECT_SOURCE_DIR}/test ${PROJECT_SOURCE_DIR}/apps/nccl/src)
     add_custom_target(check-format-cpp ALL
         COMMAND ${CLANG_FORMAT} -style=file --dry-run `find ${FIND_DIRS} -type f -name *.h -o -name *.hpp -o -name *.c -o -name *.cc -o -name *.cpp -o -name *.cu`
     )
