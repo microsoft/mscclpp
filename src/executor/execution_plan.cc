@@ -179,9 +179,9 @@ std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) c
 void ExecutionPlan::Impl::calcScratchBufferSizeAndOffset(int rank, size_t inputSize, size_t outputSize, int flag) {
   size_t sizePerRank = 0;
   if (this->inputChunks.at(rank) != 0)
-    sizePerRank = inputSize / this->inputChunks.at(rank);
+    sizePerRank = std::min(inputSize, this->maxMessageSize) / this->inputChunks.at(rank);
   else if (this->outputChunks.at(rank) != 0)
-    sizePerRank = outputSize / this->outputChunks.at(rank);
+    sizePerRank = std::min(outputSize, this->maxMessageSize) / this->outputChunks.at(rank);
   else
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
 
@@ -196,21 +196,6 @@ void ExecutionPlan::Impl::calcScratchBufferSizeAndOffset(int rank, size_t inputS
 }
 
 size_t ExecutionPlan::Impl::getScratchBufferSize() const { return this->scratchBufferSize; }
-
-size_t ExecutionPlan::Impl::getMaxScratchBufferSize(int rank) const {
-  if (this->maxMessageSize == std::numeric_limits<uint64_t>::max()) {
-    return std::numeric_limits<size_t>::max();
-  }
-  size_t sizePerChunk = 0;
-  if (this->inputChunks.at(rank) != 0)
-    sizePerChunk = maxMessageSize / this->inputChunks.at(rank);
-  else if (this->outputChunks.at(rank) != 0)
-    sizePerChunk = maxMessageSize / this->outputChunks.at(rank);
-  else
-    throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
-
-  return this->getScratchBufferSize();
-}
 
 std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadblock) const {
   return this->operations.at(rank)[threadblock];
@@ -250,9 +235,6 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
     this->chunkGroups[rank] = gpu["chunkGroups"];
   }
   this->setupChannels(gpus);
-
-  this->inputSize = inputSize;
-  this->outputSize = outputSize;
   this->calcScratchBufferSizeAndOffset(selfRank, inputBufferSize, outputBufferSize, flag);
   this->setupOperations(gpus, constSrcOffset, constDstOffset);
 }
