@@ -1272,30 +1272,30 @@ bool AllReduceTestEngine::isInPlace() const {
 }
 
 void AllReduceTestEngine::allocateBuffer() {
-  inputBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
-  resultBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
+  inputBuff_ = mscclpp::gpuMemAlloc<int>(args_.maxBytes / sizeof(int));
+  resultBuff_ = mscclpp::gpuMemAlloc<int>(args_.maxBytes / sizeof(int));
   inputBuff = inputBuff_.get();
   resultBuff = resultBuff_.get();
 
   if (args_.kernelNum == 0 || args_.kernelNum == 1 || args_.kernelNum == 3 || args_.kernelNum == 4) {
-    scratchBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
+    scratchBuff_ = mscclpp::gpuMemAlloc<int>(args_.maxBytes / sizeof(int));
     scratchBuff = scratchBuff_.get();
   } else if (args_.kernelNum == 2) {
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     // 2x for double-buffering
     const size_t scratchBuffNelem = nPacket * std::max(args_.nRanksPerNode - 1, 1) * 2;
-    scratchPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
+    scratchPacketBuff_ = mscclpp::gpuMemAlloc<mscclpp::LLPacket>(scratchBuffNelem);
     scratchPacketBuff = scratchPacketBuff_.get();
     const size_t packetBuffNelem = nPacket * 2;
-    putPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
-    getPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
+    putPacketBuff_ = mscclpp::gpuMemAlloc<mscclpp::LLPacket>(packetBuffNelem);
+    getPacketBuff_ = mscclpp::gpuMemAlloc<mscclpp::LLPacket>(packetBuffNelem);
     putPacketBuff = putPacketBuff_.get();
     getPacketBuff = getPacketBuff_.get();
   } else if (args_.kernelNum == 6 || args_.kernelNum == 7) {
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     // 2x for double-buffering, scratchBuff used to store original data and reduced results
     const size_t scratchBuffNelem = nPacket * 2 /*original data & reduced result */ * 2 /* double buffering*/;
-    scratchPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
+    scratchPacketBuff_ = mscclpp::gpuMemAlloc<mscclpp::LLPacket>(scratchBuffNelem);
     scratchPacketBuff = scratchPacketBuff_.get();
   }
 

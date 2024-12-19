@@ -157,7 +157,7 @@ void ProxyChannelOneToOneTest::testPingPong(PingPongTestParams params) {
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::ProxyChannel> proxyChannels;
-  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
+  std::shared_ptr<int> buff = mscclpp::gpuMemAlloc<int>(nElem);
   setupMeshConnections(proxyChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
 
   std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannelHandles;
@@ -202,7 +202,7 @@ void ProxyChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::ProxyChannel> proxyChannels;
-  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
+  std::shared_ptr<int> buff = mscclpp::gpuMemAlloc<int>(nElem);
   setupMeshConnections(proxyChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
 
   std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannelHandles;
@@ -344,11 +344,11 @@ void ProxyChannelOneToOneTest::testPacketPingPong(bool useIbOnly) {
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::ProxyChannel> proxyChannels;
-  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
+  std::shared_ptr<int> buff = mscclpp::gpuMemAlloc<int>(nElem);
 
   const size_t nPacket = (nElem * sizeof(int) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
-  auto putPacketBuffer = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(nPacket);
-  auto getPacketBuffer = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(nPacket);
+  auto putPacketBuffer = mscclpp::gpuMemAlloc<mscclpp::LLPacket>(nPacket);
+  auto getPacketBuffer = mscclpp::gpuMemAlloc<mscclpp::LLPacket>(nPacket);
 
   setupMeshConnections(proxyChannels, !useIbOnly, true, false, putPacketBuffer.get(),
                        nPacket * sizeof(mscclpp::LLPacket), getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket));
@@ -411,11 +411,11 @@ void ProxyChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::ProxyChannel> proxyChannels;
-  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
+  std::shared_ptr<int> buff = mscclpp::gpuMemAlloc<int>(nElem);
 
   const size_t nPacket = (nElem * sizeof(int) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
-  auto putPacketBuffer = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(nPacket);
-  auto getPacketBuffer = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(nPacket);
+  auto putPacketBuffer = mscclpp::gpuMemAlloc<mscclpp::LLPacket>(nPacket);
+  auto getPacketBuffer = mscclpp::gpuMemAlloc<mscclpp::LLPacket>(nPacket);
 
   setupMeshConnections(proxyChannels, !useIbOnly, true, false, putPacketBuffer.get(),
                        nPacket * sizeof(mscclpp::LLPacket), getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket));

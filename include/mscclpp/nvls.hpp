@@ -39,8 +39,8 @@ class NvlsConnection {
     friend class NvlsConnection;
   };
 
-  /// @brief bind the allocated memory via @ref mscclpp::allocSharedPhysicalCuda to the multicast handle. The behavior
-  /// is undefined if the devicePtr is not allocated by @ref mscclpp::allocSharedPhysicalCuda.
+  /// @brief bind the allocated memory via @ref mscclpp::gpuMemAlloc to the multicast handle. The behavior
+  /// is undefined if the devicePtr is not allocated by @ref mscclpp::gpuMemAlloc.
   /// @param devicePtr
   /// @param size
   /// @return DeviceMulticastPointer with devicePtr, mcPtr and bufferSize

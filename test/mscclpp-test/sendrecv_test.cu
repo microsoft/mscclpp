@@ -137,8 +137,8 @@ class SendRecvTestEngine : public BaseTestEngine {
 SendRecvTestEngine::SendRecvTestEngine(const TestArgs& args) : BaseTestEngine(args, "sendrecv") { inPlace_ = false; }
 
 void SendRecvTestEngine::allocateBuffer() {
-  std::shared_ptr<int> sendBuff = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
-  std::shared_ptr<int> recvBuff = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
+  std::shared_ptr<int> sendBuff = mscclpp::gpuMemAlloc<int>(args_.maxBytes / sizeof(int));
+  std::shared_ptr<int> recvBuff = mscclpp::gpuMemAlloc<int>(args_.maxBytes / sizeof(int));
   devicePtrs_.push_back(sendBuff);
   devicePtrs_.push_back(recvBuff);
 
