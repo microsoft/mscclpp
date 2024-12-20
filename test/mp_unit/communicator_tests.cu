@@ -113,7 +113,7 @@ void CommunicatorTest::SetUp() {
   }
 
   for (size_t n = 0; n < numBuffers; n++) {
-    devicePtr[n] = mscclpp::allocSharedCuda<int>(deviceBufferSize / sizeof(int));
+    devicePtr[n] = mscclpp::detail::gpuCallocShared<int>(deviceBufferSize / sizeof(int));
     registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, mscclpp::Transport::CudaIpc | ibTransport, 0, remoteRanks,
                         localMemory[n], remoteMemory[n]);
   }
@@ -133,7 +133,7 @@ void CommunicatorTest::deviceBufferInit() {
     for (size_t i = 0; i < dataCount; i++) {
       hostBuffer[i] = gEnv->rank + n * gEnv->worldSize;
     }
-    mscclpp::memcpyCuda<int>(devicePtr[n].get(), hostBuffer.data(), dataCount, cudaMemcpyHostToDevice);
+    mscclpp::gpuMemcpy<int>(devicePtr[n].get(), hostBuffer.data(), dataCount, cudaMemcpyHostToDevice);
   }
 }
 
@@ -155,7 +155,7 @@ bool CommunicatorTest::testWriteCorrectness(bool skipLocal) {
   size_t dataCount = deviceBufferSize / sizeof(int);
   for (int n = 0; n < (int)devicePtr.size(); n++) {
     std::vector<int> hostBuffer(dataCount, 0);
-    mscclpp::memcpyCuda<int>(hostBuffer.data(), devicePtr[n].get(), dataCount, cudaMemcpyDeviceToHost);
+    mscclpp::gpuMemcpy<int>(hostBuffer.data(), devicePtr[n].get(), dataCount, cudaMemcpyDeviceToHost);
     for (int i = 0; i < gEnv->worldSize; i++) {
       if (((i / gEnv->nRanksPerNode) == (gEnv->rank / gEnv->nRanksPerNode)) && skipLocal) {
         continue;
@@ -214,12 +214,13 @@ TEST_F(CommunicatorTest, WriteWithDeviceSemaphores) {
   deviceBufferInit();
   communicator->bootstrap()->barrier();
 
-  auto deviceSemaphoreHandles = mscclpp::allocSharedCuda<mscclpp::Host2DeviceSemaphore::DeviceHandle>(gEnv->worldSize);
+  auto deviceSemaphoreHandles =
+      mscclpp::detail::gpuCallocShared<mscclpp::Host2DeviceSemaphore::DeviceHandle>(gEnv->worldSize);
   for (int i = 0; i < gEnv->worldSize; i++) {
     if (i != gEnv->rank) {
       mscclpp::Host2DeviceSemaphore::DeviceHandle deviceHandle = semaphores[i]->deviceHandle();
-      mscclpp::memcpyCuda<mscclpp::Host2DeviceSemaphore::DeviceHandle>(deviceSemaphoreHandles.get() + i, &deviceHandle,
-                                                                       1, cudaMemcpyHostToDevice);
+      mscclpp::gpuMemcpy<mscclpp::Host2DeviceSemaphore::DeviceHandle>(deviceSemaphoreHandles.get() + i, &deviceHandle,
+                                                                      1, cudaMemcpyHostToDevice);
     }
   }
   communicator->bootstrap()->barrier();

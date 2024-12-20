@@ -83,18 +83,18 @@ class NpKit {
   // 64K * 2 (send/recv) * (1024/64) = 2M, 2M * 64 * 16B = 2GB per CPU
   static const uint64_t kMaxNumCpuEventsPerBuffer = 1ULL << 21;
 
-  static std::vector<mscclpp::UniqueCudaPtr<NpKitEvent>> gpu_event_buffers_;
+  static std::vector<mscclpp::detail::UniqueGpuPtr<NpKitEvent>> gpu_event_buffers_;
   static std::vector<std::unique_ptr<NpKitEvent[]>> cpu_event_buffers_;
 
-  static mscclpp::UniqueCudaPtr<NpKitEventCollectContext> gpu_collect_contexts_;
+  static mscclpp::detail::UniqueGpuPtr<NpKitEventCollectContext> gpu_collect_contexts_;
   static std::unique_ptr<NpKitEventCollectContext[]> cpu_collect_contexts_;
 
   static uint64_t rank_;
 
 #if defined(__HIP_PLATFORM_AMD__)
-  static mscclpp::UniqueCudaHostPtr<uint64_t[]> cpu_timestamp_;
+  static mscclpp::detail::UniqueGpuHostPtr<uint64_t> cpu_timestamp_;
 #else
-  static mscclpp::UniqueCudaHostPtr<uint64_t> cpu_timestamp_;
+  static mscclpp::detail::UniqueGpuHostPtr<uint64_t> cpu_timestamp_;
 #endif
   static std::unique_ptr<std::thread> cpu_timestamp_update_thread_;
   static volatile bool cpu_timestamp_update_thread_should_stop_;

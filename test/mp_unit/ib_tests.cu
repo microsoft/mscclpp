@@ -82,7 +82,7 @@ TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
 
   const int maxIter = 100000;
   const int nelem = 1;
-  auto data = mscclpp::allocUniqueCuda<int>(nelem);
+  auto data = mscclpp::detail::gpuCallocUnique<int>(nelem);
 
   registerBufferAndConnect(data.get(), sizeof(int) * nelem);
 
@@ -196,7 +196,7 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
   const uint64_t signalPeriod = 1024;
   const uint64_t maxIter = 10000;
   const uint64_t nelem = 65536 + 1;
-  auto data = mscclpp::allocUniqueCuda<uint64_t>(nelem);
+  auto data = mscclpp::detail::gpuCallocUnique<uint64_t>(nelem);
 
   registerBufferAndConnect(data.get(), sizeof(uint64_t) * nelem);
 
@@ -205,8 +205,8 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
 
   if (gEnv->rank == 0) {
     // Receiver
-    auto curIter = mscclpp::makeUniqueCudaHost<uint64_t>(0);
-    auto result = mscclpp::makeUniqueCudaHost<int>(0);
+    auto curIter = mscclpp::detail::gpuCallocHostUnique<uint64_t>(0);
+    auto result = mscclpp::detail::gpuCallocHostUnique<int>(0);
 
     volatile uint64_t* ptrCurIter = (volatile uint64_t*)curIter.get();
     volatile int* ptrResult = (volatile int*)result.get();
@@ -246,7 +246,7 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
       for (uint64_t i = 0; i < nelem; i++) {
         hostBuffer[i] = iter;
       }
-      mscclpp::memcpyCuda<uint64_t>(data.get(), hostBuffer.data(), nelem, cudaMemcpyHostToDevice);
+      mscclpp::gpuMemcpy<uint64_t>(data.get(), hostBuffer.data(), nelem, cudaMemcpyHostToDevice);
 
       // Need to signal from time to time to empty the IB send queue
       bool signaled = (iter % signalPeriod == 0);
@@ -303,7 +303,7 @@ TEST_F(IbPeerToPeerTest, SimpleAtomicAdd) {
 
   const int maxIter = 100000;
   const int nelem = 1;
-  auto data = mscclpp::allocUniqueCuda<int>(nelem);
+  auto data = mscclpp::detail::gpuCallocUnique<int>(nelem);
 
   registerBufferAndConnect(data.get(), sizeof(int) * nelem);
 
