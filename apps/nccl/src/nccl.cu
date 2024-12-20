@@ -173,9 +173,9 @@ static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> setupSmChannel
   std::transform(smChannels.begin(), smChannels.end(), std::back_inserter(smChannelDeviceHandles),
                  [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> ptr =
-      mscclpp::allocSharedCuda<mscclpp::DeviceHandle<mscclpp::SmChannel>>(smChannelDeviceHandles.size());
-  mscclpp::memcpyCuda<mscclpp::DeviceHandle<mscclpp::SmChannel>>(ptr.get(), smChannelDeviceHandles.data(),
-                                                                 smChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
+      mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::SmChannel>>(smChannelDeviceHandles.size());
+  mscclpp::gpuMemcpy<mscclpp::DeviceHandle<mscclpp::SmChannel>>(ptr.get(), smChannelDeviceHandles.data(),
+                                                                smChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
   return ptr;
 }
 

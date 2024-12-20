@@ -156,9 +156,9 @@ struct Executor::Impl {
       this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, rank, plan);
       this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
           gpuMemAlloc(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
-      memcpyCuda(this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey].get(),
-                 (char*)devicePlans[devicePlanKey].data(),
-                 devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
+      gpuMemcpy(this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey].get(),
+                (char*)devicePlans[devicePlanKey].data(),
+                devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
       this->contexts[key].currentDevicePlan = devicePlanKey;
       return this->contexts[key];
     }
@@ -182,10 +182,9 @@ struct Executor::Impl {
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
         gpuMemAlloc(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
-    memcpyCuda(context.deviceExecutionPlansBuffers[devicePlanKey].get(),
-               (char*)context.deviceExecutionPlans[devicePlanKey].data(),
-               context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan),
-               cudaMemcpyHostToDevice);
+    gpuMemcpy(context.deviceExecutionPlansBuffers[devicePlanKey].get(),
+              (char*)context.deviceExecutionPlans[devicePlanKey].data(),
+              context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
     context.currentDevicePlan = devicePlanKey;
     context.proxyService->startProxy();
     this->contexts.insert({key, context});

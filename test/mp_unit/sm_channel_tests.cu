@@ -88,7 +88,7 @@ void SmChannelOneToOneTest::packetPingPongTest(const std::string testName, Packe
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstSmChans, deviceHandles.data(),
                                        sizeof(DeviceHandle<mscclpp::SmChannel>)));
 
-  std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
+  std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   // The least nelem is 2 for packet ping pong
   kernelWrapper(buff.get(), gEnv->rank, 2, ret.get(), defaultNTries);
@@ -188,7 +188,7 @@ TEST_F(SmChannelOneToOneTest, PutPingPong) {
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstSmChans, deviceHandles.data(),
                                        sizeof(DeviceHandle<mscclpp::SmChannel>)));
 
-  std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
+  std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   kernelSmPutPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
@@ -267,7 +267,7 @@ TEST_F(SmChannelOneToOneTest, GetPingPong) {
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstSmChans, deviceHandles.data(),
                                        sizeof(DeviceHandle<mscclpp::SmChannel>)));
 
-  std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
+  std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   kernelSmGetPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
