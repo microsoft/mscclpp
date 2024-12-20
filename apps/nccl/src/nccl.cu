@@ -421,9 +421,14 @@ NCCL_API ncclResult_t ncclCommAbort(ncclComm_t) {
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclCommSplit(ncclComm_t, int, int, ncclComm_t*, ncclConfig_t*) {
-  // TODO: implement this function
-  return ncclInternalError;
+NCCL_API ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int, ncclComm_t* newcomm, ncclConfig_t*) {
+  *newcomm = NCCL_COMM_NULL;
+  if (color == NCCL_SPLIT_NOCOLOR) {
+    return ncclSuccess;
+  }
+  ncclComm_t newComm = new ncclComm(*comm);
+  *newcomm = newComm;
+  return ncclSuccess;
 }
 
 NCCL_API const char* ncclGetErrorString(ncclResult_t result) {
