@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <algorithm>
+#include <cstring>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <vector>

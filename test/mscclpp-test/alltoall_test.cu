@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <cstdint>
+#include <cstring>
 #include <mscclpp/concurrency_device.hpp>
 
 #include "common.hpp"

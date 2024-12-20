@@ -21,7 +21,8 @@ static NonblockingFuture<RegisteredMemory> setupInboundSemaphoreId(Communicator&
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communicator,
                                                            std::shared_ptr<Connection> connection)
-    : BaseSemaphore(allocExtUniqueCuda<uint64_t>(), allocExtUniqueCuda<uint64_t>(), std::make_unique<uint64_t>()),
+    : BaseSemaphore(detail::gpuCallocUncachedUnique<uint64_t>(), detail::gpuCallocUncachedUnique<uint64_t>(),
+                    std::make_unique<uint64_t>()),
       connection_(connection) {
   INFO(MSCCLPP_INIT, "Creating a Host2Device semaphore for %s transport from %d to %d",
        connection->getTransportName().c_str(), communicator.bootstrap()->getRank(),

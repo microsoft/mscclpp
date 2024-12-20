@@ -169,7 +169,7 @@ void ProxyChannelOneToOneTest::testPingPong(PingPongTestParams params) {
 
   proxyService->startProxy();
 
-  std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
+  std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   const int nTries = 1000;
 
@@ -214,7 +214,7 @@ void ProxyChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
 
   proxyService->startProxy();
 
-  std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
+  std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
   const std::string testName = std::string(testInfo->test_suite_name()) + "." + std::string(testInfo->name());
@@ -368,7 +368,7 @@ void ProxyChannelOneToOneTest::testPacketPingPong(bool useIbOnly) {
 
   proxyService->startProxy();
 
-  std::shared_ptr<int> ret = mscclpp::makeSharedCudaHost<int>(0);
+  std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   const int nTries = 1000;
 
