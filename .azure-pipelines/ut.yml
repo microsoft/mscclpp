@@ -5,6 +5,7 @@ pr:
   branches:
     include:
     - main
+    - release/*
   drafts: false
 
 jobs:
