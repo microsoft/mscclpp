@@ -1,5 +1,6 @@
 trigger:
 - main
+- release/*
 
 # Do not run multi-nodes-test for PR, we can trigger it manually
 pr: none
