@@ -141,7 +141,17 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int rank, 
   return unpaired;
 }
 
-std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank) const { return this->nvlsInfos.at(rank); }
+std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank, size_t sendBuffserSize, size_t recvBufferSize) const {
+  if (sendBuffserSize == 0 && recvBufferSize == 0) {
+    return this->nvlsInfos.at(rank);
+  }
+  size_t chunkSize = this->getUpperBoundChunkSize(rank, sendBuffserSize, recvBufferSize);
+  std::vector<NvlsInfo> infos = this->nvlsInfos.at(rank);
+  for (auto& info : infos) {
+    info.bufferSize = info.bufferSize * chunkSize;
+  }
+  return infos;
+}
 
 std::vector<int> ExecutionPlan::Impl::getConnectedPeers(int rank) const {
   std::set<int> peers;
@@ -272,7 +282,7 @@ void ExecutionPlan::Impl::parseChannels(
       NvlsInfo info;
       info.bufferType = convertToBufferType(channel["buff"]);
       for (const auto& group : channel["rankGroups"]) {
-        info.bufferSize = (int)group["size"] * this->getUpperBoundChunkSize(rank, this->inputSize, this->outputSize);
+        info.bufferSize = (int)group["size"];
         info.ranks.clear();
         for (int rank : group["ranks"]) {
           info.ranks.push_back(rank);

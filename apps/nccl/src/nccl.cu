@@ -8,6 +8,7 @@
 #include <mscclpp/executor.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <mscclpp/sm_channel_device.hpp>
+#include <mscclpp/utils.hpp>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
@@ -32,6 +33,9 @@
 // static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
 //                             mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
 //                             mscclpp::Transport::IB6, mscclpp::Transport::IB7};
+
+// Declare the global map to store associations between raw pointer and shared pointer
+static std::unordered_map<void*, std::shared_ptr<char>> ptrMap;
 
 struct channelKey {
   const void* buff;
@@ -113,7 +117,7 @@ static size_t ncclTypeSize(ncclDataType_t type) {
   return 0;
 }
 
-double parseSize(const char* value) {
+static double parseSize(const char* value) {
   std::string valueStr(value);
   std::istringstream iss(valueStr);
   long long int units;
@@ -643,4 +647,60 @@ NCCL_API ncclResult_t ncclGroupStart() {
 NCCL_API ncclResult_t ncclGroupEnd() {
   // Do nothing
   return ncclSuccess;
+}
+
+NCCL_API ncclResult_t ncclCommRegister(const ncclComm_t, void*, size_t, void**) {
+  // TODO: Implementation
+  return ncclSuccess;
+}
+
+NCCL_API ncclResult_t ncclCommDeregister(const ncclComm_t, void*) {
+  // TODO: Implementation
+  return ncclSuccess;
+}
+
+ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
+  // Allocate memory using mscclpp::allocSharedPhysicalCuda
+  if (ptr == nullptr || size == 0) {
+    return ncclInvalidArgument;
+  }
+  std::shared_ptr<char> sharedPtr;
+  try {
+    if (mscclpp::isNvlsSupported()) {
+      sharedPtr = mscclpp::allocSharedPhysicalCuda<char>(size);
+    } else {
+      sharedPtr = mscclpp::allocExtSharedCuda<char>(size);
+    }
+    if (sharedPtr == nullptr) {
+      return ncclSystemError;
+    }
+  } catch (const mscclpp::Error& e) {
+    if (e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage) {
+      return ncclInvalidUsage;
+    } else {
+      return ncclInternalError;
+    }
+  } catch (const mscclpp::CudaError& e) {
+    return ncclUnhandledCudaError;
+  } catch (const mscclpp::CuError& e) {
+    return ncclUnhandledCudaError;
+  } catch (const mscclpp::BaseError& e) {
+    return ncclInternalError;
+  }
+  ptrMap[sharedPtr.get()] = sharedPtr;
+
+  // Return the pointer
+  *ptr = sharedPtr.get();
+  return ncclSuccess;
+}
+
+ncclResult_t ncclMemFree(void* ptr) {
+  auto ptrIt = ptrMap.find(ptr);
+  if (ptrIt != ptrMap.end()) {
+    ptrMap.erase(ptrIt);
+    return ncclSuccess;
+  }
+
+  // Pointer not found
+  return ncclInvalidUsage;
 }
