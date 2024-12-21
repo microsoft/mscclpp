@@ -69,6 +69,12 @@ struct ChannelInfo {
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
 };
 
+struct splitCommInfo {
+  int color;
+  int key;
+  int originalRank;
+};
+
 struct ncclComm {
   std::shared_ptr<mscclpp::Communicator> comm;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
@@ -421,14 +427,36 @@ NCCL_API ncclResult_t ncclCommAbort(ncclComm_t) {
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int, ncclComm_t* newcomm, ncclConfig_t*) {
+NCCL_API ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclComm_t* newcomm, ncclConfig_t*) {
   *newcomm = NCCL_COMM_NULL;
+  int nRanks = comm->comm->bootstrap()->getNranks();
+  int rank = comm->comm->bootstrap()->getRank();
+  splitCommInfo info{color, key, comm->comm->bootstrap()->getRank()};
+  std::vector<splitCommInfo> infos(nRanks);
+  infos[rank] = info;
+  comm->comm->bootstrap()->allGather(infos.data(), sizeof(splitCommInfo));
+  comm->comm->bootstrap()->barrier();
+  std::vector<splitCommInfo> group;
+  std::copy_if(infos.begin(), infos.end(), std::back_inserter(group),
+               [color](const splitCommInfo& info) { return info.color == color; });
+  std::sort(group.begin(), group.end(), [](const splitCommInfo& a, const splitCommInfo& b) { return a.key < b.key; });
+  int newRank = std::distance(group.begin(),
+                              std::find_if(group.begin(), group.end(),
+                                           [rank](const splitCommInfo& info) { return info.originalRank == rank; }));
+  int groupSize = group.size();
+  ncclUniqueId uniqueId;
+  if (newRank == 0) {
+    ncclGetUniqueId(&uniqueId);
+  }
+  std::vector<ncclUniqueId> uniqueIds(nRanks);
+  uniqueIds[rank] = uniqueId;
+  comm->comm->bootstrap()->allGather(uniqueIds.data(), sizeof(ncclUniqueId));
+  comm->comm->bootstrap()->barrier();
+  uniqueId = uniqueIds[group.front().originalRank];
   if (color == NCCL_SPLIT_NOCOLOR) {
     return ncclSuccess;
   }
-  ncclComm_t newComm = new ncclComm(*comm);
-  *newcomm = newComm;
-  return ncclSuccess;
+  return ncclCommInitRankConfig(newcomm, groupSize, uniqueId, newRank, nullptr);
 }
 
 NCCL_API const char* ncclGetErrorString(ncclResult_t result) {
