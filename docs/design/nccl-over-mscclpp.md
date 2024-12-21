@@ -51,12 +51,7 @@ The table below lists all NCCL APIs (v2.21). We may cover more APIs in the futur
 
 The executor is a versatile tool designed to specify how mscclpp executes algorithms. Currently, only the allReduce operation allows for algorithm customization. The following environment variables can be managed:
 
-- ALLREDUCEPKT_IP_JSON_FILE: Specifies the path to the JSON file that defines the algorithm for small-sized, in-place operations.
-- ALLREDUCEPKT_OP_JSON_FILE: Specifies the path to the JSON file that defines the algorithm for small-sized, out-of-place operations.
-- ALLREDUCE_IP_JSON_FILE: Specifies the path to the JSON file that defines the algorithm for larger-sized, in-place operations.
-- ALLREDUCE_OP_JSON_FILE: Specifies the path to the JSON file that defines the algorithm for larger-sized, out-of-place operations.
-- ALLREDUCE_SMALL_MSG_BOUNDARY: Defines the size threshold at which the algorithm will switch between fallback code and the customized algorithm for small messages.
-- ALLREDUCE_LARGE_MSG_BOUNDARY: Defines the size threshold at which the algorithm will switch between the customized algorithm for small messages and that for larger messages.
+- MSCCLPP_EXECUTION_PLAN_DIR: Specifies the directory where the executor will look for JSON files.
 
 ```{figure} ../figs/size_boundary_diagram.png
 :name: MMSCCL++ Abstractions
@@ -68,4 +63,5 @@ Decision Flowchart for Message Size-Based Algorithm Execution
 
 This is an example of executing the interface with the executor:
 ``` bash
-mpirun -np 8 -x ALLREDUCEPKT_IP_JSON_FILE=/root/azure-mscclpp/nccl/test/execution-files/allreducepacket.json -x ALLREDUCE_IP_JSON_FILE=/root/azure-mscclpp/nccl/test/execution-files/allreducesm.json -x ALLREDUCE_SMALL_MSG_BOUNDARY=16K -x ALLREDUCE_LARGE_MSG_BOUNDARY=1M ./apps/nccl/test/nccl_api_test
+mpirun -np 8 -x MSCCLPP_EXECUTION_PLAN_DIR=/root/azure-mscclpp/nccl/test/execution-files ./apps/nccl/test/nccl_api_test
+```
