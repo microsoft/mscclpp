@@ -118,7 +118,7 @@ struct ExecutionContext {
   std::vector<mscclpp::SmChannel> smChannels;
   std::vector<mscclpp::ProxyChannel> proxyChannels;
   std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
-  std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
+  std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<std::vector<DeviceExecutionPlan>>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
   std::shared_ptr<char> scratchBuffer;
   size_t scratchBufferSize;
@@ -155,10 +155,10 @@ struct Executor::Impl {
       plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
       this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, rank, plan);
       this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
-          allocExtSharedCuda<char>(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
+          allocExtSharedCuda<char>(devicePlans[devicePlanKey]->size() * sizeof(DeviceExecutionPlan));
       memcpyCuda(this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey].get(),
-                 (char*)devicePlans[devicePlanKey].data(),
-                 devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
+                 (char*)devicePlans[devicePlanKey]->data(),
+                 devicePlans[devicePlanKey]->size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
       this->contexts[key].currentDevicePlan = devicePlanKey;
       return this->contexts[key];
     }
@@ -186,10 +186,10 @@ struct Executor::Impl {
     this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
-        allocExtSharedCuda<char>(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
+        allocExtSharedCuda<char>(context.deviceExecutionPlans[devicePlanKey]->size() * sizeof(DeviceExecutionPlan));
     memcpyCuda(context.deviceExecutionPlansBuffers[devicePlanKey].get(),
-               (char*)context.deviceExecutionPlans[devicePlanKey].data(),
-               context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan),
+               (char*)context.deviceExecutionPlans[devicePlanKey]->data(),
+               context.deviceExecutionPlans[devicePlanKey]->size() * sizeof(DeviceExecutionPlan),
                cudaMemcpyHostToDevice);
     context.currentDevicePlan = devicePlanKey;
     context.proxyService->startProxy();
@@ -367,9 +367,11 @@ struct Executor::Impl {
 
   void setupDeviceExecutionPlan(ExecutionContext& context, const DeviceExecutionPlanKey& key, int rank,
                                 const ExecutionPlan& plan) {
-    std::vector<DeviceExecutionPlan> deviceExecutionPlans;
+    size_t nthreadblocks = plan.impl_->getThreadblockCount(rank);
+    std::shared_ptr<std::vector<DeviceExecutionPlan>> deviceExecutionPlans =
+        std::make_shared<std::vector<DeviceExecutionPlan>>(nthreadblocks);
     for (int threadblock = 0; threadblock < plan.impl_->getThreadblockCount(rank); threadblock++) {
-      DeviceExecutionPlan deviceExecutionPlan = {};
+      DeviceExecutionPlan& deviceExecutionPlan = deviceExecutionPlans->at(threadblock);
       std::vector<Operation> ops = plan.impl_->getOperations(rank, threadblock);
       deviceExecutionPlan.nOperations = ops.size();
       deviceExecutionPlan.nSmChannels = plan.impl_->threadblockSMChannelMap.at(rank).at(threadblock).size();
@@ -394,16 +396,15 @@ struct Executor::Impl {
       for (size_t i = 0; i < ops.size(); i++) {
         deviceExecutionPlan.operations[i] = ops[i];
       }
-      deviceExecutionPlans.push_back(deviceExecutionPlan);
     }
-    context.deviceExecutionPlans[key] = std::move(deviceExecutionPlans);
+    context.deviceExecutionPlans[key] = deviceExecutionPlans;
   }
 
   void launchKernel(ExecutionContext& context, int rank, void* sendbuff, void* recvbuff, DataType dataType,
                     cudaStream_t stream, PacketType packetType) {
     static uint32_t flag = 0;
     DeviceExecutionPlanKey key = context.currentDevicePlan;
-    int nthreadblocks = context.deviceExecutionPlans[key].size();
+    int nthreadblocks = context.deviceExecutionPlans[key]->size();
 #if defined(ENABLE_NPKIT)
 #if defined(__HIP_PLATFORM_AMD__)
     if (nthreadblocks > NPKIT_MAX_NUM_GPU_THREADBLOCKS) {
