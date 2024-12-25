@@ -432,14 +432,14 @@ struct Executor::Impl {
       case PacketType::LL16:
         ExecutionKernel::launchKernel<LL16Packet>(
             rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
-            context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
-            sharedMemSize, stream, flag);
+            dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(), sharedMemSize, stream,
+            flag);
         break;
       case PacketType::LL8:
         ExecutionKernel::launchKernel<LL8Packet>(
             rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
-            context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
-            sharedMemSize, stream, flag);
+            dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(), sharedMemSize, stream,
+            flag);
         break;
       default:
         throw Error("Invalid packet type", ErrorCode::ExecutorError);
