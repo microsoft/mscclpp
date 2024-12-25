@@ -308,7 +308,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* output, uint32_t outputOf
 
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handlePutPacket(DeviceHandle<SmChannel>* smChannels,
-                                           DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
+                                           DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
                                            uint32_t* dstOffsets, uint32_t* srcOffsets, int nDstChannels, uint32_t size,
                                            ChannelType chType, uint32_t flag) {
   if (chType == ChannelType::SM) {
