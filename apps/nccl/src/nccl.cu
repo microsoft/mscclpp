@@ -16,8 +16,8 @@
 #include "allgather.hpp"
 #include "allreduce.hpp"
 #include "broadcast.hpp"
-#include "nccl.h"
 #include "debug.h"
+#include "nccl.h"
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
 
@@ -190,8 +190,9 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
 
   // Checking if the parameters are valids
   if (sendbuff == nullptr || recvbuff == nullptr || count == 0 || ncclTypeSize(datatype) == 0 || comm == nullptr) {
-    WARN("One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, count is 0, "
-         "datatype is invalid, or comm is nullptr.");
+    WARN(
+        "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, count is 0, "
+        "datatype is invalid, or comm is nullptr.");
     return ncclInvalidArgument;
   }
 
@@ -286,8 +287,9 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
   // Checking if the parameters are valids
   size_t bytes = sendcount * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
-    WARN("One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
-         "or comm is nullptr.");
+    WARN(
+        "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
+        "or comm is nullptr.");
     return ncclInvalidArgument;
   }
 
@@ -413,7 +415,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   if (getenv("MSCCLPP_EXECUTION_PLAN_DIR")) {
     std::string collectiveDir = getenv("MSCCLPP_EXECUTION_PLAN_DIR");
     if (!std::filesystem::is_directory(collectiveDir)) {
-      WARN("The value of the environment variable %s is not a directory", collectiveDir);
+      WARN("The value of the environment variable %s is not a directory", collectiveDir.c_str());
       return ncclInvalidArgument;
     }
     for (const auto& entry : std::filesystem::directory_iterator(collectiveDir)) {
@@ -551,8 +553,9 @@ NCCL_API ncclResult_t ncclBroadcastFallback(const void* sendbuff, void* recvbuff
                                             ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream) {
   size_t bytes = sendcount * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
-    WARN("One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
-         "or comm is nullptr.");
+    WARN(
+        "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
+        "or comm is nullptr.");
     return ncclInvalidArgument;
   }
 
@@ -599,8 +602,9 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
                                     int root, ncclComm_t comm, cudaStream_t stream) {
   size_t bytes = count * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
-    WARN("One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
-         "or comm is nullptr.");
+    WARN(
+        "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
+        "or comm is nullptr.");
     return ncclInvalidArgument;
   }
 
@@ -651,8 +655,9 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
                                     ncclRedOp_t reductionOperation, ncclComm_t comm, cudaStream_t stream) {
   // Checking if the parameters are valids
   if (sendbuff == nullptr || recvbuff == nullptr || count == 0 || ncclTypeSize(datatype) == 0 || comm == nullptr) {
-    WARN("One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, count is 0, "
-         "datatype is invalid, or comm is nullptr.");
+    WARN(
+        "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, count is 0, "
+        "datatype is invalid, or comm is nullptr.");
     return ncclInvalidArgument;
   }
 
@@ -710,8 +715,9 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                                     ncclComm_t comm, cudaStream_t stream) {
   size_t bytes = sendcount * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
-    WARN("One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
-         "or comm is nullptr.");
+    WARN(
+        "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
+        "or comm is nullptr.");
     return ncclInvalidArgument;
   }
 
