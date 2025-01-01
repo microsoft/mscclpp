@@ -417,3 +417,17 @@ class Ref(ChunkRef):
 
     def print_chunk_info(self, index=0):
         print(self._get_chunk(index + self.index))
+
+
+def chunk(rank, buffer, index, size=1) -> Ref:
+    if _curr().buffers[rank][buffer][index] is None:
+        return None
+    return _curr().get_ref(rank, buffer, index, size)
+
+
+def rank(rank) -> RankRef:
+    return _curr().get_rank_ref(rank)
+
+
+def Check():
+    return _curr().check()
