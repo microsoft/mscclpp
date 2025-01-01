@@ -1,8 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+from abc import ABC, abstractmethod
 from collections import defaultdict
+from dataclasses import asdict, dataclass
 import json
+from typing import Dict, List, Optional, Union
 
 from mscclpp.language.types import Buffer, ChannelType, Op, Program, Instruction
 
@@ -154,12 +157,32 @@ def ir_to_json(program: Program):
         if len(gpu.threadblocks) > 0:
             max_tb_channels = max(tb.channel + 1 for tb in gpu.threadblocks)
         nchannels = max(nchannels, max_tb_channels)
-    return dump_to_json(program)
+    return _dump_to_json(program)
 
 
-def dump_to_json(program: Program):
-    gpus = []
+@dataclass
+class _JsonInstruction:
+    name: str
+    i_buff: Optional[Dict[str, str]] = None
+    i_cids: Optional[List[Dict[str, Union[int, List[int]]]]] = None
+    o_buff: Optional[Dict[str, str]] = None
+    o_cids: Optional[List[Dict[str, Union[int, List[int]]]]] = None
+    src: Optional[int] = None
+    srcs: Optional[List[Dict[str, Union[int, str]]]] = None
+    dst: Optional[int] = None
+    dsts: Optional[List[Dict[str, Union[int, str]]]] = None
+    srcbuff: Optional[str] = None
+    srcoff: Optional[int] = None
+    dstbuff: Optional[str] = None
+    dstoff: Optional[int] = None
+    ctype: Optional[str] = None
+    cnt: Optional[int] = None
+    deps: Optional[List[Dict[str, int]]] = None
+    nthread_blocks: Optional[int] = None
+    barrier_id: Optional[int] = None
 
+
+class _OpConverter(ABC):
     def get_channel_ids(chunk_list, tb_channel_dict, src_buffer, dst_buffer, chan_type):
         channel_ids = []
         key = (src_buffer, dst_buffer, chan_type)
@@ -180,6 +203,192 @@ def dump_to_json(program: Program):
                     ]
                 )
         return channel_ids
+
+    @abstractmethod
+    def to_json(self, op: Op) -> _JsonInstruction:
+        pass
+
+
+class _SignalFlushConverter(_OpConverter):
+    def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
+        dst_channel_ids = self.get_channel_ids(op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        o_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
+        return _JsonInstruction(
+            name=op.inst.value,
+            o_buff=o_buff,
+            o_cids=dst_channel_ids,
+        )
+
+
+class _WaitConverter(_OpConverter):
+    def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
+        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
+        return _JsonInstruction(
+            name=op.inst.value,
+            i_buff=i_buff,
+            i_cids=src_channel_ids,
+        )
+
+
+class _ReadReduceCopyConverter(_OpConverter):
+    def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
+        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
+        dst = op.dst
+        src = op.dst  # TODO(binyli): fix this
+        return _JsonInstruction(
+            name=op.inst.value,
+            i_buff=i_buff,
+            dst=dst,
+            src=src,
+            i_cids=src_channel_ids,
+        )
+
+
+class _ReadReduceCopySendConverter(_OpConverter):
+    def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
+        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        dst_channel_ids = self.get_channel_ids(
+            op.dsts, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, op.channel_type
+        )
+        i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
+        o_buff = {"src": op.dst.buffer.value, "dst": op.dsts[0].buffer.value}
+        dst = op.dst
+        src = op.dst  # TODO(binyli): fix this
+        return _JsonInstruction(
+            name=op.inst.value,
+            i_buff=i_buff,
+            i_cids=src_channel_ids,
+            o_buff=o_buff,
+            o_cids=dst_channel_ids,
+            src=src,
+            dst=dst,
+        )
+
+
+class _ReduceSendConverter(_OpConverter):
+    def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
+        dst_channel_ids = self.get_channel_ids(
+            op.dsts, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, ChannelType.sm
+        )
+        o_buff = {"src": op.dst.buffer.value, "dst": op.dsts[0].buffer.value}
+        srcs = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.srcs))
+        dst = op.dst
+        src = op.dst  # TODO(binyli): fix this
+        return _JsonInstruction(
+            name=op.inst.value,
+            o_buff=o_buff,
+            o_cids=dst_channel_ids,
+            src=src,
+            srcs=srcs,
+            dst=dst,
+        )
+
+
+class _ReduceConverters(_OpConverter):
+    def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
+        srcs = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.srcs))
+        dst = op.dst
+        src = op.dst
+        return _JsonInstruction(srcs=srcs, dst=dst, src=src)
+
+
+class _NopConverter(_OpConverter):
+    def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
+        return _JsonInstruction(
+            name=op.inst.value,
+            deps=list(map(lambda dep: {"tb": dep.tb, "step": dep.step}, op.depends)),
+        )
+
+
+class _BarrierConverter(_OpConverter):
+    def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
+        return _JsonInstruction(
+            name=op.inst.value,
+            nthread_blocks=len(op.extra["tb_list"]),
+            barrier_id=op.extra["barrier_id"],
+        )
+
+
+class _PutConverter(_OpConverter):
+    def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
+        dst_channel_ids = self.get_channel_ids(op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        o_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
+        srcs = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.srcs))
+        return _JsonInstruction(
+            name=op.inst.value,
+            o_buff=o_buff,
+            o_cids=dst_channel_ids,
+            srcs=srcs,
+        )
+
+
+class _GetConverter(_OpConverter):
+    def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
+        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
+        dsts = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.dsts))
+        return _JsonInstruction(
+            name=op.inst.value,
+            i_buff=i_buff,
+            i_cids=src_channel_ids,
+            dsts=dsts,
+        )
+
+
+class _CopyConverter(_OpConverter):
+    def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
+        src = op.src
+        dst = op.dst
+        return _JsonInstruction(
+            name=op.inst.value,
+            src=src,
+            dst=dst,
+        )
+
+
+class _GroupLoadReduceStoreConverter(_OpConverter):
+    def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
+        src = op.src
+        dst = op.dst
+        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        dst_channel_ids = self.get_channel_ids(op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        return _JsonInstruction(
+            name=op.inst.value,
+            src=src,
+            dst=dst,
+            i_cids=src_channel_ids,
+            o_cids=dst_channel_ids,
+        )
+
+
+_json_converter_map: dict[Instruction, _OpConverter] = {
+    Instruction.signal: _SignalFlushConverter(),
+    Instruction.flush: _SignalFlushConverter(),
+    Instruction.wait: _WaitConverter(),
+    Instruction.read_reduce_copy: _ReadReduceCopyConverter(),
+    Instruction.read_reduce_copy_send: _ReadReduceCopySendConverter(),
+    Instruction.reduce_send: _ReduceSendConverter(),
+    Instruction.reduce_send_packet: _ReduceSendConverter(),
+    Instruction.reduce: _ReduceConverters(),
+    Instruction.reduce_packet: _ReduceConverters(),
+    Instruction.nop: _NopConverter(),
+    Instruction.barrier: _BarrierConverter(),
+    Instruction.put: _PutConverter(),
+    Instruction.put_packet: _PutConverter(),
+    Instruction.put_with_signal: _PutConverter(),
+    Instruction.put_with_signal_and_flush: _PutConverter(),
+    Instruction.get: _GetConverter(),
+    Instruction.copy: _CopyConverter(),
+    Instruction.copy_packet: _CopyConverter(),
+    Instruction.transform_to_packet: _CopyConverter(),
+    Instruction.group_load_reduce_store: _GroupLoadReduceStoreConverter(),
+}
+
+
+def _dump_to_json(program: Program):
+    gpus = []
 
     def remove_empty_fields(d):
         return {k: v for k, v in d.items() if v not in [None, "", [], {}]}
@@ -246,121 +455,10 @@ def dump_to_json(program: Program):
             tb_channels = filter(lambda x: x["type"] != "none", tb_channels)
             tb_channels = sorted(tb_channels, key=lambda x: (x["srcbuff"], x["dstbuff"]))
             for op in tb.ops:
-                o_buff = None
-                i_buff = None
-                dst_channel_ids = []
-                src_channel_ids = []
-                srcs = []
-                dsts = []
-                src = None
-                dst = None
                 if op.tb == -1:
                     continue
-                if op.inst == Instruction.signal or op.inst == Instruction.flush:
-                    # get dst channel ids
-                    dst_channel_ids = get_channel_ids(
-                        op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
-                    )
-                    o_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
-                elif op.inst == Instruction.wait:
-                    # get src channel ids
-                    src_channel_ids = get_channel_ids(
-                        op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
-                    )
-                    i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
-                elif op.inst == Instruction.read_reduce_copy:
-                    src_channel_ids = get_channel_ids(
-                        op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
-                    )
-                    i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
-                    dst = op.dst
-                    src = op.dst  # TODO(binyli): fix this
-                elif op.inst == Instruction.read_reduce_copy_send:
-                    src_channel_ids = get_channel_ids(
-                        op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
-                    )
-                    dst_channel_ids = get_channel_ids(
-                        op.dsts, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, op.channel_type
-                    )
-                    i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
-                    o_buff = {"src": op.dst.buffer.value, "dst": op.dsts[0].buffer.value}
-                    dst = op.dst
-                    src = op.dst  # TODO(binyli): fix this
-                elif op.inst == Instruction.reduce_send or op.inst == Instruction.reduce_send_packet:
-                    dst_channel_ids = get_channel_ids(
-                        op.dsts, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, ChannelType.sm
-                    )
-                    o_buff = {"src": op.dst.buffer.value, "dst": op.dsts[0].buffer.value}
-                    srcs = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.srcs))
-                    dst = op.dst
-                    src = op.dst  # TODO(binyli): fix this
-                elif op.inst == Instruction.reduce or op.inst == Instruction.reduce_packet:
-                    srcs = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.srcs))
-                    dst = op.dst
-                    src = op.dst
-                elif op.inst == Instruction.nop:
-                    instr = {
-                        "name": op.inst.value,
-                        "deps": list(map(lambda dep: {"tb": dep.tb, "step": dep.step}, op.depends)),
-                    }
-                elif op.inst == Instruction.barrier:
-                    instr = {
-                        "name": op.inst.value,
-                        "nthread_blocks": len(op.extra["tb_list"]),
-                        "barrier_id": op.extra["barrier_id"],
-                    }
-                elif (
-                    op.inst == Instruction.put
-                    or op.inst == Instruction.put_packet
-                    or op.inst == Instruction.put_with_signal
-                    or op.inst == Instruction.put_with_signal_and_flush
-                ):
-                    dst_channel_ids = get_channel_ids(
-                        op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
-                    )
-                    o_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
-                    srcs = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.srcs))
-                elif op.inst == Instruction.get:
-                    src_channel_ids = get_channel_ids(
-                        op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
-                    )
-                    i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
-                    dsts = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.dsts))
-                elif (
-                    op.inst == Instruction.copy
-                    or op.inst == Instruction.copy_packet
-                    or op.inst == Instruction.transform_to_packet
-                ):
-                    src = op.src
-                    dst = op.dst
-                elif op.inst == Instruction.group_load_reduce_store:
-                    src = op.src
-                    dst = op.dst
-                    src_channel_ids = get_channel_ids(
-                        op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
-                    )
-                    dst_channel_ids = get_channel_ids(
-                        op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
-                    )
-                if op.inst != Instruction.nop and op.inst != Instruction.barrier:
-                    instr = {
-                        "name": op.inst.value,
-                        "i_buff": i_buff,
-                        "i_cids": src_channel_ids,
-                        "o_buff": o_buff,
-                        "o_cids": dst_channel_ids,
-                        "src": src.rank if src else None,
-                        "srcs": srcs if srcs else None,
-                        "dsts": dsts if dsts else None,
-                        "srcbuff": src.buffer.value if src and src.buffer else None,
-                        "srcoff": src.index if src else None,
-                        "dst": dst.rank if dst else None,
-                        "dstbuff": dst.buffer.value if dst and dst.buffer else None,
-                        "dstoff": dst.index if dst else None,
-                        "ctype": op.channel_type.value,
-                        "cnt": op.cnt(),
-                    }
-                ops.append(remove_empty_fields(instr))
+                instr = _json_converter_map[op.inst].to_json(op, tb_channel_dict)
+                ops.append(remove_empty_fields(asdict(instr)))
             threadblock = {
                 "id": tb.id,
                 "ops": ops,
