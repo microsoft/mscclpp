@@ -92,10 +92,11 @@ struct BaseProxyChannelDeviceHandle {
   // can produce for and the sole proxy thread consumes it.
   FifoDeviceHandle fifo_;
 
-  BaseProxyChannelDeviceHandle() {}
+  MSCCLPP_HOST_DEVICE_INLINE BaseProxyChannelDeviceHandle() {}
 
-  BaseProxyChannelDeviceHandle(SemaphoreId semaphoreId, Host2DeviceSemaphoreDeviceHandle semaphore,
-                               FifoDeviceHandle fifo)
+  MSCCLPP_HOST_DEVICE_INLINE BaseProxyChannelDeviceHandle(SemaphoreId semaphoreId,
+                                                          Host2DeviceSemaphoreDeviceHandle semaphore,
+                                                          FifoDeviceHandle fifo)
       : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
@@ -185,10 +186,11 @@ struct ProxyChannelDeviceHandle : public BaseProxyChannelDeviceHandle {
   MemoryId dst_;
   MemoryId src_;
 
-  ProxyChannelDeviceHandle(){};
+  MSCCLPP_HOST_DEVICE_INLINE ProxyChannelDeviceHandle(){};
 
-  ProxyChannelDeviceHandle(SemaphoreId semaphoreId, Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
-                           MemoryId dst, MemoryId src)
+  MSCCLPP_HOST_DEVICE_INLINE ProxyChannelDeviceHandle(SemaphoreId semaphoreId,
+                                                      Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
+                                                      MemoryId dst, MemoryId src)
       : BaseProxyChannelDeviceHandle(semaphoreId, semaphore, fifo), dst_(dst), src_(src) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
