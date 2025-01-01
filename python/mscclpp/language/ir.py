@@ -183,7 +183,7 @@ class _JsonInstruction:
 
 
 class _OpConverter(ABC):
-    def get_channel_ids(chunk_list, tb_channel_dict, src_buffer, dst_buffer, chan_type):
+    def get_channel_ids(self, chunk_list, tb_channel_dict, src_buffer, dst_buffer, chan_type):
         channel_ids = []
         key = (src_buffer, dst_buffer, chan_type)
         if chan_type == ChannelType.nvls:
@@ -240,9 +240,15 @@ class _ReadReduceCopyConverter(_OpConverter):
         return _JsonInstruction(
             name=op.inst.value,
             i_buff=i_buff,
-            dst=dst,
-            src=src,
+            dst=dst.rank,
+            dstbuff=op.dst.buffer.value,
+            dstoff=op.dst.index,
+            src=src.rank,
+            srcbuff=op.src.buffer.value,
+            srcoff=op.src.index,
             i_cids=src_channel_ids,
+            ctype=op.channel_type.value,
+            cnt=op.cnt(),
         )
 
 
@@ -262,8 +268,14 @@ class _ReadReduceCopySendConverter(_OpConverter):
             i_cids=src_channel_ids,
             o_buff=o_buff,
             o_cids=dst_channel_ids,
-            src=src,
-            dst=dst,
+            src=src.rank,
+            srcbuff=op.src.buffer.value,
+            srcoff=op.src.index,
+            dst=dst.rank,
+            dstbuff=op.dst.buffer.value,
+            dstoff=op.dst.index,
+            ctype=op.channel_type.value,
+            cnt=op.cnt(),
         )
 
 
@@ -280,9 +292,15 @@ class _ReduceSendConverter(_OpConverter):
             name=op.inst.value,
             o_buff=o_buff,
             o_cids=dst_channel_ids,
-            src=src,
+            src=src.rank,
+            srcbuff=op.src.buffer.value,
+            srcoff=op.src.index,
             srcs=srcs,
-            dst=dst,
+            dst=dst.rank,
+            dstbuff=op.dst.buffer.value,
+            dstoff=op.dst.index,
+            ctype=op.channel_type.value,
+            cnt=op.cnt(),
         )
 
 
@@ -291,7 +309,18 @@ class _ReduceConverters(_OpConverter):
         srcs = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.srcs))
         dst = op.dst
         src = op.dst
-        return _JsonInstruction(srcs=srcs, dst=dst, src=src)
+        return _JsonInstruction(
+            name=op.inst.value,
+            srcs=srcs,
+            dst=dst.rank,
+            dstbuff=op.dst.buffer.value,
+            dstoff=op.dst.index,
+            src=src.rank,
+            srcbuff=op.src.buffer.value,
+            srcoff=op.src.index,
+            ctype=op.channel_type.value,
+            cnt=op.cnt(),
+        )
 
 
 class _NopConverter(_OpConverter):
@@ -321,6 +350,8 @@ class _PutConverter(_OpConverter):
             o_buff=o_buff,
             o_cids=dst_channel_ids,
             srcs=srcs,
+            ctype=op.channel_type.value,
+            cnt=op.cnt(),
         )
 
 
@@ -334,6 +365,8 @@ class _GetConverter(_OpConverter):
             i_buff=i_buff,
             i_cids=src_channel_ids,
             dsts=dsts,
+            ctype=op.channel_type.value,
+            cnt=op.cnt(),
         )
 
 
@@ -343,8 +376,14 @@ class _CopyConverter(_OpConverter):
         dst = op.dst
         return _JsonInstruction(
             name=op.inst.value,
-            src=src,
-            dst=dst,
+            src=src.rank,
+            srcbuff=op.src.buffer.value,
+            srcoff=op.src.index,
+            dst=dst.rank,
+            dstbuff=op.dst.buffer.value,
+            dstoff=op.dst.index,
+            ctype=op.channel_type.value,
+            cnt=op.cnt(),
         )
 
 
@@ -356,14 +395,20 @@ class _GroupLoadReduceStoreConverter(_OpConverter):
         dst_channel_ids = self.get_channel_ids(op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
         return _JsonInstruction(
             name=op.inst.value,
-            src=src,
-            dst=dst,
+            src=src.rank,
+            srcbuff=op.src.buffer.value,
+            srcoff=op.src.index,
+            dst=dst.rank,
+            dstbuff=op.dst.buffer.value,
+            dstoff=op.dst.index,
             i_cids=src_channel_ids,
             o_cids=dst_channel_ids,
+            ctype=op.channel_type.value,
+            cnt=op.cnt(),
         )
 
 
-_json_converter_map: dict[Instruction, _OpConverter] = {
+_json_converter_map: Dict[Instruction, _OpConverter] = {
     Instruction.signal: _SignalFlushConverter(),
     Instruction.flush: _SignalFlushConverter(),
     Instruction.wait: _WaitConverter(),
