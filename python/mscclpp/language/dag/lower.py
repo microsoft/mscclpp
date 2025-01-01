@@ -31,13 +31,13 @@ class DagLower:
             return
 
         self.instanced_tbs = []
-        for _ in range(self.num_ranks):
+        for _ in range(self.dag.num_ranks):
             self.instanced_tbs.append({})
 
         def get_new_index(rank, buffer, index, size, i):
             if replication_policy == ReplicationPolicy.interleaved:
                 return index * instances + i * size
-            return len(self.buffers[rank][buffer]) * i + index
+            return len(self.dag.buffers[rank][buffer]) * i + index
 
         def get_instance_ref(ref):
             if ref is None:
@@ -90,7 +90,7 @@ class DagLower:
                     self.instanced_tbs[op.rank][itbid] = itb
 
         # Redo dependency analysis
-        for rank, rank_tbs in enumerate(self.tbs):
+        for rank, rank_tbs in enumerate(self.dag.tbs):
             for tbid, tb in rank_tbs.items():
                 for i in range(instances):
                     itbid = tbid * instances + i

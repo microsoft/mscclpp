@@ -14,14 +14,14 @@ from mscclpp.language.types import (
 
 
 class InstructionDAG:
-    def __init__(self, num_ranks, buffers):
+    def __init__(self, num_ranks: int, buffers: list):
         self.num_ranks = num_ranks
         self.buffers = buffers
         # State for the actual instruction DAG
         self.operations = {}  # slot -> operations
         self.last_writer = {}  # slot -> last writing op
         self.last_readers = defaultdict(list)  # slot -> list of last reading ops
-        # State for the MSCCL-IR
+        # State for the MSCCLPP-IR
         self.tbs = []
         for _ in range(num_ranks):
             self.tbs.append({})
@@ -94,7 +94,7 @@ class InstructionDAG:
     # InstructionDAG - builds the roots of the DAG
     def add_start(self, rank, buffer, index, ref):
         slot = (rank, buffer, index)
-        op = Op(Instruction.start, rank, ref, ref, next=set(), prev=set(), chunk_step=-1)
+        op = Op(Instruction.start, rank, ref, ref, next=set(), prev=set())
         self.operations[slot] = op
         self.last_writer[slot] = op
 

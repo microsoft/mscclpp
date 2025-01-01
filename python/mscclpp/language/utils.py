@@ -50,13 +50,11 @@ def circular_dep_after_merge(op: Op, other_op: Op):
         frontier = frontier[1:]
 
 
-"""
-For case: op2.prev = [op1, op3]. op1.next = [op2]. op3.next = [op2]. And op1 and op2 are satisfied to merge.
-We only apply the merge if all previous ops of op2 are visited. (op1 is the last previous op of op2).
-"""
-
-
 def all_prevs_visited_after_merge(op: Op, other_op: Op):
+    """
+    For case: op2.prev = [op1, op3]. op1.next = [op2]. op3.next = [op2]. And op1 and op2 are satisfied to merge.
+    We only apply the merge if all previous ops of op2 are visited. (op1 is the last previous op of op2).
+    """
     step = op.step
     for prev in other_op.prev:
         if prev.step > step:

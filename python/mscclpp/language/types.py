@@ -9,20 +9,6 @@ from mscclpp.language.buffer import Buffer
 
 
 @dataclass
-class Program:
-    name: str
-    collective: str
-    inplace: bool
-    protocol: str
-    gpus: list = field(default_factory=list)
-    num_chunk_groups: int = 1
-    num_threads_per_block: int = 1024
-    use_double_scratch_buffer: bool = False
-    min_message_size: int = 0
-    max_message_size: int = 2**64 - 1
-
-
-@dataclass
 class Gpu:
     rank: int
     threadblocks: list = field(default_factory=list)
@@ -40,6 +26,20 @@ class Gpu:
 
     def scratch_size(self):
         return max((idx for addr, idx in self.scratch.items()), default=-1) + 1
+
+
+@dataclass
+class Program:
+    name: str
+    collective: str
+    inplace: bool
+    protocol: str
+    gpus: List[Gpu] = field(default_factory=list)
+    num_chunk_groups: int = 1
+    num_threads_per_block: int = 1024
+    use_double_scratch_buffer: bool = False
+    min_message_size: int = 0
+    max_message_size: int = 2**64 - 1
 
 
 @dataclass
@@ -147,11 +147,6 @@ class Op:
     tb: int = -1  # TB this op is assigned to
     prev: list = field(default_factory=list)  # List of instructions that happen before
     next: list = field(default_factory=list)  # List of instructions that happen after
-    num: int = -1
-    chunk_step: int = -1
-    priority: int = -1
-    recv_match = None
-    send_match = None
     channel: int = -1
     channel_type: ChannelType = ChannelType.none
     srcs: list = field(default_factory=list)
@@ -170,18 +165,6 @@ class Op:
 
     def __eq__(self, other):
         return self is other
-
-    def __lt__(self, other):
-        # Ordering of operations
-        # 1. Lower chunk step 2. Higher priority 3. Lower src index
-        if self.chunk_step == other.chunk_step:
-            if self.priority == other.priority:
-                return self.src.index < other.src.index
-            return self.priority > other.priority
-        return self.chunk_step < other.chunk_step
-
-    def __gt__(self, other):
-        return not self < other
 
     def __hash__(self):
         return id(self)
