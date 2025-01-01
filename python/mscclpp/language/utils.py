@@ -1,4 +1,7 @@
-from python.mscclpp.language.types import Op
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+from mscclpp.language.types import Op
 
 
 def remove_op(op: Op):

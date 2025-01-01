@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from mscclpp.language.buffer import Buffer
 from mscclpp.language.chunk import Chunk, ReduceChunk
 

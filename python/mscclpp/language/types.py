@@ -74,6 +74,7 @@ class ReplicationPolicy(Enum):
 
 
 class Instruction(Enum):
+    start = "start"
     nop = "nop"
     read_reduce_copy = "rrc"
     read_reduce_copy_send = "rrcs"
@@ -156,6 +157,16 @@ class Op:
     srcs: list = field(default_factory=list)
     dsts: list = field(default_factory=list)
     extra: dict = field(default_factory=dict)
+
+    def cnt(self):
+        if self.src:
+            if self.dst:
+                assert self.src.size == self.dst.size
+            return self.src.size
+        elif self.dst:
+            return self.dst.size
+        else:
+            return 0
 
     def __eq__(self, other):
         return self is other

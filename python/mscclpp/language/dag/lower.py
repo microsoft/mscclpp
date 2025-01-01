@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import copy
 from typing import List
 from mscclpp.language.buffer import Buffer
@@ -24,7 +27,7 @@ class DagLower:
                     op.step = id
 
         if instances == 1:
-            self.instanced_tbs = self.tbs
+            self.instanced_tbs = self.dag.tbs
             return
 
         self.instanced_tbs = []
@@ -104,14 +107,14 @@ class DagLower:
 
     def _lower_chunk(self, chunk):
         if chunk is not None and chunk.buffer is not Buffer.input and chunk.buffer is not Buffer.output:
-            buffer = self.buffers[chunk.rank][chunk.buffer].get_buffer()
-            index = self.buffers[chunk.rank][chunk.buffer].get_global_index(chunk.index)
+            buffer = self.dag.buffers[chunk.rank][chunk.buffer].get_buffer()
+            index = self.dag.buffers[chunk.rank][chunk.buffer].get_global_index(chunk.index)
             return ChunkRef(chunk.rank, buffer, index, chunk.size)
         return chunk
 
     # Assigns each scratch buffer an offset into the global scratch buffer
     def _lower_buffers(self, instances):
-        for rank_buffers in self.buffers:
+        for rank_buffers in self.dag.buffers:
             offset = 0
             for key, buf in rank_buffers.items():
                 if key is not Buffer.input and key is not Buffer.output:
@@ -136,7 +139,7 @@ class DagLower:
 
     def _infer_dependencies(self):
         visited = set()
-        for _, op in self.operations.items():
+        for _, op in self.dag.operations.items():
             if op in visited:
                 continue
             frontier = [op]
