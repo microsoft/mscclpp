@@ -57,7 +57,7 @@ void NpKit::Init(int rank) {
   for (i = 0; i < NpKit::kNumGpuEventBuffers; i++) {
     gpu_event_buffers_.emplace_back(mscclpp::detail::gpuCallocUnique<NpKitEvent>(kMaxNumGpuEventsPerBuffer));
     ctx.event_buffer = gpu_event_buffers_[i].get();
-    mscclpp::memcpyCuda(gpu_collect_contexts_.get() + i, &ctx, 1);
+    mscclpp::gpuMemcpy(gpu_collect_contexts_.get() + i, &ctx, 1);
   }
 
   cpu_collect_contexts_ = std::make_unique<NpKitEventCollectContext[]>(NpKit::kNumCpuEventBuffers);
@@ -153,8 +153,8 @@ void NpKit::Dump(const std::string& dump_dir) {
     dump_file_path += std::to_string(rank_);
     dump_file_path += "_buf_";
     dump_file_path += std::to_string(i);
-    mscclpp::memcpyCuda(cpu_event_buffers_[0].get(), gpu_event_buffers_[i].get(), kMaxNumGpuEventsPerBuffer);
-    mscclpp::memcpyCuda(cpu_collect_contexts_.get(), gpu_collect_contexts_.get() + i, 1);
+    mscclpp::gpuMemcpy(cpu_event_buffers_[0].get(), gpu_event_buffers_[i].get(), kMaxNumGpuEventsPerBuffer);
+    mscclpp::gpuMemcpy(cpu_collect_contexts_.get(), gpu_collect_contexts_.get() + i, 1);
     auto gpu_trace_file = std::fstream(dump_file_path, std::ios::out | std::ios::binary);
     gpu_trace_file.write(reinterpret_cast<char*>(cpu_event_buffers_[0].get()),
                          cpu_collect_contexts_[0].event_buffer_head * sizeof(NpKitEvent));
