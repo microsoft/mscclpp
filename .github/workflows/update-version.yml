@@ -13,8 +13,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref }}
+
+      - name: Switch to the Current Branch
+        run: |
+          git switch -
 
       - name: Read version
         id: read_version
