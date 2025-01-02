@@ -205,12 +205,14 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
 
   if (gEnv->rank == 0) {
     // Receiver
-    auto curIter = mscclpp::detail::gpuCallocHostUnique<uint64_t>(0);
-    auto result = mscclpp::detail::gpuCallocHostUnique<int>(0);
+    auto curIter = mscclpp::detail::gpuCallocHostUnique<uint64_t>();
+    auto result = mscclpp::detail::gpuCallocHostUnique<int>();
 
     volatile uint64_t* ptrCurIter = (volatile uint64_t*)curIter.get();
     volatile int* ptrResult = (volatile int*)result.get();
 
+    ASSERT_NE(ptrCurIter, nullptr);
+    ASSERT_NE(ptrResult, nullptr);
     ASSERT_EQ(*ptrCurIter, 0);
     ASSERT_EQ(*ptrResult, 0);
 
