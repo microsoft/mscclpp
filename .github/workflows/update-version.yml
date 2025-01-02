@@ -13,10 +13,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Switch to the Current Branch
-        run: |
-          git switch -
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
 
       - name: Read version
         id: read_version
