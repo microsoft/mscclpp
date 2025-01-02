@@ -549,7 +549,6 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) return ncclInvalidArgument;
 
   int rank = comm->comm->bootstrap()->getRank();
-  int nRank = comm->comm->bootstrap()->getNranks();
 
   std::vector<executionPlanInstance>& plans = comm->executionPlans["broadcast"];
   std::shared_ptr<mscclpp::ExecutionPlan> plan;

@@ -92,7 +92,7 @@ class NpKit {
   static uint64_t rank_;
 
 #if defined(__HIP_PLATFORM_AMD__)
-  static mscclpp::detail::UniqueGpuHostPtr<uint64_t> cpu_timestamp_;
+  static mscclpp::detail::UniqueGpuHostPtr<uint64_t[]> cpu_timestamp_;
 #else
   static mscclpp::detail::UniqueGpuHostPtr<uint64_t> cpu_timestamp_;
 #endif
