@@ -623,7 +623,6 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   }
 
   int rank = comm->comm->bootstrap()->getRank();
-  int nRank = comm->comm->bootstrap()->getNranks();
 
   std::vector<executionPlanInstance>& plans = comm->executionPlans["broadcast"];
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
