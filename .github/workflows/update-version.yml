@@ -7,6 +7,10 @@ on:
     paths:
       - 'VERSION'
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   update-version:
     runs-on: ubuntu-latest
