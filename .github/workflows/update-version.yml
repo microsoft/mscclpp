@@ -22,7 +22,7 @@ jobs:
         run: |
           VERSION=${{ env.VERSION }}
           sed -i "s/^version: .*/version: ${VERSION}/" CITATION.cff
-          sed -i "s/^release = \".*\"/release = \"v${VERSION}\"/" conf.py
+          sed -i "s/^release = \".*\"/release = \"v${VERSION}\"/" docs/conf.py
           sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" pyproject.toml
 
           # Update header file
