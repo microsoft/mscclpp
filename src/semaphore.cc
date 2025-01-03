@@ -83,8 +83,8 @@ MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
   }
 }
 
-MSCCLPP_API_CPP SmDevice2DeviceSemaphore::SmDevice2DeviceSemaphore(Communicator& communicator,
-                                                                   std::shared_ptr<Connection> connection)
+MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(Communicator& communicator,
+                                                                           std::shared_ptr<Connection> connection)
     : BaseSemaphore(allocExtUniqueCuda<uint64_t>(), allocExtUniqueCuda<uint64_t>(), allocExtUniqueCuda<uint64_t>()) {
   INFO(MSCCLPP_INIT, "Creating a Device2Device semaphore for %s transport from %d to %d",
        connection->getTransportName().c_str(), communicator.bootstrap()->getRank(),
@@ -99,8 +99,8 @@ MSCCLPP_API_CPP SmDevice2DeviceSemaphore::SmDevice2DeviceSemaphore(Communicator&
   }
 }
 
-MSCCLPP_API_CPP SmDevice2DeviceSemaphore::DeviceHandle SmDevice2DeviceSemaphore::deviceHandle() const {
-  SmDevice2DeviceSemaphore::DeviceHandle device;
+MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::DeviceHandle MemoryDevice2DeviceSemaphore::deviceHandle() const {
+  MemoryDevice2DeviceSemaphore::DeviceHandle device;
   device.remoteInboundSemaphoreId = isRemoteInboundSemaphoreIdSet_
                                         ? reinterpret_cast<uint64_t*>(remoteInboundSemaphoreIdsRegMem_.get().data())
                                         : nullptr;

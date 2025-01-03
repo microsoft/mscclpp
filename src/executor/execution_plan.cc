@@ -75,7 +75,7 @@ auto convertToBufferType = [](const std::string& str) {
 
 auto convertToChannelType = [](const std::string& str) {
   if (str == "sm") {
-    return mscclpp::ChannelType::SM;
+    return mscclpp::ChannelType::MEMORY;
   } else if (str == "proxy") {
     return mscclpp::ChannelType::PROXY;
   } else if (str == "none") {
@@ -304,7 +304,7 @@ void ExecutionPlan::Impl::parseChannels(
   }
 }
 
-// Construct the channel info. Step 1. Flatten SM and PROXY channels into separate vectors.
+// Construct the channel info. Step 1. Flatten MEMORY and PROXY channels into separate vectors.
 // Step 2. For each threadblock, construct a vector of channel indexes and keys.
 void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   using mapKey = std::tuple<int, BufferType, BufferType, ChannelType>;
@@ -331,7 +331,7 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   // setup threadblockChannelMap
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];
-    auto channelTypes = {ChannelType::SM, ChannelType::PROXY, ChannelType::NVLS};
+    auto channelTypes = {ChannelType::MEMORY, ChannelType::PROXY, ChannelType::NVLS};
     std::unordered_map<ChannelKey, std::vector<int>> channelMap;
     for (auto channelType : channelTypes) {
       const std::vector<ChannelInfo> channelInfos = this->getChannelInfos(rank, channelType);
@@ -352,7 +352,7 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
       }
     }
     int nthreadblocks = gpu["threadblocks"].size();
-    this->threadblockSMChannelMap[rank].resize(nthreadblocks);
+    this->threadblockMemoryChannelMap[rank].resize(nthreadblocks);
     this->threadblockProxyChannelMap[rank].resize(nthreadblocks);
     this->threadblockNvlsChannelMap[rank].resize(nthreadblocks);
     for (const auto& threadblock : gpu["threadblocks"]) {
@@ -360,8 +360,8 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
         ChannelType channelType = convertToChannelType(channel["ctype"]);
         ChannelKey key = {convertToBufferType(channel["src"]), convertToBufferType(channel["dst"]), channelType};
         for (int id : channel["cids"]) {
-          if (channelType == ChannelType::SM) {
-            this->threadblockSMChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
+          if (channelType == ChannelType::MEMORY) {
+            this->threadblockMemoryChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
           } else if (channelType == ChannelType::PROXY) {
             this->threadblockProxyChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
           } else if (channelType == ChannelType::NVLS) {
@@ -394,11 +394,11 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
       std::unordered_map<ChannelKey, std::vector<int>> channelIndexes;
       std::vector<Operation> ops;
       int threadblockId = threadblock["id"];
-      const auto& smChannels = this->threadblockSMChannelMap[rank][threadblockId];
+      const auto& memoryChannels = this->threadblockMemoryChannelMap[rank][threadblockId];
       const auto& proxyChannels = this->threadblockProxyChannelMap[rank][threadblockId];
       const auto& nvlsChannels = this->threadblockNvlsChannelMap[rank][threadblockId];
-      for (size_t i = 0; i < smChannels.size(); i++) {
-        const auto& [_, key] = smChannels[i];
+      for (size_t i = 0; i < memoryChannels.size(); i++) {
+        const auto& [_, key] = memoryChannels[i];
         channelIndexes[key].push_back(i);
       }
       for (size_t i = 0; i < proxyChannels.size(); i++) {
@@ -586,7 +586,7 @@ void ExecutionPlan::Impl::reset() {
   this->operations.clear();
   this->channelInfos.clear();
   this->nvlsInfos.clear();
-  this->threadblockSMChannelMap.clear();
+  this->threadblockMemoryChannelMap.clear();
   this->threadblockProxyChannelMap.clear();
   this->threadblockNvlsChannelMap.clear();
   this->inputChunks.clear();

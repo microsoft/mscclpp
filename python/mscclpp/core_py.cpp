@@ -15,7 +15,7 @@ using namespace mscclpp;
 
 extern void register_error(nb::module_& m);
 extern void register_proxy_channel(nb::module_& m);
-extern void register_sm_channel(nb::module_& m);
+extern void register_memory_channel(nb::module_& m);
 extern void register_fifo(nb::module_& m);
 extern void register_semaphore(nb::module_& m);
 extern void register_utils(nb::module_& m);
@@ -186,7 +186,7 @@ void register_core(nb::module_& m) {
 NB_MODULE(_mscclpp, m) {
   register_error(m);
   register_proxy_channel(m);
-  register_sm_channel(m);
+  register_memory_channel(m);
   register_fifo(m);
   register_semaphore(m);
   register_utils(m);

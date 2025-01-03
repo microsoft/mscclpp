@@ -33,10 +33,10 @@ __global__ void gpuKernel() {
 ```
 MSCCL++ also provides efficient synchronization methods, `signal()`, `flush()`, and `wait()`. We will discuss these methods in the following sections.
 
-#### SmChannel & ProxyChannel
-MSCCL++ delivers two types of channels, **ProxyChannel** and **SmChannel**. `ProxyChannel` provides (R)DMA-based data copy and synchronization methods. When called, these methods send/receive a signal to/from a host-side proxy (hence the name `ProxyChannel`), which will trigger (R)DMA (such as `cudaMemcpy*` or `ibv_post_send`) or issue synchronization methods (such as `cudaStreamSynchronize` or `ibv_poll_cq`). Since the key functionalities are run by the proxy, ProxyChannel requires only a single GPU thread to call its methods. See all `ProxyChannel` methods from [here](https://github.com/microsoft/mscclpp/blob/main/include/mscclpp/proxy_channel_device.hpp).
+#### MemoryChannel & ProxyChannel
+MSCCL++ delivers two types of channels, **ProxyChannel** and **MemoryChannel**. `ProxyChannel` provides (R)DMA-based data copy and synchronization methods. When called, these methods send/receive a signal to/from a host-side proxy (hence the name `ProxyChannel`), which will trigger (R)DMA (such as `cudaMemcpy*` or `ibv_post_send`) or issue synchronization methods (such as `cudaStreamSynchronize` or `ibv_poll_cq`). Since the key functionalities are run by the proxy, ProxyChannel requires only a single GPU thread to call its methods. See all `ProxyChannel` methods from [here](https://github.com/microsoft/mscclpp/blob/main/include/mscclpp/proxy_channel_device.hpp).
 
-On the other hand, `SmChannel` provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU's memory space. Comparing against ProxyChannel, SmChannel is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all SmChannel methods from [here](https://github.com/microsoft/mscclpp/blob/main/include/mscclpp/sm_channel_device.hpp).
+On the other hand, `MemoryChannel` provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU's memory space. Comparing against ProxyChannel, MemoryChannel is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all MemoryChannel methods from [here](https://github.com/microsoft/mscclpp/blob/main/include/mscclpp/memory_channel_device.hpp).
 
 ### Fifo & Trigger
 One of the key features of MSCCL++ is to offload the communication logic from the GPU to the CPU.
@@ -60,18 +60,18 @@ MSCCL++ offers one-sided communication methods directly callable from a GPU kern
 This operation is executed within a kernel launched with a single block.
 ```cpp
 // Running on rank 0
-__device__ void gpuKernel(mscclpp::SmChannelDeviceHandle* smChannel) {
-  smChannel[0].put(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x);
+__device__ void gpuKernel(mscclpp::MemoryChannelDeviceHandle* memoryChannel) {
+  memoryChannel[0].put(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x);
   __syncthreads();
   if (threadIdx.x == 0) {
-    smChannel[0].signal();
+    memoryChannel[0].signal();
   }
 }
 
 // Running on rank 1
-__device__ void gpuKernel(mscclpp::SmChannelDeviceHandle* smChannel) {
+__device__ void gpuKernel(mscclpp::MemoryChannelDeviceHandle* memoryChannel) {
   if (threadIdx.x == 0) {
-    smChannel[0].wait();
+    memoryChannel[0].wait();
   }
   __syncthreads();
   // Data is ready to use
@@ -81,13 +81,13 @@ __device__ void gpuKernel(mscclpp::SmChannelDeviceHandle* smChannel) {
 Similar to the LL protocol offered by NCCL, MSCCL++ introduces a `Packet` structure designed to facilitate the transfer of both data and flags within a single instruction, proving particularly beneficial for applications where latency is a critical concern. The following code shows the basic usage of the `Packet` structure. The flag should be same for sender and receiver side.
 ```cpp
 // Running on rank 0
-__device__ void gpuKernel(mscclpp::SmChannelDeviceHandle* smChans, int flag) {
+__device__ void gpuKernel(mscclpp::MemoryChannelDeviceHandle* smChans, int flag) {
   smChans[0].putPackets(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x,
                         /*flag=*/ flag);
 }
 
 // Running on rank 1
-__device__ void gpuKernel(mscclpp::SmChannelDeviceHandle* smChans, int flag) {
+__device__ void gpuKernel(mscclpp::MemoryChannelDeviceHandle* smChans, int flag) {
   smChans[0].getPackets(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x,
                         /*flag=*/ flag);
   // Data is ready to use

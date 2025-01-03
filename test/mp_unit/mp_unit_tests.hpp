@@ -8,9 +8,9 @@
 
 #include <mscclpp/core.hpp>
 #include <mscclpp/executor.hpp>
+#include <mscclpp/memory_channel.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/proxy_channel.hpp>
-#include <mscclpp/sm_channel.hpp>
 #include <mscclpp/utils.hpp>
 
 #include "ib.hpp"
@@ -151,17 +151,17 @@ class ProxyChannelOneToOneTest : public CommunicatorTestBase {
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };
 
-class SmChannelOneToOneTest : public CommunicatorTestBase {
+class MemoryChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   void SetUp() override;
   void TearDown() override;
 
-  void setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels, void* inputBuff, size_t inputBuffBytes,
+  void setupMeshConnections(std::vector<mscclpp::MemoryChannel>& memoryChannels, void* inputBuff, size_t inputBuffBytes,
                             void* outputBuff = nullptr, size_t outputBuffBytes = 0);
   using PacketPingPongKernelWrapper = std::function<void(int*, int, int, int*, int)>;
   void packetPingPongTest(const std::string testName, PacketPingPongKernelWrapper kernelWrapper);
 
-  std::unordered_map<int, std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
+  std::unordered_map<int, std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> smSemaphores;
 };
 
 class ExecutorTest : public MultiProcessTest {
