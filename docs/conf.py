@@ -9,7 +9,7 @@
 project = "mscclpp"
 copyright = "2024, MSCCL++ Team"
 author = "MSCCL++ Team"
-release = "v0.5.2"
+release = "v0.6.0"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
