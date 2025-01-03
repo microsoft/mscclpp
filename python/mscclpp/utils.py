@@ -139,7 +139,7 @@ class KernelBuilder:
 
 
 class GpuBuffer(cp.ndarray):
-    def __new__(cls, shape, dtype=float, strides=None, order='C'):
+    def __new__(cls, shape, dtype=float, strides=None, order="C"):
         # Check if `shape` is valid
         if isinstance(shape, int):
             shape = (shape,)
@@ -152,9 +152,7 @@ class GpuBuffer(cp.ndarray):
         # Create the buffer
         bytes = np.prod(shape) * np.dtype(dtype).itemsize
         buffer = PyGpuBuffer(bytes)
-        memptr = cp.cuda.MemoryPointer(
-            cp.cuda.UnownedMemory(buffer.ptr(), bytes, buffer), 0
-        )
+        memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer.ptr(), bytes, buffer), 0)
         return cp.ndarray(shape, dtype=dtype, strides=strides, order=order, memptr=memptr)
 
 
