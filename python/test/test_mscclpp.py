@@ -27,7 +27,7 @@ from mscclpp import (
     npkit,
 )
 import mscclpp.comm as mscclpp_comm
-from mscclpp.utils import KernelBuilder, pack
+from mscclpp.utils import KernelBuilder, GpuBuffer, pack
 from ._cpp import _ext
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
@@ -161,7 +161,7 @@ def test_group_with_connections(mpi_group: MpiGroup, transport: str):
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 def test_connection_write(mpi_group: MpiGroup, transport: Transport, nelem: int):
     group, connections = create_group_and_connection(mpi_group, transport)
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     nelemPerRank = nelem // group.nranks
     sizePerRank = nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
@@ -436,13 +436,12 @@ def test_d2d_semaphores(mpi_group: MpiGroup):
 def test_sm_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
     group, connections = create_group_and_connection(mpi_group, "NVLink")
 
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     if use_packet:
-        scratch = cp.zeros(nelem * 2, dtype=cp.int32)
+        scratch = GpuBuffer(nelem * 2, dtype=cp.int32)
     else:
         scratch = None
     nelemPerRank = nelem // group.nranks
-    nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
     memory_expected = cp.zeros_like(memory)
     for rank in range(group.nranks):
@@ -484,7 +483,7 @@ def test_fifo(
 def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
     group, connections = create_group_and_connection(mpi_group, transport)
 
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
@@ -534,11 +533,11 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
 def test_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
     group, connections = create_group_and_connection(mpi_group, transport)
 
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     if use_packet:
-        scratch = cp.zeros(nelem * 2, dtype=cp.int32)
+        scratch = GpuBuffer(nelem * 2, dtype=cp.int32)
     else:
-        scratch = cp.zeros(1, dtype=cp.int32)  # just so that we can pass a valid ptr
+        scratch = GpuBuffer(1, dtype=cp.int32)  # just so that we can pass a valid ptr
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1

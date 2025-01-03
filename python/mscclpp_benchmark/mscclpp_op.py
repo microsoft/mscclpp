@@ -1,9 +1,9 @@
 import os
 import cupy as cp
 import ctypes
-from mscclpp import Transport, ProxyService, SmDevice2DeviceSemaphore, alloc_shared_physical_cuda
+from mscclpp import Transport, ProxyService, SmDevice2DeviceSemaphore
 import mscclpp.comm as mscclpp_comm
-from mscclpp.utils import KernelBuilder, pack
+from mscclpp.utils import KernelBuilder, GpuBuffer, pack
 
 
 IB_TRANSPORTS = [
@@ -115,7 +115,7 @@ class MscclppAllReduce2:
         self.connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
         type_str = type_to_str(memory.dtype)
 
-        self.scratch = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
+        self.scratch = GpuBuffer(self.memory.size * 8, dtype=self.memory.dtype)
         # create a sm_channel for each remote neighbor
         self.sm_channels = self.group.make_sm_channels_with_scratch(self.memory, self.scratch, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -179,7 +179,7 @@ class MscclppAllReduce3:
         type_str = type_to_str(memory.dtype)
 
         self.proxy_service = proxy_service
-        self.scratch = cp.zeros(self.memory.size, dtype=self.memory.dtype)
+        self.scratch = GpuBuffer(self.memory.size, dtype=self.memory.dtype)
 
         # create a sm_channel for each remote neighbor
         self.fst_round_proxy_chans = self.group.make_proxy_channels_with_scratch(
@@ -259,7 +259,7 @@ class MscclppAllReduce4:
         type_str = type_to_str(memory.dtype)
 
         self.proxy_service = proxy_service
-        self.scratch = cp.zeros(self.memory.size, dtype=self.memory.dtype)
+        self.scratch = GpuBuffer(self.memory.size, dtype=self.memory.dtype)
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         # create a sm_channel for each remote neighbor
         self.sm_channels = self.group.make_sm_channels(self.memory, same_node_connections)
@@ -362,8 +362,8 @@ class MscclppAllReduce5:
         type_str = type_to_str(memory.dtype)
 
         self.proxy_service = proxy_service
-        self.scratch = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
-        self.put_buff = cp.zeros(self.memory.size * 8 // nranks_per_node, dtype=self.memory.dtype)
+        self.scratch = GpuBuffer(self.memory.size * 8, dtype=self.memory.dtype)
+        self.put_buff = GpuBuffer(self.memory.size * 8 // nranks_per_node, dtype=self.memory.dtype)
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         across_node_connections = {rank: conn for rank, conn in self.connections.items() if not in_same_node(rank)}
         # create a sm_channel for each remote neighbor

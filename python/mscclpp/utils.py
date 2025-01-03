@@ -10,6 +10,7 @@ from typing import Any, Type
 
 import cupy as cp
 import numpy as np
+from ._mscclpp import PyGpuBuffer
 
 try:
     import torch
@@ -135,6 +136,26 @@ class KernelBuilder:
     def __del__(self):
         if hasattr(self, "_tempdir"):
             self._tempdir.cleanup()
+
+
+class GpuBuffer(cp.ndarray):
+    def __new__(cls, shape, dtype=float, strides=None, order='C'):
+        # Check if `shape` is valid
+        if isinstance(shape, int):
+            shape = (shape,)
+        try:
+            shape = tuple(shape)
+        except TypeError:
+            raise ValueError("Shape must be a tuple-like or an integer.")
+        if any(s <= 0 for s in shape):
+            raise ValueError("Shape must be positive.")
+        # Create the buffer
+        bytes = np.prod(shape) * np.dtype(dtype).itemsize
+        buffer = PyGpuBuffer(bytes)
+        memptr = cp.cuda.MemoryPointer(
+            cp.cuda.UnownedMemory(buffer.ptr(), bytes, buffer), 0
+        )
+        return cp.ndarray(shape, dtype=dtype, strides=strides, order=order, memptr=memptr)
 
 
 def pack(*args):
