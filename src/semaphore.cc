@@ -22,7 +22,7 @@ static NonblockingFuture<RegisteredMemory> setupInboundSemaphoreId(Communicator&
 static detail::UniqueGpuPtr<uint64_t> createGpuSemaphoreId() {
 #if defined(__HIP_PLATFORM_AMD__)
   return detail::gpuCallocUncachedUnique<uint64_t>();
-#else  // !defined(__HIP_PLATFORM_AMD__)
+#else   // !defined(__HIP_PLATFORM_AMD__)
   return detail::gpuCallocUnique<uint64_t>();
 #endif  // !defined(__HIP_PLATFORM_AMD__)
 }

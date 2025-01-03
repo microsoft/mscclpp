@@ -225,7 +225,7 @@ std::shared_ptr<T> gpuMemAlloc(size_t nelems = 1) {
 
 #if defined(__HIP_PLATFORM_AMD__)
   return detail::gpuCallocUncachedShared<T>(nelems);
-#else  // !defined(__HIP_PLATFORM_AMD__)
+#else   // !defined(__HIP_PLATFORM_AMD__)
   return detail::gpuCallocShared<T>(nelems);
 #endif  // !defined(__HIP_PLATFORM_AMD__)
 }
