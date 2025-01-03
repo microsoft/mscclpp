@@ -19,10 +19,17 @@ static NonblockingFuture<RegisteredMemory> setupInboundSemaphoreId(Communicator&
   return communicator.recvMemoryOnSetup(remoteRank, tag);
 }
 
+static detail::UniqueGpuPtr<uint64_t> createGpuSemaphoreId() {
+#if defined(__HIP_PLATFORM_AMD__)
+  return detail::gpuCallocUncachedUnique<uint64_t>();
+#else  // !defined(__HIP_PLATFORM_AMD__)
+  return detail::gpuCallocUnique<uint64_t>();
+#endif  // !defined(__HIP_PLATFORM_AMD__)
+}
+
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communicator,
                                                            std::shared_ptr<Connection> connection)
-    : BaseSemaphore(detail::gpuCallocUncachedUnique<uint64_t>(), detail::gpuCallocUncachedUnique<uint64_t>(),
-                    std::make_unique<uint64_t>()),
+    : BaseSemaphore(createGpuSemaphoreId(), createGpuSemaphoreId(), std::make_unique<uint64_t>()),
       connection_(connection) {
   INFO(MSCCLPP_INIT, "Creating a Host2Device semaphore for %s transport from %d to %d",
        connection->getTransportName().c_str(), communicator.bootstrap()->getRank(),
