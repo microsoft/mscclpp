@@ -378,6 +378,8 @@ __global__ void __launch_bounds__(512, 1)
     }
 
     /// Starts reduce-scatter
+    // Ensure that all writes of this block have been issued before issuing the signal
+    __syncthreads();
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
       outChannels[threadIdx.x].signal();
       outChannels[threadIdx.x].wait();
@@ -398,6 +400,8 @@ __global__ void __launch_bounds__(512, 1)
       }
     }
     offsetOfThisBlock += nInt4PerChunk;
+    // Ensure all threads have consumed data from scratch buffer before signaling re-use in next iteration
+    __syncthreads();
   }
   if (restNInt4 > 0) {
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
@@ -414,6 +418,8 @@ __global__ void __launch_bounds__(512, 1)
       }
     }
 
+    // Ensure that all writes of this block have been issued before issuing the signal
+    __syncthreads();
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
       outChannels[threadIdx.x].signal();
       outChannels[threadIdx.x].wait();
@@ -433,7 +439,11 @@ __global__ void __launch_bounds__(512, 1)
                                    data);
       }
     }
+    // Ensure all threads have issued writes to outChannel
+    __syncthreads();
   }
+  // Threads are already synchronized
+  // So all writes to outChannel have been issued before signal is being issued
   if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
     outChannels[threadIdx.x].signal();
     outChannels[threadIdx.x].wait();

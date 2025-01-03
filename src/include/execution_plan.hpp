@@ -69,7 +69,7 @@ struct ExecutionPlan::Impl {
   std::vector<ChannelInfo> getChannelInfos(int rank, BufferType bufferType) const;
   std::vector<ChannelInfo> getChannelInfosByDstRank(int rank, BufferType bufferType) const;
   std::vector<ChannelInfo> getUnpairedChannelInfos(int rank, int worldSize, ChannelType channelType);
-  std::vector<NvlsInfo> getNvlsInfos(int rank) const;
+  std::vector<NvlsInfo> getNvlsInfos(int rank, size_t sendBuffserSize = 0, size_t recvBufferSize = 0) const;
   std::vector<int> getConnectedPeers(int rank) const;
   std::vector<BufferType> getConnectedBufferTypes(int rank) const;
   size_t getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const;
@@ -113,7 +113,7 @@ struct ExecutionPlan::Impl {
   bool isInPlace;
 
  private:
-  std::pair<size_t, u_int32_t> calcSizePerRank(int rank, size_t inputSize, size_t outputSize) const;
+  std::pair<size_t, uint32_t> getSizeAndChunksForRank(int rank, size_t inputSize, size_t outputSize) const;
   size_t getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex, uint32_t alignment = 16) const;
   size_t getNChunkSize(int rank, size_t inputSize, size_t outputSize, uint32_t nChunks,
                        const std::vector<uint32_t> offsets) const;

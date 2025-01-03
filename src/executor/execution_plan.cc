@@ -141,7 +141,17 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int rank, 
   return unpaired;
 }
 
-std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank) const { return this->nvlsInfos.at(rank); }
+std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank, size_t sendBuffserSize, size_t recvBufferSize) const {
+  if (sendBuffserSize == 0 && recvBufferSize == 0) {
+    return this->nvlsInfos.at(rank);
+  }
+  size_t chunkSize = this->getUpperBoundChunkSize(rank, sendBuffserSize, recvBufferSize);
+  std::vector<NvlsInfo> infos = this->nvlsInfos.at(rank);
+  for (auto& info : infos) {
+    info.bufferSize = info.bufferSize * chunkSize;
+  }
+  return infos;
+}
 
 std::vector<int> ExecutionPlan::Impl::getConnectedPeers(int rank) const {
   std::set<int> peers;
@@ -272,7 +282,7 @@ void ExecutionPlan::Impl::parseChannels(
       NvlsInfo info;
       info.bufferType = convertToBufferType(channel["buff"]);
       for (const auto& group : channel["rankGroups"]) {
-        info.bufferSize = (int)group["size"] * this->getUpperBoundChunkSize(rank, this->inputSize, this->outputSize);
+        info.bufferSize = (int)group["size"];
         info.ranks.clear();
         for (int rank : group["ranks"]) {
           info.ranks.push_back(rank);
@@ -500,8 +510,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
   }
 }
 
-std::pair<size_t, u_int32_t> ExecutionPlan::Impl::calcSizePerRank(int rank, size_t inputSize, size_t outputSize) const {
-  std::pair<size_t, u_int32_t> sizePerRank;
+std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunksForRank(int rank, size_t inputSize,
+                                                                         size_t outputSize) const {
+  std::pair<size_t, uint32_t> sizePerRank;
   if (this->inputChunks.at(rank) == 0 && this->outputChunks.at(rank) == 0) {
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
   } else if (this->inputChunks.at(rank) != 0 && this->outputChunks.at(rank) != 0) {
@@ -524,15 +535,15 @@ size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, size_t outputS
   }
 
   const int nGroups = this->chunkGroups.at(rank);
-  auto sizePerRank = calcSizePerRank(rank, inputSize, outputSize);
-  uint32_t nInputChunks = sizePerRank.second;
-  uint32_t nelems = sizePerRank.first / (alignment * sizeof(uint8_t));
+  auto rankSizeAndChunks = getSizeAndChunksForRank(rank, inputSize, outputSize);
+  uint32_t nChunks = rankSizeAndChunks.second;
+  uint32_t nelems = rankSizeAndChunks.first / (alignment * sizeof(uint8_t));
   if (nelems % nGroups != 0) {
     throw Error("Input size must be a multiple of nGroups", ErrorCode::ExecutorError);
   }
 
   int nelemsPerGroup = nelems / nGroups;
-  int nChunksPerGroup = nInputChunks / nGroups;
+  int nChunksPerGroup = nChunks / nGroups;
   uint32_t minNelems = nelemsPerGroup / nChunksPerGroup;
   uint32_t remainder = nelemsPerGroup % nChunksPerGroup;
   uint32_t groupIdx = chunkIndex / nChunksPerGroup;
@@ -558,9 +569,17 @@ size_t ExecutionPlan::Impl::getNChunkSize(int rank, size_t inputSize, size_t out
 }
 
 size_t ExecutionPlan::Impl::getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const {
-  auto sizePerRank = calcSizePerRank(rank, inputSize, outputSize);
-  uint32_t nChunks = sizePerRank.second;
-  return (sizePerRank.first + nChunks - 1) / nChunks;
+  size_t nInputChunks = this->inputChunks.at(rank);
+  size_t nOutputChunks = this->outputChunks.at(rank);
+  size_t inputChunkSize = 0;
+  size_t outputChunkSize = 0;
+  if (nInputChunks != 0) {
+    inputChunkSize = inputSize / nInputChunks;
+  }
+  if (nOutputChunks != 0) {
+    outputChunkSize = outputSize / nOutputChunks;
+  }
+  return std::max(inputChunkSize, outputChunkSize);
 }
 
 void ExecutionPlan::Impl::reset() {

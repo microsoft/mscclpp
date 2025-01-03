@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 title: "MSCCL++: A GPU-driven communication stack for scalable AI applications"
-version: 0.5.2
+version: 0.6.0
 message: >-
   If you use this project in your research, please cite it as below.
 authors:

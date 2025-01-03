@@ -1,10 +1,12 @@
 trigger:
 - main
+- release/*
 
 pr:
   branches:
     include:
     - main
+    - release/*
   drafts: false
 
 jobs:
@@ -140,8 +142,8 @@ jobs:
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
-    name: RunNcclAllreduceTest
-    displayName: Run NCCL Allreduce Test
+    name: RunNcclAllReduceTest
+    displayName: Run NCCL AllReduce Test
     inputs:
       targetType: 'inline'
       script: |
@@ -157,8 +159,8 @@ jobs:
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
-    name: RunNcclGatherTest
-    displayName: Run NCCL Allreduce Test
+    name: RunNcclAllGatherTest
+    displayName: Run NCCL AllGather Test
     inputs:
       targetType: 'inline'
       script: |
