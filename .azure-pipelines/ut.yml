@@ -1,27 +1,28 @@
 trigger:
 - main
+- release/*
 
 pr:
   branches:
     include:
     - main
+    - release/*
   drafts: false
 
 jobs:
 - job: UnitTest
-  timeoutInMinutes: 30
+  timeoutInMinutes: 40
   pool:
-    name: mscclpp
+    name: msccl-ci
   strategy:
     matrix:
       cuda11:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
 
   container:
     image: $[ variables['containerImage'] ]
-    options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
 
   steps:
   - task: Bash@3
@@ -31,21 +32,45 @@ jobs:
       targetType: 'inline'
       script: |
         mkdir build && cd build
-        cmake -DCMAKE_BUILD_TYPE=Release ..
+        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
         make -j
       workingDirectory: '$(System.DefaultWorkingDirectory)'
+  
+  - task: DownloadSecureFile@1
+    name: SshKeyFile
+    displayName: Download key file
+    inputs:
+      secureFile: mscclpp.pem
 
   - task: Bash@3
-    name: LockGPUClock
-    displayName: Lock GPU clock frequency
+    name: InstallPackages
+    displayName: Install Packages
     inputs:
       targetType: 'inline'
       script: |
-        sudo nvidia-smi -pm 1
-        for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
-          sudo nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
-        done
+        sudo apt-get update -y
+        sudo apt-get install pssh -y
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+  - task: AzureCLI@2
+    name: StartVMSS
+    displayName: Start VMSS
+    inputs:
+      azureSubscription: mscclpp-ci
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss start --name mscclpp-ci --resource-group mscclpp
+
+  - task: Bash@3
+    name: DeployTestEnv
+    displayName: Deploy Test Env
+    inputs:
+      targetType: filePath
+      filePath: test/deploy/deploy.sh
+      arguments: "single-node-test"
       workingDirectory: '$(System.DefaultWorkingDirectory)'
+
 
   - task: Bash@3
     name: UnitTests
@@ -53,7 +78,19 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
-        ./build/test/unit_tests
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+          cd /root/mscclpp;                                             \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
+          ./build/test/unit_tests"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -63,10 +100,21 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
-        export PATH=/usr/local/mpi/bin:$PATH
-        mpirun -tag-output -np 2 ./build/test/mp_unit_tests
-        mpirun -tag-output -np 4 ./build/test/mp_unit_tests
-        mpirun -tag-output -np 8 ./build/test/mp_unit_tests
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+          export PATH=/usr/local/mpi/bin:\$PATH;                        \
+          cd /root/mscclpp;                                             \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
+          mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests;  \
+          mpirun --allow-run-as-root -tag-output -np 4 ./build/test/mp_unit_tests;  \
+          mpirun --allow-run-as-root -tag-output -np 8 ./build/test/mp_unit_tests"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -76,47 +124,103 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
-        export PATH=/usr/local/mpi/bin:$PATH
-        mpirun -tag-output -x MSCCLPP_HOME=$(System.DefaultWorkingDirectory) -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .     \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "     \
+          export PATH=/usr/local/mpi/bin:\$PATH                          \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
+          cd /root/mscclpp;                                              \
+          mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: AzureCLI@2
+    name: StopVMSS
+    displayName: Deallocate VMSS
+    condition: always()
+    inputs:
+      azureSubscription: mscclpp-ci
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss deallocate --name mscclpp-ci --resource-group mscclpp
 
 - job: UnitTestWithNpKit
   timeoutInMinutes: 30
   pool:
-    name: mscclpp
+    name: msccl-ci
   strategy:
     matrix:
       cuda11:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
 
   container:
     image: $[ variables['containerImage'] ]
-    options: --privileged --ipc=host --gpus=all --ulimit memlock=-1:-1
 
   steps:
+  - task: DownloadSecureFile@1
+    name: SshKeyFile
+    displayName: Download key file
+    inputs:
+      secureFile: mscclpp.pem
+
+  - task: Bash@3
+    name: InstallPackages
+    displayName: Install Packages
+    inputs:
+      targetType: 'inline'
+      script: |
+        sudo apt-get update -y
+        sudo apt-get install pssh -y
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+  - task: AzureCLI@2
+    name: StartVMSS
+    displayName: Start VMSS
+    inputs:
+      azureSubscription: mscclpp-ci
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss start --name mscclpp-ci --resource-group mscclpp
+
+  - task: Bash@3
+    name: DeployTestEnv
+    displayName: Deploy Test Env
+    inputs:
+      targetType: filePath
+      filePath: test/deploy/deploy.sh
+      arguments: "single-node-test"
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
   - task: Bash@3
     name: Build
     displayName: Build
     inputs:
       targetType: 'inline'
       script: |
-        mkdir build && cd build
-        cmake -DCMAKE_BUILD_TYPE=Release -DNPKIT_FLAGS="-DENABLE_NPKIT -DENABLE_NPKIT_EVENT_TIME_SYNC_CPU -DENABLE_NPKIT_EVENT_TIME_SYNC_GPU -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT" ..
-        make -j
-      workingDirectory: '$(System.DefaultWorkingDirectory)'
-
-  - task: Bash@3
-    name: LockGPUClock
-    displayName: Lock GPU clock frequency
-    inputs:
-      targetType: 'inline'
-      script: |
-        sudo nvidia-smi -pm 1
-        for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
-          sudo nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
-        done
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+          set -e;                                                       \
+          cd /root/mscclpp;                                             \
+          mkdir -p build && cd build;                                   \
+          cmake -DCMAKE_BUILD_TYPE=Release -DNPKIT_FLAGS=\"-DENABLE_NPKIT -DENABLE_NPKIT_EVENT_TIME_SYNC_CPU -DENABLE_NPKIT_EVENT_TIME_SYNC_GPU -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT\" ..; \
+          make -j"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -126,15 +230,26 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
-        rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output
-        export PATH=/usr/local/mpi/bin:$PATH
-        export NPKIT_DUMP_DIR=./npkit_dump
-        mpirun -tag-output -np 2 ./build/test/mp_unit_tests --gtest_filter="ExecutorTest.TwoNodesAllreduce"
-        python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output
-        grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json
-        grep -q NPKIT_EVENT_EXECUTOR_SIGNAL_ENTRY ./npkit_output/npkit_event_trace.json
-        grep -q NPKIT_EVENT_EXECUTOR_WAIT_ENTRY ./npkit_output/npkit_event_trace.json
-        grep -q NPKIT_EVENT_EXECUTOR_READ_REDUCE_COPY_SEND_ENTRY ./npkit_output/npkit_event_trace.json
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+          cd /root/mscclpp;                                             \
+          rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output; \
+          export PATH=/usr/local/mpi/bin:\$PATH; \
+          export NPKIT_DUMP_DIR=./npkit_dump;    \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
+          mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests --gtest_filter=\"ExecutorTest.TwoNodesAllreduce\"; \
+          python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output; \
+          grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json;    \
+          grep -q NPKIT_EVENT_EXECUTOR_SIGNAL_ENTRY ./npkit_output/npkit_event_trace.json;  \
+          grep -q NPKIT_EVENT_EXECUTOR_WAIT_ENTRY ./npkit_output/npkit_event_trace.json;    \
+          grep -q NPKIT_EVENT_EXECUTOR_READ_REDUCE_COPY_SEND_ENTRY ./npkit_output/npkit_event_trace.json"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -143,21 +258,43 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
-        set -e
-        rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output
-        export PATH=/usr/local/mpi/bin:$PATH
-        export NPKIT_DUMP_DIR=./npkit_dump
-        mpirun -tag-output -x MSCCLPP_HOME=$(System.DefaultWorkingDirectory) -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x -k 'test_executor[allreduce.json'
-        python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output
-        grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json
-        grep -q NPKIT_EVENT_EXECUTOR_SIGNAL_ENTRY ./npkit_output/npkit_event_trace.json
-        grep -q NPKIT_EVENT_EXECUTOR_WAIT_ENTRY ./npkit_output/npkit_event_trace.json
-        grep -q NPKIT_EVENT_EXECUTOR_READ_REDUCE_COPY_SEND_ENTRY ./npkit_output/npkit_event_trace.json
-        rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output
-        mpirun -tag-output -x MSCCLPP_HOME=$(System.DefaultWorkingDirectory) -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x -k 'test_executor[allreduce_packet.json'
-        python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output
-        grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json
-        grep -q NPKIT_EVENT_EXECUTOR_COPY_PACKET_ENTRY ./npkit_output/npkit_event_trace.json
-        grep -q NPKIT_EVENT_EXECUTOR_PUT_PACKET_ENTRY ./npkit_output/npkit_event_trace.json
-        grep -q NPKIT_EVENT_EXECUTOR_REDUCE_SEND_PACKET_ENTRY ./npkit_output/npkit_event_trace.json
+        # set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
+          cd /root/mscclpp;                                             \
+          rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output; \
+          export PATH=/usr/local/mpi/bin:\$PATH; \
+          export NPKIT_DUMP_DIR=./npkit_dump;    \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
+          mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x -k 'test_executor[allreduce.json'; \
+          python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output; \
+          grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json;    \
+          grep -q NPKIT_EVENT_EXECUTOR_SIGNAL_ENTRY ./npkit_output/npkit_event_trace.json;  \
+          grep -q NPKIT_EVENT_EXECUTOR_WAIT_ENTRY ./npkit_output/npkit_event_trace.json;    \
+          grep -q NPKIT_EVENT_EXECUTOR_READ_REDUCE_COPY_SEND_ENTRY ./npkit_output/npkit_event_trace.json; \
+          rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output;     \
+          mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x -k 'test_executor[allreduce_packet.json';      \
+          python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output;  \
+          grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json;          \
+          grep -q NPKIT_EVENT_EXECUTOR_COPY_PACKET_ENTRY ./npkit_output/npkit_event_trace.json;   \
+          grep -q NPKIT_EVENT_EXECUTOR_PUT_PACKET_ENTRY ./npkit_output/npkit_event_trace.json;    \
+          grep -q NPKIT_EVENT_EXECUTOR_REDUCE_SEND_PACKET_ENTRY ./npkit_output/npkit_event_trace.json"'
+        kill $CHILD_PID
       workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: AzureCLI@2
+    name: StopVMSS
+    displayName: Deallocate VMSS
+    condition: always()
+    inputs:
+      azureSubscription: mscclpp-ci
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss deallocate --name mscclpp-ci --resource-group mscclpp

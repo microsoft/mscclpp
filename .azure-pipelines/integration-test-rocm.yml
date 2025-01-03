@@ -1,10 +1,12 @@
 trigger:
 - main
+- release/*
 
 pr:
   branches:
     include:
     - main
+    - release/*
   drafts: false
 
 jobs:
@@ -29,7 +31,7 @@ jobs:
       targetType: 'inline'
       script: |
         mkdir build && cd build
-        CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DBYPASS_GPU_CHECK=ON -DUSE_ROCM=ON ..
+        CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON ..
         make -j
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 

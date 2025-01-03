@@ -55,7 +55,7 @@ TEST_F(ExecutorTest, TwoNodesAllreduce) {
   std::filesystem::path path = executablePath;
   std::filesystem::path executionFilesPath =
       path.parent_path().parent_path().parent_path() / "test/execution-files/allreduce.json";
-  mscclpp::ExecutionPlan plan("allreduce_pairs", executionFilesPath.string());
+  mscclpp::ExecutionPlan plan(executionFilesPath.string());
   const int bufferSize = 1024 * 1024;
   std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
   mscclpp::CudaStreamWithFlags stream(cudaStreamNonBlocking);

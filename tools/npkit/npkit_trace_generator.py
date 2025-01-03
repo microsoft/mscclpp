@@ -11,6 +11,7 @@ from queue import Queue
 def parse_npkit_event_header(npkit_event_header_path):
     npkit_event_def = {"id_to_type": {}, "type_to_id": {}}
     executor_ops = [
+        "NOP",
         "BARRIER",
         "PUT",
         "PUT_PACKET",

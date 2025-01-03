@@ -289,7 +289,7 @@ if __name__ == "__main__":
     mscclpp_algbw = []
     nccl_algbw = []
     speed_ups = []
-    end_range = 28 if is_nvls_supported() else 29
+    end_range = 29
     for i in range(10, end_range):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
             nelems = 2**i

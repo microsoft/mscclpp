@@ -78,7 +78,7 @@ static int envSocketFamily(void) {
 
 static int findInterfaces(const char* prefixList, char* names, union SocketAddress* addrs, int sock_family,
                           int maxIfNameSize, int maxIfs) {
-#ifdef ENABLE_TRACE
+#ifdef MSCCLPP_ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
 #endif
   struct mscclpp::netIf userIfs[MAX_IFS];
@@ -184,7 +184,7 @@ static bool matchSubnet(struct ifaddrs local_if, union SocketAddress* remote) {
 
 int FindInterfaceMatchSubnet(char* ifNames, union SocketAddress* localAddrs, union SocketAddress* remoteAddr,
                              int ifNameMaxSize, int maxIfs) {
-#ifdef ENABLE_TRACE
+#ifdef MSCCLPP_ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
 #endif
   char line_a[SOCKET_NAME_MAXLEN + 1];
@@ -436,7 +436,7 @@ void Socket::bind() {
 
 void Socket::bindAndListen() {
   bind();
-#ifdef ENABLE_TRACE
+#ifdef MSCCLPP_ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
   TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Listening on socket %s", SocketToString(&addr_, line));
 #endif
@@ -452,7 +452,7 @@ void Socket::bindAndListen() {
 
 void Socket::connect(int64_t timeout) {
   mscclpp::Timer timer;
-#ifdef ENABLE_TRACE
+#ifdef MSCCLPP_ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
 #endif
   const int one = 1;
