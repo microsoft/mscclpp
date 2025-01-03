@@ -32,20 +32,6 @@ void* gpuCalloc(size_t bytes) {
   return ptr;
 }
 
-void* gpuCallocUncached(size_t bytes) {
-  AvoidCudaGraphCaptureGuard cgcGuard;
-  void* ptr;
-  CudaStreamWithFlags stream(cudaStreamNonBlocking);
-#if defined(__HIP_PLATFORM_AMD__)
-  MSCCLPP_CUDATHROW(hipExtMallocWithFlags((void**)&ptr, bytes, hipDeviceMallocUncached));
-#else   // defined(__HIP_PLATFORM_AMD__)
-  MSCCLPP_CUDATHROW(cudaMalloc(&ptr, bytes));
-#endif  // !defined(__HIP_PLATFORM_AMD__)
-  MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, bytes, stream));
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-  return ptr;
-}
-
 void* gpuCallocHost(size_t bytes) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   void* ptr;
@@ -54,8 +40,20 @@ void* gpuCallocHost(size_t bytes) {
   return ptr;
 }
 
+#if defined(__HIP_PLATFORM_AMD__)
+void* gpuCallocUncached(size_t bytes) {
+  AvoidCudaGraphCaptureGuard cgcGuard;
+  void* ptr;
+  CudaStreamWithFlags stream(cudaStreamNonBlocking);
+  MSCCLPP_CUDATHROW(hipExtMallocWithFlags((void**)&ptr, bytes, hipDeviceMallocUncached));
+  MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, bytes, stream));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+  return ptr;
+}
+#endif  // defined(__HIP_PLATFORM_AMD__)
+
 #if (CUDA_NVLS_SUPPORTED)
-void* gpuPhysicalCalloc(size_t bytes, size_t gran) {
+void* gpuCallocPhysical(size_t bytes, size_t gran) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   int deviceId = -1;
   CUdevice currentDevice;
@@ -91,13 +89,13 @@ void gpuFree(void* ptr) {
   MSCCLPP_CUDATHROW(cudaFree(ptr));
 }
 
-void gpuHostFree(void* ptr) {
+void gpuFreeHost(void* ptr) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   MSCCLPP_CUDATHROW(cudaFreeHost(ptr));
 }
 
 #if (CUDA_NVLS_SUPPORTED)
-void gpuPhysicalFree(void* ptr) {
+void gpuFreePhysical(void* ptr) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   CUmemGenericAllocationHandle handle;
   size_t size = 0;

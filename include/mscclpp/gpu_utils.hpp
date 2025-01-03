@@ -55,16 +55,18 @@ namespace detail {
 void setReadWriteMemoryAccess(void* base, size_t size);
 
 void* gpuCalloc(size_t bytes);
-void* gpuCallocUncached(size_t bytes);
 void* gpuCallocHost(size_t bytes);
+#if defined(__HIP_PLATFORM_AMD__)
+void* gpuCallocUncached(size_t bytes);
+#endif  // defined(__HIP_PLATFORM_AMD__)
 #if (CUDA_NVLS_SUPPORTED)
-void* gpuPhysicalCalloc(size_t bytes, size_t gran);
+void* gpuCallocPhysical(size_t bytes, size_t gran);
 #endif  // CUDA_NVLS_SUPPORTED
 
 void gpuFree(void* ptr);
-void gpuHostFree(void* ptr);
+void gpuFreeHost(void* ptr);
 #if (CUDA_NVLS_SUPPORTED)
-void gpuPhysicalFree(void* ptr);
+void gpuFreePhysical(void* ptr);
 #endif  // CUDA_NVLS_SUPPORTED
 
 void gpuMemcpyAsync(void* dst, const void* src, size_t bytes, cudaStream_t stream,
@@ -130,17 +132,17 @@ struct GpuDeleter {
   void operator()(void* ptr) { gpuFree(ptr); }
 };
 
-/// A deleter that calls gpuHostFree for use with std::unique_ptr or std::shared_ptr.
+/// A deleter that calls gpuFreeHost for use with std::unique_ptr or std::shared_ptr.
 /// @tparam T Type of each element in the allocated memory.
 template <class T = void>
 struct GpuHostDeleter {
-  void operator()(void* ptr) { gpuHostFree(ptr); }
+  void operator()(void* ptr) { gpuFreeHost(ptr); }
 };
 
 #if (CUDA_NVLS_SUPPORTED)
 template <class T = void>
 struct GpuPhysicalDeleter {
-  void operator()(void* ptr) { gpuPhysicalFree(ptr); }
+  void operator()(void* ptr) { gpuFreePhysical(ptr); }
 };
 #endif  // CUDA_NVLS_SUPPORTED
 
@@ -161,16 +163,6 @@ auto gpuCallocUnique(size_t nelems = 1) {
 }
 
 template <class T>
-auto gpuCallocUncachedShared(size_t nelems = 1) {
-  return detail::safeAlloc<T, detail::gpuCallocUncached, detail::GpuDeleter<T>, std::shared_ptr<T>>(nelems);
-}
-
-template <class T>
-auto gpuCallocUncachedUnique(size_t nelems = 1) {
-  return detail::safeAlloc<T, detail::gpuCallocUncached, detail::GpuDeleter<T>, UniqueGpuPtr<T>>(nelems);
-}
-
-template <class T>
 auto gpuCallocHostShared(size_t nelems = 1) {
   return detail::safeAlloc<T, detail::gpuCallocHost, detail::GpuHostDeleter<T>, std::shared_ptr<T>>(nelems);
 }
@@ -180,6 +172,20 @@ auto gpuCallocHostUnique(size_t nelems = 1) {
   return detail::safeAlloc<T, detail::gpuCallocHost, detail::GpuHostDeleter<T>, UniqueGpuHostPtr<T>>(nelems);
 }
 
+#if defined(__HIP_PLATFORM_AMD__)
+
+template <class T>
+auto gpuCallocUncachedShared(size_t nelems = 1) {
+  return detail::safeAlloc<T, detail::gpuCallocUncached, detail::GpuDeleter<T>, std::shared_ptr<T>>(nelems);
+}
+
+template <class T>
+auto gpuCallocUncachedUnique(size_t nelems = 1) {
+  return detail::safeAlloc<T, detail::gpuCallocUncached, detail::GpuDeleter<T>, UniqueGpuPtr<T>>(nelems);
+}
+
+#endif  // defined(__HIP_PLATFORM_AMD__)
+
 #if (CUDA_NVLS_SUPPORTED)
 
 template <class T>
@@ -187,13 +193,13 @@ using UniqueGpuPhysicalPtr = std::unique_ptr<T, detail::GpuPhysicalDeleter<T>>;
 
 template <class T>
 auto gpuCallocPhysicalShared(size_t nelems = 1, size_t gran = 0) {
-  return detail::safeAlloc<T, detail::gpuPhysicalCalloc, detail::GpuPhysicalDeleter<T>, std::shared_ptr<T>>(nelems,
+  return detail::safeAlloc<T, detail::gpuCallocPhysical, detail::GpuPhysicalDeleter<T>, std::shared_ptr<T>>(nelems,
                                                                                                             gran);
 }
 
 template <class T>
 auto gpuCallocPhysicalUnique(size_t nelems = 1, size_t gran = 0) {
-  return detail::safeAlloc<T, detail::gpuPhysicalCalloc, detail::GpuPhysicalDeleter<T>, UniqueGpuPhysicalPtr<T>>(nelems,
+  return detail::safeAlloc<T, detail::gpuCallocPhysical, detail::GpuPhysicalDeleter<T>, UniqueGpuPhysicalPtr<T>>(nelems,
                                                                                                                  gran);
 }
 
@@ -216,7 +222,12 @@ std::shared_ptr<T> gpuMemAlloc(size_t nelems = 1) {
     return detail::gpuCallocPhysicalShared<T>(nelems);
   }
 #endif  // CUDA_NVLS_SUPPORTED
+
+#if defined(__HIP_PLATFORM_AMD__)
   return detail::gpuCallocUncachedShared<T>(nelems);
+#else  // !defined(__HIP_PLATFORM_AMD__)
+  return detail::gpuCallocShared<T>(nelems);
+#endif  // !defined(__HIP_PLATFORM_AMD__)
 }
 
 template <class T = char>
