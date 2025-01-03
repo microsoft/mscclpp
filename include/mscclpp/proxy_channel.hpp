@@ -11,8 +11,6 @@
 
 namespace mscclpp {
 
-constexpr int MAX_INFLIGHT_REQUEST = 500;
-
 struct BaseProxyChannel;
 struct ProxyChannel;
 
