@@ -23,8 +23,8 @@ using DeviceHandle = mscclpp::DeviceHandle<T>;
 __constant__ DeviceHandle<mscclpp::ProxyChannel> constProxyChans[16];
 __constant__ DeviceHandle<mscclpp::BaseProxyChannel> constRawProxyChan[16];
 
-__constant__ DeviceHandle<mscclpp::SmChannel> constSmChans[512];
-__constant__ DeviceHandle<mscclpp::SmChannel> constSmOutOfPlaceChans[16];
+__constant__ DeviceHandle<mscclpp::MemoryChannel> constMemChans[512];
+__constant__ DeviceHandle<mscclpp::MemoryChannel> constMemOutOfPlaceChans[16];
 __device__ uint64_t globalFlag;
 
 __global__ void __launch_bounds__(1024) allgather0(int rank, size_t nelemsPerGPU) {
@@ -79,8 +79,8 @@ __device__ void localAllGather(DeviceHandle<mscclpp::ProxyChannel> proxyChan, in
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
 // This kernel is the most performant when the number of blocks is a multiple of (nRanksPerNode - 1).
-__device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunkIndex, uint64_t offsetInRankChunk,
-                                 uint64_t rankChunkSize, uint64_t size, size_t nBlocks) {
+__device__ void localAllGatherMem(int rank, int nRanksPerNode, int startRankChunkIndex, uint64_t offsetInRankChunk,
+                                  uint64_t rankChunkSize, uint64_t size, size_t nBlocks) {
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
   const size_t nPeer = nRanksPerNode - 1;
@@ -116,12 +116,12 @@ __device__ void localAllGatherSm(int rank, int nRanksPerNode, int startRankChunk
     sizeForThisBlock += lastChunkSize;
   }
   if (threadIdx.x == 0 && peerLocalBlockIdx == 0) {
-    constSmChans[peerIdx].signal();
-    constSmChans[peerIdx].wait();
+    constMemChans[peerIdx].signal();
+    constMemChans[peerIdx].wait();
   }
   deviceSyncer.sync(nBlocks);
   size_t offset = rankChunkSize * (startRankChunkIndex + remoteRankLocalIndex) + offsetInRankChunk;
-  constSmChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
+  constMemChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
 
 __global__ void __launch_bounds__(1024) allgather1(int rank, int nRanksPerNode, size_t nelemsPerGPU) {
@@ -254,7 +254,7 @@ __global__ void __launch_bounds__(1024) allgather4(int rank, int worldSize, int 
   const int startRankIndexInPeerNode = (peerRank / nRanksPerNode) * nRanksPerNode;
 
   if (peerNodeId == rank / nRanksPerNode) {
-    localAllGatherSm(rank, nRanksPerNode, 0, 0, rankChunkSize, rankChunkSize, nBlocksForLocalAllGather);
+    localAllGatherMem(rank, nRanksPerNode, 0, 0, rankChunkSize, rankChunkSize, nBlocksForLocalAllGather);
     return;
   }
 
@@ -267,8 +267,8 @@ __global__ void __launch_bounds__(1024) allgather4(int rank, int worldSize, int 
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
   }
-  localAllGatherSm(rank, nRanksPerNode, startRankIndexInLocalNode, 0, rankChunkSize, rankChunkSize,
-                   nBlocksForLocalAllGather);
+  localAllGatherMem(rank, nRanksPerNode, startRankIndexInLocalNode, 0, rankChunkSize, rankChunkSize,
+                    nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     proxyChan.wait();
     proxyChan.flush();
@@ -278,16 +278,16 @@ __global__ void __launch_bounds__(1024) allgather4(int rank, int worldSize, int 
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
   }
-  localAllGatherSm(rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
-                   nBlocksForLocalAllGather);
+  localAllGatherMem(rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
+                    nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     proxyChan.wait();
     proxyChan.flush();
   }
   deviceSyncer.sync(nBlocksForLocalAllGather);
   // Step 3
-  localAllGatherSm(rank, nRanksPerNode, startRankIndexInPeerNode, step1Bytes, rankChunkSize, step2Bytes,
-                   nBlocksForLocalAllGather);
+  localAllGatherMem(rank, nRanksPerNode, startRankIndexInPeerNode, step1Bytes, rankChunkSize, step2Bytes,
+                    nBlocksForLocalAllGather);
 }
 
 __global__ void __launch_bounds__(1024, 1)
@@ -303,7 +303,7 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t nWarp = nThread / WARP_SIZE;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
-  auto smChans = constSmChans + chanOffset;
+  auto smChans = constMemChans + chanOffset;
 
   if (wid < nPeer && lid == 0) {
     smChans[wid].relaxedSignal();
@@ -366,7 +366,7 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t nWarp = nThread / WARP_SIZE;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
-  auto smChans = constSmChans + chanOffset;
+  auto smChans = constMemChans + chanOffset;
 
   if (wid < nPeer && lid == 0) {
     smChans[wid].relaxedSignal();
@@ -425,7 +425,7 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t nThread = blockDim.x * nBlock;
   const size_t nWarp = nThread / WARP_SIZE;
   const size_t nPeer = nRanksPerNode - 1;
-  auto smChans = constSmOutOfPlaceChans;
+  auto smChans = constMemOutOfPlaceChans;
 
   const uint32_t flag = (uint32_t)globalFlag;
   const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
@@ -704,8 +704,8 @@ class AllGatherTestEngine : public BaseTestEngine {
   std::shared_ptr<int> sendBuff_;
   std::shared_ptr<int[]> expectedBuff_;
   std::shared_ptr<mscclpp::LLPacket> scratchPacketBuff_;
-  std::vector<mscclpp::SmChannel> smChannels_;
-  std::vector<mscclpp::SmChannel> smOutOfPlaceChannels_;
+  std::vector<mscclpp::MemoryChannel> memoryChannels_;
+  std::vector<mscclpp::MemoryChannel> smOutOfPlaceChannels_;
 };
 
 AllGatherTestEngine::AllGatherTestEngine(const TestArgs& args) : BaseTestEngine(args, "allgather") {}
@@ -731,29 +731,30 @@ void AllGatherTestEngine::setupConnections() {
     CUDATHROW(cudaMemcpyToSymbol(constProxyChans, devProxyChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::ProxyChannel>) * devProxyChannels.size()));
 
-    setupMeshConnections(smChannels_, sendBuff_.get(), args_.maxBytes, nullptr, 0, ChannelSemantic::PUT, 64);
-    std::vector<DeviceHandle<mscclpp::SmChannel>> smChannelHandles(smChannels_.size());
-    if (smChannels_.size() > sizeof(constSmChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
+    setupMeshConnections(memoryChannels_, sendBuff_.get(), args_.maxBytes, nullptr, 0, ChannelSemantic::PUT, 64);
+    std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelHandles(memoryChannels_.size());
+    if (memoryChannels_.size() > sizeof(constMemChans) / sizeof(DeviceHandle<mscclpp::MemoryChannel>)) {
       std::runtime_error("unexpected error");
     }
-    std::transform(smChannels_.begin(), smChannels_.end(), smChannelHandles.begin(),
-                   [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
-    CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannelHandles.data(),
-                                 sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelHandles.size()));
+    std::transform(memoryChannels_.begin(), memoryChannels_.end(), memoryChannelHandles.begin(),
+                   [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
+    CUDATHROW(cudaMemcpyToSymbol(constMemChans, memoryChannelHandles.data(),
+                                 sizeof(DeviceHandle<mscclpp::MemoryChannel>) * memoryChannelHandles.size()));
 
     if (args_.kernelNum == 7) {
       const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
       const size_t scratchPacketBuffBytes = nPacket * 2 * 2 * sizeof(mscclpp::LLPacket);
       setupMeshConnections(smOutOfPlaceChannels_, sendBuff_.get(), args_.maxBytes, scratchPacketBuff_.get(),
                            scratchPacketBuffBytes);
-      std::vector<DeviceHandle<mscclpp::SmChannel>> smOutOfPlaceChannelHandles(smOutOfPlaceChannels_.size());
-      if (smOutOfPlaceChannels_.size() > sizeof(constSmOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
+      std::vector<DeviceHandle<mscclpp::MemoryChannel>> smOutOfPlaceChannelHandles(smOutOfPlaceChannels_.size());
+      if (smOutOfPlaceChannels_.size() >
+          sizeof(constMemOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::MemoryChannel>)) {
         std::runtime_error("unexpected error");
       }
       std::transform(smOutOfPlaceChannels_.begin(), smOutOfPlaceChannels_.end(), smOutOfPlaceChannelHandles.begin(),
-                     [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
-      CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceChans, smOutOfPlaceChannelHandles.data(),
-                                   sizeof(DeviceHandle<mscclpp::SmChannel>) * smOutOfPlaceChannelHandles.size()));
+                     [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
+      CUDATHROW(cudaMemcpyToSymbol(constMemOutOfPlaceChans, smOutOfPlaceChannelHandles.data(),
+                                   sizeof(DeviceHandle<mscclpp::MemoryChannel>) * smOutOfPlaceChannelHandles.size()));
     }
   } else {
     auto service = std::dynamic_pointer_cast<AllGatherProxyService>(chanService_);

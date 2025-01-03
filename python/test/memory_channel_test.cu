@@ -1,11 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <mscclpp/sm_channel_device.hpp>
+#include <mscclpp/memory_channel_device.hpp>
 
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    sm_channel(mscclpp::SmChannelDeviceHandle* channels, int my_rank, int nranks, int num_elements, int use_packet) {
+    memory_channel(mscclpp::MemoryChannelDeviceHandle* channels, int my_rank, int nranks, int num_elements,
+                   int use_packet) {
   int tid = threadIdx.x;
   int bid = blockIdx.x;
   uint64_t size_per_rank = (num_elements * sizeof(int)) / nranks;

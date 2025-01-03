@@ -1,3 +1,3 @@
-# Using SmChannel for Intra-Node Communication
+# Using MemoryChannel for Intra-Node Communication
 
 TBU

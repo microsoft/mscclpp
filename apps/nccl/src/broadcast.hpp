@@ -7,23 +7,23 @@
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
-#include <mscclpp/sm_channel.hpp>
-#include <mscclpp/sm_channel_device.hpp>
+#include <mscclpp/memory_channel.hpp>
+#include <mscclpp/memory_channel_device.hpp>
 
 #include "common.hpp"
 
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
-    broadcast6(void* sendbuff, void* scratchbuff, void* recvbuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-               size_t channelOutOffset, size_t rank, [[maybe_unused]] size_t worldSize, size_t root,
-               size_t nRanksPerNode, size_t nelemsPerGPU) {
+    broadcast6(void* sendbuff, void* scratchbuff, void* recvbuff,
+               mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels, size_t channelOutOffset, size_t rank,
+               [[maybe_unused]] size_t worldSize, size_t root, size_t nRanksPerNode, size_t nelemsPerGPU) {
   const size_t nThread = blockDim.x * gridDim.x;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
 
-  __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> smChans[NRANKS_PER_NODE - 1];
+  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> smChans[NRANKS_PER_NODE - 1];
   if (threadIdx.x < nPeer) {
-    smChans[threadIdx.x] = smChannels[chanOffset + threadIdx.x];
+    smChans[threadIdx.x] = memoryChannels[chanOffset + threadIdx.x];
     smChans[threadIdx.x].relaxedSignal();
     smChans[threadIdx.x].wait();
   }
@@ -146,7 +146,7 @@ __global__ void __launch_bounds__(1024, 1)
 }
 
 template <bool IsOutOfPlace, typename T>
-cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
+cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
                       size_t channelOutOffset, int rank, int nRanksPerNode, int root, int worldSize, size_t nelems,
                       cudaStream_t stream) {
   int nBlocks = 7;
@@ -157,7 +157,7 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
   // } else if (nelems >= 2097152) {
   //   nBlocks = 35;
   // }
-  broadcast6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff, smChannels,
+  broadcast6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff, memoryChannels,
                                                          channelOutOffset, rank, worldSize, root, nRanksPerNode,
                                                          nelems * sizeof(T) / sizeof(int));
   return cudaGetLastError();

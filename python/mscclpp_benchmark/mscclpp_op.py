@@ -1,7 +1,7 @@
 import os
 import cupy as cp
 import ctypes
-from mscclpp import Transport, ProxyService, SmDevice2DeviceSemaphore, alloc_shared_physical_cuda
+from mscclpp import Transport, ProxyService, MemoryDevice2DeviceSemaphore, alloc_shared_physical_cuda
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, pack
 
@@ -48,8 +48,8 @@ class MscclppAllReduce1:
         self.connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
         type_str = type_to_str(memory.dtype)
 
-        # create a sm_channel for each remote neighbor
-        self.sm_channels = self.group.make_sm_channels(self.memory, self.connections)
+        # create a memory_channel for each remote neighbor
+        self.memory_channels = self.group.make_memory_channels(self.memory, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
             file="allreduce.cu",
@@ -60,7 +60,7 @@ class MscclppAllReduce1:
         self.device_handles = []
         for rank in range(self.group.nranks):
             if rank != self.group.my_rank:
-                self.device_handles.append(self.sm_channels[rank].device_handle().raw)
+                self.device_handles.append(self.memory_channels[rank].device_handle().raw)
 
         self.device_handles_cp = cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8)
 
@@ -116,8 +116,8 @@ class MscclppAllReduce2:
         type_str = type_to_str(memory.dtype)
 
         self.scratch = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
-        # create a sm_channel for each remote neighbor
-        self.sm_channels = self.group.make_sm_channels_with_scratch(self.memory, self.scratch, self.connections)
+        # create a memory_channel for each remote neighbor
+        self.memory_channels = self.group.make_memory_channels_with_scratch(self.memory, self.scratch, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
             file="allreduce.cu", kernel_name="allreduce2", file_dir=file_dir, macro_dict={"TYPE": type_str}
@@ -125,7 +125,7 @@ class MscclppAllReduce2:
         self.device_handles = []
         for rank in range(self.group.nranks):
             if rank != self.group.my_rank:
-                self.device_handles.append(self.sm_channels[rank].device_handle().raw)
+                self.device_handles.append(self.memory_channels[rank].device_handle().raw)
 
         self.device_handles_cp = cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8)
 
@@ -181,7 +181,7 @@ class MscclppAllReduce3:
         self.proxy_service = proxy_service
         self.scratch = cp.zeros(self.memory.size, dtype=self.memory.dtype)
 
-        # create a sm_channel for each remote neighbor
+        # create a memory_channel for each remote neighbor
         self.fst_round_proxy_chans = self.group.make_proxy_channels_with_scratch(
             self.proxy_service, self.memory, self.scratch, self.connections
         )
@@ -261,8 +261,8 @@ class MscclppAllReduce4:
         self.proxy_service = proxy_service
         self.scratch = cp.zeros(self.memory.size, dtype=self.memory.dtype)
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
-        # create a sm_channel for each remote neighbor
-        self.sm_channels = self.group.make_sm_channels(self.memory, same_node_connections)
+        # create a memory_channel for each remote neighbor
+        self.memory_channels = self.group.make_memory_channels(self.memory, same_node_connections)
         self.reduce_scatter_proxy_channels = self.group.make_proxy_channels_with_scratch(
             self.proxy_service, self.memory, self.scratch, self.connections
         )
@@ -273,19 +273,19 @@ class MscclppAllReduce4:
         self.kernel = KernelBuilder(
             file="allreduce.cu", kernel_name="allreduce4", file_dir=file_dir, macro_dict={"TYPE": type_str}
         ).get_compiled_kernel()
-        self.sm_device_handles = []
+        self.mem_device_handles = []
         self.reduce_sactter_proxy_device_handles = []
         self.all_gather_proxy_device_handles = []
         for rank in range(self.group.nranks):
             if rank != self.group.my_rank and in_same_node(rank):
-                self.sm_device_handles.append(self.sm_channels[rank].device_handle().raw)
+                self.mem_device_handles.append(self.memory_channels[rank].device_handle().raw)
             if rank != self.group.my_rank:
                 self.reduce_sactter_proxy_device_handles.append(
                     self.reduce_scatter_proxy_channels[rank].device_handle().raw
                 )
                 self.all_gather_proxy_device_handles.append(self.all_gather_proxy_channels[rank].device_handle().raw)
 
-        self.sm_device_handles_cp = cp.asarray(memoryview(b"".join(self.sm_device_handles)), dtype=cp.uint8)
+        self.mem_device_handles_cp = cp.asarray(memoryview(b"".join(self.mem_device_handles)), dtype=cp.uint8)
         self.reduce_sactter_proxy_device_handles_cp = cp.asarray(
             memoryview(b"".join(self.reduce_sactter_proxy_device_handles)), dtype=cp.uint8
         )
@@ -306,7 +306,7 @@ class MscclppAllReduce4:
 
         self.params = b""
         self.params += pack(
-            self.sm_device_handles_cp,
+            self.mem_device_handles_cp,
             self.reduce_sactter_proxy_device_handles_cp,
             self.all_gather_proxy_device_handles_cp,
             self.memory,
@@ -366,8 +366,10 @@ class MscclppAllReduce5:
         self.put_buff = cp.zeros(self.memory.size * 8 // nranks_per_node, dtype=self.memory.dtype)
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         across_node_connections = {rank: conn for rank, conn in self.connections.items() if not in_same_node(rank)}
-        # create a sm_channel for each remote neighbor
-        self.sm_channels = self.group.make_sm_channels_with_scratch(self.memory, self.scratch, same_node_connections)
+        # create a memory_channel for each remote neighbor
+        self.memory_channels = self.group.make_memory_channels_with_scratch(
+            self.memory, self.scratch, same_node_connections
+        )
         self.proxy_channels = self.group.make_proxy_channels_with_scratch(
             self.proxy_service, self.put_buff, self.scratch, across_node_connections
         )
@@ -375,15 +377,15 @@ class MscclppAllReduce5:
         self.kernel = KernelBuilder(
             file="allreduce.cu", kernel_name="allreduce5", file_dir=file_dir, macro_dict={"TYPE": type_str}
         ).get_compiled_kernel()
-        self.sm_device_handles = []
+        self.mem_device_handles = []
         self.proxy_device_handles = []
         for rank in range(self.group.nranks):
             if rank != self.group.my_rank and in_same_node(rank):
-                self.sm_device_handles.append(self.sm_channels[rank].device_handle().raw)
+                self.mem_device_handles.append(self.memory_channels[rank].device_handle().raw)
             if rank != self.group.my_rank and not in_same_node(rank):
                 self.proxy_device_handles.append(self.proxy_channels[rank].device_handle().raw)
 
-        self.sm_device_handles_cp = cp.asarray(memoryview(b"".join(self.sm_device_handles)), dtype=cp.uint8)
+        self.mem_device_handles_cp = cp.asarray(memoryview(b"".join(self.mem_device_handles)), dtype=cp.uint8)
         self.proxy_device_handles_cp = cp.asarray(memoryview(b"".join(self.proxy_device_handles)), dtype=cp.uint8)
 
         self.set_params(nblocks, block_size)
@@ -398,7 +400,7 @@ class MscclppAllReduce5:
 
         self.params = b""
         self.params += pack(
-            self.sm_device_handles_cp,
+            self.mem_device_handles_cp,
             self.proxy_device_handles_cp,
             self.memory,
             self.scratch,
@@ -454,8 +456,8 @@ class MscclppAllReduce6:
         )
         self.memory = cp.ndarray(nelem, memory_dtype, self.cp_memory_ptr)
 
-        # create a sm_channel for each remote neighbor
-        self.semaphores = group.make_semaphore(self.nvlink_connections, SmDevice2DeviceSemaphore)
+        # create a memory_channel for each remote neighbor
+        self.semaphores = group.make_semaphore(self.nvlink_connections, MemoryDevice2DeviceSemaphore)
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
             file="allreduce.cu",

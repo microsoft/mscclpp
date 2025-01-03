@@ -36,8 +36,8 @@ struct Host2DeviceSemaphoreDeviceHandle {
   uint64_t* expectedInboundSemaphoreId;
 };
 
-/// Device-side handle for @ref SmDevice2DeviceSemaphore.
-struct SmDevice2DeviceSemaphoreDeviceHandle {
+/// Device-side handle for @ref MemoryDevice2DeviceSemaphore.
+struct MemoryDevice2DeviceSemaphoreDeviceHandle {
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Poll if the remote device has signaled.
   /// @return true if the remote device has signaled.
@@ -101,6 +101,10 @@ struct SmDevice2DeviceSemaphoreDeviceHandle {
   uint64_t* remoteInboundSemaphoreId;
   uint64_t* expectedInboundSemaphoreId;
 };
+
+/// @deprecated Use @ref MemoryDevice2DeviceSemaphoreDeviceHandle instead.
+[[deprecated("Use MemoryDevice2DeviceSemaphoreDeviceHandle instead.")]] typedef MemoryDevice2DeviceSemaphoreDeviceHandle
+    SmDevice2DeviceSemaphoreDeviceHandle;
 
 }  // namespace mscclpp
 
