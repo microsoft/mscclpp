@@ -36,10 +36,13 @@ std::string Connection::getTransportName() {
          TransportNames[static_cast<int>(this->remoteTransport())];
 }
 
+int Connection::getMaxInflightRequest() { return maxInflightRequests; }
+
 // CudaIpcConnection
 
 CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, cudaStream_t stream)
-    : stream_(stream) {
+    : stream_(stream),
+      Connection(localEndpoint.maxInflightRequests() != -1 ? localEndpoint.maxInflightRequests() : INT_MAX) {
   if (localEndpoint.transport() != Transport::CudaIpc) {
     throw mscclpp::Error("Cuda IPC connection can only be made from a Cuda IPC endpoint", ErrorCode::InvalidUsage);
   }
@@ -121,7 +124,8 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context)
     : transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
-      dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
+      dummyAtomicSource_(std::make_unique<uint64_t>(0)),
+      Connection(localEndpoint.maxInflightRequests() != -1 ? localEndpoint.maxInflightRequests() : 1024) {
   qp = getImpl(localEndpoint)->ibQp_;
   qp->rtr(getImpl(remoteEndpoint)->ibQpInfo_);
   qp->rts();
@@ -231,7 +235,10 @@ void IBConnection::flush(int64_t timeoutUsec) {
 
 EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, uint64_t sendBufferSize,
                                        uint64_t recvBufferSize)
-    : abortFlag_(0), sendBufferSize_(sendBufferSize), recvBufferSize_(recvBufferSize) {
+    : abortFlag_(0),
+      sendBufferSize_(sendBufferSize),
+      recvBufferSize_(recvBufferSize),
+      Connection(localEndpoint.maxInflightRequests() != -1 ? localEndpoint.maxInflightRequests() : INT_MAX) {
   // Validating Transport Protocol
   if (localEndpoint.transport() != Transport::Ethernet || remoteEndpoint.transport() != Transport::Ethernet) {
     throw mscclpp::Error("Ethernet connection can only be made from Ethernet endpoints", ErrorCode::InvalidUsage);

@@ -20,6 +20,7 @@ struct Endpoint::Impl {
 
   Transport transport_;
   uint64_t hostHash_;
+  int maxInflightRequests_;
 
   // The following are only used for IB and are undefined for other transports.
   bool ibLocal_;

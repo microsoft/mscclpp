@@ -24,7 +24,6 @@ MSCCLPP_API_CPP ProxyService::ProxyService(size_t fifoSize)
   int cudaDevice;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
   deviceNumaNode = getDeviceNumaNode(cudaDevice);
-  inflightRequests = 0;
 }
 
 MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
@@ -72,28 +71,24 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
 
   auto result = ProxyHandlerResult::Continue;
 
-  inflightRequests++;
-  if (!(trigger->fields.type & TriggerSync) && inflightRequests > MAX_INFLIGHT_REQUEST) {
-    semaphore->connection()->flush();
-    result = ProxyHandlerResult::FlushFifoTailAndContinue;
-    inflightRequests = 0;
-  }
-
   if (trigger->fields.type & TriggerData) {
     RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
     RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
     semaphore->connection()->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
                                    trigger->fields.size);
+    inflightRequests[semaphore->connection()]++;
   }
 
   if (trigger->fields.type & TriggerFlag) {
     semaphore->signal();
+    inflightRequests[semaphore->connection()]++;
   }
 
-  if (trigger->fields.type & TriggerSync) {
+  if (trigger->fields.type & TriggerSync ||
+      inflightRequests[semaphore->connection()] > semaphore->connection()->getMaxInflightRequest()) {
     semaphore->connection()->flush();
     result = ProxyHandlerResult::FlushFifoTailAndContinue;
-    inflightRequests = 0;
+    inflightRequests[semaphore->connection()] = 0;
   }
 
   return result;

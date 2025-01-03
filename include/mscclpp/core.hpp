@@ -33,7 +33,7 @@ std::string version();
 /// Base class for bootstraps.
 class Bootstrap {
  public:
-  Bootstrap(){};
+  Bootstrap() {};
   virtual ~Bootstrap() = default;
   virtual int getRank() = 0;
   virtual int getNranks() = 0;
@@ -388,6 +388,11 @@ class Endpoint {
   /// @return The transport used.
   Transport transport();
 
+  /// Get the max inflight requests.
+  ///
+  /// @return max inflight requests.
+  int maxInflightRequests();
+
   /// Serialize the Endpoint object to a vector of characters.
   ///
   /// @return A vector of characters representing the serialized Endpoint object.
@@ -416,6 +421,10 @@ class Endpoint {
 /// Represents a connection between two processes.
 class Connection {
  public:
+  /// Constructor.
+  /// @param maxInflightRequests The maximum number of inflight requests.
+  Connection(int maxInflightRequests) : maxInflightRequests(maxInflightRequests) {};
+
   virtual ~Connection() = default;
 
   /// Write data from a source @ref RegisteredMemory to a destination @ref RegisteredMemory.
@@ -454,10 +463,13 @@ class Connection {
   /// @return name of @ref transport() -> @ref remoteTransport()
   std::string getTransportName();
 
+  int getMaxInflightRequest();
+
  protected:
   // Internal methods for getting implementation pointers.
   static std::shared_ptr<RegisteredMemory::Impl> getImpl(RegisteredMemory& memory);
   static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
+  int maxInflightRequests;
 };
 
 /// Used to configure an endpoint.
@@ -472,14 +484,13 @@ struct EndpointConfig {
   int ibMaxCqPollNum = DefaultMaxCqPollNum;
   int ibMaxSendWr = DefaultMaxSendWr;
   int ibMaxWrPerSend = DefaultMaxWrPerSend;
-
-  /// Default constructor. Sets transport to Transport::Unknown.
-  EndpointConfig() : transport(Transport::Unknown) {}
+  int maxInflightRequests;
 
   /// Constructor that takes a transport and sets the other fields to their default values.
   ///
   /// @param transport The transport to use.
-  EndpointConfig(Transport transport) : transport(transport) {}
+  EndpointConfig(Transport transport = Transport::Unknown, int maxInflightRequests = -1)
+      : transport(transport), maxInflightRequests(maxInflightRequests) {}
 };
 
 /// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
