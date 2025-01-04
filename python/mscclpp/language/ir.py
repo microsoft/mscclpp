@@ -169,10 +169,10 @@ class _JsonInstruction:
     o_cids: Optional[List[Dict[str, Union[int, List[int]]]]] = None
     src: Optional[int] = None
     srcs: Optional[List[Dict[str, Union[int, str]]]] = None
-    dst: Optional[int] = None
-    dsts: Optional[List[Dict[str, Union[int, str]]]] = None
     srcbuff: Optional[str] = None
     srcoff: Optional[int] = None
+    dst: Optional[int] = None
+    dsts: Optional[List[Dict[str, Union[int, str]]]] = None
     dstbuff: Optional[str] = None
     dstoff: Optional[int] = None
     ctype: Optional[str] = None
@@ -217,6 +217,8 @@ class _SignalFlushConverter(_OpConverter):
             name=op.inst.value,
             o_buff=o_buff,
             o_cids=dst_channel_ids,
+            ctype=op.channel_type.value,
+            cnt=op.cnt(),
         )
 
 
@@ -228,6 +230,8 @@ class _WaitConverter(_OpConverter):
             name=op.inst.value,
             i_buff=i_buff,
             i_cids=src_channel_ids,
+            ctype=op.channel_type.value,
+            cnt=op.cnt(),
         )
 
 
@@ -241,11 +245,11 @@ class _ReadReduceCopyConverter(_OpConverter):
             name=op.inst.value,
             i_buff=i_buff,
             dst=dst.rank,
-            dstbuff=op.dst.buffer.value,
-            dstoff=op.dst.index,
+            dstbuff=dst.buffer.value,
+            dstoff=dst.index,
             src=src.rank,
-            srcbuff=op.src.buffer.value,
-            srcoff=op.src.index,
+            srcbuff=src.buffer.value,
+            srcoff=src.index,
             i_cids=src_channel_ids,
             ctype=op.channel_type.value,
             cnt=op.cnt(),
@@ -269,11 +273,11 @@ class _ReadReduceCopySendConverter(_OpConverter):
             o_buff=o_buff,
             o_cids=dst_channel_ids,
             src=src.rank,
-            srcbuff=op.src.buffer.value,
-            srcoff=op.src.index,
+            srcbuff=src.buffer.value,
+            srcoff=src.index,
             dst=dst.rank,
-            dstbuff=op.dst.buffer.value,
-            dstoff=op.dst.index,
+            dstbuff=dst.buffer.value,
+            dstoff=dst.index,
             ctype=op.channel_type.value,
             cnt=op.cnt(),
         )
@@ -293,12 +297,12 @@ class _ReduceSendConverter(_OpConverter):
             o_buff=o_buff,
             o_cids=dst_channel_ids,
             src=src.rank,
-            srcbuff=op.src.buffer.value,
-            srcoff=op.src.index,
+            srcbuff=src.buffer.value,
+            srcoff=src.index,
             srcs=srcs,
             dst=dst.rank,
-            dstbuff=op.dst.buffer.value,
-            dstoff=op.dst.index,
+            dstbuff=dst.buffer.value,
+            dstoff=dst.index,
             ctype=op.channel_type.value,
             cnt=op.cnt(),
         )
@@ -313,11 +317,11 @@ class _ReduceConverters(_OpConverter):
             name=op.inst.value,
             srcs=srcs,
             dst=dst.rank,
-            dstbuff=op.dst.buffer.value,
-            dstoff=op.dst.index,
+            dstbuff=dst.buffer.value,
+            dstoff=dst.index,
             src=src.rank,
-            srcbuff=op.src.buffer.value,
-            srcoff=op.src.index,
+            srcbuff=src.buffer.value,
+            srcoff=src.index,
             ctype=op.channel_type.value,
             cnt=op.cnt(),
         )
@@ -377,11 +381,11 @@ class _CopyConverter(_OpConverter):
         return _JsonInstruction(
             name=op.inst.value,
             src=src.rank,
-            srcbuff=op.src.buffer.value,
-            srcoff=op.src.index,
+            srcbuff=src.buffer.value,
+            srcoff=src.index,
             dst=dst.rank,
-            dstbuff=op.dst.buffer.value,
-            dstoff=op.dst.index,
+            dstbuff=dst.buffer.value,
+            dstoff=dst.index,
             ctype=op.channel_type.value,
             cnt=op.cnt(),
         )
@@ -396,11 +400,11 @@ class _GroupLoadReduceStoreConverter(_OpConverter):
         return _JsonInstruction(
             name=op.inst.value,
             src=src.rank,
-            srcbuff=op.src.buffer.value,
-            srcoff=op.src.index,
+            srcbuff=src.buffer.value,
+            srcoff=src.index,
             dst=dst.rank,
-            dstbuff=op.dst.buffer.value,
-            dstoff=op.dst.index,
+            dstbuff=dst.buffer.value,
+            dstoff=dst.index,
             i_cids=src_channel_ids,
             o_cids=dst_channel_ids,
             ctype=op.channel_type.value,
