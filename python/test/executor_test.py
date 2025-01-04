@@ -8,8 +8,6 @@ from mscclpp import (
     ExecutionPlan,
     PacketType,
     npkit,
-    alloc_shared_physical_cuda,
-    is_nvls_supported,
 )
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, GpuBuffer, pack

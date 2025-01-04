@@ -16,9 +16,6 @@ class NvlsConnection {
   NvlsConnection() = delete;
   std::vector<char> serialize();
 
-  // the recommended buffer size for NVLS, returned by cuMulticastGetGranularity
-  static const int DefaultNvlsBufferSize;
-
   // Everyone needs to synchronize after creating a NVLS connection before adding devices
   void addDevice();
   void addDevice(int cudaDeviceId);
@@ -65,7 +62,7 @@ class Communicator;
 /// @param config The configuration for the local endpoint.
 /// @return std::shared_ptr<NvlsConnection> A shared pointer to the NVLS connection.
 std::shared_ptr<NvlsConnection> connectNvlsCollective(std::shared_ptr<Communicator> comm, std::vector<int> allRanks,
-                                                      size_t bufferSize = NvlsConnection::DefaultNvlsBufferSize);
+                                                      size_t bufferSize);
 
 }  // namespace mscclpp
 
