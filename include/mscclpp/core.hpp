@@ -388,9 +388,9 @@ class Endpoint {
   /// @return The transport used.
   Transport transport();
 
-  /// Get the max inflight requests.
+  /// Get the maximum write queue size.
   ///
-  /// @return max inflight requests.
+  /// @return The maximum number of write requests that can be queued.
   int maxWriteQueueSize();
 
   /// Serialize the Endpoint object to a vector of characters.
@@ -463,7 +463,7 @@ class Connection {
   /// @return name of @ref transport() -> @ref remoteTransport()
   std::string getTransportName();
 
- /// Get the maximum write queue size
+  /// Get the maximum write queue size
   ///
   /// @return The maximum number of write requests that can be queued.
   int getMaxWriteQueueSize();
@@ -489,7 +489,7 @@ struct EndpointConfig {
   int ibMaxWrPerSend;
   int maxWriteQueueSize;
 
-  /// Constructor that takes a transport and sets the other fields to their default values or provided values.
+  /// Constructor that takes a transport and sets the other fields to their default values.
   ///
   /// @param transport The transport to use.
   /// @param ibMaxCqSize The maximum completion queue size.
