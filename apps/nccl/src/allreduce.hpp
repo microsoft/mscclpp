@@ -247,7 +247,7 @@ __global__ void __launch_bounds__(1024, 1)
                ,
                NpKitEventCollectContext* npKitEventCollectContexts, uint64_t* cpuTimestamp) {
 #else
-               ) {
+    ) {
 #endif
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
@@ -265,7 +265,8 @@ __global__ void __launch_bounds__(1024, 1)
 #endif
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
 #if defined(MSCCLPP_DEVICE_HIP)
-  NpKit::CollectGpuEventShm(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0, NPKIT_LOAD_CPU_TIMESTAMP_PER_BLOCK(cpuTimestamp, blockIdx.x),
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0,
+                            NPKIT_LOAD_CPU_TIMESTAMP_PER_BLOCK(cpuTimestamp, blockIdx.x),
 #else
   NpKit::CollectGpuEventShm(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0, *cpuTimestamp,
 #endif
@@ -516,9 +517,9 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
     }
 #if defined(ENABLE_NPKIT)
     size_t NpkitSharedMemSize = NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
-    allreduce7<<<nBlocks, nThreadsPerBlock, NpkitSharedMemSize, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset,
-                                                         channelScratchOffset, rank, nRanksPerNode, worldSize, nelems,
-                                                         flag++, NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+    allreduce7<<<nBlocks, nThreadsPerBlock, NpkitSharedMemSize, stream>>>(
+        buff, scratch, resultBuff, smChannels, channelInOffset, channelScratchOffset, rank, nRanksPerNode, worldSize,
+        nelems, flag++, NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
 #else
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset,
                                                          channelScratchOffset, rank, nRanksPerNode, worldSize, nelems,
