@@ -53,7 +53,22 @@ void* gpuCallocUncached(size_t bytes) {
 #endif  // defined(__HIP_PLATFORM_AMD__)
 
 #if (CUDA_NVLS_SUPPORTED)
-void* gpuCallocPhysical(size_t bytes, size_t gran) {
+static size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
+  size_t gran = 0;
+  int numDevices = 0;
+  MSCCLPP_CUDATHROW(cudaGetDeviceCount(&numDevices));
+
+  CUmulticastObjectProp prop = {};
+  prop.size = size;
+  // This is a dummy value, it might affect the granularity in the future
+  prop.numDevices = numDevices;
+  prop.handleTypes = (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
+  prop.flags = 0;
+  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&gran, &prop, granFlag));
+  return gran;
+}
+
+void* gpuCallocPhysical(size_t bytes, size_t gran, size_t align) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   int deviceId = -1;
   CUdevice currentDevice;
@@ -67,13 +82,21 @@ void* gpuCallocPhysical(size_t bytes, size_t gran) {
       (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
   prop.location.id = currentDevice;
 
+  if (gran == 0) {
+    gran = getMulticastGranularity(bytes, CU_MULTICAST_GRANULARITY_RECOMMENDED);
+  }
+
   // allocate physical memory
   CUmemGenericAllocationHandle memHandle;
   size_t nbytes = (bytes + gran - 1) / gran * gran;
   MSCCLPP_CUTHROW(cuMemCreate(&memHandle, nbytes, &prop, 0 /*flags*/));
 
+  if (align == 0) {
+    align = getMulticastGranularity(nbytes, CU_MULTICAST_GRANULARITY_MINIMUM);
+  }
+
   void* devicePtr = nullptr;
-  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, nbytes, gran, 0U, 0));
+  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, nbytes, align, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, nbytes, 0, memHandle, 0));
   setReadWriteMemoryAccess(devicePtr, nbytes);
   CudaStreamWithFlags stream(cudaStreamNonBlocking);
@@ -104,23 +127,6 @@ void gpuFreePhysical(void* ptr) {
   MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, size));
   MSCCLPP_CUTHROW(cuMemRelease(handle));
   MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, size));
-}
-#endif  // CUDA_NVLS_SUPPORTED
-
-#if (CUDA_NVLS_SUPPORTED)
-size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
-  size_t gran = 0;
-  int numDevices = 0;
-  MSCCLPP_CUDATHROW(cudaGetDeviceCount(&numDevices));
-
-  CUmulticastObjectProp prop = {};
-  prop.size = size;
-  // This is a dummy value, it might affect the granularity in the future
-  prop.numDevices = numDevices;
-  prop.handleTypes = (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
-  prop.flags = 0;
-  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&gran, &prop, granFlag));
-  return gran;
 }
 #endif  // CUDA_NVLS_SUPPORTED
 

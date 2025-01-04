@@ -60,7 +60,7 @@ void* gpuCallocHost(size_t bytes);
 void* gpuCallocUncached(size_t bytes);
 #endif  // defined(__HIP_PLATFORM_AMD__)
 #if (CUDA_NVLS_SUPPORTED)
-void* gpuCallocPhysical(size_t bytes, size_t gran);
+void* gpuCallocPhysical(size_t bytes, size_t gran = 0, size_t align = 0);
 #endif  // CUDA_NVLS_SUPPORTED
 
 void gpuFree(void* ptr);
@@ -76,17 +76,20 @@ void gpuMemcpy(void* dst, const void* src, size_t bytes, cudaMemcpyKind kind = c
 /// A template function that allocates memory while ensuring that the memory will be freed when the returned object is
 /// destroyed.
 /// @tparam T Type of each element in the allocated memory.
-/// @tparam alloc A function that allocates memory.
 /// @tparam Deleter A deleter that will be used to free the allocated memory.
 /// @tparam Memory The type of the returned object.
+/// @tparam Alloc A function type that allocates memory.
+/// @tparam Args Input types of the @p alloc function variables.
+/// @param alloc A function that allocates memory.
 /// @param nelems Number of elements to allocate.
+/// @param args Extra input variables for the @p alloc function.
 /// @return An object of type @p Memory that will free the allocated memory when destroyed.
 ///
-template <class T, void*(alloc)(size_t), class Deleter, class Memory>
-Memory safeAlloc(size_t nelems) {
+template <class T, class Deleter, class Memory, typename Alloc, typename... Args>
+Memory safeAlloc(Alloc alloc, size_t nelems, Args&&... args) {
   T* ptr = nullptr;
   try {
-    ptr = reinterpret_cast<T*>(alloc(nelems * sizeof(T)));
+    ptr = reinterpret_cast<T*>(alloc(nelems * sizeof(T), std::forward<Args>(args)...));
   } catch (...) {
     if (ptr) {
       Deleter()(ptr);
@@ -95,35 +98,6 @@ Memory safeAlloc(size_t nelems) {
   }
   return Memory(ptr, Deleter());
 }
-
-#if (CUDA_NVLS_SUPPORTED)
-
-size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag);
-
-template <class T, void*(alloc)(size_t, size_t), class Deleter, class Memory>
-Memory safeAlloc(size_t nelems, size_t gran) {
-  if (gran == 0) {
-    gran = getMulticastGranularity(nelems * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
-  }
-  nelems = ((nelems * sizeof(T) + gran - 1) / gran * gran) / sizeof(T);
-  if ((nelems * sizeof(T)) % gran) {
-    throw Error("The request allocation size is not divisible by the required granularity:" +
-                    std::to_string(nelems * sizeof(T)) + " vs " + std::to_string(gran),
-                ErrorCode::InvalidUsage);
-  }
-  T* ptr = nullptr;
-  try {
-    ptr = reinterpret_cast<T*>(alloc(nelems * sizeof(T), gran));
-  } catch (...) {
-    if (ptr) {
-      Deleter()(ptr);
-    }
-    throw;
-  }
-  return Memory(ptr, Deleter());
-}
-
-#endif  // CUDA_NVLS_SUPPORTED
 
 /// A deleter that calls gpuFree for use with std::unique_ptr or std::shared_ptr.
 /// @tparam T Type of each element in the allocated memory.
@@ -154,34 +128,34 @@ using UniqueGpuHostPtr = std::unique_ptr<T, detail::GpuHostDeleter<T>>;
 
 template <class T>
 auto gpuCallocShared(size_t nelems = 1) {
-  return detail::safeAlloc<T, detail::gpuCalloc, detail::GpuDeleter<T>, std::shared_ptr<T>>(nelems);
+  return detail::safeAlloc<T, detail::GpuDeleter<T>, std::shared_ptr<T>>(detail::gpuCalloc, nelems);
 }
 
 template <class T>
 auto gpuCallocUnique(size_t nelems = 1) {
-  return detail::safeAlloc<T, detail::gpuCalloc, detail::GpuDeleter<T>, UniqueGpuPtr<T>>(nelems);
+  return detail::safeAlloc<T, detail::GpuDeleter<T>, UniqueGpuPtr<T>>(detail::gpuCalloc, nelems);
 }
 
 template <class T>
 auto gpuCallocHostShared(size_t nelems = 1) {
-  return detail::safeAlloc<T, detail::gpuCallocHost, detail::GpuHostDeleter<T>, std::shared_ptr<T>>(nelems);
+  return detail::safeAlloc<T, detail::GpuHostDeleter<T>, std::shared_ptr<T>>(detail::gpuCallocHost, nelems);
 }
 
 template <class T>
 auto gpuCallocHostUnique(size_t nelems = 1) {
-  return detail::safeAlloc<T, detail::gpuCallocHost, detail::GpuHostDeleter<T>, UniqueGpuHostPtr<T>>(nelems);
+  return detail::safeAlloc<T, detail::GpuHostDeleter<T>, UniqueGpuHostPtr<T>>(detail::gpuCallocHost, nelems);
 }
 
 #if defined(__HIP_PLATFORM_AMD__)
 
 template <class T>
 auto gpuCallocUncachedShared(size_t nelems = 1) {
-  return detail::safeAlloc<T, detail::gpuCallocUncached, detail::GpuDeleter<T>, std::shared_ptr<T>>(nelems);
+  return detail::safeAlloc<T, detail::GpuDeleter<T>, std::shared_ptr<T>>(detail::gpuCallocUncached, nelems);
 }
 
 template <class T>
 auto gpuCallocUncachedUnique(size_t nelems = 1) {
-  return detail::safeAlloc<T, detail::gpuCallocUncached, detail::GpuDeleter<T>, UniqueGpuPtr<T>>(nelems);
+  return detail::safeAlloc<T, detail::GpuDeleter<T>, UniqueGpuPtr<T>>(detail::gpuCallocUncached, nelems);
 }
 
 #endif  // defined(__HIP_PLATFORM_AMD__)
@@ -192,15 +166,15 @@ template <class T>
 using UniqueGpuPhysicalPtr = std::unique_ptr<T, detail::GpuPhysicalDeleter<T>>;
 
 template <class T>
-auto gpuCallocPhysicalShared(size_t nelems = 1, size_t gran = 0) {
-  return detail::safeAlloc<T, detail::gpuCallocPhysical, detail::GpuPhysicalDeleter<T>, std::shared_ptr<T>>(nelems,
-                                                                                                            gran);
+auto gpuCallocPhysicalShared(size_t nelems = 1, size_t gran = 0, size_t align = 0) {
+  return detail::safeAlloc<T, detail::GpuPhysicalDeleter<T>, std::shared_ptr<T>>(detail::gpuCallocPhysical, nelems,
+                                                                                 gran, align);
 }
 
 template <class T>
-auto gpuCallocPhysicalUnique(size_t nelems = 1, size_t gran = 0) {
-  return detail::safeAlloc<T, detail::gpuCallocPhysical, detail::GpuPhysicalDeleter<T>, UniqueGpuPhysicalPtr<T>>(nelems,
-                                                                                                                 gran);
+auto gpuCallocPhysicalUnique(size_t nelems = 1, size_t gran = 0, size_t align = 0) {
+  return detail::safeAlloc<T, detail::GpuPhysicalDeleter<T>, UniqueGpuPhysicalPtr<T>>(detail::gpuCallocPhysical, nelems,
+                                                                                      gran, align);
 }
 
 #endif  // CUDA_NVLS_SUPPORTED
