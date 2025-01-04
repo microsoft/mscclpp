@@ -391,7 +391,7 @@ class Endpoint {
   /// Get the max inflight requests.
   ///
   /// @return max inflight requests.
-  int maxInflightRequests();
+  int maxWriteQueueSize();
 
   /// Serialize the Endpoint object to a vector of characters.
   ///
@@ -422,8 +422,8 @@ class Endpoint {
 class Connection {
  public:
   /// Constructor.
-  /// @param maxInflightRequests The maximum number of inflight requests.
-  Connection(int maxInflightRequests) : maxInflightRequests(maxInflightRequests) {};
+  /// @param maxWriteQueueSize The maximum number of write requests that can be queued.
+  Connection(int maxWriteQueueSize) : maxWriteQueueSize(maxWriteQueueSize) {};
 
   virtual ~Connection() = default;
 
@@ -463,13 +463,16 @@ class Connection {
   /// @return name of @ref transport() -> @ref remoteTransport()
   std::string getTransportName();
 
-  int getMaxInflightRequest();
+ /// Get the maximum write queue size
+  ///
+  /// @return The maximum number of write requests that can be queued.
+  int getMaxWriteQueueSize();
 
  protected:
   // Internal methods for getting implementation pointers.
   static std::shared_ptr<RegisteredMemory::Impl> getImpl(RegisteredMemory& memory);
   static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
-  int maxInflightRequests;
+  int maxWriteQueueSize;
 };
 
 /// Used to configure an endpoint.
@@ -480,17 +483,29 @@ struct EndpointConfig {
   static const int DefaultMaxWrPerSend = 64;
 
   Transport transport;
-  int ibMaxCqSize = DefaultMaxCqSize;
-  int ibMaxCqPollNum = DefaultMaxCqPollNum;
-  int ibMaxSendWr = DefaultMaxSendWr;
-  int ibMaxWrPerSend = DefaultMaxWrPerSend;
-  int maxInflightRequests;
+  int ibMaxCqSize;
+  int ibMaxCqPollNum;
+  int ibMaxSendWr;
+  int ibMaxWrPerSend;
+  int maxWriteQueueSize;
 
-  /// Constructor that takes a transport and sets the other fields to their default values.
+  /// Constructor that takes a transport and sets the other fields to their default values or provided values.
   ///
   /// @param transport The transport to use.
-  EndpointConfig(Transport transport = Transport::Unknown, int maxInflightRequests = -1)
-      : transport(transport), maxInflightRequests(maxInflightRequests) {}
+  /// @param ibMaxCqSize The maximum completion queue size.
+  /// @param ibMaxCqPollNum The maximum completion queue poll number.
+  /// @param ibMaxSendWr The maximum send work requests.
+  /// @param ibMaxWrPerSend The maximum work requests per send.
+  /// @param maxWriteQueueSize The maximum write queue size.
+  EndpointConfig(Transport transport = Transport::Unknown, int ibMaxCqSize = DefaultMaxCqSize,
+                 int ibMaxCqPollNum = DefaultMaxCqPollNum, int ibMaxSendWr = DefaultMaxSendWr,
+                 int ibMaxWrPerSend = DefaultMaxWrPerSend, int maxWriteQueueSize = -1)
+      : transport(transport),
+        ibMaxCqSize(ibMaxCqSize),
+        ibMaxCqPollNum(ibMaxCqPollNum),
+        ibMaxSendWr(ibMaxSendWr),
+        ibMaxWrPerSend(ibMaxWrPerSend),
+        maxWriteQueueSize(maxWriteQueueSize) {}
 };
 
 /// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
