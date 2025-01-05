@@ -8,12 +8,12 @@ namespace mscclpp {
 
 template <typename PacketType>
 void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
-                                   size_t scratchSize, DataType dataType, DeviceExecutionPlan* plan,
-                                   size_t sharedMemSize, cudaStream_t stream, uint32_t flag) {
+                                   DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize,
+                                   cudaStream_t stream, uint32_t flag) {
   switch (dataType) {
     case DataType::INT32:
       executionKernel<int32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-          rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, plan, flag
+          rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, plan, flag
 #if defined(ENABLE_NPKIT)
           ,
           NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -23,7 +23,7 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
       break;
     case DataType::UINT32:
       executionKernel<uint32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-          rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, plan, flag
+          rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, plan, flag
 #if defined(ENABLE_NPKIT)
           ,
           NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -33,7 +33,7 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
       break;
     case DataType::FLOAT16:
       executionKernel<half, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-          rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, plan, flag
+          rank, (half*)src, (half*)dst, (half*)scratch, plan, flag
 #if defined(ENABLE_NPKIT)
           ,
           NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -43,7 +43,7 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
       break;
     case DataType::FLOAT32:
       executionKernel<float, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-          rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, plan, flag
+          rank, (float*)src, (float*)dst, (float*)scratch, plan, flag
 #if defined(ENABLE_NPKIT)
           ,
           NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -53,7 +53,7 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
       break;
     case DataType::BFLOAT16:
       executionKernel<__bfloat16, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-          rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchSize, plan, flag
+          rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, plan, flag
 #if defined(ENABLE_NPKIT)
           ,
           NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -65,12 +65,10 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
 }
 
 template void ExecutionKernel::launchKernel<LL16Packet>(int rank, int nthreadblocks, int nthreads, void* src, void* dst,
-                                                        void* scratch, size_t scratchSize, DataType dataType,
-                                                        DeviceExecutionPlan* plan, size_t sharedMemSize,
-                                                        cudaStream_t stream, uint32_t flag);
+                                                        void* scratch, DataType dataType, DeviceExecutionPlan* plan,
+                                                        size_t sharedMemSize, cudaStream_t stream, uint32_t flag);
 template void ExecutionKernel::launchKernel<LL8Packet>(int rank, int nthreadblocks, int nthreads, void* src, void* dst,
-                                                       void* scratch, size_t scratchSize, DataType dataType,
-                                                       DeviceExecutionPlan* plan, size_t sharedMemSize,
-                                                       cudaStream_t stream, uint32_t flag);
+                                                       void* scratch, DataType dataType, DeviceExecutionPlan* plan,
+                                                       size_t sharedMemSize, cudaStream_t stream, uint32_t flag);
 }  // namespace mscclpp
 #endif
