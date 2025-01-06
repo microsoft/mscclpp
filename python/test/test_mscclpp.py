@@ -156,6 +156,20 @@ def test_group_with_connections(mpi_group: MpiGroup, transport: str):
     create_group_and_connection(mpi_group, transport)
 
 
+@parametrize_mpi_groups(1)
+@pytest.mark.parametrize("nelem", [2**i for i in [0, 10, 15, 20]])
+@pytest.mark.parametrize("dtype", [cp.float32, cp.float16])
+def test_gpu_buffer(mpi_group: MpiGroup, nelem: int, dtype: cp.dtype):
+    memory = GpuBuffer(nelem, dtype=dtype)
+    assert memory.shape == (nelem,)
+    assert memory.dtype == dtype
+    assert memory.itemsize == cp.dtype(dtype).itemsize
+    assert memory.nbytes == nelem * cp.dtype(dtype).itemsize
+    assert memory.data.ptr != 0
+    assert memory.mem.ptr != 0
+    assert memory.mem.size >= nelem * cp.dtype(dtype).itemsize
+
+
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])

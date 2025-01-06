@@ -6,7 +6,7 @@ import os
 import struct
 import subprocess
 import tempfile
-from typing import Any, Type
+from typing import Any, Type, Union, Tuple
 
 import cupy as cp
 import numpy as np
@@ -37,7 +37,7 @@ class Kernel:
         nblocks: int,
         nthreads: int,
         shared: int,
-        stream: Type[cp.cuda.Stream] or Type[None],
+        stream: Union[cp.cuda.Stream, None],
     ):
         buffer = (ctypes.c_byte * len(params)).from_buffer_copy(params)
         buffer_size = ctypes.c_size_t(len(params))
@@ -139,7 +139,9 @@ class KernelBuilder:
 
 
 class GpuBuffer(cp.ndarray):
-    def __new__(cls, shape, dtype=float, strides=None, order="C"):
+    def __new__(
+        cls, shape: Union[int, Tuple[int]], dtype: cp.dtype = float, strides: Tuple[int] = None, order: str = "C"
+    ):
         # Check if `shape` is valid
         if isinstance(shape, int):
             shape = (shape,)
