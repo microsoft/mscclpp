@@ -79,8 +79,8 @@ void MemoryChannelOneToOneTest::packetPingPongTest(const std::string testName,
   const int defaultNTries = 1000;
 
   std::vector<mscclpp::MemoryChannel> memoryChannels;
-  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
-  std::shared_ptr<int> intermBuff = mscclpp::allocExtSharedCuda<int>(nElem * 2);
+  std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
+  std::shared_ptr<int> intermBuff = mscclpp::GpuBuffer<int>(nElem * 2).memory();
   setupMeshConnections(memoryChannels, buff.get(), nElem * sizeof(int), intermBuff.get(), nElem * 2 * sizeof(int));
   std::vector<DeviceHandle<mscclpp::MemoryChannel>> deviceHandles(memoryChannels.size());
   std::transform(memoryChannels.begin(), memoryChannels.end(), deviceHandles.begin(),
@@ -180,7 +180,7 @@ TEST_F(MemoryChannelOneToOneTest, PutPingPong) {
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::MemoryChannel> memoryChannels;
-  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
+  std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
   setupMeshConnections(memoryChannels, buff.get(), nElem * sizeof(int));
   std::vector<DeviceHandle<mscclpp::MemoryChannel>> deviceHandles(memoryChannels.size());
   std::transform(memoryChannels.begin(), memoryChannels.end(), deviceHandles.begin(),
@@ -259,7 +259,7 @@ TEST_F(MemoryChannelOneToOneTest, GetPingPong) {
   const int nElem = 4 * 1024 * 1024;
 
   std::vector<mscclpp::MemoryChannel> memoryChannels;
-  std::shared_ptr<int> buff = mscclpp::allocExtSharedCuda<int>(nElem);
+  std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
   setupMeshConnections(memoryChannels, buff.get(), nElem * sizeof(int));
   std::vector<DeviceHandle<mscclpp::MemoryChannel>> deviceHandles(memoryChannels.size());
   std::transform(memoryChannels.begin(), memoryChannels.end(), deviceHandles.begin(),

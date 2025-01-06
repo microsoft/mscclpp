@@ -1,7 +1,7 @@
 import os
 import cupy as cp
 import ctypes
-from mscclpp import Transport, ProxyService, MemoryDevice2DeviceSemaphore, alloc_shared_physical_cuda
+from mscclpp import Transport, ProxyService, MemoryDevice2DeviceSemaphore
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, GpuBuffer, pack
 
@@ -115,7 +115,7 @@ class MscclppAllReduce2:
         self.connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
         type_str = type_to_str(memory.dtype)
 
-        self.scratch = cp.zeros(self.memory.size * 8, dtype=self.memory.dtype)
+        self.scratch = GpuBuffer(self.memory.size * 8, dtype=self.memory.dtype)
         # create a memory_channel for each remote neighbor
         self.memory_channels = self.group.make_memory_channels_with_scratch(self.memory, self.scratch, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))

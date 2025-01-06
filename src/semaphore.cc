@@ -93,7 +93,7 @@ MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(Communicator& communicator,
                                                                            std::shared_ptr<Connection> connection)
-    : BaseSemaphore(allocExtUniqueCuda<uint64_t>(), allocExtUniqueCuda<uint64_t>(), allocExtUniqueCuda<uint64_t>()) {
+    : BaseSemaphore(createGpuSemaphoreId(), createGpuSemaphoreId(), createGpuSemaphoreId()) {
   INFO(MSCCLPP_INIT, "Creating a Device2Device semaphore for %s transport from %d to %d",
        connection->getTransportName().c_str(), communicator.bootstrap()->getRank(),
        communicator.remoteRankOf(*connection));

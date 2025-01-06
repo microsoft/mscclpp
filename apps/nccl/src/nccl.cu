@@ -175,8 +175,8 @@ static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemor
   std::transform(memoryChannels.begin(), memoryChannels.end(), std::back_inserter(memoryChannelDeviceHandles),
                  [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> ptr =
-      mscclpp::allocSharedCuda<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>(memoryChannelDeviceHandles.size());
-  mscclpp::memcpyCuda<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>(
+      mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>(memoryChannelDeviceHandles.size());
+  mscclpp::gpuMemcpy<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>(
       ptr.get(), memoryChannelDeviceHandles.data(), memoryChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
   return ptr;
 }
