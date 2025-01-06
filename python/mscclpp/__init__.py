@@ -26,7 +26,6 @@ from ._mscclpp import (
     ExecutionPlan,
     PacketType,
     version,
-    PyGpuBuffer,
     is_nvls_supported,
     npkit,
 )

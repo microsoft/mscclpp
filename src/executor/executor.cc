@@ -155,7 +155,7 @@ struct Executor::Impl {
       plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
       this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, rank, plan);
       this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
-          gpuMemAlloc(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
+          GpuBuffer(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
       gpuMemcpy(this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey].get(),
                 (char*)devicePlans[devicePlanKey].data(),
                 devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
@@ -170,7 +170,7 @@ struct Executor::Impl {
     size_t maxScratchBufferSize = plan.impl_->getMaxScratchBufferSize(rank);
     size_t scratchBufferSize =
         std::min(plan.impl_->getScratchBufferSize(rank, sendMemRange, recvMemRange), maxScratchBufferSize);
-    std::shared_ptr<char> scratchBuffer = gpuMemAlloc(scratchBufferSize);
+    std::shared_ptr<char> scratchBuffer = GpuBuffer(scratchBufferSize).memory();
     context.scratchBuffer = scratchBuffer;
     context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
@@ -181,7 +181,7 @@ struct Executor::Impl {
     this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
-        gpuMemAlloc(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan));
+        GpuBuffer(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
     gpuMemcpy(context.deviceExecutionPlansBuffers[devicePlanKey].get(),
               (char*)context.deviceExecutionPlans[devicePlanKey].data(),
               context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);

@@ -359,7 +359,7 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   commPtr->smSemaphores = std::move(smSemaphores);
   commPtr->buffFlag = 0;
   commPtr->numScratchBuff = 2;
-  commPtr->scratchBuff = mscclpp::gpuMemAlloc(SCRATCH_SIZE);
+  commPtr->scratchBuff = mscclpp::GpuBuffer(SCRATCH_SIZE).memory();
   commPtr->remoteScratchRegMemories =
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
 }
@@ -821,7 +821,7 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
   }
   std::shared_ptr<char> sharedPtr;
   try {
-    sharedPtr = mscclpp::gpuMemAlloc(size);
+    sharedPtr = mscclpp::GpuBuffer(size).memory();
     if (sharedPtr == nullptr) {
       INFO(MSCCLPP_ALLOC, "Failed to allocate memory");
       return ncclSystemError;

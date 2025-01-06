@@ -57,7 +57,7 @@ TEST_F(ExecutorTest, TwoNodesAllreduce) {
       path.parent_path().parent_path().parent_path() / "test/execution-files/allreduce.json";
   mscclpp::ExecutionPlan plan(executionFilesPath.string());
   const int bufferSize = 1024 * 1024;
-  std::shared_ptr<char> sendbuff = mscclpp::gpuMemAlloc(bufferSize);
+  std::shared_ptr<char> sendbuff = mscclpp::GpuBuffer(bufferSize).memory();
   mscclpp::CudaStreamWithFlags stream(cudaStreamNonBlocking);
   executor->execute(gEnv->rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16,
                     plan, stream);

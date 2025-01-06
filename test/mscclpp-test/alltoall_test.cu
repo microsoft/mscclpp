@@ -140,8 +140,8 @@ class AllToAllTestEngine : public BaseTestEngine {
 AllToAllTestEngine::AllToAllTestEngine(const TestArgs& args) : BaseTestEngine(args, "alltoall") { inPlace_ = false; }
 
 void AllToAllTestEngine::allocateBuffer() {
-  sendBuff_ = mscclpp::gpuMemAlloc<int>(args_.maxBytes / sizeof(int));
-  recvBuff_ = mscclpp::gpuMemAlloc<int>(args_.maxBytes / sizeof(int));
+  sendBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
+  recvBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
 
   localSendBuff = sendBuff_.get();
