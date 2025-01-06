@@ -333,7 +333,7 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<SmCh
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handleReadPutPacket(int rank, void* scratch, size_t scratchSize,
                                                DeviceHandle<SmChannel>* smChannels,
-                                               DeviceHandle<SimpleProxyChannel>* proxyChannels,
+                                               DeviceHandle<ProxyChannel>* proxyChannels,
                                                uint8_t* dstChannelIndexes, uint32_t* dstOffsets, uint32_t* srcOffsets,
                                                int nDstChannels, uint32_t size, ChannelType chType, uint32_t flag) {
   const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
