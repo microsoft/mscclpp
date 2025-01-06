@@ -166,8 +166,8 @@ def test_gpu_buffer(mpi_group: MpiGroup, nelem: int, dtype: cp.dtype):
     assert memory.itemsize == cp.dtype(dtype).itemsize
     assert memory.nbytes == nelem * cp.dtype(dtype).itemsize
     assert memory.data.ptr != 0
-    assert memory.mem.ptr != 0
-    assert memory.mem.size >= nelem * cp.dtype(dtype).itemsize
+    assert memory.data.mem.ptr != 0
+    assert memory.data.mem.size >= nelem * cp.dtype(dtype).itemsize
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
