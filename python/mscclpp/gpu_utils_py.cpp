@@ -14,5 +14,5 @@ void register_gpu_utils(nb::module_& m) {
       .def(nb::init<size_t>(), nb::arg("nelems"))
       .def("nelems", &GpuBuffer<char>::nelems)
       .def("bytes", &GpuBuffer<char>::bytes)
-      .def("data", &GpuBuffer<char>::data);
+      .def("data", [](GpuBuffer<char>& self) { return reinterpret_cast<uintptr_t>(self.data()); });
 }
