@@ -54,9 +54,9 @@ __global__ void __launch_bounds__(1024, 1)
       char* buff = reinterpret_cast<char*>(sendbuff);
       const size_t offsetWithinRank = (wid / nPeer) * unitBytesPerWarp;
       memChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
-                                       WARP_SIZE);
+                                        WARP_SIZE);
       memChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
-                                       WARP_SIZE);
+                                        WARP_SIZE);
     } else {
       memChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
     }
@@ -72,9 +72,9 @@ __global__ void __launch_bounds__(1024, 1)
       char* buff = reinterpret_cast<char*>(sendbuff);
       const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
       memChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
-                                       WARP_SIZE);
+                                        WARP_SIZE);
       memChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
-                                       WARP_SIZE);
+                                        WARP_SIZE);
     } else {
       memChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
     }
@@ -94,9 +94,9 @@ __global__ void __launch_bounds__(1024, 1)
         char* src = reinterpret_cast<char*>(memChans[peerIdx].src_);
         char* buff = reinterpret_cast<char*>(sendbuff);
         memChans[peerIdx].copy<16, true>(src + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid,
-                                        WARP_SIZE);
+                                         WARP_SIZE);
         memChans[peerIdx].copy<16, true>(dst + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid,
-                                        WARP_SIZE);
+                                         WARP_SIZE);
       } else {
         memChans[peerIdx].put<16, true>(offset + channelOutOffset, remainBytes, lid, WARP_SIZE);
       }

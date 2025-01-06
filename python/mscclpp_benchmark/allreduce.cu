@@ -529,8 +529,9 @@ __device__ void localAllGatherAllPairsMem(mscclpp::MemoryChannelDeviceHandle* me
 }
 
 // This is an allgather4 equivalent
-__device__ void allGatherMem(mscclpp::MemoryChannelDeviceHandle* memChans, mscclpp::ProxyChannelDeviceHandle* proxyChans,
-                             int rank, int worldSize, int nRanksPerNode, size_t nelemsPerGPU, int pipelineDepth) {
+__device__ void allGatherMem(mscclpp::MemoryChannelDeviceHandle* memChans,
+                             mscclpp::ProxyChannelDeviceHandle* proxyChans, int rank, int worldSize, int nRanksPerNode,
+                             size_t nelemsPerGPU, int pipelineDepth) {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
   // Step 1: each node does a local allgather and concurrently,
@@ -720,7 +721,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   // step 1: write to scratch buffer
   if (nRanksPerNode > 1) {
     memChan.putPackets(scratchOffset, srcOffset, nelemsPerLocalRank * sizeof(int), tid, blockDim.x * nBlocksPerPeer,
-                      flag);
+                       flag);
   }
   // step 2: get data from scratch buffer, do local reduce-scatter in each node.
   mscclpp::LLPacket* putPkt = (mscclpp::LLPacket*)((char*)putBuff + putBaseOffset);

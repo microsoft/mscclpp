@@ -876,7 +876,7 @@ __global__ void __launch_bounds__(1024)
     size_t srcOffset =
         ((blockIdx.x % BLOCKS_PER_PEER) * nelems * sizeof(int) / BLOCKS_PER_PEER);  // offset for this block
     // Offset of the peer's scratch buffer (scratch) to write on
-    size_t dstOffset = (scratchOffset) +                                                   // double buffering
+    size_t dstOffset = (scratchOffset) +                                                    // double buffering
                        ((memChanIdx < localRank ? localRank - 1 : localRank) * pktBytes) +  // offset for this rank
                        (srcOffset * 2);  // offset for this block: twice of srcOffset because 2 elems per packet
     // Write data to the peer's scratch
@@ -1327,9 +1327,9 @@ void AllReduceTestEngine::setupConnections() {
       const size_t scratchPacketBuffBytes =
           nPacket * std::max(args_.nRanksPerNode - 1, 1) * 2 * sizeof(mscclpp::LLPacket);
       const size_t packetBuffBytes = nPacket * 2 * sizeof(mscclpp::LLPacket);
-      setupMeshConnections(memoryOutOfPlaceChannels_, proxyChannels, inputBuff_.get(), args_.maxBytes, putPacketBuff_.get(),
-                           packetBuffBytes, getPacketBuff_.get(), packetBuffBytes, scratchPacketBuff_.get(),
-                           scratchPacketBuffBytes);
+      setupMeshConnections(memoryOutOfPlaceChannels_, proxyChannels, inputBuff_.get(), args_.maxBytes,
+                           putPacketBuff_.get(), packetBuffBytes, getPacketBuff_.get(), packetBuffBytes,
+                           scratchPacketBuff_.get(), scratchPacketBuffBytes);
 
       if (memoryOutOfPlaceChannels_.size() >
           sizeof(constMemOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::MemoryChannel>)) {
@@ -1366,8 +1366,10 @@ void AllReduceTestEngine::setupConnections() {
     CUDATHROW(cudaMemcpyToSymbol(constDevSndRoundChans, sndRoundChannels.data(),
                                  sizeof(DeviceHandle<mscclpp::ProxyChannel>) * sndRoundChannels.size()));
 
-    setupMeshConnections(memoryOutOfPlaceChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
-    if (memoryOutOfPlaceChannels_.size() > sizeof(constMemOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::MemoryChannel>)) {
+    setupMeshConnections(memoryOutOfPlaceChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(),
+                         args_.maxBytes);
+    if (memoryOutOfPlaceChannels_.size() >
+        sizeof(constMemOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::MemoryChannel>)) {
       std::runtime_error("unexpected error");
     }
     std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles(memoryOutOfPlaceChannels_.size());
@@ -1384,8 +1386,8 @@ void AllReduceTestEngine::setupConnections() {
     CUDATHROW(cudaMemcpyToSymbol(constMemInPlaceChans, memoryChannelDeviceHandles.data(),
                                  sizeof(DeviceHandle<mscclpp::MemoryChannel>) * memoryChannelDeviceHandles.size()));
 
-    setupMeshConnections(memoryOutOfPlaceGetChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes,
-                         ChannelSemantic::GET);
+    setupMeshConnections(memoryOutOfPlaceGetChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(),
+                         args_.maxBytes, ChannelSemantic::GET);
     if (memoryOutOfPlaceGetChannels_.size() >
         sizeof(constMemOutOfPlaceGetChans) / sizeof(DeviceHandle<mscclpp::MemoryChannel>)) {
       std::runtime_error("unexpected error");

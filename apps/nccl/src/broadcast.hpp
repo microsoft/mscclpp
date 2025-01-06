@@ -71,7 +71,7 @@ __global__ void __launch_bounds__(1024, 1)
       char* recv_ = reinterpret_cast<char*>(recvbuff);
       char* scratch_ = reinterpret_cast<char*>(scratchbuff);  // My scratchbuff.
       memChans[peerRootIdx].copy<16, false>(recv_ + offset, scratch_ + offset, unitBytesPerBlock, threadIdx.x,
-                                           blockDim.x);
+                                            blockDim.x);
     }
   }
 
@@ -90,7 +90,7 @@ __global__ void __launch_bounds__(1024, 1)
       for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);  // Peer's scratchbuff.
         memChans[peerIdx].copy<16, false>(dst + offset + scratchSub, send_ + offset, unitBytesPerBlock, threadIdx.x,
-                                         blockDim.x);
+                                          blockDim.x);
         __syncthreads();
         if (threadIdx.x == peerIdx) memChans[peerIdx].signal();
       }
@@ -104,7 +104,7 @@ __global__ void __launch_bounds__(1024, 1)
       char* recv_ = reinterpret_cast<char*>(recvbuff);
       char* scratch_ = reinterpret_cast<char*>(scratchbuff);  // My scratchbuff.
       memChans[peerRootIdx].copy<16, false>(recv_ + offset, scratch_ + offset + scratchSub, unitBytesPerBlock,
-                                           threadIdx.x, blockDim.x);
+                                            threadIdx.x, blockDim.x);
     }
   }
 
@@ -118,7 +118,7 @@ __global__ void __launch_bounds__(1024, 1)
         for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
           char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);  // Peer's scratchbuff.
           memChans[peerIdx].copy<16, true>(dst + offset + scratchSub, send_ + offset, remainBytes, threadIdx.x,
-                                          blockDim.x);
+                                           blockDim.x);
           __syncthreads();
           if (threadIdx.x == peerIdx) memChans[peerIdx].signal();
         }
@@ -132,7 +132,7 @@ __global__ void __launch_bounds__(1024, 1)
         char* recv_ = reinterpret_cast<char*>(recvbuff);
         char* scratch_ = reinterpret_cast<char*>(scratchbuff);  // My scratchbuff.
         memChans[peerRootIdx].copy<16, true>(recv_ + offset, scratch_ + offset + scratchSub, remainBytes, threadIdx.x,
-                                            blockDim.x);
+                                             blockDim.x);
       }
     }  // remainBytes > 0.
   }

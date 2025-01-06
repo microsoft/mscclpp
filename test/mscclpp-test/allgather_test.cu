@@ -747,15 +747,18 @@ void AllGatherTestEngine::setupConnections() {
       const size_t scratchPacketBuffBytes = nPacket * 2 * 2 * sizeof(mscclpp::LLPacket);
       setupMeshConnections(memoryOutOfPlaceChannels_, sendBuff_.get(), args_.maxBytes, scratchPacketBuff_.get(),
                            scratchPacketBuffBytes);
-      std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryOutOfPlaceChannelHandles(memoryOutOfPlaceChannels_.size());
+      std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryOutOfPlaceChannelHandles(
+          memoryOutOfPlaceChannels_.size());
       if (memoryOutOfPlaceChannels_.size() >
           sizeof(constMemOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::MemoryChannel>)) {
         std::runtime_error("unexpected error");
       }
-      std::transform(memoryOutOfPlaceChannels_.begin(), memoryOutOfPlaceChannels_.end(), memoryOutOfPlaceChannelHandles.begin(),
+      std::transform(memoryOutOfPlaceChannels_.begin(), memoryOutOfPlaceChannels_.end(),
+                     memoryOutOfPlaceChannelHandles.begin(),
                      [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
-      CUDATHROW(cudaMemcpyToSymbol(constMemOutOfPlaceChans, memoryOutOfPlaceChannelHandles.data(),
-                                   sizeof(DeviceHandle<mscclpp::MemoryChannel>) * memoryOutOfPlaceChannelHandles.size()));
+      CUDATHROW(
+          cudaMemcpyToSymbol(constMemOutOfPlaceChans, memoryOutOfPlaceChannelHandles.data(),
+                             sizeof(DeviceHandle<mscclpp::MemoryChannel>) * memoryOutOfPlaceChannelHandles.size()));
     }
   } else {
     auto service = std::dynamic_pointer_cast<AllGatherProxyService>(chanService_);
