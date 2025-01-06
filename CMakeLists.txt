@@ -9,7 +9,7 @@ set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})
 set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
 
 cmake_minimum_required(VERSION 3.25)
-enable_language(CXX)
+project(mscclpp LANGUAGES CXX)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
@@ -21,6 +21,7 @@ option(MSCCLPP_BUILD_APPS_NCCL "Build NCCL interfaces" ON)
 option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
+option(MSCCLPP_NPKIT_FLAGS "Enable NPKIT" OFF)
 
 if(MSCCLPP_BYPASS_GPU_CHECK)
     if(MSCCLPP_USE_CUDA)
@@ -61,7 +62,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
 if(MSCCLPP_USE_CUDA)
     set(CMAKE_CUDA_STANDARD 17)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall,-Wextra")
-    project(mscclpp LANGUAGES CXX CUDA)
+    enable_language(CUDA)
 
     # CUDA 11 or higher is required
     if(CUDAToolkit_VERSION_MAJOR LESS 11)
@@ -83,7 +84,6 @@ if(MSCCLPP_USE_CUDA)
 else()
     set(CMAKE_HIP_STANDARD 17)
     set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -Wall -Wextra")
-    project(mscclpp LANGUAGES CXX)
 
     set(CMAKE_HIP_ARCHITECTURES gfx90a gfx941 gfx942)
 
@@ -123,8 +123,8 @@ endif()
 if(MSCCLPP_ENABLE_TRACE)
     target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_ENABLE_TRACE)
 endif()
-if(NPKIT_FLAGS)
-    target_compile_definitions(mscclpp_obj PRIVATE ${NPKIT_FLAGS})
+if(MSCCLPP_NPKIT_FLAGS)
+    target_compile_definitions(mscclpp_obj PRIVATE ${MSCCLPP_NPKIT_FLAGS})
 endif()
 
 # libmscclpp

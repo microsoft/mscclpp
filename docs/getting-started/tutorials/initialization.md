@@ -21,7 +21,7 @@ We will setup a mesh topology with eight GPUs. Each GPU will be connected to its
 
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
-__constant__ DeviceHandle<mscclpp::SimpleProxyChannel> constProxyChans[8];
+__constant__ DeviceHandle<mscclpp::ProxyChannel> constProxyChans[8];
 
 void setupMeshTopology(int rank, int worldsize, void* data, size_t dataSize) {
   std::string ip_port = "10.0.0.4:50000";
@@ -55,17 +55,17 @@ void setupMeshTopology(int rank, int worldsize, void* data, size_t dataSize) {
 
   comm.setup();
 
-  std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannels;
+  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannels;
   for (size_t i = 0; i < semaphoreIds.size(); ++i) {
-    proxyChannels.push_back(mscclpp::deviceHandle(mscclpp::SimpleProxyChannel(
+    proxyChannels.push_back(mscclpp::deviceHandle(mscclpp::ProxyChannel(
         proxyService.proxyChannel(semaphoreIds[i]), proxyService.addMemory(remoteMemories[i].get()),
         proxyService.addMemory(localMemories[i]))));
   }
 
-  if (proxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
+  if (proxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::ProxyChannel>)) {
     std::runtime_error("unexpected error");
   }
   CUDACHECK(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
-                              sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * proxyChannels.size()));
+                              sizeof(DeviceHandle<mscclpp::ProxyChannel>) * proxyChannels.size()));
 }
 ```

@@ -62,17 +62,18 @@ struct ChannelInfo {
 
 struct ExecutionPlan::Impl {
  public:
-  Impl(const std::string name, const std::string planPath);
+  Impl(const std::string planPath);
   ~Impl() = default;
 
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
   std::vector<ChannelInfo> getChannelInfos(int rank, BufferType bufferType) const;
   std::vector<ChannelInfo> getChannelInfosByDstRank(int rank, BufferType bufferType) const;
   std::vector<ChannelInfo> getUnpairedChannelInfos(int rank, int worldSize, ChannelType channelType);
-  std::vector<NvlsInfo> getNvlsInfos(int rank) const;
+  std::vector<NvlsInfo> getNvlsInfos(int rank, size_t sendBuffserSize = 0, size_t recvBufferSize = 0) const;
   std::vector<int> getConnectedPeers(int rank) const;
   std::vector<BufferType> getConnectedBufferTypes(int rank) const;
   size_t getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const;
+  size_t getMaxScratchBufferSize(int rank) const;
   std::vector<Operation> getOperations(int rank, int threadblock) const;
   int getThreadblockCount(int rank) const;
   int getNThreadsPerBlock() const;
@@ -85,7 +86,8 @@ struct ExecutionPlan::Impl {
   void reset();
   void operationsReset();
 
-  const std::string name;
+  std::string name;
+  std::string collective;
   const std::string planPath;
   bool isUsingPacket;
   // operations for [rank][threadblock] = [operations]
@@ -106,9 +108,12 @@ struct ExecutionPlan::Impl {
   size_t inputSize;
   size_t outputSize;
   int nThreadsPerBlock;
+  size_t minMessageSize;
+  size_t maxMessageSize;
+  bool isInPlace;
 
  private:
-  std::pair<size_t, u_int32_t> calcSizePerRank(int rank, size_t inputSize, size_t outputSize) const;
+  std::pair<size_t, uint32_t> getSizeAndChunksForRank(int rank, size_t inputSize, size_t outputSize) const;
   size_t getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex, uint32_t alignment = 16) const;
   size_t getNChunkSize(int rank, size_t inputSize, size_t outputSize, uint32_t nChunks,
                        const std::vector<uint32_t> offsets) const;

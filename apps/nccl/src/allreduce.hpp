@@ -12,6 +12,10 @@
 #include <mscclpp/sm_channel.hpp>
 #include <mscclpp/sm_channel_device.hpp>
 
+#if defined(ENABLE_NPKIT)
+#include <mscclpp/npkit/npkit.hpp>
+#endif
+
 #include "common.hpp"
 
 template <typename To, typename From>
@@ -238,9 +242,40 @@ template <typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
                size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
-               size_t nelems, uint32_t flag) {
+               size_t nelems, uint32_t flag
+#if defined(ENABLE_NPKIT)
+               ,
+               NpKitEventCollectContext* npKitEventCollectContexts, uint64_t* cpuTimestamp) {
+#else
+    ) {
+#endif
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
+
+#if defined(ENABLE_NPKIT)
+  extern __shared__ int4 NpkitSharedMem[];
+  NpKitEvent* event_buffer = (NpKitEvent*)((char*)NpkitSharedMem);
+  uint64_t event_buffer_head = 0;
+#if defined(ENABLE_NPKIT_EVENT_KERNEL_ALLREDUCE_ENTRY) && defined(ENABLE_NPKIT_EVENT_KERNEL_ALLREDUCE_EXIT)
+  uint64_t npkit_timestamp_entry = 0;
+  if (threadIdx.x == 0) {
+    npkit_timestamp_entry = NPKIT_GET_GPU_TIMESTAMP();
+  }
+#endif
+#endif
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
+#if defined(MSCCLPP_DEVICE_HIP)
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0,
+                            NPKIT_LOAD_CPU_TIMESTAMP_PER_BLOCK(cpuTimestamp, blockIdx.x),
+#else
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0, *cpuTimestamp,
+#endif
+                            event_buffer, &event_buffer_head);
+#endif
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_GPU)
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_TIME_SYNC_GPU, 0, 0, NPKIT_GET_GPU_TIMESTAMP(), event_buffer,
+                            &event_buffer_head);
+#endif
 
   if (sizeof(T) == 2)
     nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
@@ -312,6 +347,16 @@ __global__ void __launch_bounds__(1024, 1)
     result[idx].x = data.x;
     result[idx].y = data.y;
   }
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_KERNEL_ALLREDUCE_ENTRY) && \
+    defined(ENABLE_NPKIT_EVENT_KERNEL_ALLREDUCE_EXIT)
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_KERNEL_ALLREDUCE_ENTRY, 0, 0, npkit_timestamp_entry, event_buffer,
+                            &event_buffer_head);
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_KERNEL_ALLREDUCE_EXIT, 0, 0, NPKIT_GET_GPU_TIMESTAMP(), event_buffer,
+                            &event_buffer_head);
+#endif
+#if defined(ENABLE_NPKIT)
+  NpKit::StoreGpuEventShm(npKitEventCollectContexts, event_buffer, event_buffer_head);
+#endif
 }
 
 template <typename T>
@@ -378,6 +423,8 @@ __global__ void __launch_bounds__(512, 1)
     }
 
     /// Starts reduce-scatter
+    // Ensure that all writes of this block have been issued before issuing the signal
+    __syncthreads();
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
       outChannels[threadIdx.x].signal();
       outChannels[threadIdx.x].wait();
@@ -398,6 +445,8 @@ __global__ void __launch_bounds__(512, 1)
       }
     }
     offsetOfThisBlock += nInt4PerChunk;
+    // Ensure all threads have consumed data from scratch buffer before signaling re-use in next iteration
+    __syncthreads();
   }
   if (restNInt4 > 0) {
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
@@ -414,6 +463,8 @@ __global__ void __launch_bounds__(512, 1)
       }
     }
 
+    // Ensure that all writes of this block have been issued before issuing the signal
+    __syncthreads();
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
       outChannels[threadIdx.x].signal();
       outChannels[threadIdx.x].wait();
@@ -433,7 +484,11 @@ __global__ void __launch_bounds__(512, 1)
                                    data);
       }
     }
+    // Ensure all threads have issued writes to outChannel
+    __syncthreads();
   }
+  // Threads are already synchronized
+  // So all writes to outChannel have been issued before signal is being issued
   if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
     outChannels[threadIdx.x].signal();
     outChannels[threadIdx.x].wait();
@@ -460,9 +515,16 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
       nBlocks = 56;
       nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
     }
+#if defined(ENABLE_NPKIT)
+    size_t NpkitSharedMemSize = NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
+    allreduce7<<<nBlocks, nThreadsPerBlock, NpkitSharedMemSize, stream>>>(
+        buff, scratch, resultBuff, smChannels, channelInOffset, channelScratchOffset, rank, nRanksPerNode, worldSize,
+        nelems, flag++, NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, channelInOffset,
                                                          channelScratchOffset, rank, nRanksPerNode, worldSize, nelems,
                                                          flag++);
+#endif
   } else {
     int nBlocks = 35;
     int nThreadsPerBlock = 512;

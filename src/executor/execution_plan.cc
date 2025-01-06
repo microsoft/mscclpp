@@ -94,8 +94,15 @@ std::set groupChannelType{mscclpp::ChannelType::NVLS};
 namespace mscclpp {
 using json = nlohmann::json;
 
-ExecutionPlan::Impl::Impl(const std::string name, const std::string planPath)
-    : name(name), planPath(planPath), isUsingPacket(false) {}
+ExecutionPlan::Impl::Impl(const std::string planPath) : planPath(planPath), isUsingPacket(false) {
+  std::ifstream file(this->planPath);
+  json obj = json::parse(file);
+  this->name = obj["name"];
+  this->collective = obj["collective"];
+  this->isInPlace = obj["inplace"];
+  this->minMessageSize = obj.value("min_message_size", 0);
+  this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
+}
 
 std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, ChannelType channelType) const {
   auto pred = [channelType](const ChannelInfo& info) { return info.channelType == channelType; };
@@ -134,7 +141,17 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int rank, 
   return unpaired;
 }
 
-std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank) const { return this->nvlsInfos.at(rank); }
+std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank, size_t sendBuffserSize, size_t recvBufferSize) const {
+  if (sendBuffserSize == 0 && recvBufferSize == 0) {
+    return this->nvlsInfos.at(rank);
+  }
+  size_t chunkSize = this->getUpperBoundChunkSize(rank, sendBuffserSize, recvBufferSize);
+  std::vector<NvlsInfo> infos = this->nvlsInfos.at(rank);
+  for (auto& info : infos) {
+    info.bufferSize = info.bufferSize * chunkSize;
+  }
+  return infos;
+}
 
 std::vector<int> ExecutionPlan::Impl::getConnectedPeers(int rank) const {
   std::set<int> peers;
@@ -158,8 +175,9 @@ std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) c
   }
   return std::vector<BufferType>(bufferTypes.begin(), bufferTypes.end());
 }
+
 size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const {
-  size_t sizePerRank;
+  size_t sizePerRank = 0;
   if (this->inputChunks.at(rank) != 0)
     sizePerRank = inputSize / this->inputChunks.at(rank);
   else if (this->outputChunks.at(rank) != 0)
@@ -172,6 +190,23 @@ size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize, siz
   }
   return sizePerRank * this->scratchChunks.at(rank);
 }
+
+size_t ExecutionPlan::Impl::getMaxScratchBufferSize(int rank) const {
+  if (this->maxMessageSize == std::numeric_limits<uint64_t>::max()) {
+    return std::numeric_limits<size_t>::max();
+  }
+  size_t sizePerChunk = 0;
+  if (this->inputChunks.at(rank) != 0)
+    sizePerChunk = maxMessageSize / this->inputChunks.at(rank);
+  else if (this->outputChunks.at(rank) != 0)
+    sizePerChunk = maxMessageSize / this->outputChunks.at(rank);
+  else
+    throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
+
+  return this->getScratchBufferSize(rank, sizePerChunk * this->inputChunks.at(rank),
+                                    sizePerChunk * this->outputChunks.at(rank));
+}
+
 std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadblock) const {
   return this->operations.at(rank)[threadblock];
 }
@@ -187,6 +222,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
   if (this->name != obj["name"]) {
     throw Error("Plan name does not match", ErrorCode::ExecutorError);
   }
+  this->collective = obj["collective"];
   std::string protocol = obj["protocol"];
   if (protocol == "LL") {
     this->isUsingPacket = true;
@@ -194,6 +230,9 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
   this->inputSize = inputSize;
   this->outputSize = outputSize;
   this->nThreadsPerBlock = obj.value("num_threads_per_block", 1024);
+  this->minMessageSize = obj.value("min_message_size", 0);
+  this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
+  this->isInPlace = obj["inplace"];
   const auto& gpus = obj["gpus"];
 
   for (const auto& gpu : gpus) {
@@ -243,7 +282,7 @@ void ExecutionPlan::Impl::parseChannels(
       NvlsInfo info;
       info.bufferType = convertToBufferType(channel["buff"]);
       for (const auto& group : channel["rankGroups"]) {
-        info.bufferSize = (int)group["size"] * this->getUpperBoundChunkSize(rank, this->inputSize, this->outputSize);
+        info.bufferSize = (int)group["size"];
         info.ranks.clear();
         for (int rank : group["ranks"]) {
           info.ranks.push_back(rank);
@@ -471,8 +510,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
   }
 }
 
-std::pair<size_t, u_int32_t> ExecutionPlan::Impl::calcSizePerRank(int rank, size_t inputSize, size_t outputSize) const {
-  std::pair<size_t, u_int32_t> sizePerRank;
+std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunksForRank(int rank, size_t inputSize,
+                                                                         size_t outputSize) const {
+  std::pair<size_t, uint32_t> sizePerRank;
   if (this->inputChunks.at(rank) == 0 && this->outputChunks.at(rank) == 0) {
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
   } else if (this->inputChunks.at(rank) != 0 && this->outputChunks.at(rank) != 0) {
@@ -495,15 +535,15 @@ size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, size_t outputS
   }
 
   const int nGroups = this->chunkGroups.at(rank);
-  auto sizePerRank = calcSizePerRank(rank, inputSize, outputSize);
-  uint32_t nInputChunks = sizePerRank.second;
-  uint32_t nelems = sizePerRank.first / (alignment * sizeof(uint8_t));
+  auto rankSizeAndChunks = getSizeAndChunksForRank(rank, inputSize, outputSize);
+  uint32_t nChunks = rankSizeAndChunks.second;
+  uint32_t nelems = rankSizeAndChunks.first / (alignment * sizeof(uint8_t));
   if (nelems % nGroups != 0) {
     throw Error("Input size must be a multiple of nGroups", ErrorCode::ExecutorError);
   }
 
   int nelemsPerGroup = nelems / nGroups;
-  int nChunksPerGroup = nInputChunks / nGroups;
+  int nChunksPerGroup = nChunks / nGroups;
   uint32_t minNelems = nelemsPerGroup / nChunksPerGroup;
   uint32_t remainder = nelemsPerGroup % nChunksPerGroup;
   uint32_t groupIdx = chunkIndex / nChunksPerGroup;
@@ -529,9 +569,17 @@ size_t ExecutionPlan::Impl::getNChunkSize(int rank, size_t inputSize, size_t out
 }
 
 size_t ExecutionPlan::Impl::getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const {
-  auto sizePerRank = calcSizePerRank(rank, inputSize, outputSize);
-  uint32_t nChunks = sizePerRank.second;
-  return (sizePerRank.first + nChunks - 1) / nChunks;
+  size_t nInputChunks = this->inputChunks.at(rank);
+  size_t nOutputChunks = this->outputChunks.at(rank);
+  size_t inputChunkSize = 0;
+  size_t outputChunkSize = 0;
+  if (nInputChunks != 0) {
+    inputChunkSize = inputSize / nInputChunks;
+  }
+  if (nOutputChunks != 0) {
+    outputChunkSize = outputSize / nOutputChunks;
+  }
+  return std::max(inputChunkSize, outputChunkSize);
 }
 
 void ExecutionPlan::Impl::reset() {
@@ -549,7 +597,16 @@ void ExecutionPlan::Impl::reset() {
 
 void ExecutionPlan::Impl::operationsReset() { this->operations.clear(); }
 
-ExecutionPlan::ExecutionPlan(const std::string& name, const std::string& planPath)
-    : impl_(std::make_shared<Impl>(name, planPath)) {}
+ExecutionPlan::ExecutionPlan(const std::string& planPath) : impl_(std::make_shared<Impl>(planPath)) {}
+
+std::string ExecutionPlan::name() const { return this->impl_->name; }
+
+std::string ExecutionPlan::collective() const { return this->impl_->collective; }
+
+size_t ExecutionPlan::minMessageSize() const { return this->impl_->minMessageSize; }
+
+size_t ExecutionPlan::maxMessageSize() const { return this->impl_->maxMessageSize; }
+
+bool ExecutionPlan::isInPlace() const { return this->impl_->isInPlace; }
 
 }  // namespace mscclpp
