@@ -4,7 +4,7 @@
 #include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/nvls.hpp>
-#include <mscclpp/proxy_channel.hpp>
+#include <mscclpp/port_channel.hpp>
 #include <set>
 
 #include "execution_kernel.hpp"
@@ -116,7 +116,7 @@ struct ExecutionContext {
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::vector<mscclpp::SemaphoreId> proxySemaphores;
   std::vector<mscclpp::MemoryChannel> memoryChannels;
-  std::vector<mscclpp::ProxyChannel> proxyChannels;
+  std::vector<mscclpp::PortChannel> portChannels;
   std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
@@ -196,7 +196,7 @@ struct Executor::Impl {
     for (ChannelInfo& info : infos) {
       if (info.channelType == ChannelType::MEMORY) {
         flags |= Transport::CudaIpc;
-      } else if (info.channelType == ChannelType::PROXY) {
+      } else if (info.channelType == ChannelType::PORT) {
         for (int peer : info.connectedPeers) {
           if (!inSameNode(rank, peer, this->nranksPerNode)) {
             flags |= IBs[rank % this->nranksPerNode];
@@ -279,7 +279,7 @@ struct Executor::Impl {
 
   void setupChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
                      size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
-    const auto channelTypes = {ChannelType::MEMORY, ChannelType::PROXY};
+    const auto channelTypes = {ChannelType::MEMORY, ChannelType::PORT};
     std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
     std::vector<mscclpp::SemaphoreId> proxySemaphores;
     auto processChannelInfos = [&](std::vector<ChannelInfo>& channelInfos) {
@@ -288,7 +288,7 @@ struct Executor::Impl {
           if (info.channelType == ChannelType::MEMORY) {
             memorySemaphores.push_back(
                 std::make_shared<MemoryDevice2DeviceSemaphore>(*this->comm, context.connections.at(peer)));
-          } else if (info.channelType == ChannelType::PROXY) {
+          } else if (info.channelType == ChannelType::PORT) {
             proxySemaphores.push_back(
                 context.proxyService->buildAndAddSemaphore(*this->comm, context.connections.at(peer)));
           }
@@ -335,8 +335,8 @@ struct Executor::Impl {
           if (channelType == ChannelType::MEMORY) {
             context.memoryChannels.emplace_back(context.memorySemaphores[index++],
                                                 context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
-          } else if (channelType == ChannelType::PROXY) {
-            context.proxyChannels.emplace_back(context.proxyService->proxyChannel(
+          } else if (channelType == ChannelType::PORT) {
+            context.portChannels.emplace_back(context.proxyService->portChannel(
                 context.proxySemaphores[index++],
                 context.proxyService->addMemory(context.registeredMemories[{info.dstBufferType, peer}]),
                 context.proxyService->addMemory(localMemory)));
@@ -367,14 +367,14 @@ struct Executor::Impl {
       std::vector<Operation> ops = plan.impl_->getOperations(rank, threadblock);
       deviceExecutionPlan.nOperations = ops.size();
       deviceExecutionPlan.nMemoryChannels = plan.impl_->threadblockMemoryChannelMap.at(rank).at(threadblock).size();
-      deviceExecutionPlan.nProxyChannels = plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock).size();
+      deviceExecutionPlan.nPortChannels = plan.impl_->threadblockPortChannelMap.at(rank).at(threadblock).size();
       int chanIndex = 0;
       for (const auto& [index, _] : plan.impl_->threadblockMemoryChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.memoryChannels[chanIndex++] = mscclpp::deviceHandle(context.memoryChannels[index]);
       }
       chanIndex = 0;
-      for (const auto& [index, _] : plan.impl_->threadblockProxyChannelMap.at(rank).at(threadblock)) {
-        deviceExecutionPlan.channels.proxyChannels[chanIndex++] = mscclpp::deviceHandle(context.proxyChannels[index]);
+      for (const auto& [index, _] : plan.impl_->threadblockPortChannelMap.at(rank).at(threadblock)) {
+        deviceExecutionPlan.channels.portChannels[chanIndex++] = mscclpp::deviceHandle(context.portChannels[index]);
       }
       chanIndex = 0;
       for (const auto& [index, _] : plan.impl_->threadblockNvlsChannelMap.at(rank).at(threadblock)) {

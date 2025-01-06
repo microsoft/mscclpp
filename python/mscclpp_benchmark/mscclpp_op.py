@@ -182,10 +182,10 @@ class MscclppAllReduce3:
         self.scratch = GpuBuffer(self.memory.size, dtype=self.memory.dtype)
 
         # create a memory_channel for each remote neighbor
-        self.fst_round_proxy_chans = self.group.make_proxy_channels_with_scratch(
+        self.fst_round_port_chans = self.group.make_port_channels_with_scratch(
             self.proxy_service, self.memory, self.scratch, self.connections
         )
-        self.snd_round_proxy_chans = self.group.make_proxy_channels(self.proxy_service, self.memory, self.connections)
+        self.snd_round_port_chans = self.group.make_port_channels(self.proxy_service, self.memory, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
             file="allreduce.cu", kernel_name="allreduce3", file_dir=file_dir, macro_dict={"TYPE": type_str}
@@ -194,8 +194,8 @@ class MscclppAllReduce3:
         self.snd_device_handles = []
         for rank in range(self.group.nranks):
             if rank != self.group.my_rank:
-                self.fst_device_handles.append(self.fst_round_proxy_chans[rank].device_handle().raw)
-                self.snd_device_handles.append(self.snd_round_proxy_chans[rank].device_handle().raw)
+                self.fst_device_handles.append(self.fst_round_port_chans[rank].device_handle().raw)
+                self.snd_device_handles.append(self.snd_round_port_chans[rank].device_handle().raw)
         self.fst_device_handles_cp = cp.asarray(memoryview(b"".join(self.fst_device_handles)), dtype=cp.uint8)
         self.snd_device_handles_cp = cp.asarray(memoryview(b"".join(self.snd_device_handles)), dtype=cp.uint8)
 
@@ -263,12 +263,10 @@ class MscclppAllReduce4:
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         # create a memory_channel for each remote neighbor
         self.memory_channels = self.group.make_memory_channels(self.memory, same_node_connections)
-        self.reduce_scatter_proxy_channels = self.group.make_proxy_channels_with_scratch(
+        self.reduce_scatter_port_channels = self.group.make_port_channels_with_scratch(
             self.proxy_service, self.memory, self.scratch, self.connections
         )
-        self.all_gather_proxy_channels = self.group.make_proxy_channels(
-            self.proxy_service, self.memory, self.connections
-        )
+        self.all_gather_port_channels = self.group.make_port_channels(self.proxy_service, self.memory, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
             file="allreduce.cu", kernel_name="allreduce4", file_dir=file_dir, macro_dict={"TYPE": type_str}
@@ -281,9 +279,9 @@ class MscclppAllReduce4:
                 self.mem_device_handles.append(self.memory_channels[rank].device_handle().raw)
             if rank != self.group.my_rank:
                 self.reduce_sactter_proxy_device_handles.append(
-                    self.reduce_scatter_proxy_channels[rank].device_handle().raw
+                    self.reduce_scatter_port_channels[rank].device_handle().raw
                 )
-                self.all_gather_proxy_device_handles.append(self.all_gather_proxy_channels[rank].device_handle().raw)
+                self.all_gather_proxy_device_handles.append(self.all_gather_port_channels[rank].device_handle().raw)
 
         self.mem_device_handles_cp = cp.asarray(memoryview(b"".join(self.mem_device_handles)), dtype=cp.uint8)
         self.reduce_sactter_proxy_device_handles_cp = cp.asarray(
@@ -370,7 +368,7 @@ class MscclppAllReduce5:
         self.memory_channels = self.group.make_memory_channels_with_scratch(
             self.memory, self.scratch, same_node_connections
         )
-        self.proxy_channels = self.group.make_proxy_channels_with_scratch(
+        self.port_channels = self.group.make_port_channels_with_scratch(
             self.proxy_service, self.put_buff, self.scratch, across_node_connections
         )
         file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -383,7 +381,7 @@ class MscclppAllReduce5:
             if rank != self.group.my_rank and in_same_node(rank):
                 self.mem_device_handles.append(self.memory_channels[rank].device_handle().raw)
             if rank != self.group.my_rank and not in_same_node(rank):
-                self.proxy_device_handles.append(self.proxy_channels[rank].device_handle().raw)
+                self.proxy_device_handles.append(self.port_channels[rank].device_handle().raw)
 
         self.mem_device_handles_cp = cp.asarray(memoryview(b"".join(self.mem_device_handles)), dtype=cp.uint8)
         self.proxy_device_handles_cp = cp.asarray(memoryview(b"".join(self.proxy_device_handles)), dtype=cp.uint8)

@@ -49,8 +49,8 @@ The following highlights key concepts of MSCCL++.
 MSCCL++ provides peer-to-peer communication methods between GPUs. A peer-to-peer connection between two GPUs is called a *Channel*. Channels are constructed by MSCCL++ host-side interfaces and copied to GPUs during initialization. Channels provide *GPU-side interfaces*, which means that all communication methods are defined as a device function to be called from a GPU kernel code. For example, the `put()` method in the following example copies 1KB data from the local GPU to a remote GPU.
 
 ```cpp
-// `ProxyChannel` will be explained in the following section.
-__device__ mscclpp::DeviceHandle<mscclpp::ProxyChannel> channel;
+// `PortChannel` will be explained in the following section.
+__device__ mscclpp::DeviceHandle<mscclpp::PortChannel> channel;
 __global__ void gpuKernel() {
   ...
   // Only one thread is needed for this method.
@@ -78,15 +78,15 @@ __device__ void barrier() {
 
 MSCCL++ provides consistent interfaces, i.e., the above interfaces are used regardless of the location of the remote GPU (either on the local node or on a remote node) or the underlying link (either NVLink/xGMI or InfiniBand).
 
-### ProxyChannel and MemoryChannel
+### PortChannel and MemoryChannel
 
-MSCCL++ delivers two types of channels, **ProxyChannel** and **MemoryChannel**. `ProxyChannel` provides (R)DMA-based data copy and synchronization methods. When called, these methods send/receive a signal to/from a host-side proxy (hence the name `ProxyChannel`), which will trigger (R)DMA (such as `cudaMemcpy*` or `ibv_post_send`) or issue synchronization methods (such as `cudaStreamSynchronize` or `ibv_poll_cq`). Since the key functionalities are run by the proxy, `ProxyChannel` requires only a single GPU thread to call its methods. See all `ProxyChannel` methods from [here](./include/mscclpp/proxy_channel_device.hpp).
+MSCCL++ delivers two types of channels, **PortChannel** and **MemoryChannel**. `PortChannel` provides port-mapping-based data copy and synchronization methods. When called, these methods send/receive a signal to/from a host-side proxy, which will trigger (R)DMA (such as `cudaMemcpy*` or `ibv_post_send`) or issue synchronization methods (such as `cudaStreamSynchronize` or `ibv_poll_cq`). Since the key functionalities are run by the proxy, `PortChannel` requires only a single GPU thread to call its methods. See all `PortChannel` methods from [here](./include/mscclpp/port_channel_device.hpp).
 
-On the other hand, `MemoryChannel` provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU's memory space. Comparing against `ProxyChannel`, `MemoryChannel` is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all `MemoryChannel` methods from [here](./include/mscclpp/memory_channel_device.hpp).
+On the other hand, `MemoryChannel` provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU's memory space. Comparing against `PortChannel`, `MemoryChannel` is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all `MemoryChannel` methods from [here](./include/mscclpp/memory_channel_device.hpp).
 
 ### Host-Side Communication Proxy
 
-MSCCL++ provides a default implementation of a host-side proxy for ProxyChannels, which is a background host thread that busy polls triggers from GPUs and conducts functionalities accordingly. For example, the following is a typical host-side code for MSCCL++.
+MSCCL++ provides a default implementation of a host-side proxy for PortChannels, which is a background host thread that busy polls triggers from GPUs and conducts functionalities accordingly. For example, the following is a typical host-side code for MSCCL++.
 
 ```cpp
 // Bootstrap: initialize control-plane connections between all ranks

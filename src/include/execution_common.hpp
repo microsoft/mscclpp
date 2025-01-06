@@ -6,7 +6,7 @@
 
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/nvls.hpp>
-#include <mscclpp/proxy_channel.hpp>
+#include <mscclpp/port_channel.hpp>
 
 namespace mscclpp {
 
@@ -24,7 +24,7 @@ enum class BufferType : uint8_t {
 enum class ChannelType : uint8_t {
   NONE,
   MEMORY,
-  PROXY,
+  PORT,
   NVLS,
 };
 
@@ -54,7 +54,7 @@ enum class OperationType : uint8_t {
 
 struct Channels {
   mscclpp::DeviceHandle<mscclpp::MemoryChannel> memoryChannels[MAX_CHANNEL];
-  mscclpp::DeviceHandle<mscclpp::ProxyChannel> proxyChannels[MAX_CHANNEL];
+  mscclpp::DeviceHandle<mscclpp::PortChannel> portChannels[MAX_CHANNEL];
   mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels[MAX_CHANNEL];
 };
 
@@ -98,7 +98,7 @@ struct Operation {
 // total size = 2304 + 6400 + 4 + 12(padding) = 8720 bytes
 struct __attribute__((aligned(16))) DeviceExecutionPlan {
   uint8_t nMemoryChannels;              // 1 bytes
-  uint8_t nProxyChannels;               // 1 bytes
+  uint8_t nPortChannels;                // 1 bytes
   uint16_t nOperations;                 // 2 bytes
   Channels channels;                    // 2304 bytes
   Operation operations[MAX_OPERATION];  // 64 * 100 = 6400 bytes

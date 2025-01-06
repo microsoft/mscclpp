@@ -33,17 +33,17 @@ __global__ void gpuKernel() {
 ```
 MSCCL++ also provides efficient synchronization methods, `signal()`, `flush()`, and `wait()`. We will discuss these methods in the following sections.
 
-#### MemoryChannel & ProxyChannel
-MSCCL++ delivers two types of channels, **ProxyChannel** and **MemoryChannel**. `ProxyChannel` provides (R)DMA-based data copy and synchronization methods. When called, these methods send/receive a signal to/from a host-side proxy (hence the name `ProxyChannel`), which will trigger (R)DMA (such as `cudaMemcpy*` or `ibv_post_send`) or issue synchronization methods (such as `cudaStreamSynchronize` or `ibv_poll_cq`). Since the key functionalities are run by the proxy, ProxyChannel requires only a single GPU thread to call its methods. See all `ProxyChannel` methods from [here](https://github.com/microsoft/mscclpp/blob/main/include/mscclpp/proxy_channel_device.hpp).
+#### MemoryChannel & PortChannel
+MSCCL++ delivers two types of channels, **PortChannel** and **MemoryChannel**. `PortChannel` provides port-mapping-based data copy and synchronization methods. When called, these methods send/receive a signal to/from a host-side proxy, which will trigger (R)DMA (such as `cudaMemcpy*` or `ibv_post_send`) or issue synchronization methods (such as `cudaStreamSynchronize` or `ibv_poll_cq`). Since the key functionalities are run by the proxy, PortChannel requires only a single GPU thread to call its methods. See all `PortChannel` methods from [here](https://github.com/microsoft/mscclpp/blob/main/include/mscclpp/port_channel_device.hpp).
 
-On the other hand, `MemoryChannel` provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU's memory space. Comparing against ProxyChannel, MemoryChannel is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all MemoryChannel methods from [here](https://github.com/microsoft/mscclpp/blob/main/include/mscclpp/memory_channel_device.hpp).
+On the other hand, `MemoryChannel` provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU's memory space. Comparing against PortChannel, MemoryChannel is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all MemoryChannel methods from [here](https://github.com/microsoft/mscclpp/blob/main/include/mscclpp/memory_channel_device.hpp).
 
 ### Fifo & Trigger
 One of the key features of MSCCL++ is to offload the communication logic from the GPU to the CPU.
 To offload the communication logic from the GPU to the CPU, MSCCL++ introduces the concept of `Fifo` and `Trigger`. A Fifo is a circular buffer that shared between the GPU and the CPU. It is used to store `Trigger`. A `Trigger` is a signal that is sent from the GPU to the CPU to notify the CPU that there are commands in the Fifo that need to be processed. The CPU will then process the commands in the Fifo and send a signal back to the GPU to notify the GPU that the commands have been processed. The implementation details of Fifo and Trigger can be found in following sections.
 
 ### ProxyService
-Proxy service is a persistent service that resides in the CPU side. It functions as a polling service that receives the message `Trigger` from the GPU side and then transfers data according to the command.  When we use `ProxyChannel` for communication, a `Trigger` is sent from the GPU side to the `ProxyService`. Then `ProxyService` will invoke `cudaMemcpy*` or `IB verbs` to transfer data to the targe device.
+Proxy service is a persistent service that resides in the CPU side. It functions as a polling service that receives the message `Trigger` from the GPU side and then transfers data according to the command.  When we use `PortChannel` for communication, a `Trigger` is sent from the GPU side to the `ProxyService`. Then `ProxyService` will invoke `cudaMemcpy*` or `IB verbs` to transfer data to the targe device.
 
 ## Implementation
 
@@ -117,11 +117,11 @@ In this section, we will discuss several use cases that demonstrate the capabili
 
 MSCCL++ enables the offloading of communication logic from the GPU to the CPU, facilitating the overlapping of communication and computation processes. The code snippet provided illustrates this overlapping technique. In the depicted scenario, the GPU emits a signal to the CPU indicating readiness for data transfer. Subsequently, while the GPU continues to execute computation tasks, the CPU initiates the data transfer to the designated target device.
 ```cpp
-__device__ void gpuKernel(mscclpp::ProxyChannelDeviceHandle* proxyChannel) {
+__device__ void gpuKernel(mscclpp::PortChannelDeviceHandle* portChannel) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   // Send a trigger to the CPU
   if (tid == 0) {
-    proxyChannel[0].putWithSignal(/*dstOffset*/ 0, /*srcOffset*/ 0, /*size*/ 1024);
+    portChannel[0].putWithSignal(/*dstOffset*/ 0, /*srcOffset*/ 0, /*size*/ 1024);
   }
   // Continue computation
   matrixMul()
@@ -138,18 +138,18 @@ Traditional communication libraries enforce a separation between communication a
 MCSCL++ offers a low-level communication API, allowing users to design customized collective communication algorithms. The following code demonstrates how to implement a customized All2All algorithm using MSCCL++.
 ```cpp
 using DeviceHandle = mscclpp::DeviceHandle<T>;
-__device__ void localAlltoall(DeviceHandle<mscclpp::ProxyChannel>* proxyChans, int rank,
+__device__ void localAlltoall(DeviceHandle<mscclpp::PortChannel>* portChans, int rank,
                               int nRanksPerNode, size_t nElements) {
   int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   for (int i = 1; i < nRanksPerNode; i++) {
-    DeviceHandle<mscclpp::ProxyChannel> proxyChan = proxyChans[blockIdx.x];
+    DeviceHandle<mscclpp::PortChannel> portChan = portChans[blockIdx.x];
     if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank + i) % nRanksPerNode) {
-      proxyChan.putWithSignalAndFlush(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
+      portChan.putWithSignalAndFlush(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
                                       nElements * sizeof(int));
     }
     // wait for the data from GPU (rank-i) % nranksPerNode to arrive
     if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank - i + nRanksPerNode) % nRanksPerNode) {
-      proxyChan.wait();
+      portChan.wait();
     }
     deviceSyncer.sync(nRanksPerNode - 1);
   }

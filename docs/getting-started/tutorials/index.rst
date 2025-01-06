@@ -9,7 +9,7 @@ This tutorial section provides a step-by-step guide to help you get started with
    :hidden:
 
    initialization
-   proxy-channel
+   port-channel
    memory-channel
    packet-api
    customized-proxy-service

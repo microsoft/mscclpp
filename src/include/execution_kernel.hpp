@@ -11,7 +11,7 @@
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/packet_device.hpp>
-#include <mscclpp/proxy_channel.hpp>
+#include <mscclpp/port_channel.hpp>
 
 #include "execution_common.hpp"
 
@@ -193,36 +193,36 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
 }
 
 MSCCLPP_DEVICE_INLINE void handleSignal(DeviceHandle<MemoryChannel>* memoryChannels,
-                                        DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* channelIndex, int nChannels,
+                                        DeviceHandle<PortChannel>* portChannels, uint8_t* channelIndex, int nChannels,
                                         ChannelType chType) {
   int tid = threadIdx.x;
   if (tid < nChannels && chType == ChannelType::MEMORY) {
     memoryChannels[channelIndex[tid]].signal();
     return;
   }
-  if (tid < nChannels && chType == ChannelType::PROXY) {
-    proxyChannels[channelIndex[threadIdx.x]].signal();
+  if (tid < nChannels && chType == ChannelType::PORT) {
+    portChannels[channelIndex[threadIdx.x]].signal();
   }
 }
 
 MSCCLPP_DEVICE_INLINE void handleWait(DeviceHandle<MemoryChannel>* memoryChannels,
-                                      DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* channelIndexes, int nChannels,
+                                      DeviceHandle<PortChannel>* portChannels, uint8_t* channelIndexes, int nChannels,
                                       ChannelType chType) {
   int tid = threadIdx.x;
   if (tid < nChannels && chType == ChannelType::MEMORY) {
     memoryChannels[channelIndexes[tid]].wait();
     return;
   }
-  if (tid < nChannels && chType == ChannelType::PROXY) {
-    proxyChannels[channelIndexes[tid]].wait();
+  if (tid < nChannels && chType == ChannelType::PORT) {
+    portChannels[channelIndexes[tid]].wait();
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleFlush(DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* channelIndexes,
+MSCCLPP_DEVICE_INLINE void handleFlush(DeviceHandle<PortChannel>* portChannels, uint8_t* channelIndexes,
                                        int nChannels) {
   int tid = threadIdx.x;
   if (tid < nChannels) {
-    proxyChannels[channelIndexes[tid]].flush();
+    portChannels[channelIndexes[tid]].flush();
   }
 }
 
@@ -237,7 +237,7 @@ MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<MemoryChannel>* memoryChannel,
 
 template <bool PutWithSignal = false, bool PutWithSignalAndFlush = false>
 MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<MemoryChannel>* memoryChannel,
-                                     DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
+                                     DeviceHandle<PortChannel>* portChannels, uint8_t* dstChannelIndexes,
                                      uint32_t* dstOffsets, uint32_t* srcOffsets, int count, uint32_t size,
                                      ChannelType chType) {
   if (chType == ChannelType::MEMORY) {
@@ -248,15 +248,15 @@ MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<MemoryChannel>* memoryChannel,
     }
     return;
   }
-  if (chType == ChannelType::PROXY) {
+  if (chType == ChannelType::PORT) {
     int tid = threadIdx.x;
     if (tid < count) {
       if constexpr (PutWithSignal) {
-        proxyChannels[dstChannelIndexes[tid]].putWithSignal(dstOffsets[tid], srcOffsets[tid], size);
+        portChannels[dstChannelIndexes[tid]].putWithSignal(dstOffsets[tid], srcOffsets[tid], size);
       } else if constexpr (PutWithSignalAndFlush) {
-        proxyChannels[dstChannelIndexes[tid]].putWithSignalAndFlush(dstOffsets[tid], srcOffsets[tid], size);
+        portChannels[dstChannelIndexes[tid]].putWithSignalAndFlush(dstOffsets[tid], srcOffsets[tid], size);
       } else {
-        proxyChannels[dstChannelIndexes[tid]].put(dstOffsets[tid], srcOffsets[tid], size);
+        portChannels[dstChannelIndexes[tid]].put(dstOffsets[tid], srcOffsets[tid], size);
       }
     }
   }
@@ -312,7 +312,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* output, uint32_t outputOf
 
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<MemoryChannel>* memoryChannels,
-                                           DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
+                                           DeviceHandle<PortChannel>* portChannels, uint8_t* dstChannelIndexes,
                                            uint32_t* dstOffsets, uint32_t* srcOffsets, int nDstChannels, uint32_t size,
                                            ChannelType chType, uint32_t flag) {
   const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
@@ -322,15 +322,15 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<Memo
           scratchBaseOffset + dstOffsets[index] * 2, srcOffsets[index], size, threadIdx.x, blockDim.x, flag);
     }
   }
-  if (chType == ChannelType::PROXY) {
+  if (chType == ChannelType::PORT) {
     int tid = threadIdx.x;
     if (tid >= nDstChannels) {
       return;
     }
-    // For proxy channel, we assume src and dst are in packet format
+    // For port channel, we assume src and dst are in packet format
     uint32_t dstOffset = (dstOffsets[tid] << 1) + scratchBaseOffset;
     uint32_t srcOffset = (srcOffsets[tid] << 1) + scratchBaseOffset;
-    proxyChannels[dstChannelIndexes[tid]].put(dstOffset, srcOffset, size << 1);
+    portChannels[dstChannelIndexes[tid]].put(dstOffset, srcOffset, size << 1);
   }
 }
 
@@ -497,7 +497,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   int nOperations = localPlan->nOperations;
   Operation* operations = localPlan->operations;
   DeviceHandle<MemoryChannel>* memoryChannels = localPlan->channels.memoryChannels;
-  DeviceHandle<ProxyChannel>* proxyChannels = localPlan->channels.proxyChannels;
+  DeviceHandle<PortChannel>* portChannels = localPlan->channels.portChannels;
   [[maybe_unused]] DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels =
       localPlan->channels.nvlsChannels;
 
@@ -538,19 +538,19 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       int syncStateIndex = op.deviceSyncerIndex;
       deviceSyncers[syncStateIndex].sync(nThreadBlocks);
     } else if (op.type == OperationType::SIGNAL) {
-      handleSignal(memoryChannels, proxyChannels, op.outputChannelIndexes, op.nOutputs, op.channelType);
+      handleSignal(memoryChannels, portChannels, op.outputChannelIndexes, op.nOutputs, op.channelType);
     } else if (op.type == OperationType::WAIT) {
-      handleWait(memoryChannels, proxyChannels, op.inputChannelIndexes, op.nInputs, op.channelType);
+      handleWait(memoryChannels, portChannels, op.inputChannelIndexes, op.nInputs, op.channelType);
     } else if (op.type == OperationType::FLUSH) {
-      handleFlush(proxyChannels, op.outputChannelIndexes, op.nOutputs);
+      handleFlush(portChannels, op.outputChannelIndexes, op.nOutputs);
     } else if (op.type == OperationType::PUT) {
-      handlePut(memoryChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs,
+      handlePut(memoryChannels, portChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs,
                 op.size, op.channelType);
     } else if (op.type == OperationType::PUT_WITH_SIGNAL) {
-      handlePut<true>(memoryChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
+      handlePut<true>(memoryChannels, portChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
                       op.nOutputs, op.size, op.channelType);
     } else if (op.type == OperationType::PUT_WITH_SIGNAL_AND_FLUSH) {
-      handlePut<false, true>(memoryChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
+      handlePut<false, true>(memoryChannels, portChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
                              op.nOutputs, op.size, op.channelType);
     } else if (op.type == OperationType::GET) {
       handleGet(memoryChannels, op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nInputs, op.size);
@@ -572,7 +572,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                                op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
                                op.size, false);
     } else if (op.type == OperationType::PUT_PACKET) {
-      handlePutPacket<PacketType>(scratchSize, memoryChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets,
+      handlePutPacket<PacketType>(scratchSize, memoryChannels, portChannels, op.outputChannelIndexes, op.outputOffsets,
                                   op.inputOffsets, op.nOutputs, op.size, op.channelType, flag);
     } else if (op.type == OperationType::REDUCE_SEND_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);

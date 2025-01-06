@@ -15,7 +15,7 @@ from ._mscclpp import (
     numa,
     ProxyService,
     RegisteredMemory,
-    ProxyChannel,
+    PortChannel,
     MemoryChannel,
     MemoryDevice2DeviceSemaphore,
     TcpBootstrap,
@@ -42,7 +42,7 @@ __all__ = [
     "numa",
     "ProxyService",
     "RegisteredMemory",
-    "ProxyChannel",
+    "PortChannel",
     "MemoryChannel",
     "MemoryDevice2DeviceSemaphore",
     "TcpBootstrap",
@@ -64,18 +64,18 @@ __all__ = [
     "SmDevice2DeviceSemaphore",
 ]
 
-__version__ = version()
+__version__: str = str(version())
 
 if os.environ.get("MSCCLPP_HOME", None) is None:
     os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
 
 
-def get_include():
+def get_include() -> str:
     """Return the directory that contains the MSCCL++ headers."""
     return os.path.join(os.path.dirname(__file__), "include")
 
 
-def get_lib():
+def get_lib() -> str:
     """Return the directory that contains the MSCCL++ headers."""
     return os.path.join(os.path.dirname(__file__), "lib")
 
@@ -93,6 +93,10 @@ class MetaDeprecated(type):
 
         new_class.__init__ = new_init
         return new_class
+
+
+class ProxyChannel(PortChannel, metaclass=MetaDeprecated):
+    pass
 
 
 class SmChannel(MemoryChannel, metaclass=MetaDeprecated):

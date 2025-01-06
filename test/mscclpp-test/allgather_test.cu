@@ -21,8 +21,8 @@ constexpr uint64_t MAGIC = 0xdeadbeef;
 
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
-__constant__ DeviceHandle<mscclpp::ProxyChannel> constProxyChans[16];
-__constant__ DeviceHandle<mscclpp::BaseProxyChannel> constRawProxyChan[16];
+__constant__ DeviceHandle<mscclpp::PortChannel> constPortChans[16];
+__constant__ DeviceHandle<mscclpp::BasePortChannel> constRawPortChan[16];
 
 __constant__ DeviceHandle<mscclpp::MemoryChannel> constMemChans[512];
 __constant__ DeviceHandle<mscclpp::MemoryChannel> constMemOutOfPlaceChans[16];
@@ -32,26 +32,26 @@ __global__ void __launch_bounds__(1024) allgather0(int rank, size_t nelemsPerGPU
   int warpId = threadIdx.x / WARP_SIZE;
 
   // Each warp is responsible for one of the remote ranks
-  DeviceHandle<mscclpp::ProxyChannel> proxyChan = constProxyChans[warpId];
+  DeviceHandle<mscclpp::PortChannel> portChan = constPortChans[warpId];
 
   // this allgather is really simple and implemented as an alltoall
 
   // this thread's role is a sender role
   // put your data asynchronously
   if (threadIdx.x % WARP_SIZE == 0) {
-    proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+    portChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
   }
   // make sure everyone is put their data before some thread randomly blocks everyone else in signal
   __syncthreads();
   // push with flag and sync to make sure the data is received
-  if (threadIdx.x % WARP_SIZE == 0) proxyChan.flush();
+  if (threadIdx.x % WARP_SIZE == 0) portChan.flush();
 
   // this thread's role is a receiver role. wait on the semaphore to make sure the data is ready
-  if (threadIdx.x % WARP_SIZE == 0) proxyChan.wait();
+  if (threadIdx.x % WARP_SIZE == 0) portChan.wait();
 }
 
-__device__ void localAllGather(DeviceHandle<mscclpp::ProxyChannel> proxyChan, int rank, int nRanksPerNode,
-                               int remoteRank, uint64_t offset, uint64_t size, bool flushAfterSignal = true) {
+__device__ void localAllGather(DeviceHandle<mscclpp::PortChannel> portChan, int rank, int nRanksPerNode, int remoteRank,
+                               uint64_t offset, uint64_t size, bool flushAfterSignal = true) {
   // this allgather algorithm works as follows:
   // Step 1: GPU rank i sends data to GPU rank (i+1) % nRanksPerNode
   // and waits for data from GPU rank (i-1) % nRanksPerNode
@@ -61,12 +61,12 @@ __device__ void localAllGather(DeviceHandle<mscclpp::ProxyChannel> proxyChan, in
   for (int i = 1; i < nRanksPerNode; i++) {
     if ((remoteRank % nRanksPerNode) == ((rank + i) % nRanksPerNode)) {
       // put your data to GPU (rank+i) % nRanksPerNode and signal in one call
-      if (flushAfterSignal && (threadIdx.x % WARP_SIZE) == 0) proxyChan.putWithSignalAndFlush(offset, size);
-      if (!flushAfterSignal && (threadIdx.x % WARP_SIZE) == 0) proxyChan.putWithSignal(offset, size);
+      if (flushAfterSignal && (threadIdx.x % WARP_SIZE) == 0) portChan.putWithSignalAndFlush(offset, size);
+      if (!flushAfterSignal && (threadIdx.x % WARP_SIZE) == 0) portChan.putWithSignal(offset, size);
     }
     // wait for the data from GPU (rank-i) % nRanksPerNode to arrive
     if ((remoteRank % nRanksPerNode) == ((rank - i + nRanksPerNode) % nRanksPerNode)) {
-      if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.wait();
+      if ((threadIdx.x % WARP_SIZE) == 0) portChan.wait();
     }
 #if defined(__HIP_PLATFORM_AMD__)
     // NOTE: we actually need a group barrier here for better performance, but __syncthreads() is still correct.
@@ -130,9 +130,9 @@ __global__ void __launch_bounds__(1024) allgather1(int rank, int nRanksPerNode, 
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
 
   // Each warp is responsible for one of the remote ranks
-  DeviceHandle<mscclpp::ProxyChannel> proxyChan = constProxyChans[warpId];
+  DeviceHandle<mscclpp::PortChannel> portChan = constPortChans[warpId];
 
-  localAllGather(proxyChan, rank, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
+  localAllGather(portChan, rank, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
 }
 
@@ -141,7 +141,7 @@ __global__ void __launch_bounds__(1024) allgather2(int rank, int worldSize, int 
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
 
   // Each warp is responsible for one of the remote ranks
-  DeviceHandle<mscclpp::ProxyChannel> proxyChan = constProxyChans[warpId];
+  DeviceHandle<mscclpp::PortChannel> portChan = constPortChans[warpId];
 
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
@@ -158,16 +158,16 @@ __global__ void __launch_bounds__(1024) allgather2(int rank, int worldSize, int 
   // Step 1
   // local allgather
   if (remoteRank / nRanksPerNode == rank / nRanksPerNode) {
-    localAllGather(proxyChan, rank, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
+    localAllGather(portChan, rank, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                    nelemsPerGPU * sizeof(int), false);
   }
   // cross-node exchange
   if (remoteRank % nRanksPerNode == rank % nRanksPerNode) {
     // opposite side
     if ((threadIdx.x % WARP_SIZE) == 0)
-      proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
-                              (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
-    if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.wait();
+      portChan.putWithSignal(rank * nelemsPerGPU * sizeof(int),
+                             (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int));
+    if ((threadIdx.x % WARP_SIZE) == 0) portChan.wait();
   }
 
   // sync here to make sure IB flush dose not block the CUDA IPC traffic
@@ -175,7 +175,7 @@ __global__ void __launch_bounds__(1024) allgather2(int rank, int worldSize, int 
   // need to flush ib channel here to avoid cq overflow. since we won't change send suffer after send, we don't need
   // to flush for IPC channel.
   if (remoteRank % nRanksPerNode == rank % nRanksPerNode) {
-    if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.flush();
+    if ((threadIdx.x % WARP_SIZE) == 0) portChan.flush();
   }
   __syncthreads();
 
@@ -183,7 +183,7 @@ __global__ void __launch_bounds__(1024) allgather2(int rank, int worldSize, int 
   // local allgather
   int otherNghr = (rank + nRanksPerNode) % worldSize;
   if (remoteRank / nRanksPerNode == rank / nRanksPerNode) {
-    localAllGather(proxyChan, rank, nRanksPerNode, remoteRank, otherNghr * nelemsPerGPU * sizeof(int),
+    localAllGather(portChan, rank, nRanksPerNode, remoteRank, otherNghr * nelemsPerGPU * sizeof(int),
                    (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize * sizeof(int), false);
   }
 
@@ -191,21 +191,21 @@ __global__ void __launch_bounds__(1024) allgather2(int rank, int worldSize, int 
   if (remoteRank % nRanksPerNode == rank % nRanksPerNode) {
     // opposite side
     if ((threadIdx.x % WARP_SIZE) == 0)
-      proxyChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
-                              nelemsPerGPU / pipelineSize * sizeof(int));
-    if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.wait();
+      portChan.putWithSignal((rank * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
+                             nelemsPerGPU / pipelineSize * sizeof(int));
+    if ((threadIdx.x % WARP_SIZE) == 0) portChan.wait();
   }
 
   __syncthreads();
   if (remoteRank % nRanksPerNode == rank % nRanksPerNode) {
-    if ((threadIdx.x % WARP_SIZE) == 0) proxyChan.flush();
+    if ((threadIdx.x % WARP_SIZE) == 0) portChan.flush();
   }
   __syncthreads();
 
   // Step 3
   // local allgather
   if (remoteRank / nRanksPerNode == rank / nRanksPerNode) {
-    localAllGather(proxyChan, rank, nRanksPerNode, remoteRank,
+    localAllGather(portChan, rank, nRanksPerNode, remoteRank,
                    (otherNghr * nelemsPerGPU + (nelemsPerGPU * (pipelineSize - 1)) / pipelineSize) * sizeof(int),
                    nelemsPerGPU / pipelineSize * sizeof(int));
   }
@@ -215,7 +215,7 @@ __global__ void __launch_bounds__(1024) allgather3() {
   int warpId = threadIdx.x / WARP_SIZE;
 
   // Each warp is responsible for one of the remote ranks
-  DeviceHandle<mscclpp::BaseProxyChannel> proxyChan = constRawProxyChan[warpId];
+  DeviceHandle<mscclpp::BasePortChannel> portChan = constRawPortChan[warpId];
 
   int tid = threadIdx.x;
   __syncthreads();
@@ -224,12 +224,12 @@ __global__ void __launch_bounds__(1024) allgather3() {
     trigger.fst = MAGIC;
     trigger.snd = 0;
     // offload all the work to the proxy
-    uint64_t currentFifoHead = proxyChan.fifo_.push(trigger);
+    uint64_t currentFifoHead = portChan.fifo_.push(trigger);
     // wait for the work to be done in cpu side
-    proxyChan.fifo_.sync(currentFifoHead);
+    portChan.fifo_.sync(currentFifoHead);
   }
   if (tid % WARP_SIZE == 0) {
-    proxyChan.wait();
+    portChan.wait();
   }
 }
 
@@ -248,7 +248,7 @@ __global__ void __launch_bounds__(1024) allgather4(int rank, int worldSize, int 
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  DeviceHandle<mscclpp::ProxyChannel>& proxyChan = constProxyChans[peer];
+  DeviceHandle<mscclpp::PortChannel>& portChan = constPortChans[peer];
   const size_t nBlocksForLocalAllGather = gridDim.x;
   const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
   const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
@@ -266,24 +266,24 @@ __global__ void __launch_bounds__(1024) allgather4(int rank, int worldSize, int 
 
   // Step 1
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
+    portChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), step1Bytes);
   }
   localAllGatherMem(rank, nRanksPerNode, startRankIndexInLocalNode, 0, rankChunkSize, rankChunkSize,
                     nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    proxyChan.wait();
-    proxyChan.flush();
+    portChan.wait();
+    portChan.flush();
   }
   deviceSyncer.sync(nBlocksForLocalAllGather);
   // Step 2
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    proxyChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
+    portChan.putWithSignal(rank * nelemsPerGPU * sizeof(int) + step1Bytes, step2Bytes);
   }
   localAllGatherMem(rank, nRanksPerNode, startRankIndexInPeerNode, 0, rankChunkSize, step1Bytes,
                     nBlocksForLocalAllGather);
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    proxyChan.wait();
-    proxyChan.flush();
+    portChan.wait();
+    portChan.flush();
   }
   deviceSyncer.sync(nBlocksForLocalAllGather);
   // Step 3
@@ -513,10 +513,10 @@ class AllGatherProxyService : public mscclpp::BaseProxyService {
     semaphores_.push_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(communicator, connection));
     return semaphores_.size() - 1;
   }
-  std::vector<DeviceHandle<mscclpp::BaseProxyChannel>> proxyChannels() {
-    std::vector<DeviceHandle<mscclpp::BaseProxyChannel>> result;
+  std::vector<DeviceHandle<mscclpp::BasePortChannel>> portChannels() {
+    std::vector<DeviceHandle<mscclpp::BasePortChannel>> result;
     for (auto& semaphore : semaphores_) {
-      result.push_back(mscclpp::deviceHandle(mscclpp::BaseProxyChannel(0, semaphore, proxy_)));
+      result.push_back(mscclpp::deviceHandle(mscclpp::BasePortChannel(0, semaphore, proxy_)));
     }
     return result;
   }
@@ -723,14 +723,14 @@ void AllGatherTestEngine::allocateBuffer() {
 }
 
 void AllGatherTestEngine::setupConnections() {
-  std::vector<DeviceHandle<mscclpp::ProxyChannel>> devProxyChannels;
+  std::vector<DeviceHandle<mscclpp::PortChannel>> devPortChannels;
   if (!isUsingHostOffload(args_.kernelNum)) {
-    setupMeshConnections(devProxyChannels, sendBuff_.get(), args_.maxBytes);
-    if (devProxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::ProxyChannel>)) {
+    setupMeshConnections(devPortChannels, sendBuff_.get(), args_.maxBytes);
+    if (devPortChannels.size() > sizeof(constPortChans) / sizeof(DeviceHandle<mscclpp::PortChannel>)) {
       std::runtime_error("unexpected error");
     }
-    CUDATHROW(cudaMemcpyToSymbol(constProxyChans, devProxyChannels.data(),
-                                 sizeof(DeviceHandle<mscclpp::ProxyChannel>) * devProxyChannels.size()));
+    CUDATHROW(cudaMemcpyToSymbol(constPortChans, devPortChannels.data(),
+                                 sizeof(DeviceHandle<mscclpp::PortChannel>) * devPortChannels.size()));
 
     setupMeshConnections(memoryChannels_, sendBuff_.get(), args_.maxBytes, nullptr, 0, ChannelSemantic::PUT, 64);
     std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelHandles(memoryChannels_.size());
@@ -762,7 +762,7 @@ void AllGatherTestEngine::setupConnections() {
     }
   } else {
     auto service = std::dynamic_pointer_cast<AllGatherProxyService>(chanService_);
-    setupMeshConnections(devProxyChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,
+    setupMeshConnections(devPortChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,
                          [&](std::vector<std::shared_ptr<mscclpp::Connection>> conns,
                              std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteMemories,
                              const mscclpp::RegisteredMemory& localMemory) {
@@ -774,12 +774,12 @@ void AllGatherTestEngine::setupConnections() {
                            service->setLocalMemory(localMemory);
                            comm_->setup();
                          });
-    auto proxyChannels = service->proxyChannels();
-    if (proxyChannels.size() > sizeof(constRawProxyChan) / sizeof(DeviceHandle<mscclpp::BaseProxyChannel>)) {
+    auto portChannels = service->portChannels();
+    if (portChannels.size() > sizeof(constRawPortChan) / sizeof(DeviceHandle<mscclpp::BasePortChannel>)) {
       std::runtime_error("unexpected error");
     }
-    CUDATHROW(cudaMemcpyToSymbol(constRawProxyChan, proxyChannels.data(),
-                                 sizeof(DeviceHandle<mscclpp::BaseProxyChannel>) * proxyChannels.size()));
+    CUDATHROW(cudaMemcpyToSymbol(constRawPortChan, portChannels.data(),
+                                 sizeof(DeviceHandle<mscclpp::BasePortChannel>) * portChannels.size()));
   }
 }
 

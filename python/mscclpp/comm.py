@@ -14,7 +14,7 @@ from ._mscclpp import (
     Host2HostSemaphore,
     ProxyService,
     RegisteredMemory,
-    ProxyChannel,
+    PortChannel,
     MemoryChannel,
     MemoryDevice2DeviceSemaphore,
     TcpBootstrap,
@@ -169,7 +169,7 @@ class CommGroup:
             )
         return channels
 
-    def make_proxy_channels(
+    def make_port_channels(
         self, proxy_service: ProxyService, tensor: cp.ndarray, connections: dict[int, Connection]
     ) -> dict[int, MemoryChannel]:
         semaphores = self.make_semaphore(connections, Host2DeviceSemaphore)
@@ -182,12 +182,10 @@ class CommGroup:
             semaphore_ids[rank] = proxy_service.add_semaphore(semaphores[rank])
         channels = {}
         for rank in semaphores:
-            channels[rank] = proxy_service.proxy_channel(
-                semaphore_ids[rank], memory_ids[rank], memory_ids[self.my_rank]
-            )
+            channels[rank] = proxy_service.port_channel(semaphore_ids[rank], memory_ids[rank], memory_ids[self.my_rank])
         return channels
 
-    def make_proxy_channels_with_scratch(
+    def make_port_channels_with_scratch(
         self,
         proxy_service: ProxyService,
         tensor: cp.ndarray,
@@ -220,9 +218,7 @@ class CommGroup:
             semaphore_ids[rank] = proxy_service.add_semaphore(semaphores[rank])
         channels = {}
         for rank in semaphores:
-            channels[rank] = proxy_service.proxy_channel(
-                semaphore_ids[rank], memory_ids[rank], memory_ids[self.my_rank]
-            )
+            channels[rank] = proxy_service.port_channel(semaphore_ids[rank], memory_ids[rank], memory_ids[self.my_rank])
         return channels
 
     def register_semaphore_with_proxy(
@@ -234,7 +230,7 @@ class CommGroup:
             semaphore_ids[rank] = proxy_service.add_semaphore(semaphores[rank])
         channels = {}
         for rank in semaphores:
-            channels[rank] = proxy_service.base_proxy_channel(semaphore_ids[rank])
+            channels[rank] = proxy_service.base_port_channel(semaphore_ids[rank])
         return channels
 
     def register_memory_with_proxy(

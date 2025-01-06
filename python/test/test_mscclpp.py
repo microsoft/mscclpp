@@ -346,9 +346,9 @@ class MscclppKernel:
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
-        elif test_name == "proxy_channel":
+        elif test_name == "port_channel":
             self._kernel = KernelBuilder(
-                file="proxy_channel_test.cu", kernel_name="proxy_channel", file_dir=file_dir
+                file="port_channel_test.cu", kernel_name="port_channel", file_dir=file_dir
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = 1024
@@ -376,11 +376,11 @@ class MscclppKernel:
             # keep a reference to the device handles so that they don't get garbage collected
             self._d_semaphore_or_channels = cp.asarray(memoryview(b"".join(device_handles)), dtype=cp.uint8)
 
-        if test_name in ["h2d_semaphore", "d2d_semaphore", "memory_channel", "proxy_channel"]:
+        if test_name in ["h2d_semaphore", "d2d_semaphore", "memory_channel", "port_channel"]:
             self.params += pack(self._d_semaphore_or_channels, my_rank, nranks)
             if test_name == "memory_channel":
                 self.params += pack(tensor.size, use_packet)
-            if test_name == "proxy_channel":
+            if test_name == "port_channel":
                 self.params += pack(tensor, scratch, tensor.size, use_packet)
         elif test_name == "fifo":
             self.params = fifo.device_handle().raw
@@ -530,7 +530,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["NVLink", "IB"])
 @pytest.mark.parametrize("use_packet", [False, True])
-def test_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
+def test_port_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
     group, connections = create_group_and_connection(mpi_group, transport)
 
     memory = GpuBuffer(nelem, dtype=cp.int32)
@@ -551,10 +551,10 @@ def test_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_pack
         memory_to_register = scratch
     else:
         memory_to_register = memory
-    channels = group.make_proxy_channels(proxy_service, memory_to_register, connections)
+    channels = group.make_port_channels(proxy_service, memory_to_register, connections)
 
     kernel = MscclppKernel(
-        "proxy_channel",
+        "port_channel",
         my_rank=group.my_rank,
         nranks=group.nranks,
         semaphore_or_channels=channels,

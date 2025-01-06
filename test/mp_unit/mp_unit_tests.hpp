@@ -10,7 +10,7 @@
 #include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/packet_device.hpp>
-#include <mscclpp/proxy_channel.hpp>
+#include <mscclpp/port_channel.hpp>
 #include <mscclpp/utils.hpp>
 
 #include "ib.hpp"
@@ -128,7 +128,7 @@ class CommunicatorTest : public CommunicatorTestBase {
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
 
-class ProxyChannelOneToOneTest : public CommunicatorTestBase {
+class PortChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   struct PingPongTestParams {
     bool useIPC;
@@ -140,9 +140,8 @@ class ProxyChannelOneToOneTest : public CommunicatorTestBase {
   void SetUp() override;
   void TearDown() override;
 
-  void setupMeshConnections(std::vector<mscclpp::ProxyChannel>& proxyChannels, bool useIPC, bool useIb,
-                            bool useEthernet, void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr,
-                            size_t recvBuffBytes = 0);
+  void setupMeshConnections(std::vector<mscclpp::PortChannel>& portChannels, bool useIPC, bool useIb, bool useEthernet,
+                            void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
   void testPingPong(PingPongTestParams params);
   void testPingPongPerf(PingPongTestParams params);
   void testPacketPingPong(bool useIbOnly);
