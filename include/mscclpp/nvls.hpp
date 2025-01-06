@@ -36,10 +36,10 @@ class NvlsConnection {
     friend class NvlsConnection;
   };
 
-  /// @brief bind the allocated memory via @ref mscclpp::gpuMemAlloc to the multicast handle. The behavior
-  /// is undefined if the devicePtr is not allocated by @ref mscclpp::gpuMemAlloc.
-  /// @param devicePtr
-  /// @param size
+  /// @brief bind the memory allocated via @ref mscclpp::GpuBuffer to the multicast handle. The behavior
+  /// is undefined if the devicePtr is not allocated by @ref mscclpp::GpuBuffer.
+  /// @param devicePtr The device pointer returned by `mscclpp::GpuBuffer::data()`.
+  /// @param size The bytes of the memory to bind to the multicast handle.
   /// @return DeviceMulticastPointer with devicePtr, mcPtr and bufferSize
   DeviceMulticastPointer bindAllocatedMemory(CUdeviceptr devicePtr, size_t size);
 

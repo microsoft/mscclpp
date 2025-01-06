@@ -177,32 +177,11 @@ auto gpuCallocPhysicalUnique(size_t nelems = 1, size_t gran = 0, size_t align = 
                                                                                       gran, align);
 }
 
+size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag);
+
 #endif  // CUDA_NVLS_SUPPORTED
 
 }  // namespace detail
-
-/// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
-/// The allocated memory space is specialized for MSCCL++ communication.
-/// @tparam T Type of each element in the allocated memory.
-/// @param nelems Number of elements to allocate.
-/// @return A std::shared_ptr to the allocated memory.
-template <class T = char>
-std::shared_ptr<T> gpuMemAlloc(size_t nelems = 1) {
-  if (nelems == 0) {
-    return nullptr;
-  }
-#if (CUDA_NVLS_SUPPORTED)
-  if (mscclpp::isNvlsSupported()) {
-    return detail::gpuCallocPhysicalShared<T>(nelems);
-  }
-#endif  // CUDA_NVLS_SUPPORTED
-
-#if defined(__HIP_PLATFORM_AMD__)
-  return detail::gpuCallocUncachedShared<T>(nelems);
-#else   // !defined(__HIP_PLATFORM_AMD__)
-  return detail::gpuCallocShared<T>(nelems);
-#endif  // !defined(__HIP_PLATFORM_AMD__)
-}
 
 template <class T = char>
 void gpuMemcpyAsync(T* dst, const T* src, size_t nelems, cudaStream_t stream, cudaMemcpyKind kind = cudaMemcpyDefault) {
@@ -213,6 +192,71 @@ template <class T = char>
 void gpuMemcpy(T* dst, const T* src, size_t nelems, cudaMemcpyKind kind = cudaMemcpyDefault) {
   detail::gpuMemcpy(dst, src, nelems * sizeof(T), kind);
 }
+
+bool isNvlsSupported();
+
+/// Allocates a GPU memory space specialized for communication. The memory is zeroed out. Get the device pointer by
+/// `GpuBuffer::data()`.
+///
+/// Use this function for communication buffers, i.e., only when other devices (CPU, GPU, NIC, etc.) may access this
+/// memory space at the same time with the local device (GPU). Running heavy computation over this memory space
+/// may perform bad and is not recommended in general.
+///
+/// The allocated memory space is managed by the `memory_` object, not by the class instance. Which means,
+/// the class destructor will NOT free the allocated memory if `memory_` is shared with and alive in other contexts.
+///
+/// @tparam T Type of each element in the allocated memory. Default is `char`.
+///
+template <class T = char>
+class GpuBuffer {
+ public:
+  /// Constructs a GpuBuffer with the specified number of elements.
+  /// @param nelems Number of elements to allocate. If it is zero, `data()` will return a null pointer.
+  GpuBuffer(size_t nelems) : nelems_(nelems) {
+    if (nelems == 0) {
+      bytes_ = 0;
+      return;
+    }
+#if (CUDA_NVLS_SUPPORTED)
+    if (isNvlsSupported()) {
+      size_t gran = detail::getMulticastGranularity(nelems * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
+      bytes_ = (nelems * sizeof(T) + gran - 1) / gran * gran / sizeof(T) * sizeof(T);
+      memory_ = detail::gpuCallocPhysicalShared<T>(nelems, gran);
+      return;
+    }
+#endif  // CUDA_NVLS_SUPPORTED
+
+    bytes_ = nelems * sizeof(T);
+#if defined(__HIP_PLATFORM_AMD__)
+    memory_ = detail::gpuCallocUncachedShared<T>(nelems);
+#else   // !defined(__HIP_PLATFORM_AMD__)
+    memory_ = detail::gpuCallocShared<T>(nelems);
+#endif  // !defined(__HIP_PLATFORM_AMD__)
+  }
+
+  /// Returns the number of elements in the allocated memory.
+  /// @return The number of elements.
+  size_t nelems() const { return nelems_; }
+
+  /// Returns the number of bytes that is actually allocated. This may be larger than `nelems() * sizeof(T)`.
+  /// @return The number of bytes.
+  size_t bytes() const { return bytes_; }
+
+  /// Returns the shared pointer to the allocated memory.
+  /// If `nelems()` is zero, this function will return an empty shared pointer.
+  /// @return A `std::shared_ptr` to the allocated memory.
+  std::shared_ptr<T> memory() { return memory_; }
+
+  /// Returns the device pointer to the allocated memory. Equivalent to `memory().get()`.
+  /// If `nelems()` is zero, this function will return a null pointer.
+  /// @return A device pointer to the allocated memory.
+  T* data() { return memory_.get(); }
+
+ private:
+  size_t nelems_;
+  size_t bytes_;
+  std::shared_ptr<T> memory_;
+};
 
 }  // namespace mscclpp
 

@@ -53,7 +53,7 @@ void* gpuCallocUncached(size_t bytes) {
 #endif  // defined(__HIP_PLATFORM_AMD__)
 
 #if (CUDA_NVLS_SUPPORTED)
-static size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
+size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
   size_t gran = 0;
   int numDevices = 0;
   MSCCLPP_CUDATHROW(cudaGetDeviceCount(&numDevices));
@@ -143,5 +143,23 @@ void gpuMemcpy(void* dst, const void* src, size_t bytes, cudaMemcpyKind kind) {
 }
 
 }  // namespace detail
+
+bool isNvlsSupported() {
+  [[maybe_unused]] static bool result = false;
+  [[maybe_unused]] static bool isChecked = false;
+#if (CUDA_NVLS_SUPPORTED)
+  if (!isChecked) {
+    int isMulticastSupported;
+    int isFabricSupported;
+    CUdevice dev;
+    MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
+    MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isMulticastSupported, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
+    MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isFabricSupported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, dev));
+    result = (isMulticastSupported == 1 && isFabricSupported == 1);
+  }
+  return result;
+#endif
+  return false;
+}
 
 }  // namespace mscclpp

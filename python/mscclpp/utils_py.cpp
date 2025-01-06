@@ -20,5 +20,4 @@ void register_utils(nb::module_& m) {
   nb::class_<ScopedTimer, Timer>(m, "ScopedTimer").def(nb::init<std::string>(), nb::arg("name"));
 
   m.def("get_host_name", &getHostName, nb::arg("maxlen"), nb::arg("delim"));
-  m.def("is_nvls_supported", &isNvlsSupported);
 }

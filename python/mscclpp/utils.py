@@ -10,7 +10,7 @@ from typing import Any, Type
 
 import cupy as cp
 import numpy as np
-from ._mscclpp import PyGpuBuffer
+from ._mscclpp import RawGpuBuffer
 
 try:
     import torch
@@ -150,9 +150,8 @@ class GpuBuffer(cp.ndarray):
         if any(s <= 0 for s in shape):
             raise ValueError("Shape must be positive.")
         # Create the buffer
-        bytes = np.prod(shape) * np.dtype(dtype).itemsize
-        buffer = PyGpuBuffer(bytes)
-        memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer.ptr(), bytes, buffer), 0)
+        buffer = RawGpuBuffer(np.prod(shape) * np.dtype(dtype).itemsize)
+        memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer.data(), buffer.bytes(), buffer), 0)
         return cp.ndarray(shape, dtype=dtype, strides=strides, order=order, memptr=memptr)
 
 
