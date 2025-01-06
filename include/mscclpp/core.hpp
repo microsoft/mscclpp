@@ -33,7 +33,7 @@ std::string version();
 /// Base class for bootstraps.
 class Bootstrap {
  public:
-  Bootstrap() {};
+  Bootstrap(){};
   virtual ~Bootstrap() = default;
   virtual int getRank() = 0;
   virtual int getNranks() = 0;
@@ -423,7 +423,7 @@ class Connection {
  public:
   /// Constructor.
   /// @param maxWriteQueueSize The maximum number of write requests that can be queued.
-  Connection(int maxWriteQueueSize) : maxWriteQueueSize(maxWriteQueueSize) {};
+  Connection(int maxWriteQueueSize) : maxWriteQueueSize(maxWriteQueueSize){};
 
   virtual ~Connection() = default;
 
