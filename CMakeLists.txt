@@ -21,6 +21,7 @@ option(MSCCLPP_BUILD_APPS_NCCL "Build NCCL interfaces" ON)
 option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
+option(MSCCLPP_NPKIT_FLAGS "Enable NPKIT" OFF)
 
 if(MSCCLPP_BYPASS_GPU_CHECK)
     if(MSCCLPP_USE_CUDA)
@@ -122,8 +123,8 @@ endif()
 if(MSCCLPP_ENABLE_TRACE)
     target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_ENABLE_TRACE)
 endif()
-if(NPKIT_FLAGS)
-    target_compile_definitions(mscclpp_obj PRIVATE ${NPKIT_FLAGS})
+if(MSCCLPP_NPKIT_FLAGS)
+    target_compile_definitions(mscclpp_obj PRIVATE ${MSCCLPP_NPKIT_FLAGS})
 endif()
 
 # libmscclpp
