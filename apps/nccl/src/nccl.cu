@@ -75,7 +75,7 @@ struct ChannelInfo {
 struct ncclComm {
   std::shared_ptr<mscclpp::Communicator> comm;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
-  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> smSemaphores;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::shared_ptr<mscclpp::Executor> executor;
   std::unordered_map<std::string, std::vector<executionPlanInstance>> executionPlans;
 
@@ -150,12 +150,12 @@ static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_pt
 static std::vector<mscclpp::MemoryChannel> setupMemoryChannels(
     ncclComm_t comm, const std::vector<mscclpp::RegisteredMemory>& remoteMemories, void* src) {
   std::vector<mscclpp::MemoryChannel> channels;
-  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& smSemaphores = comm->smSemaphores;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores = comm->memorySemaphores;
   size_t nConnections = comm->connections.size();
   for (size_t idx = 0; idx < NUM_CHANNELS_PER_CONNECTION; ++idx) {
     for (size_t cid = 0; cid < nConnections; ++cid) {
       if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-        channels.emplace_back(smSemaphores[idx * nConnections + cid], remoteMemories[cid], src, nullptr);
+        channels.emplace_back(memorySemaphores[idx * nConnections + cid], remoteMemories[cid], src, nullptr);
       }
     }
   }
@@ -210,7 +210,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   channelKey sendKey{(void*)sendBasePtr, sendBytes};
   channelKey recvKey{(void*)recvBasePtr, recvBytes};
   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = nullptr;
-  mscclpp::DeviceHandle<mscclpp::MemoryChannel>* smOutChannels = nullptr;
+  mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryOutChannels = nullptr;
 
   // Creating the channels
   if (count * ncclTypeSize(datatype) <= (1 << 20)) {
@@ -245,28 +245,28 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     }
 
     memoryChannels = sendIt->second.memoryChannelDeviceHandles.get();
-    smOutChannels = recvIt->second.memoryChannelDeviceHandles.get();
+    memoryOutChannels = recvIt->second.memoryChannelDeviceHandles.get();
   }
 
   switch (datatype) {
     case ncclFloat16:
       CUDACHECK(allreduce((half*)sendbuff, (half*)comm->scratchBuff.get(), (half*)recvbuff, memoryChannels,
-                          smOutChannels, offsetIn, offsetOut, offsetScratch, rank, NRANKS_PER_NODE,
+                          memoryOutChannels, offsetIn, offsetOut, offsetScratch, rank, NRANKS_PER_NODE,
                           comm->comm->bootstrap()->getNranks(), count, stream));
       break;
     case ncclFloat32:
       CUDACHECK(allreduce((float*)sendbuff, (float*)comm->scratchBuff.get(), (float*)recvbuff, memoryChannels,
-                          smOutChannels, offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(),
+                          memoryOutChannels, offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(),
                           NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream));
       break;
     case ncclBfloat16:
       CUDACHECK(allreduce((__bfloat16*)sendbuff, (__bfloat16*)comm->scratchBuff.get(), (__bfloat16*)recvbuff,
-                          memoryChannels, smOutChannels, offsetIn, offsetOut, offsetScratch, rank, NRANKS_PER_NODE,
+                          memoryChannels, memoryOutChannels, offsetIn, offsetOut, offsetScratch, rank, NRANKS_PER_NODE,
                           comm->comm->bootstrap()->getNranks(), count, stream));
       break;
     case ncclInt32:
     case ncclUint32:
-      CUDACHECK(allreduce((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, smOutChannels,
+      CUDACHECK(allreduce((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, memoryOutChannels,
                           offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(), NRANKS_PER_NODE,
                           comm->comm->bootstrap()->getNranks(), count, stream));
       break;
@@ -344,11 +344,11 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
                  [](const auto& future) { return future.get(); });
 
-  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> smSemaphores;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
   for (size_t idx = 0; idx < NUM_CHANNELS_PER_CONNECTION; ++idx) {
     for (size_t cid = 0; cid < connections.size(); ++cid) {
       if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-        smSemaphores.emplace_back(
+        memorySemaphores.emplace_back(
             std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*(mscclppComm), connections[cid]));
       }
     }
@@ -356,7 +356,7 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
 
   mscclppComm->setup();
   commPtr->connections = std::move(connections);
-  commPtr->smSemaphores = std::move(smSemaphores);
+  commPtr->memorySemaphores = std::move(memorySemaphores);
   commPtr->buffFlag = 0;
   commPtr->numScratchBuff = 2;
   commPtr->scratchBuff = mscclpp::GpuBuffer(SCRATCH_SIZE).memory();

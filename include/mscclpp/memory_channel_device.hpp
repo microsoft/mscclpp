@@ -42,7 +42,7 @@ MSCCLPP_DEVICE_INLINE void copy(T* dst, T* src, uint64_t numElems, uint32_t thre
 
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
-/// Channel for accessing peer memory directly from SM.
+/// Device-side handle of a MemoryChannel.
 struct MemoryChannelDeviceHandle {
   MemoryDevice2DeviceSemaphoreDeviceHandle semaphore_;
   void* src_;

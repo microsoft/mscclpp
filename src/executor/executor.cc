@@ -113,7 +113,7 @@ struct ExecutionContext {
   std::unordered_map<int, std::shared_ptr<Connection>> connections;
   std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
   std::unordered_map<std::pair<BufferType, int>, mscclpp::RegisteredMemory> registeredMemories;
-  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> smSemaphores;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::vector<mscclpp::SemaphoreId> proxySemaphores;
   std::vector<mscclpp::MemoryChannel> memoryChannels;
   std::vector<mscclpp::ProxyChannel> proxyChannels;
@@ -280,13 +280,13 @@ struct Executor::Impl {
   void setupChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
                      size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
     const auto channelTypes = {ChannelType::MEMORY, ChannelType::PROXY};
-    std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> smSemaphores;
+    std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
     std::vector<mscclpp::SemaphoreId> proxySemaphores;
     auto processChannelInfos = [&](std::vector<ChannelInfo>& channelInfos) {
       for (ChannelInfo& info : channelInfos) {
         for (int peer : info.connectedPeers) {
           if (info.channelType == ChannelType::MEMORY) {
-            smSemaphores.push_back(
+            memorySemaphores.push_back(
                 std::make_shared<MemoryDevice2DeviceSemaphore>(*this->comm, context.connections.at(peer)));
           } else if (info.channelType == ChannelType::PROXY) {
             proxySemaphores.push_back(
@@ -307,7 +307,7 @@ struct Executor::Impl {
       processChannelInfos(channelInfos);
     }
     this->comm->setup();
-    context.smSemaphores = std::move(smSemaphores);
+    context.memorySemaphores = std::move(memorySemaphores);
     context.proxySemaphores = std::move(proxySemaphores);
 
     auto getBufferSize = [&](BufferType type) {
@@ -333,7 +333,7 @@ struct Executor::Impl {
         RegisteredMemory localMemory = this->comm->registerMemory(src, bufferSize, transport);
         for (int peer : info.connectedPeers) {
           if (channelType == ChannelType::MEMORY) {
-            context.memoryChannels.emplace_back(context.smSemaphores[index++],
+            context.memoryChannels.emplace_back(context.memorySemaphores[index++],
                                                 context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
           } else if (channelType == ChannelType::PROXY) {
             context.proxyChannels.emplace_back(context.proxyService->proxyChannel(

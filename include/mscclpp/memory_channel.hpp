@@ -12,7 +12,7 @@
 
 namespace mscclpp {
 
-/// Channel for accessing peer memory directly from SM.
+/// Channel for accessing peer memory directly from GPU threads.
 struct MemoryChannel {
  private:
   std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore_;

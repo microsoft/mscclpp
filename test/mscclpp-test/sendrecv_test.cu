@@ -153,7 +153,7 @@ void SendRecvTestEngine::setupConnections() {
   std::array<int, 2> ranks = {sendToRank, recvFromRank};
   auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
 
-  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> smSemaphores;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
 
   auto sendConnFuture =
       comm_->connectOnSetup(sendToRank, 0, getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice));
@@ -161,12 +161,12 @@ void SendRecvTestEngine::setupConnections() {
     auto recvConnFuture =
         comm_->connectOnSetup(recvFromRank, 0, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice));
     comm_->setup();
-    smSemaphores.push_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, sendConnFuture.get()));
-    smSemaphores.push_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, recvConnFuture.get()));
+    memorySemaphores.push_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, sendConnFuture.get()));
+    memorySemaphores.push_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, recvConnFuture.get()));
   } else {
     comm_->setup();
-    smSemaphores.push_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, sendConnFuture.get()));
-    smSemaphores.push_back(smSemaphores[0]);  // reuse the send channel if worldSize is 2
+    memorySemaphores.push_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, sendConnFuture.get()));
+    memorySemaphores.push_back(memorySemaphores[0]);  // reuse the send channel if worldSize is 2
   }
   comm_->setup();
 
@@ -186,7 +186,7 @@ void SendRecvTestEngine::setupConnections() {
   std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelHandles(2);
   for (int i : {0, 1}) {
     // We assume ranks in the same node
-    memoryChannels_.emplace_back(smSemaphores[i], futureRemoteMemory[i].get(), (void*)localMemories[i].data());
+    memoryChannels_.emplace_back(memorySemaphores[i], futureRemoteMemory[i].get(), (void*)localMemories[i].data());
   }
   std::transform(memoryChannels_.begin(), memoryChannels_.end(), memoryChannelHandles.begin(),
                  [](const mscclpp::MemoryChannel& memoryChannel) { return memoryChannel.deviceHandle(); });

@@ -304,11 +304,11 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t nWarp = nThread / WARP_SIZE;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
-  auto smChans = constMemChans + chanOffset;
+  auto memChans = constMemChans + chanOffset;
 
   if (wid < nPeer && lid == 0) {
-    smChans[wid].relaxedSignal();
-    smChans[wid].wait();
+    memChans[wid].relaxedSignal();
+    memChans[wid].wait();
   }
   __syncthreads();
   const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
@@ -328,7 +328,7 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t peerIdx = wid % nPeer;
     const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * remoteRankLocalIndex + (wid / nPeer) * unitBytesPerWarp;
-    smChans[peerIdx].get<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+    memChans[peerIdx].get<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
   }
 
   for (size_t i = 1; i < nLoop; ++i) {
@@ -336,7 +336,7 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t peerIdx = gWid % nPeer;
     const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * remoteRankLocalIndex + (gWid / nPeer) * unitBytesPerWarp;
-    smChans[peerIdx].get<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+    memChans[peerIdx].get<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
   }
 
   if (bytes % unitBytes > 0) {
@@ -349,7 +349,7 @@ __global__ void __launch_bounds__(1024, 1)
                                    ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
                                    : unitBytesPerWarp;
     if (remainBytes > 0) {
-      smChans[peerIdx].get<16, true>(offset, remainBytes, lid, WARP_SIZE);
+      memChans[peerIdx].get<16, true>(offset, remainBytes, lid, WARP_SIZE);
     }
   }
 }
@@ -367,11 +367,11 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t nWarp = nThread / WARP_SIZE;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
-  auto smChans = constMemChans + chanOffset;
+  auto memChans = constMemChans + chanOffset;
 
   if (wid < nPeer && lid == 0) {
-    smChans[wid].relaxedSignal();
-    smChans[wid].wait();
+    memChans[wid].relaxedSignal();
+    memChans[wid].wait();
   }
   __syncthreads();
   const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
@@ -390,14 +390,14 @@ __global__ void __launch_bounds__(1024, 1)
     // First loop unrolling
     const size_t peerIdx = wid % nPeer;
     const size_t offset = bytesPerGPU * rank + (wid / nPeer) * unitBytesPerWarp;
-    smChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+    memChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
   }
 
   for (size_t i = 1; i < nLoop; ++i) {
     const size_t gWid = wid + i * nWarp;
     const size_t peerIdx = gWid % nPeer;
     const size_t offset = bytesPerGPU * rank + (gWid / nPeer) * unitBytesPerWarp;
-    smChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
+    memChans[peerIdx].put<16, false>(offset, unitBytesPerWarp, lid, WARP_SIZE);
   }
 
   if (bytes % unitBytes > 0) {
@@ -409,7 +409,7 @@ __global__ void __launch_bounds__(1024, 1)
                                    ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
                                    : unitBytesPerWarp;
     if (remainBytes > 0) {
-      smChans[peerIdx].put<16, true>(offset, remainBytes, lid, WARP_SIZE);
+      memChans[peerIdx].put<16, true>(offset, remainBytes, lid, WARP_SIZE);
     }
   }
 }
@@ -426,7 +426,7 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t nThread = blockDim.x * nBlock;
   const size_t nWarp = nThread / WARP_SIZE;
   const size_t nPeer = nRanksPerNode - 1;
-  auto smChans = constMemOutOfPlaceChans;
+  auto memChans = constMemOutOfPlaceChans;
 
   const uint32_t flag = (uint32_t)globalFlag;
   const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
@@ -443,7 +443,7 @@ __global__ void __launch_bounds__(1024, 1)
     // First loop unrolling
     const size_t peerIdx = wid % nPeer;
     const size_t offset = bytesPerGPU * rank + (wid / nPeer) * unitBytesPerWarp;
-    smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
+    memChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
   }
 
   if (nLoop > 0) {
@@ -451,14 +451,14 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t peerIdx = wid % nPeer;
     const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * remoteRankLocalIndex + (wid / nPeer) * unitBytesPerWarp;
-    smChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
+    memChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
   }
 
   for (size_t i = 1; i < nLoop; ++i) {
     const size_t gWid = wid + i * nWarp;
     const size_t peerIdx = gWid % nPeer;
     const size_t offset = bytesPerGPU * rank + (gWid / nPeer) * unitBytesPerWarp;
-    smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
+    memChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
   }
 
   for (size_t i = 1; i < nLoop; ++i) {
@@ -466,7 +466,7 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t peerIdx = gWid % nPeer;
     const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * remoteRankLocalIndex + (gWid / nPeer) * unitBytesPerWarp;
-    smChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
+    memChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
   }
 
   if (bytes % unitBytes > 0) {
@@ -478,7 +478,7 @@ __global__ void __launch_bounds__(1024, 1)
                                    ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
                                    : unitBytesPerWarp;
     if (remainBytes > 0) {
-      smChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
+      memChans[peerIdx].putPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
     }
   }
   if (bytes % unitBytes > 0) {
@@ -491,7 +491,7 @@ __global__ void __launch_bounds__(1024, 1)
                                    ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
                                    : unitBytesPerWarp;
     if (remainBytes > 0) {
-      smChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
+      memChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
     }
   }
 
@@ -706,7 +706,7 @@ class AllGatherTestEngine : public BaseTestEngine {
   std::shared_ptr<int[]> expectedBuff_;
   std::shared_ptr<mscclpp::LLPacket> scratchPacketBuff_;
   std::vector<mscclpp::MemoryChannel> memoryChannels_;
-  std::vector<mscclpp::MemoryChannel> smOutOfPlaceChannels_;
+  std::vector<mscclpp::MemoryChannel> memoryOutOfPlaceChannels_;
 };
 
 AllGatherTestEngine::AllGatherTestEngine(const TestArgs& args) : BaseTestEngine(args, "allgather") {}
@@ -745,17 +745,17 @@ void AllGatherTestEngine::setupConnections() {
     if (args_.kernelNum == 7) {
       const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
       const size_t scratchPacketBuffBytes = nPacket * 2 * 2 * sizeof(mscclpp::LLPacket);
-      setupMeshConnections(smOutOfPlaceChannels_, sendBuff_.get(), args_.maxBytes, scratchPacketBuff_.get(),
+      setupMeshConnections(memoryOutOfPlaceChannels_, sendBuff_.get(), args_.maxBytes, scratchPacketBuff_.get(),
                            scratchPacketBuffBytes);
-      std::vector<DeviceHandle<mscclpp::MemoryChannel>> smOutOfPlaceChannelHandles(smOutOfPlaceChannels_.size());
-      if (smOutOfPlaceChannels_.size() >
+      std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryOutOfPlaceChannelHandles(memoryOutOfPlaceChannels_.size());
+      if (memoryOutOfPlaceChannels_.size() >
           sizeof(constMemOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::MemoryChannel>)) {
         std::runtime_error("unexpected error");
       }
-      std::transform(smOutOfPlaceChannels_.begin(), smOutOfPlaceChannels_.end(), smOutOfPlaceChannelHandles.begin(),
+      std::transform(memoryOutOfPlaceChannels_.begin(), memoryOutOfPlaceChannels_.end(), memoryOutOfPlaceChannelHandles.begin(),
                      [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
-      CUDATHROW(cudaMemcpyToSymbol(constMemOutOfPlaceChans, smOutOfPlaceChannelHandles.data(),
-                                   sizeof(DeviceHandle<mscclpp::MemoryChannel>) * smOutOfPlaceChannelHandles.size()));
+      CUDATHROW(cudaMemcpyToSymbol(constMemOutOfPlaceChans, memoryOutOfPlaceChannelHandles.data(),
+                                   sizeof(DeviceHandle<mscclpp::MemoryChannel>) * memoryOutOfPlaceChannelHandles.size()));
     }
   } else {
     auto service = std::dynamic_pointer_cast<AllGatherProxyService>(chanService_);

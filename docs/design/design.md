@@ -81,14 +81,14 @@ __device__ void gpuKernel(mscclpp::MemoryChannelDeviceHandle* memoryChannel) {
 Similar to the LL protocol offered by NCCL, MSCCL++ introduces a `Packet` structure designed to facilitate the transfer of both data and flags within a single instruction, proving particularly beneficial for applications where latency is a critical concern. The following code shows the basic usage of the `Packet` structure. The flag should be same for sender and receiver side.
 ```cpp
 // Running on rank 0
-__device__ void gpuKernel(mscclpp::MemoryChannelDeviceHandle* smChans, int flag) {
-  smChans[0].putPackets(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x,
+__device__ void gpuKernel(mscclpp::MemoryChannelDeviceHandle* memChans, int flag) {
+  memChans[0].putPackets(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x,
                         /*flag=*/ flag);
 }
 
 // Running on rank 1
-__device__ void gpuKernel(mscclpp::MemoryChannelDeviceHandle* smChans, int flag) {
-  smChans[0].getPackets(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x,
+__device__ void gpuKernel(mscclpp::MemoryChannelDeviceHandle* memChans, int flag) {
+  memChans[0].getPackets(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x,
                         /*flag=*/ flag);
   // Data is ready to use
 }

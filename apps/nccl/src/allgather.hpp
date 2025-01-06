@@ -24,11 +24,11 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t nWarp = nThread / WARP_SIZE;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
-  auto smChans = memoryChannels + chanOffset;
+  auto memChans = memoryChannels + chanOffset;
 
   if (threadIdx.x < nPeer) {
-    smChans[threadIdx.x].relaxedSignal();
-    smChans[threadIdx.x].wait();
+    memChans[threadIdx.x].relaxedSignal();
+    memChans[threadIdx.x].wait();
   }
   __syncthreads();
 
@@ -49,16 +49,16 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t peerIdx = wid % nPeer;
     const size_t offset = bytesPerGPU * rank + (wid / nPeer) * unitBytesPerWarp;
     if constexpr (IsOutOfPlace) {
-      char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
-      char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
+      char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);
+      char* src = reinterpret_cast<char*>(memChans[peerIdx].src_);
       char* buff = reinterpret_cast<char*>(sendbuff);
       const size_t offsetWithinRank = (wid / nPeer) * unitBytesPerWarp;
-      smChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
+      memChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
                                        WARP_SIZE);
-      smChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
+      memChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
                                        WARP_SIZE);
     } else {
-      smChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
+      memChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
     }
   }
 
@@ -67,16 +67,16 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t peerIdx = gWid % nPeer;
     const size_t offset = bytesPerGPU * rank + (gWid / nPeer) * unitBytesPerWarp;
     if constexpr (IsOutOfPlace) {
-      char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
-      char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
+      char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);
+      char* src = reinterpret_cast<char*>(memChans[peerIdx].src_);
       char* buff = reinterpret_cast<char*>(sendbuff);
       const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
-      smChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
+      memChans[peerIdx].copy<16, false>(src + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
                                        WARP_SIZE);
-      smChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
+      memChans[peerIdx].copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
                                        WARP_SIZE);
     } else {
-      smChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
+      memChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
     }
   }
 
@@ -90,15 +90,15 @@ __global__ void __launch_bounds__(1024, 1)
                                    : unitBytesPerWarp;
     if (remainBytes > 0) {
       if constexpr (IsOutOfPlace) {
-        char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
-        char* src = reinterpret_cast<char*>(smChans[peerIdx].src_);
+        char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);
+        char* src = reinterpret_cast<char*>(memChans[peerIdx].src_);
         char* buff = reinterpret_cast<char*>(sendbuff);
-        smChans[peerIdx].copy<16, true>(src + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid,
+        memChans[peerIdx].copy<16, true>(src + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid,
                                         WARP_SIZE);
-        smChans[peerIdx].copy<16, true>(dst + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid,
+        memChans[peerIdx].copy<16, true>(dst + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid,
                                         WARP_SIZE);
       } else {
-        smChans[peerIdx].put<16, true>(offset + channelOutOffset, remainBytes, lid, WARP_SIZE);
+        memChans[peerIdx].put<16, true>(offset + channelOutOffset, remainBytes, lid, WARP_SIZE);
       }
     }
   }
@@ -106,8 +106,8 @@ __global__ void __launch_bounds__(1024, 1)
   deviceSyncer.sync(gridDim.x);
 
   if (threadIdx.x < nPeer) {
-    smChans[threadIdx.x].relaxedSignal();
-    smChans[threadIdx.x].wait();
+    memChans[threadIdx.x].relaxedSignal();
+    memChans[threadIdx.x].wait();
   }
 }
 

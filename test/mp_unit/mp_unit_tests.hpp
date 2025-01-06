@@ -161,7 +161,7 @@ class MemoryChannelOneToOneTest : public CommunicatorTestBase {
   using PacketPingPongKernelWrapper = std::function<void(int*, int, int, int*, int)>;
   void packetPingPongTest(const std::string testName, PacketPingPongKernelWrapper kernelWrapper);
 
-  std::unordered_map<int, std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> smSemaphores;
+  std::unordered_map<int, std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
 };
 
 class ExecutorTest : public MultiProcessTest {

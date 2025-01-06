@@ -116,7 +116,7 @@ class Host2HostSemaphore : public BaseSemaphore<std::default_delete, std::defaul
   std::shared_ptr<Connection> connection_;
 };
 
-/// A semaphore for sending signals from the local device to a peer device via SM.
+/// A semaphore for sending signals from the local device to a peer device via a GPU thread.
 class MemoryDevice2DeviceSemaphore : public BaseSemaphore<CudaDeleter, CudaDeleter> {
  public:
   /// Constructor.

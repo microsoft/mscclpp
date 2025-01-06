@@ -33,12 +33,12 @@ void register_semaphore(nb::module_& m) {
       .def("wait", &Host2HostSemaphore::wait, nb::call_guard<nb::gil_scoped_release>(),
            nb::arg("max_spin_count") = 10000000);
 
-  nb::class_<MemoryDevice2DeviceSemaphore> smDevice2DeviceSemaphore(m, "MemoryDevice2DeviceSemaphore");
-  smDevice2DeviceSemaphore
+  nb::class_<MemoryDevice2DeviceSemaphore> memoryDevice2DeviceSemaphore(m, "MemoryDevice2DeviceSemaphore");
+  memoryDevice2DeviceSemaphore
       .def(nb::init<Communicator&, std::shared_ptr<Connection>>(), nb::arg("communicator"), nb::arg("connection"))
       .def("device_handle", &MemoryDevice2DeviceSemaphore::deviceHandle);
 
-  nb::class_<MemoryDevice2DeviceSemaphore::DeviceHandle>(smDevice2DeviceSemaphore, "DeviceHandle")
+  nb::class_<MemoryDevice2DeviceSemaphore::DeviceHandle>(memoryDevice2DeviceSemaphore, "DeviceHandle")
       .def(nb::init<>())
       .def_rw("inboundSemaphoreId", &MemoryDevice2DeviceSemaphore::DeviceHandle::inboundSemaphoreId)
       .def_rw("outboundSemaphoreId", &MemoryDevice2DeviceSemaphore::DeviceHandle::outboundSemaphoreId)
