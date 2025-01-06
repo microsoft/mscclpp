@@ -41,8 +41,7 @@ int Connection::getMaxWriteQueueSize() { return maxWriteQueueSize; }
 // CudaIpcConnection
 
 CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, cudaStream_t stream)
-    : Connection(localEndpoint.maxWriteQueueSize()),
-      stream_(stream) {
+    : Connection(localEndpoint.maxWriteQueueSize()), stream_(stream) {
   if (localEndpoint.transport() != Transport::CudaIpc) {
     throw mscclpp::Error("Cuda IPC connection can only be made from a Cuda IPC endpoint", ErrorCode::InvalidUsage);
   }
@@ -123,7 +122,7 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 
 IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context)
     : Connection(localEndpoint.maxWriteQueueSize() != -1 ? localEndpoint.maxWriteQueueSize()
-                                                           : EndpointConfig::DefaultMaxCqSize),
+                                                         : EndpointConfig::DefaultMaxCqSize),
       transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
