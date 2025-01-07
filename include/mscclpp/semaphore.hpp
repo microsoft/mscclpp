@@ -116,25 +116,29 @@ class Host2HostSemaphore : public BaseSemaphore<std::default_delete, std::defaul
   std::shared_ptr<Connection> connection_;
 };
 
-/// A semaphore for sending signals from the local device to a peer device via SM.
-class SmDevice2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, detail::GpuDeleter> {
+/// A semaphore for sending signals from the local device to a peer device via a GPU thread.
+class MemoryDevice2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, detail::GpuDeleter> {
  public:
   /// Constructor.
   /// @param communicator The communicator.
   /// @param connection The connection associated with this semaphore.
-  SmDevice2DeviceSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
+  MemoryDevice2DeviceSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
 
   /// Constructor.
-  SmDevice2DeviceSemaphore() = delete;
+  MemoryDevice2DeviceSemaphore() = delete;
 
-  /// Device-side handle for @ref SmDevice2DeviceSemaphore.
-  using DeviceHandle = SmDevice2DeviceSemaphoreDeviceHandle;
+  /// Device-side handle for @ref MemoryDevice2DeviceSemaphore.
+  using DeviceHandle = MemoryDevice2DeviceSemaphoreDeviceHandle;
 
   /// Returns the device-side handle.
   DeviceHandle deviceHandle() const;
 
   bool isRemoteInboundSemaphoreIdSet_;
 };
+
+/// @deprecated Use @ref MemoryDevice2DeviceSemaphore instead.
+[[deprecated(
+    "Use MemoryDevice2DeviceSemaphore instead.")]] typedef MemoryDevice2DeviceSemaphore SmDevice2DeviceSemaphore;
 
 }  // namespace mscclpp
 

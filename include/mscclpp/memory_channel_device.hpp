@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_SM_CHANNEL_DEVICE_HPP_
-#define MSCCLPP_SM_CHANNEL_DEVICE_HPP_
+#ifndef MSCCLPP_MEMORY_CHANNEL_DEVICE_HPP_
+#define MSCCLPP_MEMORY_CHANNEL_DEVICE_HPP_
 
 #include "semaphore_device.hpp"
 #if defined(MSCCLPP_DEVICE_COMPILE)
@@ -42,9 +42,9 @@ MSCCLPP_DEVICE_INLINE void copy(T* dst, T* src, uint64_t numElems, uint32_t thre
 
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
-/// Channel for accessing peer memory directly from SM.
-struct SmChannelDeviceHandle {
-  SmDevice2DeviceSemaphoreDeviceHandle semaphore_;
+/// Device-side handle of a MemoryChannel.
+struct MemoryChannelDeviceHandle {
+  MemoryDevice2DeviceSemaphoreDeviceHandle semaphore_;
   void* src_;
   void* dst_;
   void* getPacketBuffer_;
@@ -276,6 +276,9 @@ struct SmChannelDeviceHandle {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
+/// @deprecated Use @ref MemoryChannelDeviceHandle instead.
+[[deprecated("Use MemoryChannelDeviceHandle instead.")]] typedef MemoryChannelDeviceHandle SmChannelDeviceHandle;
+
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_SM_CHANNEL_DEVICE_HPP_
+#endif  // MSCCLPP_MEMORY_CHANNEL_DEVICE_HPP_

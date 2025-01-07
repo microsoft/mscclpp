@@ -35,7 +35,7 @@ if __name__ == "__main__":
     nelems = 1024
     memory = GpuBuffer(nelem, dtype=cp.int32)
     proxy_service = ProxyService()
-    simple_channels = group.make_proxy_channels(proxy_service, memory, connections)
+    simple_channels = group.make_port_channels(proxy_service, memory, connections)
     proxy_service.start_proxy()
     mscclpp_group.barrier()
     launch_kernel(mscclpp_group.my_rank, mscclpp_group.nranks, simple_channels, memory)
@@ -48,7 +48,7 @@ We provide some Python utils to help you launch kernel via python. Here is a exa
 ```python
 from mscclpp.utils import KernelBuilder, pack
 
-def launch_kernel(my_rank: int, nranks: int, simple_channels: List[ProxyChannel], memory: cp.ndarray):
+def launch_kernel(my_rank: int, nranks: int, simple_channels: List[PortChannel], memory: cp.ndarray):
     file_dir = os.path.dirname(os.path.abspath(__file__))
     kernel = KernelBuilder(file="test.cu", kernel_name="test", file_dir=file_dir).get_compiled_kernel()
     params = b""
@@ -74,11 +74,11 @@ def launch_kernel(my_rank: int, nranks: int, simple_channels: List[ProxyChannel]
 The test kernel is defined in `test.cu` as follows:
 ```cuda
 #include <mscclpp/packet_device.hpp>
-#include <mscclpp/proxy_channel_device.hpp>
+#include <mscclpp/port_channel_device.hpp>
 
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    proxy_channel(mscclpp::ProxyChannelDeviceHandle* channels, int my_rank, int nranks,
+    port_channel(mscclpp::PortChannelDeviceHandle* channels, int my_rank, int nranks,
                          int num_elements) {
     int tid = threadIdx.x;
     int nthreads = blockDim.x;

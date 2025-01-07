@@ -9,7 +9,7 @@
 
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
-__constant__ DeviceHandle<mscclpp::ProxyChannel> constProxyChans[16];
+__constant__ DeviceHandle<mscclpp::PortChannel> constPortChans[16];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 void* localRecvBuff;
 void* localSendBuff;
@@ -17,14 +17,14 @@ void* localSendBuff;
 __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
   int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   for (int i = 1; i < nRanksPerNode; i++) {
-    DeviceHandle<mscclpp::ProxyChannel> proxyChan = constProxyChans[blockIdx.x];
+    DeviceHandle<mscclpp::PortChannel> portChan = constPortChans[blockIdx.x];
     if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank + i) % nRanksPerNode) {
-      proxyChan.putWithSignalAndFlush(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
-                                      nElements * sizeof(int));
+      portChan.putWithSignalAndFlush(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
+                                     nElements * sizeof(int));
     }
     // wait for the data from GPU (rank-i) % nranksPerNode to arrive
     if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank - i + nRanksPerNode) % nRanksPerNode) {
-      proxyChan.wait();
+      portChan.wait();
     }
     deviceSyncer.sync(nRanksPerNode - 1);
   }
@@ -32,16 +32,16 @@ __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
 
 __global__ void __launch_bounds__(1024) alltoall0(int rank, size_t nElements) {
   int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
-  DeviceHandle<mscclpp::ProxyChannel> proxyChan = constProxyChans[blockIdx.x];
+  DeviceHandle<mscclpp::PortChannel> portChan = constPortChans[blockIdx.x];
   if (threadIdx.x == 0) {
-    proxyChan.putWithSignal(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
-                            nElements * sizeof(int));
+    portChan.putWithSignal(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
+                           nElements * sizeof(int));
   }
 
   deviceSyncer.sync(gridDim.x);
   if (threadIdx.x == 0) {
-    proxyChan.flush();
-    proxyChan.wait();
+    portChan.flush();
+    portChan.wait();
   }
 }
 
@@ -149,14 +149,14 @@ void AllToAllTestEngine::allocateBuffer() {
 }
 
 void AllToAllTestEngine::setupConnections() {
-  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannels;
-  setupMeshConnections(proxyChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannels;
+  setupMeshConnections(portChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
 
-  if (proxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::ProxyChannel>)) {
+  if (portChannels.size() > sizeof(constPortChans) / sizeof(DeviceHandle<mscclpp::PortChannel>)) {
     std::runtime_error("unexpected error");
   }
-  CUDATHROW(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
-                               sizeof(DeviceHandle<mscclpp::ProxyChannel>) * proxyChannels.size()));
+  CUDATHROW(cudaMemcpyToSymbol(constPortChans, portChannels.data(),
+                               sizeof(DeviceHandle<mscclpp::PortChannel>) * portChannels.size()));
 }
 
 std::vector<void*> AllToAllTestEngine::getSendBuff() { return {sendBuff_.get()}; }

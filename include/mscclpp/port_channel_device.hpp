@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_PROXY_CHANNEL_DEVICE_HPP_
-#define MSCCLPP_PROXY_CHANNEL_DEVICE_HPP_
+#ifndef MSCCLPP_PORT_CHANNEL_DEVICE_HPP_
+#define MSCCLPP_PORT_CHANNEL_DEVICE_HPP_
 
 #include "fifo_device.hpp"
 #include "semaphore_device.hpp"
@@ -83,7 +83,7 @@ union ChannelTrigger {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-struct BaseProxyChannelDeviceHandle {
+struct BasePortChannelDeviceHandle {
   SemaphoreId semaphoreId_;
 
   Host2DeviceSemaphoreDeviceHandle semaphore_;
@@ -92,11 +92,11 @@ struct BaseProxyChannelDeviceHandle {
   // can produce for and the sole proxy thread consumes it.
   FifoDeviceHandle fifo_;
 
-  MSCCLPP_HOST_DEVICE_INLINE BaseProxyChannelDeviceHandle() {}
+  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle() {}
 
-  MSCCLPP_HOST_DEVICE_INLINE BaseProxyChannelDeviceHandle(SemaphoreId semaphoreId,
-                                                          Host2DeviceSemaphoreDeviceHandle semaphore,
-                                                          FifoDeviceHandle fifo)
+  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(SemaphoreId semaphoreId,
+                                                         Host2DeviceSemaphoreDeviceHandle semaphore,
+                                                         FifoDeviceHandle fifo)
       : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
@@ -171,27 +171,27 @@ struct BaseProxyChannelDeviceHandle {
     fifo_.sync(curFifoHead);
   }
 
-  /// Check if the proxy channel has been signaled.
-  /// @return true if the proxy channel has been signaled.
+  /// Check if the port channel has been signaled.
+  /// @return true if the port channel has been signaled.
   MSCCLPP_DEVICE_INLINE bool poll() { return semaphore_.poll(); }
 
-  /// Wait for the proxy channel to be signaled.
+  /// Wait for the port channel to be signaled.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) { semaphore_.wait(maxSpinCount); }
 
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-struct ProxyChannelDeviceHandle : public BaseProxyChannelDeviceHandle {
+struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   MemoryId dst_;
   MemoryId src_;
 
-  MSCCLPP_HOST_DEVICE_INLINE ProxyChannelDeviceHandle(){};
+  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(){};
 
-  MSCCLPP_HOST_DEVICE_INLINE ProxyChannelDeviceHandle(SemaphoreId semaphoreId,
-                                                      Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
-                                                      MemoryId dst, MemoryId src)
-      : BaseProxyChannelDeviceHandle(semaphoreId, semaphore, fifo), dst_(dst), src_(src) {}
+  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(SemaphoreId semaphoreId,
+                                                     Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
+                                                     MemoryId dst, MemoryId src)
+      : BasePortChannelDeviceHandle(semaphoreId, semaphore, fifo), dst_(dst), src_(src) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a @ref TriggerData to the FIFO.
@@ -199,7 +199,7 @@ struct ProxyChannelDeviceHandle : public BaseProxyChannelDeviceHandle {
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BaseProxyChannelDeviceHandle::put(dst_, dstOffset, src_, srcOffset, size);
+    BasePortChannelDeviceHandle::put(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a @ref TriggerData to the FIFO.
@@ -212,7 +212,7 @@ struct ProxyChannelDeviceHandle : public BaseProxyChannelDeviceHandle {
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BaseProxyChannelDeviceHandle::putWithSignal(dst_, dstOffset, src_, srcOffset, size);
+    BasePortChannelDeviceHandle::putWithSignal(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a @ref TriggerData and a @ref TriggerFlag at the same time to the FIFO.
@@ -225,7 +225,7 @@ struct ProxyChannelDeviceHandle : public BaseProxyChannelDeviceHandle {
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BaseProxyChannelDeviceHandle::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size);
+    BasePortChannelDeviceHandle::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a @ref TriggerData, a @ref TriggerFlag, and a @ref TriggerSync at the same time to the FIFO.
@@ -239,4 +239,4 @@ struct ProxyChannelDeviceHandle : public BaseProxyChannelDeviceHandle {
 
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_PROXY_CHANNEL_DEVICE_HPP_
+#endif  // MSCCLPP_PORT_CHANNEL_DEVICE_HPP_
