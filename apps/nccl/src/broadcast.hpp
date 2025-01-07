@@ -62,9 +62,9 @@ __global__ void __launch_bounds__(1024, 1)
       for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
         smChans[peerIdx].copy<16, false>(dst + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
-        __syncthreads();
-        if (threadIdx.x == peerIdx) smChans[peerIdx].signal();
       }
+      __syncthreads();
+      if (threadIdx.x < nPeer) smChans[threadIdx.x].signal();
       if constexpr (IsOutOfPlace) {
         char* recv_ = reinterpret_cast<char*>(recvbuff);
         smChans[0].copy<16, false>(recv_ + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
@@ -96,9 +96,9 @@ __global__ void __launch_bounds__(1024, 1)
         char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
         smChans[peerIdx].copy<16, false>(dst + offset + scratchSub, send_ + offset, unitBytesPerBlock, threadIdx.x,
                                          blockDim.x);
-        __syncthreads();
-        if (threadIdx.x == peerIdx) smChans[peerIdx].signal();
       }
+      __syncthreads();
+      if (threadIdx.x < nPeer) smChans[threadIdx.x].signal();
       if constexpr (IsOutOfPlace) {
         char* recv_ = reinterpret_cast<char*>(recvbuff);
         smChans[0].copy<16, false>(recv_ + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
@@ -124,9 +124,9 @@ __global__ void __launch_bounds__(1024, 1)
           char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
           smChans[peerIdx].copy<16, true>(dst + offset + scratchSub, send_ + offset, remainBytes, threadIdx.x,
                                           blockDim.x);
-          __syncthreads();
-          if (threadIdx.x == peerIdx) smChans[peerIdx].signal();
         }
+        __syncthreads();
+        if (threadIdx.x < nPeer) smChans[threadIdx.x].signal();
         if constexpr (IsOutOfPlace) {
           char* recv_ = reinterpret_cast<char*>(recvbuff);
           smChans[0].copy<16, true>(recv_ + offset, send_ + offset, remainBytes, threadIdx.x, blockDim.x);
