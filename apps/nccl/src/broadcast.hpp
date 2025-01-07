@@ -72,10 +72,10 @@ __global__ void __launch_bounds__(1024, 1)
         smChans[0].copy<16, false>(recv_ + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
       }
 
-      if (threadIdx.x < nPeer) {
-        smChans[threadIdx.x].signal();
-        smChans[threadIdx.x].wait();
-      }
+      // if (threadIdx.x < nPeer) {
+      //   smChans[threadIdx.x].signal();
+      //   smChans[threadIdx.x].wait();
+      // }
 
     } else {  // rank != root.
               // Assumes root is 0.
@@ -95,8 +95,7 @@ __global__ void __launch_bounds__(1024, 1)
         //   smChans[peerIdx].wait();    // Wait
         // }
       }
-
-      if (threadIdx.x < nPeer) {
+      if (threadIdx.x != 0 && threadIdx.x < nPeer) {
         smChans[threadIdx.x].signal();
         smChans[threadIdx.x].wait();
       }
