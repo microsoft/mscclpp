@@ -110,7 +110,7 @@ def ir_to_json(program: Program):
                     op.depends = list(filter(lambda dep: dep.inst != Instruction.signal, op.depends))
 
     # Filter out redundant dependencies
-    # e.g. if op1 and op2 depend on op, and op1 happends before op2
+    # e.g. if op1 and op2 depend on op, and op1 happens before op2
     # then op2 does not need to explicitly depend on op
     for gpu in program.gpus:
         for tb in gpu.threadblocks:
@@ -461,10 +461,10 @@ def _dump_to_json(program: Program):
                 "srcbuff": srcBuffer.value if hasattr(srcBuffer, "value") else srcBuffer,
                 "dstbuff": dstBuffer.value if hasattr(dstBuffer, "value") else dstBuffer,
                 "type": type.value,
-                "connectedTo": [eles[1] for eles in channels],
+                "connectedTo": [ch[1] for ch in channels],
             }
             if type == ChannelType.nvls:
-                obj["connectedTo"] = [sorted(list(eles)) for eles in obj["connectedTo"]]
+                obj["connectedTo"] = [sorted(list(peers)) for peers in obj["connectedTo"]]
             gpu_instance["channels"].append(obj)
         gpu_instance["channels"] = list(filter(lambda x: x["type"] != "none", gpu_instance["channels"]))
         gpu_instance["channels"] = sorted(gpu_instance["channels"], key=lambda x: (x["srcbuff"], x["dstbuff"]))

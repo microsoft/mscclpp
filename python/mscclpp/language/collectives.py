@@ -12,7 +12,7 @@ class Collective:
         self.chunk_factor = chunk_factor
         self.inplace = inplace
         self.name = "custom"
-        # Devide the buffer into num_chunk_groups group
+        # Divide the buffer into num_chunk_groups group
         if num_ranks_per_node == -1:
             self.num_ranks_per_node = num_ranks
         else:
@@ -20,7 +20,7 @@ class Collective:
 
         # kwargs
         # Number of chunk groups: which means we will group n chunks into m groups.
-        # We will gurantee that the group size is the same.
+        # We will guarantee that the group size is the same.
         # But in the same group, the chunk size may be different due to group size
         # can not be divided by the number of chunks.
         self.num_chunk_groups = kwargs.get("num_chunk_groups", 1)

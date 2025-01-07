@@ -75,7 +75,7 @@ class MSCCLPPProgram:
             raise RuntimeError("This program is not currently in context")
         _current_program = None
 
-    def _convert_to_exectuion_plan(self):
+    def _convert_to_execution_plan(self):
         ops = self.instr_dag.convert_set_list()
         ops = sorted(ops, key=lambda x: x.step)
         for op in ops:
@@ -133,7 +133,7 @@ class MSCCLPPProgram:
 
     # Lower program to MSCCLPP
     def lower(self):
-        self._convert_to_exectuion_plan()
+        self._convert_to_execution_plan()
         self.instr_dag.complete_channels()
         dag_optimizer = DagOptimizer(self.instr_dag)
         dag_optimizer.remove_redundant_signal_wait()
