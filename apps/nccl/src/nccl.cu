@@ -12,7 +12,9 @@
 #include <sstream>
 #include <unordered_map>
 #include <vector>
-
+#if defined(ENABLE_NPKIT)
+#include <mscclpp/npkit/npkit.hpp>
+#endif
 #include "allgather.hpp"
 #include "allreduce.hpp"
 #include "broadcast.hpp"
@@ -427,6 +429,12 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   }
 
   *comm = commPtr;
+#if defined(ENABLE_NPKIT)
+  const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
+  if (npkitDumpDir != nullptr) {
+    NpKit::Init(rank);
+  }
+#endif
   return ncclSuccess;
 }
 
@@ -446,6 +454,13 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
     WARN("comm is nullptr");
     return ncclInvalidArgument;
   }
+#if defined(ENABLE_NPKIT)
+  const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
+  if (npkitDumpDir != nullptr) {
+    NpKit::Dump(npkitDumpDir);
+    NpKit::Shutdown();
+  }
+#endif
   delete comm;
   return ncclSuccess;
 }
