@@ -90,12 +90,8 @@ __global__ void __launch_bounds__(1024, 1)
       char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
       if (peerIdx != peerRootIdx) {
         smChans[peerIdx].copy<16, false>(dst + offset, scratch_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
-        // if (threadIdx.x == peerIdx) {
-        //   smChans[peerIdx].signal();  // Signal.
-        //   smChans[peerIdx].wait();    // Wait
-        // }
       }
-      if (threadIdx.x != 0 && threadIdx.x < nPeer) {
+      if (threadIdx.x != peerRootIdx && threadIdx.x < nPeer) {
         smChans[threadIdx.x].signal();
         smChans[threadIdx.x].wait();
       }
