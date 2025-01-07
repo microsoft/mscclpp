@@ -1,0 +1,60 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ * ]
+
+jobs:
+  test:
+    runs-on: 'ubuntu-latest'
+    container:
+      image: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-${{ matrix.version }}
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install mscclpp
+      run: |
+        CMAKE_ARGS="-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON" pip3 install .
+
+  # compare_outputs:
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     matrix:
+  #       python-version: ['3.8', '3.9', '3.10']
+  #   name: Compare outputs with Python ${{ matrix.python-version }}
+
+  #   steps:
+  #   - name: Set up Python ${{ matrix.python-version }}
+  #     uses: actions/setup-python@v2
+  #     with:
+  #       python-version: ${{ matrix.python-version }}
+  #   - name: Checkout current branch
+  #     uses: actions/checkout@v4
+  #   - name: Install msccl-tools and dependencies
+  #     run: |
+  #       pip install --upgrade pip
+  #       pip install -r requirements.txt
+  #   - name: Copy test script/config to temp directory
+  #     run: |
+  #       cp tests/generate_test_results.py $RUNNER_TEMP/
+  #       cp tests/configs/test-config.json $RUNNER_TEMP/
+  #   - name: generate outputs
+  #     run: |
+  #       python $RUNNER_TEMP/generate_test_results.py examples/mscclang/ $RUNNER_TEMP/test-config.json $RUNNER_TEMP/tests/pr-outputs/
+  #   - name: Checkout main branch
+  #     uses: actions/checkout@v4
+  #     if: github.event_name == 'pull_request' || github.event_name == 'push'
+  #     with:
+  #       ref: main
+  #   - name: Install msccl and dependencies
+  #     run: |
+  #       pip install --upgrade pip
+  #       pip install -r requirements.txt
+  #   - name: generate outputs
+  #     run: |
+  #       python $RUNNER_TEMP/generate_test_results.py examples/mscclang/ $RUNNER_TEMP/test-config.json $RUNNER_TEMP/tests/main-outputs/
+  #   - name: Compare outputs
+  #     run: |
+  #       diff -rw $RUNNER_TEMP/tests/main-outputs/ $RUNNER_TEMP/tests/pr-outputs/
