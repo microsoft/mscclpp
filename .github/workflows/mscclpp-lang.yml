@@ -29,19 +29,19 @@ jobs:
         cp python/test/configs/mscclpp_lang_test_config.json $RUNNER_TEMP/
     - name: generate outputs
       run: |
-        python3 $RUNNER_TEMP/generate_test_results.py examples/mscclang/ $RUNNER_TEMP/test-config.json $RUNNER_TEMP/tests/pr-outputs/
-  #   - name: Checkout main branch
-  #     uses: actions/checkout@v4
-  #     if: github.event_name == 'pull_request' || github.event_name == 'push'
-  #     with:
-  #       ref: main
-  #   - name: Install msccl and dependencies
-  #     run: |
-  #       pip install --upgrade pip
-  #       pip install -r requirements.txt
-  #   - name: generate outputs
-  #     run: |
-  #       python $RUNNER_TEMP/generate_test_results.py examples/mscclang/ $RUNNER_TEMP/test-config.json $RUNNER_TEMP/tests/main-outputs/
-  #   - name: Compare outputs
-  #     run: |
-  #       diff -rw $RUNNER_TEMP/tests/main-outputs/ $RUNNER_TEMP/tests/pr-outputs/
+        python3 $RUNNER_TEMP/generate_mscclpp_lang_test_result.py examples/mscclang/ $RUNNER_TEMP/test-config.json $RUNNER_TEMP/tests/pr-outputs/
+    - name: Checkout main branch
+      uses: actions/checkout@v4
+      if: github.event_name == 'pull_request' || github.event_name == 'push'
+      with:
+        ref: main
+    - name: Install msccl and dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    - name: generate outputs
+      run: |
+        python $RUNNER_TEMP/generate_test_results.py examples/mscclang/ $RUNNER_TEMP/test-config.json $RUNNER_TEMP/tests/main-outputs/
+    - name: Compare outputs
+      run: |
+        diff -rw $RUNNER_TEMP/tests/main-outputs/ $RUNNER_TEMP/tests/pr-outputs/
