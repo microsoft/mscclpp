@@ -4,7 +4,7 @@
 #ifndef MSCCLPP_GPU_HPP_
 #define MSCCLPP_GPU_HPP_
 
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
 
 #include <hip/hip_runtime.h>
 
