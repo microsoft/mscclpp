@@ -7,17 +7,17 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "mscclpp"
-version = "0.5.2"
+version = "0.6.0"
 
 [tool.scikit-build]
-cmake.minimum-version = "3.25.0"
+cmake.version = ">=3.25.0"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["python/mscclpp", "python/mscclpp_benchmark"]
 wheel.install-dir = "mscclpp"
 
 [tool.scikit-build.cmake.define]
-BUILD_PYTHON_BINDINGS = "ON"
-BUILD_TESTS = "OFF"
+MSCCLPP_BUILD_PYTHON_BINDINGS = "ON"
+MSCCLPP_BUILD_TESTS = "OFF"
 
 [tool.black]
 line-length = 120

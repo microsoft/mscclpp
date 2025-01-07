@@ -13,13 +13,38 @@
     * AMD MI250X GPUs + ROCm >= 5.7
     * AMD MI300X GPUs + ROCm >= 6.0
 * OS: tested over Ubuntu 18.04 and 20.04
-* Libraries: [libnuma](https://github.com/numactl/numactl), MPI (optional)
+* Libraries
+    * [libnuma](https://github.com/numactl/numactl)
+        ```bash
+        sudo apt-get install libnuma-dev
+        ```
+    * (Optional, for [building the Python module](#install-from-source-python-module)) Python >= 3.8 and Python Development Package
+        ```bash
+        sudo apt-get satisfy "python3 (>=3.8), python3-dev (>=3.8)"
+        ```
+        If you don't want to build Python module, you need to set `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF` in your `cmake` command (see details in [Install from Source (Libraries and Headers)](#install-from-source-libraries-and-headers)).
+    * (Optional, for benchmarks) MPI
 * Others
     * For NVIDIA platforms, `nvidia_peermem` driver should be loaded on all nodes. Check it via:
         ```
         lsmod | grep nvidia_peermem
         ```
+    * For GPU with nvls support, the IMEX channels should be set up (refer [cuMemCreate](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__VA.html#group__CUDA__VA_1g899d69a862bba36449789c64b430dc7c)). You can set up the channels manually via:
+        ```
+        sudo nvidia-modprobe -s -i <start:number of minors>
+        ```
 
+## Build with Docker Images
+
+We provide docker images which package all prerequisites for MSCCL++. You can setup your dev environment with the following command.
+
+```bash
+$ docker run -it --privileged --net=host --ipc=host --gpus all ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2 mscclpp-dev bash
+```
+
+See all available images [here](https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp).
+
+(build-from-source)=
 ## Build from Source
 
 CMake 3.25 or later is required.
@@ -45,15 +70,17 @@ $ CXX=/path/to/hipcc cmake -DCMAKE_BUILD_TYPE=Release ..
 $ make -j
 ```
 
+(install-from-source-libraries-and-headers)=
 ## Install from Source (Libraries and Headers)
 
 ```bash
 # Install the generated headers and binaries to /usr/local/mscclpp
-$ cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local/mscclpp -DBUILD_PYTHON_BINDINGS=OFF ..
+$ cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local/mscclpp -DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF ..
 $ make -j mscclpp mscclpp_static
 $ sudo make install/fast
 ```
 
+(install-from-source-python-module)=
 ## Install from Source (Python Module)
 
 Python 3.8 or later is required.
@@ -101,7 +128,7 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.
 
 ### Python Benchmark
 
-[Install the MSCCL++ Python package](https://github.com/microsoft/mscclpp/blob/chhwang/docs/docs/quickstart.md#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
+[Install the MSCCL++ Python package](#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
 
 ```bash
 # Choose `requirements_*.txt` according to your CUDA/ROCm version.
@@ -163,4 +190,4 @@ mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/app
 
 If MSCCL++ is built on AMD platforms, `libmscclpp_nccl.so` would replace the [RCCL](https://github.com/ROCm/rccl) library (i.e., `librccl.so`).
 
-See limitations of the current NCCL over MSCCL++ from [here](../apps/nccl/README.md#limitations).
+See limitations of the current NCCL over MSCCL++ from [here](../design/nccl-over-mscclpp.md#limitations).

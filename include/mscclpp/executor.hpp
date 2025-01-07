@@ -25,8 +25,14 @@ enum class PacketType {
 
 class ExecutionPlan {
  public:
-  ExecutionPlan(const std::string& name, const std::string& planPath);
+  ExecutionPlan(const std::string& planPath);
   ~ExecutionPlan() = default;
+
+  std::string name() const;
+  std::string collective() const;
+  size_t minMessageSize() const;
+  size_t maxMessageSize() const;
+  bool isInPlace() const;
 
  private:
   struct Impl;
@@ -43,7 +49,7 @@ class Executor {
   ~Executor();
 
   void execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, DataType dataType,
-               int nthreads, const ExecutionPlan& plan, cudaStream_t stream, PacketType packetType = PacketType::LL16);
+               const ExecutionPlan& plan, cudaStream_t stream, PacketType packetType = PacketType::LL16);
 
  private:
   struct Impl;

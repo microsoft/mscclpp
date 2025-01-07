@@ -1,5 +1,6 @@
 trigger:
 - main
+- release/*
 
 # Do not run multi-nodes-test for PR, we can trigger it manually
 pr: none
@@ -26,7 +27,7 @@ jobs:
       targetType: 'inline'
       script: |
         mkdir build && cd build
-        cmake -DCMAKE_BUILD_TYPE=Release -DBYPASS_GPU_CHECK=ON -DUSE_CUDA=ON ..
+        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
         make -j
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 

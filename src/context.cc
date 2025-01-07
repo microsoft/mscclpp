@@ -43,7 +43,7 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpo
     if (remoteEndpoint.transport() != Transport::CudaIpc) {
       throw mscclpp::Error("Local transport is CudaIpc but remote is not", ErrorCode::InvalidUsage);
     }
-#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
+#if defined(__HIP_PLATFORM_AMD__)
     pimpl_->ipcStreams_.emplace_back(std::make_shared<CudaStreamWithFlags>(cudaStreamNonBlocking));
 #else
     if (pimpl_->ipcStreams_.empty()) {

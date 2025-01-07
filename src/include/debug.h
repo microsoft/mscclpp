@@ -1,8 +1,6 @@
-/*************************************************************************
- * Copyright (c) 2015-2022, NVIDIA CORPORATION. All rights reserved.
- *
- * See LICENSE.txt for license information
- ************************************************************************/
+// Copyright (c) 2015-2022, NVIDIA CORPORATION. All rights reserved.
+// Modifications Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_DEBUG_H_
 #define MSCCLPP_DEBUG_H_
@@ -109,7 +107,7 @@ extern char mscclppLastError[];
 #define INFO(FLAGS, ...) mscclppDebugLog(MSCCLPP_LOG_INFO, (FLAGS), __func__, __LINE__, __VA_ARGS__)
 #define TRACE_CALL(...) mscclppDebugLog(MSCCLPP_LOG_TRACE, MSCCLPP_CALL, __func__, __LINE__, __VA_ARGS__)
 
-#ifdef ENABLE_TRACE
+#ifdef MSCCLPP_ENABLE_TRACE
 #define TRACE(FLAGS, ...) mscclppDebugLog(MSCCLPP_LOG_TRACE, (FLAGS), __func__, __LINE__, __VA_ARGS__)
 extern std::chrono::steady_clock::time_point mscclppEpoch;
 #else

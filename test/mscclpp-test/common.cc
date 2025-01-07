@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <mscclpp/core.hpp>
 #include <mscclpp/utils.hpp>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -396,10 +397,11 @@ void BaseTestEngine::setupMeshConnectionsInternal(
 
 // Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
 // TODO(saemal): retrun the actual vector instead of void
-void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>>& proxyChannels,
+void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::ProxyChannel>>& proxyChannels,
                                           void* inputBuff, size_t inputBuffBytes, void* outputBuff,
                                           size_t outputBuffBytes, SetupChannelFunc setupChannel) {
-  const mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc | IBs[args_.gpuNum];
+  mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc;
+  if (mscclpp::getIBDeviceCount() > 0) allTransports |= IBs[args_.gpuNum];
   mscclpp::RegisteredMemory inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, allTransports);
   mscclpp::RegisteredMemory outputBufRegMem;
   if (outputBuff) {
@@ -417,9 +419,9 @@ void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::Simp
   } else {
     auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
     for (size_t i = 0; i < connections.size(); ++i) {
-      proxyChannels.push_back(mscclpp::deviceHandle(mscclpp::SimpleProxyChannel(
-          service->proxyChannel(service->buildAndAddSemaphore(*comm_, connections[i])),
-          service->addMemory(remoteRegMemories[i].get()), service->addMemory(inputBufRegMem))));
+      proxyChannels.push_back(mscclpp::deviceHandle(
+          service->proxyChannel(service->buildAndAddSemaphore(*comm_, connections[i]),
+                                service->addMemory(remoteRegMemories[i].get()), service->addMemory(inputBufRegMem))));
     }
   }
 
@@ -429,7 +431,8 @@ void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::Simp
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels, void* inputBuff,
                                           size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes,
                                           ChannelSemantic semantic, size_t nChannelPerConnection) {
-  const mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc | IBs[args_.gpuNum];
+  mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc;
+  if (mscclpp::getIBDeviceCount() > 0) allTransports |= IBs[args_.gpuNum];
   mscclpp::RegisteredMemory inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, allTransports);
   mscclpp::RegisteredMemory getPacketBufRegMem;
   mscclpp::RegisteredMemory outputBufRegMem;
@@ -465,11 +468,12 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
 }
 
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels,
-                                          std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>>& proxyChannels,
+                                          std::vector<DeviceHandle<mscclpp::ProxyChannel>>& proxyChannels,
                                           void* inputBuff, size_t inputBuffBytes, void* putPacketBuff,
                                           size_t putPacketBuffBytes, void* getPacketBuff, size_t getPacketBuffBytes,
                                           void* outputBuff, size_t outputBuffBytes) {
-  const mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc | IBs[args_.gpuNum];
+  mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc;
+  if (mscclpp::getIBDeviceCount() > 0) allTransports |= IBs[args_.gpuNum];
   mscclpp::RegisteredMemory inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, allTransports);
   mscclpp::RegisteredMemory putPacketBufRegMem;
   mscclpp::RegisteredMemory getPacketBufRegMem;
@@ -518,9 +522,9 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::SmChannel>& smCha
       if (putPacketBuff == nullptr || getPacketBuff == nullptr) {
         throw std::runtime_error("IB transport requires putPacketBuff and getPacketBuff");
       }
-      proxyChannels.emplace_back(mscclpp::deviceHandle(mscclpp::SimpleProxyChannel(
-          service->proxyChannel(connIdToSemId[cid]), service->addMemory(remoteRegMemories[cid].get()),
-          service->addMemory(putPacketBufRegMem))));
+      proxyChannels.emplace_back(mscclpp::deviceHandle(
+          service->proxyChannel(connIdToSemId[cid], service->addMemory(remoteRegMemories[cid].get()),
+                                service->addMemory(putPacketBufRegMem))));
     }
   }
 }

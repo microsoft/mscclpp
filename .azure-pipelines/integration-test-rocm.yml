@@ -1,0 +1,98 @@
+trigger:
+- main
+- release/*
+
+pr:
+  branches:
+    include:
+    - main
+    - release/*
+  drafts: false
+
+jobs:
+- job: IntegrationTestRocm
+  displayName: Integration test ROCm
+  strategy:
+    matrix:
+      rocm6.2:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2
+
+  pool:
+    name: mscclpp-rocm
+  container:
+    image: $[ variables['containerImage'] ]
+    options: --privileged --ipc=host --security-opt seccomp=unconfined --group-add video --ulimit memlock=-1:-1
+
+  steps:
+  - task: Bash@3
+    name: Build
+    displayName: Build
+    inputs:
+      targetType: 'inline'
+      script: |
+        mkdir build && cd build
+        CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON ..
+        make -j
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: InstallRcclTest
+    displayName: Install rccl-test
+    inputs:
+      targetType: 'inline'
+      script: |
+        git clone https://github.com/ROCm/rccl-tests.git
+        cd rccl-tests
+        make MPI=1 MPI_HOME=/usr/local/mpi HIP_HOME=/opt/rocm -j
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: InstallDep
+    displayName: Install dependencies
+    inputs:
+     targetType: 'inline'
+     script: |
+      set -e
+      git clone https://github.com/Azure/msccl-tools.git
+      cd msccl-tools
+      pip3 install .
+
+  - task: Bash@3
+    name: GenerateExectionFiles
+    displayName: Generate execution files
+    inputs:
+     targetType: 'inline'
+     script: |
+      set -e
+      git clone https://$(GIT_USER):$(GIT_PAT)@msazure.visualstudio.com/DefaultCollection/One/_git/msccl-users
+      cd msccl-users
+      mkdir execution-files
+      python3 algos/allreduce_mi300_packet.py 8 8 > execution-files/allreduce_mi300_packet.json
+      python3 algos/allreduce_mi300_sm_mscclpp.py 8 8 > execution-files/allreduce_mi300_sm_mscclpp.json
+
+  - task: Bash@3
+    name: AllReduceTest
+    displayName: Run mscclpp allReduce test
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        export PATH=/usr/local/mpi/bin:$PATH
+        sudo /usr/local/mpi/bin/mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN -x LD_PRELOAD="$(pwd)/build/apps/nccl/libmscclpp_nccl.so" \
+          -x ALLREDUCE_SMALL_MSG_BOUNDARY=32K -x ALLREDUCE_LARGE_MSG_BOUNDARY=1M ./rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 100
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: AllReduceWithExecutionFileTest
+    displayName: Run mscclpp allReduce with execution file
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        export PATH=/usr/local/mpi/bin:$PATH
+        sudo /usr/local/mpi/bin/mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$(pwd)/build/apps/nccl/libmscclpp_nccl.so -x NCCL_DEBUG=WARN \
+          -x ALLREDUCEPKT_IP_JSON_FILE=./msccl-users/execution-files/allreduce_mi300_packet.json \
+          -x ALLREDUCE_IP_JSON_FILE=./msccl-users/execution-files/allreduce_mi300_sm_mscclpp.json \
+          -x ALLREDUCE_SMALL_MSG_BOUNDARY=32K -x ALLREDUCE_LARGE_MSG_BOUNDARY=1M ./rccl-tests/build/all_reduce_perf \
+          -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 100
+      workingDirectory: '$(System.DefaultWorkingDirectory)'

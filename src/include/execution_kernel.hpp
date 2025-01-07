@@ -8,6 +8,7 @@
 #if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.hpp>
 #endif
+#include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/proxy_channel.hpp>
 #include <mscclpp/sm_channel.hpp>
@@ -15,7 +16,8 @@
 #include "execution_common.hpp"
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-#include "gpu_data_types.hpp"
+#include <mscclpp/gpu_data_types.hpp>
+#include <mscclpp/nvls_device.hpp>
 
 namespace {
 template <typename To, typename From>
@@ -37,6 +39,16 @@ MSCCLPP_DEVICE_INLINE T add_elements(T a, T b) {
 
 template <>
 MSCCLPP_DEVICE_INLINE __half2 add_elements(__half2 a, __half2 b) {
+  return __hadd2(a, b);
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE __bfloat16 add_elements(__bfloat16 a, __bfloat16 b) {
+  return __hadd(a, b);
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE __bfloat162 add_elements(__bfloat162 a, __bfloat162 b) {
   return __hadd2(a, b);
 }
 
@@ -128,10 +140,41 @@ MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
   return add_vectors_helper<__bfloat162>(a, b);
 }
 
+template <typename T>
+struct VectorType {
+  using type = T;
+  using nvls_type = T;
+  using nvls_type2 = T;
+};
+
+template <>
+struct VectorType<__half> {
+  using type = __half2;
+  using nvls_type = uint4;
+  using nvls_type2 = uint1;
+};
+
+template <>
+struct VectorType<__bfloat16> {
+  using type = __bfloat162;
+  using nvls_type = uint4;
+  using nvls_type2 = uint1;
+};
+
+template <>
+struct VectorType<float> {
+  using type = float;
+  using nvls_type = uint4;
+  using nvls_type2 = uint1;
+};
+
 }  // namespace
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace mscclpp {
+
+#define MAX_DEVICE_SYNCERS 16
+__device__ DeviceSyncer deviceSyncers[MAX_DEVICE_SYNCERS];
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
 
@@ -149,9 +192,8 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
   return nullptr;
 }
 
-MSCCLPP_DEVICE_INLINE void handleSignal(DeviceHandle<SmChannel>* smChannels,
-                                        DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* channelIndex,
-                                        int nChannels, ChannelType chType) {
+MSCCLPP_DEVICE_INLINE void handleSignal(DeviceHandle<SmChannel>* smChannels, DeviceHandle<ProxyChannel>* proxyChannels,
+                                        uint8_t* channelIndex, int nChannels, ChannelType chType) {
   int tid = threadIdx.x;
   if (tid < nChannels && chType == ChannelType::SM) {
     smChannels[channelIndex[tid]].signal();
@@ -162,9 +204,8 @@ MSCCLPP_DEVICE_INLINE void handleSignal(DeviceHandle<SmChannel>* smChannels,
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleWait(DeviceHandle<SmChannel>* smChannels,
-                                      DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* channelIndexes,
-                                      int nChannels, ChannelType chType) {
+MSCCLPP_DEVICE_INLINE void handleWait(DeviceHandle<SmChannel>* smChannels, DeviceHandle<ProxyChannel>* proxyChannels,
+                                      uint8_t* channelIndexes, int nChannels, ChannelType chType) {
   int tid = threadIdx.x;
   if (tid < nChannels && chType == ChannelType::SM) {
     smChannels[channelIndexes[tid]].wait();
@@ -172,6 +213,14 @@ MSCCLPP_DEVICE_INLINE void handleWait(DeviceHandle<SmChannel>* smChannels,
   }
   if (tid < nChannels && chType == ChannelType::PROXY) {
     proxyChannels[channelIndexes[tid]].wait();
+  }
+}
+
+MSCCLPP_DEVICE_INLINE void handleFlush(DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* channelIndexes,
+                                       int nChannels) {
+  int tid = threadIdx.x;
+  if (tid < nChannels) {
+    proxyChannels[channelIndexes[tid]].flush();
   }
 }
 
@@ -184,10 +233,10 @@ MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<SmChannel>* smChannel, uint8_t
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<SmChannel>* smChannel,
-                                     DeviceHandle<SimpleProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
-                                     uint32_t* dstOffsets, uint32_t* srcOffsets, int count, uint32_t size,
-                                     ChannelType chType) {
+template <bool PutWithSignal = false, bool PutWithSignalAndFlush = false>
+MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<SmChannel>* smChannel, DeviceHandle<ProxyChannel>* proxyChannels,
+                                     uint8_t* dstChannelIndexes, uint32_t* dstOffsets, uint32_t* srcOffsets, int count,
+                                     uint32_t size, ChannelType chType) {
   if (chType == ChannelType::SM) {
     for (int i = 0; i < count; i++) {
       uint32_t dstOffset = dstOffsets[i];
@@ -197,10 +246,15 @@ MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<SmChannel>* smChannel,
     return;
   }
   if (chType == ChannelType::PROXY) {
-    for (int i = 0; i < count; i++) {
-      uint32_t dstOffset = dstOffsets[i];
-      uint32_t srcOffset = srcOffsets[i];
-      proxyChannels[dstChannelIndexes[i]].put(dstOffset, srcOffset, size);
+    int tid = threadIdx.x;
+    if (tid < count) {
+      if constexpr (PutWithSignal) {
+        proxyChannels[dstChannelIndexes[tid]].putWithSignal(dstOffsets[tid], srcOffsets[tid], size);
+      } else if constexpr (PutWithSignalAndFlush) {
+        proxyChannels[dstChannelIndexes[tid]].putWithSignalAndFlush(dstOffsets[tid], srcOffsets[tid], size);
+      } else {
+        proxyChannels[dstChannelIndexes[tid]].put(dstOffsets[tid], srcOffsets[tid], size);
+      }
     }
   }
 }
@@ -240,7 +294,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* output, uint32_t outputOf
     T tmp = input[idx];
     for (int index = 0; index < nSrcChannels; ++index) {
       size_t srcOffset = srcOffsets[index] / sizeof(T);
-      tmp += smChannels[srcChannelIndexes[index]].read<T>(srcOffset + idx);
+      tmp = add_elements(tmp, smChannels[srcChannelIndexes[index]].read<T>(srcOffset + idx));
     }
     output[idx] = tmp;
     if (sendToRemote) {
@@ -254,12 +308,25 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* output, uint32_t outputOf
 
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<SmChannel>* smChannels,
-                                           uint8_t* dstChannelIndexes, uint32_t* dstOffsets, uint32_t* srcOffsets,
-                                           int nDstChannels, uint32_t size, uint32_t flag) {
+                                           DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
+                                           uint32_t* dstOffsets, uint32_t* srcOffsets, int nDstChannels, uint32_t size,
+                                           ChannelType chType, uint32_t flag) {
   const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
-  for (int index = 0; index < nDstChannels; ++index) {
-    smChannels[dstChannelIndexes[index]].putPackets<PacketType>(scratchBaseOffset + dstOffsets[index] * 2,
-                                                                srcOffsets[index], size, threadIdx.x, blockDim.x, flag);
+  if (chType == ChannelType::SM) {
+    for (int index = 0; index < nDstChannels; ++index) {
+      smChannels[dstChannelIndexes[index]].putPackets<PacketType>(
+          scratchBaseOffset + dstOffsets[index] * 2, srcOffsets[index], size, threadIdx.x, blockDim.x, flag);
+    }
+  }
+  if (chType == ChannelType::PROXY) {
+    int tid = threadIdx.x;
+    if (tid >= nDstChannels) {
+      return;
+    }
+    // For proxy channel, we assume src and dst are in packet format
+    uint32_t dstOffset = (dstOffsets[tid] << 1) + scratchBaseOffset;
+    uint32_t srcOffset = (srcOffsets[tid] << 1) + scratchBaseOffset;
+    proxyChannels[dstChannelIndexes[tid]].put(dstOffset, srcOffset, size << 1);
   }
 }
 
@@ -298,14 +365,22 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBy
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, size_t srcSize, uint32_t dstOffset,
                                             uint32_t srcOffset, size_t size, uint32_t flag) {
-  const size_t outputScratchBaseOffset = flag & 0x1 ? 0 : srcSize >> 1;
-  PacketType* srcPackets = (PacketType*)((char*)src + outputScratchBaseOffset + 2 * srcOffset);
+  const size_t inputScratchBaseOffset = flag & 0x1 ? 0 : srcSize >> 1;
+  PacketType* srcPackets = (PacketType*)((char*)src + inputScratchBaseOffset + 2 * srcOffset);
   PacketPayload<PacketType>* result = (PacketPayload<PacketType>*)((char*)dst + dstOffset);
   size_t nPackets = size * 2 / sizeof(PacketType);
   for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketPayload<PacketType> data = srcPackets[idx].read(flag);
     result[idx] = data;
   }
+}
+
+template <typename PacketType>
+MSCCLPP_DEVICE_INLINE void handleTransformToPacket(void* dst, void* src, size_t dstSize, uint32_t dstOffset,
+                                                   uint32_t srcOffset, size_t size, uint32_t flag) {
+  const size_t outputScratchBaseOffset = flag & 0x1 ? 0 : dstSize >> 1;
+  dstOffset = dstOffset * 2 + outputScratchBaseOffset;
+  mscclpp::putPackets<PacketType>(dst, dstOffset, src, srcOffset, size, threadIdx.x, blockDim.x, flag);
 }
 
 template <typename T>
@@ -340,7 +415,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
     T tmp = src[idx];
     for (int index = 0; index < nOutChannels; ++index) {
       size_t offset = inputOffsets[index] / sizeof(T);
-      tmp += input[offset + idx];
+      tmp = add_elements(tmp, input[offset + idx]);
     }
     dst[idx] = tmp;
     for (int index = 0; index < nOutChannels; ++index) {
@@ -349,6 +424,43 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
     }
   }
 }
+
+MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
+  char* srcData = (char*)src + srcOffset;
+  char* dstData = (char*)dst + dstOffset;
+  Element::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
+}
+
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+template <typename T>
+MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* dst, T* src, uint32_t dstOffset, uint32_t srcOffset,
+                                                      size_t size) {
+  using vectorType = typename VectorType<T>::type;
+  using nvlsType = typename VectorType<T>::nvls_type;
+  // nvls can only handle 4 bytes alignment
+  assert(size % sizeof(vectorType) == 0);
+  const size_t nInt4 = size / sizeof(nvlsType);
+  const size_t srcOffset4 = srcOffset / sizeof(nvlsType);
+  const size_t dstOffset4 = dstOffset / sizeof(nvlsType);
+  nvlsType* src4 = (nvlsType*)src;
+  nvlsType* dst4 = (nvlsType*)dst;
+  for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
+    nvlsType val;
+    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)(src4 + srcOffset4 + idx));
+    DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)(dst4 + dstOffset4 + idx));
+  }
+  // handle rest of data
+  size_t processed = nInt4 * sizeof(nvlsType);
+  using nvlsType2 = typename VectorType<T>::nvls_type2;
+  const size_t startIdx = (srcOffset + processed) / sizeof(nvlsType2);
+  const size_t endIdx = (dstOffset + size) / sizeof(nvlsType2);
+  for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
+    nvlsType2 val;
+    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)src + idx);
+    DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)dst + idx);
+  }
+}
+#endif
 
 template <typename T, typename PacketType = LL16Packet>
 __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
@@ -381,7 +493,9 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   int nOperations = localPlan->nOperations;
   Operation* operations = localPlan->operations;
   DeviceHandle<SmChannel>* smChannels = localPlan->channels.smChannels;
-  DeviceHandle<SimpleProxyChannel>* proxyChannels = localPlan->channels.proxyChannels;
+  DeviceHandle<ProxyChannel>* proxyChannels = localPlan->channels.proxyChannels;
+  [[maybe_unused]] DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels =
+      localPlan->channels.nvlsChannels;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
 #if defined(MSCCLPP_DEVICE_HIP)
@@ -413,17 +527,33 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                               event_buffer, &event_buffer_head);
 #endif
 
-    if (op.type == OperationType::BARRIER) {
+    if (op.type == OperationType::NOP) {
       __syncthreads();
+    } else if (op.type == OperationType::BARRIER) {
+      int nThreadBlocks = op.nThreadBlocks;
+      int syncStateIndex = op.deviceSyncerIndex;
+      deviceSyncers[syncStateIndex].sync(nThreadBlocks);
     } else if (op.type == OperationType::SIGNAL) {
       handleSignal(smChannels, proxyChannels, op.outputChannelIndexes, op.nOutputs, op.channelType);
     } else if (op.type == OperationType::WAIT) {
       handleWait(smChannels, proxyChannels, op.inputChannelIndexes, op.nInputs, op.channelType);
+    } else if (op.type == OperationType::FLUSH) {
+      handleFlush(proxyChannels, op.outputChannelIndexes, op.nOutputs);
     } else if (op.type == OperationType::PUT) {
       handlePut(smChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs,
                 op.size, op.channelType);
+    } else if (op.type == OperationType::PUT_WITH_SIGNAL) {
+      handlePut<true>(smChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
+                      op.nOutputs, op.size, op.channelType);
+    } else if (op.type == OperationType::PUT_WITH_SIGNAL_AND_FLUSH) {
+      handlePut<false, true>(smChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
+                             op.nOutputs, op.size, op.channelType);
     } else if (op.type == OperationType::GET) {
       handleGet(smChannels, op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nInputs, op.size);
+    } else if (op.type == OperationType::COPY) {
+      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
+      T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      handleCopy(dst, src, op.dstOffset, op.srcOffset, op.size);
     } else if (op.type == OperationType::READ_REDUCE_COPY_SEND) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
@@ -438,8 +568,8 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                                op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
                                op.size, false);
     } else if (op.type == OperationType::PUT_PACKET) {
-      handlePutPacket<PacketType>(scratchSize, smChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
-                                  op.nOutputs, op.size, flag);
+      handlePutPacket<PacketType>(scratchSize, smChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets,
+                                  op.inputOffsets, op.nOutputs, op.size, op.channelType, flag);
     } else if (op.type == OperationType::REDUCE_SEND_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
@@ -456,6 +586,10 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       handleCopyPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);
+    } else if (op.type == OperationType::TRANSFORM_TO_PACKET) {
+      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
+      T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      handleTransformToPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);
     } else if (op.type == OperationType::REDUCE_SEND) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
@@ -463,6 +597,13 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, smChannels, op.outputChannelIndexes,
                        op.outputOffsets, op.nOutputs, op.size);
     }
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+    else if (op.type == OperationType::MULTI_LOAD_REDUCE_STORE) {
+      T* dst = (T*)(nvlsChannels[op.nvlsOutputIndex].mcPtr);
+      T* src = (T*)(nvlsChannels[op.nvlsInputIndex].mcPtr);
+      handleMultiLoadReduceStore(dst, src, op.dstOffset, op.srcOffset, op.size);
+    }
+#endif
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT)
     NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),

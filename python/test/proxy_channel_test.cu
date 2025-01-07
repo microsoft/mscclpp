@@ -6,8 +6,8 @@
 
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    simple_proxy_channel(mscclpp::SimpleProxyChannelDeviceHandle* channels, int my_rank, int nranks, int* data,
-                         int* scratch, int num_elements, int use_packet) {
+    proxy_channel(mscclpp::ProxyChannelDeviceHandle* channels, int my_rank, int nranks, int* data, int* scratch,
+                  int num_elements, int use_packet) {
   int tid = threadIdx.x;
   int nthreads = blockDim.x;
   uint64_t size_per_rank = (num_elements * sizeof(int)) / nranks;

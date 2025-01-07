@@ -1,0 +1,188 @@
+trigger:
+- main
+- release/*
+
+pr:
+  branches:
+    include:
+    - main
+    - release/*
+  drafts: false
+
+jobs:
+- job: NcclTest
+  displayName: Run MSCCLPP over NCCL Test
+  strategy:
+    matrix:
+      cuda11:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+  pool:
+    name: msccl-ci
+  container:
+    image: $[ variables['containerImage'] ]
+
+  steps:
+  - checkout: self
+  - checkout: git://One/msccl-users
+  - task: Bash@3
+    name: Build
+    displayName: Build
+    inputs:
+      targetType: 'inline'
+      script: |
+        mkdir build && cd build
+        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
+        make -j
+      workingDirectory: '$(System.DefaultWorkingDirectory)/mscclpp'
+  
+  - task: DownloadSecureFile@1
+    name: SshKeyFile
+    displayName: Download key file
+    inputs:
+      secureFile: mscclpp.pem
+
+  - task: Bash@3
+    name: InstallPackages
+    displayName: Install Packages
+    inputs:
+      targetType: 'inline'
+      script: |
+        sudo apt-get update -y
+        sudo apt-get install pssh -y
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+  - task: AzureCLI@2
+    name: StartVMSS
+    displayName: Start VMSS
+    inputs:
+      azureSubscription: mscclpp-ci
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss start --name mscclpp-ci --resource-group mscclpp
+
+  - task: Bash@3
+    name: DeployTestEnv
+    displayName: Deploy Test Env
+    inputs:
+      targetType: filePath
+      filePath: mscclpp/test/deploy/deploy.sh
+      arguments: "nccltest-single-node"
+      workingDirectory: $(System.DefaultWorkingDirectory)/mscclpp
+
+  - task: Bash@3
+    name: CopyMscclUsers
+    displayName: Copy msccl-users
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+        ROOT_DIR=$(System.DefaultWorkingDirectory)/msccl-users
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        DST_DIR="/tmp/mscclpp/msccl-users"
+        parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${ROOT_DIR} ${DST_DIR}
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: InstallMscclTools
+    displayName: Install msccl-tools
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"   \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c " \
+          cd /root/mscclpp;                                          \
+          git clone https://github.com/Azure/msccl-tools.git;        \
+          cd /root/mscclpp/msccl-tools; pip3 install ."'
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: GenerateExecutionFile
+    displayName: Generate execution file
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+        ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"  \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
+          cd /root/mscclpp/msccl-users;  \
+          mkdir -p execution-files;      \
+          cd /root/mscclpp/msccl-users;  \
+          bash algos/mscclpp_a100/generate_execution_plan.sh"'
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: InstallNcclTests
+    displayName: Install NCCL Tests
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+        ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"   \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c " \
+          cd; git clone https://github.com/NVIDIA/nccl-tests.git;    \
+          cd nccl-tests;                                             \
+          MPI=1 MPI_HOME=/usr/local/mpi make -j"'
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: RunNcclAllReduceTest
+    displayName: Run NCCL AllReduce Test
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+        ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"  \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
+          cd /root/mscclpp;                                         \
+          mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/apps/nccl/libmscclpp_nccl.so -x NCCL_DEBUG=WARN  -x MSCCLPP_EXECUTION_PLAN_DIR=/root/mscclpp/msccl-users/execution-files /root/nccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20"'
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: RunNcclAllGatherTest
+    displayName: Run NCCL AllGather Test
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+        ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"  \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
+          cd /root/mscclpp;                                         \
+          mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/apps/nccl/libmscclpp_nccl.so -x NCCL_DEBUG=WARN  -x MSCCLPP_EXECUTION_PLAN_DIR=/root/mscclpp/msccl-users/execution-files /root/nccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20"'
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+
+  - task: AzureCLI@2
+    name: StopVMSS
+    displayName: Deallocate VMSS
+    condition: always()
+    inputs:
+      azureSubscription: mscclpp-ci
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss deallocate --name mscclpp-ci --resource-group mscclpp

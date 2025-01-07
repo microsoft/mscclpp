@@ -346,9 +346,9 @@ class MscclppKernel:
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
-        elif test_name == "simple_proxy_channel":
+        elif test_name == "proxy_channel":
             self._kernel = KernelBuilder(
-                file="simple_proxy_channel_test.cu", kernel_name="simple_proxy_channel", file_dir=file_dir
+                file="proxy_channel_test.cu", kernel_name="proxy_channel", file_dir=file_dir
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = 1024
@@ -376,11 +376,11 @@ class MscclppKernel:
             # keep a reference to the device handles so that they don't get garbage collected
             self._d_semaphore_or_channels = cp.asarray(memoryview(b"".join(device_handles)), dtype=cp.uint8)
 
-        if test_name in ["h2d_semaphore", "d2d_semaphore", "sm_channel", "simple_proxy_channel"]:
+        if test_name in ["h2d_semaphore", "d2d_semaphore", "sm_channel", "proxy_channel"]:
             self.params += pack(self._d_semaphore_or_channels, my_rank, nranks)
             if test_name == "sm_channel":
                 self.params += pack(tensor.size, use_packet)
-            if test_name == "simple_proxy_channel":
+            if test_name == "proxy_channel":
                 self.params += pack(tensor, scratch, tensor.size, use_packet)
         elif test_name == "fifo":
             self.params = fifo.device_handle().raw
@@ -531,7 +531,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["NVLink", "IB"])
 @pytest.mark.parametrize("use_packet", [False, True])
-def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
+def test_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
     group, connections = create_group_and_connection(mpi_group, transport)
 
     memory = cp.zeros(nelem, dtype=cp.int32)
@@ -552,13 +552,13 @@ def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, u
         memory_to_register = scratch
     else:
         memory_to_register = memory
-    simple_channels = group.make_proxy_channels(proxy_service, memory_to_register, connections)
+    channels = group.make_proxy_channels(proxy_service, memory_to_register, connections)
 
     kernel = MscclppKernel(
-        "simple_proxy_channel",
+        "proxy_channel",
         my_rank=group.my_rank,
         nranks=group.nranks,
-        semaphore_or_channels=simple_channels,
+        semaphore_or_channels=channels,
         tensor=memory,
         use_packet=use_packet,
         scratch=scratch,
@@ -607,7 +607,7 @@ def test_executor(mpi_group: MpiGroup, filename: str):
     npkit_dump_dir = os.getenv("NPKIT_DUMP_DIR")
     if npkit_dump_dir is not None:
         npkit.init(mscclpp_group.my_rank)
-    execution_plan = ExecutionPlan("allreduce_pairs", os.path.join(project_dir, "test", "execution-files", filename))
+    execution_plan = ExecutionPlan(os.path.join(project_dir, "test", "execution-files", filename))
 
     nelems = 1024 * 1024
     cp.random.seed(42)
@@ -630,7 +630,6 @@ def test_executor(mpi_group: MpiGroup, filename: str):
         sendbuf.nbytes,
         sendbuf.nbytes,
         DataType.float16,
-        512,
         execution_plan,
         stream.ptr,
     )

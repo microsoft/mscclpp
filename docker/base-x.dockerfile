@@ -2,9 +2,10 @@ ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 LABEL maintainer="MSCCL++"
-LABEL org.opencontainers.image.source https://github.com/microsoft/mscclpp
+LABEL org.opencontainers.image.source=https://github.com/microsoft/mscclpp
 
 ENV DEBIAN_FRONTEND=noninteractive
+USER root
 
 RUN rm -rf /opt/nvidia
 
@@ -16,6 +17,7 @@ RUN apt-get update && \
         git \
         libcap2 \
         libnuma-dev \
+        lsb-release \
         openssh-client \
         openssh-server \
         python3-dev \
@@ -30,11 +32,13 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* /tmp/*
 
 # Install OFED
-ENV OFED_VERSION=5.2-2.2.3.0
+ARG OFED_VERSION=5.2-2.2.3.0
 RUN cd /tmp && \
-    wget -q https://content.mellanox.com/ofed/MLNX_OFED-${OFED_VERSION}/MLNX_OFED_LINUX-${OFED_VERSION}-ubuntu20.04-x86_64.tgz && \
-    tar xzf MLNX_OFED_LINUX-${OFED_VERSION}-ubuntu20.04-x86_64.tgz && \
-    MLNX_OFED_LINUX-${OFED_VERSION}-ubuntu20.04-x86_64/mlnxofedinstall --user-space-only --without-fw-update --force --all && \
+    OS_VERSION=$(lsb_release -rs) && \
+    OS_VERSION=ubuntu${OS_VERSION} && \
+    wget -q https://content.mellanox.com/ofed/MLNX_OFED-${OFED_VERSION}/MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-x86_64.tgz && \
+    tar xzf MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-x86_64.tgz && \
+    MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-x86_64/mlnxofedinstall --user-space-only --without-fw-update --without-ucx-cuda --force --all && \
     rm -rf /tmp/MLNX_OFED_LINUX-${OFED_VERSION}*
 
 # Install OpenMPI

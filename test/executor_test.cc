@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #include <mpi.h>
 #include <unistd.h>
 
@@ -56,16 +59,16 @@ mscclpp::PacketType parsePacketType(const char* value) {
 }
 
 double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::shared_ptr<mscclpp::Executor> executor,
-                 const mscclpp::ExecutionPlan& plan, std::shared_ptr<char> sendbuff, size_t bufferSize,
-                 int nthreadsPerBlock, int niters, int ngrapthIters, mscclpp::PacketType packetType) {
+                 const mscclpp::ExecutionPlan& plan, std::shared_ptr<char> sendbuff, size_t bufferSize, int niters,
+                 int ngrapthIters, mscclpp::PacketType packetType) {
   mscclpp::CudaStreamWithFlags stream(cudaStreamNonBlocking);
   cudaGraph_t graph;
   cudaGraphExec_t graphExec;
   mscclpp::Timer timer;
   MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
   for (int i = 0; i < niters; i++) {
-    executor->execute(rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16,
-                      nthreadsPerBlock, plan, stream, packetType);
+    executor->execute(rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16, plan,
+                      stream, packetType);
   }
   MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
   MSCCLPP_CUDATHROW(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
@@ -86,11 +89,9 @@ double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::s
 }
 
 int main(int argc, char* argv[]) {
-  if (argc != 7 && argc != 8) {
+  if (argc != 5 && argc != 6) {
     std::cerr << "Usage: " << argv[0] << " <buffer size>"
-              << " <execution plan name>"
               << " <execution plan path>"
-              << " <nthreads per block>"
               << " <number of iterations>"
               << " <number of graph iterations>"
               << " (optional) <packet type>" << std::endl;
@@ -105,15 +106,13 @@ int main(int argc, char* argv[]) {
   MSCCLPP_CUDATHROW(cudaSetDevice(rank));
 
   const size_t bufferSize = parseSize(argv[1]);
-  const std::string executionPlanName = argv[2];
-  const std::string executionPlanPath = argv[3];
-  const int nthreadsPerBlock = std::stoi(argv[4]);
-  const int niters = std::stoi(argv[5]);
-  const int ngraphIters = std::stoi(argv[6]);
+  const std::string executionPlanPath = argv[2];
+  const int niters = std::stoi(argv[3]);
+  const int ngraphIters = std::stoi(argv[4]);
   const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
   mscclpp::PacketType packetType = mscclpp::PacketType::LL16;
-  if (argc == 8) {
-    packetType = parsePacketType(argv[7]);
+  if (argc == 6) {
+    packetType = parsePacketType(argv[5]);
   }
 
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
@@ -129,12 +128,16 @@ int main(int argc, char* argv[]) {
     NpKit::Init(rank);
   }
 
-  mscclpp::ExecutionPlan plan(executionPlanName, executionPlanPath);
-  std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
+  mscclpp::ExecutionPlan plan(executionPlanPath);
+  std::shared_ptr<char> sendbuff;
+  if (mscclpp::isNvlsSupported()) {
+    sendbuff = mscclpp::allocSharedPhysicalCuda<char>(bufferSize);
+  } else {
+    sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
+  }
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
   MSCCLPP_CUDATHROW(cudaMemcpy(sendbuff.get(), dataHost.data(), bufferSize, cudaMemcpyHostToDevice));
-  double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, nthreadsPerBlock, niters,
-                              ngraphIters, packetType);
+  double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, niters, ngraphIters, packetType);
 
   if (npkitDumpDir != nullptr) {
     NpKit::Dump(npkitDumpDir);
