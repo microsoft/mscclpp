@@ -42,8 +42,9 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t bytes = bytesPerGPU;
   size_t unitBytesPerThread;
   if (bytes >= nThread * 64) {
-    unitBytesPerThread = 64;
+    // unitBytesPerThread = 64;
     // unitBytesPerThread = 16;
+    unitBytesPerThread = 32;
   } else {
     unitBytesPerThread = 16;
   }
@@ -56,7 +57,8 @@ __global__ void __launch_bounds__(1024, 1)
 
   size_t scratchSub = 0;
 
-  // printf("nLoop = %ld, bytes = %ld, unitBytes = %ld\n", nLoop, bytes, unitBytes);
+  // printf("nLoop = %ld, bytes = %ld, unitBytes = %ld, bytes mod unitBytes = %ld \n", nLoop, bytes, unitBytes,
+  //        bytes % unitBytes);
 
   // First loop will always fit the scratch size.
   if (nLoop > 0) {
@@ -84,6 +86,7 @@ __global__ void __launch_bounds__(1024, 1)
       if (peerIdx != peerRootIdx) {
         smChans[peerIdx].copy<16, false>(dst + offset, scratch_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
       }
+      __syncthreads();
       if (threadIdx.x != peerRootIdx && threadIdx.x < nPeer) {
         smChans[threadIdx.x].signal();
         smChans[threadIdx.x].wait();
@@ -97,7 +100,6 @@ __global__ void __launch_bounds__(1024, 1)
   }
 
   for (size_t i = 1; i < nLoop; ++i) {
-    scratchSub = 0;
     if (i % nLoopToSync == 0) {  // Sync to reuse scratch buff
       scratchSub = -i * unitBytes;
       deviceSyncer.sync(gridDim.x);
@@ -132,6 +134,7 @@ __global__ void __launch_bounds__(1024, 1)
         smChans[peerIdx].copy<16, false>(dst + offset, scratch_ + offset + scratchSub, unitBytesPerBlock, threadIdx.x,
                                          blockDim.x);
       }
+      __syncthreads();
       if (threadIdx.x != peerRootIdx && threadIdx.x < nPeer) {
         smChans[threadIdx.x].signal();
         smChans[threadIdx.x].wait();
@@ -187,6 +190,7 @@ __global__ void __launch_bounds__(1024, 1)
         smChans[peerIdx].copy<16, true>(dst + offset, scratch_ + offset + scratchSub, remainBytes, threadIdx.x,
                                         blockDim.x);
       }
+      __syncthreads();
       if (threadIdx.x != peerRootIdx && threadIdx.x < nPeer) {
         smChans[threadIdx.x].signal();
         smChans[threadIdx.x].wait();
