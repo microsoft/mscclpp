@@ -496,11 +496,120 @@ __global__ void __launch_bounds__(512, 1)
 }
 
 template <typename T>
+__global__ void __launch_bounds__(512, 1)
+    allreduce8Read(T* buff, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
+               mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, size_t channelOutDataOffset,
+               int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+  const int nPeer = nRanksPerNode - 1;
+  const size_t chanOffset = nPeer * blockIdx.x;
+  // assume (nelems * sizeof(T)) is divisible by (16 * worldSize)
+  const size_t nInt4 = nelems * sizeof(T) / sizeof(int4);
+  const size_t nInt4PerRank = nInt4 / worldSize;
+  auto smChans = smChannels + chanOffset;
+  auto smOutChans = smOutChannels + chanOffset;
+
+  int4* buff4 = reinterpret_cast<int4*>(buff);
+  int4* resultBuff4 = reinterpret_cast<int4*>(resultBuff);
+
+   // Distribute `nInt4PerRank` across all blocks with the unit size `unitNInt4`
+  constexpr size_t unitNInt4 = 512;
+  const size_t maxNInt4PerBlock =
+      (((nInt4PerRank + gridDim.x - 1) / gridDim.x) + unitNInt4 - 1) / unitNInt4 * unitNInt4;
+  size_t offsetOfThisBlock = maxNInt4PerBlock * blockIdx.x;
+  size_t nInt4OfThisBlock = maxNInt4PerBlock;
+  size_t nNeededBlocks = (nInt4PerRank + maxNInt4PerBlock - 1) / maxNInt4PerBlock;
+  constexpr size_t nInt4PerChunk = 1024 * 256 / sizeof(int4);  // 256KB
+  if (blockIdx.x >= nNeededBlocks) {
+    nInt4OfThisBlock = 0;
+  } else if (blockIdx.x == nNeededBlocks - 1) {
+    nInt4OfThisBlock = nInt4PerRank - maxNInt4PerBlock * (nNeededBlocks - 1);
+  }
+
+  const size_t nItrs = nInt4OfThisBlock / nInt4PerChunk;
+  const size_t restNInt4 = nInt4OfThisBlock % nInt4PerChunk;
+
+  __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> channels[NRANKS_PER_NODE - 1];
+  __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> outChannels[NRANKS_PER_NODE - 1];
+  const int lid = threadIdx.x % WARP_SIZE;
+
+  if (lid < nPeer) {
+    channels[lid] = smChans[lid];
+    outChannels[lid] = smOutChans[lid];
+  }
+  __syncwarp();
+
+  for (size_t itr = 0; itr < nItrs; itr++) {
+    if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
+      channels[threadIdx.x].signal();
+      channels[threadIdx.x].wait();
+    }
+    __syncthreads();
+
+    for (size_t idx = threadIdx.x; idx < nInt4PerChunk; idx += blockDim.x) {
+      int4 data = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
+      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+        int4 val = channels[peerIdx].read<int4>(nInt4PerRank  * rank + offsetOfThisBlock + idx);;
+        data = add_vectors<T>(val, data);
+      }
+      resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
+      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+        outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
+                                   data);
+      }
+    }
+    __syncthreads();
+
+    offsetOfThisBlock += nInt4PerChunk;
+  }
+
+  if (restNInt4 > 0) {
+    if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
+       outChannels[threadIdx.x].signal();
+       outChannels[threadIdx.x].wait();
+    }
+    __syncthreads();
+
+    for (size_t idx = threadIdx.x; idx < restNInt4; idx += blockDim.x) {
+      int4 data = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
+      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+        int4 val = channels[peerIdx].read<int4>(nInt4PerRank  * rank + offsetOfThisBlock + idx);;
+        data = add_vectors<T>(val, data);
+      }
+      resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
+      for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
+        outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
+                                   data);
+      }
+    }
+    __syncthreads();
+  }
+
+  if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
+      outChannels[threadIdx.x].signal();
+      outChannels[threadIdx.x].wait();
+  }
+  __syncthreads();
+
+}
+
+template <typename T>
 cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
+		      mscclpp::DeviceHandle<mscclpp::SmChannel>* smScrChannels,
                       mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels, size_t channelInOffset,
                       size_t channelOutOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
                       size_t nelems, cudaStream_t stream) {
   static uint32_t flag = 1;
+
+  int readAllred = 0;
+  char* envValue = nullptr;
+
+  envValue = std::getenv("MSCCLPP_READ_ALLRED");
+
+  if (envValue != nullptr) {
+     if (atoi(envValue) == 1) {
+        readAllred = 1;
+     }
+  }
 
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
     int nBlocks = 7;
@@ -528,9 +637,14 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
   } else {
     int nBlocks = 35;
     int nThreadsPerBlock = 512;
-    allreduce8<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smChannels, smOutChannels,
+    if (!readAllred) {
+    	allreduce8<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, smScrChannels, smOutChannels,
                                                          channelOutOffset, channelScratchOffset, rank, nRanksPerNode,
                                                          worldSize, nelems);
+    } else {
+	allreduce8Read<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, resultBuff, smChannels, smOutChannels,
+                                                         channelOutOffset, rank, nRanksPerNode, worldSize, nelems);	
+    }
   }
 
   return cudaGetLastError();
