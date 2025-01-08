@@ -13,12 +13,9 @@
 #include <bitset>
 #include <future>
 #include <memory>
-#include <mscclpp/gpu.hpp>
-#include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/errors.hpp>
 #include <string>
 #include <vector>
-
-#include "errors.hpp"
 
 namespace mscclpp {
 
@@ -302,23 +299,6 @@ inline TransportFlags operator&(Transport transport1, Transport transport2) {
 inline TransportFlags operator^(Transport transport1, Transport transport2) {
   return TransportFlags(transport1) ^ transport2;
 }
-
-/// Get the number of available InfiniBand devices.
-///
-/// @return The number of available InfiniBand devices.
-int getIBDeviceCount();
-
-/// Get the name of the InfiniBand device associated with the specified transport.
-///
-/// @param ibTransport The InfiniBand transport to get the device name for.
-/// @return The name of the InfiniBand device associated with the specified transport.
-std::string getIBDeviceName(Transport ibTransport);
-
-/// Get the InfiniBand transport associated with the specified device name.
-///
-/// @param ibDeviceName The name of the InfiniBand device to get the transport for.
-/// @return The InfiniBand transport associated with the specified device name.
-Transport getIBTransportByDeviceName(const std::string& ibDeviceName);
 
 class Context;
 class Connection;

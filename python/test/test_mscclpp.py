@@ -12,6 +12,8 @@ import netifaces as ni
 import pytest
 
 from mscclpp import (
+    ErrorCode,
+    Error,
     DataType,
     EndpointConfig,
     ExecutionPlan,
@@ -44,7 +46,7 @@ def all_ranks_on_the_same_node(mpi_group: MpiGroup):
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-@pytest.mark.parametrize("ifIpPortTrio", ["eth0:localhost:50000", ethernet_interface_name, ""])
+@pytest.mark.parametrize("ifIpPortTrio", [f"{ethernet_interface_name}:localhost:50000", ethernet_interface_name, ""])
 def test_group_with_ip(mpi_group: MpiGroup, ifIpPortTrio: str):
     if (ethernet_interface_name in ni.interfaces()) is False:
         pytest.skip(f"{ethernet_interface_name} is not an interface to use on this node")
@@ -146,7 +148,12 @@ def create_group_and_connection(mpi_group: MpiGroup, transport: str):
     if (transport == "NVLink" or transport == "NVLS") and all_ranks_on_the_same_node(mpi_group) is False:
         pytest.skip("cannot use nvlink/nvls for cross node")
     group = mscclpp_comm.CommGroup(mpi_group.comm)
-    connection = create_connection(group, transport)
+    try:
+        connection = create_connection(group, transport)
+    except Error as e:
+        if transport == "IB" and e.args[0] == ErrorCode.InvalidUsage:
+            pytest.skip("IB not supported on this node")
+        raise
     return group, connection
 
 
