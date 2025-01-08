@@ -10,9 +10,9 @@
 namespace mscclpp {
 
 struct Fifo::Impl {
-  UniqueCudaHostPtr<ProxyTrigger[]> triggers;
-  UniqueCudaPtr<uint64_t> head;
-  UniqueCudaPtr<uint64_t> tailReplica;
+  detail::UniqueGpuHostPtr<ProxyTrigger> triggers;
+  detail::UniqueGpuPtr<uint64_t> head;
+  detail::UniqueGpuPtr<uint64_t> tailReplica;
   const int size;
 
   // allocated on the host. Only accessed by the host. This is a copy of the
@@ -28,9 +28,9 @@ struct Fifo::Impl {
   CudaStreamWithFlags stream;
 
   Impl(int size)
-      : triggers(makeUniqueCudaHost<ProxyTrigger[]>(size)),
-        head(allocUniqueCuda<uint64_t>()),
-        tailReplica(allocUniqueCuda<uint64_t>()),
+      : triggers(detail::gpuCallocHostUnique<ProxyTrigger>(size)),
+        head(detail::gpuCallocUnique<uint64_t>()),
+        tailReplica(detail::gpuCallocUnique<uint64_t>()),
         size(size),
         hostTail(0),
         stream(cudaStreamNonBlocking) {}

@@ -35,7 +35,7 @@ jobs:
         cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
         make -j
       workingDirectory: '$(System.DefaultWorkingDirectory)'
-  
+
   - task: DownloadSecureFile@1
     name: SshKeyFile
     displayName: Download key file

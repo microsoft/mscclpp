@@ -24,9 +24,9 @@ from ._mscclpp import (
     Executor,
     ExecutionPlan,
     PacketType,
+    RawGpuBuffer,
     version,
     is_nvls_supported,
-    alloc_shared_physical_cuda,
     npkit,
 )
 
