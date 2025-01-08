@@ -105,7 +105,7 @@ __global__ void __launch_bounds__(1024, 1)
       scratchSub = -i * unitBytes;
       deviceSyncer.sync(gridDim.x);
       if (threadIdx.x < nPeer) {
-        smChans[threadIdx.x].relaxedSignal();
+        smChans[threadIdx.x].signal();
         smChans[threadIdx.x].wait();
       }
     }
@@ -132,8 +132,8 @@ __global__ void __launch_bounds__(1024, 1)
       char* scratch_ = reinterpret_cast<char*>(scratchbuff);       // My scratchbuff.
       char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
       if (peerIdx != peerRootIdx) {
-        smChans[peerIdx].copy<16, false>(dst + offset, scratch_ + offset + scratchSub, unitBytesPerBlock, threadIdx.x,
-                                         blockDim.x);
+        smChans[peerIdx].copy<16, false>(dst + offset + scratchSub, scratch_ + offset + scratchSub, unitBytesPerBlock,
+                                         threadIdx.x, blockDim.x);
       }
       __syncthreads();
       if (threadIdx.x != peerRootIdx && threadIdx.x < nPeer) {
@@ -188,8 +188,8 @@ __global__ void __launch_bounds__(1024, 1)
       char* scratch_ = reinterpret_cast<char*>(scratchbuff);       // My scratchbuff.
       char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
       if (peerIdx != peerRootIdx) {
-        smChans[peerIdx].copy<16, true>(dst + offset, scratch_ + offset + scratchSub, remainBytes, threadIdx.x,
-                                        blockDim.x);
+        smChans[peerIdx].copy<16, true>(dst + offset + scratchSub, scratch_ + offset + scratchSub, remainBytes,
+                                        threadIdx.x, blockDim.x);
       }
       __syncthreads();
       if (threadIdx.x != peerRootIdx && threadIdx.x < nPeer) {
