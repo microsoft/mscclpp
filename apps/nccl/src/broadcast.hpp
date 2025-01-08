@@ -98,14 +98,14 @@ __global__ void __launch_bounds__(1024, 1)
 
   for (size_t i = 1; i < nLoop; ++i) {
     scratchSub = 0;
-    // if (i % nLoopToSync == 0) {  // Sync to reuse scratch buff
-    //   scratchSub = -i * unitBytes;
-    //   deviceSyncer.sync(gridDim.x);
-    //   if (threadIdx.x < nPeer) {
-    //     smChans[threadIdx.x].relaxedSignal();
-    //     smChans[threadIdx.x].wait();
-    //   }
-    // }
+    if (i % nLoopToSync == 0) {  // Sync to reuse scratch buff
+      scratchSub = -i * unitBytes;
+      deviceSyncer.sync(gridDim.x);
+      if (threadIdx.x < nPeer) {
+        smChans[threadIdx.x].relaxedSignal();
+        smChans[threadIdx.x].wait();
+      }
+    }
     if (rank == root) {
       const size_t offset = blockIdx.x * unitBytesPerBlock + i * unitBytes;
       char* send_ = reinterpret_cast<char*>(sendbuff);
