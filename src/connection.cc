@@ -308,8 +308,8 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
     uint64_t dataSize =
         std::min(sendBufferSize_ - headerSize / sizeof(char), (size - sentDataSize) / sizeof(char)) * sizeof(char);
     uint64_t messageSize = dataSize + headerSize;
-    mscclpp::memcpyCuda<char>(sendBuffer_.data() + headerSize / sizeof(char),
-                              (char*)srcPtr + (sentDataSize / sizeof(char)), dataSize, cudaMemcpyDeviceToHost);
+    mscclpp::gpuMemcpy(sendBuffer_.data() + headerSize / sizeof(char), srcPtr + (sentDataSize / sizeof(char)), dataSize,
+                       cudaMemcpyDeviceToHost);
     sendSocket_->send(sendBuffer_.data(), messageSize);
     sentDataSize += messageSize;
     headerSize = 0;
@@ -409,8 +409,7 @@ void EthernetConnection::recvMessages() {
       received &= !closed;
 
       if (received)
-        mscclpp::memcpyCuda<char>((char*)ptr + (recvSize / sizeof(char)), recvBuffer_.data(), messageSize,
-                                  cudaMemcpyHostToDevice);
+        mscclpp::gpuMemcpy(ptr + (recvSize / sizeof(char)), recvBuffer_.data(), messageSize, cudaMemcpyHostToDevice);
       recvSize += messageSize;
     }
 

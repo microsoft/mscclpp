@@ -244,7 +244,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
       size_t gran = getRecommendedGranularity();
       MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&base, this->size, gran, 0, 0));
       MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, this->size, 0, handle, 0));
-      setReadWriteMemoryAccess(base, this->size);
+      detail::setReadWriteMemoryAccess(base, this->size);
       this->data = static_cast<char*>(base) + entry.offsetFromBase;
     } else {
       MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
