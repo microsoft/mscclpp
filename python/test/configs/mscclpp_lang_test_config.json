@@ -1,5 +1,9 @@
 [
     {
+        "filename": "allgather_barrier.py",
+        "args": ["8", "8"]
+    },
+    {
         "filename": "allreduce_allpairs_packet.py",
         "args": ["8", "8"]
     },
