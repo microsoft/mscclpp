@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <algorithm>
+#include <cstring>
 #include <mscclpp/concurrency_device.hpp>
 #include <string>
 
@@ -711,13 +712,13 @@ class AllGatherTestEngine : public BaseTestEngine {
 AllGatherTestEngine::AllGatherTestEngine(const TestArgs& args) : BaseTestEngine(args, "allgather") {}
 
 void AllGatherTestEngine::allocateBuffer() {
-  sendBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
+  sendBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
   if (args_.kernelNum == 7) {
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     // 2x for double-buffering, scratchBuff used to store original data and reduced results
     const size_t scratchBuffNelem = nPacket * 2 /*original data & reduced result */ * 2 /* double buffering*/;
-    scratchPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
+    scratchPacketBuff_ = mscclpp::GpuBuffer<mscclpp::LLPacket>(scratchBuffNelem).memory();
   }
 }
 

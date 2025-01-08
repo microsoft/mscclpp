@@ -12,16 +12,16 @@
 
 uint64_t NpKit::rank_ = 0;
 
-std::vector<mscclpp::UniqueCudaPtr<NpKitEvent>> NpKit::gpu_event_buffers_;
+std::vector<mscclpp::detail::UniqueGpuPtr<NpKitEvent>> NpKit::gpu_event_buffers_;
 std::vector<std::unique_ptr<NpKitEvent[]>> NpKit::cpu_event_buffers_;
 
-mscclpp::UniqueCudaPtr<NpKitEventCollectContext> NpKit::gpu_collect_contexts_;
+mscclpp::detail::UniqueGpuPtr<NpKitEventCollectContext> NpKit::gpu_collect_contexts_;
 std::unique_ptr<NpKitEventCollectContext[]> NpKit::cpu_collect_contexts_;
 
 #if defined(__HIP_PLATFORM_AMD__)
-mscclpp::UniqueCudaHostPtr<uint64_t[]> NpKit::cpu_timestamp_;
+mscclpp::detail::UniqueGpuHostPtr<uint64_t[]> NpKit::cpu_timestamp_;
 #else
-mscclpp::UniqueCudaHostPtr<uint64_t> NpKit::cpu_timestamp_;
+mscclpp::detail::UniqueGpuHostPtr<uint64_t> NpKit::cpu_timestamp_;
 #endif
 std::unique_ptr<std::thread> NpKit::cpu_timestamp_update_thread_;
 volatile bool NpKit::cpu_timestamp_update_thread_should_stop_ = false;
@@ -53,11 +53,11 @@ void NpKit::Init(int rank) {
   rank_ = rank;
 
   // Init event data structures
-  gpu_collect_contexts_ = mscclpp::allocUniqueCuda<NpKitEventCollectContext>(NpKit::kNumGpuEventBuffers);
+  gpu_collect_contexts_ = mscclpp::detail::gpuCallocUnique<NpKitEventCollectContext>(NpKit::kNumGpuEventBuffers);
   for (i = 0; i < NpKit::kNumGpuEventBuffers; i++) {
-    gpu_event_buffers_.emplace_back(mscclpp::allocUniqueCuda<NpKitEvent>(kMaxNumGpuEventsPerBuffer));
+    gpu_event_buffers_.emplace_back(mscclpp::detail::gpuCallocUnique<NpKitEvent>(kMaxNumGpuEventsPerBuffer));
     ctx.event_buffer = gpu_event_buffers_[i].get();
-    mscclpp::memcpyCuda(gpu_collect_contexts_.get() + i, &ctx, 1);
+    mscclpp::gpuMemcpy(gpu_collect_contexts_.get() + i, &ctx, 1);
   }
 
   cpu_collect_contexts_ = std::make_unique<NpKitEventCollectContext[]>(NpKit::kNumCpuEventBuffers);
@@ -69,15 +69,15 @@ void NpKit::Init(int rank) {
 
 #if defined(__HIP_PLATFORM_AMD__)
   // Init timestamp. Allocates MAXCHANNELS*128 bytes buffer for GPU
-  cpu_timestamp_ = mscclpp::makeUniqueCudaHost<uint64_t[]>(NPKIT_MAX_NUM_GPU_THREADBLOCKS *
-                                                           NPKIT_CPU_TIMESTAMP_SLOT_SIZE / sizeof(uint64_t));
+  cpu_timestamp_ = mscclpp::detail::gpuCallocHostUnique<uint64_t[]>(NPKIT_MAX_NUM_GPU_THREADBLOCKS *
+                                                                    NPKIT_CPU_TIMESTAMP_SLOT_SIZE / sizeof(uint64_t));
   for (int i = 0; i < NPKIT_MAX_NUM_GPU_THREADBLOCKS; i++) {
     NPKIT_STORE_CPU_TIMESTAMP_PER_BLOCK(cpu_timestamp_.get(),
                                         std::chrono::system_clock::now().time_since_epoch().count(), i);
   }
 #else
   // Init timestamp
-  cpu_timestamp_ = mscclpp::makeUniqueCudaHost<uint64_t>();
+  cpu_timestamp_ = mscclpp::detail::gpuCallocHostUnique<uint64_t>();
   volatile uint64_t* volatile_cpu_timestamp = cpu_timestamp_.get();
   *volatile_cpu_timestamp = std::chrono::system_clock::now().time_since_epoch().count();
 #endif
@@ -153,8 +153,8 @@ void NpKit::Dump(const std::string& dump_dir) {
     dump_file_path += std::to_string(rank_);
     dump_file_path += "_buf_";
     dump_file_path += std::to_string(i);
-    mscclpp::memcpyCuda(cpu_event_buffers_[0].get(), gpu_event_buffers_[i].get(), kMaxNumGpuEventsPerBuffer);
-    mscclpp::memcpyCuda(cpu_collect_contexts_.get(), gpu_collect_contexts_.get() + i, 1);
+    mscclpp::gpuMemcpy(cpu_event_buffers_[0].get(), gpu_event_buffers_[i].get(), kMaxNumGpuEventsPerBuffer);
+    mscclpp::gpuMemcpy(cpu_collect_contexts_.get(), gpu_collect_contexts_.get() + i, 1);
     auto gpu_trace_file = std::fstream(dump_file_path, std::ios::out | std::ios::binary);
     gpu_trace_file.write(reinterpret_cast<char*>(cpu_event_buffers_[0].get()),
                          cpu_collect_contexts_[0].event_buffer_head * sizeof(NpKitEvent));
