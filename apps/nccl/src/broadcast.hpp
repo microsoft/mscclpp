@@ -42,9 +42,9 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t bytes = bytesPerGPU;
   size_t unitBytesPerThread;
   if (bytes >= nThread * 64) {
-    // unitBytesPerThread = 64;
+    unitBytesPerThread = 64;
     // unitBytesPerThread = 16;
-    unitBytesPerThread = 32;
+    // unitBytesPerThread = 32;
   } else {
     unitBytesPerThread = 16;
   }
@@ -91,7 +91,8 @@ __global__ void __launch_bounds__(1024, 1)
         smChans[threadIdx.x].signal();
         smChans[threadIdx.x].wait();
       }
-      __syncthreads();
+      deviceSyncer.sync(gridDim.x);  // All blocks in the GPU wait.
+      //__syncthreads();
       {
         const size_t offset = blockIdx.x * unitBytesPerBlock;
         smChans[peerIdx].copy<16, false>(recv_ + offset, scratch_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
@@ -139,7 +140,7 @@ __global__ void __launch_bounds__(1024, 1)
         smChans[threadIdx.x].signal();
         smChans[threadIdx.x].wait();
       }
-      __syncthreads();
+      deviceSyncer.sync(gridDim.x);  // All blocks in the GPU wait.
       {
         const size_t offset = blockIdx.x * unitBytesPerBlock + i * unitBytes;
         smChans[peerIdx].copy<16, false>(recv_ + offset, scratch_ + offset + scratchSub, unitBytesPerBlock, threadIdx.x,
@@ -195,7 +196,7 @@ __global__ void __launch_bounds__(1024, 1)
         smChans[threadIdx.x].signal();
         smChans[threadIdx.x].wait();
       }
-      __syncthreads();
+      deviceSyncer.sync(gridDim.x);  // All blocks in the GPU wait.
       {
         const size_t offset = blockIdx.x * unitBytesPerBlock + nLoop * unitBytes;
         const size_t remainBytes =
