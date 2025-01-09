@@ -133,7 +133,7 @@ __global__ void __launch_bounds__(1024, 1)
 
     } else {
       int rankIndexInRoot = (rank < root) ? rank : (rank - 1);
-      if (blockIdx.x == rankIndexInRoot && threadIdx.x == peerRootIdx) smChans[peerRootIdx].wait();
+      if (bid % nPeer == rankIndexInRoot && threadIdx.x == peerRootIdx) smChans[peerRootIdx].wait();
       deviceSyncer.sync(gridDim.x);
 
       // Step 2.
