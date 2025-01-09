@@ -4,6 +4,13 @@
 import os as _os
 
 from ._mscclpp import (
+    ErrorCode,
+    BaseError,
+    Error,
+    SysError,
+    CudaError,
+    CuError,
+    IbError,
     Communicator,
     Connection,
     connect_nvls_collective,
@@ -24,9 +31,9 @@ from ._mscclpp import (
     Executor,
     ExecutionPlan,
     PacketType,
+    RawGpuBuffer,
     version,
     is_nvls_supported,
-    alloc_shared_physical_cuda,
     npkit,
 )
 

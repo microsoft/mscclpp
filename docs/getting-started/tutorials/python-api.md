@@ -14,6 +14,7 @@ from mscclpp import (
     ProxyService,
     Transport,
 )
+from mscclpp.utils import GpuBuffer
 import mscclpp.comm as mscclpp_comm
 
 def create_connection(group: mscclpp_comm.CommGroup, transport: str):
@@ -32,7 +33,7 @@ if __name__ == "__main__":
     mscclpp_group = mscclpp_comm.CommGroup(MPI.COMM_WORLD)
     connections = create_connection(mscclpp_group, "NVLink")
     nelems = 1024
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     proxy_service = ProxyService()
     simple_channels = group.make_proxy_channels(proxy_service, memory, connections)
     proxy_service.start_proxy()
