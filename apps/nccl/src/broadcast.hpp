@@ -50,15 +50,23 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t maxScratchSizeToUse = (SCRATCH_SIZE - unitBytes);
   const size_t nLoopToSync = (maxScratchSizeToUse / unitBytes) + 1;
 
-  size_t scratchSub = 0;
+  size_t scratchOffset = 0;
   for (size_t i = 0; i < nLoop; ++i) {
+    if (i % nLoopToSync == 0) {  // Sync to reuse scratch buff
+      scratchOffset = -i * unitBytes;
+      deviceSyncer.sync(gridDim.x);
+      if (threadIdx.x < nPeer) {
+        smChans[threadIdx.x].signal();
+        smChans[threadIdx.x].wait();
+      }
+    }
     if (rank == root) {
-      int peerIdx = bid;
+      int peerIdx = bid % nPeer;
       const size_t offset = blockIdx.x * unitBytesPerBlock * nPeer + i * unitBytes;
-      char* send_ = reinterpret_cast<char*>(sendbuff);
+      char* send = reinterpret_cast<char*>(sendbuff);
       char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
 
-      smChans[peerIdx].copy<16, false>(dst + offset + scratchSub, send_ + offset, nPeer * unitBytesPerBlock,
+      smChans[peerIdx].copy<16, false>(dst + offset + scratchOffset, send + offset, nPeer * unitBytesPerBlock,
                                        threadIdx.x, blockDim.x);
       __syncthreads();
       if (threadIdx.x == peerIdx) smChans[threadIdx.x].signal();
@@ -69,7 +77,7 @@ __global__ void __launch_bounds__(1024, 1)
 
       // Step 2.
       char* recv_ = reinterpret_cast<char*>(recvbuff);
-      char* scratch_ = reinterpret_cast<char*>(scratchbuff);       // My scratchbuff.
+      char* scratch_ = reinterpret_cast<char*>(scratchbuff);
 
       const size_t offset =
           bid * unitBytesPerBlock + unitBytesPerBlock * nPeer * (rank - isRootInSmallerRank) + i * unitBytes;
@@ -77,8 +85,8 @@ __global__ void __launch_bounds__(1024, 1)
         int peerIdx = (bid + j) % nPeer;
         if (peerIdx != peerRootIdx) {
           char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
-          smChans[peerIdx].copy<16, false>(dst + offset + scratchSub, scratch_ + offset + scratchSub, unitBytesPerBlock,
-                                           threadIdx.x, blockDim.x);
+          smChans[peerIdx].copy<16, false>(dst + offset + scratchOffset, scratch_ + offset + scratchOffset,
+                                           unitBytesPerBlock, threadIdx.x, blockDim.x);
         }
       }
       __syncthreads();
@@ -87,9 +95,10 @@ __global__ void __launch_bounds__(1024, 1)
         smChans[threadIdx.x].wait();
       }
       __syncthreads();
-      for (int j = 0; j < nPeer; ++j) {
-        const size_t offset = blockIdx.x * unitBytesPerBlock + j * unitBytesPerBlock * nPeer+ i * unitBytes;
-        smChans[0].copy<16, false>(recv_ + offset, scratch_ + offset + scratchSub, unitBytesPerBlock, threadIdx.x,
+      for (int peerId = 0; peerId < nPeer; ++peerId) {
+        const size_t offset =
+            bid * unitBytesPerBlock + peerId * unitBytesPerBlock * nPeer + i * unitBytes;
+        smChans[0].copy<16, false>(recv_ + offset, scratch_ + offset + scratchOffset, unitBytesPerBlock, threadIdx.x,
                                    blockDim.x);
       }
     }
