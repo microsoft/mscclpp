@@ -15,13 +15,12 @@
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
     broadcast6(void* sendbuff, void* scratchbuff, void* recvbuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-               size_t channelOutOffset, size_t rank, [[maybe_unused]] size_t worldSize, size_t root,
+               [[maybe_unused]] size_t channelOutOffset, size_t rank, [[maybe_unused]] size_t worldSize, size_t root,
                size_t nRanksPerNode, size_t nelemsPerGPU) {
-  const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
   const size_t bid = blockIdx.x;
 
   const size_t nThread = blockDim.x * gridDim.x;
-  const size_t nPeer = nRanksPerNode - 1;
+  const unsigned int nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
 
   __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> smChans[NRANKS_PER_NODE - 1];
@@ -32,7 +31,7 @@ __global__ void __launch_bounds__(1024, 1)
   }
   __syncthreads();
 
-  const size_t peerRootIdx = (root == rank) ? nPeer : ((root < rank) ? root : (root - 1));
+  const unsigned int peerRootIdx = (root == rank) ? nPeer : ((root < rank) ? root : (root - 1));
 
   const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
   const size_t bytes = bytesPerGPU;
@@ -60,7 +59,7 @@ __global__ void __launch_bounds__(1024, 1)
       }
     }
     if (rank == root) {
-      int peerIdx = bid % nPeer;
+      unsigned int peerIdx = bid % nPeer;
       const size_t offset = blockIdx.x * unitBytesPerBlock * nPeer + i * unitBytes;
       char* send = reinterpret_cast<char*>(sendbuff);
       char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
@@ -87,8 +86,8 @@ __global__ void __launch_bounds__(1024, 1)
       const int chunkGroundId = bid / nPeer;
       const size_t offset = chunkId * unitBytesPerBlock +
                             unitBytesPerBlock * nPeer * (chunkGroundId * nPeer + rankIndexInRoot) + i * unitBytes;
-      for (int j = 0; j < nPeer; ++j) {
-        int peerIdx = (bid + j) % nPeer;
+      for (unsigned int j = 0; j < nPeer; ++j) {
+        unsigned int peerIdx = (bid + j) % nPeer;
         if (peerIdx != peerRootIdx) {
           char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
           smChans[peerIdx].copy<16, false>(dst + offset + scratchOffset, scratch_ + offset + scratchOffset,
@@ -101,7 +100,7 @@ __global__ void __launch_bounds__(1024, 1)
         smChans[threadIdx.x].wait();
       }
       __syncthreads();
-      for (int peerId = 0; peerId < nPeer; ++peerId) {
+      for (unsigned int peerId = 0; peerId < nPeer; ++peerId) {
         const size_t offset =
             chunkId * unitBytesPerBlock + (peerId + chunkGroundId * nPeer) * unitBytesPerBlock * nPeer + i * unitBytes;
         smChans[0].copy<16, false>(recv_ + offset, scratch_ + offset + scratchOffset, unitBytesPerBlock, threadIdx.x,
@@ -110,12 +109,9 @@ __global__ void __launch_bounds__(1024, 1)
     }
   }
 
-  // if (tid == 0) {
-  //   printf("remain bytes is %d, nLoop is %d\n", bytes % unitBytes, nLoop);
-  // }
   if (bytes % unitBytes > 0) {
     if (rank == root) {
-      int peerIdx = bid % nPeer;
+      unsigned int peerIdx = bid % nPeer;
       const size_t offset = blockIdx.x * unitBytesPerBlock * nPeer + nLoop * unitBytes;
       const size_t remainBytes =
           offset < bytes ? ((bytes - offset) > unitBytesPerBlock * nPeer ? unitBytesPerBlock * nPeer : (bytes - offset))
@@ -147,8 +143,8 @@ __global__ void __launch_bounds__(1024, 1)
       const size_t remainBytes =
           (offset < bytes) ? ((bytes - offset) > unitBytesPerBlock ? unitBytesPerBlock : (bytes - offset)) : 0;
 
-      for (int j = 0; j < nPeer; ++j) {
-        int peerIdx = (bid + j) % nPeer;
+      for (size_t j = 0; j < nPeer; ++j) {
+        unsigned peerIdx = (bid + j) % nPeer;
         if (peerIdx != peerRootIdx) {
           char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
           smChans[peerIdx].copy<16, true>(dst + offset + scratchOffset, scratch_ + offset + scratchOffset, remainBytes,
@@ -161,13 +157,13 @@ __global__ void __launch_bounds__(1024, 1)
         smChans[threadIdx.x].wait();
       }
       __syncthreads();
-      for (int peerId = 0; peerId < nPeer; ++peerId) {
-        const size_t offset =
-            chunkId * unitBytesPerBlock + (peerId + chunkGroundId * nPeer) * unitBytesPerBlock * nPeer + nLoop * unitBytes;
+      for (unsigned int peerId = 0; peerId < nPeer; ++peerId) {
+        const size_t offset = chunkId * unitBytesPerBlock +
+                              (peerId + chunkGroundId * nPeer) * unitBytesPerBlock * nPeer + nLoop * unitBytes;
         const size_t remainBytes =
             (offset < bytes) ? ((bytes - offset) > unitBytesPerBlock ? unitBytesPerBlock : (bytes - offset)) : 0;
         smChans[0].copy<16, true>(recv_ + offset, scratch_ + offset + scratchOffset, remainBytes, threadIdx.x,
-                                   blockDim.x);
+                                  blockDim.x);
       }
     }
   }
@@ -178,10 +174,8 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                       size_t channelOutOffset, int rank, int nRanksPerNode, int root, int worldSize, size_t nelems,
                       cudaStream_t stream) {
   int nBlocks = 7;
-  if (nelems <= 4096) {
+  if (nelems <= 32768) {
     nBlocks = 7;
-  } else if (nelems <= 32768) {
-    nBlocks = 14;
   } else if (nelems >= 2097152) {
     nBlocks = 21;
   }
