@@ -5,8 +5,11 @@
 #define MSCCLPP_EXECUTOR_HPP_
 
 #include <memory>
+
+// clang-format off
 #include <mscclpp/core.hpp>
-#include <unordered_map>
+#include <mscclpp/gpu.hpp>
+// clang-format on
 
 namespace mscclpp {
 

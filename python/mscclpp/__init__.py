@@ -4,6 +4,13 @@
 import os as _os
 
 from ._mscclpp import (
+    ErrorCode,
+    BaseError,
+    Error,
+    SysError,
+    CudaError,
+    CuError,
+    IbError,
     Communicator,
     Connection,
     connect_nvls_collective,
