@@ -33,7 +33,6 @@ __global__ void __launch_bounds__(1024, 1)
   __syncthreads();
 
   const size_t peerRootIdx = (root == rank) ? nPeer : ((root < rank) ? root : (root - 1));
-  const size_t isRootInSmallerRank = (root < rank) ? 1 : 0;
 
   const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
   const size_t bytes = bytesPerGPU;
@@ -64,12 +63,17 @@ __global__ void __launch_bounds__(1024, 1)
       int peerIdx = bid % nPeer;
       const size_t offset = blockIdx.x * unitBytesPerBlock * nPeer + i * unitBytes;
       char* send = reinterpret_cast<char*>(sendbuff);
-      char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
+      char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
 
       smChans[peerIdx].copy<16, false>(dst + offset + scratchOffset, send + offset, nPeer * unitBytesPerBlock,
                                        threadIdx.x, blockDim.x);
       __syncthreads();
       if (threadIdx.x == peerIdx) smChans[threadIdx.x].signal();
+      if (IsOutOfPlace) {
+        char* recv = reinterpret_cast<char*>(recvbuff);
+        smChans[peerIdx].copy<16, false>(recv + offset, send + offset, nPeer * unitBytesPerBlock, threadIdx.x,
+                                         blockDim.x);
+      }
     } else {  // rank != root.
       int rankIndexInRoot = (rank < root) ? rank : (rank - 1);
       if (blockIdx.x == rankIndexInRoot && threadIdx.x == peerRootIdx) smChans[peerRootIdx].wait();
@@ -80,7 +84,7 @@ __global__ void __launch_bounds__(1024, 1)
       char* scratch_ = reinterpret_cast<char*>(scratchbuff);
 
       const size_t offset =
-          bid * unitBytesPerBlock + unitBytesPerBlock * nPeer * (rank - isRootInSmallerRank) + i * unitBytes;
+          bid * unitBytesPerBlock + unitBytesPerBlock * nPeer * rankIndexInRoot + i * unitBytes;
       for (int j = 0; j < nPeer; ++j) {
         int peerIdx = (bid + j) % nPeer;
         if (peerIdx != peerRootIdx) {
