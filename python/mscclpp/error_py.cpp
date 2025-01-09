@@ -9,7 +9,19 @@
 namespace nb = nanobind;
 using namespace mscclpp;
 
-void register_error(nb::module_& m) {
+#define REGISTER_EXCEPTION_TRANSLATOR(name_)                                                                         \
+  nb::register_exception_translator(                                                                                 \
+      [](const std::exception_ptr &p, void *payload) {                                                               \
+        try {                                                                                                        \
+          std::rethrow_exception(p);                                                                                 \
+        } catch (const name_ &e) {                                                                                   \
+          PyErr_SetObject(reinterpret_cast<PyObject *>(payload),                                                     \
+                          PyTuple_Pack(2, PyLong_FromLong(long(e.getErrorCode())), PyUnicode_FromString(e.what()))); \
+        }                                                                                                            \
+      },                                                                                                             \
+      m.attr(#name_).ptr());
+
+void register_error(nb::module_ &m) {
   nb::enum_<ErrorCode>(m, "ErrorCode")
       .value("SystemError", ErrorCode::SystemError)
       .value("InternalError", ErrorCode::InternalError)
@@ -19,24 +31,21 @@ void register_error(nb::module_& m) {
       .value("Aborted", ErrorCode::Aborted)
       .value("ExecutorError", ErrorCode::ExecutorError);
 
-  nb::class_<BaseError>(m, "BaseError")
-      .def(nb::init<std::string&, int>(), nb::arg("message"), nb::arg("errorCode"))
-      .def("get_error_code", &BaseError::getErrorCode)
-      .def("what", &BaseError::what);
+  nb::exception<BaseError>(m, "BaseError");
+  REGISTER_EXCEPTION_TRANSLATOR(BaseError);
 
-  nb::class_<Error, BaseError>(m, "Error")
-      .def(nb::init<const std::string&, ErrorCode>(), nb::arg("message"), nb::arg("errorCode"))
-      .def("get_error_code", &Error::getErrorCode);
+  nb::exception<Error>(m, "Error", m.attr("BaseError").ptr());
+  REGISTER_EXCEPTION_TRANSLATOR(Error);
 
-  nb::class_<SysError, BaseError>(m, "SysError")
-      .def(nb::init<const std::string&, int>(), nb::arg("message"), nb::arg("errorCode"));
+  nb::exception<SysError>(m, "SysError", m.attr("BaseError").ptr());
+  REGISTER_EXCEPTION_TRANSLATOR(SysError);
 
-  nb::class_<CudaError, BaseError>(m, "CudaError")
-      .def(nb::init<const std::string&, int>(), nb::arg("message"), nb::arg("errorCode"));
+  nb::exception<CudaError>(m, "CudaError", m.attr("BaseError").ptr());
+  REGISTER_EXCEPTION_TRANSLATOR(CudaError);
 
-  nb::class_<CuError, BaseError>(m, "CuError")
-      .def(nb::init<const std::string&, int>(), nb::arg("message"), nb::arg("errorCode"));
+  nb::exception<CuError>(m, "CuError", m.attr("BaseError").ptr());
+  REGISTER_EXCEPTION_TRANSLATOR(CuError);
 
-  nb::class_<IbError, BaseError>(m, "IbError")
-      .def(nb::init<const std::string&, int>(), nb::arg("message"), nb::arg("errorCode"));
+  nb::exception<IbError>(m, "IbError", m.attr("BaseError").ptr());
+  REGISTER_EXCEPTION_TRANSLATOR(IbError);
 }

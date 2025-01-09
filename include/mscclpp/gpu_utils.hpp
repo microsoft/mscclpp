@@ -193,6 +193,9 @@ void gpuMemcpy(T* dst, const T* src, size_t nelems, cudaMemcpyKind kind = cudaMe
   detail::gpuMemcpy(dst, src, nelems * sizeof(T), kind);
 }
 
+/// Check if NVLink SHARP (NVLS) is supported.
+///
+/// @return True if NVLink SHARP (NVLS) is supported, false otherwise.
 bool isNvlsSupported();
 
 /// Allocates a GPU memory space specialized for communication. The memory is zeroed out. Get the device pointer by
