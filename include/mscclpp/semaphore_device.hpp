@@ -4,11 +4,11 @@
 #ifndef MSCCLPP_SEMAPHORE_DEVICE_HPP_
 #define MSCCLPP_SEMAPHORE_DEVICE_HPP_
 
-#include "device.hpp"
+#include <mscclpp/device.hpp>
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-#include "atomic_device.hpp"
-#include "poll_device.hpp"
+#include <mscclpp/atomic_device.hpp>
+#include <mscclpp/poll_device.hpp>
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace mscclpp {

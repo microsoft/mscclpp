@@ -7,12 +7,13 @@
 #include <cstdint>
 #include <type_traits>
 
-#include "device.hpp"
-
+// clang-format off
+#include <mscclpp/device.hpp>
 #if defined(MSCCLPP_DEVICE_COMPILE)
-#include "atomic_device.hpp"
-#include "poll_device.hpp"
+#include <mscclpp/atomic_device.hpp>
+#include <mscclpp/poll_device.hpp>
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
+// clang-format on
 
 namespace mscclpp {
 /// LL (low latency) protocol packet.

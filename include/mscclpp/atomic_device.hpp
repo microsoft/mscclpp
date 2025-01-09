@@ -4,7 +4,7 @@
 #ifndef MSCCLPP_ATOMIC_DEVICE_HPP_
 #define MSCCLPP_ATOMIC_DEVICE_HPP_
 
-#include "device.hpp"
+#include <mscclpp/device.hpp>
 
 #if defined(MSCCLPP_DEVICE_CUDA)
 #include <cuda/atomic>

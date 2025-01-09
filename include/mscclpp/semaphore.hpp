@@ -6,9 +6,11 @@
 
 #include <memory>
 
-#include "core.hpp"
-#include "gpu_utils.hpp"
-#include "semaphore_device.hpp"
+// clang-format off
+#include <mscclpp/core.hpp>
+#include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/semaphore_device.hpp>
+// clang-format on
 
 namespace mscclpp {
 

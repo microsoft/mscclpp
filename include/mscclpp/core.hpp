@@ -13,12 +13,14 @@
 #include <bitset>
 #include <future>
 #include <memory>
-#include <mscclpp/gpu.hpp>
-#include <mscclpp/gpu_utils.hpp>
 #include <string>
 #include <vector>
 
-#include "errors.hpp"
+// clang-format off
+#include <mscclpp/errors.hpp>
+#include <mscclpp/gpu.hpp>
+#include <mscclpp/gpu_utils.hpp>
+// clang-format on
 
 namespace mscclpp {
 

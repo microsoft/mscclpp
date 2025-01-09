@@ -4,8 +4,12 @@
 #ifndef MSCCLPP_CONCURRENCY_DEVICE_HPP_
 #define MSCCLPP_CONCURRENCY_DEVICE_HPP_
 
-#include "atomic_device.hpp"
-#include "poll_device.hpp"
+#include <mscclpp/device.hpp>
+
+#if defined(MSCCLPP_DEVICE_COMPILE)
+#include <mscclpp/atomic_device.hpp>
+#include <mscclpp/poll_device.hpp>
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace mscclpp {
 

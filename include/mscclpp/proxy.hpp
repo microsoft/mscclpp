@@ -7,7 +7,9 @@
 #include <functional>
 #include <memory>
 
-#include "fifo.hpp"
+// clang-format off
+#include <mscclpp/fifo.hpp>
+// clang-format on
 
 namespace mscclpp {
 

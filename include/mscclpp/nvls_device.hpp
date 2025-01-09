@@ -4,16 +4,13 @@
 #ifndef MSCCLPP_NVLS_DEVICE_HPP_
 #define MSCCLPP_NVLS_DEVICE_HPP_
 
-#include <mscclpp/gpu.hpp>
 #include <type_traits>
 
-#if defined(MSCCLPP_DEVICE_CUDA)
-#include <cuda_fp16.h>
-#endif  // defined(MSCCLPP_DEVICE_CUDA)
-
+// clang-format off
+#include <mscclpp/device.hpp>
+#include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_data_types.hpp>
-
-#include "device.hpp"
+// clang-format on
 
 namespace mscclpp {
 
