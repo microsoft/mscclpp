@@ -37,7 +37,7 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
   const size_t bytes = bytesPerGPU;
   size_t unitBytesPerThread;
-  if (bytes >= nThread * 64) {
+  if (bytes >= nThread * 64 * nPeer) {
     unitBytesPerThread = 64;
   } else {
     unitBytesPerThread = 16;
@@ -51,8 +51,8 @@ __global__ void __launch_bounds__(1024, 1)
 
   size_t scratchOffset = 0;
   for (size_t i = 0; i < nLoop; ++i) {
-    if (i % nLoopToSync == 0) {  // Sync to reuse scratch buff
-      scratchOffset = -i * unitBytes;
+    if (i % nLoopToSync == 0 && i > 0) {
+      scratchOffset -= nLoopToSync * unitBytes;
       deviceSyncer.sync(gridDim.x);
       if (threadIdx.x < nPeer) {
         smChans[threadIdx.x].signal();
@@ -76,15 +76,17 @@ __global__ void __launch_bounds__(1024, 1)
       }
     } else {  // rank != root.
       int rankIndexInRoot = (rank < root) ? rank : (rank - 1);
-      if (blockIdx.x == rankIndexInRoot && threadIdx.x == peerRootIdx) smChans[peerRootIdx].wait();
+      if (bid % nPeer == rankIndexInRoot && threadIdx.x == peerRootIdx) smChans[peerRootIdx].wait();
       deviceSyncer.sync(gridDim.x);  // All blocks in the GPU wait.
 
       // Step 2.
       char* recv_ = reinterpret_cast<char*>(recvbuff);
       char* scratch_ = reinterpret_cast<char*>(scratchbuff);
 
-      const size_t offset =
-          bid * unitBytesPerBlock + unitBytesPerBlock * nPeer * rankIndexInRoot + i * unitBytes;
+      const int chunkId = bid % nPeer;
+      const int chunkGroundId = bid / nPeer;
+      const size_t offset = chunkId * unitBytesPerBlock +
+                            unitBytesPerBlock * nPeer * (chunkGroundId * nPeer + rankIndexInRoot) + i * unitBytes;
       for (int j = 0; j < nPeer; ++j) {
         int peerIdx = (bid + j) % nPeer;
         if (peerIdx != peerRootIdx) {
@@ -101,8 +103,70 @@ __global__ void __launch_bounds__(1024, 1)
       __syncthreads();
       for (int peerId = 0; peerId < nPeer; ++peerId) {
         const size_t offset =
-            bid * unitBytesPerBlock + peerId * unitBytesPerBlock * nPeer + i * unitBytes;
+            chunkId * unitBytesPerBlock + (peerId + chunkGroundId * nPeer) * unitBytesPerBlock * nPeer + i * unitBytes;
         smChans[0].copy<16, false>(recv_ + offset, scratch_ + offset + scratchOffset, unitBytesPerBlock, threadIdx.x,
+                                   blockDim.x);
+      }
+    }
+  }
+
+  // if (tid == 0) {
+  //   printf("remain bytes is %d, nLoop is %d\n", bytes % unitBytes, nLoop);
+  // }
+  if (bytes % unitBytes > 0) {
+    if (rank == root) {
+      int peerIdx = bid % nPeer;
+      const size_t offset = blockIdx.x * unitBytesPerBlock * nPeer + nLoop * unitBytes;
+      const size_t remainBytes =
+          offset < bytes ? ((bytes - offset) > unitBytesPerBlock * nPeer ? unitBytesPerBlock * nPeer : (bytes - offset))
+                         : 0;
+      char* send = reinterpret_cast<char*>(sendbuff);
+      char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);
+
+      smChans[peerIdx].copy<16, true>(dst + offset + scratchOffset, send + offset, remainBytes, threadIdx.x, blockDim.x);
+      __syncthreads();
+      if (threadIdx.x == peerIdx) smChans[threadIdx.x].signal();
+      if constexpr (IsOutOfPlace) {
+        char* recv = reinterpret_cast<char*>(recvbuff);
+        smChans[peerIdx].copy<16, true>(recv + offset, send + offset, remainBytes, threadIdx.x, blockDim.x);
+      }
+
+    } else {
+      int rankIndexInRoot = (rank < root) ? rank : (rank - 1);
+      if (blockIdx.x == rankIndexInRoot && threadIdx.x == peerRootIdx) smChans[peerRootIdx].wait();
+      deviceSyncer.sync(gridDim.x);
+
+      // Step 2.
+      char* recv_ = reinterpret_cast<char*>(recvbuff);
+      char* scratch_ = reinterpret_cast<char*>(scratchbuff);
+
+      const int chunkId = bid % nPeer;
+      const int chunkGroundId = bid / nPeer;
+      const size_t offset = chunkId * unitBytesPerBlock +
+                            unitBytesPerBlock * nPeer * (chunkGroundId * nPeer + rankIndexInRoot) + nLoop * unitBytes;
+      const size_t remainBytes =
+          (offset < bytes) ? ((bytes - offset) > unitBytesPerBlock ? unitBytesPerBlock : (bytes - offset)) : 0;
+
+      for (int j = 0; j < nPeer; ++j) {
+        int peerIdx = (bid + j) % nPeer;
+        if (peerIdx != peerRootIdx) {
+          char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
+          smChans[peerIdx].copy<16, true>(dst + offset + scratchOffset, scratch_ + offset + scratchOffset, remainBytes,
+                                           threadIdx.x, blockDim.x);
+        }
+      }
+      __syncthreads();
+      if (threadIdx.x != peerRootIdx && threadIdx.x < nPeer) {
+        smChans[threadIdx.x].signal();
+        smChans[threadIdx.x].wait();
+      }
+      __syncthreads();
+      for (int peerId = 0; peerId < nPeer; ++peerId) {
+        const size_t offset =
+            chunkId * unitBytesPerBlock + (peerId + chunkGroundId * nPeer) * unitBytesPerBlock * nPeer + nLoop * unitBytes;
+        const size_t remainBytes =
+            (offset < bytes) ? ((bytes - offset) > unitBytesPerBlock ? unitBytesPerBlock : (bytes - offset)) : 0;
+        smChans[0].copy<16, true>(recv_ + offset, scratch_ + offset + scratchOffset, remainBytes, threadIdx.x,
                                    blockDim.x);
       }
     }
@@ -114,13 +178,13 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                       size_t channelOutOffset, int rank, int nRanksPerNode, int root, int worldSize, size_t nelems,
                       cudaStream_t stream) {
   int nBlocks = 7;
-  // if (nelems <= 4096) {
-  //   nBlocks = 7;
-  // } else if (nelems <= 32768) {
-  //   nBlocks = 14;
-  // } else if (nelems >= 2097152) {
-  //   nBlocks = 35;
-  // }
+  if (nelems <= 4096) {
+    nBlocks = 7;
+  } else if (nelems <= 32768) {
+    nBlocks = 14;
+  } else if (nelems >= 2097152) {
+    nBlocks = 21;
+  }
   broadcast6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff, smChannels,
                                                          channelOutOffset, rank, worldSize, root, nRanksPerNode,
                                                          nelems * sizeof(T) / sizeof(int));
