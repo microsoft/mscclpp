@@ -360,7 +360,7 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   commPtr->smSemaphores = std::move(smSemaphores);
   commPtr->buffFlag = 0;
   commPtr->numScratchBuff = 2;
-  commPtr->scratchBuff = mscclpp::GpuBuffer(SCRATCH_SIZE).memory();
+  commPtr->scratchBuff = mscclpp::detail::gpuCallocShared<char>(SCRATCH_SIZE);
   commPtr->remoteScratchRegMemories =
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
 }
