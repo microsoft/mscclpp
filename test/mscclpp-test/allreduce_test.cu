@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <algorithm>
+#include <cstring>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <vector>
@@ -12,8 +13,8 @@
 
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
-__constant__ DeviceHandle<mscclpp::SimpleProxyChannel> constDevFstRoundChans[16];
-__constant__ DeviceHandle<mscclpp::SimpleProxyChannel> constDevSndRoundChans[16];
+__constant__ DeviceHandle<mscclpp::ProxyChannel> constDevFstRoundChans[16];
+__constant__ DeviceHandle<mscclpp::ProxyChannel> constDevSndRoundChans[16];
 
 __constant__ DeviceHandle<mscclpp::SmChannel> constSmInPlaceChans[8];
 __constant__ DeviceHandle<mscclpp::SmChannel> constSmOutOfPlaceChans[8];
@@ -93,8 +94,8 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
     int peerSendId = (remoteSendToRank < rank) ? remoteSendToRank : remoteSendToRank - 1;
     int peerRecvId = (remoteRecvFromRank < rank) ? remoteRecvFromRank : remoteRecvFromRank - 1;
 
-    DeviceHandle<mscclpp::SimpleProxyChannel>& devFstSendChan = constDevFstRoundChans[peerSendId];
-    DeviceHandle<mscclpp::SimpleProxyChannel>& devFstRecvChan = constDevFstRoundChans[peerRecvId];
+    DeviceHandle<mscclpp::ProxyChannel>& devFstSendChan = constDevFstRoundChans[peerSendId];
+    DeviceHandle<mscclpp::ProxyChannel>& devFstRecvChan = constDevFstRoundChans[peerRecvId];
     size_t srcOffset =
         (((rankIndexInNode + i) % nRanksPerNode + startChunkIndex) * chunkSize + offsetInChunk) * sizeof(int);
     size_t dstOffset = rank * chunkSize * sizeof(int);
@@ -109,7 +110,7 @@ __device__ void localReduceScatter(int* buff, int* scratch, int rank, int nRanks
       int prePeerRecvId = (preRemoteRecvFromRank < rank) ? preRemoteRecvFromRank : preRemoteRecvFromRank - 1;
 
       // overlap communication and computation
-      DeviceHandle<mscclpp::SimpleProxyChannel>& preDevFstRecvChan = constDevFstRoundChans[prePeerRecvId];
+      DeviceHandle<mscclpp::ProxyChannel>& preDevFstRecvChan = constDevFstRoundChans[prePeerRecvId];
       if (isComm) {
         preDevFstRecvChan.wait();
         devFstSendChan.putWithSignal(dstOffset, srcOffset, nelems * sizeof(int));
@@ -156,7 +157,7 @@ __device__ void reduceScatter(int* buff, int* scratch, int rank, int nRanksPerNo
   int peerNodeId = peerRank / nRanksPerNode;
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = constDevFstRoundChans[peer];
+  DeviceHandle<mscclpp::ProxyChannel>& proxyChan = constDevFstRoundChans[peer];
   if (peerNodeId == rank / nRanksPerNode) {
     localReduceScatter(buff, scratch, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize);
     return;
@@ -227,8 +228,8 @@ __device__ void localAllGather(int rank, int nRanksPerNode, uint64_t offset, uin
     int peerSendId = (remoteSendToRank < rank) ? remoteSendToRank : remoteSendToRank - 1;
     int peerRecvId = (remoteRecvFromRank < rank) ? remoteRecvFromRank : remoteRecvFromRank - 1;
 
-    DeviceHandle<mscclpp::SimpleProxyChannel>& devSendChan = constDevSndRoundChans[peerSendId];
-    DeviceHandle<mscclpp::SimpleProxyChannel>& devRecvChan = constDevSndRoundChans[peerRecvId];
+    DeviceHandle<mscclpp::ProxyChannel>& devSendChan = constDevSndRoundChans[peerSendId];
+    DeviceHandle<mscclpp::ProxyChannel>& devRecvChan = constDevSndRoundChans[peerRecvId];
     // wait for the data from GPU (rank-i) % nranksPerNode to arrive
     devSendChan.putWithSignal(offset, size);
     devRecvChan.wait();
@@ -251,7 +252,7 @@ __device__ void allGather(int rank, int worldSize, int nRanksPerNode, size_t nel
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = constDevSndRoundChans[peer];
+  DeviceHandle<mscclpp::ProxyChannel>& proxyChan = constDevSndRoundChans[peer];
 
   if (peerNodeId == rank / nRanksPerNode) {
     localAllGather(rank, nRanksPerNode, rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
@@ -456,7 +457,7 @@ __device__ void reduceScatterSm(int* buff, int* scratch, int rank, int nRanksPer
   int isComm = (threadIdx.x == 0) && ((int)blockIdx.x == nBlocksForReduceScatter);
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   int nBlocksRemain = gridDim.x - nBlocksForReduceScatter;
-  DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = constDevFstRoundChans[peer];
+  DeviceHandle<mscclpp::ProxyChannel>& proxyChan = constDevFstRoundChans[peer];
   if (peerNodeId == rank / nRanksPerNode) {
     localReduceScatterSm(buff, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, gridDim.x);
     return;
@@ -631,7 +632,7 @@ __device__ void allGatherSm(int rank, int worldSize, int nRanksPerNode, size_t n
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  DeviceHandle<mscclpp::SimpleProxyChannel>& proxyChan = constDevSndRoundChans[peer];
+  DeviceHandle<mscclpp::ProxyChannel>& proxyChan = constDevSndRoundChans[peer];
   const size_t nBlocksForLocalAllGather = gridDim.x / (nRanksPerNode - 1) * (nRanksPerNode - 1);
   const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
   const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
@@ -681,7 +682,7 @@ __global__ void __launch_bounds__(1024)
   int remoteRank = (peerId < rank) ? peerId : peerId + 1;
 
   // 1st communication phase: send data to the scratch buffer of the peer associated with this block
-  DeviceHandle<mscclpp::SimpleProxyChannel>& devFstRoundChan = constDevFstRoundChans[peerId];
+  DeviceHandle<mscclpp::ProxyChannel>& devFstRoundChan = constDevFstRoundChans[peerId];
   Chunk toPeerChunk = getChunk(nelems, worldSize, remoteRank);
   // Now we need to figure out the offset of this chunk in the scratch buffer of the destination.
   // The destination will have allocated a scratch buffer of size numPeers() * toPeerChunk.size and
@@ -699,7 +700,7 @@ __global__ void __launch_bounds__(1024)
   deviceSyncer.sync(gridDim.x);
 
   // Local reduction: every block reduces a slice of each chunk in the scratch buffer into the user buffer
-  DeviceHandle<mscclpp::SimpleProxyChannel>& devSndRoundChan = constDevSndRoundChans[peerId];
+  DeviceHandle<mscclpp::ProxyChannel>& devSndRoundChan = constDevSndRoundChans[peerId];
   Chunk rankChunk = getChunk(nelems, worldSize, rank);
   int* chunk = buff + rankChunk.offset;
   int numPeers = gridDim.x / BLOCKS_PER_PEER;
@@ -733,10 +734,10 @@ __global__ void __launch_bounds__(1024) allreduce1(int* buff, int* scratch, int 
   int peerSendId = (remoteSendRank < rank) ? remoteSendRank : remoteSendRank - 1;
   int peerRecvId = (remoteRecvRank < rank) ? remoteRecvRank : remoteRecvRank - 1;
 
-  DeviceHandle<mscclpp::SimpleProxyChannel>& devFstSendChan = constDevFstRoundChans[peerSendId];
-  DeviceHandle<mscclpp::SimpleProxyChannel>& devFstRecvChan = constDevFstRoundChans[peerRecvId];
-  DeviceHandle<mscclpp::SimpleProxyChannel>& devSndSendChan = constDevSndRoundChans[peerSendId];
-  DeviceHandle<mscclpp::SimpleProxyChannel>& devSndRecvChan = constDevSndRoundChans[peerRecvId];
+  DeviceHandle<mscclpp::ProxyChannel>& devFstSendChan = constDevFstRoundChans[peerSendId];
+  DeviceHandle<mscclpp::ProxyChannel>& devFstRecvChan = constDevFstRoundChans[peerRecvId];
+  DeviceHandle<mscclpp::ProxyChannel>& devSndSendChan = constDevSndRoundChans[peerSendId];
+  DeviceHandle<mscclpp::ProxyChannel>& devSndRecvChan = constDevSndRoundChans[peerRecvId];
 
   // Step 1
   size_t chunkIndex = (rank + worldSize - 1) % worldSize;
@@ -850,7 +851,7 @@ __global__ void __launch_bounds__(1024)
 
   // Channel to a remote peer that has the same local rank as me
   int localRank = rank % nRanksPerNode;
-  DeviceHandle<mscclpp::SimpleProxyChannel> proxyChan = constDevFstRoundChans[localRank];
+  DeviceHandle<mscclpp::ProxyChannel> proxyChan = constDevFstRoundChans[localRank];
 
   // Flag for packets. Initially 1
   uint32_t flag = (uint32_t)globalFlag;
@@ -1272,30 +1273,30 @@ bool AllReduceTestEngine::isInPlace() const {
 }
 
 void AllReduceTestEngine::allocateBuffer() {
-  inputBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
-  resultBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
+  inputBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
+  resultBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
   inputBuff = inputBuff_.get();
   resultBuff = resultBuff_.get();
 
   if (args_.kernelNum == 0 || args_.kernelNum == 1 || args_.kernelNum == 3 || args_.kernelNum == 4) {
-    scratchBuff_ = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
+    scratchBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
     scratchBuff = scratchBuff_.get();
   } else if (args_.kernelNum == 2) {
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     // 2x for double-buffering
     const size_t scratchBuffNelem = nPacket * std::max(args_.nRanksPerNode - 1, 1) * 2;
-    scratchPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
+    scratchPacketBuff_ = mscclpp::GpuBuffer<mscclpp::LLPacket>(scratchBuffNelem).memory();
     scratchPacketBuff = scratchPacketBuff_.get();
     const size_t packetBuffNelem = nPacket * 2;
-    putPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
-    getPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(packetBuffNelem);
+    putPacketBuff_ = mscclpp::GpuBuffer<mscclpp::LLPacket>(packetBuffNelem).memory();
+    getPacketBuff_ = mscclpp::GpuBuffer<mscclpp::LLPacket>(packetBuffNelem).memory();
     putPacketBuff = putPacketBuff_.get();
     getPacketBuff = getPacketBuff_.get();
   } else if (args_.kernelNum == 6 || args_.kernelNum == 7) {
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     // 2x for double-buffering, scratchBuff used to store original data and reduced results
     const size_t scratchBuffNelem = nPacket * 2 /*original data & reduced result */ * 2 /* double buffering*/;
-    scratchPacketBuff_ = mscclpp::allocExtSharedCuda<mscclpp::LLPacket>(scratchBuffNelem);
+    scratchPacketBuff_ = mscclpp::GpuBuffer<mscclpp::LLPacket>(scratchBuffNelem).memory();
     scratchPacketBuff = scratchPacketBuff_.get();
   }
 
@@ -1309,7 +1310,7 @@ void AllReduceTestEngine::setupConnections() {
                           [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
   };
   if (isUsePacket()) {
-    std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> proxyChannels;
+    std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannels;
 
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     if (args_.kernelNum == 6 || args_.kernelNum == 7) {
@@ -1332,7 +1333,7 @@ void AllReduceTestEngine::setupConnections() {
       if (smOutOfPlaceChannels_.size() > sizeof(constSmOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {
         std::runtime_error("unexpected error");
       }
-      if (proxyChannels.size() > sizeof(constDevFstRoundChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
+      if (proxyChannels.size() > sizeof(constDevFstRoundChans) / sizeof(DeviceHandle<mscclpp::ProxyChannel>)) {
         std::runtime_error("unexpected error");
       }
 
@@ -1341,27 +1342,27 @@ void AllReduceTestEngine::setupConnections() {
       CUDATHROW(cudaMemcpyToSymbol(constSmOutOfPlaceChans, smChannelDeviceHandles.data(),
                                    sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelDeviceHandles.size()));
       CUDATHROW(cudaMemcpyToSymbol(constDevFstRoundChans, proxyChannels.data(),
-                                   sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * proxyChannels.size()));
+                                   sizeof(DeviceHandle<mscclpp::ProxyChannel>) * proxyChannels.size()));
     }
   } else {
-    std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> fstRoundChannels;
-    std::vector<DeviceHandle<mscclpp::SimpleProxyChannel>> sndRoundChannels;
+    std::vector<DeviceHandle<mscclpp::ProxyChannel>> fstRoundChannels;
+    std::vector<DeviceHandle<mscclpp::ProxyChannel>> sndRoundChannels;
 
     // Send data from local inputBuff to remote scratchBuff (out-of-place)
     setupMeshConnections(fstRoundChannels, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
-    if (fstRoundChannels.size() > sizeof(constDevFstRoundChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
+    if (fstRoundChannels.size() > sizeof(constDevFstRoundChans) / sizeof(DeviceHandle<mscclpp::ProxyChannel>)) {
       std::runtime_error("unexpected error");
     }
     CUDATHROW(cudaMemcpyToSymbol(constDevFstRoundChans, fstRoundChannels.data(),
-                                 sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * fstRoundChannels.size()));
+                                 sizeof(DeviceHandle<mscclpp::ProxyChannel>) * fstRoundChannels.size()));
 
     // Send data from local inputBuff to remote inputBuff (in-place)
     setupMeshConnections(sndRoundChannels, inputBuff_.get(), args_.maxBytes);
-    if (sndRoundChannels.size() > sizeof(constDevSndRoundChans) / sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>)) {
+    if (sndRoundChannels.size() > sizeof(constDevSndRoundChans) / sizeof(DeviceHandle<mscclpp::ProxyChannel>)) {
       std::runtime_error("unexpected error");
     }
     CUDATHROW(cudaMemcpyToSymbol(constDevSndRoundChans, sndRoundChannels.data(),
-                                 sizeof(DeviceHandle<mscclpp::SimpleProxyChannel>) * sndRoundChannels.size()));
+                                 sizeof(DeviceHandle<mscclpp::ProxyChannel>) * sndRoundChannels.size()));
 
     setupMeshConnections(smOutOfPlaceChannels_, inputBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes);
     if (smOutOfPlaceChannels_.size() > sizeof(constSmOutOfPlaceChans) / sizeof(DeviceHandle<mscclpp::SmChannel>)) {

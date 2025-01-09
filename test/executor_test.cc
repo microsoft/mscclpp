@@ -89,9 +89,8 @@ double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::s
 }
 
 int main(int argc, char* argv[]) {
-  if (argc != 6 && argc != 7) {
+  if (argc != 5 && argc != 6) {
     std::cerr << "Usage: " << argv[0] << " <buffer size>"
-              << " <execution plan name>"
               << " <execution plan path>"
               << " <number of iterations>"
               << " <number of graph iterations>"
@@ -107,14 +106,13 @@ int main(int argc, char* argv[]) {
   MSCCLPP_CUDATHROW(cudaSetDevice(rank));
 
   const size_t bufferSize = parseSize(argv[1]);
-  const std::string executionPlanName = argv[2];
-  const std::string executionPlanPath = argv[3];
-  const int niters = std::stoi(argv[4]);
-  const int ngraphIters = std::stoi(argv[5]);
+  const std::string executionPlanPath = argv[2];
+  const int niters = std::stoi(argv[3]);
+  const int ngraphIters = std::stoi(argv[4]);
   const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
   mscclpp::PacketType packetType = mscclpp::PacketType::LL16;
-  if (argc == 7) {
-    packetType = parsePacketType(argv[6]);
+  if (argc == 6) {
+    packetType = parsePacketType(argv[5]);
   }
 
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
@@ -130,8 +128,8 @@ int main(int argc, char* argv[]) {
     NpKit::Init(rank);
   }
 
-  mscclpp::ExecutionPlan plan(executionPlanName, executionPlanPath);
-  std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
+  mscclpp::ExecutionPlan plan(executionPlanPath);
+  std::shared_ptr<char> sendbuff = mscclpp::GpuBuffer(bufferSize).memory();
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
   MSCCLPP_CUDATHROW(cudaMemcpy(sendbuff.get(), dataHost.data(), bufferSize, cudaMemcpyHostToDevice));
   double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, niters, ngraphIters, packetType);

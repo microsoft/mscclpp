@@ -11,6 +11,8 @@
 #include <cuda_fp16.h>
 #endif  // defined(MSCCLPP_DEVICE_CUDA)
 
+#include <mscclpp/gpu_data_types.hpp>
+
 #include "device.hpp"
 
 namespace mscclpp {
@@ -27,7 +29,11 @@ struct DeviceMulticastPointerDeviceHandle {
 #if defined(MSCCLPP_DEVICE_CUDA)
   template <typename TValue, typename T>
   MSCCLPP_DEVICE_INLINE static void multimemLoadReduce(TValue& val, T* ptr) {
-    if constexpr (std::is_same_v<TValue, uint4> && std::is_same_v<T, float>) {
+    if constexpr (std::is_same_v<TValue, int32_t> && std::is_same_v<T, int32_t>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.s32 %0, [%1];" : "=r"(val) : "l"(ptr) : "memory");
+    } else if constexpr (std::is_same_v<TValue, uint32_t> && std::is_same_v<T, uint32_t>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.u32 %0, [%1];" : "=r"(val) : "l"(ptr) : "memory");
+    } else if constexpr (std::is_same_v<TValue, uint4> && std::is_same_v<T, float>) {
       asm("multimem.ld_reduce.relaxed.sys.global.add.v4.f32 {%0,%1,%2,%3}, [%4];"
           : "=r"(val.x), "=r"(val.y), "=r"(val.z), "=r"(val.w)
           : "l"(ptr)
@@ -51,6 +57,13 @@ struct DeviceMulticastPointerDeviceHandle {
           : "memory");
     } else if constexpr (std::is_same_v<TValue, uint1> && std::is_same_v<T, __half2>) {
       asm("multimem.ld_reduce.relaxed.sys.global.add.f16x2 {%0}, [%1];" : "=r"(val.x) : "l"(ptr) : "memory");
+    } else if constexpr (std::is_same_v<TValue, uint4> && std::is_same_v<T, __bfloat162>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.v4.bf16x2 {%0,%1,%2,%3}, [%4];"
+          : "=r"(val.x), "=r"(val.y), "=r"(val.z), "=r"(val.w)
+          : "l"(ptr)
+          : "memory");
+    } else if constexpr (std::is_same_v<TValue, uint1> && std::is_same_v<T, __bfloat162>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.bf16x2 {%0}, [%1];" : "=r"(val.x) : "l"(ptr) : "memory");
     } else {
       static_assert(dependentFalse<T>, "Not supported type");
     }
@@ -58,7 +71,11 @@ struct DeviceMulticastPointerDeviceHandle {
 
   template <typename TValue, typename T>
   MSCCLPP_DEVICE_INLINE static void multimemStore(const TValue& val, T* ptr) {
-    if constexpr (std::is_same_v<TValue, uint4> && std::is_same_v<T, float>) {
+    if constexpr (std::is_same_v<TValue, int32_t> && std::is_same_v<T, int32_t>) {
+      asm volatile("multimem.st.relaxed.sys.global.s32 [%0], %1;" ::"l"(ptr), "r"(val) : "memory");
+    } else if constexpr (std::is_same_v<TValue, uint32_t> && std::is_same_v<T, uint32_t>) {
+      asm volatile("multimem.st.relaxed.sys.global.u32 [%0], %1;" ::"l"(ptr), "r"(val) : "memory");
+    } else if constexpr (std::is_same_v<TValue, uint4> && std::is_same_v<T, float>) {
       asm volatile("multimem.st.relaxed.sys.global.v4.f32 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x), "r"(val.y),
                    "r"(val.z), "r"(val.w)
                    : "memory");
@@ -76,6 +93,12 @@ struct DeviceMulticastPointerDeviceHandle {
                    : "memory");
     } else if constexpr (std::is_same_v<TValue, uint1> && std::is_same_v<T, __half2>) {
       asm volatile("multimem.st.relaxed.sys.global.f16x2 [%0], {%1};" ::"l"(ptr), "r"(val.x) : "memory");
+    } else if constexpr (std::is_same_v<TValue, uint4> && std::is_same_v<T, __bfloat162>) {
+      asm volatile("multimem.st.relaxed.sys.global.v4.bf16x2 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.x), "r"(val.y),
+                   "r"(val.z), "r"(val.w)
+                   : "memory");
+    } else if constexpr (std::is_same_v<TValue, uint1> && std::is_same_v<T, __bfloat162>) {
+      asm volatile("multimem.st.relaxed.sys.global.bf16x2 [%0], {%1};" ::"l"(ptr), "r"(val.x) : "memory");
     } else {
       static_assert(dependentFalse<T>, "Not supported type");
     }

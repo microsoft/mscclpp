@@ -27,7 +27,7 @@ from mscclpp import (
     npkit,
 )
 import mscclpp.comm as mscclpp_comm
-from mscclpp.utils import KernelBuilder, pack
+from mscclpp.utils import KernelBuilder, GpuBuffer, pack
 from ._cpp import _ext
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
@@ -156,12 +156,26 @@ def test_group_with_connections(mpi_group: MpiGroup, transport: str):
     create_group_and_connection(mpi_group, transport)
 
 
+@parametrize_mpi_groups(1)
+@pytest.mark.parametrize("nelem", [2**i for i in [0, 10, 15, 20]])
+@pytest.mark.parametrize("dtype", [cp.float32, cp.float16])
+def test_gpu_buffer(mpi_group: MpiGroup, nelem: int, dtype: cp.dtype):
+    memory = GpuBuffer(nelem, dtype=dtype)
+    assert memory.shape == (nelem,)
+    assert memory.dtype == dtype
+    assert memory.itemsize == cp.dtype(dtype).itemsize
+    assert memory.nbytes == nelem * cp.dtype(dtype).itemsize
+    assert memory.data.ptr != 0
+    assert memory.data.mem.ptr != 0
+    assert memory.data.mem.size >= nelem * cp.dtype(dtype).itemsize
+
+
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 def test_connection_write(mpi_group: MpiGroup, transport: Transport, nelem: int):
     group, connections = create_group_and_connection(mpi_group, transport)
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     nelemPerRank = nelem // group.nranks
     sizePerRank = nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
@@ -346,9 +360,9 @@ class MscclppKernel:
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
-        elif test_name == "simple_proxy_channel":
+        elif test_name == "proxy_channel":
             self._kernel = KernelBuilder(
-                file="simple_proxy_channel_test.cu", kernel_name="simple_proxy_channel", file_dir=file_dir
+                file="proxy_channel_test.cu", kernel_name="proxy_channel", file_dir=file_dir
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = 1024
@@ -376,11 +390,11 @@ class MscclppKernel:
             # keep a reference to the device handles so that they don't get garbage collected
             self._d_semaphore_or_channels = cp.asarray(memoryview(b"".join(device_handles)), dtype=cp.uint8)
 
-        if test_name in ["h2d_semaphore", "d2d_semaphore", "sm_channel", "simple_proxy_channel"]:
+        if test_name in ["h2d_semaphore", "d2d_semaphore", "sm_channel", "proxy_channel"]:
             self.params += pack(self._d_semaphore_or_channels, my_rank, nranks)
             if test_name == "sm_channel":
                 self.params += pack(tensor.size, use_packet)
-            if test_name == "simple_proxy_channel":
+            if test_name == "proxy_channel":
                 self.params += pack(tensor, scratch, tensor.size, use_packet)
         elif test_name == "fifo":
             self.params = fifo.device_handle().raw
@@ -436,13 +450,12 @@ def test_d2d_semaphores(mpi_group: MpiGroup):
 def test_sm_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
     group, connections = create_group_and_connection(mpi_group, "NVLink")
 
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     if use_packet:
-        scratch = cp.zeros(nelem * 2, dtype=cp.int32)
+        scratch = GpuBuffer(nelem * 2, dtype=cp.int32)
     else:
         scratch = None
     nelemPerRank = nelem // group.nranks
-    nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
     memory_expected = cp.zeros_like(memory)
     for rank in range(group.nranks):
@@ -484,7 +497,7 @@ def test_fifo(
 def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
     group, connections = create_group_and_connection(mpi_group, transport)
 
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
@@ -531,14 +544,14 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["NVLink", "IB"])
 @pytest.mark.parametrize("use_packet", [False, True])
-def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
+def test_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
     group, connections = create_group_and_connection(mpi_group, transport)
 
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     if use_packet:
-        scratch = cp.zeros(nelem * 2, dtype=cp.int32)
+        scratch = GpuBuffer(nelem * 2, dtype=cp.int32)
     else:
-        scratch = cp.zeros(1, dtype=cp.int32)  # just so that we can pass a valid ptr
+        scratch = GpuBuffer(1, dtype=cp.int32)  # just so that we can pass a valid ptr
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
@@ -552,13 +565,13 @@ def test_simple_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, u
         memory_to_register = scratch
     else:
         memory_to_register = memory
-    simple_channels = group.make_proxy_channels(proxy_service, memory_to_register, connections)
+    channels = group.make_proxy_channels(proxy_service, memory_to_register, connections)
 
     kernel = MscclppKernel(
-        "simple_proxy_channel",
+        "proxy_channel",
         my_rank=group.my_rank,
         nranks=group.nranks,
-        semaphore_or_channels=simple_channels,
+        semaphore_or_channels=channels,
         tensor=memory,
         use_packet=use_packet,
         scratch=scratch,
@@ -607,7 +620,7 @@ def test_executor(mpi_group: MpiGroup, filename: str):
     npkit_dump_dir = os.getenv("NPKIT_DUMP_DIR")
     if npkit_dump_dir is not None:
         npkit.init(mscclpp_group.my_rank)
-    execution_plan = ExecutionPlan("allreduce_pairs", os.path.join(project_dir, "test", "execution-files", filename))
+    execution_plan = ExecutionPlan(os.path.join(project_dir, "test", "execution-files", filename))
 
     nelems = 1024 * 1024
     cp.random.seed(42)

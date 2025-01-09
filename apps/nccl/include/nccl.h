@@ -69,6 +69,15 @@ typedef struct ncclConfig_v21700 {
         NCCL_CONFIG_UNDEF_INT                             /* splitShare */     \
   }
 
+/* NCCL malloc and free function for all types of NCCL optimizations
+ * (e.g. user buffer registration). The actual allocated size might
+ * be larger than requested due to granularity requirement. */
+ncclResult_t ncclMemAlloc(void** ptr, size_t size);
+ncclResult_t pncclMemAlloc(void** ptr, size_t size);
+
+ncclResult_t ncclMemFree(void* ptr);
+ncclResult_t pncclMemFree(void* ptr);
+
 /* Return the NCCL_VERSION_CODE of the NCCL library in the supplied integer.
  * This integer is coded with the MAJOR, MINOR and PATCH level of the
  * NCCL library

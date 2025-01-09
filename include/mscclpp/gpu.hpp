@@ -22,6 +22,7 @@ using CUdeviceptr = hipDeviceptr_t;
 using CUmemGenericAllocationHandle = hipMemGenericAllocationHandle_t;
 using CUmemAllocationProp = hipMemAllocationProp;
 using CUmemAccessDesc = hipMemAccessDesc;
+using CUmemAllocationHandleType = hipMemAllocationHandleType;
 
 constexpr auto cudaSuccess = hipSuccess;
 constexpr auto cudaStreamNonBlocking = hipStreamNonBlocking;
@@ -86,6 +87,9 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define cuMemSetAccess(...) hipMemSetAccess(__VA_ARGS__)
 #define cuMemMap(...) hipMemMap(__VA_ARGS__)
 #define cuMemUnmap(...) hipMemUnmap(__VA_ARGS__)
+#define cuMemRetainAllocationHandle(...) hipMemRetainAllocationHandle(__VA_ARGS__)
+#define cuMemExportToShareableHandle(...) hipMemExportToShareableHandle(__VA_ARGS__)
+#define cuMemImportFromShareableHandle(...) hipMemImportFromShareableHandle(__VA_ARGS__)
 
 #else
 
@@ -97,9 +101,10 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 // NVLS
 #if !defined(__HIP_PLATFORM_AMD__)
 #include <linux/version.h>
-#define USE_NVLS ((CUDART_VERSION >= 12010) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)))
+// We need CU_MEM_HANDLE_TYPE_FABRIC (instroduced in cuda12.3) to support sharing handles across GPUs via sockets
+#define CUDA_NVLS_SUPPORTED ((CUDART_VERSION >= 12030) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)))
 #else  // !defined(__HIP_PLATFORM_AMD__)
-#define USE_NVLS 0
+#define CUDA_NVLS_SUPPORTED 0
 #endif  // !defined(__HIP_PLATFORM_AMD__)
 
 // GPU sync threads

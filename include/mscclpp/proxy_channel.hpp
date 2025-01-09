@@ -11,6 +11,7 @@
 
 namespace mscclpp {
 
+struct BaseProxyChannel;
 struct ProxyChannel;
 
 /// Base class for proxy services. Proxy services are used to proxy data between devices.
@@ -48,10 +49,17 @@ class ProxyService : public BaseProxyService {
   /// @return The semaphore.
   std::shared_ptr<Host2DeviceSemaphore> semaphore(SemaphoreId id) const;
 
-  /// Get a proxy channel by semaphore ID.
+  /// Get a base proxy channel by semaphore ID.
   /// @param id The ID of the semaphore.
+  /// @return The base proxy channel.
+  BaseProxyChannel baseProxyChannel(SemaphoreId id);
+
+  /// Get a proxy channel by semaphore ID and memory regions.
+  /// @param id The ID of the semaphore.
+  /// @param dst The destination memory region.
+  /// @param src The source memory region.
   /// @return The proxy channel.
-  ProxyChannel proxyChannel(SemaphoreId id);
+  ProxyChannel proxyChannel(SemaphoreId id, MemoryId dst, MemoryId src);
 
   /// Start the proxy service.
   void startProxy();
@@ -64,6 +72,7 @@ class ProxyService : public BaseProxyService {
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
   int deviceNumaNode;
+  std::unordered_map<std::shared_ptr<Connection>, int> inflightRequests;
 
   void bindThread();
 
@@ -71,8 +80,8 @@ class ProxyService : public BaseProxyService {
 };
 
 /// Proxy channel.
-struct ProxyChannel {
- private:
+struct BaseProxyChannel {
+ protected:
   SemaphoreId semaphoreId_;
 
   std::shared_ptr<Host2DeviceSemaphore> semaphore_;
@@ -80,12 +89,48 @@ struct ProxyChannel {
   std::shared_ptr<Proxy> proxy_;
 
  public:
+  BaseProxyChannel() = default;
+
+  BaseProxyChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
+                   std::shared_ptr<Proxy> proxy);
+
+  BaseProxyChannel(const BaseProxyChannel& other) = default;
+
+  BaseProxyChannel& operator=(BaseProxyChannel& other) = default;
+
+  /// Device-side handle for @ref BaseProxyChannel.
+  using DeviceHandle = BaseProxyChannelDeviceHandle;
+
+  /// Returns the device-side handle.
+  ///
+  /// User should make sure the BaseProxyChannel is not released when using the returned handle.
+  ///
+  DeviceHandle deviceHandle() const;
+};
+
+/// A common form of proxy channel with a single destination and source memory region.
+struct ProxyChannel : public BaseProxyChannel {
+ private:
+  MemoryId dst_;
+  MemoryId src_;
+
+ public:
+  /// Default constructor.
   ProxyChannel() = default;
 
-  ProxyChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy);
+  /// Constructor.
+  /// @param semaphoreId The ID of the semaphore.
+  /// @param semaphore The semaphore.
+  /// @param proxy The proxy.
+  /// @param dst The destination memory region.
+  /// @param src The source memory region.
+  ProxyChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy,
+               MemoryId dst, MemoryId src);
 
+  /// Copy constructor.
   ProxyChannel(const ProxyChannel& other) = default;
 
+  /// Assignment operator.
   ProxyChannel& operator=(ProxyChannel& other) = default;
 
   /// Device-side handle for @ref ProxyChannel.
@@ -94,43 +139,6 @@ struct ProxyChannel {
   /// Returns the device-side handle.
   ///
   /// User should make sure the ProxyChannel is not released when using the returned handle.
-  ///
-  DeviceHandle deviceHandle() const;
-};
-
-/// Simple proxy channel with a single destination and source memory region.
-struct SimpleProxyChannel {
- private:
-  ProxyChannel proxyChan_;
-  MemoryId dst_;
-  MemoryId src_;
-
- public:
-  /// Default constructor.
-  SimpleProxyChannel() = default;
-
-  /// Constructor.
-  /// @param proxyChan The proxy channel.
-  /// @param dst The destination memory region.
-  /// @param src The source memory region.
-  SimpleProxyChannel(ProxyChannel proxyChan, MemoryId dst, MemoryId src);
-
-  /// Constructor.
-  /// @param proxyChan The proxy channel.
-  SimpleProxyChannel(ProxyChannel proxyChan) : proxyChan_(proxyChan) {}
-
-  /// Copy constructor.
-  SimpleProxyChannel(const SimpleProxyChannel& other) = default;
-
-  /// Assignment operator.
-  SimpleProxyChannel& operator=(SimpleProxyChannel& other) = default;
-
-  /// Device-side handle for @ref SimpleProxyChannel.
-  using DeviceHandle = SimpleProxyChannelDeviceHandle;
-
-  /// Returns the device-side handle.
-  ///
-  /// User should make sure the SimpleProxyChannel is not released when using the returned handle.
   ///
   DeviceHandle deviceHandle() const;
 };

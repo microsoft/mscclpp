@@ -14,6 +14,7 @@ from mscclpp import (
     ProxyService,
     Transport,
 )
+from mscclpp.utils import GpuBuffer
 import mscclpp.comm as mscclpp_comm
 
 def create_connection(group: mscclpp_comm.CommGroup, transport: str):
@@ -32,7 +33,7 @@ if __name__ == "__main__":
     mscclpp_group = mscclpp_comm.CommGroup(MPI.COMM_WORLD)
     connections = create_connection(mscclpp_group, "NVLink")
     nelems = 1024
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     proxy_service = ProxyService()
     simple_channels = group.make_proxy_channels(proxy_service, memory, connections)
     proxy_service.start_proxy()
@@ -47,7 +48,7 @@ We provide some Python utils to help you launch kernel via python. Here is a exa
 ```python
 from mscclpp.utils import KernelBuilder, pack
 
-def launch_kernel(my_rank: int, nranks: int, simple_channels: List[SimpleProxyChannel], memory: cp.ndarray):
+def launch_kernel(my_rank: int, nranks: int, simple_channels: List[ProxyChannel], memory: cp.ndarray):
     file_dir = os.path.dirname(os.path.abspath(__file__))
     kernel = KernelBuilder(file="test.cu", kernel_name="test", file_dir=file_dir).get_compiled_kernel()
     params = b""
@@ -77,7 +78,7 @@ The test kernel is defined in `test.cu` as follows:
 
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    simple_proxy_channel(mscclpp::SimpleProxyChannelDeviceHandle* channels, int my_rank, int nranks,
+    proxy_channel(mscclpp::ProxyChannelDeviceHandle* channels, int my_rank, int nranks,
                          int num_elements) {
     int tid = threadIdx.x;
     int nthreads = blockDim.x;

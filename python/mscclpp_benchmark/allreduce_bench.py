@@ -15,6 +15,7 @@ from mpi4py import MPI
 import cupy.cuda.nccl as nccl
 import mscclpp.comm as mscclpp_comm
 from mscclpp import ProxyService, is_nvls_supported
+from mscclpp.utils import GpuBuffer
 from prettytable import PrettyTable
 import netifaces as ni
 import ipaddress
@@ -162,8 +163,8 @@ def find_best_config(mscclpp_call, niter):
 def run_benchmark(
     mscclpp_group: mscclpp_comm.CommGroup, nccl_op: nccl.NcclCommunicator, table: PrettyTable, niter: int, nelem: int
 ):
-    memory = cp.zeros(nelem, dtype=data_type)
-    memory_out = cp.zeros(nelem, dtype=data_type)
+    memory = GpuBuffer(nelem, dtype=data_type)
+    memory_out = GpuBuffer(nelem, dtype=data_type)
     cp.cuda.runtime.deviceSynchronize()
 
     proxy_service = ProxyService()
@@ -289,7 +290,7 @@ if __name__ == "__main__":
     mscclpp_algbw = []
     nccl_algbw = []
     speed_ups = []
-    end_range = 28 if is_nvls_supported() else 29
+    end_range = 29
     for i in range(10, end_range):
         if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
             nelems = 2**i
