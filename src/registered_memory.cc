@@ -24,22 +24,6 @@
   } while (false)
 
 namespace {
-size_t getMinGranularity(size_t size) {
-#if (CUDA_NVLS_SUPPORTED)
-  return mscclpp::detail::getMulticastGranularity(size, CU_MULTICAST_GRANULARITY_MINIMUM);
-#else
-  throw mscclpp::Error("Only support GPU with NVLS support", mscclpp::ErrorCode::InvalidUsage);
-#endif
-}
-
-size_t getRecommendedGranularity(size_t size) {
-#if (CUDA_NVLS_SUPPORTED)
-  return mscclpp::detail::getMulticastGranularity(size, CU_MULTICAST_GRANULARITY_RECOMMENDED);
-#else
-  throw mscclpp::Error("Only support GPU with NVLS support", mscclpp::ErrorCode::InvalidUsage);
-#endif
-}
-
 CUmemAllocationHandleType getNvlsCompatibleMemHandleType() {
 #if (CUDA_NVLS_SUPPORTED)
   return CU_MEM_HANDLE_TYPE_FABRIC;
@@ -233,15 +217,21 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
     if (this->isCuMemMapAlloc) {
+#if (CUDA_NVLS_SUPPORTED)
       CUmemGenericAllocationHandle handle;
       MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsCompatibleMemHandleType()));
-      size_t minGran = getMinGranularity(this->size);
-      size_t recommendedGran = getRecommendedGranularity(this->size);
+      size_t minGran = detail::getMulticastGranularity(size, CU_MULTICAST_GRANULARITY_MINIMUM);
+      size_t recommendedGran = detail::getMulticastGranularity(size, CU_MULTICAST_GRANULARITY_RECOMMENDED);
       size_t size = (this->size + recommendedGran - 1) / recommendedGran * recommendedGran;
       MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&base, size, minGran, 0, 0));
       MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, size, 0, handle, 0));
       detail::setReadWriteMemoryAccess(base, size);
       this->data = static_cast<char*>(base) + entry.offsetFromBase;
+#else
+      throw mscclpp::Error(
+          "CUDA does not support NVLS. Please ensure your CUDA version supports NVLS to use this feature.",
+          mscclpp::ErrorCode::InvalidUsage);
+#endif
     } else {
       MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
       this->data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
