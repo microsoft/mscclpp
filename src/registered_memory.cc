@@ -24,23 +24,17 @@
   } while (false)
 
 namespace {
-// Get the recommended granularity for cuMemAddressReserve
-size_t getRecommendedGranularity() {
+size_t getMinGranularity(size_t size) {
 #if (CUDA_NVLS_SUPPORTED)
-  size_t gran = 0;
-  int deviceId = -1;
-  int currentDevice = -1;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
-  MSCCLPP_CUTHROW(cuDeviceGet(&currentDevice, deviceId));
+  return mscclpp::detail::getMulticastGranularity(size, CU_MULTICAST_GRANULARITY_MINIMUM);
+#else
+  throw mscclpp::Error("Only support GPU with NVLS support", mscclpp::ErrorCode::InvalidUsage);
+#endif
+}
 
-  CUmemAllocationProp prop = {};
-  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  prop.requestedHandleTypes =
-      (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
-  prop.location.id = currentDevice;
-  MSCCLPP_CUTHROW(cuMemGetAllocationGranularity(&gran, &prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
-  return gran;
+size_t getRecommendedGranularity(size_t size) {
+#if (CUDA_NVLS_SUPPORTED)
+  return mscclpp::detail::getMulticastGranularity(size, CU_MULTICAST_GRANULARITY_RECOMMENDED);
 #else
   throw mscclpp::Error("Only support GPU with NVLS support", mscclpp::ErrorCode::InvalidUsage);
 #endif
@@ -241,10 +235,12 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     if (this->isCuMemMapAlloc) {
       CUmemGenericAllocationHandle handle;
       MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsCompatibleMemHandleType()));
-      size_t gran = getRecommendedGranularity();
-      MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&base, this->size, gran, 0, 0));
-      MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, this->size, 0, handle, 0));
-      detail::setReadWriteMemoryAccess(base, this->size);
+      size_t minGran = getMinGranularity(this->size);
+      size_t recommendedGran = getRecommendedGranularity(this->size);
+      size_t size = (this->size + recommendedGran - 1) / recommendedGran * recommendedGran;
+      MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&base, size, minGran, 0, 0));
+      MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, size, 0, handle, 0));
+      detail::setReadWriteMemoryAccess(base, size);
       this->data = static_cast<char*>(base) + entry.offsetFromBase;
     } else {
       MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
