@@ -861,5 +861,5 @@ ncclResult_t ncclMemFree(void* ptr) {
 
   // Pointer not found
   WARN("Pointer not found");
-  return ncclInvalidUsage;
+  return ncclSuccess;
 }
