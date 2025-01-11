@@ -11,7 +11,7 @@
 
 namespace mscclpp {
 
-Context::Impl::Impl() {}
+Context::Impl::Impl() : ipcStream_(std::make_shared<CudaStreamWithFlags>()) {}
 
 IbCtx* Context::Impl::getIbContext(Transport ibTransport) {
   // Find IB context or create it
