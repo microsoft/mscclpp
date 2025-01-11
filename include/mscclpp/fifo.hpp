@@ -4,11 +4,11 @@
 #ifndef MSCCLPP_FIFO_HPP_
 #define MSCCLPP_FIFO_HPP_
 
-#include <cstdint>
-#include <functional>
 #include <memory>
 
-#include "fifo_device.hpp"
+// clang-format off
+#include <mscclpp/fifo_device.hpp>
+// clang-format on
 
 namespace mscclpp {
 

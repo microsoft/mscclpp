@@ -4,10 +4,10 @@
 #ifndef MSCCLPP_PROXY_CHANNEL_HPP_
 #define MSCCLPP_PROXY_CHANNEL_HPP_
 
-#include "core.hpp"
-#include "proxy.hpp"
-#include "proxy_channel_device.hpp"
-#include "semaphore.hpp"
+#include <mscclpp/core.hpp>
+#include <mscclpp/proxy.hpp>
+#include <mscclpp/proxy_channel_device.hpp>
+#include <mscclpp/semaphore.hpp>
 
 namespace mscclpp {
 

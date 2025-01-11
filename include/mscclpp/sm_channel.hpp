@@ -4,11 +4,9 @@
 #ifndef MSCCLPP_SM_CHANNEL_HPP_
 #define MSCCLPP_SM_CHANNEL_HPP_
 
-#include <type_traits>
-
-#include "core.hpp"
-#include "semaphore.hpp"
-#include "sm_channel_device.hpp"
+#include <mscclpp/core.hpp>
+#include <mscclpp/semaphore.hpp>
+#include <mscclpp/sm_channel_device.hpp>
 
 namespace mscclpp {
 

@@ -4,9 +4,9 @@
 #ifndef MSCCLPP_SM_CHANNEL_DEVICE_HPP_
 #define MSCCLPP_SM_CHANNEL_DEVICE_HPP_
 
-#include "semaphore_device.hpp"
+#include <mscclpp/semaphore_device.hpp>
 #if defined(MSCCLPP_DEVICE_COMPILE)
-#include "packet_device.hpp"
+#include <mscclpp/packet_device.hpp>
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace mscclpp {

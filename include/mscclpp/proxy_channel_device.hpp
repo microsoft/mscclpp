@@ -4,8 +4,8 @@
 #ifndef MSCCLPP_PROXY_CHANNEL_DEVICE_HPP_
 #define MSCCLPP_PROXY_CHANNEL_DEVICE_HPP_
 
-#include "fifo_device.hpp"
-#include "semaphore_device.hpp"
+#include <mscclpp/fifo_device.hpp>
+#include <mscclpp/semaphore_device.hpp>
 
 namespace mscclpp {
 
