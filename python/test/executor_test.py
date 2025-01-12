@@ -172,7 +172,7 @@ def main(
     mscclpp_group = mscclpp_comm.CommGroup(MPI.COMM_WORLD)
     cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
     executor = Executor(mscclpp_group.communicator)
-    npkit_dump_dir = env().npkitDumpDir
+    npkit_dump_dir = env().npkit_dump_dir
     if npkit_dump_dir != "":
         npkit.init(mscclpp_group.my_rank)
     execution_plan = ExecutionPlan(execution_plan_path)
