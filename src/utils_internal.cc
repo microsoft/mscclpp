@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fstream>
 #include <memory>
+#include <mscclpp/env.hpp>
 #include <mscclpp/errors.hpp>
 #include <string>
 
@@ -77,10 +78,9 @@ uint64_t computeHostHash(void) {
   std::string hostName = getHostName(hashLen, '\0');
   strncpy(hostHash, hostName.c_str(), hostName.size());
 
-  char* hostId;
-  if ((hostId = getenv("MSCCLPP_HOSTID")) != NULL) {
-    INFO(MSCCLPP_ENV, "MSCCLPP_HOSTID set by environment to %s", hostId);
-    strncpy(hostHash, hostId, hashLen);
+  std::string hostid = env().hostid;
+  if (hostid != "") {
+    strncpy(hostHash, hostid.c_str(), hashLen);
   } else if (hostName.size() < hashLen) {
     std::ifstream file(HOSTID_FILE, std::ios::binary);
     if (file.is_open()) {

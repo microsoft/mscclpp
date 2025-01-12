@@ -17,6 +17,6 @@ parallel-ssh -h ${HOSTFILE} "mkdir -p ${NPKIT_RUN_DIR}/npkit_dump"
 parallel-ssh -h ${HOSTFILE} "mkdir -p ${NPKIT_RUN_DIR}/npkit_trace"
 
 # --bind-to numa is required because hardware timer from different cores (or core groups) can be non-synchronized.
-mpirun --allow-run-as-root -hostfile ${HOSTFILE} -map-by ppr:8:node --bind-to numa -x LD_PRELOAD=${NPKIT_RUN_DIR}/mscclpp/build/lib/libmscclpp.so -x MSCCLPP_DEBUG=WARN -x NPKIT_DUMP_DIR=${NPKIT_RUN_DIR}/npkit_dump ${NPKIT_RUN_DIR}/mscclpp/build/bin/tests/allgather_test -ip_port ${LEADER_IP_PORT} -kernel 0
+mpirun --allow-run-as-root -hostfile ${HOSTFILE} -map-by ppr:8:node --bind-to numa -x LD_PRELOAD=${NPKIT_RUN_DIR}/mscclpp/build/lib/libmscclpp.so -x MSCCLPP_DEBUG=WARN -x MSCCLPP_NPKIT_DUMP_DIR=${NPKIT_RUN_DIR}/npkit_dump ${NPKIT_RUN_DIR}/mscclpp/build/bin/tests/allgather_test -ip_port ${LEADER_IP_PORT} -kernel 0
 
 parallel-ssh -h ${HOSTFILE} "cd ${NPKIT_RUN_DIR}/mscclpp/tools/npkit && python npkit_trace_generator.py --npkit_dump_dir ${NPKIT_RUN_DIR}/npkit_dump --npkit_event_header_path ${NPKIT_RUN_DIR}/mscclpp/src/include/npkit/npkit_event.h --output_dir ${NPKIT_RUN_DIR}/npkit_trace"

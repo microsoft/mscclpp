@@ -4,6 +4,7 @@
 #include <mpi.h>
 
 #include <filesystem>
+#include <mscclpp/env.hpp>
 #include <mscclpp/npkit/npkit.hpp>
 
 #include "mp_unit_tests.hpp"
@@ -31,14 +32,14 @@ void ExecutorTest::SetUp() {
   bootstrap->initialize(id);
   std::shared_ptr<mscclpp::Communicator> communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
   executor = std::make_shared<mscclpp::Executor>(communicator);
-  npkitDumpDir = getenv("NPKIT_DUMP_DIR");
-  if (npkitDumpDir != nullptr) {
+  npkitDumpDir = mscclpp::env().npkitDumpDir;
+  if (npkitDumpDir != "") {
     NpKit::Init(gEnv->rank);
   }
 }
 
 void ExecutorTest::TearDown() {
-  if (npkitDumpDir != nullptr) {
+  if (npkitDumpDir != "") {
     NpKit::Dump(npkitDumpDir);
     NpKit::Shutdown();
   }
