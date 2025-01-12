@@ -7,6 +7,27 @@
 
 namespace mscclpp {
 
+AvoidCudaGraphCaptureGuard::AvoidCudaGraphCaptureGuard() : mode_(cudaStreamCaptureModeRelaxed) {
+  MSCCLPP_CUDATHROW(cudaThreadExchangeStreamCaptureMode(&mode_));
+}
+
+AvoidCudaGraphCaptureGuard::~AvoidCudaGraphCaptureGuard() { (void)cudaThreadExchangeStreamCaptureMode(&mode_); }
+
+CudaStreamWithFlags::CudaStreamWithFlags(unsigned int flags) {
+  MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream_, flags));
+}
+
+CudaStreamWithFlags::~CudaStreamWithFlags() {
+  if (!empty()) (void)cudaStreamDestroy(stream_);
+}
+
+void CudaStreamWithFlags::set(unsigned int flags) {
+  if (!empty()) throw Error("CudaStreamWithFlags already set", ErrorCode::InternalError);
+  MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream_, flags));
+}
+
+bool CudaStreamWithFlags::empty() const { return stream_ == nullptr; }
+
 namespace detail {
 
 /// set memory access permission to read-write
