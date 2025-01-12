@@ -170,6 +170,6 @@ class ExecutorTest : public MultiProcessTest {
   void TearDown() override;
 
   std::shared_ptr<mscclpp::Executor> executor;
-  const char* npkitDumpDir;
+  std::string npkitDumpDir;
 };
 #endif  // MSCCLPP_MP_UNIT_TESTS_HPP_

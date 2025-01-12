@@ -27,6 +27,7 @@ from mscclpp import (
     Transport,
     is_nvls_supported,
     npkit,
+    env,
 )
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, GpuBuffer, pack
@@ -624,8 +625,8 @@ def test_executor(mpi_group: MpiGroup, filename: str):
     project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     mscclpp_group = mscclpp_comm.CommGroup(mpi_group.comm)
     executor = Executor(mscclpp_group.communicator)
-    npkit_dump_dir = os.getenv("NPKIT_DUMP_DIR")
-    if npkit_dump_dir is not None:
+    npkit_dump_dir = env().npkit_dump_dir
+    if npkit_dump_dir != "":
         npkit.init(mscclpp_group.my_rank)
     execution_plan = ExecutionPlan(os.path.join(project_dir, "test", "execution-files", filename))
 
