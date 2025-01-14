@@ -390,7 +390,7 @@ MSCCLPP_API_CPP int getIBDeviceCount() {
 }
 
 std::string getHcaDevices(int deviceIndex) {
-  std::string envStr = env().hcaDevices;
+  std::string envStr = env()->hcaDevices;
   if (envStr != "") {
     std::vector<std::string> devices;
     std::stringstream ss(envStr);

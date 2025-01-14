@@ -415,7 +415,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   if (mscclppComm->bootstrap()->getNranks() == mscclppComm->bootstrap()->getNranksPerNode())
     ncclCommInitRankFallbackSingleNode(commPtr, mscclppComm, rank);
 
-  const std::string& collectiveDir = mscclpp::env().executionPlanDir;
+  const std::string& collectiveDir = mscclpp::env()->executionPlanDir;
   if (collectiveDir != "") {
     if (!std::filesystem::is_directory(collectiveDir)) {
       WARN("The value of the environment variable %s is not a directory", collectiveDir.c_str());
@@ -431,7 +431,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 
   *comm = commPtr;
 #if defined(ENABLE_NPKIT)
-  if (mscclpp::env().npkitDumpDir != "") {
+  if (mscclpp::env()->npkitDumpDir != "") {
     NpKit::Init(rank);
   }
 #endif
@@ -455,7 +455,7 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
     return ncclInvalidArgument;
   }
 #if defined(ENABLE_NPKIT)
-  const std::string& npkitDumpDir = mscclpp::env().npkitDumpDir;
+  const std::string& npkitDumpDir = mscclpp::env()->npkitDumpDir;
   if (npkitDumpDir != "") {
     NpKit::Dump(npkitDumpDir);
     NpKit::Shutdown();

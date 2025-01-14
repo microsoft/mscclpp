@@ -4,26 +4,34 @@
 #ifndef MSCCLPP_ENV_HPP_
 #define MSCCLPP_ENV_HPP_
 
+#include <memory>
 #include <string>
 
 namespace mscclpp {
 
-struct Env {
-  Env();
-  std::string debug;
-  std::string debugSubsys;
-  std::string debugFile;
-  std::string hcaDevices;
-  std::string hostid;
-  std::string socketFamily;
-  std::string socketIfname;
-  std::string commId;
-  std::string executionPlanDir;
-  std::string npkitDumpDir;
-  bool cudaIpcUseDefaultStream;
-};
+class Env;
 
-const Env &env();
+std::shared_ptr<Env> env();
+
+class Env {
+ public:
+  const std::string debug;
+  const std::string debugSubsys;
+  const std::string debugFile;
+  const std::string hcaDevices;
+  const std::string hostid;
+  const std::string socketFamily;
+  const std::string socketIfname;
+  const std::string commId;
+  const std::string executionPlanDir;
+  const std::string npkitDumpDir;
+  const bool cudaIpcUseDefaultStream;
+
+ protected:
+  Env();
+
+  friend std::shared_ptr<Env> env();
+};
 
 }  // namespace mscclpp
 

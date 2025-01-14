@@ -35,7 +35,7 @@ void mscclppDebugInit() {
     pthread_mutex_unlock(&mscclppDebugLock);
     return;
   }
-  const char* mscclpp_debug = mscclpp::env().debug.c_str();
+  const char* mscclpp_debug = mscclpp::env()->debug.c_str();
   int tempNcclDebugLevel = -1;
   if (mscclpp_debug == NULL) {
     tempNcclDebugLevel = MSCCLPP_LOG_NONE;
@@ -55,7 +55,7 @@ void mscclppDebugInit() {
    * This can be a comma separated list such as INIT,COLL
    * or ^INIT,COLL etc
    */
-  std::string mscclppDebugSubsysStr = mscclpp::env().debugSubsys;
+  std::string mscclppDebugSubsysStr = mscclpp::env()->debugSubsys;
   const char* mscclppDebugSubsysEnv = mscclppDebugSubsysStr.c_str();
   if (mscclppDebugSubsysStr != "") {
     int invert = 0;
@@ -110,7 +110,7 @@ void mscclppDebugInit() {
    * then create the debug file. But don't bother unless the
    * MSCCLPP_DEBUG level is > VERSION
    */
-  const char* mscclppDebugFileEnv = mscclpp::env().debugFile.c_str();
+  const char* mscclppDebugFileEnv = mscclpp::env()->debugFile.c_str();
   if (tempNcclDebugLevel > MSCCLPP_LOG_VERSION && mscclppDebugFileEnv != NULL) {
     int c = 0;
     char debugFn[PATH_MAX + 1] = "";

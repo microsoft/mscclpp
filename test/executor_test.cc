@@ -110,7 +110,7 @@ int main(int argc, char* argv[]) {
   const std::string executionPlanPath = argv[2];
   const int niters = std::stoi(argv[3]);
   const int ngraphIters = std::stoi(argv[4]);
-  const char* npkitDumpDir = mscclpp::env().npkitDumpDir.c_str();
+  const char* npkitDumpDir = mscclpp::env()->npkitDumpDir.c_str();
   mscclpp::PacketType packetType = mscclpp::PacketType::LL16;
   if (argc == 6) {
     packetType = parsePacketType(argv[5]);
