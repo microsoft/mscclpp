@@ -76,7 +76,7 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
   char* dstPtr = (char*)dst.data();
   char* srcPtr = (char*)src.data();
 
-  if (!env().cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
+  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
 
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, srcPtr + srcOffset, size, cudaMemcpyDeviceToDevice, *stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection write: from %p to %p, size %lu", srcPtr + srcOffset, dstPtr + dstOffset, size);
@@ -96,7 +96,7 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
   *src = newValue;
   uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
 
-  if (!env().cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
+  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
 
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr, src, sizeof(uint64_t), cudaMemcpyHostToDevice, *stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
@@ -116,7 +116,7 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
     INFO(MSCCLPP_P2P, "CudaIpcConnection flush: timeout is not supported, ignored");
   }
 
-  if (!env().cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
+  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
 
   AvoidCudaGraphCaptureGuard guard;
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(*stream_));
