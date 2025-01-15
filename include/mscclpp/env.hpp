@@ -31,7 +31,7 @@ class Env {
   const std::string npkitDumpDir;
   const bool cudaIpcUseDefaultStream;
 
- protected:
+ private:
   Env();
 
   friend std::shared_ptr<Env> env();
