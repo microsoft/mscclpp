@@ -19,8 +19,7 @@ class Chunk:
             chunks = [self, chunk]
             return ReduceChunk(dst, chunks)
         else:
-            assert True, "Trying to reduce with chunk of None"
-            return None
+            raise ValueError("Trying to reduce with chunk of None")
 
     def __hash__(self):
         return hash((self.origin_rank, self.origin_index))
@@ -47,7 +46,7 @@ class ReduceChunk:
         elif type(chunk) is Chunk:
             chunks = self.chunks + [chunk]
         else:
-            assert True, "Trying to reduce with chunk of None"
+            raise ValueError("Trying to reduce with chunk of None")
         return ReduceChunk(self.creation_rank, chunks)
 
     def sort(self):
