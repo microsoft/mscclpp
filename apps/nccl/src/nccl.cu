@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/env.hpp>
 #include <mscclpp/executor.hpp>
 #include <mscclpp/sm_channel.hpp>
 #include <mscclpp/sm_channel_device.hpp>
@@ -414,8 +415,8 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   if (mscclppComm->bootstrap()->getNranks() == mscclppComm->bootstrap()->getNranksPerNode())
     ncclCommInitRankFallbackSingleNode(commPtr, mscclppComm, rank);
 
-  if (getenv("MSCCLPP_EXECUTION_PLAN_DIR")) {
-    std::string collectiveDir = getenv("MSCCLPP_EXECUTION_PLAN_DIR");
+  const std::string& collectiveDir = mscclpp::env()->executionPlanDir;
+  if (collectiveDir != "") {
     if (!std::filesystem::is_directory(collectiveDir)) {
       WARN("The value of the environment variable %s is not a directory", collectiveDir.c_str());
       return ncclInvalidArgument;
@@ -430,8 +431,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 
   *comm = commPtr;
 #if defined(ENABLE_NPKIT)
-  const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
-  if (npkitDumpDir != nullptr) {
+  if (mscclpp::env()->npkitDumpDir != "") {
     NpKit::Init(rank);
   }
 #endif
@@ -455,8 +455,8 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
     return ncclInvalidArgument;
   }
 #if defined(ENABLE_NPKIT)
-  const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
-  if (npkitDumpDir != nullptr) {
+  const std::string& npkitDumpDir = mscclpp::env()->npkitDumpDir;
+  if (npkitDumpDir != "") {
     NpKit::Dump(npkitDumpDir);
     NpKit::Shutdown();
   }

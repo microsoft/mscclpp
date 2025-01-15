@@ -12,6 +12,8 @@ import netifaces as ni
 import pytest
 
 from mscclpp import (
+    ErrorCode,
+    Error,
     DataType,
     EndpointConfig,
     ExecutionPlan,
@@ -25,6 +27,7 @@ from mscclpp import (
     Transport,
     is_nvls_supported,
     npkit,
+    env,
 )
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, GpuBuffer, pack
@@ -32,6 +35,19 @@ from ._cpp import _ext
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
 ethernet_interface_name = "eth0"
+
+
+@parametrize_mpi_groups(1)
+def test_env(mpi_group: MpiGroup):
+    e = env()
+    assert isinstance(e.debug, str)
+    with pytest.raises(AttributeError):
+        # all attributes should be read-only
+        e.debug = "INFO"
+
+    # should be the same object
+    e2 = env()
+    assert e == e2
 
 
 def all_ranks_on_the_same_node(mpi_group: MpiGroup):
@@ -44,7 +60,7 @@ def all_ranks_on_the_same_node(mpi_group: MpiGroup):
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-@pytest.mark.parametrize("ifIpPortTrio", ["eth0:localhost:50000", ethernet_interface_name, ""])
+@pytest.mark.parametrize("ifIpPortTrio", [f"{ethernet_interface_name}:localhost:50000", ethernet_interface_name, ""])
 def test_group_with_ip(mpi_group: MpiGroup, ifIpPortTrio: str):
     if (ethernet_interface_name in ni.interfaces()) is False:
         pytest.skip(f"{ethernet_interface_name} is not an interface to use on this node")
@@ -146,7 +162,12 @@ def create_group_and_connection(mpi_group: MpiGroup, transport: str):
     if (transport == "NVLink" or transport == "NVLS") and all_ranks_on_the_same_node(mpi_group) is False:
         pytest.skip("cannot use nvlink/nvls for cross node")
     group = mscclpp_comm.CommGroup(mpi_group.comm)
-    connection = create_connection(group, transport)
+    try:
+        connection = create_connection(group, transport)
+    except Error as e:
+        if transport == "IB" and e.args[0] == ErrorCode.InvalidUsage:
+            pytest.skip("IB not supported on this node")
+        raise
     return group, connection
 
 
@@ -617,8 +638,8 @@ def test_executor(mpi_group: MpiGroup, filename: str):
     project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     mscclpp_group = mscclpp_comm.CommGroup(mpi_group.comm)
     executor = Executor(mscclpp_group.communicator)
-    npkit_dump_dir = os.getenv("NPKIT_DUMP_DIR")
-    if npkit_dump_dir is not None:
+    npkit_dump_dir = env().npkit_dump_dir
+    if npkit_dump_dir != "":
         npkit.init(mscclpp_group.my_rank)
     execution_plan = ExecutionPlan(os.path.join(project_dir, "test", "execution-files", filename))
 

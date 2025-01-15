@@ -4,6 +4,14 @@
 import os as _os
 
 from ._mscclpp import (
+    Env,
+    ErrorCode,
+    BaseError,
+    Error,
+    SysError,
+    CudaError,
+    CuError,
+    IbError,
     Communicator,
     Connection,
     connect_nvls_collective,
@@ -25,6 +33,7 @@ from ._mscclpp import (
     ExecutionPlan,
     PacketType,
     RawGpuBuffer,
+    env,
     version,
     is_nvls_supported,
     npkit,
