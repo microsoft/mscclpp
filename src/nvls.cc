@@ -58,7 +58,7 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) {
   mcProp_.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
   MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minMcGran_, &mcProp_, CU_MULTICAST_GRANULARITY_MINIMUM));
   MSCCLPP_CUTHROW(cuMulticastGetGranularity(&mcGran_, &mcProp_, CU_MULTICAST_GRANULARITY_RECOMMENDED));
-  mcProp_.size = ((mcProp_.size + minMcGran_ - 1) / minMcGran_) * minMcGran_;
+  mcProp_.size = ((mcProp_.size + mcGran_ - 1) / mcGran_) * mcGran_;
   bufferSize_ = mcProp_.size;
   MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp_));
   mcFileDesc_ = 0;
@@ -200,7 +200,7 @@ std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUdeviceptr devicePtr, si
   char* mcPtr;
   MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)(&mcPtr), devBuffSize, minMcGran_, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), devBuffSize, 0, mcHandle_, 0));
-  setReadWriteMemoryAccess(mcPtr, devBuffSize);
+  detail::setReadWriteMemoryAccess(mcPtr, devBuffSize);
   INFO(MSCCLPP_COLL, "NVLS connection bound memory at offset %ld, size %ld", offset, devBuffSize);
 
   auto deleter = [=, self = shared_from_this()](char* ptr) {
@@ -239,8 +239,6 @@ class NvlsConnection::Impl {
       Error("NVLS is not supported on this CUDA version (< 12.3) or kernel version (< 5.6.0)", ErrorCode::InvalidUsage);
 };
 #endif  // !(CUDA_NVLS_SUPPORTED)
-
-const int NvlsConnection::DefaultNvlsBufferSize = (1 << 29);
 
 NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices)
     : pimpl_(std::make_shared<Impl>(bufferSize, numDevices)) {}

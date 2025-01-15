@@ -8,11 +8,9 @@ from mscclpp import (
     ExecutionPlan,
     PacketType,
     npkit,
-    alloc_shared_physical_cuda,
-    is_nvls_supported,
 )
 import mscclpp.comm as mscclpp_comm
-from mscclpp.utils import KernelBuilder, pack
+from mscclpp.utils import KernelBuilder, GpuBuffer, pack
 import os
 import struct
 
@@ -129,18 +127,6 @@ def dtype_to_mscclpp_dtype(dtype):
         raise ValueError(f"Unknown data type: {dtype}")
 
 
-def allocate_buffer(nelems, dtype):
-    if is_nvls_supported():
-        buffer_raw = alloc_shared_physical_cuda(nelems * cp.dtype(dtype).itemsize)
-        buffer_ptr = cp.cuda.MemoryPointer(
-            cp.cuda.UnownedMemory(buffer_raw.get_ptr(), buffer_raw.size(), buffer_raw), 0
-        )
-        buffer = cp.ndarray(nelems, dtype=dtype, memptr=buffer_ptr)
-        return buffer
-    else:
-        return cp.zeros(nelems, dtype=dtype)
-
-
 def build_bufs(
     collective: str,
     size: int,
@@ -160,14 +146,14 @@ def build_bufs(
         nelems_input = nelems
     nelems_output = nelems
 
-    result_buf = allocate_buffer(nelems_output, dtype=dtype)
+    result_buf = GpuBuffer(nelems_output, dtype=dtype)
     if in_place:
         if "allgather" in collective:
             input_buf = cp.split(result_buf, num_ranks)[rank]
         else:
             input_buf = result_buf
     else:
-        input_buf = allocate_buffer(nelems_input, dtype=dtype)
+        input_buf = GpuBuffer(nelems_input, dtype=dtype)
     test_buf = cp.zeros(nelems_output, dtype=dtype)
 
     return input_buf, result_buf, test_buf

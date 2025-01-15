@@ -36,10 +36,12 @@ std::string Connection::getTransportName() {
          TransportNames[static_cast<int>(this->remoteTransport())];
 }
 
+int Connection::getMaxWriteQueueSize() { return maxWriteQueueSize; }
+
 // CudaIpcConnection
 
 CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, cudaStream_t stream)
-    : stream_(stream) {
+    : Connection(localEndpoint.maxWriteQueueSize()), stream_(stream) {
   if (localEndpoint.transport() != Transport::CudaIpc) {
     throw mscclpp::Error("Cuda IPC connection can only be made from a Cuda IPC endpoint", ErrorCode::InvalidUsage);
   }
@@ -119,7 +121,9 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 // IBConnection
 
 IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context)
-    : transport_(localEndpoint.transport()),
+    : Connection(localEndpoint.maxWriteQueueSize() != -1 ? localEndpoint.maxWriteQueueSize()
+                                                         : EndpointConfig::DefaultMaxCqSize),
+      transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
   qp = getImpl(localEndpoint)->ibQp_;
@@ -231,7 +235,10 @@ void IBConnection::flush(int64_t timeoutUsec) {
 
 EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, uint64_t sendBufferSize,
                                        uint64_t recvBufferSize)
-    : abortFlag_(0), sendBufferSize_(sendBufferSize), recvBufferSize_(recvBufferSize) {
+    : Connection(localEndpoint.maxWriteQueueSize()),
+      abortFlag_(0),
+      sendBufferSize_(sendBufferSize),
+      recvBufferSize_(recvBufferSize) {
   // Validating Transport Protocol
   if (localEndpoint.transport() != Transport::Ethernet || remoteEndpoint.transport() != Transport::Ethernet) {
     throw mscclpp::Error("Ethernet connection can only be made from Ethernet endpoints", ErrorCode::InvalidUsage);
@@ -301,8 +308,8 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
     uint64_t dataSize =
         std::min(sendBufferSize_ - headerSize / sizeof(char), (size - sentDataSize) / sizeof(char)) * sizeof(char);
     uint64_t messageSize = dataSize + headerSize;
-    mscclpp::memcpyCuda<char>(sendBuffer_.data() + headerSize / sizeof(char),
-                              (char*)srcPtr + (sentDataSize / sizeof(char)), dataSize, cudaMemcpyDeviceToHost);
+    mscclpp::gpuMemcpy(sendBuffer_.data() + headerSize / sizeof(char), srcPtr + (sentDataSize / sizeof(char)), dataSize,
+                       cudaMemcpyDeviceToHost);
     sendSocket_->send(sendBuffer_.data(), messageSize);
     sentDataSize += messageSize;
     headerSize = 0;
@@ -402,8 +409,7 @@ void EthernetConnection::recvMessages() {
       received &= !closed;
 
       if (received)
-        mscclpp::memcpyCuda<char>((char*)ptr + (recvSize / sizeof(char)), recvBuffer_.data(), messageSize,
-                                  cudaMemcpyHostToDevice);
+        mscclpp::gpuMemcpy(ptr + (recvSize / sizeof(char)), recvBuffer_.data(), messageSize, cudaMemcpyHostToDevice);
       recvSize += messageSize;
     }
 

@@ -12,6 +12,8 @@ import netifaces as ni
 import pytest
 
 from mscclpp import (
+    ErrorCode,
+    Error,
     DataType,
     EndpointConfig,
     ExecutionPlan,
@@ -27,7 +29,7 @@ from mscclpp import (
     npkit,
 )
 import mscclpp.comm as mscclpp_comm
-from mscclpp.utils import KernelBuilder, pack
+from mscclpp.utils import KernelBuilder, GpuBuffer, pack
 from ._cpp import _ext
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
@@ -44,7 +46,7 @@ def all_ranks_on_the_same_node(mpi_group: MpiGroup):
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-@pytest.mark.parametrize("ifIpPortTrio", ["eth0:localhost:50000", ethernet_interface_name, ""])
+@pytest.mark.parametrize("ifIpPortTrio", [f"{ethernet_interface_name}:localhost:50000", ethernet_interface_name, ""])
 def test_group_with_ip(mpi_group: MpiGroup, ifIpPortTrio: str):
     if (ethernet_interface_name in ni.interfaces()) is False:
         pytest.skip(f"{ethernet_interface_name} is not an interface to use on this node")
@@ -146,7 +148,12 @@ def create_group_and_connection(mpi_group: MpiGroup, transport: str):
     if (transport == "NVLink" or transport == "NVLS") and all_ranks_on_the_same_node(mpi_group) is False:
         pytest.skip("cannot use nvlink/nvls for cross node")
     group = mscclpp_comm.CommGroup(mpi_group.comm)
-    connection = create_connection(group, transport)
+    try:
+        connection = create_connection(group, transport)
+    except Error as e:
+        if transport == "IB" and e.args[0] == ErrorCode.InvalidUsage:
+            pytest.skip("IB not supported on this node")
+        raise
     return group, connection
 
 
@@ -156,12 +163,26 @@ def test_group_with_connections(mpi_group: MpiGroup, transport: str):
     create_group_and_connection(mpi_group, transport)
 
 
+@parametrize_mpi_groups(1)
+@pytest.mark.parametrize("nelem", [2**i for i in [0, 10, 15, 20]])
+@pytest.mark.parametrize("dtype", [cp.float32, cp.float16])
+def test_gpu_buffer(mpi_group: MpiGroup, nelem: int, dtype: cp.dtype):
+    memory = GpuBuffer(nelem, dtype=dtype)
+    assert memory.shape == (nelem,)
+    assert memory.dtype == dtype
+    assert memory.itemsize == cp.dtype(dtype).itemsize
+    assert memory.nbytes == nelem * cp.dtype(dtype).itemsize
+    assert memory.data.ptr != 0
+    assert memory.data.mem.ptr != 0
+    assert memory.data.mem.size >= nelem * cp.dtype(dtype).itemsize
+
+
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 def test_connection_write(mpi_group: MpiGroup, transport: Transport, nelem: int):
     group, connections = create_group_and_connection(mpi_group, transport)
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     nelemPerRank = nelem // group.nranks
     sizePerRank = nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
@@ -436,13 +457,12 @@ def test_d2d_semaphores(mpi_group: MpiGroup):
 def test_sm_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
     group, connections = create_group_and_connection(mpi_group, "NVLink")
 
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     if use_packet:
-        scratch = cp.zeros(nelem * 2, dtype=cp.int32)
+        scratch = GpuBuffer(nelem * 2, dtype=cp.int32)
     else:
         scratch = None
     nelemPerRank = nelem // group.nranks
-    nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
     memory_expected = cp.zeros_like(memory)
     for rank in range(group.nranks):
@@ -484,7 +504,7 @@ def test_fifo(
 def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
     group, connections = create_group_and_connection(mpi_group, transport)
 
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
@@ -534,11 +554,11 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
 def test_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
     group, connections = create_group_and_connection(mpi_group, transport)
 
-    memory = cp.zeros(nelem, dtype=cp.int32)
+    memory = GpuBuffer(nelem, dtype=cp.int32)
     if use_packet:
-        scratch = cp.zeros(nelem * 2, dtype=cp.int32)
+        scratch = GpuBuffer(nelem * 2, dtype=cp.int32)
     else:
-        scratch = cp.zeros(1, dtype=cp.int32)  # just so that we can pass a valid ptr
+        scratch = GpuBuffer(1, dtype=cp.int32)  # just so that we can pass a valid ptr
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))] = group.my_rank + 1
