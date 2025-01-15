@@ -11,8 +11,12 @@ namespace mscclpp {
 
 class Env;
 
+/// Get the MSCCL++ environment.
+/// @return A reference to the global environment object.
 std::shared_ptr<Env> env();
 
+/// The MSCCL++ environment. The constructor reads environment variables and sets the corresponding fields.
+/// Use the @ref env() function to get the environment object.
 class Env {
  public:
   const std::string debug;
