@@ -4,26 +4,38 @@
 #ifndef MSCCLPP_ENV_HPP_
 #define MSCCLPP_ENV_HPP_
 
+#include <memory>
 #include <string>
 
 namespace mscclpp {
 
-struct Env {
-  Env();
-  std::string debug;
-  std::string debugSubsys;
-  std::string debugFile;
-  std::string hcaDevices;
-  std::string hostid;
-  std::string socketFamily;
-  std::string socketIfname;
-  std::string commId;
-  std::string executionPlanDir;
-  std::string npkitDumpDir;
-  bool cudaIpcUseDefaultStream;
-};
+class Env;
 
-const Env &env();
+/// Get the MSCCL++ environment.
+/// @return A reference to the global environment object.
+std::shared_ptr<Env> env();
+
+/// The MSCCL++ environment. The constructor reads environment variables and sets the corresponding fields.
+/// Use the @ref env() function to get the environment object.
+class Env {
+ public:
+  const std::string debug;
+  const std::string debugSubsys;
+  const std::string debugFile;
+  const std::string hcaDevices;
+  const std::string hostid;
+  const std::string socketFamily;
+  const std::string socketIfname;
+  const std::string commId;
+  const std::string executionPlanDir;
+  const std::string npkitDumpDir;
+  const bool cudaIpcUseDefaultStream;
+
+ private:
+  Env();
+
+  friend std::shared_ptr<Env> env();
+};
 
 }  // namespace mscclpp
 

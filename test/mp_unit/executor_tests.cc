@@ -32,7 +32,7 @@ void ExecutorTest::SetUp() {
   bootstrap->initialize(id);
   std::shared_ptr<mscclpp::Communicator> communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
   executor = std::make_shared<mscclpp::Executor>(communicator);
-  npkitDumpDir = mscclpp::env().npkitDumpDir;
+  npkitDumpDir = mscclpp::env()->npkitDumpDir;
   if (npkitDumpDir != "") {
     NpKit::Init(gEnv->rank);
   }

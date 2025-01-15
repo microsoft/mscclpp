@@ -37,6 +37,19 @@ from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 ethernet_interface_name = "eth0"
 
 
+@parametrize_mpi_groups(1)
+def test_env(mpi_group: MpiGroup):
+    e = env()
+    assert isinstance(e.debug, str)
+    with pytest.raises(AttributeError):
+        # all attributes should be read-only
+        e.debug = "INFO"
+
+    # should be the same object
+    e2 = env()
+    assert e == e2
+
+
 def all_ranks_on_the_same_node(mpi_group: MpiGroup):
     if (ethernet_interface_name in ni.interfaces()) is False:
         pytest.skip(f"{ethernet_interface_name} is not an interface to use on this node")

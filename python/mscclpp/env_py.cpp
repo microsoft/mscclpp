@@ -2,6 +2,8 @@
 // Licensed under the MIT license.
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/shared_ptr.h>
+#include <nanobind/stl/string.h>
 
 #include <mscclpp/env.hpp>
 
@@ -22,5 +24,5 @@ void register_env(nb::module_& m) {
       .def_ro("npkit_dump_dir", &Env::npkitDumpDir)
       .def_ro("cuda_ipc_use_default_stream", &Env::cudaIpcUseDefaultStream);
 
-  m.def("env", &env, nb::rv_policy::copy);
+  m.def("env", &env);
 }

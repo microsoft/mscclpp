@@ -65,7 +65,7 @@ static uint16_t socketToPort(union SocketAddress* addr) {
 /* Allow the user to force the IPv4/IPv6 interface selection */
 static int envSocketFamily(void) {
   int family = -1;  // Family selection is not forced, will use first one found
-  const std::string& socketFamily = env().socketFamily;
+  const std::string& socketFamily = env()->socketFamily;
   if (socketFamily == "") return family;
 
   if (socketFamily == "AF_INET")
@@ -305,7 +305,7 @@ int FindInterfaces(char* ifNames, union SocketAddress* ifAddrs, int ifNameMaxSiz
   // Allow user to force the INET socket family selection
   int sock_family = envSocketFamily();
   // User specified interface
-  const std::string& socketIfname = env().socketIfname;
+  const std::string& socketIfname = env()->socketIfname;
   if (inputIfName) {
     INFO(MSCCLPP_NET, "using iterface %s", inputIfName);
     nIfs = findInterfaces(inputIfName, ifNames, ifAddrs, sock_family, ifNameMaxSize, maxIfs);
@@ -319,7 +319,7 @@ int FindInterfaces(char* ifNames, union SocketAddress* ifAddrs, int ifNameMaxSiz
     nIfs = findInterfaces("ib", ifNames, ifAddrs, sock_family, ifNameMaxSize, maxIfs);
     // else see if we can get some hint from COMM ID
     if (nIfs == 0) {
-      const std::string& commId = env().commId;
+      const std::string& commId = env()->commId;
       if (commId != "") {
         // Try to find interface that is in the same subnet as the IP in comm id
         union SocketAddress idAddr;
