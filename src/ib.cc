@@ -9,6 +9,8 @@
 #include <cstring>
 #include <fstream>
 #include <mscclpp/core.hpp>
+#include <mscclpp/env.hpp>
+#include <mscclpp/errors.hpp>
 #include <mscclpp/fifo.hpp>
 #include <sstream>
 #include <string>
@@ -388,18 +390,16 @@ MSCCLPP_API_CPP int getIBDeviceCount() {
 }
 
 std::string getHcaDevices(int deviceIndex) {
-  const char* envValue = std::getenv("MSCCLPP_HCA_DEVICES");
-  if (envValue) {
+  std::string envStr = env()->hcaDevices;
+  if (envStr != "") {
     std::vector<std::string> devices;
-    std::string envStr(envValue);
     std::stringstream ss(envStr);
     std::string device;
     while (std::getline(ss, device, ',')) {
       devices.push_back(device);
     }
     if (deviceIndex >= (int)devices.size()) {
-      throw std::invalid_argument("Not enough HCA devices are defined with MSCCLPP_HCA_DEVICES: " +
-                                  std::string(envValue));
+      throw Error("Not enough HCA devices are defined with MSCCLPP_HCA_DEVICES: " + envStr, ErrorCode::InvalidUsage);
     }
     return devices[deviceIndex];
   }
@@ -434,7 +434,7 @@ MSCCLPP_API_CPP std::string getIBDeviceName(Transport ibTransport) {
       ibTransportIndex = 7;
       break;
     default:
-      throw std::invalid_argument("Not an IB transport");
+      throw Error("Not an IB transport", ErrorCode::InvalidUsage);
   }
   std::string userHcaDevice = getHcaDevices(ibTransportIndex);
   if (!userHcaDevice.empty()) {
@@ -446,7 +446,7 @@ MSCCLPP_API_CPP std::string getIBDeviceName(Transport ibTransport) {
   if (ibTransportIndex >= num) {
     std::stringstream ss;
     ss << "IB transport out of range: " << ibTransportIndex << " >= " << num;
-    throw std::out_of_range(ss.str());
+    throw Error(ss.str(), ErrorCode::InvalidUsage);
   }
   return devices[ibTransportIndex]->name;
 }
@@ -474,11 +474,11 @@ MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string& ibDevice
         case 7:
           return Transport::IB7;
         default:
-          throw std::out_of_range("IB device index out of range");
+          throw Error("IB device index out of range", ErrorCode::InvalidUsage);
       }
     }
   }
-  throw std::invalid_argument("IB device not found");
+  throw Error("IB device not found", ErrorCode::InvalidUsage);
 }
 
 #else  // !defined(USE_IBVERBS)
