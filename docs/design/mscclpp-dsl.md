@@ -1,5 +1,5 @@
 # MSCCLPP DSL
-## MSCCLPPLang Intruduction
+## MSCCLPPLang Introduction
 MSCCLPPLang is a Python moudule for writing high-performance commnunication algorithms. It is designed to be easy to use and efficient, while providing a high-level interface for writing communication algorithms. MSCCLPPLang program will be compiled to json based execution plan, which can be executed by MSCCLPP executor.
 
 ## How to use MSCCLPPLang
@@ -67,7 +67,7 @@ c = chunk(0, Buffer.input, 0, 2)
 ```
 
 #### Operation
-The operation can only be applied to the chunks. We provide a set of communicatoin operations for the users to use. For example, the `put` operation is used to send the data from one GPU to another GPU. The `get` operation is used to receive the data from another GPU.
+The operation can only be applied to the chunks. We provide a set of communications operations for the users to use. For example, the `put` operation is used to send the data from one GPU to another GPU. The `get` operation is used to receive the data from another GPU.
 
 ***Please notice***: MSCCLPPLang only provides one-sided communication operations. The user needs to make sure that the data is ready to be sent or received before calling the communication operations. Also we provides `wait/signal` operations to synchronize the communication across GPUs.
 

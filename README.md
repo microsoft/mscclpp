@@ -3,6 +3,7 @@
 [![Latest Release](https://img.shields.io/github/release/microsoft/mscclpp.svg)](https://github.com/microsoft/mscclpp/releases/latest)
 [![License](https://img.shields.io/github/license/microsoft/mscclpp.svg)](LICENSE)
 [![CodeQL](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml)
+[![Docs Build](https://github.com/microsoft/mscclpp/actions/workflows/doc-build.yaml/badge.svg)](https://microsoft.github.io/mscclpp/)
 
 | Pipelines                | Build Status      |
 |--------------------------|-------------------|
@@ -12,7 +13,7 @@
 
 A GPU-driven communication stack for scalable AI applications.
 
-See [Quick Start](docs/getting-started/quickstart.md) to quickly get started.
+See [Quick Start](https://microsoft.github.io/mscclpp/getting-started/quickstart.html) to quickly get started.
 
 ## Overview
 
