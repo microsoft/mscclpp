@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include <fstream>
+#include <mscclpp/env.hpp>
 #include <mscclpp/errors.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
@@ -64,14 +65,12 @@ static uint16_t socketToPort(union SocketAddress* addr) {
 /* Allow the user to force the IPv4/IPv6 interface selection */
 static int envSocketFamily(void) {
   int family = -1;  // Family selection is not forced, will use first one found
-  char* env = getenv("MSCCLPP_SOCKET_FAMILY");
-  if (env == NULL) return family;
+  const std::string& socketFamily = env()->socketFamily;
+  if (socketFamily == "") return family;
 
-  INFO(MSCCLPP_ENV, "MSCCLPP_SOCKET_FAMILY set by environment to %s", env);
-
-  if (strcmp(env, "AF_INET") == 0)
+  if (socketFamily == "AF_INET")
     family = AF_INET;  // IPv4
-  else if (strcmp(env, "AF_INET6") == 0)
+  else if (socketFamily == "AF_INET6")
     family = AF_INET6;  // IPv6
   return family;
 }
@@ -306,27 +305,25 @@ int FindInterfaces(char* ifNames, union SocketAddress* ifAddrs, int ifNameMaxSiz
   // Allow user to force the INET socket family selection
   int sock_family = envSocketFamily();
   // User specified interface
-  char* env = getenv("MSCCLPP_SOCKET_IFNAME");
+  const std::string& socketIfname = env()->socketIfname;
   if (inputIfName) {
     INFO(MSCCLPP_NET, "using iterface %s", inputIfName);
     nIfs = findInterfaces(inputIfName, ifNames, ifAddrs, sock_family, ifNameMaxSize, maxIfs);
-  } else if (env && strlen(env) > 1) {
-    INFO(MSCCLPP_ENV, "MSCCLPP_SOCKET_IFNAME set by environment to %s", env);
+  } else if (socketIfname != "") {
     // Specified by user : find or fail
-    if (shownIfName++ == 0) INFO(MSCCLPP_NET, "MSCCLPP_SOCKET_IFNAME set to %s", env);
-    nIfs = findInterfaces(env, ifNames, ifAddrs, sock_family, ifNameMaxSize, maxIfs);
+    if (shownIfName++ == 0) INFO(MSCCLPP_NET, "MSCCLPP_SOCKET_IFNAME set to %s", socketIfname.c_str());
+    nIfs = findInterfaces(socketIfname.c_str(), ifNames, ifAddrs, sock_family, ifNameMaxSize, maxIfs);
   } else {
     // Try to automatically pick the right one
     // Start with IB
     nIfs = findInterfaces("ib", ifNames, ifAddrs, sock_family, ifNameMaxSize, maxIfs);
     // else see if we can get some hint from COMM ID
     if (nIfs == 0) {
-      char* commId = getenv("MSCCLPP_COMM_ID");
-      if (commId && strlen(commId) > 1) {
-        INFO(MSCCLPP_ENV, "MSCCLPP_COMM_ID set by environment to %s", commId);
+      const std::string& commId = env()->commId;
+      if (commId != "") {
         // Try to find interface that is in the same subnet as the IP in comm id
         union SocketAddress idAddr;
-        SocketGetAddrFromString(&idAddr, commId);
+        SocketGetAddrFromString(&idAddr, commId.c_str());
         nIfs = FindInterfaceMatchSubnet(ifNames, ifAddrs, &idAddr, ifNameMaxSize, maxIfs);
       }
     }
