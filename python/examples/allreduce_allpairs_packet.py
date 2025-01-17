@@ -11,9 +11,10 @@ def allreduce_allpairs(gpus, instances):
     """
     AllReduce with all pairs algorithm using packets format.
     Steps:
-    1. Each rank sends the nth chunk to the nth rank into scratch space.
-    2. Each rank performs a local reduction on the nth chunk. Then sends the reduced data to all other ranks.
-    3. Each rank retrieves the final result from scratch space.
+    1. Each rank sends its nth chunk to the nth rank's scratch space.
+    2. Each rank performs a local reduction on its nth chunk using data from all other ranks' scratch spaces.
+    3. Each rank sends the reduced data to all other ranks' scratch spaces.
+    4. Each rank retrieves the final reduced result from the scratch space.
     """
     size = gpus
     chunksperloop = gpus * gpus

@@ -9,10 +9,10 @@ from mscclpp.language.buffer import Buffer
 
 def allreduce_allpairs(gpus, instances, protocol):
     """
-    Demostrate allreduce with all pairs algorithm with put semantics.
+    Demonstrate allreduce with all pairs algorithm using put semantics.
     Steps:
     1. Sync all ranks to ensure the data is ready.
-    2. Each rank read chunks from all peers and reduces the data.
+    2. Each rank reads chunks from all peers and reduces the data.
     3. Put the reduced data to all peers.
     4. Sync all ranks to ensure the data is received.
     """
