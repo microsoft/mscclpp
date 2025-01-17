@@ -1,4 +1,4 @@
-# MSCCLPP DSL
+# MSCCL++ DSL
 ## MSCCLPPLang Introduction
 MSCCLPPLang is a Python moudule for writing high-performance commnunication algorithms. It is designed to be easy to use and efficient, while providing a high-level interface for writing communication algorithms. MSCCLPPLang program will be compiled to json based execution plan, which can be executed by MSCCLPP executor.
 
@@ -81,8 +81,12 @@ A channel is a communication channel between two GPUs. It is used to send and re
 `ChannelType.nvls` is used for communication between GPUs on the same node. This feature offloads the data processing task to the switch, requiring specific hardware support.
 
 #### Thread Block
-
 We can assign operations to a thread block. The thread block is a group of threads that are executed together on the GPU. In the operation function, we can specify the thread block that the operation belongs to via `sendtb` or `recvtb` parameter.
+
+#### Instance
+An instance is a parallel execution of the program. For example, if a collective algorithm is designed to run on `n` chunks with `m` thread blocks, setting the instance to 2 will run the algorithm on `2n` chunks with `2m` thread blocks. Serveral replication policies are supported, including `duplicated` and `interleaved`.
+- `duplicated`: Divide chunks equally among the number of instances. For example, ChunkA and ChunkB are duplicated to ChunkA0, ChunkA1, ChunkB0, and ChunkB1. ChunkA0 and ChunkA1 belong to Instance 0, while ChunkB0 and ChunkB1 belong to Instance 1.
+- `interleaved`: Assign chunks to instances in an interleaved manner. For example, ChunkA and ChunkB are interleaved to ChunkA0, ChunkA1, ChunkB0, and ChunkB1. ChunkA0 and ChunkB0 belong to Instance 0, while ChunkA1 and ChunkB1 belong to Instance 1.
 
 #### Instruction Fusion
 MSCCLPPLang provides the instruction fusion mechanism to fuse multiple operations into a single kernel. This can reduce the overhead of launching multiple instructions. When user create the MSCCLPPLang program, it can specify the `instr_fusion` parameter to enable the instruction fusion. By default, the instruction fusion is enabled.
