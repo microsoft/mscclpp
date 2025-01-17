@@ -8,6 +8,14 @@ from mscclpp.language.buffer import Buffer
 
 
 def allreduce_allpairs(gpus, instances):
+    """
+    AllReduce with all pairs algorithm using get semantics.
+    Steps:
+    1. Sync all ranks to ensure the data is ready.
+    2. Each rank read chunks from all peers and reduces the data.
+    3. Signal all ranks to notify that the data is ready.
+    4. Wait for all chunks to be ready, then retrieve the chunks from all peers.
+    """
     size = gpus
     chunksperloop = gpus * gpus
     collective = AllReduce(size, chunksperloop, True)

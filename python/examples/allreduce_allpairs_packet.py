@@ -8,6 +8,13 @@ from mscclpp.language.buffer import Buffer
 
 
 def allreduce_allpairs(gpus, instances):
+    """
+    AllReduce with all pairs algorithm using packets format.
+    Steps:
+    1. Each rank sends the nth chunk to the nth rank into scratch space.
+    2. Each rank performs a local reduction on the nth chunk. Then sends the reduced data to all other ranks.
+    3. Each rank retrieves the final result from scratch space.
+    """
     size = gpus
     chunksperloop = gpus * gpus
     collective = AllReduce(size, chunksperloop, True)

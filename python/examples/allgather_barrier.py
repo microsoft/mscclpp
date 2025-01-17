@@ -6,6 +6,14 @@ from mscclpp.language.types import ChannelType, ReplicationPolicy
 
 
 def allgather_test(gpus, instances):
+    """
+    Demonstrates how to use barrier in the MSCCL++ DSL with an allgather collective.
+    This example uses an allpairs algorithm for the allgather operation.
+    Steps:
+    1. Each rank sends a chunk to all other ranks' output buffers and copies the chunk to its own output buffer.
+    2. A barrier is called to synchronize the send and copy operations, and signal peers that the data has been sent.
+    3. Wait for all the chunks from other ranks to be received.
+    """
     size = gpus
     collective = AllGather(size, 1, False)
     with MSCCLPPProgram(

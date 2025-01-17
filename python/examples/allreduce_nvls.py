@@ -7,7 +7,14 @@ from mscclpp.language.collectives import AllReduce
 from mscclpp.language.buffer import Buffer
 
 
-def allreduce_allpairs(gpus, instances):
+def allreduce_nvls(gpus, instances):
+    """
+    Allreduce via NVLS channel
+    Steps:
+    1. Sync all the ranks to make sure the data is ready.
+    2. Call group_load_reduce to reduce the data.
+    3. Call group_store to propagate the data to all the ranks.
+    """
     size = gpus
     chunksperloop = gpus
     collective = AllReduce(size, chunksperloop, True)
@@ -45,4 +52,4 @@ parser.add_argument("instances", type=int, help="number of instances")
 
 args = parser.parse_args()
 
-allreduce_allpairs(args.num_gpus, args.instances)
+allreduce_nvls(args.num_gpus, args.instances)

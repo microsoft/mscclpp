@@ -9,6 +9,12 @@ from mscclpp.language.types import ChannelType
 
 
 def send_recv(instances):
+    """
+    Send and receive data between two ranks using proxy channels.
+    steps:
+    1. Each rank sends a chunk to the other rank's scratch buffer and signals the other rank that the data has been sent.
+    2. Wait for the data to be received then copy it to the output buffer.
+    """
     size = 2
     chunksperloop = 1
     collective = SendRecv(size, chunksperloop, False)

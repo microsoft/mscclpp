@@ -7,8 +7,14 @@ from mscclpp.language.collectives import AllReduce
 from mscclpp.language.buffer import Buffer
 
 
-# Ring all reduce for A100s
 def allreduce_ring(size, instances):
+    """
+    Implements a ring based allreduce.
+    Steps:
+    1. Send signal to next rank and wait for signal from previous rank. Make sure the data is ready in previous rank.
+    2. Reduce the data and send to next rank.
+    3. After all the data is reduced, propagate the data to all the ranks.
+    """
     collective = AllReduce(size, size, True)
     with MSCCLPPProgram(
         f"allreduce_ring",
