@@ -46,8 +46,11 @@ struct AvoidCudaGraphCaptureGuard {
 
 /// A RAII wrapper around cudaStream_t that will call cudaStreamDestroy on destruction.
 struct CudaStreamWithFlags {
+  CudaStreamWithFlags() : stream_(nullptr) {}
   CudaStreamWithFlags(unsigned int flags);
   ~CudaStreamWithFlags();
+  void set(unsigned int flags);
+  bool empty() const;
   operator cudaStream_t() const { return stream_; }
   cudaStream_t stream_;
 };
