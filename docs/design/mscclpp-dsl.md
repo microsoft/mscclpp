@@ -78,7 +78,7 @@ A channel is a communication channel between two GPUs. It is used to send and re
 
 `ChannelType.proxy` is used for communication between GPUs, whether they are on different nodes or the same node. This channel will offload the data transfer to CPU processors, which can provide better throughput compared to `ChannelType.sm`. However, this comes at the cost of higher latency compared to `ChannelType.sm`.
 
-`ChannelType.nvls` is used for communication between GPUs on the same node. This feature offloads the data processing task to the switch, requiring specific hardware support. Refer [nvdia documentation](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MULTICAST.html) for more details.
+`ChannelType.nvls` is used for communication between GPUs on the same node. This feature offloads the data processing task to the switch, requiring specific hardware support. Refer [nvdia documentation](https://www.nvidia.com/en-us/data-center/nvlink/) for more details.
 
 #### Thread Block
 We can assign operations to a thread block. The thread block is a group of threads that are executed together on the GPU. In the operation function, we can specify the thread block that the operation belongs to via `sendtb` or `recvtb` parameter.
