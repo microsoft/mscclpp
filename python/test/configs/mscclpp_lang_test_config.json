@@ -1,0 +1,34 @@
+[
+    {
+        "filename": "allgather_barrier.py",
+        "args": ["8", "8"]
+    },
+    {
+        "filename": "allreduce_allpairs_packet.py",
+        "args": ["8", "8"]
+    },
+    {
+        "filename": "allreduce_allpairs_get.py",
+        "args": ["8", "8"]
+    },
+    {
+        "filename": "allreduce_allpairs.py",
+        "args": ["8", "8"]
+    },
+    {
+        "filename": "allreduce_ring.py",
+        "args": ["8", "8"]
+    },
+    {
+        "filename": "send_recv_packet.py",
+        "args": ["2"]
+    },
+    {
+        "filename": "send_recv_proxy.py",
+        "args": ["2"]
+    },
+    {
+        "filename": "allreduce_nvls.py",
+        "args": ["8", "2"]
+    }
+]
