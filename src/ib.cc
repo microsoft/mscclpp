@@ -367,10 +367,10 @@ IbQp* IbCtx::createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRec
   if (port == -1) {
     port = this->getAnyActivePort();
     if (port == -1) {
-      throw mscclpp::Error("No active port found", ErrorCode::InternalError);
+      throw mscclpp::Error("No active port found", ErrorCode::InvalidUsage);
     }
   } else if (!this->isPortUsable(port)) {
-    throw mscclpp::Error("invalid IB port: " + std::to_string(port), ErrorCode::InternalError);
+    throw mscclpp::Error("invalid IB port: " + std::to_string(port), ErrorCode::InvalidUsage);
   }
   qps.emplace_back(new IbQp(this->ctx, this->pd, port, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
   return qps.back().get();
