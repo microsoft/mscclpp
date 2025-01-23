@@ -7,6 +7,7 @@
 #include <mscclpp/sm_channel.hpp>
 #include <set>
 
+#include "debug.h"
 #include "execution_kernel.hpp"
 #include "execution_plan.hpp"
 
@@ -435,6 +436,9 @@ Executor::Executor(std::shared_ptr<Communicator> comm) : impl_(std::make_unique<
 void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuffSize,
                        [[maybe_unused]] size_t recvBuffSize, DataType dataType, const ExecutionPlan& plan,
                        cudaStream_t stream, PacketType packetType) {
+  INFO(MSCCLPP_EXECUTOR,
+       "Starting communication collective execution with executor, execution plan: %s, execution collective %s",
+       plan.name().c_str(), plan.collective().c_str());
   size_t sendMemRange, recvMemRange;
   CUdeviceptr sendBasePtr, recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendMemRange, (CUdeviceptr)sendbuff));
