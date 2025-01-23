@@ -74,9 +74,9 @@ auto convertToBufferType = [](const std::string& str) {
 };
 
 auto convertToChannelType = [](const std::string& str) {
-  if (str == "sm") {
+  if (str == "memory" || str == "sm") {
     return mscclpp::ChannelType::MEMORY;
-  } else if (str == "proxy") {
+  } else if (str == "port" || str == "proxy") {
     return mscclpp::ChannelType::PORT;
   } else if (str == "none") {
     return mscclpp::ChannelType::NONE;
@@ -304,7 +304,7 @@ void ExecutionPlan::Impl::parseChannels(
   }
 }
 
-// Construct the channel info. Step 1. Flatten MEMORY and PROXY channels into separate vectors.
+// Construct the channel info. Step 1. Flatten MEMORY and PORT channels into separate vectors.
 // Step 2. For each threadblock, construct a vector of channel indexes and keys.
 void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   using mapKey = std::tuple<int, BufferType, BufferType, ChannelType>;

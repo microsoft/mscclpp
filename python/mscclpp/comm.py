@@ -99,7 +99,7 @@ class CommGroup:
             else:
                 endpoint = endpoints
             if endpoint.transport == Transport.Nvls:
-                return connect_nvls_collective(self.communicator, all_ranks, 2**30)
+                return connect_nvls_collective(self.communicator, all_ranks, 2 ** 30)
             else:
                 connections[rank] = self.communicator.connect_on_setup(rank, 0, endpoint)
         self.communicator.setup()
@@ -115,7 +115,9 @@ class CommGroup:
         data_ptr = (
             tensor.data.ptr
             if isinstance(tensor, cp.ndarray)
-            else tensor.data_ptr() if is_torch_tensor(tensor) else tensor.ctypes.data
+            else tensor.data_ptr()
+            if is_torch_tensor(tensor)
+            else tensor.ctypes.data
         )
         tensor_size = (
             tensor.numel() * tensor.element_size() if is_torch_tensor(tensor) else tensor.size * tensor.itemsize
@@ -198,7 +200,9 @@ class CommGroup:
         data_ptr = (
             tensor.data.ptr
             if isinstance(tensor, cp.ndarray)
-            else tensor.data_ptr() if is_torch_tensor(tensor) else tensor.ctypes.data
+            else tensor.data_ptr()
+            if is_torch_tensor(tensor)
+            else tensor.ctypes.data
         )
         tensor_size = (
             tensor.numel() * tensor.element_size() if is_torch_tensor(tensor) else tensor.size * tensor.itemsize

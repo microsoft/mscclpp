@@ -110,7 +110,7 @@ def parse_size(size_str):
     size_str = size_str.strip()
     if not size_str:
         raise ValueError("Size string can not be empty")
-    units = {"K": 1024, "M": 1024**2, "G": 1024**3}
+    units = {"K": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
     if size_str[-1].upper() in units:
         return int(size_str[:-1]) * units[size_str[-1].upper()]
     else:

@@ -10,9 +10,9 @@ from mscclpp.language.types import ChannelType
 
 def send_recv(instances):
     """
-    Send and receive data between two ranks using proxy channels, with LL protocol and double scratch buffer.
+    Send and receive data between two ranks using port channels, with LL protocol and double scratch buffer.
     Steps:
-    1. Each rank sends a chunk to every other rank's scratch buffer with packet format via proxy channel.
+    1. Each rank sends a chunk to every other rank's scratch buffer with packet format via port channel.
     2. Wait for the data to be received, then copy it to the output buffer.
     """
     size = 2
@@ -36,7 +36,7 @@ def send_recv(instances):
                     "scratch",
                     1,
                     sendtb=0,
-                    chan_type=ChannelType.proxy,
+                    chan_type=ChannelType.port,
                     temp_buffer="scratch",
                     temp_buffer_index=0,
                 )

@@ -286,7 +286,7 @@ class _ReadReduceCopySendConverter(_OpConverter):
 class _ReduceSendConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
         dst_channel_ids = self.get_channel_ids(
-            op.dsts, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, ChannelType.sm
+            op.dsts, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, ChannelType.memory
         )
         o_buff = {"src": op.dst.buffer.value, "dst": op.dsts[0].buffer.value}
         srcs = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.srcs))
@@ -476,7 +476,9 @@ def _dump_to_json(program: Program):
                 buffer_size = (
                     max_input
                     if buff == Buffer.input.value
-                    else max_output if buff == Buffer.output.value else max_scratch
+                    else max_output
+                    if buff == Buffer.output.value
+                    else max_scratch
                 )
                 gpu_instance["channels"][i] = {
                     "buff": chan["srcbuff"],
