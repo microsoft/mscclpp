@@ -9,6 +9,7 @@
 
 #include "execution_kernel.hpp"
 #include "execution_plan.hpp"
+#include "debug.h"
 
 namespace mscclpp {
 struct ExecutionContextKey {
@@ -143,7 +144,7 @@ struct Executor::Impl {
                                          size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendMemRange, recvMemRange, plan.impl_->name};
     DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset};
-    if (this->contexts.find(key) != this->contexts.end()) {
+    if (mscclppDisableChannelCache == true || this->contexts.find(key) != this->contexts.end()) {
       auto& devicePlans = this->contexts[key].deviceExecutionPlans;
       if (this->contexts[key].currentDevicePlan == devicePlanKey) {
         return this->contexts[key];

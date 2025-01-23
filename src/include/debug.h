@@ -90,6 +90,7 @@ typedef enum {
 } mscclppDebugLogSubSys;
 
 extern int mscclppDebugLevel;
+extern bool mscclppDisableChannelCache;
 extern uint64_t mscclppDebugMask;
 extern pthread_mutex_t mscclppDebugLock;
 extern FILE* mscclppDebugFile;

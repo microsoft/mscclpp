@@ -501,10 +501,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                       size_t channelOutOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
                       size_t nelems, cudaStream_t stream) {
   static uint32_t flag = 1;
-  // printf(
-  //     "allreduce: rank=%d, nRanksPerNode=%d, worldSize=%d, nelems=%ld, flag=%d scratch buff: %ld, scratch buffer addr "
-  //     "%p\n",
-  //     rank, nRanksPerNode, worldSize, nelems, flag, channelScratchOffset, scratch);
+
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
     int nBlocks = 7;
     int nThreadsPerBlock = 32;

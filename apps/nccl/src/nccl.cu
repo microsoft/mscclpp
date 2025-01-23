@@ -242,8 +242,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     }
 
     auto recvIt = comm->channelOutInfos.find(recvKey);
-    // if (recvIt == comm->channelOutInfos.end()) {
-    {
+    if (mscclppDisableChannelCache == true || recvIt == comm->channelOutInfos.end()) {
       remoteMemories =
           setupRemoteMemories(comm->comm, rank, (void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
       std::vector<mscclpp::SmChannel> outChannels =
@@ -282,14 +281,11 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
       WARN("datatype is invalid, datatype: %d", datatype);
       return ncclInvalidArgument;
   }
-  // printf("allreduce rank %d, done\n", comm->comm->bootstrap()->getRank());
   return ncclSuccess;
 }
 
 static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, size_t sendcount,
                                           ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream) {
-  // return ncclSuccess;
-  // return ncclInvalidArgument;
   // FallBack for single node
   if (comm->comm->bootstrap()->getNranks() != comm->comm->bootstrap()->getNranksPerNode()) {
     WARN("ncclAllGatherFallback is currently unavailable for multi-node");
@@ -305,35 +301,21 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
     return ncclInvalidArgument;
   }
 
-  // printf("allgather rank %d, sendbuff: %p, recvbuff: %p, bytes: %zu\n", comm->comm->bootstrap()->getRank(), sendbuff,
-  //        recvbuff, bytes);
-  // Declarating variables
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
-  // size_t sendBytes;
-  // CUdeviceptr sendBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)recvbuff));
-  // MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)sendbuff));
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
   channelKey recvKey{(void*)recvBasePtr, recvBytes};
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
   mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels = nullptr;
 
-  // printf(
-  //     "allgather rank %d, setupRemoteMemories start, recvBasePtr: %p, recvBytes %ld, sendBasePtr: %p, sendBytes %ld\n",
-  //     comm->comm->bootstrap()->getRank(), recvBasePtr, recvBytes, sendBasePtr, sendBytes);
-
   auto it = comm->channelOutInfos.find(recvKey);
-  // if (it == comm->channelOutInfos.end())
-  {
+  if (mscclppDisableChannelCache == true || it == comm->channelOutInfos.end()) {
     std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
         comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
-    // printf("allgather rank %d, setupRemoteMemories done, recvBasePtr: %p, recvBytes %ld\n",
-    //        comm->comm->bootstrap()->getRank(), recvBasePtr, recvBytes);
     std::vector<mscclpp::SmChannel> channels =
         setupSmChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
-    // printf("allgather rank %d, setupSmChannels done\n", comm->comm->bootstrap()->getRank());
     std::vector<mscclpp::DeviceHandle<mscclpp::SmChannel>> smChannelDeviceHandles;
     std::transform(channels.begin(), channels.end(), std::back_inserter(smChannelDeviceHandles),
                    [](const mscclpp::SmChannel& smChannel) { return mscclpp::deviceHandle(smChannel); });
@@ -349,7 +331,7 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
     CUDACHECK(allgather<true>((int*)sendbuff, (int*)nullptr, (int*)recvbuff, smChannels, offsetOut, rank,
                               NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
   }
-  // printf("allgather rank %d, done\n", comm->comm->bootstrap()->getRank());
+
   return ncclSuccess;
 }
 
@@ -383,7 +365,7 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   commPtr->smSemaphores = std::move(smSemaphores);
   commPtr->buffFlag = 0;
   commPtr->numScratchBuff = 2;
-  commPtr->scratchBuff = mscclpp::detail::gpuCallocShared<char>(SCRATCH_SIZE);
+  commPtr->scratchBuff = mscclpp::GpuBuffer<char>(SCRATCH_SIZE).memory();
   commPtr->remoteScratchRegMemories =
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
 }

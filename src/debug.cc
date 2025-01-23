@@ -14,6 +14,7 @@
 #include <string>
 
 int mscclppDebugLevel = -1;
+bool mscclppDisableChannelCache = false;
 static int pid = -1;
 static std::string hostname;
 thread_local int mscclppDebugNoWarn = 0;
@@ -48,6 +49,17 @@ void mscclppDebugInit() {
     tempNcclDebugLevel = MSCCLPP_LOG_ABORT;
   } else if (strcasecmp(mscclpp_debug, "TRACE") == 0) {
     tempNcclDebugLevel = MSCCLPP_LOG_TRACE;
+  }
+
+  const char* disable_channel_cache = getenv("MSCCLPP_DISABLE_CHANNEL_CACHE");
+  if (disable_channel_cache == NULL) {
+    mscclppDisableChannelCache = false;
+  } else if (strcasecmp(disable_channel_cache, "TRUE") == 0) {
+    mscclppDisableChannelCache = true;
+  } else if (strcasecmp(disable_channel_cache, "FALSE") == 0) {
+    mscclppDisableChannelCache = false;
+  } else {
+    mscclppDisableChannelCache = false;
   }
 
   /* Parse the MSCCLPP_DEBUG_SUBSYS env var
