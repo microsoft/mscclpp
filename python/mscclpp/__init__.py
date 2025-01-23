@@ -4,6 +4,7 @@
 import os as _os
 
 from ._mscclpp import (
+    Env,
     ErrorCode,
     BaseError,
     Error,
@@ -32,6 +33,7 @@ from ._mscclpp import (
     ExecutionPlan,
     PacketType,
     RawGpuBuffer,
+    env,
     version,
     is_nvls_supported,
     npkit,

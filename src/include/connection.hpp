@@ -5,7 +5,7 @@
 #define MSCCLPP_CONNECTION_HPP_
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/gpu.hpp>
+#include <mscclpp/gpu_utils.hpp>
 
 #include "communicator.hpp"
 #include "context.hpp"
@@ -16,10 +16,10 @@
 namespace mscclpp {
 
 class CudaIpcConnection : public Connection {
-  cudaStream_t stream_;
+  std::shared_ptr<CudaStreamWithFlags> stream_;
 
  public:
-  CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, cudaStream_t stream);
+  CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, std::shared_ptr<CudaStreamWithFlags> stream);
 
   Transport transport() override;
 

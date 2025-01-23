@@ -233,6 +233,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
     if (this->isCuMemMapAlloc) {
+#if (CUDA_NVLS_SUPPORTED)
       CUmemGenericAllocationHandle handle;
       MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsCompatibleMemHandleType()));
       size_t minGran = getMinGranularity(this->size);
@@ -242,6 +243,11 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
       MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, size, 0, handle, 0));
       detail::setReadWriteMemoryAccess(base, size);
       this->data = static_cast<char*>(base) + entry.offsetFromBase;
+#else
+      throw mscclpp::Error(
+          "CUDA does not support NVLS. Please ensure your CUDA version supports NVLS to use this feature.",
+          mscclpp::ErrorCode::InvalidUsage);
+#endif
     } else {
       MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
       this->data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
