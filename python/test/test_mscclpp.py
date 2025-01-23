@@ -178,7 +178,7 @@ def test_group_with_connections(mpi_group: MpiGroup, transport: str):
 
 
 @parametrize_mpi_groups(1)
-@pytest.mark.parametrize("nelem", [2 ** i for i in [0, 10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2**i for i in [0, 10, 15, 20]])
 @pytest.mark.parametrize("dtype", [cp.float32, cp.float16])
 def test_gpu_buffer(mpi_group: MpiGroup, nelem: int, dtype: cp.dtype):
     memory = GpuBuffer(nelem, dtype=dtype)
@@ -193,7 +193,7 @@ def test_gpu_buffer(mpi_group: MpiGroup, nelem: int, dtype: cp.dtype):
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
-@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 def test_connection_write(mpi_group: MpiGroup, transport: Transport, nelem: int):
     group, connections = create_group_and_connection(mpi_group, transport)
     memory = GpuBuffer(nelem, dtype=cp.int32)
@@ -228,7 +228,7 @@ def test_connection_write(mpi_group: MpiGroup, transport: Transport, nelem: int)
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
-@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20, 27]])
+@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20, 27]])
 @pytest.mark.parametrize("device", ["cuda", "cpu"])
 def test_connection_write_and_signal(mpi_group: MpiGroup, transport: Transport, nelem: int, device: str):
     # this test starts with a random tensor on rank 0 and rotates it all the way through all ranks
@@ -325,15 +325,15 @@ def test_nvls_connection(mpi_group: MpiGroup):
         pytest.skip("cannot use nvls for cross node")
     group = mscclpp_comm.CommGroup(mpi_group.comm)
     all_ranks = list(range(group.nranks))
-    endpoint = EndpointConfig(Transport.Nvls, 2 ** 22)
+    endpoint = EndpointConfig(Transport.Nvls, 2**22)
     nvls_connection = group.make_connection(all_ranks, endpoint)
-    mem_handle1 = nvls_connection.allocate_bind_memory(2 ** 21)
-    mem_handle2 = nvls_connection.allocate_bind_memory(2 ** 21)
+    mem_handle1 = nvls_connection.allocate_bind_memory(2**21)
+    mem_handle2 = nvls_connection.allocate_bind_memory(2**21)
     with pytest.raises(Exception):
-        mem_handle3 = nvls_connection.allocate_bind_memory(2 ** 21)
+        mem_handle3 = nvls_connection.allocate_bind_memory(2**21)
     # the memory is freed on the destructor of mem_handle2
     mem_handle2 = None
-    mem_handle3 = nvls_connection.allocate_bind_memory(2 ** 21)
+    mem_handle3 = nvls_connection.allocate_bind_memory(2**21)
 
 
 class MscclppKernel:
@@ -466,7 +466,7 @@ def test_d2d_semaphores(mpi_group: MpiGroup):
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("use_packet", [False, True])
 def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
     group, connections = create_group_and_connection(mpi_group, "NVLink")
@@ -513,7 +513,7 @@ def test_fifo(
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["IB", "NVLink"])
 def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
     group, connections = create_group_and_connection(mpi_group, transport)
@@ -562,7 +562,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
-@pytest.mark.parametrize("nelem", [2 ** i for i in [10, 15, 20]])
+@pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["NVLink", "IB"])
 @pytest.mark.parametrize("use_packet", [False, True])
 def test_port_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
@@ -610,7 +610,7 @@ def test_port_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packe
 @pytest.mark.skipif(is_nvls_supported() is False, reason="NVLS is not supported")
 def test_nvls(mpi_group: MpiGroup):
     group, nvls_connection = create_group_and_connection(mpi_group, "NVLS")
-    nbytes = 2 ** 21
+    nbytes = 2**21
     mem_handle = nvls_connection.allocate_bind_memory(nbytes)
 
     nvlinks_connections = create_connection(group, "NVLink")

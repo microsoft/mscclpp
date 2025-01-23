@@ -476,9 +476,7 @@ def _dump_to_json(program: Program):
                 buffer_size = (
                     max_input
                     if buff == Buffer.input.value
-                    else max_output
-                    if buff == Buffer.output.value
-                    else max_scratch
+                    else max_output if buff == Buffer.output.value else max_scratch
                 )
                 gpu_instance["channels"][i] = {
                     "buff": chan["srcbuff"],
