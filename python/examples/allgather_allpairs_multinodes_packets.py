@@ -8,18 +8,16 @@ from mscclpp.language.buffer import Buffer
 from mscclpp.language.types import ChannelType, ReplicationPolicy
 
 
-def allgather_allpair(name, gpus, gpus_per_node, instances, num_threads_per_block, min_message_size, max_message_size):
+def allgather_multinodes_allpair(gpus, gpus_per_node, instances):
     collective = AllGather(gpus, 1, True)
     with MSCCLPPProgram(
-        name,
+        "allgather_multinodes_allpair",
         collective,
         gpus,
         instances,
         protocol="LL",
         replication_policy=ReplicationPolicy.interleaved,
-        num_threads_per_block=num_threads_per_block,
-        min_message_size=min_message_size,
-        max_message_size=max_message_size,
+        num_threads_per_block=1024,
     ):
         for g in range(gpus):
             src_rank = g
@@ -55,22 +53,14 @@ def allgather_allpair(name, gpus, gpus_per_node, instances, num_threads_per_bloc
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--name", type=str, help="name of the program")
-parser.add_argument("--num_gpus", type=int, help="number of gpus")
-parser.add_argument("--gpus_per_node", type=int, help="number of gpus")
-parser.add_argument("--instances", type=int, help="number of instances")
-parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
-parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
-parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="maximum message size")
+parser.add_argument("num_gpus", type=int, help="number of gpus")
+parser.add_argument("gpus_per_node", type=int, help="number of gpus")
+parser.add_argument("instances", type=int, help="number of instances")
 
 args = parser.parse_args()
 
-allgather_allpair(
-    args.name,
+allgather_multinodes_allpair(
     args.num_gpus,
     args.gpus_per_node,
     args.instances,
-    args.num_threads_per_block,
-    args.min_message_size,
-    args.max_message_size,
 )
