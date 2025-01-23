@@ -119,6 +119,10 @@ class ChannelType(Enum):
     none = "none"
     nvls = "nvls"
 
+    # Deprecated
+    proxy = "port"
+    sm = "memory"
+
     def __str__(self):
         return self.value
 
