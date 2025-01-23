@@ -3,6 +3,7 @@
 
 import os
 import warnings
+from functools import wraps
 
 from ._mscclpp import (
     Env,
@@ -70,6 +71,7 @@ __all__ = [
     "get_include",
     "get_lib",
     ### Deprecated ###
+    "ProxyChannel",
     "SmChannel",
     "SmDevice2DeviceSemaphore",
 ]
@@ -90,28 +92,31 @@ def get_lib() -> str:
     return os.path.join(os.path.dirname(__file__), "lib")
 
 
-class MetaDeprecated(type):
-    def __new__(cls, name, bases, class_dict):
-        new_class = super().__new__(cls, name, bases, class_dict)
+def deprecated(new_cls):
+    def decorator(old_cls):
+        @wraps(old_cls)
+        def wrapper(*args, **kwargs):
+            warnings.warn(
+                f"{old_cls.__name__} is deprecated, use {new_cls.__name__} instead.",
+                DeprecationWarning,
+            )
+            return new_cls(*args, **kwargs)
 
-        # Override the __init__ method to add a deprecation warning
-        original_init = new_class.__init__
+        return wrapper
 
-        def new_init(self, *args, **kwargs):
-            warnings.warn(f"{name} is deprecated, use {bases[0].__name__} instead.", DeprecationWarning, stacklevel=2)
-            original_init(self, *args, **kwargs)
-
-        new_class.__init__ = new_init
-        return new_class
+    return decorator
 
 
-class ProxyChannel(PortChannel, metaclass=MetaDeprecated):
+@deprecated(PortChannel)
+class ProxyChannel(PortChannel):
     pass
 
 
-class SmChannel(MemoryChannel, metaclass=MetaDeprecated):
+@deprecated(MemoryChannel)
+class SmChannel(MemoryChannel):
     pass
 
 
-class SmDevice2DeviceSemaphore(MemoryDevice2DeviceSemaphore, metaclass=MetaDeprecated):
+@deprecated(MemoryDevice2DeviceSemaphore)
+class SmDevice2DeviceSemaphore(MemoryDevice2DeviceSemaphore):
     pass
