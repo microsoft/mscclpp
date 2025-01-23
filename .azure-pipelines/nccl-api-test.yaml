@@ -88,23 +88,6 @@ jobs:
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
-    name: InstallMscclTools
-    displayName: Install msccl-tools
-    inputs:
-      targetType: 'inline'
-      script: |
-        set -e
-        HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
-        SSH_OPTION="StrictHostKeyChecking=no"
-        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-        parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"   \
-          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c " \
-          cd /root/mscclpp;                                          \
-          git clone https://github.com/Azure/msccl-tools.git;        \
-          cd /root/mscclpp/msccl-tools; pip3 install ."'
-      workingDirectory: '$(System.DefaultWorkingDirectory)'
-
-  - task: Bash@3
     name: GenerateExecutionFile
     displayName: Generate execution file
     inputs:

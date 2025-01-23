@@ -15,8 +15,8 @@
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
     broadcast6(void* sendbuff, void* scratchbuff, void* recvbuff,
-               mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels, size_t channelOutOffset, size_t rank,
-               [[maybe_unused]] size_t worldSize, size_t root, size_t nRanksPerNode, size_t nelemsPerGPU) {
+               mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels, [[maybe_unused]] size_t channelOutOffset,
+               size_t rank, [[maybe_unused]] size_t worldSize, size_t root, size_t nRanksPerNode, size_t nelemsPerGPU) {
   const size_t nThread = blockDim.x * gridDim.x;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;

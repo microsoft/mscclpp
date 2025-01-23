@@ -7,6 +7,7 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 
+#include <mscclpp/env.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
 #include <thread>
@@ -36,10 +37,13 @@ std::string Connection::getTransportName() {
          TransportNames[static_cast<int>(this->remoteTransport())];
 }
 
+int Connection::getMaxWriteQueueSize() { return maxWriteQueueSize; }
+
 // CudaIpcConnection
 
-CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, cudaStream_t stream)
-    : stream_(stream) {
+CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint,
+                                     std::shared_ptr<CudaStreamWithFlags> stream)
+    : Connection(localEndpoint.maxWriteQueueSize()), stream_(stream) {
   if (localEndpoint.transport() != Transport::CudaIpc) {
     throw mscclpp::Error("Cuda IPC connection can only be made from a Cuda IPC endpoint", ErrorCode::InvalidUsage);
   }
@@ -72,7 +76,9 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
   char* dstPtr = (char*)dst.data();
   char* srcPtr = (char*)src.data();
 
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, srcPtr + srcOffset, size, cudaMemcpyDeviceToDevice, stream_));
+  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
+
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, srcPtr + srcOffset, size, cudaMemcpyDeviceToDevice, *stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection write: from %p to %p, size %lu", srcPtr + srcOffset, dstPtr + dstOffset, size);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_WRITE_EXIT)
@@ -90,7 +96,9 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
   *src = newValue;
   uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
 
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr, src, sizeof(uint64_t), cudaMemcpyHostToDevice, stream_));
+  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
+
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr, src, sizeof(uint64_t), cudaMemcpyHostToDevice, *stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
        newValue);
 
@@ -107,8 +115,11 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
   if (timeoutUsec >= 0) {
     INFO(MSCCLPP_P2P, "CudaIpcConnection flush: timeout is not supported, ignored");
   }
+
+  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
+
   AvoidCudaGraphCaptureGuard guard;
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream_));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(*stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection flushing connection");
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_FLUSH_EXIT)
@@ -119,7 +130,9 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 // IBConnection
 
 IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context)
-    : transport_(localEndpoint.transport()),
+    : Connection(localEndpoint.maxWriteQueueSize() != -1 ? localEndpoint.maxWriteQueueSize()
+                                                         : EndpointConfig::DefaultMaxCqSize),
+      transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
   qp = getImpl(localEndpoint)->ibQp_;
@@ -231,7 +244,10 @@ void IBConnection::flush(int64_t timeoutUsec) {
 
 EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, uint64_t sendBufferSize,
                                        uint64_t recvBufferSize)
-    : abortFlag_(0), sendBufferSize_(sendBufferSize), recvBufferSize_(recvBufferSize) {
+    : Connection(localEndpoint.maxWriteQueueSize()),
+      abortFlag_(0),
+      sendBufferSize_(sendBufferSize),
+      recvBufferSize_(recvBufferSize) {
   // Validating Transport Protocol
   if (localEndpoint.transport() != Transport::Ethernet || remoteEndpoint.transport() != Transport::Ethernet) {
     throw mscclpp::Error("Ethernet connection can only be made from Ethernet endpoints", ErrorCode::InvalidUsage);

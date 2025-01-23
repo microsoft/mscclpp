@@ -72,6 +72,7 @@ class ProxyService : public BaseProxyService {
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
   int deviceNumaNode;
+  std::unordered_map<std::shared_ptr<Connection>, int> inflightRequests;
 
   void bindThread();
 

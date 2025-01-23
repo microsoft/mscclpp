@@ -13,6 +13,7 @@
 namespace nb = nanobind;
 using namespace mscclpp;
 
+extern void register_env(nb::module_& m);
 extern void register_error(nb::module_& m);
 extern void register_port_channel(nb::module_& m);
 extern void register_memory_channel(nb::module_& m);
@@ -184,6 +185,7 @@ void register_core(nb::module_& m) {
 }
 
 NB_MODULE(_mscclpp, m) {
+  register_env(m);
   register_error(m);
   register_port_channel(m);
   register_memory_channel(m);

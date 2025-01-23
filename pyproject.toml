@@ -11,6 +11,7 @@ version = "0.6.0"
 
 [tool.scikit-build]
 cmake.version = ">=3.25.0"
+cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["python/mscclpp", "python/mscclpp_benchmark"]
 wheel.install-dir = "mscclpp"
