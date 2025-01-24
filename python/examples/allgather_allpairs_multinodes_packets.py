@@ -33,7 +33,7 @@ def allgather_multinodes_allpair(gpus, gpus_per_node, instances):
                         Buffer.scratch,
                         index=src_rank,
                         sendtb=tb,
-                        chan_type=ChannelType.proxy,
+                        chan_type=ChannelType.port,
                         temp_buffer=Buffer.scratch,
                         temp_buffer_index=src_rank,
                     )
