@@ -6,7 +6,6 @@ from mscclpp.language.chunk import Chunk, ReduceChunk
 
 
 class Collective:
-
     def __init__(self, num_ranks, chunk_factor, inplace, num_ranks_per_node=-1, **kwargs):
         self.num_ranks = num_ranks
         self.chunk_factor = chunk_factor
@@ -36,7 +35,6 @@ class Collective:
 
 
 class AllToAll(Collective):
-
     def __init__(self, num_ranks, chunk_factor, inplace):
         Collective.__init__(self, num_ranks, chunk_factor, inplace)
         self.name = "alltoall"
@@ -137,7 +135,6 @@ class AllGather(Collective):
 
 
 class AllReduce(Collective):
-
     def __init__(self, num_ranks, chunk_factor, inplace, num_ranks_per_node=-1, **kwargs):
         num_chunk_groups = kwargs.get("num_chunk_groups", num_ranks)
         Collective.__init__(

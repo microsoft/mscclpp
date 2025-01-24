@@ -1,18 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_PROXY_CHANNEL_HPP_
-#define MSCCLPP_PROXY_CHANNEL_HPP_
+#ifndef MSCCLPP_PORT_CHANNEL_HPP_
+#define MSCCLPP_PORT_CHANNEL_HPP_
 
 #include "core.hpp"
+#include "port_channel_device.hpp"
 #include "proxy.hpp"
-#include "proxy_channel_device.hpp"
 #include "semaphore.hpp"
 
 namespace mscclpp {
 
-struct BaseProxyChannel;
-struct ProxyChannel;
+struct BasePortChannel;
+struct PortChannel;
 
 /// Base class for proxy services. Proxy services are used to proxy data between devices.
 class BaseProxyService {
@@ -49,17 +49,17 @@ class ProxyService : public BaseProxyService {
   /// @return The semaphore.
   std::shared_ptr<Host2DeviceSemaphore> semaphore(SemaphoreId id) const;
 
-  /// Get a base proxy channel by semaphore ID.
+  /// Get a base port channel by semaphore ID.
   /// @param id The ID of the semaphore.
-  /// @return The base proxy channel.
-  BaseProxyChannel baseProxyChannel(SemaphoreId id);
+  /// @return The base port channel.
+  BasePortChannel basePortChannel(SemaphoreId id);
 
-  /// Get a proxy channel by semaphore ID and memory regions.
+  /// Get a port channel by semaphore ID and memory regions.
   /// @param id The ID of the semaphore.
   /// @param dst The destination memory region.
   /// @param src The source memory region.
-  /// @return The proxy channel.
-  ProxyChannel proxyChannel(SemaphoreId id, MemoryId dst, MemoryId src);
+  /// @return The port channel.
+  PortChannel portChannel(SemaphoreId id, MemoryId dst, MemoryId src);
 
   /// Start the proxy service.
   void startProxy();
@@ -79,8 +79,8 @@ class ProxyService : public BaseProxyService {
   ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
 };
 
-/// Proxy channel.
-struct BaseProxyChannel {
+/// Port channel without specifying source/destination memory regions.
+struct BasePortChannel {
  protected:
   SemaphoreId semaphoreId_;
 
@@ -89,34 +89,34 @@ struct BaseProxyChannel {
   std::shared_ptr<Proxy> proxy_;
 
  public:
-  BaseProxyChannel() = default;
+  BasePortChannel() = default;
 
-  BaseProxyChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
-                   std::shared_ptr<Proxy> proxy);
+  BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
+                  std::shared_ptr<Proxy> proxy);
 
-  BaseProxyChannel(const BaseProxyChannel& other) = default;
+  BasePortChannel(const BasePortChannel& other) = default;
 
-  BaseProxyChannel& operator=(BaseProxyChannel& other) = default;
+  BasePortChannel& operator=(BasePortChannel& other) = default;
 
-  /// Device-side handle for @ref BaseProxyChannel.
-  using DeviceHandle = BaseProxyChannelDeviceHandle;
+  /// Device-side handle for @ref BasePortChannel.
+  using DeviceHandle = BasePortChannelDeviceHandle;
 
   /// Returns the device-side handle.
   ///
-  /// User should make sure the BaseProxyChannel is not released when using the returned handle.
+  /// User should make sure the BasePortChannel is not released when using the returned handle.
   ///
   DeviceHandle deviceHandle() const;
 };
 
-/// A common form of proxy channel with a single destination and source memory region.
-struct ProxyChannel : public BaseProxyChannel {
+/// Port channel.
+struct PortChannel : public BasePortChannel {
  private:
   MemoryId dst_;
   MemoryId src_;
 
  public:
   /// Default constructor.
-  ProxyChannel() = default;
+  PortChannel() = default;
 
   /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
@@ -124,25 +124,31 @@ struct ProxyChannel : public BaseProxyChannel {
   /// @param proxy The proxy.
   /// @param dst The destination memory region.
   /// @param src The source memory region.
-  ProxyChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy,
-               MemoryId dst, MemoryId src);
+  PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy,
+              MemoryId dst, MemoryId src);
 
   /// Copy constructor.
-  ProxyChannel(const ProxyChannel& other) = default;
+  PortChannel(const PortChannel& other) = default;
 
   /// Assignment operator.
-  ProxyChannel& operator=(ProxyChannel& other) = default;
+  PortChannel& operator=(PortChannel& other) = default;
 
-  /// Device-side handle for @ref ProxyChannel.
-  using DeviceHandle = ProxyChannelDeviceHandle;
+  /// Device-side handle for @ref PortChannel.
+  using DeviceHandle = PortChannelDeviceHandle;
 
   /// Returns the device-side handle.
   ///
-  /// User should make sure the ProxyChannel is not released when using the returned handle.
+  /// User should make sure the PortChannel is not released when using the returned handle.
   ///
   DeviceHandle deviceHandle() const;
 };
 
+/// @deprecated Use @ref BasePortChannel instead.
+[[deprecated("Use BasePortChannel instead.")]] typedef BasePortChannel BaseProxyChannel;
+
+/// @deprecated Use @ref PortChannel instead.
+[[deprecated("Use PortChannel instead.")]] typedef PortChannel ProxyChannel;
+
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_PROXY_CHANNEL_HPP_
+#endif  // MSCCLPP_PORT_CHANNEL_HPP_

@@ -28,7 +28,7 @@ def allgather_test(gpus, instances):
             c = chunk(n, Buffer.input, 0, 1)
             for peer in range(gpus):
                 if n != peer:
-                    c.put(peer, Buffer.output, n, sendtb=peer, chan_type=ChannelType.sm)
+                    c.put(peer, Buffer.output, n, sendtb=peer, chan_type=ChannelType.memory)
                 else:
                     c.copy(n, Buffer.output, n, sendtb=peer)
             # explicit barrier
@@ -36,13 +36,13 @@ def allgather_test(gpus, instances):
             r.barrier(tb_list=list(range(gpus)))
             for peer in range(gpus):
                 if n != peer:
-                    c.signal(peer, Buffer.output, n, sendtb=peer, chan_type=ChannelType.sm)
+                    c.signal(peer, Buffer.output, n, sendtb=peer, chan_type=ChannelType.memory)
 
         for n in range(gpus):
             for peer in range(gpus):
                 c = chunk(n, Buffer.output, peer, 1)
                 if n != peer:
-                    c.wait(peer, Buffer.input, peer, recvtb=peer, chan_type=ChannelType.sm)
+                    c.wait(peer, Buffer.input, peer, recvtb=peer, chan_type=ChannelType.memory)
 
         Json()
         Check()
