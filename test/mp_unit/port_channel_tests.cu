@@ -6,18 +6,18 @@
 
 #include "mp_unit_tests.hpp"
 
-void ProxyChannelOneToOneTest::SetUp() {
+void PortChannelOneToOneTest::SetUp() {
   // Use only two ranks
   setNumRanksToUse(2);
   CommunicatorTestBase::SetUp();
   proxyService = std::make_shared<mscclpp::ProxyService>();
 }
 
-void ProxyChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
+void PortChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
-void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::ProxyChannel>& proxyChannels, bool useIPC,
-                                                    bool useIb, bool useEthernet, void* sendBuff, size_t sendBuffBytes,
-                                                    void* recvBuff, size_t recvBuffBytes) {
+void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChannel>& portChannels, bool useIPC,
+                                                   bool useIb, bool useEthernet, void* sendBuff, size_t sendBuffBytes,
+                                                   void* recvBuff, size_t recvBuffBytes) {
   const int rank = communicator->bootstrap()->getRank();
   const int worldSize = communicator->bootstrap()->getNranks();
   const bool isInPlace = (recvBuff == nullptr);
@@ -64,17 +64,17 @@ void ProxyChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::ProxyCh
     }
     mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, connectionFutures[r].get());
 
-    proxyChannels.emplace_back(proxyService->proxyChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
-                                                          proxyService->addMemory(sendBufRegMem)));
+    portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
+                                                        proxyService->addMemory(sendBufRegMem)));
   }
 
   communicator->setup();
 }
 
-__constant__ DeviceHandle<mscclpp::ProxyChannel> gChannelOneToOneTestConstProxyChans;
+__constant__ DeviceHandle<mscclpp::PortChannel> gChannelOneToOneTestConstPortChans;
 
 __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWithPoll, int nTries, int* ret) {
-  DeviceHandle<mscclpp::ProxyChannel>& proxyChan = gChannelOneToOneTestConstProxyChans;
+  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
   volatile int* sendBuff = (volatile int*)buff;
   int flusher = 0;
   int rank1Offset = 10000000;
@@ -84,7 +84,7 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWit
         if (threadIdx.x == 0) {
           if (waitWithPoll) {
             int spin = 1000000;
-            while (!proxyChan.poll() && spin > 0) {
+            while (!portChan.poll() && spin > 0) {
               spin--;
             }
             if (spin == 0) {
@@ -92,7 +92,7 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWit
               *ret = 1;
             }
           } else {
-            proxyChan.wait();
+            portChan.wait();
           }
         }
         __syncthreads();
@@ -109,13 +109,13 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWit
       }
       __syncthreads();
       // __threadfence_system(); // not necessary if we make sendBuff volatile
-      if (threadIdx.x == 0) proxyChan.putWithSignal(0, nElem * sizeof(int));
+      if (threadIdx.x == 0) portChan.putWithSignal(0, nElem * sizeof(int));
     }
     if (rank == 1) {
       if (threadIdx.x == 0) {
         if (waitWithPoll) {
           int spin = 1000000;
-          while (!proxyChan.poll() && spin > 0) {
+          while (!portChan.poll() && spin > 0) {
             spin--;
           }
           if (spin == 0) {
@@ -123,7 +123,7 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWit
             *ret = 1;
           }
         } else {
-          proxyChan.wait();
+          portChan.wait();
         }
       }
       __syncthreads();
@@ -140,32 +140,32 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWit
         }
         __syncthreads();
         // __threadfence_system(); // not necessary if we make sendBuff volatile
-        if (threadIdx.x == 0) proxyChan.putWithSignal(0, nElem * sizeof(int));
+        if (threadIdx.x == 0) portChan.putWithSignal(0, nElem * sizeof(int));
       }
     }
     flusher++;
     if (flusher == 1) {
-      if (threadIdx.x == 0) proxyChan.flush();
+      if (threadIdx.x == 0) portChan.flush();
       flusher = 0;
     }
   }
 }
 
-void ProxyChannelOneToOneTest::testPingPong(PingPongTestParams params) {
+void PortChannelOneToOneTest::testPingPong(PingPongTestParams params) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::ProxyChannel> proxyChannels;
+  std::vector<mscclpp::PortChannel> portChannels;
   std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
-  setupMeshConnections(proxyChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
+  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
 
-  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannelHandles;
-  for (auto& ch : proxyChannels) proxyChannelHandles.push_back(ch.deviceHandle());
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
+  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
 
-  ASSERT_EQ(proxyChannels.size(), 1);
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstProxyChans, proxyChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::ProxyChannel>)));
+  ASSERT_EQ(portChannels.size(), 1);
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
 
   proxyService->startProxy();
 
@@ -196,21 +196,21 @@ void ProxyChannelOneToOneTest::testPingPong(PingPongTestParams params) {
   proxyService->stopProxy();
 }
 
-void ProxyChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
+void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::ProxyChannel> proxyChannels;
+  std::vector<mscclpp::PortChannel> portChannels;
   std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
-  setupMeshConnections(proxyChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
+  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
 
-  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannelHandles;
-  for (auto& ch : proxyChannels) proxyChannelHandles.push_back(ch.deviceHandle());
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
+  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
 
-  ASSERT_EQ(proxyChannels.size(), 1);
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstProxyChans, proxyChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::ProxyChannel>)));
+  ASSERT_EQ(portChannels.size(), 1);
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
 
   proxyService->startProxy();
 
@@ -240,46 +240,46 @@ void ProxyChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
   proxyService->stopProxy();
 }
 
-TEST_F(ProxyChannelOneToOneTest, PingPong) {
+TEST_F(PortChannelOneToOneTest, PingPong) {
   testPingPong(PingPongTestParams{.useIPC = true, .useIB = true, .useEthernet = false, .waitWithPoll = false});
 }
 
-TEST_F(ProxyChannelOneToOneTest, PingPongIb) {
+TEST_F(PortChannelOneToOneTest, PingPongIb) {
   testPingPong(PingPongTestParams{.useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false});
 }
 
-TEST_F(ProxyChannelOneToOneTest, PingPongEthernet) {
+TEST_F(PortChannelOneToOneTest, PingPongEthernet) {
   testPingPong(PingPongTestParams{.useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false});
 }
 
-TEST_F(ProxyChannelOneToOneTest, PingPongWithPoll) {
+TEST_F(PortChannelOneToOneTest, PingPongWithPoll) {
   testPingPong(PingPongTestParams{.useIPC = true, .useIB = true, .useEthernet = false, .waitWithPoll = true});
 }
 
-TEST_F(ProxyChannelOneToOneTest, PingPongIbWithPoll) {
+TEST_F(PortChannelOneToOneTest, PingPongIbWithPoll) {
   testPingPong(PingPongTestParams{.useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true});
 }
 
-TEST_F(ProxyChannelOneToOneTest, PingPongPerf) {
+TEST_F(PortChannelOneToOneTest, PingPongPerf) {
   testPingPongPerf(PingPongTestParams{.useIPC = true, .useIB = true, .useEthernet = false, .waitWithPoll = false});
 }
 
-TEST_F(ProxyChannelOneToOneTest, PingPongPerfIb) {
+TEST_F(PortChannelOneToOneTest, PingPongPerfIb) {
   testPingPongPerf(PingPongTestParams{.useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false});
 }
 
-TEST_F(ProxyChannelOneToOneTest, PingPongPerfEthernet) {
+TEST_F(PortChannelOneToOneTest, PingPongPerfEthernet) {
   testPingPongPerf(PingPongTestParams{.useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false});
 }
 
-__device__ mscclpp::DeviceSyncer gChannelOneToOneTestProxyChansSyncer;
+__device__ mscclpp::DeviceSyncer gChannelOneToOneTestPortChansSyncer;
 
 template <bool CheckCorrectness>
 __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, mscclpp::LLPacket* getPktBuf, int rank,
                                       int nElem, int nTries, int* ret) {
   if (rank > 1) return;
 
-  DeviceHandle<mscclpp::ProxyChannel>& proxyChan = gChannelOneToOneTestConstProxyChans;
+  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
   volatile int* buffPtr = (volatile int*)buff;
   int putOffset = (rank == 0) ? 0 : 10000000;
   int getOffset = (rank == 0) ? 10000000 : 0;
@@ -302,14 +302,14 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
         // __syncthreads();
       }
       mscclpp::putPackets(putPktBuf, 0, buff, 0, nElem * sizeof(int), threadId, numThreads, flag);
-      gChannelOneToOneTestProxyChansSyncer.sync(gridDim.x);
+      gChannelOneToOneTestPortChansSyncer.sync(gridDim.x);
       if (threadId == 0) {
         // Send data from the local putPacketBuffer to the remote getPacketBuffer
-        proxyChan.put(0, nPkt * sizeof(mscclpp::LLPacket));
+        portChan.put(0, nPkt * sizeof(mscclpp::LLPacket));
       }
       flusher++;
       if (flusher == 64) {
-        if (threadId == 0) proxyChan.flush();
+        if (threadId == 0) portChan.flush();
         flusher = 0;
       }
     } else {
@@ -333,38 +333,38 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
         }
       }
       // Make sure all threads are done in this iteration
-      gChannelOneToOneTestProxyChansSyncer.sync(gridDim.x);
+      gChannelOneToOneTestPortChansSyncer.sync(gridDim.x);
     }
   }
 }
 
-void ProxyChannelOneToOneTest::testPacketPingPong(bool useIbOnly) {
+void PortChannelOneToOneTest::testPacketPingPong(bool useIbOnly) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::ProxyChannel> proxyChannels;
+  std::vector<mscclpp::PortChannel> portChannels;
   std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
 
   const size_t nPacket = (nElem * sizeof(int) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
   auto putPacketBuffer = mscclpp::GpuBuffer<mscclpp::LLPacket>(nPacket).memory();
   auto getPacketBuffer = mscclpp::GpuBuffer<mscclpp::LLPacket>(nPacket).memory();
 
-  setupMeshConnections(proxyChannels, !useIbOnly, true, false, putPacketBuffer.get(),
+  setupMeshConnections(portChannels, !useIbOnly, true, false, putPacketBuffer.get(),
                        nPacket * sizeof(mscclpp::LLPacket), getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket));
 
-  ASSERT_EQ(proxyChannels.size(), 1);
+  ASSERT_EQ(portChannels.size(), 1);
 
-  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannelHandles;
-  for (auto& proxyChannel : proxyChannels) {
-    proxyChannelHandles.push_back(proxyChannel.deviceHandle());
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
+  for (auto& portChannel : portChannels) {
+    portChannelHandles.push_back(portChannel.deviceHandle());
   }
 
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstProxyChans, proxyChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::ProxyChannel>)));
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
 
   mscclpp::DeviceSyncer syncer = {};
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestProxyChansSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestPortChansSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
 
   proxyService->startProxy();
 
@@ -405,33 +405,33 @@ void ProxyChannelOneToOneTest::testPacketPingPong(bool useIbOnly) {
   proxyService->stopProxy();
 }
 
-void ProxyChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
+void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
 
-  std::vector<mscclpp::ProxyChannel> proxyChannels;
+  std::vector<mscclpp::PortChannel> portChannels;
   std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
 
   const size_t nPacket = (nElem * sizeof(int) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
   auto putPacketBuffer = mscclpp::GpuBuffer<mscclpp::LLPacket>(nPacket).memory();
   auto getPacketBuffer = mscclpp::GpuBuffer<mscclpp::LLPacket>(nPacket).memory();
 
-  setupMeshConnections(proxyChannels, !useIbOnly, true, false, putPacketBuffer.get(),
+  setupMeshConnections(portChannels, !useIbOnly, true, false, putPacketBuffer.get(),
                        nPacket * sizeof(mscclpp::LLPacket), getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket));
 
-  ASSERT_EQ(proxyChannels.size(), 1);
+  ASSERT_EQ(portChannels.size(), 1);
 
-  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannelHandles;
-  for (auto& proxyChannel : proxyChannels) {
-    proxyChannelHandles.push_back(proxyChannel.deviceHandle());
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
+  for (auto& portChannel : portChannels) {
+    portChannelHandles.push_back(portChannel.deviceHandle());
   }
 
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstProxyChans, proxyChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::ProxyChannel>)));
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
 
   mscclpp::DeviceSyncer syncer = {};
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestProxyChansSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestPortChansSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
 
   proxyService->startProxy();
 
@@ -461,10 +461,10 @@ void ProxyChannelOneToOneTest::testPacketPingPongPerf(bool useIbOnly) {
   proxyService->stopProxy();
 }
 
-TEST_F(ProxyChannelOneToOneTest, PacketPingPong) { testPacketPingPong(false); }
+TEST_F(PortChannelOneToOneTest, PacketPingPong) { testPacketPingPong(false); }
 
-TEST_F(ProxyChannelOneToOneTest, PacketPingPongIb) { testPacketPingPong(true); }
+TEST_F(PortChannelOneToOneTest, PacketPingPongIb) { testPacketPingPong(true); }
 
-TEST_F(ProxyChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(false); }
+TEST_F(PortChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(false); }
 
-TEST_F(ProxyChannelOneToOneTest, PacketPingPongPerfIb) { testPacketPingPongPerf(true); }
+TEST_F(PortChannelOneToOneTest, PacketPingPongPerfIb) { testPacketPingPongPerf(true); }

@@ -114,10 +114,14 @@ class ChunkRef:
 
 
 class ChannelType(Enum):
-    proxy = "proxy"
-    sm = "sm"
+    port = "port"
+    memory = "memory"
     none = "none"
     nvls = "nvls"
+
+    # Deprecated
+    proxy = "port"
+    sm = "memory"
 
     def __str__(self):
         return self.value

@@ -7,25 +7,25 @@
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
-#include <mscclpp/sm_channel.hpp>
-#include <mscclpp/sm_channel_device.hpp>
+#include <mscclpp/memory_channel.hpp>
+#include <mscclpp/memory_channel_device.hpp>
 
 #include "common.hpp"
 
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
-    broadcast6(void* sendbuff, void* scratchbuff, void* recvbuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
-               [[maybe_unused]] size_t channelOutOffset, size_t rank, [[maybe_unused]] size_t worldSize, size_t root,
-               size_t nRanksPerNode, size_t nelemsPerGPU) {
+    broadcast6(void* sendbuff, void* scratchbuff, void* recvbuff,
+               mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels, [[maybe_unused]] size_t channelOutOffset,
+               size_t rank, [[maybe_unused]] size_t worldSize, size_t root, size_t nRanksPerNode, size_t nelemsPerGPU) {
   const size_t nThread = blockDim.x * gridDim.x;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
 
-  __shared__ mscclpp::DeviceHandle<mscclpp::SmChannel> smChans[NRANKS_PER_NODE - 1];
+  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> memChans[NRANKS_PER_NODE - 1];
   if (threadIdx.x < nPeer) {
-    smChans[threadIdx.x] = smChannels[chanOffset + threadIdx.x];
-    smChans[threadIdx.x].relaxedSignal();
-    smChans[threadIdx.x].wait();
+    memChans[threadIdx.x] = memoryChannels[chanOffset + threadIdx.x];
+    memChans[threadIdx.x].relaxedSignal();
+    memChans[threadIdx.x].wait();
   }
   __syncthreads();
 
@@ -55,23 +55,23 @@ __global__ void __launch_bounds__(1024, 1)
     if (rank == root) {
       char* send_ = reinterpret_cast<char*>(sendbuff);
       for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
-        char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
-        smChans[peerIdx].copy<16, false>(dst + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
+        char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);  // Peer's scratchbuff.
+        memChans[peerIdx].copy<16, false>(dst + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
         __syncthreads();
-        if (threadIdx.x == peerIdx) smChans[peerIdx].signal();
+        if (threadIdx.x == peerIdx) memChans[peerIdx].signal();
       }
       if constexpr (IsOutOfPlace) {
         char* recv_ = reinterpret_cast<char*>(recvbuff);
-        smChans[0].copy<16, false>(recv_ + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
+        memChans[0].copy<16, false>(recv_ + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
       }
 
     } else {  // rank != root.
-      if (threadIdx.x == peerRootIdx) smChans[peerRootIdx].wait();
+      if (threadIdx.x == peerRootIdx) memChans[peerRootIdx].wait();
       __syncthreads();
       char* recv_ = reinterpret_cast<char*>(recvbuff);
       char* scratch_ = reinterpret_cast<char*>(scratchbuff);  // My scratchbuff.
-      smChans[peerRootIdx].copy<16, false>(recv_ + offset, scratch_ + offset, unitBytesPerBlock, threadIdx.x,
-                                           blockDim.x);
+      memChans[peerRootIdx].copy<16, false>(recv_ + offset, scratch_ + offset, unitBytesPerBlock, threadIdx.x,
+                                            blockDim.x);
     }
   }
 
@@ -81,30 +81,30 @@ __global__ void __launch_bounds__(1024, 1)
       scratchSub = -i * unitBytes;
       deviceSyncer.sync(gridDim.x);
       if (threadIdx.x < nPeer) {
-        smChans[threadIdx.x].relaxedSignal();
-        smChans[threadIdx.x].wait();
+        memChans[threadIdx.x].relaxedSignal();
+        memChans[threadIdx.x].wait();
       }
     }
     if (rank == root) {
       char* send_ = reinterpret_cast<char*>(sendbuff);
       for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
-        char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
-        smChans[peerIdx].copy<16, false>(dst + offset + scratchSub, send_ + offset, unitBytesPerBlock, threadIdx.x,
-                                         blockDim.x);
+        char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);  // Peer's scratchbuff.
+        memChans[peerIdx].copy<16, false>(dst + offset + scratchSub, send_ + offset, unitBytesPerBlock, threadIdx.x,
+                                          blockDim.x);
         __syncthreads();
-        if (threadIdx.x == peerIdx) smChans[peerIdx].signal();
+        if (threadIdx.x == peerIdx) memChans[peerIdx].signal();
       }
       if constexpr (IsOutOfPlace) {
         char* recv_ = reinterpret_cast<char*>(recvbuff);
-        smChans[0].copy<16, false>(recv_ + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
+        memChans[0].copy<16, false>(recv_ + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
       }
     } else {  // rank != root.
-      if (threadIdx.x == peerRootIdx) smChans[peerRootIdx].wait();
+      if (threadIdx.x == peerRootIdx) memChans[peerRootIdx].wait();
       __syncthreads();
       char* recv_ = reinterpret_cast<char*>(recvbuff);
       char* scratch_ = reinterpret_cast<char*>(scratchbuff);  // My scratchbuff.
-      smChans[peerRootIdx].copy<16, false>(recv_ + offset, scratch_ + offset + scratchSub, unitBytesPerBlock,
-                                           threadIdx.x, blockDim.x);
+      memChans[peerRootIdx].copy<16, false>(recv_ + offset, scratch_ + offset + scratchSub, unitBytesPerBlock,
+                                            threadIdx.x, blockDim.x);
     }
   }
 
@@ -116,23 +116,23 @@ __global__ void __launch_bounds__(1024, 1)
       if (rank == root) {
         char* send_ = reinterpret_cast<char*>(sendbuff);
         for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
-          char* dst = reinterpret_cast<char*>(smChans[peerIdx].dst_);  // Peer's scratchbuff.
-          smChans[peerIdx].copy<16, true>(dst + offset + scratchSub, send_ + offset, remainBytes, threadIdx.x,
-                                          blockDim.x);
+          char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);  // Peer's scratchbuff.
+          memChans[peerIdx].copy<16, true>(dst + offset + scratchSub, send_ + offset, remainBytes, threadIdx.x,
+                                           blockDim.x);
           __syncthreads();
-          if (threadIdx.x == peerIdx) smChans[peerIdx].signal();
+          if (threadIdx.x == peerIdx) memChans[peerIdx].signal();
         }
         if constexpr (IsOutOfPlace) {
           char* recv_ = reinterpret_cast<char*>(recvbuff);
-          smChans[0].copy<16, true>(recv_ + offset, send_ + offset, remainBytes, threadIdx.x, blockDim.x);
+          memChans[0].copy<16, true>(recv_ + offset, send_ + offset, remainBytes, threadIdx.x, blockDim.x);
         }
       } else {  // rank != root.
-        if (threadIdx.x == peerRootIdx) smChans[peerRootIdx].wait();
+        if (threadIdx.x == peerRootIdx) memChans[peerRootIdx].wait();
         __syncthreads();
         char* recv_ = reinterpret_cast<char*>(recvbuff);
         char* scratch_ = reinterpret_cast<char*>(scratchbuff);  // My scratchbuff.
-        smChans[peerRootIdx].copy<16, true>(recv_ + offset, scratch_ + offset + scratchSub, remainBytes, threadIdx.x,
-                                            blockDim.x);
+        memChans[peerRootIdx].copy<16, true>(recv_ + offset, scratch_ + offset + scratchSub, remainBytes, threadIdx.x,
+                                             blockDim.x);
       }
     }  // remainBytes > 0.
   }
@@ -140,13 +140,13 @@ __global__ void __launch_bounds__(1024, 1)
   deviceSyncer.sync(gridDim.x);
 
   if (threadIdx.x < nPeer) {
-    smChans[threadIdx.x].relaxedSignal();
-    smChans[threadIdx.x].wait();
+    memChans[threadIdx.x].relaxedSignal();
+    memChans[threadIdx.x].wait();
   }
 }
 
 template <bool IsOutOfPlace, typename T>
-cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels,
+cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
                       size_t channelOutOffset, int rank, int nRanksPerNode, int root, int worldSize, size_t nelems,
                       cudaStream_t stream) {
   int nBlocks = 7;
@@ -157,7 +157,7 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
   // } else if (nelems >= 2097152) {
   //   nBlocks = 35;
   // }
-  broadcast6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff, smChannels,
+  broadcast6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff, memoryChannels,
                                                          channelOutOffset, rank, worldSize, root, nRanksPerNode,
                                                          nelems * sizeof(T) / sizeof(int));
   return cudaGetLastError();

@@ -10,7 +10,7 @@ __device__ mscclpp::DeviceSyncer deviceSyncer;
 
 extern "C" __global__ void __launch_bounds__(1024, 1)
     nvls_test(mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs,
-              mscclpp::SmDevice2DeviceSemaphoreDeviceHandle* semaphores, int my_rank, int nranks, int nbytes) {
+              mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle* semaphores, int my_rank, int nranks, int nbytes) {
   int nelem = nbytes / sizeof(float);
   float* dev_ptr = (float*)nvlsPtrs.devicePtr;
   float* mc_ptr = (float*)nvlsPtrs.mcPtr;

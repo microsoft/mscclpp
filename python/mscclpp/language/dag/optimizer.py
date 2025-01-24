@@ -19,7 +19,6 @@ from mscclpp.language.types import ChunkRef, ChannelType, Instruction, Op, Threa
 
 
 class _InstructionOptimizer:
-
     def try_merge_same_instructions(
         self,
         op: Op,
@@ -128,8 +127,8 @@ class _InstructionOptimizer:
             and same_tb(op, next_op)
             and same_count(op, next_op)
             and buf_dst_src_match(op, next_op)
-            and next_op.channel_type == ChannelType.sm
-            and (op.channel_type == ChannelType.none or op.channel_type == ChannelType.sm)
+            and next_op.channel_type == ChannelType.memory
+            and (op.channel_type == ChannelType.none or op.channel_type == ChannelType.memory)
             and not circular_dep_after_merge(op, next_op)
             and all_prevs_visited_after_merge(op, next_op)
         ):
@@ -140,10 +139,10 @@ class _InstructionOptimizer:
                 op.inst = Instruction.read_reduce_copy_send
             elif op.inst == Instruction.reduce:
                 op.inst = Instruction.reduce_send
-                op.channel_type = ChannelType.sm
+                op.channel_type = ChannelType.memory
             elif op.inst == Instruction.reduce_packet:
                 op.inst = Instruction.reduce_send_packet
-                op.channel_type = ChannelType.sm
+                op.channel_type = ChannelType.memory
             # Append the destination chunk from next_op
             op.dsts.append(
                 (
@@ -158,11 +157,11 @@ class _InstructionOptimizer:
             return True
         return False
 
-    def try_fuse_instructions_using_proxy_channel(
+    def try_fuse_instructions_using_port_channel(
         self, op: Op, next_op: Op, tb: Threadblock, queue: list, expected_next_inst: Instruction
     ) -> bool:
         """
-        Attempts to fuse operations which using proxy channel.
+        Attempts to fuse operations which using port channel.
         :param op: The current operation.
         :param next_op: The next operation to potentially merge with.
         :param tb: The thread block containing the operations.
@@ -177,7 +176,7 @@ class _InstructionOptimizer:
             and same_buf_dst(op, next_op)
             and same_buf_src(op, next_op)
             and same_chan_type(op, next_op)
-            and op.channel_type == ChannelType.proxy
+            and op.channel_type == ChannelType.port
             and not circular_dep_after_merge(op, next_op)
             and all_prevs_visited_after_merge(op, next_op)
         ):
@@ -229,7 +228,6 @@ class _InstructionOptimizer:
 
 
 class DagOptimizer:
-
     def __init__(self, instruction_dag: InstructionDAG):
         self.optimizer = _InstructionOptimizer()
         self.dag = instruction_dag
@@ -257,7 +255,7 @@ class DagOptimizer:
                     queue = queue[1:]
 
     def fuse_instructions(self):
-        self._fuse_instructions_using_proxy_channel()
+        self._fuse_instructions_using_port_channel()
         self._fuse_same_instructions()
         self._optimize_rrcs_rs()
         self._optimize_group_ops()
@@ -267,7 +265,7 @@ class DagOptimizer:
     # -> putWithSignal(src, sbuf, si, dst, dbuf, di)
     # put(src, sbuf, si, dst, dbuf, di) signal(src, sbuf, si, dst, dbuf, di) flush(src, sbuf, si, dst, dbuf, di)
     # -> putWithSignalAndFlush(src, sbuf, si, dst, dbuf, di)
-    def _fuse_instructions_using_proxy_channel(self):
+    def _fuse_instructions_using_port_channel(self):
         inst_followup_map = {
             Instruction.put: Instruction.signal,
             Instruction.put_with_signal: Instruction.flush,
@@ -280,7 +278,7 @@ class DagOptimizer:
                     fused = False
                     if op.inst in inst_followup_map:
                         for next_op in op.next:
-                            fused = self.optimizer.try_fuse_instructions_using_proxy_channel(
+                            fused = self.optimizer.try_fuse_instructions_using_port_channel(
                                 op, next_op, tb, queue, inst_followup_map[op.inst]
                             )
                             if fused:

@@ -222,7 +222,7 @@ class Ref(ChunkRef):
             return buffer, self.prog.buffers[remote_rank][buffer].instance_size()
         return buffer, index
 
-    def _put(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.sm, use_packet=False):
+    def _put(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.memory, use_packet=False):
         self.prog.check_buffer_exists(dst, buffer)
         assert self.rank != dst, "Cannot put to the same rank"
         buffer, index = self._get_buffer_index(dst, buffer, index)
@@ -237,7 +237,7 @@ class Ref(ChunkRef):
             self.prog.instr_dag.add_put(self.rank, self, dst_chunkref, sendtb, chan_type)
         return dst_chunkref
 
-    def put(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.sm):
+    def put(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.memory):
         return self._put(dst, buffer, index, sendtb, chan_type)
 
     def put_packet(
@@ -246,19 +246,19 @@ class Ref(ChunkRef):
         buffer=None,
         index=-1,
         sendtb=-1,
-        chan_type=ChannelType.sm,
+        chan_type=ChannelType.memory,
         temp_buffer=None,
         temp_buffer_index=-1,
     ):
         chunk_ref = self
-        if chan_type == ChannelType.proxy:
-            assert temp_buffer is not None, "Need to specify a temporary buffer for proxy channels"
+        if chan_type == ChannelType.port:
+            assert temp_buffer is not None, "Need to specify a temporary buffer for port channels"
             chunk_ref = self._copy(
                 self.rank, temp_buffer, temp_buffer_index, sendtb, trans_from_packet=False, trans_to_packet=True
             )
         return chunk_ref._put(dst, buffer, index, sendtb, chan_type, True)
 
-    def get(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.sm):
+    def get(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.memory):
         self.prog.check_buffer_exists(src, buffer)
         sender = src
         receiver = self.rank
@@ -273,7 +273,7 @@ class Ref(ChunkRef):
     # for signal and wait, currently we assuem the pair will use the same tb index. In future we need
     # to infer the tb index from the instruction DAG Add a channel is define as (send_tb, src_buffer, recv_tb, dst_buffer, type).
     # Then we can use DAG info to reduce the number of channels.
-    def signal(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.sm):
+    def signal(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.memory):
         sender = self.rank
         receiver = dst
         assert sender != receiver, "Cannot signal to the same rank"
@@ -282,9 +282,9 @@ class Ref(ChunkRef):
         dst_chunkref = self.prog.get_ref(dst, buffer, index, self.size)
         self.prog.instr_dag.add_signal(sender, self, dst_chunkref, sendtb, chan_type)
 
-    # only proxy channel need to use this function
-    def flush(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.proxy):
-        assert chan_type == ChannelType.proxy, "Only proxy channel can use flush"
+    # only port channel need to use this function
+    def flush(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.port):
+        assert chan_type == ChannelType.port, "Only port channel can use flush"
         sender = self.rank
         receiver = dst
         assert sender != receiver, "Cannot flush to the same rank"
@@ -293,7 +293,7 @@ class Ref(ChunkRef):
         dst_chunkref = self.prog.get_ref(dst, buffer, index, self.size)
         self.prog.instr_dag.add_flush(sender, self, dst_chunkref, sendtb)
 
-    def wait(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.sm):
+    def wait(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.memory):
         sender = src
         receiver = self.rank
         assert sender != receiver, "Cannot wait on the same rank"
@@ -324,7 +324,7 @@ class Ref(ChunkRef):
     def copy_packet(self, dst, buffer=None, index=-1, sendtb=-1):
         return self._copy(dst, buffer, index, sendtb, trans_from_packet=True, trans_to_packet=False)
 
-    def _reduce(self, other_chunkref, recvtb=-1, channel_type=ChannelType.sm, use_packet=False):
+    def _reduce(self, other_chunkref, recvtb=-1, channel_type=ChannelType.memory, use_packet=False):
         dst = self.rank
         src = other_chunkref.rank
 
@@ -342,7 +342,7 @@ class Ref(ChunkRef):
         return self
 
     # Reduces the chunk(s) referenced by other_chunkref into the chunk(s) referenced by this chunkref
-    def reduce(self, other_chunkref, recvtb=-1, channel_type=ChannelType.sm):
+    def reduce(self, other_chunkref, recvtb=-1, channel_type=ChannelType.memory):
         return self._reduce(other_chunkref, recvtb, channel_type)
 
     # Reduces the chunk(s) referenced by other_chunkref into the chunk(s) referenced by this chunkref
