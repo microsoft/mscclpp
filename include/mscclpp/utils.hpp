@@ -5,8 +5,11 @@
 #define MSCCLPP_UTILS_HPP_
 
 #include <chrono>
-#include <mscclpp/core.hpp>
 #include <string>
+
+// clang-format off
+#include <mscclpp/core.hpp>
+// clang-format on
 
 namespace mscclpp {
 

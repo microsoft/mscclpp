@@ -6,9 +6,11 @@
 
 #include <memory>
 
-#include "errors.hpp"
-#include "gpu.hpp"
-#include "utils.hpp"
+// clang-format off
+#include <mscclpp/errors.hpp>
+#include <mscclpp/gpu.hpp>
+#include <mscclpp/utils.hpp>
+// clang-format on
 
 /// Throw @ref mscclpp::CudaError if @p cmd does not return cudaSuccess.
 /// @param cmd The command to execute.

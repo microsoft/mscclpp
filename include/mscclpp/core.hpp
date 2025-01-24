@@ -13,9 +13,12 @@
 #include <bitset>
 #include <future>
 #include <memory>
-#include <mscclpp/errors.hpp>
 #include <string>
 #include <vector>
+
+// clang-format off
+#include <mscclpp/errors.hpp>
+// clang-format on
 
 namespace mscclpp {
 

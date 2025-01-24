@@ -4,7 +4,7 @@
 #ifndef MSCCLPP_POLL_DEVICE_HPP_
 #define MSCCLPP_POLL_DEVICE_HPP_
 
-#include "device.hpp"
+#include <mscclpp/device.hpp>
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
 
