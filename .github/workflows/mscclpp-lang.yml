@@ -16,12 +16,12 @@ jobs:
         fail-fast: false
         matrix:
           version: [ 'cuda11.8', 'cuda12.2' ]
-    
-    env:
-      LD_LIBRARY_PATH: ${{ env.PATH }}:/usr/local/cuda/compat
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Set environment variable
+      run: echo "LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/local/cuda/lib64" >> $GITHUB_ENV
 
     - name: Install mscclpp
       run: |
