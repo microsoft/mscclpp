@@ -9,6 +9,12 @@ from mscclpp.language.types import ChannelType, ReplicationPolicy
 
 
 def allgather_multinodes_allpair(gpus, gpus_per_node, instances):
+    """
+    Implements a multi-node allgather collective using an allpairs algorithm with MSCCL++ DSL.
+    Steps:
+    1. Each rank sends a chunk to all other ranks' scratch buffers using packet format.
+    2. Copy the chunk from the scratch buffer to the output buffer using packet format.
+    """
     collective = AllGather(gpus, 1, True)
     with MSCCLPPProgram(
         "allgather_multinodes_allpair",
