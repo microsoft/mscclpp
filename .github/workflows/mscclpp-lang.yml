@@ -21,6 +21,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: Install mscclpp
       run: |
+        export LD_LIBRARY_PATH=/usr/local/cuda/compat:$LD_LIBRARY_PATH
         CMAKE_ARGS="-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON" pip3 install .
 
     - name: Copy test script/config to temp directory
