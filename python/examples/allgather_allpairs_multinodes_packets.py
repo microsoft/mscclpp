@@ -11,6 +11,8 @@ from mscclpp.language.types import ChannelType, ReplicationPolicy
 def allgather_multinodes_allpair(gpus, gpus_per_node, instances):
     """
     Implements a multi-node allgather collective using an allpairs algorithm with MSCCL++ DSL.
+    @param gpus: Total number of GPUs
+    @param gpus_per_node: Number of GPUs per node
     Steps:
     1. Each rank sends a chunk to all other ranks' scratch buffers using packet format.
     2. Copy the chunk from the scratch buffer to the output buffer using packet format.
