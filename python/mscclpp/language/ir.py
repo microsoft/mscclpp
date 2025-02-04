@@ -467,7 +467,9 @@ def _dump_to_json(program: Program):
                 obj["connectedTo"] = [sorted(list(peers)) for peers in obj["connectedTo"]]
             gpu_instance["channels"].append(obj)
         gpu_instance["channels"] = list(filter(lambda x: x["type"] != "none", gpu_instance["channels"]))
-        gpu_instance["channels"] = sorted(gpu_instance["channels"], key=lambda x: (x["srcbuff"], x["dstbuff"]))
+        gpu_instance["channels"] = sorted(
+            gpu_instance["channels"], key=lambda x: (x["srcbuff"], x["dstbuff"], x["type"])
+        )
 
         # render for GPU NVLS channels
         for i, chan in enumerate(gpu_instance["channels"]):
@@ -502,7 +504,7 @@ def _dump_to_json(program: Program):
                     tb_channel_dict[(srcBuffer, dstBuffer, type)] = obj
                     tb_channels.append(obj)
             tb_channels = filter(lambda x: x["type"] != "none", tb_channels)
-            tb_channels = sorted(tb_channels, key=lambda x: (x["srcbuff"], x["dstbuff"]))
+            tb_channels = sorted(tb_channels, key=lambda x: (x["srcbuff"], x["dstbuff"], x["type"]))
             for op in tb.ops:
                 if op.tb == -1:
                     continue
