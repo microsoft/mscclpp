@@ -4,6 +4,7 @@
 #include <mpi.h>
 
 #include <filesystem>
+#include <mscclpp/env.hpp>
 #include <mscclpp/npkit/npkit.hpp>
 
 #include "mp_unit_tests.hpp"
@@ -31,14 +32,14 @@ void ExecutorTest::SetUp() {
   bootstrap->initialize(id);
   std::shared_ptr<mscclpp::Communicator> communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
   executor = std::make_shared<mscclpp::Executor>(communicator);
-  npkitDumpDir = getenv("NPKIT_DUMP_DIR");
-  if (npkitDumpDir != nullptr) {
+  npkitDumpDir = mscclpp::env()->npkitDumpDir;
+  if (npkitDumpDir != "") {
     NpKit::Init(gEnv->rank);
   }
 }
 
 void ExecutorTest::TearDown() {
-  if (npkitDumpDir != nullptr) {
+  if (npkitDumpDir != "") {
     NpKit::Dump(npkitDumpDir);
     NpKit::Shutdown();
   }
@@ -57,7 +58,7 @@ TEST_F(ExecutorTest, TwoNodesAllreduce) {
       path.parent_path().parent_path().parent_path() / "test/execution-files/allreduce.json";
   mscclpp::ExecutionPlan plan(executionFilesPath.string());
   const int bufferSize = 1024 * 1024;
-  std::shared_ptr<char> sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
+  std::shared_ptr<char> sendbuff = mscclpp::GpuBuffer(bufferSize).memory();
   mscclpp::CudaStreamWithFlags stream(cudaStreamNonBlocking);
   executor->execute(gEnv->rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16,
                     plan, stream);

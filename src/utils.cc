@@ -7,7 +7,6 @@
 #include <chrono>
 #include <iostream>
 #include <mscclpp/errors.hpp>
-#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
 #include <string>
@@ -65,24 +64,6 @@ std::string getHostName(int maxlen, const char delim) {
   while ((hostname[i] != delim) && (hostname[i] != '\0') && (i < maxlen - 1)) i++;
   hostname[i] = '\0';
   return hostname.substr(0, i);
-}
-
-bool isNvlsSupported() {
-  [[maybe_unused]] static bool result = false;
-  [[maybe_unused]] static bool isChecked = false;
-#if (CUDA_NVLS_SUPPORTED)
-  if (!isChecked) {
-    int isMulticastSupported;
-    int isFabricSupported;
-    CUdevice dev;
-    MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
-    MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isMulticastSupported, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
-    MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isFabricSupported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, dev));
-    result = (isMulticastSupported == 1 && isFabricSupported == 1);
-  }
-  return result;
-#endif
-  return false;
 }
 
 }  // namespace mscclpp

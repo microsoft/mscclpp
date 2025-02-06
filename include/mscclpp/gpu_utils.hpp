@@ -4,7 +4,6 @@
 #ifndef MSCCLPP_GPU_UTILS_HPP_
 #define MSCCLPP_GPU_UTILS_HPP_
 
-#include <cstring>
 #include <memory>
 
 #include "errors.hpp"
@@ -35,19 +34,6 @@
 
 namespace mscclpp {
 
-/// set memory access permission to read-write
-/// @param base Base memory pointer.
-/// @param size Size of the memory.
-inline void setReadWriteMemoryAccess(void* base, size_t size) {
-  CUmemAccessDesc accessDesc = {};
-  int deviceId;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
-  accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  accessDesc.location.id = deviceId;
-  accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-  MSCCLPP_CUTHROW(cuMemSetAccess((CUdeviceptr)base, size, &accessDesc, 1));
-}
-
 /// A RAII guard that will cudaThreadExchangeStreamCaptureMode to cudaStreamCaptureModeRelaxed on construction and
 /// restore the previous mode on destruction. This is helpful when we want to avoid CUDA graph capture.
 struct AvoidCudaGraphCaptureGuard {
@@ -58,107 +44,55 @@ struct AvoidCudaGraphCaptureGuard {
 
 /// A RAII wrapper around cudaStream_t that will call cudaStreamDestroy on destruction.
 struct CudaStreamWithFlags {
+  CudaStreamWithFlags() : stream_(nullptr) {}
   CudaStreamWithFlags(unsigned int flags);
   ~CudaStreamWithFlags();
+  void set(unsigned int flags);
+  bool empty() const;
   operator cudaStream_t() const { return stream_; }
   cudaStream_t stream_;
 };
 
-template <class T>
-struct CudaDeleter;
-
 namespace detail {
 
-/// A wrapper of cudaMalloc that sets the allocated memory to zero.
-/// @tparam T Type of each element in the allocated memory.
-/// @param nelem Number of elements to allocate.
-/// @return A pointer to the allocated memory.
-template <class T>
-T* cudaCalloc(size_t nelem) {
-  AvoidCudaGraphCaptureGuard cgcGuard;
-  T* ptr;
-  CudaStreamWithFlags stream(cudaStreamNonBlocking);
-  MSCCLPP_CUDATHROW(cudaMalloc(&ptr, nelem * sizeof(T)));
-  MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, nelem * sizeof(T), stream));
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-  return ptr;
-}
+void setReadWriteMemoryAccess(void* base, size_t size);
 
-#if (CUDA_NVLS_SUPPORTED)
-template <class T>
-T* cudaPhysicalCalloc(size_t nelems, size_t gran) {
-  AvoidCudaGraphCaptureGuard cgcGuard;
-  int deviceId = -1;
-  CUdevice currentDevice;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
-  MSCCLPP_CUTHROW(cuDeviceGet(&currentDevice, deviceId));
-
-  CUmemAllocationProp prop = {};
-  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  prop.requestedHandleTypes =
-      (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
-  prop.location.id = currentDevice;
-
-  // allocate physical memory
-  CUmemGenericAllocationHandle memHandle;
-  size_t nbytes = (nelems * sizeof(T) + gran - 1) / gran * gran;
-  MSCCLPP_CUTHROW(cuMemCreate(&memHandle, nbytes, &prop, 0 /*flags*/));
-
-  T* devicePtr = nullptr;
-  MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, nbytes, gran, 0U, 0));
-  MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, nbytes, 0, memHandle, 0));
-  setReadWriteMemoryAccess(devicePtr, nbytes);
-  CudaStreamWithFlags stream(cudaStreamNonBlocking);
-  MSCCLPP_CUDATHROW(cudaMemsetAsync(devicePtr, 0, nbytes, stream));
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-
-  return devicePtr;
-}
-#endif
-
-template <class T>
-T* cudaExtCalloc(size_t nelem) {
-  AvoidCudaGraphCaptureGuard cgcGuard;
-  T* ptr;
-  CudaStreamWithFlags stream(cudaStreamNonBlocking);
+void* gpuCalloc(size_t bytes);
+void* gpuCallocHost(size_t bytes);
 #if defined(__HIP_PLATFORM_AMD__)
-  MSCCLPP_CUDATHROW(hipExtMallocWithFlags((void**)&ptr, nelem * sizeof(T), hipDeviceMallocUncached));
-#else
-  MSCCLPP_CUDATHROW(cudaMalloc(&ptr, nelem * sizeof(T)));
-#endif
-  MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, nelem * sizeof(T), stream));
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-  return ptr;
-}
+void* gpuCallocUncached(size_t bytes);
+#endif  // defined(__HIP_PLATFORM_AMD__)
+#if (CUDA_NVLS_SUPPORTED)
+void* gpuCallocPhysical(size_t bytes, size_t gran = 0, size_t align = 0);
+#endif  // CUDA_NVLS_SUPPORTED
 
-/// A wrapper of cudaHostAlloc that sets the allocated memory to zero.
-/// @tparam T Type of each element in the allocated memory.
-/// @param nelem Number of elements to allocate.
-/// @return A pointer to the allocated memory.
-template <class T>
-T* cudaHostCalloc(size_t nelem) {
-  AvoidCudaGraphCaptureGuard cgcGuard;
-  T* ptr;
-  MSCCLPP_CUDATHROW(cudaHostAlloc(&ptr, nelem * sizeof(T), cudaHostAllocMapped | cudaHostAllocWriteCombined));
-  memset(ptr, 0, nelem * sizeof(T));
-  return ptr;
-}
+void gpuFree(void* ptr);
+void gpuFreeHost(void* ptr);
+#if (CUDA_NVLS_SUPPORTED)
+void gpuFreePhysical(void* ptr);
+#endif  // CUDA_NVLS_SUPPORTED
+
+void gpuMemcpyAsync(void* dst, const void* src, size_t bytes, cudaStream_t stream,
+                    cudaMemcpyKind kind = cudaMemcpyDefault);
+void gpuMemcpy(void* dst, const void* src, size_t bytes, cudaMemcpyKind kind = cudaMemcpyDefault);
 
 /// A template function that allocates memory while ensuring that the memory will be freed when the returned object is
 /// destroyed.
 /// @tparam T Type of each element in the allocated memory.
-/// @tparam alloc A function that allocates memory.
 /// @tparam Deleter A deleter that will be used to free the allocated memory.
 /// @tparam Memory The type of the returned object.
-/// @param nelem Number of elements to allocate.
+/// @tparam Alloc A function type that allocates memory.
+/// @tparam Args Input types of the @p alloc function variables.
+/// @param alloc A function that allocates memory.
+/// @param nelems Number of elements to allocate.
+/// @param args Extra input variables for the @p alloc function.
 /// @return An object of type @p Memory that will free the allocated memory when destroyed.
 ///
-template <class T, T*(alloc)(size_t), class Deleter, class Memory>
-Memory safeAlloc(size_t nelem) {
+template <class T, class Deleter, class Memory, typename Alloc, typename... Args>
+Memory safeAlloc(Alloc alloc, size_t nelems, Args&&... args) {
   T* ptr = nullptr;
   try {
-    ptr = alloc(nelem);
+    ptr = reinterpret_cast<T*>(alloc(nelems * sizeof(T), std::forward<Args>(args)...));
   } catch (...) {
     if (ptr) {
       Deleter()(ptr);
@@ -168,258 +102,167 @@ Memory safeAlloc(size_t nelem) {
   return Memory(ptr, Deleter());
 }
 
-template <class T, T*(alloc)(size_t, size_t), class Deleter, class Memory>
-Memory safeAlloc(size_t nelem, size_t gran) {
-  if ((nelem * sizeof(T)) % gran) {
-    throw Error("The request allocation size is not divisible by the required granularity:" +
-                    std::to_string(nelem * sizeof(T)) + " vs " + std::to_string(gran),
-                ErrorCode::InvalidUsage);
-  }
-  T* ptr = nullptr;
-  try {
-    ptr = alloc(nelem, gran);
-  } catch (...) {
-    if (ptr) {
-      Deleter()(ptr);
-    }
-    throw;
-  }
-  return Memory(ptr, Deleter());
+/// A deleter that calls gpuFree for use with std::unique_ptr or std::shared_ptr.
+/// @tparam T Type of each element in the allocated memory.
+template <class T = void>
+struct GpuDeleter {
+  void operator()(void* ptr) { gpuFree(ptr); }
+};
+
+/// A deleter that calls gpuFreeHost for use with std::unique_ptr or std::shared_ptr.
+/// @tparam T Type of each element in the allocated memory.
+template <class T = void>
+struct GpuHostDeleter {
+  void operator()(void* ptr) { gpuFreeHost(ptr); }
+};
+
+#if (CUDA_NVLS_SUPPORTED)
+template <class T = void>
+struct GpuPhysicalDeleter {
+  void operator()(void* ptr) { gpuFreePhysical(ptr); }
+};
+#endif  // CUDA_NVLS_SUPPORTED
+
+template <class T>
+using UniqueGpuPtr = std::unique_ptr<T, detail::GpuDeleter<T>>;
+
+template <class T>
+using UniqueGpuHostPtr = std::unique_ptr<T, detail::GpuHostDeleter<T>>;
+
+template <class T>
+auto gpuCallocShared(size_t nelems = 1) {
+  return detail::safeAlloc<T, detail::GpuDeleter<T>, std::shared_ptr<T>>(detail::gpuCalloc, nelems);
 }
+
+template <class T>
+auto gpuCallocUnique(size_t nelems = 1) {
+  return detail::safeAlloc<T, detail::GpuDeleter<T>, UniqueGpuPtr<T>>(detail::gpuCalloc, nelems);
+}
+
+template <class T>
+auto gpuCallocHostShared(size_t nelems = 1) {
+  return detail::safeAlloc<T, detail::GpuHostDeleter<T>, std::shared_ptr<T>>(detail::gpuCallocHost, nelems);
+}
+
+template <class T>
+auto gpuCallocHostUnique(size_t nelems = 1) {
+  return detail::safeAlloc<T, detail::GpuHostDeleter<T>, UniqueGpuHostPtr<T>>(detail::gpuCallocHost, nelems);
+}
+
+#if defined(__HIP_PLATFORM_AMD__)
+
+template <class T>
+auto gpuCallocUncachedShared(size_t nelems = 1) {
+  return detail::safeAlloc<T, detail::GpuDeleter<T>, std::shared_ptr<T>>(detail::gpuCallocUncached, nelems);
+}
+
+template <class T>
+auto gpuCallocUncachedUnique(size_t nelems = 1) {
+  return detail::safeAlloc<T, detail::GpuDeleter<T>, UniqueGpuPtr<T>>(detail::gpuCallocUncached, nelems);
+}
+
+#endif  // defined(__HIP_PLATFORM_AMD__)
+
+#if (CUDA_NVLS_SUPPORTED)
+
+template <class T>
+using UniqueGpuPhysicalPtr = std::unique_ptr<T, detail::GpuPhysicalDeleter<T>>;
+
+template <class T>
+auto gpuCallocPhysicalShared(size_t nelems = 1, size_t gran = 0, size_t align = 0) {
+  return detail::safeAlloc<T, detail::GpuPhysicalDeleter<T>, std::shared_ptr<T>>(detail::gpuCallocPhysical, nelems,
+                                                                                 gran, align);
+}
+
+template <class T>
+auto gpuCallocPhysicalUnique(size_t nelems = 1, size_t gran = 0, size_t align = 0) {
+  return detail::safeAlloc<T, detail::GpuPhysicalDeleter<T>, UniqueGpuPhysicalPtr<T>>(detail::gpuCallocPhysical, nelems,
+                                                                                      gran, align);
+}
+
+size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag);
+
+#endif  // CUDA_NVLS_SUPPORTED
 
 }  // namespace detail
 
-/// A deleter that calls cudaFree for use with std::unique_ptr or std::shared_ptr.
-/// @tparam T Type of each element in the allocated memory.
-template <class T>
-struct CudaDeleter {
-  using TPtrOrArray = std::conditional_t<std::is_array_v<T>, T, T*>;
-  void operator()(TPtrOrArray ptr) {
-    AvoidCudaGraphCaptureGuard cgcGuard;
-    MSCCLPP_CUDATHROW(cudaFree(ptr));
-  }
-};
-
-template <class T>
-struct CudaPhysicalDeleter {
-  static_assert(!std::is_array_v<T>, "T must not be an array");
-  void operator()(T* ptr) {
-    AvoidCudaGraphCaptureGuard cgcGuard;
-    CUmemGenericAllocationHandle handle;
-    size_t size = 0;
-    MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, ptr));
-    MSCCLPP_CUTHROW(cuMemGetAddressRange(NULL, &size, (CUdeviceptr)ptr));
-    MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, size));
-    MSCCLPP_CUTHROW(cuMemRelease(handle));
-    MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, size));
-  }
-};
-
-/// A deleter that calls cudaFreeHost for use with std::unique_ptr or std::shared_ptr.
-/// @tparam T Type of each element in the allocated memory.
-template <class T>
-struct CudaHostDeleter {
-  using TPtrOrArray = std::conditional_t<std::is_array_v<T>, T, T*>;
-  void operator()(TPtrOrArray ptr) {
-    AvoidCudaGraphCaptureGuard cgcGuard;
-    MSCCLPP_CUDATHROW(cudaFreeHost(ptr));
-  }
-};
-
-/// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
-/// @tparam T Type of each element in the allocated memory.
-/// @param count Number of elements to allocate.
-/// @return A std::shared_ptr to the allocated memory.
-template <class T>
-std::shared_ptr<T> allocSharedCuda(size_t count = 1) {
-  return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, std::shared_ptr<T>>(count);
+template <class T = char>
+void gpuMemcpyAsync(T* dst, const T* src, size_t nelems, cudaStream_t stream, cudaMemcpyKind kind = cudaMemcpyDefault) {
+  detail::gpuMemcpyAsync(dst, src, nelems * sizeof(T), stream, kind);
 }
 
+template <class T = char>
+void gpuMemcpy(T* dst, const T* src, size_t nelems, cudaMemcpyKind kind = cudaMemcpyDefault) {
+  detail::gpuMemcpy(dst, src, nelems * sizeof(T), kind);
+}
+
+/// Check if NVLink SHARP (NVLS) is supported.
+///
+/// @return True if NVLink SHARP (NVLS) is supported, false otherwise.
+bool isNvlsSupported();
+
+/// Allocates a GPU memory space specialized for communication. The memory is zeroed out. Get the device pointer by
+/// `GpuBuffer::data()`.
+///
+/// Use this function for communication buffers, i.e., only when other devices (CPU, GPU, NIC, etc.) may access this
+/// memory space at the same time with the local device (GPU). Running heavy computation over this memory space
+/// may perform bad and is not recommended in general.
+///
+/// The allocated memory space is managed by the `memory_` object, not by the class instance. Which means,
+/// the class destructor will NOT free the allocated memory if `memory_` is shared with and alive in other contexts.
+///
+/// @tparam T Type of each element in the allocated memory. Default is `char`.
+///
+template <class T = char>
+class GpuBuffer {
+ public:
+  /// Constructs a GpuBuffer with the specified number of elements.
+  /// @param nelems Number of elements to allocate. If it is zero, `data()` will return a null pointer.
+  GpuBuffer(size_t nelems) : nelems_(nelems) {
+    if (nelems == 0) {
+      bytes_ = 0;
+      return;
+    }
 #if (CUDA_NVLS_SUPPORTED)
-static inline size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
-  size_t gran = 0;
-  int numDevices = 0;
-  MSCCLPP_CUDATHROW(cudaGetDeviceCount(&numDevices));
+    if (isNvlsSupported()) {
+      size_t gran = detail::getMulticastGranularity(nelems * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
+      bytes_ = (nelems * sizeof(T) + gran - 1) / gran * gran / sizeof(T) * sizeof(T);
+      memory_ = detail::gpuCallocPhysicalShared<T>(nelems, gran);
+      return;
+    }
+#endif  // CUDA_NVLS_SUPPORTED
 
-  CUmulticastObjectProp prop = {};
-  prop.size = size;
-  // This is a dummy value, it might affect the granularity in the future
-  prop.numDevices = numDevices;
-  prop.handleTypes = (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
-  prop.flags = 0;
-  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&gran, &prop, granFlag));
-  return gran;
-}
-#endif
-
-/// Allocates physical memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
-/// @tparam T Type of each element in the allocated memory.
-/// @param count Number of elements to allocate.
-/// @param gran the granularity of the allocation.
-/// @return A std::shared_ptr to the allocated memory.
-template <class T>
-std::shared_ptr<T> allocSharedPhysicalCuda([[maybe_unused]] size_t count, [[maybe_unused]] size_t gran = 0) {
-#if (CUDA_NVLS_SUPPORTED)
-  if (!isNvlsSupported()) {
-    throw Error("Only support GPU with NVLS support", ErrorCode::InvalidUsage);
-  }
-  if (count == 0) {
-    return nullptr;
+    bytes_ = nelems * sizeof(T);
+#if defined(__HIP_PLATFORM_AMD__)
+    memory_ = detail::gpuCallocUncachedShared<T>(nelems);
+#else   // !defined(__HIP_PLATFORM_AMD__)
+    memory_ = detail::gpuCallocShared<T>(nelems);
+#endif  // !defined(__HIP_PLATFORM_AMD__)
   }
 
-  if (gran == 0) {
-    gran = getMulticastGranularity(count * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
-  }
-  size_t nelems = ((count * sizeof(T) + gran - 1) / gran * gran) / sizeof(T);
-  return detail::safeAlloc<T, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>, std::shared_ptr<T>>(nelems, gran);
-#else
-  throw Error("Only support GPU with Fabric support", ErrorCode::InvalidUsage);
-#endif
-}
+  /// Returns the number of elements in the allocated memory.
+  /// @return The number of elements.
+  size_t nelems() const { return nelems_; }
 
-/// Allocates memory on the device and returns a std::shared_ptr to it. The memory is zeroed out.
-/// @tparam T Type of each element in the allocated memory.
-/// @param count Number of elements to allocate.
-/// @return A std::shared_ptr to the allocated memory.
-template <class T>
-std::shared_ptr<T> allocExtSharedCuda(size_t count = 1) {
-  return detail::safeAlloc<T, detail::cudaExtCalloc<T>, CudaDeleter<T>, std::shared_ptr<T>>(count);
-}
+  /// Returns the number of bytes that is actually allocated. This may be larger than `nelems() * sizeof(T)`.
+  /// @return The number of bytes.
+  size_t bytes() const { return bytes_; }
 
-/// Unique device pointer that will call cudaFree on destruction.
-/// @tparam T Type of each element in the allocated memory.
-template <class T>
-using UniqueCudaPtr = std::unique_ptr<T, CudaDeleter<T>>;
+  /// Returns the shared pointer to the allocated memory.
+  /// If `nelems()` is zero, this function will return an empty shared pointer.
+  /// @return A `std::shared_ptr` to the allocated memory.
+  std::shared_ptr<T> memory() { return memory_; }
 
-/// Allocates memory on the device and returns a std::unique_ptr to it. The memory is zeroed out.
-/// @tparam T Type of each element in the allocated memory.
-/// @param count Number of elements to allocate.
-/// @return A std::unique_ptr to the allocated memory.
-template <class T>
-UniqueCudaPtr<T> allocUniqueCuda(size_t count = 1) {
-  return detail::safeAlloc<T, detail::cudaCalloc<T>, CudaDeleter<T>, UniqueCudaPtr<T>>(count);
-}
+  /// Returns the device pointer to the allocated memory. Equivalent to `memory().get()`.
+  /// If `nelems()` is zero, this function will return a null pointer.
+  /// @return A device pointer to the allocated memory.
+  T* data() { return memory_.get(); }
 
-/// Allocates memory on the device and returns a std::unique_ptr to it. The memory is zeroed out.
-/// @tparam T Type of each element in the allocated memory.
-/// @param count Number of elements to allocate.
-/// @return A std::unique_ptr to the allocated memory.
-template <class T>
-UniqueCudaPtr<T> allocExtUniqueCuda(size_t count = 1) {
-  return detail::safeAlloc<T, detail::cudaExtCalloc<T>, CudaDeleter<T>, UniqueCudaPtr<T>>(count);
-}
-
-/// Allocates memory with cudaHostAlloc, constructs an object of type T in it and returns a std::shared_ptr to it.
-/// @tparam T Type of the object to construct.
-/// @tparam Args Types of the arguments to pass to the constructor.
-/// @param args Arguments to pass to the constructor.
-/// @return A std::shared_ptr to the allocated memory.
-template <class T, typename... Args>
-std::shared_ptr<T> makeSharedCudaHost(Args&&... args) {
-  auto ptr = detail::safeAlloc<T, detail::cudaHostCalloc<T>, CudaHostDeleter<T>, std::shared_ptr<T>>(1);
-  new (ptr.get()) T(std::forward<Args>(args)...);
-  return ptr;
-}
-
-/// Allocates an array of objects of type T with cudaHostAlloc, default constructs each element and returns a
-/// std::shared_ptr to it.
-/// @tparam T Type of the object to construct.
-/// @param count Number of elements to allocate.
-/// @return A std::shared_ptr to the allocated memory.
-template <class T>
-std::shared_ptr<T[]> makeSharedCudaHost(size_t count) {
-  using TElem = std::remove_extent_t<T>;
-  auto ptr = detail::safeAlloc<T, detail::cudaHostCalloc<T>, CudaHostDeleter<TElem>, std::shared_ptr<T[]>>(count);
-  for (size_t i = 0; i < count; ++i) {
-    new (&ptr[i]) TElem();
-  }
-  return ptr;
-}
-
-/// Unique CUDA host pointer that will call cudaFreeHost on destruction.
-/// @tparam T Type of each element in the allocated memory.
-template <class T>
-using UniqueCudaHostPtr = std::unique_ptr<T, CudaHostDeleter<T>>;
-
-/// Allocates memory with cudaHostAlloc, constructs an object of type T in it and returns a std::unique_ptr to it.
-/// @tparam T Type of the object to construct.
-/// @tparam Args Types of the arguments to pass to the constructor.
-/// @param args Arguments to pass to the constructor.
-/// @return A std::unique_ptr to the allocated memory.
-template <class T, typename... Args, std::enable_if_t<false == std::is_array_v<T>, bool> = true>
-UniqueCudaHostPtr<T> makeUniqueCudaHost(Args&&... args) {
-  auto ptr = detail::safeAlloc<T, detail::cudaHostCalloc<T>, CudaHostDeleter<T>, UniqueCudaHostPtr<T>>(1);
-  new (ptr.get()) T(std::forward<Args>(args)...);
-  return ptr;
-}
-
-/// Allocates an array of objects of type T with cudaHostAlloc, default constructs each element and returns a
-/// std::unique_ptr to it.
-/// @tparam T Type of the object to construct.
-/// @param count Number of elements to allocate.
-/// @return A std::unique_ptr to the allocated memory.
-template <class T, std::enable_if_t<true == std::is_array_v<T>, bool> = true>
-UniqueCudaHostPtr<T> makeUniqueCudaHost(size_t count) {
-  using TElem = std::remove_extent_t<T>;
-  auto ptr = detail::safeAlloc<TElem, detail::cudaHostCalloc<TElem>, CudaHostDeleter<T>, UniqueCudaHostPtr<T>>(count);
-  for (size_t i = 0; i < count; ++i) {
-    new (&ptr[i]) TElem();
-  }
-  return ptr;
-}
-
-/// Allocated physical memory on the device and returns a memory handle along with a virtual memory handle for it.
-/// The memory is zeroed out.
-/// @tparam T Type of each element in the allocated memory.
-/// @param count Number of elements to allocate.
-/// @param gran the granularity of the allocation.
-/// @return A std::unique_ptr to the allocated memory.
-template <class T>
-std::unique_ptr<T> allocUniquePhysicalCuda([[maybe_unused]] size_t count, [[maybe_unused]] size_t gran = 0) {
-#if (CUDA_NVLS_SUPPORTED)
-  if (!isNvlsSupported()) {
-    throw Error("Only support GPU with NVLS support", ErrorCode::InvalidUsage);
-  }
-  if (count == 0) {
-    return nullptr;
-  }
-
-  if (gran == 0) {
-    gran = getMulticastGranularity(count * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
-  }
-  return detail::safeAlloc<T, detail::cudaPhysicalCalloc<T>, CudaPhysicalDeleter<T>,
-                           std::unique_ptr<CudaPhysicalDeleter<T>, CudaDeleter<CudaPhysicalDeleter<T>>>>(count, gran);
-#else
-  throw Error("Only support GPU with Fabric support", ErrorCode::InvalidUsage);
-#endif
-}
-
-/// Asynchronous cudaMemcpy without capture into a CUDA graph.
-/// @tparam T Type of each element in the allocated memory.
-/// @param dst Destination pointer.
-/// @param src Source pointer.
-/// @param count Number of elements to copy.
-/// @param stream CUDA stream to use.
-/// @param kind Type of cudaMemcpy to perform.
-template <class T>
-void memcpyCudaAsync(T* dst, const T* src, size_t count, cudaStream_t stream, cudaMemcpyKind kind = cudaMemcpyDefault) {
-  AvoidCudaGraphCaptureGuard cgcGuard;
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, count * sizeof(T), kind, stream));
-}
-
-/// Synchronous cudaMemcpy without capture into a CUDA graph.
-/// @tparam T Type of each element in the allocated memory.
-/// @param dst Destination pointer.
-/// @param src Source pointer.
-/// @param count Number of elements to copy.
-/// @param kind Type of cudaMemcpy to perform.
-template <class T>
-void memcpyCuda(T* dst, const T* src, size_t count, cudaMemcpyKind kind = cudaMemcpyDefault) {
-  AvoidCudaGraphCaptureGuard cgcGuard;
-  CudaStreamWithFlags stream(cudaStreamNonBlocking);
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, count * sizeof(T), kind, stream));
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-}
+ private:
+  size_t nelems_;
+  size_t bytes_;
+  std::shared_ptr<T> memory_;
+};
 
 }  // namespace mscclpp
 

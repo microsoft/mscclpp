@@ -5,6 +5,7 @@
 #define MSCCLPP_UTILS_HPP_
 
 #include <chrono>
+#include <mscclpp/core.hpp>
 #include <string>
 
 namespace mscclpp {
@@ -37,7 +38,22 @@ struct ScopedTimer : public Timer {
 
 std::string getHostName(int maxlen, const char delim);
 
-bool isNvlsSupported();
+/// Get the number of available InfiniBand devices.
+///
+/// @return The number of available InfiniBand devices.
+int getIBDeviceCount();
+
+/// Get the name of the InfiniBand device associated with the specified transport.
+///
+/// @param ibTransport The InfiniBand transport to get the device name for.
+/// @return The name of the InfiniBand device associated with the specified transport.
+std::string getIBDeviceName(Transport ibTransport);
+
+/// Get the InfiniBand transport associated with the specified device name.
+///
+/// @param ibDeviceName The name of the InfiniBand device to get the transport for.
+/// @return The InfiniBand transport associated with the specified device name.
+Transport getIBTransportByDeviceName(const std::string& ibDeviceName);
 
 }  // namespace mscclpp
 
