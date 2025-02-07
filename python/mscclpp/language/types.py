@@ -86,6 +86,7 @@ class Instruction(Enum):
     reduce_send_packet = "rspkt"
     reduce_packet = "rpkt"
     put = "put"
+    read_put_packet = "rppkt"
     put_packet = "ppkt"
     put_with_signal = "pws"
     put_with_signal_and_flush = "pwsf"

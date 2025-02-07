@@ -331,7 +331,9 @@ class _NopConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
         return _JsonInstruction(
             name=op.inst.value,
-            deps=list(map(lambda dep: {"tb": dep.tb, "step": dep.step}, op.depends)),
+            deps=sorted(
+                list(map(lambda dep: {"tb": dep.tb, "step": dep.step}, op.depends)), key=lambda x: (x["tb"], x["step"])
+            ),
         )
 
 
