@@ -601,15 +601,12 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, memoryChannels, op.outputChannelIndexes,
                                op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
                                op.size, false);
-    } else if (op.type == OperationType::PUT_PACKET) {
-      if (op.inputBufferType == BufferType::SCRATCH && op.channelType == ChannelType::SM) {
+    } else if (op.type == OperationType::READ_PUT_PACKET) {
         handleReadPutPacket<PacketType>(rank, scratch, scratchSize, smChannels, proxyChannels, op.outputChannelIndexes,
                                         op.outputOffsets, op.inputOffsets, op.nOutputs, op.size, op.channelType, flag);
-      } else {
+    } else if (op.type == OperationType::PUT_PACKET) {
         handlePutPacket<PacketType>(scratchSize, smChannels, proxyChannels, op.outputChannelIndexes, op.outputOffsets,
                                     op.inputOffsets, op.nOutputs, op.size, op.channelType, flag);
-      }
-
     } else if (op.type == OperationType::REDUCE_SEND_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
