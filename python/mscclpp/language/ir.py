@@ -131,8 +131,8 @@ def ir_to_json(program: Program):
                 # Expand extra dependencies into nop operations
                 nop = Op(Instruction.nop, -1, None, None, [])
                 for i, dep in enumerate(op.depends):
-                    # barrier already syncs all threads
-                    if dep.inst != Instruction.barrier:
+                    # barrier already syncs all threads, only sync within the same threadblock
+                    if dep.inst != Instruction.barrier and dep.tb == op.tb:
                         nop.depends.append(dep)
                 if len(new_ops) > 0 and (
                     new_ops[-1].inst == Instruction.barrier or new_ops[-1].inst == Instruction.nop
