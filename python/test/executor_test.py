@@ -145,26 +145,18 @@ def build_bufs(
         nelems_input = nelems if in_place else nelems // num_ranks
     else:
         nelems_input = nelems
-
-    if "reducescatter" in collective:
-        assert (nelems % num_ranks) == 0, "nelems %d not multiple of num_ranks %d" % (nelems, num_ranks)
-        nelems_output = nelems // num_ranks
-    else:
-        nelems_output = nelems
+    nelems_output = nelems
 
     result_buf = GpuBuffer(nelems_output, dtype=dtype)
     if in_place:
         if "allgather" in collective:
             input_buf = cp.split(result_buf, num_ranks)[rank]
-        elif "reducescatter" in collective:
-            input_buf = GpuBuffer(nelems_input, dtype=dtype)
-            result_buf = cp.split(input_buf, num_ranks)[rank]
         else:
             input_buf = result_buf
     else:
         input_buf = GpuBuffer(nelems_input, dtype=dtype)
 
-    test_buf = cp.zeros(nelems, dtype=dtype)
+    test_buf = cp.zeros(nelems_output, dtype=dtype)
 
     return input_buf, result_buf, test_buf
 

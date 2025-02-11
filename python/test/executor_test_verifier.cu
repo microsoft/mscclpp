@@ -91,7 +91,7 @@ TEST_DATA_ALL_REDUCE(int32, int)
     }                                                                                                      \
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < num_elems; i += blockDim.x * gridDim.x) {   \
       if (i >= offset && i < offset + nem_elems_per_rank) {                                                \
-        assert(abs(float(result_buf[i - offset]) - float(test_buf[i])) < 1e-3 * num_ranks);                \
+        assert(abs(float(result_buf[i]) - float(test_buf[i])) < 1e-3 * num_ranks);                \
       }                                                                                                    \
     }                                                                                                      \
   }
