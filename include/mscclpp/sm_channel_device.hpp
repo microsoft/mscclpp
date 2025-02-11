@@ -48,6 +48,7 @@ struct SmChannelDeviceHandle {
   void* src_;
   void* dst_;
   void* getPacketBuffer_;
+  size_t dstSize_;  // Store the size of the memory region dst_
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Load a value from the remote memory.
@@ -66,6 +67,13 @@ struct SmChannelDeviceHandle {
   template <typename T>
   MSCCLPP_DEVICE_INLINE void write(uint64_t index, const T& v) {
     *(reinterpret_cast<T*>(dst_) + index) = v;
+  }
+
+  /// Get the size of the memory region dst_.
+  ///
+  /// @return The size of the memory region.
+  MSCCLPP_DEVICE_INLINE size_t getDstSize() const {
+    return dstSize_;
   }
 
   /// this is a helper for copy function

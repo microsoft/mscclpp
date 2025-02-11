@@ -325,7 +325,7 @@ class RegisteredMemory {
   /// Get the size of the memory block.
   ///
   /// @return The size of the memory block.
-  size_t size();
+  size_t size() const;
 
   /// Get the transport flags associated with the memory block.
   ///

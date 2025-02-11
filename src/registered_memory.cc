@@ -130,7 +130,7 @@ MSCCLPP_API_CPP void* RegisteredMemory::data() const { return pimpl_->data; }
 
 MSCCLPP_API_CPP void* RegisteredMemory::originalDataPtr() const { return pimpl_->originalDataPtr; }
 
-MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl_->size; }
+MSCCLPP_API_CPP size_t RegisteredMemory::size() const { return pimpl_->size; }
 
 MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl_->transports; }
 
