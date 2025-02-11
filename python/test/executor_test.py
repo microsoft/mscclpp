@@ -155,7 +155,6 @@ def build_bufs(
             input_buf = result_buf
     else:
         input_buf = GpuBuffer(nelems_input, dtype=dtype)
-
     test_buf = cp.zeros(nelems_output, dtype=dtype)
 
     return input_buf, result_buf, test_buf
