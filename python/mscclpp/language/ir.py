@@ -12,6 +12,7 @@ from mscclpp.language.types import Buffer, ChannelType, Op, Program, Instruction
 _local_src_insts_mscclpp: set = {
     Instruction.put,
     Instruction.put_packet,
+    Instruction.read_put_packet,
     Instruction.signal,
     Instruction.flush,
     Instruction.put_with_signal,
@@ -428,6 +429,7 @@ _json_converter_map: Dict[Instruction, _OpConverter] = {
     Instruction.barrier: _BarrierConverter(),
     Instruction.put: _PutConverter(),
     Instruction.put_packet: _PutConverter(),
+    Instruction.read_put_packet: _PutConverter(),
     Instruction.put_with_signal: _PutConverter(),
     Instruction.put_with_signal_and_flush: _PutConverter(),
     Instruction.get: _GetConverter(),
