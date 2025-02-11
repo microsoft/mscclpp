@@ -222,7 +222,16 @@ class Ref(ChunkRef):
             return buffer, self.prog.buffers[remote_rank][buffer].instance_size()
         return buffer, index
 
-    def _put(self, dst, buffer=None, index=-1, sendtb=-1, src_format=DataFormat.raw, chan_type=ChannelType.memory, use_packet=False):
+    def _put(
+        self,
+        dst,
+        buffer=None,
+        index=-1,
+        sendtb=-1,
+        src_format=DataFormat.raw,
+        chan_type=ChannelType.memory,
+        use_packet=False,
+    ):
         self.prog.check_buffer_exists(dst, buffer)
         assert self.rank != dst, "Cannot put to the same rank"
         buffer, index = self._get_buffer_index(dst, buffer, index)

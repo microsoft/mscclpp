@@ -177,6 +177,7 @@ class Op:
     def __repr__(self):
         return f"Op({self.inst}, {self.rank}, {self.src}, {self.dst}, step:{self.step}, tb:{self.tb})"
 
+
 class DataFormat(Enum):
     raw = "raw"
     packet = "packet"

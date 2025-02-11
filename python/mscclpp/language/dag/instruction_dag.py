@@ -144,7 +144,7 @@ class InstructionDAG:
     def add_put(self, rank, send_ref, recv_ref, tb, src_format, ch_type, use_packet=False):
         tb_step = self._get_tb_step(rank, tb)
         if use_packet:
-            if src_format==DataFormat.raw:
+            if src_format == DataFormat.raw:
                 op = Op(
                     Instruction.put_packet,
                     rank,
@@ -156,7 +156,7 @@ class InstructionDAG:
                     channel_type=ch_type,
                     step=tb_step,
                 )
-            elif src_format==DataFormat.packet:
+            elif src_format == DataFormat.packet:
                 op = Op(
                     Instruction.read_put_packet,
                     rank,
