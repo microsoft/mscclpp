@@ -480,10 +480,8 @@ __global__ void __launch_bounds__(512, 1)
       }
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
       for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
-        size_t writeIndex = nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4);
-        if (writeIndex < outChannels[peerIdx].getDstSize() / sizeof(int4)) {
-          outChannels[peerIdx].write(writeIndex, data);
-        }
+        outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
+                                   data);
       }
     }
     // Ensure all threads have issued writes to outChannel
