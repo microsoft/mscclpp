@@ -21,6 +21,7 @@
 #include "broadcast.hpp"
 #include "debug.h"
 #include "nccl.h"
+#include <dlfcn.h>
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
 
@@ -34,6 +35,58 @@
   } while (0)
 
 #define NUM_CHANNELS_PER_CONNECTION 64
+
+typedef enum dlopen_err {
+  DLOPEN_SUCCESS = 0,
+  DLOPEN_ERROR = 1,
+} dlopen_err_t;
+
+typedef struct _nccl_ops_t {
+  ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream);
+  ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream);
+  ncclResult_t (*Broadcast)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream);
+} nccl_ops_t;
+
+nccl_ops_t nccl_ops;
+void* nccl_dl_handle = NULL;
+char* error = NULL;
+
+#define NCCL_DLSYM(_struct_, _handle_, _prefix_, _function_)                       \
+  do {                                                                             \
+    _struct_._function_ =                                                          \
+      dlsym((_handle_), _prefix_##_function_);                                     \
+    if (_struct_._function_ == NULL) {                                             \
+      fprintf(stderr, "Failed to open %s: %s\n", _prefix_##_function_, dlerror()); \
+    }                                                                              \
+  } while (0)
+
+static inline int nccl_dlopen_init() {
+  char* nccl_path = NULL;
+
+  nccl_path = getenv("NCCL_LIB_PATH");
+  if (nccl_path) {
+    nccl_dl_handle = dlopen(nccl_path, RTLD_LAZY);
+  } else {
+    fprintf(stderr, "NCCL_LIB_PATH is empty!\n");
+    return DLOPEN_ERROR;
+  }
+
+  if (!nccl_dl_handle) {
+    fprintf(stderr, "Cannot open nccl library libnccl.so: %s\n", dlerror());
+    return DLOPEN_ERROR;
+  }
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, AllReduce);
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, AllGather);
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, Broadcast);
+
+  return DLOPEN_SUCCESS;
+}
+
+static inline void nccl_dlopen_finalize() {
+  if (nccl_dl_handle) {
+    dlclose(nccl_dl_handle);
+  }
+}
 
 // static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
 //                             mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
