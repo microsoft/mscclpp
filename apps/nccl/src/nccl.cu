@@ -219,6 +219,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   channelKey recvKey{(void*)recvBasePtr, recvBytes};
   mscclpp::DeviceHandle<mscclpp::SmChannel>* smChannels = nullptr;
   mscclpp::DeviceHandle<mscclpp::SmChannel>* smOutChannels = nullptr;
+  size_t bytes = count * ncclTypeSize(datatype);
 
   // Creating the channels
   if (count * ncclTypeSize(datatype) <= (1 << 20)) {
@@ -244,6 +245,11 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
 
     auto recvIt = comm->channelOutInfos.find(recvKey);
     if (mscclppDisableChannelCache == true || recvIt == comm->channelOutInfos.end()) {
+      if (mscclppDisableChannelCache == true) {
+        recvBytes = bytes;
+        recvBasePtr = (CUdeviceptr)recvbuff;
+        offsetOut = 0;
+      }
       remoteMemories =
           setupRemoteMemories(comm->comm, rank, (void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
       std::vector<mscclpp::SmChannel> outChannels =
@@ -313,6 +319,11 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
 
   auto it = comm->channelOutInfos.find(recvKey);
   if (mscclppDisableChannelCache == true || it == comm->channelOutInfos.end()) {
+    if (mscclppDisableChannelCache == true) {
+      recvBytes = bytes;
+      recvBasePtr = (CUdeviceptr)recvbuff;
+      offsetOut = 0;
+    }
     std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
         comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
     std::vector<mscclpp::SmChannel> channels =
