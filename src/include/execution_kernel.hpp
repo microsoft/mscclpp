@@ -140,34 +140,6 @@ MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
   return add_vectors_helper<__bfloat162>(a, b);
 }
 
-template <typename T>
-struct VectorType {
-  using type = T;
-  using nvls_type = T;
-  using nvls_type2 = T;
-};
-
-template <>
-struct VectorType<__half> {
-  using type = __half2;
-  using nvls_type = uint4;
-  using nvls_type2 = uint1;
-};
-
-template <>
-struct VectorType<__bfloat16> {
-  using type = __bfloat162;
-  using nvls_type = uint4;
-  using nvls_type2 = uint1;
-};
-
-template <>
-struct VectorType<float> {
-  using type = float;
-  using nvls_type = uint4;
-  using nvls_type2 = uint1;
-};
-
 }  // namespace
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
@@ -439,29 +411,44 @@ MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, 
 template <typename T>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* dst, T* src, uint32_t dstOffset, uint32_t srcOffset,
                                                       size_t size) {
-  using vectorType = typename VectorType<T>::type;
-  using nvlsType = typename VectorType<T>::nvls_type;
-  // nvls can only handle 4 bytes alignment
-  assert(size % sizeof(vectorType) == 0);
-  const size_t nInt4 = size / sizeof(nvlsType);
-  const size_t srcOffset4 = srcOffset / sizeof(nvlsType);
-  const size_t dstOffset4 = dstOffset / sizeof(nvlsType);
-  nvlsType* src4 = (nvlsType*)src;
-  nvlsType* dst4 = (nvlsType*)dst;
-  for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
-    nvlsType val;
-    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)(src4 + srcOffset4 + idx));
-    DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)(dst4 + dstOffset4 + idx));
-  }
-  // handle rest of data
-  size_t processed = nInt4 * sizeof(nvlsType);
-  using nvlsType2 = typename VectorType<T>::nvls_type2;
-  const size_t startIdx = (srcOffset + processed) / sizeof(nvlsType2);
-  const size_t endIdx = (dstOffset + size) / sizeof(nvlsType2);
-  for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
-    nvlsType2 val;
-    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)src + idx);
-    DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)dst + idx);
+  static_assert(sizeof(T) <= 8, "Only support type with size <= 8 bytes");
+  // TODO: use `nelems` instead of `size` to avoid the size check
+  assert(size % sizeof(T) == 0);
+  assert(srcOffset % sizeof(T) == 0);
+  assert(dstOffset % sizeof(T) == 0);
+  if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t>) {
+    const size_t nElem = size / sizeof(T);
+    const size_t srcOffsetElem = srcOffset / sizeof(T);
+    const size_t dstOffsetElem = dstOffset / sizeof(T);
+    VectorType<T, 1>* srcElem = reinterpret_cast<VectorType<T, 1>*>(src + srcOffsetElem);
+    VectorType<T, 1>* dstElem = reinterpret_cast<VectorType<T, 1>*>(dst + dstOffsetElem);
+    for (size_t idx = threadIdx.x; idx < nElem; idx += blockDim.x) {
+      auto val = DeviceMulticastPointerDeviceHandle::multimemLoadReduce(srcElem + idx);
+      DeviceMulticastPointerDeviceHandle::multimemStore(val, dstElem + idx);
+    }
+  } else {
+    // handle data in 16-byte unit
+    using Type16 = typename mscclpp::VectorType<T, 16 / sizeof(T)>;
+    const size_t nType16 = size / sizeof(Type16);
+    const size_t srcOffset16 = srcOffset / sizeof(Type16);
+    const size_t dstOffset16 = dstOffset / sizeof(Type16);
+    Type16* src16 = reinterpret_cast<Type16*>(src) + srcOffset16;
+    Type16* dst16 = reinterpret_cast<Type16*>(dst) + dstOffset16;
+    for (size_t idx = threadIdx.x; idx < nType16; idx += blockDim.x) {
+      Type16 val = DeviceMulticastPointerDeviceHandle::multimemLoadReduce(src16 + idx);
+      DeviceMulticastPointerDeviceHandle::multimemStore(val, dst16 + idx);
+    }
+    // handle rest of data
+    constexpr int RedBytes = (sizeof(T) == 8) ? 8 : 4;
+    using TypeRest = typename mscclpp::VectorType<T, RedBytes / sizeof(T)>;
+    const size_t processed = nType16 * sizeof(Type16);
+    const size_t nRest = (size - processed) / sizeof(TypeRest);
+    TypeRest* srcR = reinterpret_cast<TypeRest*>(src + srcOffset + processed);
+    TypeRest* dstR = reinterpret_cast<TypeRest*>(dst + dstOffset + processed);
+    for (size_t idx = threadIdx.x; idx < nRest; idx += blockDim.x) {
+      TypeRest val = DeviceMulticastPointerDeviceHandle::multimemLoadReduce(srcR + idx);
+      DeviceMulticastPointerDeviceHandle::multimemStore(val, dstR + idx);
+    }
   }
 }
 #endif
