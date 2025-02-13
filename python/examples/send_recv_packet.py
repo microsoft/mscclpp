@@ -33,16 +33,16 @@ def send_recv(instances):
                 c = chunk(r, Buffer.input, 0)
                 c.put_packet(
                     nghr,
-                    "scratch",
+                    Buffer.scratch,
                     1,
                     sendtb=0,
                     chan_type=ChannelType.port,
-                    temp_buffer="scratch",
+                    temp_buffer=Buffer.scratch,
                     temp_buffer_index=0,
                 )
 
         for r in range(size):
-            c = chunk(r, "scratch", 1)
+            c = chunk(r, Buffer.scratch, 1)
             c.copy_packet(r, Buffer.output, 0, sendtb=0)
 
         Json()

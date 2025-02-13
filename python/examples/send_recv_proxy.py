@@ -31,16 +31,16 @@ def send_recv(instances):
                 c = chunk(r, Buffer.input, 0)
                 c.put(
                     nghr,
-                    "scratch",
+                    Buffer.scratch,
                     1,
                     sendtb=0,
                     chan_type=ChannelType.port,
                 )
-                c.signal(nghr, "scratch", 1, sendtb=0, chan_type=ChannelType.port)
-                c.flush(nghr, "scratch", 1, sendtb=0, chan_type=ChannelType.port)
+                c.signal(nghr, Buffer.scratch, 1, sendtb=0, chan_type=ChannelType.port)
+                c.flush(nghr, Buffer.scratch, 1, sendtb=0, chan_type=ChannelType.port)
 
         for r in range(size):
-            c = chunk(r, "scratch", 1)
+            c = chunk(r, Buffer.scratch, 1)
             c.wait(1 - r, Buffer.input, 0, recvtb=0, chan_type=ChannelType.port)
             c.copy(r, Buffer.output, 0, sendtb=0)
 
