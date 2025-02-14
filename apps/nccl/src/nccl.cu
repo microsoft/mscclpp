@@ -16,12 +16,13 @@
 #if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.hpp>
 #endif
+#include <dlfcn.h>
+
 #include "allgather.hpp"
 #include "allreduce.hpp"
 #include "broadcast.hpp"
 #include "debug.h"
 #include "nccl.h"
-#include <dlfcn.h>
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
 
@@ -42,22 +43,26 @@ typedef enum dlopen_err {
 } dlopen_err_t;
 
 typedef struct _nccl_ops_t {
-  ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream);
-  ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream);
-  ncclResult_t (*Broadcast)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream);
+  ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, ncclRedOp_t op,
+                            ncclComm_t comm, cudaStream_t stream);
+  ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype,
+                            ncclComm_t comm, cudaStream_t stream);
+  ncclResult_t (*Broadcast)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
+                            ncclComm_t comm, cudaStream_t stream);
 } nccl_ops_t;
 
 nccl_ops_t nccl_ops;
 void* nccl_dl_handle = NULL;
 char* error = NULL;
 
-#define NCCL_DLSYM(_struct_, _handle_, _prefix_, _function_)                       \
-  do {                                                                             \
-    _struct_._function_ =                                                          \
-      dlsym((_handle_), _prefix_##_function_);                                     \
-    if (_struct_._function_ == NULL) {                                             \
-      fprintf(stderr, "Failed to open %s: %s\n", _prefix_##_function_, dlerror()); \
-    }                                                                              \
+#define QUOTE(symbol) #symbol
+
+#define NCCL_DLSYM(_struct_, _handle_, _prefix_, _function_, _type_)                      \
+  do {                                                                                    \
+    _struct_._function_ = (_type_)dlsym((_handle_), QUOTE(_prefix_##_function_));         \
+    if (_struct_._function_ == NULL) {                                                    \
+      fprintf(stderr, "Failed to open %s: %s\n", QUOTE(_prefix_##_function_), dlerror()); \
+    }                                                                                     \
   } while (0)
 
 static inline int nccl_dlopen_init() {
@@ -75,9 +80,12 @@ static inline int nccl_dlopen_init() {
     fprintf(stderr, "Cannot open nccl library libnccl.so: %s\n", dlerror());
     return DLOPEN_ERROR;
   }
-  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, AllReduce);
-  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, AllGather);
-  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, Broadcast);
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, AllReduce,
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, AllGather,
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, Broadcast,
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
 
   return DLOPEN_SUCCESS;
 }
