@@ -20,8 +20,7 @@ MSCCLPP_API_CPP MemoryChannel::DeviceHandle MemoryChannel::deviceHandle() const 
   return DeviceHandle{.semaphore_ = semaphore_->deviceHandle(),
                       .src_ = src_,
                       .dst_ = dst_.data(),
-                      .getPacketBuffer_ = getPacketBuffer_,
-                      .dstSize_ = dst_.size()};
+                      .getPacketBuffer_ = getPacketBuffer_};
 }
 
 }  // namespace mscclpp

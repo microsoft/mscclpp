@@ -57,8 +57,6 @@ void mscclppDebugInit() {
     mscclppDisableChannelCache = false;
   } else if (strcasecmp(disable_channel_cache, "TRUE") == 0) {
     mscclppDisableChannelCache = true;
-  } else if (strcasecmp(disable_channel_cache, "FALSE") == 0) {
-    mscclppDisableChannelCache = false;
   } else {
     mscclppDisableChannelCache = false;
   }
