@@ -10,7 +10,6 @@
 #include "debug.h"
 #include "execution_kernel.hpp"
 #include "execution_plan.hpp"
-#include "debug.h"
 
 namespace mscclpp {
 struct ExecutionContextKey {
