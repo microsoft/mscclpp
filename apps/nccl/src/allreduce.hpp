@@ -422,7 +422,7 @@ __global__ void __launch_bounds__(512, 1)
       }
     }
 
-    /// Starts reduce-scatter
+    // Starts reduce-scatter
     // Ensure that all writes of this block have been issued before issuing the signal
     __syncthreads();
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
