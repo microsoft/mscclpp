@@ -86,6 +86,7 @@ typedef enum {
   MSCCLPP_ENV = 128,
   MSCCLPP_ALLOC = 256,
   MSCCLPP_CALL = 512,
+  MSCCLPP_EXECUTOR = 1024,
   MSCCLPP_ALL = ~0
 } mscclppDebugLogSubSys;
 

@@ -5,12 +5,12 @@
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
 
-#include <mscclpp/proxy_channel.hpp>
+#include <mscclpp/port_channel.hpp>
 
 namespace nb = nanobind;
 using namespace mscclpp;
 
-void register_proxy_channel(nb::module_& m) {
+void register_port_channel(nb::module_& m) {
   nb::class_<BaseProxyService>(m, "BaseProxyService")
       .def("start_proxy", &BaseProxyService::startProxy)
       .def("stop_proxy", &BaseProxyService::stopProxy);
@@ -23,36 +23,36 @@ void register_proxy_channel(nb::module_& m) {
       .def("add_semaphore", &ProxyService::addSemaphore, nb::arg("semaphore"))
       .def("add_memory", &ProxyService::addMemory, nb::arg("memory"))
       .def("semaphore", &ProxyService::semaphore, nb::arg("id"))
-      .def("base_proxy_channel", &ProxyService::baseProxyChannel, nb::arg("id"))
-      .def("proxy_channel", &ProxyService::proxyChannel, nb::arg("id"), nb::arg("dst"), nb::arg("src"));
+      .def("base_port_channel", &ProxyService::basePortChannel, nb::arg("id"))
+      .def("port_channel", &ProxyService::portChannel, nb::arg("id"), nb::arg("dst"), nb::arg("src"));
 
-  nb::class_<BaseProxyChannel>(m, "BaseProxyChannel")
+  nb::class_<BasePortChannel>(m, "BasePortChannel")
       .def(nb::init<SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>>(),
            nb::arg("semaphoreId"), nb::arg("semaphore"), nb::arg("proxy"))
-      .def("device_handle", &BaseProxyChannel::deviceHandle);
+      .def("device_handle", &BasePortChannel::deviceHandle);
 
-  nb::class_<BaseProxyChannel::DeviceHandle>(m, "BaseProxyChannelDeviceHandle")
+  nb::class_<BasePortChannel::DeviceHandle>(m, "BasePortChannelDeviceHandle")
       .def(nb::init<>())
-      .def_rw("semaphoreId_", &BaseProxyChannel::DeviceHandle::semaphoreId_)
-      .def_rw("semaphore_", &BaseProxyChannel::DeviceHandle::semaphore_)
-      .def_rw("fifo_", &BaseProxyChannel::DeviceHandle::fifo_)
-      .def_prop_ro("raw", [](const BaseProxyChannel::DeviceHandle& self) -> nb::bytes {
+      .def_rw("semaphoreId_", &BasePortChannel::DeviceHandle::semaphoreId_)
+      .def_rw("semaphore_", &BasePortChannel::DeviceHandle::semaphore_)
+      .def_rw("fifo_", &BasePortChannel::DeviceHandle::fifo_)
+      .def_prop_ro("raw", [](const BasePortChannel::DeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
 
-  nb::class_<ProxyChannel>(m, "ProxyChannel")
+  nb::class_<PortChannel>(m, "PortChannel")
       .def(nb::init<SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>, MemoryId, MemoryId>(),
            nb::arg("semaphoreId"), nb::arg("semaphore"), nb::arg("proxy"), nb::arg("dst"), nb::arg("src"))
-      .def("device_handle", &ProxyChannel::deviceHandle);
+      .def("device_handle", &PortChannel::deviceHandle);
 
-  nb::class_<ProxyChannel::DeviceHandle>(m, "ProxyChannelDeviceHandle")
+  nb::class_<PortChannel::DeviceHandle>(m, "PortChannelDeviceHandle")
       .def(nb::init<>())
-      .def_rw("semaphoreId_", &ProxyChannel::DeviceHandle::semaphoreId_)
-      .def_rw("semaphore_", &ProxyChannel::DeviceHandle::semaphore_)
-      .def_rw("fifo_", &ProxyChannel::DeviceHandle::fifo_)
-      .def_rw("src_", &ProxyChannel::DeviceHandle::src_)
-      .def_rw("dst_", &ProxyChannel::DeviceHandle::dst_)
-      .def_prop_ro("raw", [](const ProxyChannel::DeviceHandle& self) -> nb::bytes {
+      .def_rw("semaphoreId_", &PortChannel::DeviceHandle::semaphoreId_)
+      .def_rw("semaphore_", &PortChannel::DeviceHandle::semaphore_)
+      .def_rw("fifo_", &PortChannel::DeviceHandle::fifo_)
+      .def_rw("src_", &PortChannel::DeviceHandle::src_)
+      .def_rw("dst_", &PortChannel::DeviceHandle::dst_)
+      .def_prop_ro("raw", [](const PortChannel::DeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
 };

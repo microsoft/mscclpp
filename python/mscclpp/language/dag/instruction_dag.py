@@ -221,7 +221,7 @@ class InstructionDAG:
             next=set(),
             prev=set(),
             tb=tb,
-            channel_type=ChannelType.proxy,
+            channel_type=ChannelType.port,
             step=tb_step,
         )
         buffer = send_ref.buffer

@@ -22,7 +22,7 @@ from mscclpp import (
     Host2DeviceSemaphore,
     Host2HostSemaphore,
     ProxyService,
-    SmDevice2DeviceSemaphore,
+    MemoryDevice2DeviceSemaphore,
     TcpBootstrap,
     Transport,
     is_nvls_supported,
@@ -363,9 +363,9 @@ class MscclppKernel:
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
-        elif test_name == "sm_channel":
+        elif test_name == "memory_channel":
             self._kernel = KernelBuilder(
-                file="sm_channel_test.cu", kernel_name="sm_channel", file_dir=file_dir
+                file="memory_channel_test.cu", kernel_name="memory_channel", file_dir=file_dir
             ).get_compiled_kernel()
             self.nblocks = nranks
             self.nthreads = 1024
@@ -381,9 +381,9 @@ class MscclppKernel:
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = nranks
-        elif test_name == "proxy_channel":
+        elif test_name == "port_channel":
             self._kernel = KernelBuilder(
-                file="proxy_channel_test.cu", kernel_name="proxy_channel", file_dir=file_dir
+                file="port_channel_test.cu", kernel_name="port_channel", file_dir=file_dir
             ).get_compiled_kernel()
             self.nblocks = 1
             self.nthreads = 1024
@@ -411,11 +411,11 @@ class MscclppKernel:
             # keep a reference to the device handles so that they don't get garbage collected
             self._d_semaphore_or_channels = cp.asarray(memoryview(b"".join(device_handles)), dtype=cp.uint8)
 
-        if test_name in ["h2d_semaphore", "d2d_semaphore", "sm_channel", "proxy_channel"]:
+        if test_name in ["h2d_semaphore", "d2d_semaphore", "memory_channel", "port_channel"]:
             self.params += pack(self._d_semaphore_or_channels, my_rank, nranks)
-            if test_name == "sm_channel":
+            if test_name == "memory_channel":
                 self.params += pack(tensor.size, use_packet)
-            if test_name == "proxy_channel":
+            if test_name == "port_channel":
                 self.params += pack(tensor, scratch, tensor.size, use_packet)
         elif test_name == "fifo":
             self.params = fifo.device_handle().raw
@@ -457,7 +457,7 @@ def test_h2d_semaphores(mpi_group: MpiGroup, transport: str):
 def test_d2d_semaphores(mpi_group: MpiGroup):
     group, connections = create_group_and_connection(mpi_group, "NVLink")
 
-    semaphores = group.make_semaphore(connections, SmDevice2DeviceSemaphore)
+    semaphores = group.make_semaphore(connections, MemoryDevice2DeviceSemaphore)
     group.barrier()
     kernel = MscclppKernel("d2d_semaphore", group.my_rank, group.nranks, semaphores)
     kernel()
@@ -468,7 +468,7 @@ def test_d2d_semaphores(mpi_group: MpiGroup):
 @parametrize_mpi_groups(2, 4, 8, 16)
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("use_packet", [False, True])
-def test_sm_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
+def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
     group, connections = create_group_and_connection(mpi_group, "NVLink")
 
     memory = GpuBuffer(nelem, dtype=cp.int32)
@@ -483,10 +483,10 @@ def test_sm_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
 
     if use_packet:
-        channels = group.make_sm_channels_with_scratch(memory, scratch, connections)
+        channels = group.make_memory_channels_with_scratch(memory, scratch, connections)
     else:
-        channels = group.make_sm_channels(memory, connections)
-    kernel = MscclppKernel("sm_channel", group.my_rank, group.nranks, channels, memory, use_packet, scratch)
+        channels = group.make_memory_channels(memory, connections)
+    kernel = MscclppKernel("memory_channel", group.my_rank, group.nranks, channels, memory, use_packet, scratch)
 
     group.barrier()
     kernel()
@@ -565,7 +565,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, transport: str):
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("transport", ["NVLink", "IB"])
 @pytest.mark.parametrize("use_packet", [False, True])
-def test_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
+def test_port_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packet: bool):
     group, connections = create_group_and_connection(mpi_group, transport)
 
     memory = GpuBuffer(nelem, dtype=cp.int32)
@@ -586,10 +586,10 @@ def test_proxy_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_pack
         memory_to_register = scratch
     else:
         memory_to_register = memory
-    channels = group.make_proxy_channels(proxy_service, memory_to_register, connections)
+    channels = group.make_port_channels(proxy_service, memory_to_register, connections)
 
     kernel = MscclppKernel(
-        "proxy_channel",
+        "port_channel",
         my_rank=group.my_rank,
         nranks=group.nranks,
         semaphore_or_channels=channels,
@@ -614,7 +614,7 @@ def test_nvls(mpi_group: MpiGroup):
     mem_handle = nvls_connection.allocate_bind_memory(nbytes)
 
     nvlinks_connections = create_connection(group, "NVLink")
-    semaphores = group.make_semaphore(nvlinks_connections, SmDevice2DeviceSemaphore)
+    semaphores = group.make_semaphore(nvlinks_connections, MemoryDevice2DeviceSemaphore)
 
     kernel = MscclppKernel(
         "nvls",

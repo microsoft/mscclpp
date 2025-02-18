@@ -131,8 +131,8 @@ def ir_to_json(program: Program):
                 # Expand extra dependencies into nop operations
                 nop = Op(Instruction.nop, -1, None, None, [])
                 for i, dep in enumerate(op.depends):
-                    # barrier already syncs all threads
-                    if dep.inst != Instruction.barrier:
+                    # barrier already syncs all threads, only sync within the same threadblock
+                    if dep.inst != Instruction.barrier and dep.tb == op.tb:
                         nop.depends.append(dep)
                 if len(new_ops) > 0 and (
                     new_ops[-1].inst == Instruction.barrier or new_ops[-1].inst == Instruction.nop
@@ -286,7 +286,7 @@ class _ReadReduceCopySendConverter(_OpConverter):
 class _ReduceSendConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
         dst_channel_ids = self.get_channel_ids(
-            op.dsts, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, ChannelType.sm
+            op.dsts, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, ChannelType.memory
         )
         o_buff = {"src": op.dst.buffer.value, "dst": op.dsts[0].buffer.value}
         srcs = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.srcs))
@@ -331,7 +331,9 @@ class _NopConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
         return _JsonInstruction(
             name=op.inst.value,
-            deps=list(map(lambda dep: {"tb": dep.tb, "step": dep.step}, op.depends)),
+            deps=sorted(
+                list(map(lambda dep: {"tb": dep.tb, "step": dep.step}, op.depends)), key=lambda x: (x["tb"], x["step"])
+            ),
         )
 
 
@@ -467,7 +469,9 @@ def _dump_to_json(program: Program):
                 obj["connectedTo"] = [sorted(list(peers)) for peers in obj["connectedTo"]]
             gpu_instance["channels"].append(obj)
         gpu_instance["channels"] = list(filter(lambda x: x["type"] != "none", gpu_instance["channels"]))
-        gpu_instance["channels"] = sorted(gpu_instance["channels"], key=lambda x: (x["srcbuff"], x["dstbuff"]))
+        gpu_instance["channels"] = sorted(
+            gpu_instance["channels"], key=lambda x: (x["srcbuff"], x["dstbuff"], x["type"])
+        )
 
         # render for GPU NVLS channels
         for i, chan in enumerate(gpu_instance["channels"]):
@@ -502,7 +506,7 @@ def _dump_to_json(program: Program):
                     tb_channel_dict[(srcBuffer, dstBuffer, type)] = obj
                     tb_channels.append(obj)
             tb_channels = filter(lambda x: x["type"] != "none", tb_channels)
-            tb_channels = sorted(tb_channels, key=lambda x: (x["srcbuff"], x["dstbuff"]))
+            tb_channels = sorted(tb_channels, key=lambda x: (x["srcbuff"], x["dstbuff"], x["type"]))
             for op in tb.ops:
                 if op.tb == -1:
                     continue

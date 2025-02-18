@@ -13,7 +13,7 @@ We will setup a mesh topology with eight GPUs. Each GPU will be connected to its
 ```cpp
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
-#include <mscclpp/proxy_channel.hpp>
+#include <mscclpp/port_channel.hpp>
 
 #include <memory>
 #include <string>
@@ -21,7 +21,7 @@ We will setup a mesh topology with eight GPUs. Each GPU will be connected to its
 
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
-__constant__ DeviceHandle<mscclpp::ProxyChannel> constProxyChans[8];
+__constant__ DeviceHandle<mscclpp::PortChannel> constPortChans[8];
 
 void setupMeshTopology(int rank, int worldsize, void* data, size_t dataSize) {
   std::string ip_port = "10.0.0.4:50000";
@@ -55,17 +55,17 @@ void setupMeshTopology(int rank, int worldsize, void* data, size_t dataSize) {
 
   comm.setup();
 
-  std::vector<DeviceHandle<mscclpp::ProxyChannel>> proxyChannels;
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannels;
   for (size_t i = 0; i < semaphoreIds.size(); ++i) {
-    proxyChannels.push_back(mscclpp::deviceHandle(mscclpp::ProxyChannel(
-        proxyService.proxyChannel(semaphoreIds[i]), proxyService.addMemory(remoteMemories[i].get()),
+    portChannels.push_back(mscclpp::deviceHandle(mscclpp::PortChannel(
+        proxyService.portChannel(semaphoreIds[i]), proxyService.addMemory(remoteMemories[i].get()),
         proxyService.addMemory(localMemories[i]))));
   }
 
-  if (proxyChannels.size() > sizeof(constProxyChans) / sizeof(DeviceHandle<mscclpp::ProxyChannel>)) {
+  if (portChannels.size() > sizeof(constPortChans) / sizeof(DeviceHandle<mscclpp::PortChannel>)) {
     std::runtime_error("unexpected error");
   }
-  CUDACHECK(cudaMemcpyToSymbol(constProxyChans, proxyChannels.data(),
-                              sizeof(DeviceHandle<mscclpp::ProxyChannel>) * proxyChannels.size()));
+  CUDACHECK(cudaMemcpyToSymbol(constPortChans, portChannels.data(),
+                              sizeof(DeviceHandle<mscclpp::PortChannel>) * portChannels.size()));
 }
 ```

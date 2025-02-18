@@ -10,7 +10,7 @@ from mscclpp.language.types import ChannelType
 
 def send_recv(instances):
     """
-    Send and receive data between two ranks using proxy channels.
+    Send and receive data between two ranks using port channels.
     steps:
     1. Each rank sends a chunk to the other rank's scratch buffer and signals the other rank that the data has been sent.
     2. Wait for the data to be received then copy it to the output buffer.
@@ -34,14 +34,14 @@ def send_recv(instances):
                     "scratch",
                     1,
                     sendtb=0,
-                    chan_type=ChannelType.proxy,
+                    chan_type=ChannelType.port,
                 )
-                c.signal(nghr, "scratch", 1, sendtb=0, chan_type=ChannelType.proxy)
-                c.flush(nghr, "scratch", 1, sendtb=0, chan_type=ChannelType.proxy)
+                c.signal(nghr, "scratch", 1, sendtb=0, chan_type=ChannelType.port)
+                c.flush(nghr, "scratch", 1, sendtb=0, chan_type=ChannelType.port)
 
         for r in range(size):
             c = chunk(r, "scratch", 1)
-            c.wait(1 - r, Buffer.input, 0, recvtb=0, chan_type=ChannelType.proxy)
+            c.wait(1 - r, Buffer.input, 0, recvtb=0, chan_type=ChannelType.port)
             c.copy(r, Buffer.output, 0, sendtb=0)
 
         Json()
