@@ -15,6 +15,7 @@
 #include <string>
 
 int mscclppDebugLevel = -1;
+bool mscclppEnableSharedLib = false;
 static int pid = -1;
 static std::string hostname;
 thread_local int mscclppDebugNoWarn = 0;
@@ -49,6 +50,15 @@ void mscclppDebugInit() {
     tempNcclDebugLevel = MSCCLPP_LOG_ABORT;
   } else if (strcasecmp(mscclpp_debug, "TRACE") == 0) {
     tempNcclDebugLevel = MSCCLPP_LOG_TRACE;
+  }
+
+  const char* enable_shared_lib = getenv("MSCCLPP_ENABLE_SHARED_LIB");
+  if (enable_shared_lib == NULL) {
+    mscclppEnableSharedLib = false;
+  } else if (strcasecmp(enable_shared_lib, "TRUE") == 0) {
+    mscclppEnableSharedLib = true;
+  } else {
+    mscclppEnableSharedLib = false;
   }
 
   /* Parse the MSCCLPP_DEBUG_SUBSYS env var
