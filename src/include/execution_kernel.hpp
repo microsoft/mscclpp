@@ -328,6 +328,7 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<Memo
       return;
     }
     // For port channel, we assume src and dst are in packet format
+    // TODO: support non-packet format and remove packet format(packet format should be handle in handleReadPutPacket)
     uint32_t dstOffset = (dstOffsets[tid] << 1) + scratchBaseOffset;
     uint32_t srcOffset = (srcOffsets[tid] << 1) + scratchBaseOffset;
     portChannels[dstChannelIndexes[tid]].put(dstOffset, srcOffset, size << 1);
@@ -354,9 +355,6 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPacket(int rank, void* scratch, size_t s
     }
   } else if (chType == ChannelType::PORT) {
     int ch_idx = threadIdx.x;
-    if (ch_idx >= nDstChannels) {
-      return;
-    }
 
     // Ensuring Data Is Ready
     size_t nPackets = size * 2 / sizeof(PacketType);
@@ -364,8 +362,12 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPacket(int rank, void* scratch, size_t s
       PacketType* pkts = (PacketType*)((char*)scratch + scratchBaseOffset + srcOffsets[ch_idx] * 2);
       PacketPayload<PacketType> data = pkts[pkt_idx].read(flag);
     }
+    __syncthreads();
 
     // For proxy channel, we assume src and dst are in packet format
+    if (ch_idx >= nDstChannels) {
+      return;
+    }
     uint32_t dstOffset = scratchBaseOffset + dstOffsets[ch_idx] * 2;
     uint32_t srcOffset = scratchBaseOffset + srcOffsets[ch_idx] * 2;
     proxyChannels[dstChannelIndexes[ch_idx]].put(dstOffset, srcOffset, size * 2);
