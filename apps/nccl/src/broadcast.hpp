@@ -24,6 +24,7 @@ __global__ void __launch_bounds__(1024, 1)
 
   __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> memChans[NRANKS_PER_NODE - 1];
   if (threadIdx.x < nPeer) {
+    memChans[threadIdx.x] = memoryChannels[chanOffset + threadIdx.x];
     memChans[threadIdx.x].relaxedSignal();
     memChans[threadIdx.x].wait();
   }
