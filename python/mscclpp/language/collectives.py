@@ -202,7 +202,10 @@ class ReduceScatter(Collective):
                 for i in range(self.num_ranks):
                     for c in range(self.chunk_factor):
                         input_buffer.append(Chunk(r, i * self.chunk_factor + c, i, c))
-                buffers = {Buffer.input: input_buffer}
+                buffers = {
+                    Buffer.input: input_buffer,
+                    Buffer.output: input_buffer[r * self.chunk_factor : (r + 1) * self.chunk_factor],
+                }
                 rank_buffers.append(buffers)
             else:
                 input_buffer = []
