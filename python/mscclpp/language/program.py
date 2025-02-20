@@ -261,7 +261,7 @@ class Ref(ChunkRef):
         temp_buffer_index=-1,
     ):
         chunk_ref = self
-        if chan_type == ChannelType.port and src_format==DataFormat.raw:
+        if chan_type == ChannelType.port and src_format == DataFormat.raw:
             assert temp_buffer is not None, "Need to specify a temporary buffer for port channels"
             chunk_ref = self._copy(
                 self.rank, temp_buffer, temp_buffer_index, sendtb, trans_from_packet=False, trans_to_packet=True
