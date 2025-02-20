@@ -354,17 +354,18 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPacket(int rank, void* scratch, size_t s
       }
     }
   } else if (chType == ChannelType::PORT) {
-    int ch_idx = threadIdx.x;
-
     // Ensuring Data Is Ready
     size_t nPackets = size * 2 / sizeof(PacketType);
     for (size_t pkt_idx = threadIdx.x; pkt_idx < nPackets; pkt_idx += blockDim.x) {
-      PacketType* pkts = (PacketType*)((char*)scratch + scratchBaseOffset + srcOffsets[ch_idx] * 2);
-      PacketPayload<PacketType> data = pkts[pkt_idx].read(flag);
+      for (int ch_idx = 0; ch_idx < nDstChannels; ++ch_idx) {
+        PacketType* pkts = (PacketType*)((char*)scratch + scratchBaseOffset + srcOffsets[ch_idx] * 2);
+        PacketPayload<PacketType> data = pkts[pkt_idx].read(flag);
+      }
     }
     __syncthreads();
 
-    // For proxy channel, we assume src and dst are in packet format
+    // Putting the data
+    int ch_idx = threadIdx.x;
     if (ch_idx >= nDstChannels) {
       return;
     }
