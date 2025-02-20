@@ -190,7 +190,7 @@ static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemor
 }
 
 static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
-                                          ncclRedOp_t, ncclComm_t comm, cudaStream_t stream) {
+                                          ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
   // FallBack for single node
   if (comm->comm->bootstrap()->getNranks() != comm->comm->bootstrap()->getNranksPerNode()) {
     WARN("ncclAllReduceFallback is currently unavailable for multi-node");
@@ -262,27 +262,33 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     memoryOutChannels = recvIt->second.memoryChannelDeviceHandles.get();
   }
 
+  Op reduceOp;
+  if (op == ncclSum) {
+    reduceOp = SUM;
+  } else if (op == ncclMin) {
+    reduceOp = MIN;
+  }
   switch (datatype) {
     case ncclFloat16:
       CUDACHECK(allreduce((half*)sendbuff, (half*)comm->scratchBuff.get(), (half*)recvbuff, memoryChannels,
                           memoryOutChannels, offsetIn, offsetOut, offsetScratch, rank, NRANKS_PER_NODE,
-                          comm->comm->bootstrap()->getNranks(), count, stream));
+                          comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
       break;
     case ncclFloat32:
       CUDACHECK(allreduce((float*)sendbuff, (float*)comm->scratchBuff.get(), (float*)recvbuff, memoryChannels,
                           memoryOutChannels, offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(),
-                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream));
+                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
       break;
     case ncclBfloat16:
       CUDACHECK(allreduce((__bfloat16*)sendbuff, (__bfloat16*)comm->scratchBuff.get(), (__bfloat16*)recvbuff,
                           memoryChannels, memoryOutChannels, offsetIn, offsetOut, offsetScratch, rank, NRANKS_PER_NODE,
-                          comm->comm->bootstrap()->getNranks(), count, stream));
+                          comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
       break;
     case ncclInt32:
     case ncclUint32:
       CUDACHECK(allreduce((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels,
                           memoryOutChannels, offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(),
-                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream));
+                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
       break;
     default:
       WARN("datatype is invalid, datatype: %d", datatype);
@@ -372,6 +378,7 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
     }
   }
 
+  WARN("In initializing ncclCommFallback");
   mscclppComm->setup();
   commPtr->connections = std::move(connections);
   commPtr->memorySemaphores = std::move(memorySemaphores);
