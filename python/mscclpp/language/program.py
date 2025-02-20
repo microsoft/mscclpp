@@ -247,7 +247,7 @@ class Ref(ChunkRef):
         return dst_chunkref
 
     def put(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.memory):
-        return self._put(dst, buffer, index, sendtb, chan_type)
+        return self._put(dst, buffer, index, sendtb, DataFormat.raw, chan_type)
 
     def put_packet(
         self,
