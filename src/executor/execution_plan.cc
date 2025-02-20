@@ -46,6 +46,8 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::READ_REDUCE_COPY_SEND;
   } else if (str == "ppkt") {
     return mscclpp::OperationType::PUT_PACKET;
+  } else if (str == "rppkt") {
+    return mscclpp::OperationType::READ_PUT_PACKET;
   } else if (str == "rspkt") {
     return mscclpp::OperationType::REDUCE_SEND_PACKET;
   } else if (str == "cpkt") {
