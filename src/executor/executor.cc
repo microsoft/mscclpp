@@ -144,7 +144,7 @@ struct Executor::Impl {
                                          size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendMemRange, recvMemRange, plan.impl_->name};
     DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset};
-    if (this->contexts.find(key) != this->contexts.end()) {
+    if (mscclppDisableChannelCache == false && this->contexts.find(key) != this->contexts.end()) {
       auto& devicePlans = this->contexts[key].deviceExecutionPlans;
       if (this->contexts[key].currentDevicePlan == devicePlanKey) {
         return this->contexts[key];
@@ -444,6 +444,15 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvMemRange, (CUdeviceptr)recvbuff));
   size_t offsetIn = (char*)sendbuff - (char*)sendBasePtr;
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
+
+  if (mscclppDisableChannelCache) {
+    sendBasePtr = (CUdeviceptr)sendbuff;
+    recvBasePtr = (CUdeviceptr)recvbuff;
+    sendMemRange = sendBuffSize;
+    recvMemRange = recvBuffSize;
+    offsetIn = 0;
+    offsetOut = 0;
+  }
 
   ExecutionContext context =
       this->impl_->setupExecutionContext(rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, recvBuffSize,
