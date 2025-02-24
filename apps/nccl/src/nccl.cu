@@ -134,6 +134,12 @@ struct ChannelInfo {
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
 };
 
+struct splitCommInfo {
+  int color;
+  int key;
+  int originalRank;
+};
+
 struct ncclComm {
   std::shared_ptr<mscclpp::Communicator> comm;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
@@ -274,6 +280,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   channelKey recvKey{(void*)recvBasePtr, recvBytes};
   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = nullptr;
   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryOutChannels = nullptr;
+  size_t bytes = count * ncclTypeSize(datatype);
 
   // Creating the channels
   if (count * ncclTypeSize(datatype) <= (1 << 20)) {
@@ -298,7 +305,12 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     }
 
     auto recvIt = comm->channelOutInfos.find(recvKey);
-    if (recvIt == comm->channelOutInfos.end()) {
+    if (mscclppDisableChannelCache == true || recvIt == comm->channelOutInfos.end()) {
+      if (mscclppDisableChannelCache == true) {
+        recvBytes = bytes;
+        recvBasePtr = (CUdeviceptr)recvbuff;
+        offsetOut = 0;
+      }
       remoteMemories =
           setupRemoteMemories(comm->comm, rank, (void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
       std::vector<mscclpp::MemoryChannel> outChannels =
@@ -334,7 +346,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
                           NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream));
       break;
     default:
-      WARN("datatype is invalid");
+      WARN("datatype is invalid, datatype: %d", datatype);
       return ncclInvalidArgument;
   }
   return ncclSuccess;
@@ -357,7 +369,6 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
     return ncclInvalidArgument;
   }
 
-  // Declarating variables
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)recvbuff));
@@ -368,7 +379,12 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = nullptr;
 
   auto it = comm->channelOutInfos.find(recvKey);
-  if (it == comm->channelOutInfos.end()) {
+  if (mscclppDisableChannelCache == true || it == comm->channelOutInfos.end()) {
+    if (mscclppDisableChannelCache == true) {
+      recvBytes = bytes;
+      recvBasePtr = (CUdeviceptr)recvbuff;
+      offsetOut = 0;
+    }
     std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
         comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
     std::vector<mscclpp::MemoryChannel> channels =
@@ -422,7 +438,7 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   commPtr->memorySemaphores = std::move(memorySemaphores);
   commPtr->buffFlag = 0;
   commPtr->numScratchBuff = 2;
-  commPtr->scratchBuff = mscclpp::GpuBuffer(SCRATCH_SIZE).memory();
+  commPtr->scratchBuff = mscclpp::GpuBuffer<char>(SCRATCH_SIZE).memory();
   commPtr->remoteScratchRegMemories =
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
 }
@@ -543,10 +559,36 @@ NCCL_API ncclResult_t ncclCommAbort(ncclComm_t) {
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclCommSplit(ncclComm_t, int, int, ncclComm_t*, ncclConfig_t*) {
-  // TODO: implement this function
-  WARN("ncclCommSplit is currently unavailable");
-  return ncclInternalError;
+NCCL_API ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclComm_t* newcomm, ncclConfig_t*) {
+  *newcomm = NCCL_COMM_NULL;
+  int nRanks = comm->comm->bootstrap()->getNranks();
+  int rank = comm->comm->bootstrap()->getRank();
+  splitCommInfo info{color, key, comm->comm->bootstrap()->getRank()};
+  std::vector<splitCommInfo> infos(nRanks);
+  infos[rank] = info;
+  comm->comm->bootstrap()->allGather(infos.data(), sizeof(splitCommInfo));
+  comm->comm->bootstrap()->barrier();
+  std::vector<splitCommInfo> group;
+  std::copy_if(infos.begin(), infos.end(), std::back_inserter(group),
+               [color](const splitCommInfo& info) { return info.color == color; });
+  std::sort(group.begin(), group.end(), [](const splitCommInfo& a, const splitCommInfo& b) { return a.key < b.key; });
+  int newRank = std::distance(group.begin(),
+                              std::find_if(group.begin(), group.end(),
+                                           [rank](const splitCommInfo& info) { return info.originalRank == rank; }));
+  int groupSize = group.size();
+  ncclUniqueId uniqueId;
+  if (newRank == 0) {
+    ncclGetUniqueId(&uniqueId);
+  }
+  std::vector<ncclUniqueId> uniqueIds(nRanks);
+  uniqueIds[rank] = uniqueId;
+  comm->comm->bootstrap()->allGather(uniqueIds.data(), sizeof(ncclUniqueId));
+  comm->comm->bootstrap()->barrier();
+  uniqueId = uniqueIds[group.front().originalRank];
+  if (color == NCCL_SPLIT_NOCOLOR) {
+    return ncclSuccess;
+  }
+  return ncclCommInitRankConfig(newcomm, groupSize, uniqueId, newRank, nullptr);
 }
 
 NCCL_API const char* ncclGetErrorString(ncclResult_t result) {
