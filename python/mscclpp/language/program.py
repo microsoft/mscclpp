@@ -268,7 +268,7 @@ class Ref(ChunkRef):
         src_chunkref = self.prog.get_ref(src, buffer, index, self.size)
 
         self.prog.apply_send(src, buffer, index, self.rank, self.buffer, self.index, self.size)
-        self.prog.instr_dag.add_get(receiver, src_chunkref, self, recvtb, chan_type)
+        self.prog.instr_dag.add_get(receiver, self, src_chunkref, recvtb, chan_type)
 
     # for signal and wait, currently we assuem the pair will use the same tb index. In future we need
     # to infer the tb index from the instruction DAG Add a channel is define as (send_tb, src_buffer, recv_tb, dst_buffer, type).

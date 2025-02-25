@@ -183,23 +183,25 @@ class _JsonInstruction:
 
 
 class _OpConverter(ABC):
-    def get_channel_ids(self, chunk_list, tb_channel_dict, src_buffer, dst_buffer, chan_type):
+    def get_channel_ids(self, rank_list, offset_list, tb_channel_dict, src_buffer, dst_buffer, chan_type):
         channel_ids = []
         key = (src_buffer, dst_buffer, chan_type)
         if chan_type == ChannelType.nvls:
             ranks = []
-            for c in chunk_list:
+            for c in rank_list:
                 ranks.append(c.rank)
             channel_ids.extend(
                 [{"id": id} for id, ele in enumerate(tb_channel_dict[key]["connectedTo"]) if set(ele) == set(ranks)]
             )
         else:
-            for c in chunk_list:
+            for c in range(len(rank_list)):
+                rank = rank_list[c].rank
+                index = offset_list[c].index
                 channel_ids.extend(
                     [
-                        {"id": id, "off": c.index}
+                        {"id": id, "off": index}
                         for id, ele in enumerate(tb_channel_dict[key]["connectedTo"])
-                        if ele == c.rank
+                        if ele == rank
                     ]
                 )
         return channel_ids
@@ -211,7 +213,9 @@ class _OpConverter(ABC):
 
 class _SignalFlushConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
-        dst_channel_ids = self.get_channel_ids(op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        dst_channel_ids = self.get_channel_ids(
+            op.dsts, op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
+        )
         o_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
         return _JsonInstruction(
             name=op.inst.value,
@@ -224,7 +228,9 @@ class _SignalFlushConverter(_OpConverter):
 
 class _WaitConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
-        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        src_channel_ids = self.get_channel_ids(
+            op.srcs, op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
+        )
         i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
         return _JsonInstruction(
             name=op.inst.value,
@@ -237,7 +243,9 @@ class _WaitConverter(_OpConverter):
 
 class _ReadReduceCopyConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
-        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        src_channel_ids = self.get_channel_ids(
+            op.srcs, op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
+        )
         i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
         dst = op.dst
         src = op.dst  # TODO(binyli): fix this
@@ -258,7 +266,9 @@ class _ReadReduceCopyConverter(_OpConverter):
 
 class _ReadReduceCopySendConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
-        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        src_channel_ids = self.get_channel_ids(
+            op.srcs, op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
+        )
         dst_channel_ids = self.get_channel_ids(
             op.dsts, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, op.channel_type
         )
@@ -286,7 +296,7 @@ class _ReadReduceCopySendConverter(_OpConverter):
 class _ReduceSendConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
         dst_channel_ids = self.get_channel_ids(
-            op.dsts, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, ChannelType.memory
+            op.dsts, op.srcs, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, ChannelType.memory
         )
         o_buff = {"src": op.dst.buffer.value, "dst": op.dsts[0].buffer.value}
         srcs = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.srcs))
@@ -348,7 +358,9 @@ class _BarrierConverter(_OpConverter):
 
 class _PutConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
-        dst_channel_ids = self.get_channel_ids(op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        dst_channel_ids = self.get_channel_ids(
+            op.dsts, op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
+        )
         o_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
         srcs = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.srcs))
         return _JsonInstruction(
@@ -363,7 +375,9 @@ class _PutConverter(_OpConverter):
 
 class _GetConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
-        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        src_channel_ids = self.get_channel_ids(
+            op.dsts, op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
+        )
         i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
         dsts = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.dsts))
         return _JsonInstruction(
@@ -397,8 +411,12 @@ class _GroupLoadReduceStoreConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
         src = op.src
         dst = op.dst
-        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
-        dst_channel_ids = self.get_channel_ids(op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
+        src_channel_ids = self.get_channel_ids(
+            op.srcs, op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
+        )
+        dst_channel_ids = self.get_channel_ids(
+            op.dsts, op.dsts, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
+        )
         return _JsonInstruction(
             name=op.inst.value,
             src=src.rank,

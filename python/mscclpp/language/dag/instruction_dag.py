@@ -51,8 +51,8 @@ class InstructionDAG:
         return visited
 
     def complete_channels(self):
-        send_op = [Instruction.put, Instruction.signal, Instruction.put_packet]
-        recv_op = [Instruction.wait, Instruction.get, Instruction.read_reduce_copy]
+        send_op = [Instruction.put, Instruction.signal, Instruction.put_packet, Instruction.get]
+        recv_op = [Instruction.wait, Instruction.read_reduce_copy]
         group_send_op = [Instruction.group_store]
         group_recv_op = [Instruction.group_load_reduce]
         for rank, rank_tbs in enumerate(self.tbs):
