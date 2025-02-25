@@ -519,7 +519,11 @@ std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunksForRank(int ran
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
   } else if (this->inputChunks.at(rank) != 0 && this->outputChunks.at(rank) != 0) {
     if (inputSize / this->inputChunks.at(rank) != outputSize / this->outputChunks.at(rank))
-      throw mscclpp::Error("Size per chunks inconsistent", mscclpp::ErrorCode::ExecutorError);
+      throw mscclpp::Error("Size per chunks inconsistent: inputSize " + std::to_string(inputSize) + " inputChunks " +
+                               std::to_string(this->inputChunks.at(rank)) + " outputSize " +
+                               std::to_string(outputSize) + " outputChunks " +
+                               std::to_string(this->outputChunks.at(rank)),
+                           mscclpp::ErrorCode::ExecutorError);
     else
       sizePerRank = std::make_pair(inputSize, this->inputChunks.at(rank));
   } else if (this->inputChunks.at(rank) != 0) {
