@@ -33,6 +33,12 @@ class Collective:
     def get_buffer_index(self, rank, buffer, index):
         return buffer, index
 
+    def get_output_chunk_count(self, buffer_length, instances):
+        if self.inplace:
+            return 0
+        else:
+            return buffer_length * instances
+
 
 class AllToAll(Collective):
     def __init__(self, num_ranks, chunk_factor, inplace):
@@ -123,6 +129,9 @@ class AllGather(Collective):
             return Buffer.output, index + rank * self.chunk_factor
         else:
             return buffer, index
+
+    def get_output_chunk_count(self, buffer_lenght, instances):
+        return buffer_lenght * instances
 
 
 class AllReduce(Collective):

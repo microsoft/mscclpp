@@ -155,8 +155,9 @@ class MSCCLPPProgram:
         )
         for gpu in program.gpus:
             gpu.input_chunks = len(self.buffers[gpu.rank][Buffer.input]) * self.instances
-            if self.collective.name == "allgather" or not self.collective.inplace:
-                gpu.output_chunks = len(self.buffers[gpu.rank][Buffer.output]) * self.instances
+            gpu.output_chunks = self.collective.get_output_chunk_count(
+                len(self.buffers[gpu.rank][Buffer.output]), self.instances
+            )
         return program
 
     def generate_json(self):
