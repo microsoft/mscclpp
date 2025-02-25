@@ -130,8 +130,8 @@ class AllGather(Collective):
         else:
             return buffer, index
 
-    def get_output_chunk_count(self, buffer_lenght, instances):
-        return buffer_lenght * instances
+    def get_output_chunk_count(self, buffer_length, instances):
+        return buffer_length * instances
 
 
 class AllReduce(Collective):
