@@ -43,6 +43,7 @@ typedef enum dlopen_err {
 } dlopen_err_t;
 
 typedef struct _nccl_ops_t {
+  ncclResult_t (*CommInitRank)(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank);
   ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, ncclRedOp_t op,
                             ncclComm_t comm, cudaStream_t stream);
   ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype,
@@ -86,6 +87,8 @@ static inline int nccl_dlopen_init() {
              ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, Broadcast,
              ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, CommInitRank,
+             ncclResult_t (*)(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank));
 
   return DLOPEN_SUCCESS;
 }
@@ -155,6 +158,8 @@ struct ncclComm {
 
   uint32_t numScratchBuff;
   uint32_t buffFlag;
+
+  ncclComm_t nccl_comm;
 };
 
 static size_t ncclTypeSize(ncclDataType_t type) {
@@ -519,6 +524,11 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     NpKit::Init(rank);
   }
 #endif
+
+  if (mscclppOpenSharedLib == true) {
+    nccl_ops.CommInitRank(&commPtr->nccl_comm, nranks, commId, rank);
+  }
+
   return ncclSuccess;
 }
 
