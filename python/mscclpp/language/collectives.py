@@ -83,13 +83,16 @@ class AllGather(Collective):
     def init_buffers(self):
         rank_buffers = []
         for r in range(self.num_ranks):
-            input_buffer = [None] * self.chunk_factor
             output_buffer = [None] * (self.num_ranks * self.chunk_factor)
-            for ch in range(self.chunk_factor):
-                input_buffer[ch] = Chunk(r, ch, -1, r * self.chunk_factor + ch)
             for rank in range(self.num_ranks):
                 for ch in range(self.chunk_factor):
                     output_buffer[rank * self.chunk_factor + ch] = Chunk(rank, ch, -1, rank * self.chunk_factor + ch)
+            if self.inplace:
+                input_buffer = output_buffer[r * self.chunk_factor : (r + 1) * self.chunk_factor]
+            else:
+                input_buffer = [None] * self.chunk_factor
+                for ch in range(self.chunk_factor):
+                    input_buffer[ch] = Chunk(r, ch, -1, r * self.chunk_factor + ch)
             buffers = {Buffer.input: input_buffer, Buffer.output: output_buffer}
             rank_buffers.append(buffers)
         return rank_buffers
