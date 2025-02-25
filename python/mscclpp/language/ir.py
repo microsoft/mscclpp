@@ -270,7 +270,7 @@ class _ReadReduceCopySendConverter(_OpConverter):
             op.srcs, op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type
         )
         dst_channel_ids = self.get_channel_ids(
-            op.dsts, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, op.channel_type
+            op.dsts, op.dsts, tb_channel_dict, op.dst.buffer, op.dsts[0].buffer, op.channel_type
         )
         i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
         o_buff = {"src": op.dst.buffer.value, "dst": op.dsts[0].buffer.value}
