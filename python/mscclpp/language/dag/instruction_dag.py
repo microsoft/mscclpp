@@ -6,6 +6,7 @@ from collections import defaultdict
 from mscclpp.language.buffer import Buffer
 from mscclpp.language.types import (
     Channel,
+    DataFormat,
     ChannelType,
     ChunkRef,
     Instruction,
@@ -51,8 +52,13 @@ class InstructionDAG:
         return visited
 
     def complete_channels(self):
+<<<<<<< HEAD
         send_op = [Instruction.put, Instruction.signal, Instruction.put_packet, Instruction.get]
         recv_op = [Instruction.wait, Instruction.read_reduce_copy]
+=======
+        send_op = [Instruction.put, Instruction.signal, Instruction.put_packet, Instruction.read_put_packet]
+        recv_op = [Instruction.wait, Instruction.get, Instruction.read_reduce_copy]
+>>>>>>> main
         group_send_op = [Instruction.group_store]
         group_recv_op = [Instruction.group_load_reduce]
         for rank, rank_tbs in enumerate(self.tbs):
@@ -140,20 +146,33 @@ class InstructionDAG:
         return op
 
     # InstructionDAG - adds a put node
-    def add_put(self, rank, send_ref, recv_ref, tb, ch_type, use_packet=False):
+    def add_put(self, rank, send_ref, recv_ref, tb, src_format, ch_type, use_packet=False):
         tb_step = self._get_tb_step(rank, tb)
         if use_packet:
-            op = Op(
-                Instruction.put_packet,
-                rank,
-                send_ref,
-                recv_ref,
-                next=set(),
-                prev=set(),
-                tb=tb,
-                channel_type=ch_type,
-                step=tb_step,
-            )
+            if src_format == DataFormat.raw:
+                op = Op(
+                    Instruction.put_packet,
+                    rank,
+                    send_ref,
+                    recv_ref,
+                    next=set(),
+                    prev=set(),
+                    tb=tb,
+                    channel_type=ch_type,
+                    step=tb_step,
+                )
+            elif src_format == DataFormat.packet:
+                op = Op(
+                    Instruction.read_put_packet,
+                    rank,
+                    send_ref,
+                    recv_ref,
+                    next=set(),
+                    prev=set(),
+                    tb=tb,
+                    channel_type=ch_type,
+                    step=tb_step,
+                )
         else:
             op = Op(
                 Instruction.put,

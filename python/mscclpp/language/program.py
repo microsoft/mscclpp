@@ -4,7 +4,7 @@
 from dataclasses import dataclass
 from mscclpp.language.collectives import Collective
 from mscclpp.language.buffer import *
-from mscclpp.language.types import ChannelType, ChunkRef, ReplicationPolicy, Threadblock
+from mscclpp.language.types import DataFormat, ChannelType, ChunkRef, ReplicationPolicy, Threadblock
 from mscclpp.language.ir import *
 from mscclpp.language.dag import DagOptimizer, DagLower, InstructionDAG
 from mscclpp.language.rank import Rank
@@ -223,7 +223,16 @@ class Ref(ChunkRef):
             return buffer, self.prog.buffers[remote_rank][buffer].instance_size()
         return buffer, index
 
-    def _put(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.memory, use_packet=False):
+    def _put(
+        self,
+        dst,
+        buffer=None,
+        index=-1,
+        sendtb=-1,
+        src_format=DataFormat.raw,
+        chan_type=ChannelType.memory,
+        use_packet=False,
+    ):
         self.prog.check_buffer_exists(dst, buffer)
         assert self.rank != dst, "Cannot put to the same rank"
         buffer, index = self._get_buffer_index(dst, buffer, index)
@@ -231,15 +240,15 @@ class Ref(ChunkRef):
         dst_chunkref = self.prog.get_ref(dst, buffer, index, self.size)
         self.prog.apply_send(self.rank, self.buffer, self.index, dst, buffer, index, self.size)
         if use_packet:
-            self.prog.instr_dag.add_put(self.rank, self, dst_chunkref, sendtb, chan_type, True)
+            self.prog.instr_dag.add_put(self.rank, self, dst_chunkref, sendtb, src_format, chan_type, True)
             self.prog.instr_dag.add_signal(self.rank, self, dst_chunkref, -1, ChannelType.none)
             self.prog.instr_dag.add_wait(dst, dst_chunkref, self, -1, ChannelType.none)
         else:
-            self.prog.instr_dag.add_put(self.rank, self, dst_chunkref, sendtb, chan_type)
+            self.prog.instr_dag.add_put(self.rank, self, dst_chunkref, sendtb, src_format, chan_type)
         return dst_chunkref
 
     def put(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.memory):
-        return self._put(dst, buffer, index, sendtb, chan_type)
+        return self._put(dst, buffer, index, sendtb, DataFormat.raw, chan_type)
 
     def put_packet(
         self,
@@ -247,17 +256,18 @@ class Ref(ChunkRef):
         buffer=None,
         index=-1,
         sendtb=-1,
+        src_format=DataFormat.raw,
         chan_type=ChannelType.memory,
         temp_buffer=None,
         temp_buffer_index=-1,
     ):
         chunk_ref = self
-        if chan_type == ChannelType.port:
+        if chan_type == ChannelType.port and src_format == DataFormat.raw:
             assert temp_buffer is not None, "Need to specify a temporary buffer for port channels"
             chunk_ref = self._copy(
                 self.rank, temp_buffer, temp_buffer_index, sendtb, trans_from_packet=False, trans_to_packet=True
             )
-        return chunk_ref._put(dst, buffer, index, sendtb, chan_type, True)
+        return chunk_ref._put(dst, buffer, index, sendtb, src_format, chan_type, True)
 
     def get(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.memory):
         self.prog.check_buffer_exists(src, buffer)
