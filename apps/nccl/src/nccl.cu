@@ -88,7 +88,7 @@ static inline int nccl_dlopen_init() {
   NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, Broadcast,
              ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, CommInitRank,
-             ncclResult_t (*)(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank));
+             ncclResult_t (*)(ncclComm_t*, int, ncclUniqueId, int));
 
   return DLOPEN_SUCCESS;
 }
