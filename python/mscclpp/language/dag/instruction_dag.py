@@ -194,17 +194,17 @@ class InstructionDAG:
         op.srcs.append((ChunkRef(send_ref.rank, send_ref.buffer, send_ref.index, send_ref.size), tb_step))
         return op
 
-    def add_get(self, rank, send_ref, recv_ref, tb, ch_type):
+    def add_get(self, rank, recv_ref, send_ref, tb, ch_type):
         tb_step = self._get_tb_step(rank, tb)
         op = Op(
-            Instruction.get, rank, send_ref, recv_ref, next=set(), prev=set(), tb=tb, channel_type=ch_type, step=tb_step
+            Instruction.get, rank, recv_ref, send_ref, next=set(), prev=set(), tb=tb, channel_type=ch_type, step=tb_step
         )
         buffer = recv_ref.buffer
         index = recv_ref.index
         size = recv_ref.size
         self._write(rank, buffer, index, size, op)
-        op.srcs.append((ChunkRef(send_ref.rank, send_ref.buffer, send_ref.index, send_ref.size), tb_step))
-        op.dsts.append((ChunkRef(recv_ref.rank, recv_ref.buffer, recv_ref.index, recv_ref.size), tb_step))
+        op.srcs.append((ChunkRef(recv_ref.rank, recv_ref.buffer, recv_ref.index, recv_ref.size), tb_step))
+        op.dsts.append((ChunkRef(send_ref.rank, send_ref.buffer, send_ref.index, send_ref.size), tb_step))
         return op
 
     # InstructionDAG - adds a signal node.
