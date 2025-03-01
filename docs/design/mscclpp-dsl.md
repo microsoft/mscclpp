@@ -12,7 +12,7 @@ pip install .
 
 ### Import mscclpp language module
 ```python
-import mscclpp.language *
+from mscclpp.language import *
 from mscclpp.language.types import ChannelType, ReplicationPolicy
 from mscclpp.language.collectives import AllGather
 
