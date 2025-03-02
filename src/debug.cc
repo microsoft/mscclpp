@@ -53,15 +53,6 @@ void mscclppDebugInit() {
     tempNcclDebugLevel = MSCCLPP_LOG_TRACE;
   }
 
-  const char* enable_shared_lib = getenv("MSCCLPP_ENABLE_SHARED_LIB");
-  if (enable_shared_lib == NULL) {
-    mscclppEnableSharedLib = false;
-  } else if (strcasecmp(enable_shared_lib, "TRUE") == 0) {
-    mscclppEnableSharedLib = true;
-  } else {
-    mscclppEnableSharedLib = false;
-  }
-
   const char* disable_channel_cache = getenv("MSCCLPP_DISABLE_CHANNEL_CACHE");
   if (disable_channel_cache == NULL) {
     mscclppDisableChannelCache = false;

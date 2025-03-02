@@ -44,6 +44,8 @@ typedef enum dlopen_err {
 
 typedef struct _nccl_ops_t {
   ncclResult_t (*CommInitRank)(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank);
+  ncclResult_t (*GetUniqueId)(ncclUniqueId* uniqueId);
+  ncclResult_t (*CommDestroy)(ncclComm_t);
   ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, ncclRedOp_t op,
                             ncclComm_t comm, cudaStream_t stream);
   ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype,
@@ -67,28 +69,32 @@ bool mscclppOpenSharedLib = false;
   } while (0)
 
 static inline int nccl_dlopen_init() {
-  char* nccl_path = NULL;
-
-  nccl_path = getenv("MSCCLPP_NCCL_LIB_PATH");
+  const char* nccl_path = mscclpp::env()->ncclSharedLibPath.c_str();
   if (nccl_path) {
-    nccl_dl_handle = dlopen(nccl_path, RTLD_LAZY);
+    if (std::filesystem::is_directory(nccl_path)) {
+      WARN("The value of the environment variable %s is a directory", nccl_path);
+      return DLOPEN_ERROR;
+    }
+
+    nccl_dl_handle = dlopen(nccl_path, RTLD_LAZY | RTLD_NODELETE);
+    if (!nccl_dl_handle) {
+      fprintf(stderr, "Cannot open nccl library libnccl.so: %s\n", dlerror());
+      return DLOPEN_ERROR;
+    }
   } else {
     fprintf(stderr, "MSCCLPP_NCCL_LIB_PATH is empty!\n");
     return DLOPEN_ERROR;
   }
 
-  if (!nccl_dl_handle) {
-    fprintf(stderr, "Cannot open nccl library libnccl.so: %s\n", dlerror());
-    return DLOPEN_ERROR;
-  }
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, CommInitRank, ncclResult_t(*)(ncclComm_t*, int, ncclUniqueId, int));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, GetUniqueId, ncclResult_t(*)(ncclUniqueId*));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, CommDestroy, ncclResult_t(*)(ncclComm_t));
   NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, AllReduce,
              ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, AllGather,
              ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, Broadcast,
              ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
-  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, CommInitRank,
-             ncclResult_t (*)(ncclComm_t*, int, ncclUniqueId, int));
 
   return DLOPEN_SUCCESS;
 }
@@ -143,6 +149,7 @@ struct splitCommInfo {
   int originalRank;
 };
 
+ncclComm_t ncclcommPtr;
 struct ncclComm {
   std::shared_ptr<mscclpp::Communicator> comm;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
@@ -462,6 +469,19 @@ NCCL_API ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
     WARN("uniqueId is nullptr");
     return ncclInvalidArgument;
   }
+
+  const bool mscclppEnableSharedLib = mscclpp::env()->enableSharedLib;
+  if (mscclppEnableSharedLib == true) {
+    int dlopen_status = nccl_dlopen_init();
+    if (dlopen_status == DLOPEN_SUCCESS) {
+      mscclppOpenSharedLib = true;
+    }
+  }
+  if (mscclppOpenSharedLib == true) {
+    nccl_ops.GetUniqueId(uniqueId);
+    return ncclSuccess;
+  }
+
   if (MSCCLPP_UNIQUE_ID_BYTES != NCCL_UNIQUE_ID_BYTES) return ncclInternalError;
   mscclpp::UniqueId id = mscclpp::TcpBootstrap::createUniqueId();
   memcpy(uniqueId, &id, sizeof(ncclUniqueId));
@@ -483,6 +503,22 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     WARN("nranks is %d, rank is %d", nranks, rank);
     return ncclInvalidArgument;
   }
+
+  const bool mscclppEnableSharedLib = mscclpp::env()->enableSharedLib;
+
+  if (mscclppEnableSharedLib == true && rank != 0) {
+    int dlopen_status = nccl_dlopen_init();
+    if (dlopen_status == DLOPEN_SUCCESS) {
+      mscclppOpenSharedLib = true;
+    }
+  }
+
+  if (mscclppOpenSharedLib == true) {
+    nccl_ops.CommInitRank(&ncclcommPtr, nranks, commId, rank);
+    *comm = ncclcommPtr;
+    return ncclSuccess;
+  }
+
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, nranks);
   mscclpp::UniqueId id;
   memcpy(id.data(), &commId, sizeof(ncclUniqueId));
@@ -496,13 +532,6 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   // FallBack for single node
   if (mscclppComm->bootstrap()->getNranks() == mscclppComm->bootstrap()->getNranksPerNode())
     ncclCommInitRankFallbackSingleNode(commPtr, mscclppComm, rank);
-
-  if (mscclppEnableSharedLib == true) {
-    int dlopen_status = nccl_dlopen_init();
-    if (dlopen_status == DLOPEN_SUCCESS) {
-      mscclppOpenSharedLib = true;
-    }
-  }
 
   const std::string& collectiveDir = mscclpp::env()->executionPlanDir;
   if (collectiveDir != "") {
@@ -524,10 +553,6 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     NpKit::Init(rank);
   }
 #endif
-
-  if (mscclppOpenSharedLib == true) {
-    nccl_ops.CommInitRank(&commPtr->nccl_comm, nranks, commId, rank);
-  }
 
   return ncclSuccess;
 }
@@ -556,8 +581,10 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
   }
 #endif
 
-  if (mscclppEnableSharedLib == true) {
+  if (mscclppOpenSharedLib == true) {
+    nccl_ops.CommDestroy(comm);
     nccl_dlopen_finalize();
+    return ncclSuccess;
   }
 
   delete comm;
@@ -748,6 +775,10 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
+  if (mscclppOpenSharedLib == true) {
+    return nccl_ops.Broadcast(sendbuff, recvbuff, count, datatype, root, comm, stream);
+  }
+
   int rank = comm->comm->bootstrap()->getRank();
 
   std::vector<executionPlanInstance>& plans = comm->executionPlans["broadcast"];
@@ -763,11 +794,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   }
 
   if (plan == nullptr) {
-    if (mscclppEnableSharedLib == true && mscclppOpenSharedLib == true) {
-      return nccl_ops.Broadcast(sendbuff, recvbuff, count, datatype, root, comm, stream);
-    } else {
-      return ncclBroadcastFallback(sendbuff, recvbuff, count, datatype, root, comm, stream);
-    }
+    return ncclBroadcastFallback(sendbuff, recvbuff, count, datatype, root, comm, stream);
   }
 
   switch (datatype) {
@@ -806,6 +833,10 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
+  if (mscclppOpenSharedLib == true) {
+    return nccl_ops.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
+  }
+
   // Declarating variables
   size_t bytes = count * ncclTypeSize(datatype);
   int rank = comm->comm->bootstrap()->getRank();
@@ -821,11 +852,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   }
 
   if (plan == nullptr) {
-    if (mscclppEnableSharedLib == true && mscclppOpenSharedLib == true) {
-      return nccl_ops.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
-    } else {
-      return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
-    }
+    return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
   }
 
   switch (datatype) {
@@ -920,6 +947,10 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
+  if (mscclppOpenSharedLib == true) {
+    return nccl_ops.AllGather(sendbuff, recvbuff, sendcount, datatype, comm, stream);
+  }
+
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
 
@@ -935,11 +966,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     }
   }
   if (plan == nullptr) {
-    if (mscclppEnableSharedLib == true && mscclppOpenSharedLib == true) {
-      return nccl_ops.AllGather(sendbuff, recvbuff, sendcount, datatype, comm, stream);
-    } else {
-      return ncclAllGatherFallback(sendbuff, recvbuff, sendcount, datatype, comm, stream);
-    }
+    return ncclAllGatherFallback(sendbuff, recvbuff, sendcount, datatype, comm, stream);
   }
 
   switch (datatype) {

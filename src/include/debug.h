@@ -95,7 +95,6 @@ extern bool mscclppDisableChannelCache;
 extern uint64_t mscclppDebugMask;
 extern pthread_mutex_t mscclppDebugLock;
 extern FILE* mscclppDebugFile;
-extern bool mscclppEnableSharedLib;
 
 void mscclppDebugDefaultLogHandler(const char* msg);
 void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char* filefunc, int line, const char* fmt,

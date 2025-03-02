@@ -30,6 +30,8 @@ class Env {
   const std::string executionPlanDir;
   const std::string npkitDumpDir;
   const bool cudaIpcUseDefaultStream;
+  const std::string ncclSharedLibPath;
+  const bool enableSharedLib;
 
  private:
   Env();
