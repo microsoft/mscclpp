@@ -149,7 +149,6 @@ struct splitCommInfo {
   int originalRank;
 };
 
-ncclComm_t ncclcommPtr;
 struct ncclComm {
   std::shared_ptr<mscclpp::Communicator> comm;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
@@ -505,7 +504,6 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   }
 
   const bool mscclppEnableSharedLib = mscclpp::env()->enableSharedLib;
-
   if (mscclppEnableSharedLib == true && rank != 0) {
     int dlopen_status = nccl_dlopen_init();
     if (dlopen_status == DLOPEN_SUCCESS) {
@@ -513,9 +511,10 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     }
   }
 
+  ncclComm* commPtr = new ncclComm();
   if (mscclppOpenSharedLib == true) {
-    nccl_ops.CommInitRank(&ncclcommPtr, nranks, commId, rank);
-    *comm = ncclcommPtr;
+    nccl_ops.CommInitRank(&commPtr->nccl_comm, nranks, commId, rank);
+    *comm = commPtr->nccl_comm;
     return ncclSuccess;
   }
 
@@ -524,7 +523,6 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   memcpy(id.data(), &commId, sizeof(ncclUniqueId));
   bootstrap->initialize(id);
   std::shared_ptr<mscclpp::Communicator> mscclppComm = std::make_shared<mscclpp::Communicator>(bootstrap);
-  ncclComm* commPtr = new ncclComm();
 
   commPtr->comm = mscclppComm;
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
