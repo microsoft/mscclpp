@@ -45,7 +45,8 @@ typedef enum dlopen_err {
 typedef struct _nccl_ops_t {
   ncclResult_t (*CommInitRank)(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank);
   ncclResult_t (*GetUniqueId)(ncclUniqueId* uniqueId);
-  ncclResult_t (*CommDestroy)(ncclComm_t);
+  ncclResult_t (*CommDestroy)(ncclComm_t comm);
+  ncclResult_t (*CommUserRank)(const ncclComm_t, int* rank);
   ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, ncclRedOp_t op,
                             ncclComm_t comm, cudaStream_t stream);
   ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype,
@@ -89,6 +90,7 @@ static inline int nccl_dlopen_init() {
   NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, CommInitRank, ncclResult_t(*)(ncclComm_t*, int, ncclUniqueId, int));
   NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, GetUniqueId, ncclResult_t(*)(ncclUniqueId*));
   NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, CommDestroy, ncclResult_t(*)(ncclComm_t));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, CommUserRank, ncclResult_t(*)(ncclComm_t, int*));
   NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, AllReduce,
              ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, AllGather,
@@ -686,6 +688,11 @@ NCCL_API ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
     WARN("comm is nullptr or rank is nullptr");
     return ncclInvalidArgument;
   }
+
+  if (mscclppOpenSharedLib == true) {
+    return nccl_ops.CommUserRank(comm, rank);
+  }
+
   *rank = comm->comm->bootstrap()->getRank();
   return ncclSuccess;
 }
