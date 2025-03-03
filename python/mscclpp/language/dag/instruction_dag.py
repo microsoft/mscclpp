@@ -53,7 +53,7 @@ class InstructionDAG:
 
     def complete_channels(self):
         send_op = [Instruction.put, Instruction.signal, Instruction.put_packet, Instruction.read_put_packet]
-        recv_op = [Instruction.wait, Instruction.get, Instruction.read_reduce_copy]
+        recv_op = [Instruction.get, Instruction.read_reduce_copy]
         group_send_op = [Instruction.group_store]
         group_recv_op = [Instruction.group_load_reduce]
         for rank, rank_tbs in enumerate(self.tbs):
@@ -88,6 +88,10 @@ class InstructionDAG:
                             chan = Channel(src_buffer, dst_buffer, op.channel_type, op.dst.rank)
                             chans.add(chan)
                         elif op.inst in recv_op:
+                            chan = Channel(dst_buffer, src_buffer,  op.channel_type, op.src.rank)
+                            chans.add(chan)
+                        else:
+                            # TODO: This is a temporary fix for the wait operation case
                             chan = Channel(src_buffer, dst_buffer, op.channel_type, op.src.rank)
                             chans.add(chan)
                 tb.channels = list(chans)
