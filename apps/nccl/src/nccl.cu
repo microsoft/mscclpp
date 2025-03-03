@@ -16,6 +16,8 @@
 #if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.hpp>
 #endif
+#include <dlfcn.h>
+
 #include "allgather.hpp"
 #include "allreduce.hpp"
 #include "broadcast.hpp"
@@ -34,6 +36,76 @@
   } while (0)
 
 #define NUM_CHANNELS_PER_CONNECTION 64
+
+typedef enum dlopen_err {
+  DLOPEN_SUCCESS = 0,
+  DLOPEN_ERROR = 1,
+} dlopen_err_t;
+
+typedef struct _nccl_ops_t {
+  ncclResult_t (*CommInitRank)(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank);
+  ncclResult_t (*GetUniqueId)(ncclUniqueId* uniqueId);
+  ncclResult_t (*CommDestroy)(ncclComm_t comm);
+  ncclResult_t (*CommUserRank)(const ncclComm_t, int* rank);
+  ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, ncclRedOp_t op,
+                            ncclComm_t comm, cudaStream_t stream);
+  ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype,
+                            ncclComm_t comm, cudaStream_t stream);
+  ncclResult_t (*Broadcast)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
+                            ncclComm_t comm, cudaStream_t stream);
+} nccl_ops_t;
+
+nccl_ops_t nccl_ops;
+void* nccl_dl_handle = NULL;
+bool mscclppOpenSharedLib = false;
+
+#define QUOTE(symbol) #symbol
+
+#define NCCL_DLSYM(_struct_, _handle_, _prefix_, _function_, _type_)                      \
+  do {                                                                                    \
+    _struct_._function_ = (_type_)dlsym((_handle_), QUOTE(_prefix_##_function_));         \
+    if (_struct_._function_ == NULL) {                                                    \
+      fprintf(stderr, "Failed to open %s: %s\n", QUOTE(_prefix_##_function_), dlerror()); \
+    }                                                                                     \
+  } while (0)
+
+static inline int nccl_dlopen_init() {
+  const char* nccl_path = mscclpp::env()->ncclSharedLibPath.c_str();
+  if (nccl_path) {
+    if (std::filesystem::is_directory(nccl_path)) {
+      WARN("The value of the environment variable %s is a directory", nccl_path);
+      return DLOPEN_ERROR;
+    }
+
+    nccl_dl_handle = dlopen(nccl_path, RTLD_LAZY | RTLD_NODELETE);
+    if (!nccl_dl_handle) {
+      fprintf(stderr, "Cannot open nccl library libnccl.so: %s\n", dlerror());
+      return DLOPEN_ERROR;
+    }
+  } else {
+    fprintf(stderr, "MSCCLPP_NCCL_LIB_PATH is empty!\n");
+    return DLOPEN_ERROR;
+  }
+
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, CommInitRank, ncclResult_t(*)(ncclComm_t*, int, ncclUniqueId, int));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, GetUniqueId, ncclResult_t(*)(ncclUniqueId*));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, CommDestroy, ncclResult_t(*)(ncclComm_t));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, CommUserRank, ncclResult_t(*)(ncclComm_t, int*));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, AllReduce,
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, AllGather,
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, Broadcast,
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+
+  return DLOPEN_SUCCESS;
+}
+
+static inline void nccl_dlopen_finalize() {
+  if (nccl_dl_handle) {
+    dlclose(nccl_dl_handle);
+  }
+}
 
 // static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
 //                             mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
@@ -94,6 +166,8 @@ struct ncclComm {
 
   uint32_t numScratchBuff;
   uint32_t buffFlag;
+
+  ncclComm_t nccl_comm;
 };
 
 static size_t ncclTypeSize(ncclDataType_t type) {
@@ -396,6 +470,19 @@ NCCL_API ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
     WARN("uniqueId is nullptr");
     return ncclInvalidArgument;
   }
+
+  const bool mscclppEnableSharedLib = mscclpp::env()->enableSharedLib;
+  if (mscclppEnableSharedLib == true) {
+    int dlopen_status = nccl_dlopen_init();
+    if (dlopen_status == DLOPEN_SUCCESS) {
+      mscclppOpenSharedLib = true;
+    }
+  }
+  if (mscclppOpenSharedLib == true) {
+    nccl_ops.GetUniqueId(uniqueId);
+    return ncclSuccess;
+  }
+
   if (MSCCLPP_UNIQUE_ID_BYTES != NCCL_UNIQUE_ID_BYTES) return ncclInternalError;
   mscclpp::UniqueId id = mscclpp::TcpBootstrap::createUniqueId();
   memcpy(uniqueId, &id, sizeof(ncclUniqueId));
@@ -417,12 +504,27 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     WARN("nranks is %d, rank is %d", nranks, rank);
     return ncclInvalidArgument;
   }
+
+  const bool mscclppEnableSharedLib = mscclpp::env()->enableSharedLib;
+  if (mscclppEnableSharedLib == true && rank != 0) {
+    int dlopen_status = nccl_dlopen_init();
+    if (dlopen_status == DLOPEN_SUCCESS) {
+      mscclppOpenSharedLib = true;
+    }
+  }
+
+  ncclComm* commPtr = new ncclComm();
+  if (mscclppOpenSharedLib == true) {
+    nccl_ops.CommInitRank(&commPtr->nccl_comm, nranks, commId, rank);
+    *comm = commPtr->nccl_comm;
+    return ncclSuccess;
+  }
+
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, nranks);
   mscclpp::UniqueId id;
   memcpy(id.data(), &commId, sizeof(ncclUniqueId));
   bootstrap->initialize(id);
   std::shared_ptr<mscclpp::Communicator> mscclppComm = std::make_shared<mscclpp::Communicator>(bootstrap);
-  ncclComm* commPtr = new ncclComm();
 
   commPtr->comm = mscclppComm;
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
@@ -451,6 +553,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     NpKit::Init(rank);
   }
 #endif
+
   return ncclSuccess;
 }
 
@@ -477,6 +580,13 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
     NpKit::Shutdown();
   }
 #endif
+
+  if (mscclppOpenSharedLib == true) {
+    nccl_ops.CommDestroy(comm);
+    nccl_dlopen_finalize();
+    return ncclSuccess;
+  }
+
   delete comm;
   return ncclSuccess;
 }
@@ -578,6 +688,11 @@ NCCL_API ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
     WARN("comm is nullptr or rank is nullptr");
     return ncclInvalidArgument;
   }
+
+  if (mscclppOpenSharedLib == true) {
+    return nccl_ops.CommUserRank(comm, rank);
+  }
+
   *rank = comm->comm->bootstrap()->getRank();
   return ncclSuccess;
 }
@@ -665,6 +780,10 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
+  if (mscclppOpenSharedLib == true) {
+    return nccl_ops.Broadcast(sendbuff, recvbuff, count, datatype, root, comm, stream);
+  }
+
   int rank = comm->comm->bootstrap()->getRank();
 
   std::vector<executionPlanInstance>& plans = comm->executionPlans["broadcast"];
@@ -679,7 +798,9 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     }
   }
 
-  if (plan == nullptr) return ncclBroadcastFallback(sendbuff, recvbuff, count, datatype, root, comm, stream);
+  if (plan == nullptr) {
+    return ncclBroadcastFallback(sendbuff, recvbuff, count, datatype, root, comm, stream);
+  }
 
   switch (datatype) {
     case ncclFloat16:
@@ -717,6 +838,10 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
+  if (mscclppOpenSharedLib == true) {
+    return nccl_ops.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
+  }
+
   // Declarating variables
   size_t bytes = count * ncclTypeSize(datatype);
   int rank = comm->comm->bootstrap()->getRank();
@@ -731,8 +856,9 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     }
   }
 
-  if (plan == nullptr)
+  if (plan == nullptr) {
     return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
+  }
 
   switch (datatype) {
     case ncclFloat16:
@@ -826,6 +952,10 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
+  if (mscclppOpenSharedLib == true) {
+    return nccl_ops.AllGather(sendbuff, recvbuff, sendcount, datatype, comm, stream);
+  }
+
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
 
@@ -840,7 +970,9 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
       break;
     }
   }
-  if (plan == nullptr) return ncclAllGatherFallback(sendbuff, recvbuff, sendcount, datatype, comm, stream);
+  if (plan == nullptr) {
+    return ncclAllGatherFallback(sendbuff, recvbuff, sendcount, datatype, comm, stream);
+  }
 
   switch (datatype) {
     case ncclFloat16:
