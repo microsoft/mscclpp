@@ -88,7 +88,7 @@ class InstructionDAG:
                             chan = Channel(src_buffer, dst_buffer, op.channel_type, op.dst.rank)
                             chans.add(chan)
                         elif op.inst in recv_op:
-                            chan = Channel(dst_buffer, src_buffer,  op.channel_type, op.src.rank)
+                            chan = Channel(dst_buffer, src_buffer, op.channel_type, op.src.rank)
                             chans.add(chan)
                         else:
                             # TODO: This is a temporary fix for the wait operation case
