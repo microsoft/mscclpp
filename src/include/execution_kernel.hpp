@@ -231,7 +231,7 @@ MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<MemoryChannel>* memoryChannel,
   for (int i = 0; i < count; i++) {
     uint32_t dstOffset = dstOffsets[i];
     uint32_t srcOffset = srcOffsets[i];
-    memoryChannel[srcChannelIndexes[i]].get(dstOffset, srcOffset, size, threadIdx.x, blockDim.x);
+    memoryChannel[srcChannelIndexes[i]].get(srcOffset, dstOffset, size, threadIdx.x, blockDim.x);
   }
 }
 
