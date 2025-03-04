@@ -41,6 +41,7 @@
 
 // Declare the global map to store associations between raw pointer and shared pointer
 static std::unordered_map<void*, std::shared_ptr<char>> ptrMap;
+static bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
 
 struct channelKey {
   const void* buff;
@@ -190,7 +191,7 @@ static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemor
 }
 
 static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
-                                          ncclRedOp_t, ncclComm_t comm, cudaStream_t stream) {
+                                          ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
   // FallBack for single node
   if (comm->comm->bootstrap()->getNranks() != comm->comm->bootstrap()->getNranksPerNode()) {
     WARN("ncclAllReduceFallback is currently unavailable for multi-node");
@@ -202,6 +203,11 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     WARN(
         "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, count is 0, "
         "datatype is invalid, or comm is nullptr.");
+    return ncclInvalidArgument;
+  }
+
+  if (op != ncclSum) {
+    WARN("Only ncclSum is supported in the fallback path");
     return ncclInvalidArgument;
   }
 
@@ -321,7 +327,7 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = nullptr;
   std::vector<mscclpp::RegisteredMemory> remoteMemories;
 
-  if (bytes <= 32 * (1 << 20)) {
+  auto setupOutputChan = [&]() {
     auto it = comm->channelOutInfos.find(recvKey);
     if (mscclppDisableChannelCache == true || it == comm->channelOutInfos.end()) {
       if (mscclppDisableChannelCache == true) {
@@ -340,7 +346,14 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
       it = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
     }
     memoryChannels = it->second.memoryChannelDeviceHandles.get();
+  };
+
+  if (bytes <= 32 * (1 << 20)) {
+    setupOutputChan();
   } else {
+#if defined(__HIP_PLATFORM_AMD__)
+    setupOutputChan();
+#else
     auto sendIt = comm->channelInInfos.find(sendKey);
     if (sendIt == comm->channelInInfos.end()) {
       std::vector<mscclpp::MemoryChannel> channels =
@@ -349,6 +362,7 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
       sendIt = comm->channelInInfos.emplace(sendKey, channelInfo).first;
     }
     memoryChannels = sendIt->second.memoryChannelDeviceHandles.get();
+#endif
   }
 
   if ((char*)sendbuff == (char*)recvbuff + rank * sendcount) {

@@ -223,10 +223,16 @@ cudaError_t allgather(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
     allgather6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, memoryChannels, channelOutOffset, rank,
                                                            worldSize, nRanksPerNode, nelems * sizeof(T) / sizeof(int));
   } else {
+#if defined(__HIP_PLATFORM_AMD__)
+    nBlocks = 35;
+    allgather6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, memoryChannels, channelOutOffset, rank,
+                                                           worldSize, nRanksPerNode, nelems * sizeof(T) / sizeof(int));
+#else
     nBlocks = 56;
     allgather8<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff,
                                                            memoryChannels, channelInOffset, rank, nRanksPerNode,
                                                            worldSize, nelems * sizeof(T) / sizeof(int));
+#endif
   }
   return cudaGetLastError();
 }
