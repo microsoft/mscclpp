@@ -125,24 +125,11 @@ __global__ void __launch_bounds__(1024, 1)
   int4* scratch4 = reinterpret_cast<int4*>(scratch);
   int4* resultBuff4 = reinterpret_cast<int4*>(resultBuff);
 
-
-  // Distribute `nInt4` across all blocks with the unit size `unitNInt4`
-  constexpr size_t unitNInt4 = 1024;
-  const size_t maxNInt4PerBlock = (((nInt4 + gridDim.x - 1) / gridDim.x) + unitNInt4 - 1) / unitNInt4 * unitNInt4;
-  size_t offsetOfThisBlock = maxNInt4PerBlock * blockIdx.x;
-  size_t nInt4OfThisBlock = maxNInt4PerBlock;
-  size_t nNeededBlocks = (nInt4 + maxNInt4PerBlock - 1) / maxNInt4PerBlock;
-  constexpr size_t nInt4PerChunk = 1024 * 256 / sizeof(int4);  // 256KB
-  if (blockIdx.x >= nNeededBlocks) {
-    nInt4OfThisBlock = 0;
-  } else if (blockIdx.x == nNeededBlocks - 1) {
-    nInt4OfThisBlock = nInt4 - maxNInt4PerBlock * (nNeededBlocks - 1);
-  }
-  const size_t nItrs = nInt4OfThisBlock / nInt4PerChunk;
-  const size_t restNInt4 = nInt4OfThisBlock % nInt4PerChunk;
-  const size_t chunkSizePerRank = nNeededBlocks * nInt4PerChunk;
-  const size_t blockOffset = nInt4PerChunk * blockIdx.x;
-  const size_t scratchChunkRankOffset = chunkSizePerRank * rank;
+  const size_t unitNInt4 = blockDim.x * gridDim.x; // The number of int4 transfers at once
+  const size_t nInt4PerChunk = unitNInt4 * 8; // 16 instructions per thread to transfer data per chunk
+  const size_t nItrs = nInt4 / nInt4PerChunk;
+  const size_t restNInt4 = nInt4 % nInt4PerChunk;
+  const size_t scratchChunkRankOffset = nInt4PerChunk * rank;
 
   __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[NRANKS_PER_NODE - 1];
   const int lid = threadIdx.x % WARP_SIZE;
@@ -150,6 +137,7 @@ __global__ void __launch_bounds__(1024, 1)
     channels[lid] = memoryChans[lid];
   }
   __syncwarp();
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   // we can use double buffering to hide synchronization overhead
   for (size_t itr = 0; itr < nItrs; itr++) {
     if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
@@ -158,12 +146,14 @@ __global__ void __launch_bounds__(1024, 1)
     }
     __syncthreads();
     // Starts allgather
-    for (int i = 0; i < NPEERS; i++) {
-    for (size_t idx = threadIdx.x; idx < nInt4PerChunk; idx += blockDim.x) {
-      int4 val = buff4[idx + offsetOfThisBlock];
+    for (size_t idx = tid; idx < nInt4PerChunk; idx += blockDim.x * gridDim.x) {
+      int4 val = buff4[itr * nInt4PerChunk + idx];
+      for (int i = 0; i < NPEERS; i++) {
         const int peerIdx = (i + rank) % nPeer;
-        const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
-        channels[peerIdx].write(scratchChunkRankOffset + blockOffset + idx, val);
+        channels[peerIdx].write(idx + scratchChunkRankOffset, val);
+      }
+      if constexpr (IsOutOfPlace) {
+        resultBuff4[nInt4 * rank + idx + itr * nInt4PerChunk] = val;
       }
     }
     // Ensure that all writes of this block have been issued before issuing the signal
@@ -175,49 +165,46 @@ __global__ void __launch_bounds__(1024, 1)
     __syncthreads();
     for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
       const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
-      for (size_t idx = threadIdx.x; idx < nInt4PerChunk; idx += blockDim.x) {
-        int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
-        resultBuff4[nInt4 * remoteRank + idx + offsetOfThisBlock] = val;
+      const int resultOffset = nInt4 * remoteRank + itr * nInt4PerChunk;
+      for (size_t idx = tid; idx < nInt4PerChunk; idx += blockDim.x * gridDim.x) {
+        int4 val = scratch4[nInt4PerChunk * remoteRank + idx];
+        resultBuff4[resultOffset + idx] = val;
       }
     }
   }
 
-  // if (restNInt4 > 0) {
-  //   if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
-  //     channels[threadIdx.x].signal();
-  //     channels[threadIdx.x].wait();
-  //   }
-  //   __syncthreads();
-  //   for (size_t idx = threadIdx.x; idx < restNInt4; idx += blockDim.x) {
-  //     for (int i = 0; i < NPEERS; i++) {
-  //       const int peerIdx = (i + blockIdx.x) % nPeer;
-  //       const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
-  //       int4 val = buff4[nInt4PerRank * remoteRank + idx + offsetOfThisBlock];
-  //       channels[peerIdx].write(scratchBaseOffsetInt4 + scratchChunkRankOffset + blockOffset + idx, val);
-  //     }
-  //   }
-
-  //   // Ensure that all writes of this block have been issued before issuing the signal
-  //   __syncthreads();
-  //   if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
-  //     channels[threadIdx.x].signal();
-  //     channels[threadIdx.x].wait();
-  //   }
-  //   __syncthreads();
-
-  //   for (size_t idx = threadIdx.x; idx < restNInt4; idx += blockDim.x) {
-  //     int4 data = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
-  //     resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
-  //   }
-  //   // Ensure all threads have issued writes to outChannel
-  //   __syncthreads();
-  // }
-  // // Threads are already synchronized
-  // // So all writes to outChannel have been issued before signal is being issued
-  // if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
-  //   channels[threadIdx.x].signal();
-  //   channels[threadIdx.x].wait();
-  // }
+  if (restNInt4 > 0) {
+    if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
+      channels[threadIdx.x].signal();
+      channels[threadIdx.x].wait();
+    }
+    __syncthreads();
+    for (size_t idx = tid; idx < restNInt4; idx += blockDim.x * gridDim.x) {
+      int4 val = buff4[nItrs * nInt4PerChunk + idx];
+      for (int i = 0; i < NPEERS; i++) {
+        const int peerIdx = (i + rank) % nPeer;
+        channels[peerIdx].write(idx + scratchChunkRankOffset, val);
+      }
+      if constexpr (IsOutOfPlace) {
+        resultBuff4[nInt4 * rank + idx + nItrs * nInt4PerChunk] = val;
+      }
+    }
+    // Ensure that all writes of this block have been issued before issuing the signal
+    __syncthreads();
+    if (threadIdx.x < static_cast<uint32_t>(nPeer)) {
+      channels[threadIdx.x].signal();
+      channels[threadIdx.x].wait();
+    }
+    __syncthreads();
+    for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
+      const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
+      const int resultOffset = nInt4 * remoteRank + nItrs * nInt4PerChunk;
+      for (size_t idx = tid; idx < restNInt4; idx += blockDim.x * gridDim.x) {
+        int4 val = scratch4[nInt4PerChunk * remoteRank + idx];
+        resultBuff4[resultOffset + idx] = val;
+      }
+    }
+  }
 }
 
 template <bool IsOutOfPlace, typename T>
@@ -236,7 +223,7 @@ cudaError_t allgather(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
     allgather6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, memoryChannels, channelOutOffset, rank,
                                                            worldSize, nRanksPerNode, nelems * sizeof(T) / sizeof(int));
   } else {
-    nBlocks = 64;
+    nBlocks = 56;
     allgather8<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff,
                                                            memoryChannels, channelInOffset, rank, nRanksPerNode,
                                                            worldSize, nelems * sizeof(T) / sizeof(int));
