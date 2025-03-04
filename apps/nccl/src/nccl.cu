@@ -321,7 +321,7 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = nullptr;
   std::vector<mscclpp::RegisteredMemory> remoteMemories;
 
-  if (bytes <= 64 * (1 << 20)) {
+  if (bytes <= 32 * (1 << 20)) {
     auto it = comm->channelOutInfos.find(recvKey);
     if (mscclppDisableChannelCache == true || it == comm->channelOutInfos.end()) {
       if (mscclppDisableChannelCache == true) {

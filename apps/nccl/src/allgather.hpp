@@ -212,7 +212,7 @@ cudaError_t allgather(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                       size_t channelInOffset, size_t channelOutOffset, int rank, int nRanksPerNode, int worldSize,
                       size_t nelems, cudaStream_t stream) {
   int nBlocks = 28;
-  if (nelems * sizeof(T) <= 64 * (1 << 20)) {
+  if (nelems * sizeof(T) <= 32 * (1 << 20)) {
     if (nelems <= 4096) {
       nBlocks = 7;
     } else if (nelems <= 32768) {
