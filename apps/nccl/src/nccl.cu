@@ -61,17 +61,18 @@ bool mscclppOpenSharedLib = false;
 
 #define QUOTE(symbol) #symbol
 
-#define NCCL_DLSYM(_struct_, _handle_, _prefix_, _function_, _type_)                      \
-  do {                                                                                    \
-    _struct_._function_ = (_type_)dlsym((_handle_), QUOTE(_prefix_##_function_));         \
-    if (_struct_._function_ == NULL) {                                                    \
-      fprintf(stderr, "Failed to open %s: %s\n", QUOTE(_prefix_##_function_), dlerror()); \
-    }                                                                                     \
+#define NCCL_DLSYM(_struct_, _handle_, _prefix_, _function_, _type_)                               \
+  do {                                                                                             \
+    _struct_._function_ = (_type_)dlsym((_handle_), QUOTE(_prefix_##_function_));                  \
+    if (_struct_._function_ == NULL) {                                                             \
+      printf("Failed: dlsym error: Cannot open %s: %s\n", QUOTE(_prefix_##_function_), dlerror()); \
+      exit(DLOPEN_ERROR);                                                                          \
+    }                                                                                              \
   } while (0)
 
 static inline int nccl_dlopen_init() {
   const char* nccl_path = mscclpp::env()->ncclSharedLibPath.c_str();
-  if (nccl_path) {
+  if (nccl_path != nullptr && nccl_path[0] != '\0') {
     if (std::filesystem::is_directory(nccl_path)) {
       WARN("The value of the environment variable %s is a directory", nccl_path);
       return DLOPEN_ERROR;
@@ -79,11 +80,11 @@ static inline int nccl_dlopen_init() {
 
     nccl_dl_handle = dlopen(nccl_path, RTLD_LAZY | RTLD_NODELETE);
     if (!nccl_dl_handle) {
-      fprintf(stderr, "Cannot open nccl library libnccl.so: %s\n", dlerror());
+      WARN("Cannot open the shared library specified by MSCCLPP_NCCL_LIB_PATH: %s\n", dlerror());
       return DLOPEN_ERROR;
     }
   } else {
-    fprintf(stderr, "MSCCLPP_NCCL_LIB_PATH is empty!\n");
+    WARN("The value of MSCCLPP_NCCL_LIB_PATH is empty!\n");
     return DLOPEN_ERROR;
   }
 
@@ -476,6 +477,8 @@ NCCL_API ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
     int dlopen_status = nccl_dlopen_init();
     if (dlopen_status == DLOPEN_SUCCESS) {
       mscclppOpenSharedLib = true;
+    } else {
+      return ncclInternalError;
     }
   }
   if (mscclppOpenSharedLib == true) {
@@ -510,6 +513,8 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     int dlopen_status = nccl_dlopen_init();
     if (dlopen_status == DLOPEN_SUCCESS) {
       mscclppOpenSharedLib = true;
+    } else {
+      return ncclInternalError;
     }
   }
 
