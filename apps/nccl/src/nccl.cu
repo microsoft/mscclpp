@@ -319,9 +319,8 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)recvbuff));
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)sendbuff));
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
-  size_t offsetIn = (char*)sendbuff - (char*)sendBasePtr;
   channelKey recvKey{(void*)recvBasePtr, recvBytes};
-  channelKey sendKey{(void*)sendBasePtr, sendBytes};
+  [[maybe_unused]] channelKey sendKey{(void*)sendBasePtr, sendBytes};
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = nullptr;
@@ -366,11 +365,11 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
   }
 
   if ((char*)sendbuff == (char*)recvbuff + rank * sendcount) {
-    CUDACHECK(allgather<false>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, offsetIn,
-                               offsetOut, rank, NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
+    CUDACHECK(allgather<false>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, offsetOut,
+                               rank, NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
   } else {
-    CUDACHECK(allgather<true>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, offsetIn,
-                              offsetOut, rank, NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
+    CUDACHECK(allgather<true>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, offsetOut,
+                              rank, NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
   }
 
   return ncclSuccess;
@@ -790,7 +789,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
 }
 
 NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype,
-                                        ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
+                                        ncclRedOp_t, ncclComm_t comm, cudaStream_t stream) {
   size_t bytes = recvcount * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
     WARN(

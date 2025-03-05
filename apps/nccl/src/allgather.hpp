@@ -113,8 +113,9 @@ __global__ void __launch_bounds__(1024, 1)
 
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
-    allgather8(void* buff, void* scratch, void* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-               size_t channelInputOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+    allgather8(void* buff, void* scratch, void* resultBuff,
+               mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels, int rank, int nRanksPerNode,
+               [[maybe_unused]] int worldSize, size_t nelems) {
   const int nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
   // assume (nelems * sizeof(T)) is divisible by 16
@@ -208,9 +209,9 @@ __global__ void __launch_bounds__(1024, 1)
 }
 
 template <bool IsOutOfPlace, typename T>
-cudaError_t allgather(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-                      size_t channelInOffset, size_t channelOutOffset, int rank, int nRanksPerNode, int worldSize,
-                      size_t nelems, cudaStream_t stream) {
+cudaError_t allgather(T* buff, [[maybe_unused]] T* scratch, [[maybe_unused]] T* resultBuff,
+                      mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels, size_t channelOutOffset, int rank,
+                      int nRanksPerNode, [[maybe_unused]] int worldSize, size_t nelems, cudaStream_t stream) {
   int nBlocks = 28;
   if (nelems * sizeof(T) <= 32 * (1 << 20)) {
     if (nelems <= 4096) {
@@ -230,8 +231,8 @@ cudaError_t allgather(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
 #else
     nBlocks = 56;
     allgather8<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff,
-                                                           memoryChannels, channelInOffset, rank, nRanksPerNode,
-                                                           worldSize, nelems * sizeof(T) / sizeof(int));
+                                                           memoryChannels, rank, nRanksPerNode, worldSize,
+                                                           nelems * sizeof(T) / sizeof(int));
 #endif
   }
   return cudaGetLastError();
