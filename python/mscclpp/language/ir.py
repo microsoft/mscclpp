@@ -238,8 +238,8 @@ class _WaitConverter(_OpConverter):
 
 class _ReadReduceCopyConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
-        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
-        i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
+        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.dst.buffer, op.src.buffer, op.channel_type)
+        i_buff = {"src": op.dst.buffer.value, "dst": op.src.buffer.value}
         dst = op.dst
         src = op.dst  # TODO(binyli): fix this
         return _JsonInstruction(
@@ -364,8 +364,8 @@ class _PutConverter(_OpConverter):
 
 class _GetConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
-        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
-        i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
+        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.dst.buffer, op.src.buffer, op.channel_type)
+        i_buff = {"src": op.dst.buffer.value, "dst": op.src.buffer.value}
         dsts = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.dsts))
         return _JsonInstruction(
             name=op.inst.value,
