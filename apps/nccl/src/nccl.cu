@@ -803,9 +803,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     }
   }
 
-  if (plan == nullptr) {
-    return ncclBroadcastFallback(sendbuff, recvbuff, count, datatype, root, comm, stream);
-  }
+  if (plan == nullptr) return ncclBroadcastFallback(sendbuff, recvbuff, count, datatype, root, comm, stream);
 
   switch (datatype) {
     case ncclFloat16:
@@ -861,9 +859,8 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     }
   }
 
-  if (plan == nullptr) {
+  if (plan == nullptr)
     return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
-  }
 
   switch (datatype) {
     case ncclFloat16:
@@ -975,9 +972,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
       break;
     }
   }
-  if (plan == nullptr) {
-    return ncclAllGatherFallback(sendbuff, recvbuff, sendcount, datatype, comm, stream);
-  }
+  if (plan == nullptr) return ncclAllGatherFallback(sendbuff, recvbuff, sendcount, datatype, comm, stream);
 
   switch (datatype) {
     case ncclFloat16:

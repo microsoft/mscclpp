@@ -15,7 +15,6 @@
 #include <string>
 
 int mscclppDebugLevel = -1;
-bool mscclppEnableSharedLib = false;
 bool mscclppDisableChannelCache = false;
 static int pid = -1;
 static std::string hostname;
