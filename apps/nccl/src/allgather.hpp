@@ -126,8 +126,8 @@ __global__ void __launch_bounds__(1024, 1)
   int4* scratch4 = reinterpret_cast<int4*>(scratch);
   int4* resultBuff4 = reinterpret_cast<int4*>(resultBuff);
 
-  const size_t unitNInt4 = blockDim.x * gridDim.x; // The number of int4 transfers at once
-  const size_t nInt4PerChunk = unitNInt4 * 4; // 4 instructions per thread to make it more efficient
+  const size_t unitNInt4 = blockDim.x * gridDim.x;  // The number of int4 transfers at once
+  const size_t nInt4PerChunk = unitNInt4 * 4;       // 4 instructions per thread to make it more efficient
   const size_t nItrs = nInt4 / nInt4PerChunk;
   const size_t restNInt4 = nInt4 % nInt4PerChunk;
   const size_t scratchChunkRankOffset = nInt4PerChunk * rank;
