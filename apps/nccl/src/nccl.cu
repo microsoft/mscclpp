@@ -53,6 +53,8 @@ typedef struct _nccl_ops_t {
                             ncclComm_t comm, cudaStream_t stream);
   ncclResult_t (*Broadcast)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
                             ncclComm_t comm, cudaStream_t stream);
+  ncclResult_t (*ReduceScatter)(const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype,
+                                ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream);
 } nccl_ops_t;
 
 nccl_ops_t nccl_ops;
@@ -98,6 +100,8 @@ static inline int nccl_dlopen_init() {
              ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, Broadcast,
              ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(nccl_ops, nccl_dl_handle, nccl, ReduceScatter,
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
 
   return DLOPEN_SUCCESS;
 }
@@ -896,6 +900,10 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
         "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
         "or comm is nullptr.");
     return ncclInvalidArgument;
+  }
+
+  if (mscclppOpenSharedLib == true) {
+    return nccl_ops.ReduceScatter(sendbuff, recvbuff, recvcount, datatype, op, comm, stream);
   }
 
   int rank = comm->comm->bootstrap()->getRank();
