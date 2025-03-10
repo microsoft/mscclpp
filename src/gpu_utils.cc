@@ -144,6 +144,7 @@ void gpuFreePhysical(void* ptr) {
   CUmemGenericAllocationHandle handle;
   size_t size = 0;
   MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, ptr));
+  MSCCLPP_CUTHROW(cuMemRelease(handle));
   MSCCLPP_CUTHROW(cuMemGetAddressRange(NULL, &size, (CUdeviceptr)ptr));
   MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, size));
   MSCCLPP_CUTHROW(cuMemRelease(handle));
