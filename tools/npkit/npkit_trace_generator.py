@@ -15,6 +15,7 @@ def parse_npkit_event_header(npkit_event_header_path):
         "BARRIER",
         "PUT",
         "PUT_PACKET",
+        "READ_PUT_PACKET",
         "PUT_WITH_SIGNAL",
         "PUT_WITH_SIGNAL_AND_FLUSH",
         "GET",
