@@ -75,6 +75,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       MSCCLPP_CUTHROW(
           cuMemExportToShareableHandle(transportInfo.shareableHandle, handle, getNvlsCompatibleMemHandleType(), 0));
       transportInfo.offsetFromBase = (char*)data - (char*)baseDataPtr;
+      MSCCLPP_CUTHROW(cuMemRelease(handle));
     } else {
       cudaIpcMemHandle_t handle;
       MSCCLPP_CUDATHROW(cudaIpcGetMemHandle(&handle, baseDataPtr));
