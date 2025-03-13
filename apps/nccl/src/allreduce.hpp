@@ -112,7 +112,7 @@ __forceinline__ __device__ __half2 min_elements(__half2 a, __half2 b) {
 
 template <Op op>
 __forceinline__ __device__ __half2 cal_elements<__half2, op>(__half2 a, __half2 b) {
-  return cal_elements<__half, op>(a, b);
+  return cal_elements<__half2, op>(a, b);
 }
 
 template <>
@@ -127,7 +127,7 @@ __forceinline__ __device__ __bfloat162 min_elements(__bfloat162 a, __bfloat162 b
 
 template <Op op>
 __forceinline__ __device__ __bfloat162 cal_elements<__bfloat162, op>(__bfloat162 a, __bfloat162 b) {
-  return cal_elements<__bfloat16, op>(a, b);
+  return cal_elements<__bfloat162, op>(a, b);
 }
 
 template <typename T>
@@ -177,7 +177,8 @@ __forceinline__ __device__ int4 cal_vectors(int4 a, int4 b, Op op) {
   } else if (op == MIN) {
     return cal_vectors_helper<T, MIN>(a, b);
   }
-  return;
+  // SHOULD NOT REACH HERE
+  return a;
 }
 
 template <>
