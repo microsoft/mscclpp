@@ -100,7 +100,14 @@ __forceinline__ __device__ __half2 add_elements(__half2 a, __half2 b) {
 
 template <>
 __forceinline__ __device__ __half2 min_elements(__half2 a, __half2 b) {
+#if defined(__HIP_PLATFORM_AMD__)
+  __half2 val;
+  val.x = __hmin(a.x, b.x);
+  val.y = __hmin(a.y, b.y);
+  return val;
+#else
   return __hmin2(a, b);
+#endif
 }
 
 template <Op op>
