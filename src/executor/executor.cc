@@ -144,41 +144,36 @@ struct Executor::Impl {
                                          size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendMemRange, recvMemRange, plan.impl_->name};
     DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset};
-    // if (mscclppDisableChannelCache == false && this->contexts.find(key) != this->contexts.end()) {
-    //   auto& devicePlans = this->contexts[key].deviceExecutionPlans;
-    //   if (this->contexts[key].currentDevicePlan == devicePlanKey) {
-    //     return this->contexts[key];
-    //   } else if (devicePlans.find(devicePlanKey) != devicePlans.end()) {
-    //     this->contexts[key].currentDevicePlan = devicePlanKey;
-    //     return this->contexts[key];
-    //   }
-    //   plan.impl_->operationsReset();
-    //   plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
-    //   this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, rank, plan);
-    //   this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
-    //       GpuBuffer(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
-    //   gpuMemcpy(this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey].get(),
-    //             (char*)devicePlans[devicePlanKey].data(),
-    //             devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
-    //   this->contexts[key].currentDevicePlan = devicePlanKey;
-    //   return this->contexts[key];
-    // }
+    if (mscclppDisableChannelCache == false && this->contexts.find(key) != this->contexts.end()) {
+      auto& devicePlans = this->contexts[key].deviceExecutionPlans;
+      if (this->contexts[key].currentDevicePlan == devicePlanKey) {
+        return this->contexts[key];
+      } else if (devicePlans.find(devicePlanKey) != devicePlans.end()) {
+        this->contexts[key].currentDevicePlan = devicePlanKey;
+        return this->contexts[key];
+      }
+      plan.impl_->operationsReset();
+      plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
+      this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, rank, plan);
+      this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
+          GpuBuffer(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
+      gpuMemcpy(this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey].get(),
+                (char*)devicePlans[devicePlanKey].data(),
+                devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
+      this->contexts[key].currentDevicePlan = devicePlanKey;
+      return this->contexts[key];
+    }
 
     plan.impl_->reset();
     plan.impl_->loadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
 
     ExecutionContext context;
-    if (this->contexts.find(key) != this->contexts.end()) {
-      context.scratchBuffer = this->contexts[key].scratchBuffer;
-      context.scratchBufferSize = this->contexts[key].scratchBufferSize;
-    } else {
-      size_t maxScratchBufferSize = plan.impl_->getMaxScratchBufferSize(rank);
-      size_t scratchBufferSize =
-          std::min(plan.impl_->getScratchBufferSize(rank, sendMemRange, recvMemRange), maxScratchBufferSize);
-      std::shared_ptr<char> scratchBuffer = GpuBuffer(scratchBufferSize).memory();
-      context.scratchBuffer = scratchBuffer;
-      context.scratchBufferSize = scratchBufferSize;
-    }
+    size_t maxScratchBufferSize = plan.impl_->getMaxScratchBufferSize(rank);
+    size_t scratchBufferSize =
+        std::min(plan.impl_->getScratchBufferSize(rank, sendMemRange, recvMemRange), maxScratchBufferSize);
+    std::shared_ptr<char> scratchBuffer = GpuBuffer(scratchBufferSize).memory();
+    context.scratchBuffer = scratchBuffer;
+    context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
     context.nthreadsPerBlock = plan.impl_->getNThreadsPerBlock();
     this->setupConnections(context, rank, plan, sendMemRange, recvMemRange);
@@ -192,7 +187,7 @@ struct Executor::Impl {
               (char*)context.deviceExecutionPlans[devicePlanKey].data(),
               context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
     context.currentDevicePlan = devicePlanKey;
-    // context.proxyService->startProxy();
+    context.proxyService->startProxy();
     this->contexts.insert({key, context});
     return context;
   }
@@ -449,16 +444,6 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvMemRange, (CUdeviceptr)recvbuff));
   size_t offsetIn = (char*)sendbuff - (char*)sendBasePtr;
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
-
-  if (mscclppDisableChannelCache) {
-    sendBasePtr = (CUdeviceptr)sendbuff;
-    recvBasePtr = (CUdeviceptr)recvbuff;
-    sendMemRange = sendBuffSize;
-    recvMemRange = recvBuffSize;
-    offsetIn = 0;
-    offsetOut = 0;
-  }
-
   ExecutionContext context =
       this->impl_->setupExecutionContext(rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, recvBuffSize,
                                          offsetIn, offsetOut, sendMemRange, recvMemRange, plan);

@@ -385,7 +385,6 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
     }
   }
 
-  WARN("In initializing ncclCommFallback");
   mscclppComm->setup();
   commPtr->connections = std::move(connections);
   commPtr->memorySemaphores = std::move(memorySemaphores);
