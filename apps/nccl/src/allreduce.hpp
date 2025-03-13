@@ -183,7 +183,6 @@ __forceinline__ __device__ int4 min_vectors<__half>(int4 a, int4 b) {
   return min_vectors_helper<__half2>(a, b);
 }
 
-
 template <>
 __forceinline__ __device__ int4 add_vectors<__bfloat16>(int4 a, int4 b) {
   return add_vectors_helper<__bfloat162>(a, b);
