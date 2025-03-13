@@ -231,7 +231,7 @@ MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<MemoryChannel>* memoryChannel,
   for (int i = 0; i < count; i++) {
     uint32_t dstOffset = dstOffsets[i];
     uint32_t srcOffset = srcOffsets[i];
-    memoryChannel[srcChannelIndexes[i]].get(dstOffset, srcOffset, size, threadIdx.x, blockDim.x);
+    memoryChannel[srcChannelIndexes[i]].get(srcOffset, dstOffset, size, threadIdx.x, blockDim.x);
   }
 }
 
@@ -328,9 +328,50 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<Memo
       return;
     }
     // For port channel, we assume src and dst are in packet format
+    // TODO: support non-packet format and remove packet format(packet format should be handle in handleReadPutPacket)
     uint32_t dstOffset = (dstOffsets[tid] << 1) + scratchBaseOffset;
     uint32_t srcOffset = (srcOffsets[tid] << 1) + scratchBaseOffset;
     portChannels[dstChannelIndexes[tid]].put(dstOffset, srcOffset, size << 1);
+  }
+}
+
+template <typename PacketType>
+MSCCLPP_DEVICE_INLINE void handleReadPutPacket(int rank, void* scratch, size_t scratchSize,
+                                               DeviceHandle<SmChannel>* smChannels,
+                                               DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
+                                               uint32_t* dstOffsets, uint32_t* srcOffsets, int nDstChannels,
+                                               uint32_t size, ChannelType chType, uint32_t flag) {
+  const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
+  if (chType == ChannelType::MEMORY) {
+    size_t nPackets = size * 2 / sizeof(PacketType);
+    for (size_t pkt_idx = threadIdx.x; pkt_idx < nPackets; pkt_idx += blockDim.x) {
+      for (int ch_idx = 0; ch_idx < nDstChannels; ++ch_idx) {
+        PacketType* pkts = (PacketType*)((char*)scratch + scratchBaseOffset + srcOffsets[ch_idx] * 2);
+        PacketPayload<PacketType> data = pkts[pkt_idx].read(flag);
+        PacketType pkt(data, flag);
+        size_t offset = (scratchBaseOffset + dstOffsets[ch_idx] * 2) / sizeof(PacketType);
+        smChannels[dstChannelIndexes[ch_idx]].write(offset + pkt_idx, pkt);
+      }
+    }
+  } else if (chType == ChannelType::PORT) {
+    // Ensuring Data Is Ready
+    size_t nPackets = size * 2 / sizeof(PacketType);
+    for (size_t pkt_idx = threadIdx.x; pkt_idx < nPackets; pkt_idx += blockDim.x) {
+      for (int ch_idx = 0; ch_idx < nDstChannels; ++ch_idx) {
+        PacketType* pkts = (PacketType*)((char*)scratch + scratchBaseOffset + srcOffsets[ch_idx] * 2);
+        PacketPayload<PacketType> data = pkts[pkt_idx].read(flag);
+      }
+    }
+    __syncthreads();
+
+    // Putting the data
+    int ch_idx = threadIdx.x;
+    if (ch_idx >= nDstChannels) {
+      return;
+    }
+    uint32_t dstOffset = scratchBaseOffset + dstOffsets[ch_idx] * 2;
+    uint32_t srcOffset = scratchBaseOffset + srcOffsets[ch_idx] * 2;
+    proxyChannels[dstChannelIndexes[ch_idx]].put(dstOffset, srcOffset, size * 2);
   }
 }
 
@@ -571,6 +612,9 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, memoryChannels, op.outputChannelIndexes,
                                op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
                                op.size, false);
+    } else if (op.type == OperationType::READ_PUT_PACKET) {
+      handleReadPutPacket<PacketType>(rank, scratch, scratchSize, memoryChannels, portChannels, op.outputChannelIndexes,
+                                      op.outputOffsets, op.inputOffsets, op.nOutputs, op.size, op.channelType, flag);
     } else if (op.type == OperationType::PUT_PACKET) {
       handlePutPacket<PacketType>(scratchSize, memoryChannels, portChannels, op.outputChannelIndexes, op.outputOffsets,
                                   op.inputOffsets, op.nOutputs, op.size, op.channelType, flag);
