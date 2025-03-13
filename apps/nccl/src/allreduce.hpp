@@ -110,11 +110,6 @@ __forceinline__ __device__ __half2 min_elements(__half2 a, __half2 b) {
 #endif
 }
 
-template <Op op>
-__forceinline__ __device__ __half2 cal_elements<__half2, op>(__half2 a, __half2 b) {
-  return cal_elements<__half2, op>(a, b);
-}
-
 template <>
 __forceinline__ __device__ __bfloat162 add_elements(__bfloat162 a, __bfloat162 b) {
   return clip(__hadd2(a, b));
@@ -123,11 +118,6 @@ __forceinline__ __device__ __bfloat162 add_elements(__bfloat162 a, __bfloat162 b
 template <>
 __forceinline__ __device__ __bfloat162 min_elements(__bfloat162 a, __bfloat162 b) {
   return __hmin2(a, b);
-}
-
-template <Op op>
-__forceinline__ __device__ __bfloat162 cal_elements<__bfloat162, op>(__bfloat162 a, __bfloat162 b) {
-  return cal_elements<__bfloat162, op>(a, b);
 }
 
 template <typename T>
