@@ -137,6 +137,18 @@ static mscclpp::Transport getTransport(int, int) {
   return mscclpp::Transport::CudaIpc;
 }
 
+static Op getReduceOp(ncclRedOp_t op) {
+  switch (op) {
+    case ncclSum:
+      return SUM;
+    case ncclMin:
+      return MIN;
+    default:
+      WARN("op is invalid, op: %d", op);
+      throw mscclpp::Error("Invalid operation", mscclpp::ErrorCode::InternalError);
+  }
+}
+
 static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
                                                                   void* buff, size_t bytes,
                                                                   mscclpp::TransportFlags transport) {
@@ -262,12 +274,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     memoryOutChannels = recvIt->second.memoryChannelDeviceHandles.get();
   }
 
-  Op reduceOp;
-  if (op == ncclSum) {
-    reduceOp = SUM;
-  } else if (op == ncclMin) {
-    reduceOp = MIN;
-  }
+  Op reduceOp = getReduceOp(op);
   switch (datatype) {
     case ncclFloat16:
       CUDACHECK(allreduce((half*)sendbuff, (half*)comm->scratchBuff.get(), (half*)recvbuff, memoryChannels,
@@ -934,10 +941,10 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
       return ncclInternalError;
     }
   } catch (const mscclpp::CudaError& e) {
-    INFO(MSCCLPP_ALLOC, "Cuda error: %s", e.what());
+    WARN("Cuda error: %s", e.what());
     return ncclUnhandledCudaError;
   } catch (const mscclpp::CuError& e) {
-    INFO(MSCCLPP_ALLOC, "Cu error: %s", e.what());
+    WARN("Cu error: %s", e.what());
     return ncclUnhandledCudaError;
   } catch (const mscclpp::BaseError& e) {
     WARN("Base error: %s", e.what());
