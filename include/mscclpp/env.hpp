@@ -30,6 +30,7 @@ class Env {
   const std::string executionPlanDir;
   const std::string npkitDumpDir;
   const bool cudaIpcUseDefaultStream;
+  const bool disableChannelCache;
 
  private:
   Env();
