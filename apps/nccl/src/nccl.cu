@@ -774,7 +774,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
 }
 
 NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype,
-                                        ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
+                                        ncclRedOp_t, ncclComm_t comm, cudaStream_t stream) {
   size_t bytes = recvcount * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
     WARN(
