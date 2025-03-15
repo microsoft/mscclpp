@@ -495,21 +495,6 @@ NCCL_API ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
     WARN("uniqueId is nullptr");
     return ncclInvalidArgument;
   }
-
-  const bool mscclppEnableSharedLib = mscclpp::env()->enableSharedLib;
-  if (mscclppEnableSharedLib == true && mscclppNcclDlHandle == NULL) {
-    int dlopen_status = nccl_dlopen_init();
-    if (dlopen_status == DLOPEN_SUCCESS) {
-      mscclppOpenSharedLib = true;
-    } else {
-      return ncclInternalError;
-    }
-  }
-  if (mscclppOpenSharedLib == true) {
-    mscclppNcclOps.GetUniqueId(uniqueId);
-    return ncclSuccess;
-  }
-
   if (MSCCLPP_UNIQUE_ID_BYTES != NCCL_UNIQUE_ID_BYTES) return ncclInternalError;
   mscclpp::UniqueId id = mscclpp::TcpBootstrap::createUniqueId();
   memcpy(uniqueId, &id, sizeof(ncclUniqueId));
@@ -531,27 +516,12 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     WARN("nranks is %d, rank is %d", nranks, rank);
     return ncclInvalidArgument;
   }
-
-  const bool mscclppEnableSharedLib = mscclpp::env()->enableSharedLib;
-  if (mscclppEnableSharedLib == true && mscclppNcclDlHandle == NULL) {
-    int dlopen_status = nccl_dlopen_init();
-    if (dlopen_status == DLOPEN_SUCCESS) {
-      mscclppOpenSharedLib = true;
-    } else {
-      return ncclInternalError;
-    }
-  }
-
-  ncclComm* commPtr = new ncclComm();
-  if (mscclppOpenSharedLib == true) {
-    mscclppNcclOps.CommInitRank(&commPtr->mscclppNcclComm, nranks, commId, rank);
-  }
-
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, nranks);
   mscclpp::UniqueId id;
   memcpy(id.data(), &commId, sizeof(ncclUniqueId));
   bootstrap->initialize(id);
   std::shared_ptr<mscclpp::Communicator> mscclppComm = std::make_shared<mscclpp::Communicator>(bootstrap);
+  ncclComm* commPtr = new ncclComm();
 
   commPtr->comm = mscclppComm;
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
@@ -580,6 +550,27 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     NpKit::Init(rank);
   }
 #endif
+
+  const bool mscclppEnableSharedLib = mscclpp::env()->enableSharedLib;
+  if (mscclppEnableSharedLib == true && mscclppNcclDlHandle == NULL) {
+    int dlopen_status = nccl_dlopen_init();
+    if (dlopen_status == DLOPEN_SUCCESS) {
+      mscclppOpenSharedLib = true;
+    } else {
+      return ncclInternalError;
+    }
+  }
+
+  if (mscclppOpenSharedLib == true) {
+    ncclUniqueId mscclppNcclUniqueId[nranks];
+    if (rank == 0) {
+      mscclppNcclOps.GetUniqueId(&mscclppNcclUniqueId[rank]);
+    }
+    // After allGather, mscclppNcclUniqueId[0] on each rank has the same ncclUniqueId
+    bootstrap->allGather(mscclppNcclUniqueId, sizeof(ncclUniqueId));
+
+    mscclppNcclOps.CommInitRank(&commPtr->mscclppNcclComm, nranks, mscclppNcclUniqueId[0], rank);
+  }
 
   return ncclSuccess;
 }
