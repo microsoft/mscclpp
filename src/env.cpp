@@ -63,8 +63,8 @@ Env::Env()
       npkitDumpDir(readEnv<std::string>("MSCCLPP_NPKIT_DUMP_DIR", "")),
       cudaIpcUseDefaultStream(readEnv<bool>("MSCCLPP_CUDAIPC_USE_DEFAULT_STREAM", false)),
       ncclSharedLibPath(readEnv<std::string>("MSCCLPP_NCCL_LIB_PATH", "")),
-      forceFallbackOperation(readEnv<std::string>("MSCCLPP_FORCE_FALLBACK_OPERATION", "")),
-      enableSharedLib(readEnv<bool>("MSCCLPP_ENABLE_SHARED_LIB", false)) {}
+      forceNcclFallbackOperation(readEnv<std::string>("MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION", "")),
+      enableNcclFallback(readEnv<bool>("MSCCLPP_ENABLE_NCCL_FALLBACK", false)) {}
 
 std::shared_ptr<Env> env() {
   static std::shared_ptr<Env> globalEnv = std::shared_ptr<Env>(new Env());
@@ -84,8 +84,8 @@ std::shared_ptr<Env> env() {
     logEnv("MSCCLPP_NPKIT_DUMP_DIR", globalEnv->npkitDumpDir);
     logEnv("MSCCLPP_CUDAIPC_USE_DEFAULT_STREAM", globalEnv->cudaIpcUseDefaultStream);
     logEnv("MSCCLPP_NCCL_LIB_PATH", globalEnv->ncclSharedLibPath);
-    logEnv("MSCCLPP_FORCE_FALLBACK_OPERATION", globalEnv->forceFallbackOperation);
-    logEnv("MSCCLPP_ENABLE_SHARED_LIB", globalEnv->enableSharedLib);
+    logEnv("MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION", globalEnv->forceNcclFallbackOperation);
+    logEnv("MSCCLPP_ENABLE_NCCL_FALLBACK", globalEnv->enableNcclFallback);
   }
   return globalEnv;
 }

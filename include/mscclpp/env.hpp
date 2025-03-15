@@ -31,8 +31,8 @@ class Env {
   const std::string npkitDumpDir;
   const bool cudaIpcUseDefaultStream;
   const std::string ncclSharedLibPath;
-  const std::string forceFallbackOperation;
-  const bool enableSharedLib;
+  const std::string forceNcclFallbackOperation;
+  const bool enableNcclFallback;
 
  private:
   Env();

@@ -38,8 +38,8 @@
 #define NUM_CHANNELS_PER_CONNECTION 64
 
 typedef enum mscclppNcclDlopenErr {
-  DLOPEN_SUCCESS = 0,
-  DLOPEN_ERROR = 1,
+  dlopenSuccess = 0,
+  dlopenError = 1,
 } mscclppNcclDlopenErr_t;
 
 typedef struct _mscclppNcclOps_t {
@@ -59,7 +59,7 @@ typedef struct _mscclppNcclOps_t {
 
 mscclppNcclOps_t mscclppNcclOps;
 void* mscclppNcclDlHandle = NULL;
-bool mscclppOpenSharedLib = false;
+bool mscclppNcclDlopenSharedLib = false;
 
 #define QUOTE(symbol) #symbol
 
@@ -68,26 +68,26 @@ bool mscclppOpenSharedLib = false;
     _struct_._function_ = (_type_)dlsym((_handle_), QUOTE(_prefix_##_function_));                  \
     if (_struct_._function_ == NULL) {                                                             \
       printf("Failed: dlsym error: Cannot open %s: %s\n", QUOTE(_prefix_##_function_), dlerror()); \
-      exit(DLOPEN_ERROR);                                                                          \
+      exit(dlopenError);                                                                           \
     }                                                                                              \
   } while (0)
 
-static inline int nccl_dlopen_init() {
-  const char* nccl_path = mscclpp::env()->ncclSharedLibPath.c_str();
-  if (nccl_path != nullptr && nccl_path[0] != '\0') {
-    if (std::filesystem::is_directory(nccl_path)) {
-      WARN("The value of the environment variable %s is a directory", nccl_path);
-      return DLOPEN_ERROR;
+static inline int mscclppNcclDlopenInit() {
+  const char* ncclLibPath = mscclpp::env()->ncclSharedLibPath.c_str();
+  if (ncclLibPath != nullptr && ncclLibPath[0] != '\0') {
+    if (std::filesystem::is_directory(ncclLibPath)) {
+      WARN("The value of the environment variable %s is a directory", ncclLibPath);
+      return dlopenError;
     }
 
-    mscclppNcclDlHandle = dlopen(nccl_path, RTLD_LAZY | RTLD_NODELETE);
+    mscclppNcclDlHandle = dlopen(ncclLibPath, RTLD_LAZY | RTLD_NODELETE);
     if (!mscclppNcclDlHandle) {
       WARN("Cannot open the shared library specified by MSCCLPP_NCCL_LIB_PATH: %s\n", dlerror());
-      return DLOPEN_ERROR;
+      return dlopenError;
     }
   } else {
     WARN("The value of MSCCLPP_NCCL_LIB_PATH is empty!\n");
-    return DLOPEN_ERROR;
+    return dlopenError;
   }
 
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommInitRank,
@@ -104,31 +104,31 @@ static inline int nccl_dlopen_init() {
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, ReduceScatter,
              ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
 
-  return DLOPEN_SUCCESS;
+  return dlopenSuccess;
 }
 
-static inline void nccl_dlopen_finalize() {
+static inline void mscclppNcclDlopenFinalize() {
   if (mscclppNcclDlHandle) {
     dlclose(mscclppNcclDlHandle);
   }
 }
 
-static inline int inFallbackList(const char* collOps, const char* fallbackList) {
+static inline int mscclppNcclInFallbackList(const char* collOps, const char* fallbackList) {
   if (fallbackList == nullptr || fallbackList[0] == '\0' || strcmp(fallbackList, "all") == 0) {
     return 1;
   }
 
-  char* fallbackList_copy = strdup(fallbackList);
-  char* token = strtok(fallbackList_copy, ",");
+  char* fallbackListCopy = strdup(fallbackList);
+  char* token = strtok(fallbackListCopy, ",");
   while (token != NULL) {
     if (strcmp(collOps, token) == 0) {
-      free(fallbackList_copy);
+      free(fallbackListCopy);
       return 1;
     }
     token = strtok(NULL, ",");
   }
 
-  free(fallbackList_copy);
+  free(fallbackListCopy);
   return 0;
 }
 
@@ -551,17 +551,17 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   }
 #endif
 
-  const bool mscclppEnableSharedLib = mscclpp::env()->enableSharedLib;
-  if (mscclppEnableSharedLib == true && mscclppNcclDlHandle == NULL) {
-    int dlopen_status = nccl_dlopen_init();
-    if (dlopen_status == DLOPEN_SUCCESS) {
-      mscclppOpenSharedLib = true;
+  const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
+  if (mscclppEnableNcclFallback == true && mscclppNcclDlHandle == NULL) {
+    int dlopenStatus = mscclppNcclDlopenInit();
+    if (dlopenStatus == dlopenSuccess) {
+      mscclppNcclDlopenSharedLib = true;
     } else {
       return ncclInternalError;
     }
   }
 
-  if (mscclppOpenSharedLib == true) {
+  if (mscclppNcclDlopenSharedLib == true) {
     ncclUniqueId mscclppNcclUniqueId[nranks];
     if (rank == 0) {
       mscclppNcclOps.GetUniqueId(&mscclppNcclUniqueId[rank]);
@@ -599,9 +599,9 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
   }
 #endif
 
-  if (mscclppOpenSharedLib == true) {
+  if (mscclppNcclDlopenSharedLib == true) {
     mscclppNcclOps.CommDestroy(comm->mscclppNcclComm);
-    nccl_dlopen_finalize();
+    mscclppNcclDlopenFinalize();
   }
 
   delete comm;
@@ -706,7 +706,7 @@ NCCL_API ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
     return ncclInvalidArgument;
   }
 
-  if (mscclppOpenSharedLib == true) {
+  if (mscclppNcclDlopenSharedLib == true) {
     return mscclppNcclOps.CommUserRank(comm->mscclppNcclComm, rank);
   }
 
@@ -797,9 +797,9 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
-  const char* fallbackList = mscclpp::env()->forceFallbackOperation.c_str();
+  const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const char* collOps = "broadcast";
-  if (mscclppOpenSharedLib == true && inFallbackList(collOps, fallbackList)) {
+  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList(collOps, fallbackList)) {
     return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root, comm->mscclppNcclComm, stream);
   }
 
@@ -855,9 +855,9 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
-  const char* fallbackList = mscclpp::env()->forceFallbackOperation.c_str();
+  const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const char* collOps = "allreduce";
-  if (mscclppOpenSharedLib == true && inFallbackList(collOps, fallbackList)) {
+  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList(collOps, fallbackList)) {
     return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation, comm->mscclppNcclComm,
                                     stream);
   }
@@ -915,9 +915,9 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
     return ncclInvalidArgument;
   }
 
-  const char* fallbackList = mscclpp::env()->forceFallbackOperation.c_str();
+  const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const char* collOps = "reducescatter";
-  if (mscclppOpenSharedLib == true && inFallbackList(collOps, fallbackList)) {
+  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList(collOps, fallbackList)) {
     return mscclppNcclOps.ReduceScatter(sendbuff, recvbuff, recvcount, datatype, op, comm->mscclppNcclComm, stream);
   }
 
@@ -977,9 +977,9 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
-  const char* fallbackList = mscclpp::env()->forceFallbackOperation.c_str();
+  const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const char* collOps = "allgather";
-  if (mscclppOpenSharedLib == true && inFallbackList(collOps, fallbackList)) {
+  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList(collOps, fallbackList)) {
     return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype, comm->mscclppNcclComm, stream);
   }
 
