@@ -64,7 +64,8 @@ Env::Env()
       cudaIpcUseDefaultStream(readEnv<bool>("MSCCLPP_CUDAIPC_USE_DEFAULT_STREAM", false)),
       ncclSharedLibPath(readEnv<std::string>("MSCCLPP_NCCL_LIB_PATH", "")),
       forceNcclFallbackOperation(readEnv<std::string>("MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION", "")),
-      enableNcclFallback(readEnv<bool>("MSCCLPP_ENABLE_NCCL_FALLBACK", false)) {}
+      enableNcclFallback(readEnv<bool>("MSCCLPP_ENABLE_NCCL_FALLBACK", false)),
+      disableChannelCache(readEnv<bool>("MSCCLPP_DISABLE_CHANNEL_CACHE", false)) {}
 
 std::shared_ptr<Env> env() {
   static std::shared_ptr<Env> globalEnv = std::shared_ptr<Env>(new Env());
@@ -86,6 +87,7 @@ std::shared_ptr<Env> env() {
     logEnv("MSCCLPP_NCCL_LIB_PATH", globalEnv->ncclSharedLibPath);
     logEnv("MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION", globalEnv->forceNcclFallbackOperation);
     logEnv("MSCCLPP_ENABLE_NCCL_FALLBACK", globalEnv->enableNcclFallback);
+    logEnv("MSCCLPP_DISABLE_CHANNEL_CACHE", globalEnv->disableChannelCache);
   }
   return globalEnv;
 }

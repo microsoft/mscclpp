@@ -33,6 +33,7 @@ class Env {
   const std::string ncclSharedLibPath;
   const std::string forceNcclFallbackOperation;
   const bool enableNcclFallback;
+  const bool disableChannelCache;
 
  private:
   Env();
