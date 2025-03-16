@@ -193,7 +193,7 @@ struct ncclComm {
   uint32_t numScratchBuff;
   uint32_t buffFlag;
 
-  ncclComm_t mscclppNcclComm;
+  void* mscclppNcclComm;
 };
 
 static size_t ncclTypeSize(ncclDataType_t type) {
@@ -597,7 +597,13 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     // After allGather, mscclppNcclUniqueId[0] on each rank has the same ncclUniqueId
     bootstrap->allGather(mscclppNcclUniqueId, sizeof(ncclUniqueId));
 
-    mscclppNcclOps.CommInitRank(&commPtr->mscclppNcclComm, nranks, mscclppNcclUniqueId[0], rank);
+    commPtr->mscclppNcclComm = malloc(sizeof(ncclComm_t));
+    if (commPtr->mscclppNcclComm == nullptr) {
+      WARN("Failed to allocate memory for mscclppNcclComm");
+      return ncclInternalError;
+    }
+    mscclppNcclOps.CommInitRank(reinterpret_cast<ncclComm_t*>(commPtr->mscclppNcclComm), nranks, mscclppNcclUniqueId[0],
+                                rank);
   }
 
   return ncclSuccess;
@@ -628,8 +634,9 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
 #endif
 
   if (mscclppNcclDlopenSharedLib == true) {
-    mscclppNcclOps.CommDestroy(comm->mscclppNcclComm);
+    mscclppNcclOps.CommDestroy(*reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm));
     mscclppNcclDlopenFinalize();
+    free(comm->mscclppNcclComm);
   }
 
   delete comm;
@@ -735,7 +742,7 @@ NCCL_API ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
-    return mscclppNcclOps.CommUserRank(comm->mscclppNcclComm, rank);
+    return mscclppNcclOps.CommUserRank(*reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), rank);
   }
 
   *rank = comm->comm->bootstrap()->getRank();
@@ -828,7 +835,8 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const char* collOps = "broadcast";
   if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList(collOps, fallbackList)) {
-    return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root, comm->mscclppNcclComm, stream);
+    return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
+                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
   int rank = comm->comm->bootstrap()->getRank();
@@ -886,8 +894,8 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const char* collOps = "allreduce";
   if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList(collOps, fallbackList)) {
-    return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation, comm->mscclppNcclComm,
-                                    stream);
+    return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
+                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
   // Declarating variables
@@ -946,7 +954,8 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const char* collOps = "reducescatter";
   if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList(collOps, fallbackList)) {
-    return mscclppNcclOps.ReduceScatter(sendbuff, recvbuff, recvcount, datatype, op, comm->mscclppNcclComm, stream);
+    return mscclppNcclOps.ReduceScatter(sendbuff, recvbuff, recvcount, datatype, op,
+                                        *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
   int rank = comm->comm->bootstrap()->getRank();
@@ -1008,7 +1017,8 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const char* collOps = "allgather";
   if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList(collOps, fallbackList)) {
-    return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype, comm->mscclppNcclComm, stream);
+    return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
+                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
   int rank = comm->comm->bootstrap()->getRank();
