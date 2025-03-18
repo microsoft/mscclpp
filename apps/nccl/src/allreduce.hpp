@@ -100,12 +100,14 @@ __forceinline__ __device__ __half2 add_elements(__half2 a, __half2 b) {
 
 template <>
 __forceinline__ __device__ __half2 min_elements(__half2 a, __half2 b) {
+#if defined(__HIP_PLATFORM_AMD__)
+  __half2 val;
+  val.x = __hmin(a.x, b.x);
+  val.y = __hmin(a.y, b.y);
+  return val;
+#else
   return __hmin2(a, b);
-}
-
-template <Op op>
-__forceinline__ __device__ __half2 cal_elements<__half2, op>(__half2 a, __half2 b) {
-  return cal_elements<__half, op>(a, b);
+#endif
 }
 
 template <>
@@ -116,11 +118,6 @@ __forceinline__ __device__ __bfloat162 add_elements(__bfloat162 a, __bfloat162 b
 template <>
 __forceinline__ __device__ __bfloat162 min_elements(__bfloat162 a, __bfloat162 b) {
   return __hmin2(a, b);
-}
-
-template <Op op>
-__forceinline__ __device__ __bfloat162 cal_elements<__bfloat162, op>(__bfloat162 a, __bfloat162 b) {
-  return cal_elements<__bfloat16, op>(a, b);
 }
 
 template <typename T>
@@ -170,7 +167,8 @@ __forceinline__ __device__ int4 cal_vectors(int4 a, int4 b, Op op) {
   } else if (op == MIN) {
     return cal_vectors_helper<T, MIN>(a, b);
   }
-  return;
+  // SHOULD NOT REACH HERE
+  return a;
 }
 
 template <>
@@ -182,7 +180,6 @@ template <>
 __forceinline__ __device__ int4 min_vectors<__half>(int4 a, int4 b) {
   return min_vectors_helper<__half2>(a, b);
 }
-
 
 template <>
 __forceinline__ __device__ int4 add_vectors<__bfloat16>(int4 a, int4 b) {
@@ -764,7 +761,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
     size_t NpkitSharedMemSize = NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
     allreduce7<<<nBlocks, nThreadsPerBlock, NpkitSharedMemSize, stream>>>(
         buff, scratch, resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank, nRanksPerNode,
-        worldSize, nelems, flag++, NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+        worldSize, op, nelems, flag++, NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
 #else
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, channelInOffset,
                                                          channelScratchOffset, rank, nRanksPerNode, worldSize, op,
