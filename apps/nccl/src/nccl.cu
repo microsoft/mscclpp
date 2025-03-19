@@ -590,19 +590,19 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
-    ncclUniqueId mscclppNcclUniqueId[nranks];
+    ncclUniqueId mscclppNcclUniqueId;
     if (rank == 0) {
-      mscclppNcclOps.GetUniqueId(&mscclppNcclUniqueId[rank]);
+      mscclppNcclOps.GetUniqueId(&mscclppNcclUniqueId);
     }
-    // After allGather, mscclppNcclUniqueId[0] on each rank has the same ncclUniqueId
-    bootstrap->allGather(mscclppNcclUniqueId, sizeof(ncclUniqueId));
+    // After broadcast, mscclppNcclUniqueId on each rank has the same ncclUniqueId
+    bootstrap->broadcast(&mscclppNcclUniqueId, sizeof(ncclUniqueId), 0);
 
-    commPtr->mscclppNcclComm = malloc(sizeof(ncclComm_t));
+    commPtr->mscclppNcclComm = new ncclComm_t();
     if (commPtr->mscclppNcclComm == nullptr) {
       WARN("Failed to allocate memory for mscclppNcclComm");
       return ncclInternalError;
     }
-    mscclppNcclOps.CommInitRank(reinterpret_cast<ncclComm_t*>(commPtr->mscclppNcclComm), nranks, mscclppNcclUniqueId[0],
+    mscclppNcclOps.CommInitRank(reinterpret_cast<ncclComm_t*>(commPtr->mscclppNcclComm), nranks, mscclppNcclUniqueId,
                                 rank);
   }
 
@@ -636,7 +636,7 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
   if (mscclppNcclDlopenSharedLib == true) {
     mscclppNcclOps.CommDestroy(*reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm));
     mscclppNcclDlopenFinalize();
-    free(comm->mscclppNcclComm);
+    delete static_cast<ncclComm_t*>(comm->mscclppNcclComm);
   }
 
   delete comm;
@@ -833,8 +833,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   }
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  const char* collOps = "broadcast";
-  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList(collOps, fallbackList)) {
+  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
     return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
@@ -892,8 +891,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   }
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  const char* collOps = "allreduce";
-  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList(collOps, fallbackList)) {
+  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("allreduce", fallbackList)) {
     return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
@@ -952,8 +950,7 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
   }
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  const char* collOps = "reducescatter";
-  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList(collOps, fallbackList)) {
+  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("reducescatter", fallbackList)) {
     return mscclppNcclOps.ReduceScatter(sendbuff, recvbuff, recvcount, datatype, op,
                                         *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
@@ -1015,8 +1012,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   }
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  const char* collOps = "allgather";
-  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList(collOps, fallbackList)) {
+  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("allgather", fallbackList)) {
     return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
