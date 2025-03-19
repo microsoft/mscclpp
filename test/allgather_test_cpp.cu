@@ -28,7 +28,7 @@ static int nranksPerNode = 8;
     }                                                                                   \
   } while (false)
 
-#if defined(__HIP_PLATFORM_AMD__) && (__HIP_PLATFORM_AMD__ == 1)
+#if defined(__HIP_PLATFORM_AMD__)
 #define WARP_SIZE 64
 #else
 #define WARP_SIZE 32
