@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <mscclpp/core.hpp>
+#include <mscclpp/gpu.hpp>
 #include <unordered_map>
 
 namespace mscclpp {

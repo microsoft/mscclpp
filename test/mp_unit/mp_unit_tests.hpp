@@ -8,9 +8,9 @@
 
 #include <mscclpp/core.hpp>
 #include <mscclpp/executor.hpp>
+#include <mscclpp/memory_channel.hpp>
 #include <mscclpp/packet_device.hpp>
-#include <mscclpp/proxy_channel.hpp>
-#include <mscclpp/sm_channel.hpp>
+#include <mscclpp/port_channel.hpp>
 #include <mscclpp/utils.hpp>
 
 #include "ib.hpp"
@@ -128,7 +128,7 @@ class CommunicatorTest : public CommunicatorTestBase {
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
 
-class ProxyChannelOneToOneTest : public CommunicatorTestBase {
+class PortChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   struct PingPongTestParams {
     bool useIPC;
@@ -140,9 +140,8 @@ class ProxyChannelOneToOneTest : public CommunicatorTestBase {
   void SetUp() override;
   void TearDown() override;
 
-  void setupMeshConnections(std::vector<mscclpp::ProxyChannel>& proxyChannels, bool useIPC, bool useIb,
-                            bool useEthernet, void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr,
-                            size_t recvBuffBytes = 0);
+  void setupMeshConnections(std::vector<mscclpp::PortChannel>& portChannels, bool useIPC, bool useIb, bool useEthernet,
+                            void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
   void testPingPong(PingPongTestParams params);
   void testPingPongPerf(PingPongTestParams params);
   void testPacketPingPong(bool useIbOnly);
@@ -151,17 +150,17 @@ class ProxyChannelOneToOneTest : public CommunicatorTestBase {
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };
 
-class SmChannelOneToOneTest : public CommunicatorTestBase {
+class MemoryChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   void SetUp() override;
   void TearDown() override;
 
-  void setupMeshConnections(std::vector<mscclpp::SmChannel>& smChannels, void* inputBuff, size_t inputBuffBytes,
+  void setupMeshConnections(std::vector<mscclpp::MemoryChannel>& memoryChannels, void* inputBuff, size_t inputBuffBytes,
                             void* outputBuff = nullptr, size_t outputBuffBytes = 0);
   using PacketPingPongKernelWrapper = std::function<void(int*, int, int, int*, int)>;
   void packetPingPongTest(const std::string testName, PacketPingPongKernelWrapper kernelWrapper);
 
-  std::unordered_map<int, std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
+  std::unordered_map<int, std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
 };
 
 class ExecutorTest : public MultiProcessTest {
@@ -170,6 +169,6 @@ class ExecutorTest : public MultiProcessTest {
   void TearDown() override;
 
   std::shared_ptr<mscclpp::Executor> executor;
-  const char* npkitDumpDir;
+  std::string npkitDumpDir;
 };
 #endif  // MSCCLPP_MP_UNIT_TESTS_HPP_

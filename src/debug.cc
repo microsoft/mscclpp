@@ -9,6 +9,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <mscclpp/env.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/utils.hpp>
 #include <string>
@@ -34,7 +35,7 @@ void mscclppDebugInit() {
     pthread_mutex_unlock(&mscclppDebugLock);
     return;
   }
-  const char* mscclpp_debug = getenv("MSCCLPP_DEBUG");
+  const char* mscclpp_debug = mscclpp::env()->debug.c_str();
   int tempNcclDebugLevel = -1;
   if (mscclpp_debug == NULL) {
     tempNcclDebugLevel = MSCCLPP_LOG_NONE;
@@ -54,8 +55,9 @@ void mscclppDebugInit() {
    * This can be a comma separated list such as INIT,COLL
    * or ^INIT,COLL etc
    */
-  char* mscclppDebugSubsysEnv = getenv("MSCCLPP_DEBUG_SUBSYS");
-  if (mscclppDebugSubsysEnv != NULL) {
+  std::string mscclppDebugSubsysStr = mscclpp::env()->debugSubsys;
+  const char* mscclppDebugSubsysEnv = mscclppDebugSubsysStr.c_str();
+  if (mscclppDebugSubsysStr != "") {
     int invert = 0;
     if (mscclppDebugSubsysEnv[0] == '^') {
       invert = 1;
@@ -86,6 +88,8 @@ void mscclppDebugInit() {
         mask = MSCCLPP_ALLOC;
       } else if (strcasecmp(subsys, "CALL") == 0) {
         mask = MSCCLPP_CALL;
+      } else if (strcasecmp(subsys, "MSCCLPP_EXECUTOR") == 0) {
+        mask = MSCCLPP_EXECUTOR;
       } else if (strcasecmp(subsys, "ALL") == 0) {
         mask = MSCCLPP_ALL;
       }
@@ -108,7 +112,7 @@ void mscclppDebugInit() {
    * then create the debug file. But don't bother unless the
    * MSCCLPP_DEBUG level is > VERSION
    */
-  const char* mscclppDebugFileEnv = getenv("MSCCLPP_DEBUG_FILE");
+  const char* mscclppDebugFileEnv = mscclpp::env()->debugFile.c_str();
   if (tempNcclDebugLevel > MSCCLPP_LOG_VERSION && mscclppDebugFileEnv != NULL) {
     int c = 0;
     char debugFn[PATH_MAX + 1] = "";

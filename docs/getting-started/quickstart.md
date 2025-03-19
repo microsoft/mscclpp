@@ -39,7 +39,7 @@
 We provide docker images which package all prerequisites for MSCCL++. You can setup your dev environment with the following command.
 
 ```bash
-$ docker run -it --privileged --net=host --ipc=host --gpus all ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2 mscclpp-dev bash
+$ docker run -it --privileged --net=host --ipc=host --gpus all --name mscclpp-dev ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4  bash
 ```
 
 See all available images [here](https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp).
@@ -136,9 +136,26 @@ $ python3 -m pip install -r ./python/requirements_cuda12.txt
 $ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
 ```
 
-### C++ Benchmark (mscclpp-test)
+## NCCL over MSCCL++
 
-*NOTE: mscclpp-test will be retired soon and will be maintained only as an example of C++ implementation. If you want to get the latest performance numbers, please use the Python benchmark instead.*
+We implement [NCCL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api.html) APIs using MSCCL++. How to use:
+
+1. [Build MSCCL++ from source](#build-from-source).
+2. Replace your `libnccl.so` library with `libmscclpp_nccl.so`, which is compiled under `./build/apps/nccl/` directory.
+
+For example, you can run [nccl-tests](https://github.com/NVIDIA/nccl-tests) using `libmscclpp_nccl.so` as follows, where `MSCCLPP_BUILD` is your MSCCL++ build directory.
+
+```bash
+mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/apps/nccl/libmscclpp_nccl.so ./build/all_reduce_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
+```
+
+If MSCCL++ is built on AMD platforms, `libmscclpp_nccl.so` would replace the [RCCL](https://github.com/ROCm/rccl) library (i.e., `librccl.so`).
+
+See limitations of the current NCCL over MSCCL++ from [here](../design/nccl-over-mscclpp.md#limitations).
+
+### C++ Benchmark (mscclpp-test, *Deprecated*)
+
+*NOTE: mscclpp-test is retired and maintained only as an example of C++ implementation. If you want to get the latest performance numbers, please use the Python benchmark or the NCCL APIs instead.*
 
 mscclpp-test is a set of C++ performance benchmarks. It requires MPI on the system, and the path should be provided via `MPI_HOME` environment variable to the CMake build system.
 
@@ -174,20 +191,3 @@ USAGE: allreduce_test_perf
         [-o, --output_file <output file name>]
         [-h,--help]
 ```
-
-## NCCL over MSCCL++
-
-We implement [NCCL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api.html) APIs using MSCCL++. How to use:
-
-1. [Build MSCCL++ from source](#build-from-source).
-2. Replace your `libnccl.so` library with `libmscclpp_nccl.so`, which is compiled under `./build/apps/nccl/` directory.
-
-For example, you can run [nccl-tests](https://github.com/NVIDIA/nccl-tests) using `libmscclpp_nccl.so` as follows, where `MSCCLPP_BUILD` is your MSCCL++ build directory.
-
-```bash
-mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/apps/nccl/libmscclpp_nccl.so ./build/all_reduce_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
-```
-
-If MSCCL++ is built on AMD platforms, `libmscclpp_nccl.so` would replace the [RCCL](https://github.com/ROCm/rccl) library (i.e., `librccl.so`).
-
-See limitations of the current NCCL over MSCCL++ from [here](../design/nccl-over-mscclpp.md#limitations).

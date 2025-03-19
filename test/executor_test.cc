@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <iostream>
+#include <mscclpp/env.hpp>
 #include <mscclpp/executor.hpp>
 #include <mscclpp/npkit/npkit.hpp>
 #include <mscclpp/utils.hpp>
@@ -109,7 +110,7 @@ int main(int argc, char* argv[]) {
   const std::string executionPlanPath = argv[2];
   const int niters = std::stoi(argv[3]);
   const int ngraphIters = std::stoi(argv[4]);
-  const char* npkitDumpDir = getenv("NPKIT_DUMP_DIR");
+  const char* npkitDumpDir = mscclpp::env()->npkitDumpDir.c_str();
   mscclpp::PacketType packetType = mscclpp::PacketType::LL16;
   if (argc == 6) {
     packetType = parsePacketType(argv[5]);
@@ -129,12 +130,7 @@ int main(int argc, char* argv[]) {
   }
 
   mscclpp::ExecutionPlan plan(executionPlanPath);
-  std::shared_ptr<char> sendbuff;
-  if (mscclpp::isNvlsSupported()) {
-    sendbuff = mscclpp::allocSharedPhysicalCuda<char>(bufferSize);
-  } else {
-    sendbuff = mscclpp::allocExtSharedCuda<char>(bufferSize);
-  }
+  std::shared_ptr<char> sendbuff = mscclpp::GpuBuffer(bufferSize).memory();
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
   MSCCLPP_CUDATHROW(cudaMemcpy(sendbuff.get(), dataHost.data(), bufferSize, cudaMemcpyHostToDevice));
   double deltaSec = benchTime(rank, bootstrap, executor, plan, sendbuff, bufferSize, niters, ngraphIters, packetType);

@@ -14,7 +14,6 @@ baseImageTable=(
 
 declare -A extraLdPathTable
 extraLdPathTable=(
-    ["cuda11.8"]="/usr/local/cuda-11.8/lib64"
     ["cuda12.1"]="/usr/local/cuda-12.1/compat:/usr/local/cuda-12.1/lib64"
     ["cuda12.2"]="/usr/local/cuda-12.2/compat:/usr/local/cuda-12.2/lib64"
     ["cuda12.3"]="/usr/local/cuda-12.3/compat:/usr/local/cuda-12.3/lib64"

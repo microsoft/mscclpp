@@ -19,9 +19,17 @@ static NonblockingFuture<RegisteredMemory> setupInboundSemaphoreId(Communicator&
   return communicator.recvMemoryOnSetup(remoteRank, tag);
 }
 
+static detail::UniqueGpuPtr<uint64_t> createGpuSemaphoreId() {
+#if defined(__HIP_PLATFORM_AMD__)
+  return detail::gpuCallocUncachedUnique<uint64_t>();
+#else   // !defined(__HIP_PLATFORM_AMD__)
+  return detail::gpuCallocUnique<uint64_t>();
+#endif  // !defined(__HIP_PLATFORM_AMD__)
+}
+
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communicator,
                                                            std::shared_ptr<Connection> connection)
-    : BaseSemaphore(allocExtUniqueCuda<uint64_t>(), allocExtUniqueCuda<uint64_t>(), std::make_unique<uint64_t>()),
+    : BaseSemaphore(createGpuSemaphoreId(), createGpuSemaphoreId(), std::make_unique<uint64_t>()),
       connection_(connection) {
   INFO(MSCCLPP_INIT, "Creating a Host2Device semaphore for %s transport from %d to %d",
        connection->getTransportName().c_str(), communicator.bootstrap()->getRank(),
@@ -83,9 +91,9 @@ MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
   }
 }
 
-MSCCLPP_API_CPP SmDevice2DeviceSemaphore::SmDevice2DeviceSemaphore(Communicator& communicator,
-                                                                   std::shared_ptr<Connection> connection)
-    : BaseSemaphore(allocExtUniqueCuda<uint64_t>(), allocExtUniqueCuda<uint64_t>(), allocExtUniqueCuda<uint64_t>()) {
+MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(Communicator& communicator,
+                                                                           std::shared_ptr<Connection> connection)
+    : BaseSemaphore(createGpuSemaphoreId(), createGpuSemaphoreId(), createGpuSemaphoreId()) {
   INFO(MSCCLPP_INIT, "Creating a Device2Device semaphore for %s transport from %d to %d",
        connection->getTransportName().c_str(), communicator.bootstrap()->getRank(),
        communicator.remoteRankOf(*connection));
@@ -99,8 +107,8 @@ MSCCLPP_API_CPP SmDevice2DeviceSemaphore::SmDevice2DeviceSemaphore(Communicator&
   }
 }
 
-MSCCLPP_API_CPP SmDevice2DeviceSemaphore::DeviceHandle SmDevice2DeviceSemaphore::deviceHandle() const {
-  SmDevice2DeviceSemaphore::DeviceHandle device;
+MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::DeviceHandle MemoryDevice2DeviceSemaphore::deviceHandle() const {
+  MemoryDevice2DeviceSemaphore::DeviceHandle device;
   device.remoteInboundSemaphoreId = isRemoteInboundSemaphoreIdSet_
                                         ? reinterpret_cast<uint64_t*>(remoteInboundSemaphoreIdsRegMem_.get().data())
                                         : nullptr;

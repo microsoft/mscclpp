@@ -46,6 +46,8 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::READ_REDUCE_COPY_SEND;
   } else if (str == "ppkt") {
     return mscclpp::OperationType::PUT_PACKET;
+  } else if (str == "rppkt") {
+    return mscclpp::OperationType::READ_PUT_PACKET;
   } else if (str == "rspkt") {
     return mscclpp::OperationType::REDUCE_SEND_PACKET;
   } else if (str == "cpkt") {
@@ -74,10 +76,10 @@ auto convertToBufferType = [](const std::string& str) {
 };
 
 auto convertToChannelType = [](const std::string& str) {
-  if (str == "sm") {
-    return mscclpp::ChannelType::SM;
-  } else if (str == "proxy") {
-    return mscclpp::ChannelType::PROXY;
+  if (str == "memory" || str == "sm") {
+    return mscclpp::ChannelType::MEMORY;
+  } else if (str == "port" || str == "proxy") {
+    return mscclpp::ChannelType::PORT;
   } else if (str == "none") {
     return mscclpp::ChannelType::NONE;
   } else if (str == "nvls") {
@@ -304,7 +306,7 @@ void ExecutionPlan::Impl::parseChannels(
   }
 }
 
-// Construct the channel info. Step 1. Flatten SM and PROXY channels into separate vectors.
+// Construct the channel info. Step 1. Flatten MEMORY and PORT channels into separate vectors.
 // Step 2. For each threadblock, construct a vector of channel indexes and keys.
 void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   using mapKey = std::tuple<int, BufferType, BufferType, ChannelType>;
@@ -331,7 +333,7 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   // setup threadblockChannelMap
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];
-    auto channelTypes = {ChannelType::SM, ChannelType::PROXY, ChannelType::NVLS};
+    auto channelTypes = {ChannelType::MEMORY, ChannelType::PORT, ChannelType::NVLS};
     std::unordered_map<ChannelKey, std::vector<int>> channelMap;
     for (auto channelType : channelTypes) {
       const std::vector<ChannelInfo> channelInfos = this->getChannelInfos(rank, channelType);
@@ -352,18 +354,18 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
       }
     }
     int nthreadblocks = gpu["threadblocks"].size();
-    this->threadblockSMChannelMap[rank].resize(nthreadblocks);
-    this->threadblockProxyChannelMap[rank].resize(nthreadblocks);
+    this->threadblockMemoryChannelMap[rank].resize(nthreadblocks);
+    this->threadblockPortChannelMap[rank].resize(nthreadblocks);
     this->threadblockNvlsChannelMap[rank].resize(nthreadblocks);
     for (const auto& threadblock : gpu["threadblocks"]) {
       for (const auto& channel : threadblock["channels"]) {
         ChannelType channelType = convertToChannelType(channel["ctype"]);
         ChannelKey key = {convertToBufferType(channel["src"]), convertToBufferType(channel["dst"]), channelType};
         for (int id : channel["cids"]) {
-          if (channelType == ChannelType::SM) {
-            this->threadblockSMChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
-          } else if (channelType == ChannelType::PROXY) {
-            this->threadblockProxyChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
+          if (channelType == ChannelType::MEMORY) {
+            this->threadblockMemoryChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
+          } else if (channelType == ChannelType::PORT) {
+            this->threadblockPortChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
           } else if (channelType == ChannelType::NVLS) {
             this->threadblockNvlsChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
           }
@@ -394,15 +396,15 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
       std::unordered_map<ChannelKey, std::vector<int>> channelIndexes;
       std::vector<Operation> ops;
       int threadblockId = threadblock["id"];
-      const auto& smChannels = this->threadblockSMChannelMap[rank][threadblockId];
-      const auto& proxyChannels = this->threadblockProxyChannelMap[rank][threadblockId];
+      const auto& memoryChannels = this->threadblockMemoryChannelMap[rank][threadblockId];
+      const auto& portChannels = this->threadblockPortChannelMap[rank][threadblockId];
       const auto& nvlsChannels = this->threadblockNvlsChannelMap[rank][threadblockId];
-      for (size_t i = 0; i < smChannels.size(); i++) {
-        const auto& [_, key] = smChannels[i];
+      for (size_t i = 0; i < memoryChannels.size(); i++) {
+        const auto& [_, key] = memoryChannels[i];
         channelIndexes[key].push_back(i);
       }
-      for (size_t i = 0; i < proxyChannels.size(); i++) {
-        const auto& [_, key] = proxyChannels[i];
+      for (size_t i = 0; i < portChannels.size(); i++) {
+        const auto& [_, key] = portChannels[i];
         channelIndexes[key].push_back(i);
       }
       for (size_t i = 0; i < nvlsChannels.size(); i++) {
@@ -517,7 +519,11 @@ std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunksForRank(int ran
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
   } else if (this->inputChunks.at(rank) != 0 && this->outputChunks.at(rank) != 0) {
     if (inputSize / this->inputChunks.at(rank) != outputSize / this->outputChunks.at(rank))
-      throw mscclpp::Error("Size per chunks inconsistent", mscclpp::ErrorCode::ExecutorError);
+      throw mscclpp::Error("Size per chunks inconsistent: inputSize " + std::to_string(inputSize) + " inputChunks " +
+                               std::to_string(this->inputChunks.at(rank)) + " outputSize " +
+                               std::to_string(outputSize) + " outputChunks " +
+                               std::to_string(this->outputChunks.at(rank)),
+                           mscclpp::ErrorCode::ExecutorError);
     else
       sizePerRank = std::make_pair(inputSize, this->inputChunks.at(rank));
   } else if (this->inputChunks.at(rank) != 0) {
@@ -586,8 +592,8 @@ void ExecutionPlan::Impl::reset() {
   this->operations.clear();
   this->channelInfos.clear();
   this->nvlsInfos.clear();
-  this->threadblockSMChannelMap.clear();
-  this->threadblockProxyChannelMap.clear();
+  this->threadblockMemoryChannelMap.clear();
+  this->threadblockPortChannelMap.clear();
   this->threadblockNvlsChannelMap.clear();
   this->inputChunks.clear();
   this->outputChunks.clear();

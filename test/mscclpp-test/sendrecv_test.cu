@@ -7,8 +7,8 @@
 #include <iostream>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/memory_channel.hpp>
 #include <mscclpp/semaphore.hpp>
-#include <mscclpp/sm_channel.hpp>
 #include <string>
 #include <vector>
 
@@ -24,7 +24,7 @@ constexpr size_t MAX_BLOCKS_NUM = 32;
 
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
-__constant__ DeviceHandle<mscclpp::SmChannel> constSmChans[2];
+__constant__ DeviceHandle<mscclpp::MemoryChannel> constMemChans[2];
 
 inline int getBlockNum(size_t count) {
   return std::min((count + THRES_BYTES_PER_BLOCK - 1) / THRES_BYTES_PER_BLOCK, MAX_BLOCKS_NUM);
@@ -41,8 +41,8 @@ __global__ void __launch_bounds__(1024) kernel(size_t dataSize, size_t dataPerBl
   size_t blockDataSize = min(dataSize - startIndex, dataPerBlock);
   int globalIndex = blockIdx.x * blockDim.x + threadIdx.x;
 
-  DeviceHandle<mscclpp::SmChannel> sendConn = constSmChans[0];
-  DeviceHandle<mscclpp::SmChannel> recvConn = constSmChans[1];
+  DeviceHandle<mscclpp::MemoryChannel> sendConn = constMemChans[0];
+  DeviceHandle<mscclpp::MemoryChannel> recvConn = constMemChans[1];
 
   sendConn.put(startIndex, startIndex, blockDataSize, threadIdx.x, blockDim.x);
   deviceSyncer.sync(gridDim.x);
@@ -131,14 +131,14 @@ class SendRecvTestEngine : public BaseTestEngine {
 
   std::vector<std::shared_ptr<int>> devicePtrs_;
   std::shared_ptr<int[]> expectedBuff_;
-  std::vector<mscclpp::SmChannel> smChannels_;
+  std::vector<mscclpp::MemoryChannel> memoryChannels_;
 };
 
 SendRecvTestEngine::SendRecvTestEngine(const TestArgs& args) : BaseTestEngine(args, "sendrecv") { inPlace_ = false; }
 
 void SendRecvTestEngine::allocateBuffer() {
-  std::shared_ptr<int> sendBuff = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
-  std::shared_ptr<int> recvBuff = mscclpp::allocExtSharedCuda<int>(args_.maxBytes / sizeof(int));
+  std::shared_ptr<int> sendBuff = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
+  std::shared_ptr<int> recvBuff = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
   devicePtrs_.push_back(sendBuff);
   devicePtrs_.push_back(recvBuff);
 
@@ -153,7 +153,7 @@ void SendRecvTestEngine::setupConnections() {
   std::array<int, 2> ranks = {sendToRank, recvFromRank};
   auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
 
-  std::vector<std::shared_ptr<mscclpp::SmDevice2DeviceSemaphore>> smSemaphores;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
 
   auto sendConnFuture =
       comm_->connectOnSetup(sendToRank, 0, getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice));
@@ -161,12 +161,12 @@ void SendRecvTestEngine::setupConnections() {
     auto recvConnFuture =
         comm_->connectOnSetup(recvFromRank, 0, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice));
     comm_->setup();
-    smSemaphores.push_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, sendConnFuture.get()));
-    smSemaphores.push_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, recvConnFuture.get()));
+    memorySemaphores.push_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, sendConnFuture.get()));
+    memorySemaphores.push_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, recvConnFuture.get()));
   } else {
     comm_->setup();
-    smSemaphores.push_back(std::make_shared<mscclpp::SmDevice2DeviceSemaphore>(*comm_, sendConnFuture.get()));
-    smSemaphores.push_back(smSemaphores[0]);  // reuse the send channel if worldSize is 2
+    memorySemaphores.push_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, sendConnFuture.get()));
+    memorySemaphores.push_back(memorySemaphores[0]);  // reuse the send channel if worldSize is 2
   }
   comm_->setup();
 
@@ -183,15 +183,15 @@ void SendRecvTestEngine::setupConnections() {
 
   // swap to make sure devicePtrs_[0] in local rank write to devicePtrs_[1] in remote rank
   std::swap(futureRemoteMemory[0], futureRemoteMemory[1]);
-  std::vector<DeviceHandle<mscclpp::SmChannel>> smChannelHandles(2);
+  std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelHandles(2);
   for (int i : {0, 1}) {
     // We assume ranks in the same node
-    smChannels_.emplace_back(smSemaphores[i], futureRemoteMemory[i].get(), (void*)localMemories[i].data());
+    memoryChannels_.emplace_back(memorySemaphores[i], futureRemoteMemory[i].get(), (void*)localMemories[i].data());
   }
-  std::transform(smChannels_.begin(), smChannels_.end(), smChannelHandles.begin(),
-                 [](const mscclpp::SmChannel& smChannel) { return smChannel.deviceHandle(); });
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(constSmChans, smChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::SmChannel>) * smChannelHandles.size()));
+  std::transform(memoryChannels_.begin(), memoryChannels_.end(), memoryChannelHandles.begin(),
+                 [](const mscclpp::MemoryChannel& memoryChannel) { return memoryChannel.deviceHandle(); });
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(constMemChans, memoryChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::MemoryChannel>) * memoryChannelHandles.size()));
 }
 
 std::vector<void*> SendRecvTestEngine::getSendBuff() { return {devicePtrs_[0].get()}; }

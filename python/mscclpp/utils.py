@@ -6,10 +6,11 @@ import os
 import struct
 import subprocess
 import tempfile
-from typing import Any, Type
+from typing import Any, Type, Union, Tuple
 
 import cupy as cp
 import numpy as np
+from ._mscclpp import RawGpuBuffer
 
 try:
     import torch
@@ -36,7 +37,7 @@ class Kernel:
         nblocks: int,
         nthreads: int,
         shared: int,
-        stream: Type[cp.cuda.Stream] or Type[None],
+        stream: Union[cp.cuda.Stream, None],
     ):
         buffer = (ctypes.c_byte * len(params)).from_buffer_copy(params)
         buffer_size = ctypes.c_size_t(len(params))
@@ -135,6 +136,25 @@ class KernelBuilder:
     def __del__(self):
         if hasattr(self, "_tempdir"):
             self._tempdir.cleanup()
+
+
+class GpuBuffer(cp.ndarray):
+    def __new__(
+        cls, shape: Union[int, Tuple[int]], dtype: cp.dtype = float, strides: Tuple[int] = None, order: str = "C"
+    ):
+        # Check if `shape` is valid
+        if isinstance(shape, int):
+            shape = (shape,)
+        try:
+            shape = tuple(shape)
+        except TypeError:
+            raise ValueError("Shape must be a tuple-like or an integer.")
+        if any(s <= 0 for s in shape):
+            raise ValueError("Shape must be positive.")
+        # Create the buffer
+        buffer = RawGpuBuffer(np.prod(shape) * np.dtype(dtype).itemsize)
+        memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer.data(), buffer.bytes(), buffer), 0)
+        return cp.ndarray(shape, dtype=dtype, strides=strides, order=order, memptr=memptr)
 
 
 def pack(*args):

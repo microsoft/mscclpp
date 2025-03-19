@@ -8,11 +8,10 @@ from mscclpp import (
     ExecutionPlan,
     PacketType,
     npkit,
-    alloc_shared_physical_cuda,
-    is_nvls_supported,
+    env,
 )
 import mscclpp.comm as mscclpp_comm
-from mscclpp.utils import KernelBuilder, pack
+from mscclpp.utils import KernelBuilder, GpuBuffer, pack
 import os
 import struct
 
@@ -129,18 +128,6 @@ def dtype_to_mscclpp_dtype(dtype):
         raise ValueError(f"Unknown data type: {dtype}")
 
 
-def allocate_buffer(nelems, dtype):
-    if is_nvls_supported():
-        buffer_raw = alloc_shared_physical_cuda(nelems * cp.dtype(dtype).itemsize)
-        buffer_ptr = cp.cuda.MemoryPointer(
-            cp.cuda.UnownedMemory(buffer_raw.get_ptr(), buffer_raw.size(), buffer_raw), 0
-        )
-        buffer = cp.ndarray(nelems, dtype=dtype, memptr=buffer_ptr)
-        return buffer
-    else:
-        return cp.zeros(nelems, dtype=dtype)
-
-
 def build_bufs(
     collective: str,
     size: int,
@@ -158,17 +145,26 @@ def build_bufs(
         nelems_input = nelems if in_place else nelems // num_ranks
     else:
         nelems_input = nelems
-    nelems_output = nelems
 
-    result_buf = allocate_buffer(nelems_output, dtype=dtype)
+    if "reducescatter" in collective:
+        assert (nelems % num_ranks) == 0, "nelems %d not multiple of num_ranks %d" % (nelems, num_ranks)
+        nelems_output = nelems // num_ranks
+    else:
+        nelems_output = nelems
+
+    result_buf = GpuBuffer(nelems_output, dtype=dtype)
     if in_place:
         if "allgather" in collective:
             input_buf = cp.split(result_buf, num_ranks)[rank]
+        elif "reducescatter" in collective:
+            input_buf = GpuBuffer(nelems_input, dtype=dtype)
+            result_buf = cp.split(input_buf, num_ranks)[rank]
         else:
             input_buf = result_buf
     else:
-        input_buf = allocate_buffer(nelems_input, dtype=dtype)
-    test_buf = cp.zeros(nelems_output, dtype=dtype)
+        input_buf = GpuBuffer(nelems_input, dtype=dtype)
+
+    test_buf = cp.zeros(nelems, dtype=dtype)
 
     return input_buf, result_buf, test_buf
 
@@ -185,8 +181,8 @@ def main(
     mscclpp_group = mscclpp_comm.CommGroup(MPI.COMM_WORLD)
     cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
     executor = Executor(mscclpp_group.communicator)
-    npkit_dump_dir = os.getenv("NPKIT_DUMP_DIR")
-    if npkit_dump_dir is not None:
+    npkit_dump_dir = env().npkit_dump_dir
+    if npkit_dump_dir != "":
         npkit.init(mscclpp_group.my_rank)
     execution_plan = ExecutionPlan(execution_plan_path)
     collective = execution_plan.collective()

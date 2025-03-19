@@ -13,7 +13,7 @@
 namespace mscclpp {
 
 Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
-    : transport_(config.transport), hostHash_(getHostHash()) {
+    : transport_(config.transport), hostHash_(getHostHash()), maxWriteQueueSize_(config.maxWriteQueueSize) {
   if (AllIBTransports.has(transport_)) {
     ibLocal_ = true;
     ibQp_ = contextImpl.getIbContext(transport_)
@@ -33,6 +33,8 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
 }
 
 MSCCLPP_API_CPP Transport Endpoint::transport() { return pimpl_->transport_; }
+
+MSCCLPP_API_CPP int Endpoint::maxWriteQueueSize() { return pimpl_->maxWriteQueueSize_; }
 
 MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() {
   std::vector<char> data;

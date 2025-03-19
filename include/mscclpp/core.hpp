@@ -13,12 +13,9 @@
 #include <bitset>
 #include <future>
 #include <memory>
-#include <mscclpp/gpu.hpp>
-#include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/errors.hpp>
 #include <string>
 #include <vector>
-
-#include "errors.hpp"
 
 namespace mscclpp {
 
@@ -303,23 +300,6 @@ inline TransportFlags operator^(Transport transport1, Transport transport2) {
   return TransportFlags(transport1) ^ transport2;
 }
 
-/// Get the number of available InfiniBand devices.
-///
-/// @return The number of available InfiniBand devices.
-int getIBDeviceCount();
-
-/// Get the name of the InfiniBand device associated with the specified transport.
-///
-/// @param ibTransport The InfiniBand transport to get the device name for.
-/// @return The name of the InfiniBand device associated with the specified transport.
-std::string getIBDeviceName(Transport ibTransport);
-
-/// Get the InfiniBand transport associated with the specified device name.
-///
-/// @param ibDeviceName The name of the InfiniBand device to get the transport for.
-/// @return The InfiniBand transport associated with the specified device name.
-Transport getIBTransportByDeviceName(const std::string& ibDeviceName);
-
 class Context;
 class Connection;
 
@@ -388,6 +368,11 @@ class Endpoint {
   /// @return The transport used.
   Transport transport();
 
+  /// Get the maximum write queue size.
+  ///
+  /// @return The maximum number of write requests that can be queued.
+  int maxWriteQueueSize();
+
   /// Serialize the Endpoint object to a vector of characters.
   ///
   /// @return A vector of characters representing the serialized Endpoint object.
@@ -416,6 +401,10 @@ class Endpoint {
 /// Represents a connection between two processes.
 class Connection {
  public:
+  /// Constructor.
+  /// @param maxWriteQueueSize The maximum number of write requests that can be queued.
+  Connection(int maxWriteQueueSize) : maxWriteQueueSize(maxWriteQueueSize){};
+
   virtual ~Connection() = default;
 
   /// Write data from a source @ref RegisteredMemory to a destination @ref RegisteredMemory.
@@ -454,10 +443,16 @@ class Connection {
   /// @return name of @ref transport() -> @ref remoteTransport()
   std::string getTransportName();
 
+  /// Get the maximum write queue size
+  ///
+  /// @return The maximum number of write requests that can be queued.
+  int getMaxWriteQueueSize();
+
  protected:
   // Internal methods for getting implementation pointers.
   static std::shared_ptr<RegisteredMemory::Impl> getImpl(RegisteredMemory& memory);
   static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
+  int maxWriteQueueSize;
 };
 
 /// Used to configure an endpoint.
@@ -468,18 +463,29 @@ struct EndpointConfig {
   static const int DefaultMaxWrPerSend = 64;
 
   Transport transport;
-  int ibMaxCqSize = DefaultMaxCqSize;
-  int ibMaxCqPollNum = DefaultMaxCqPollNum;
-  int ibMaxSendWr = DefaultMaxSendWr;
-  int ibMaxWrPerSend = DefaultMaxWrPerSend;
-
-  /// Default constructor. Sets transport to Transport::Unknown.
-  EndpointConfig() : transport(Transport::Unknown) {}
+  int ibMaxCqSize;
+  int ibMaxCqPollNum;
+  int ibMaxSendWr;
+  int ibMaxWrPerSend;
+  int maxWriteQueueSize;
 
   /// Constructor that takes a transport and sets the other fields to their default values.
   ///
   /// @param transport The transport to use.
-  EndpointConfig(Transport transport) : transport(transport) {}
+  /// @param ibMaxCqSize The maximum completion queue size.
+  /// @param ibMaxCqPollNum The maximum completion queue poll number.
+  /// @param ibMaxSendWr The maximum send work requests.
+  /// @param ibMaxWrPerSend The maximum work requests per send.
+  /// @param maxWriteQueueSize The maximum write queue size.
+  EndpointConfig(Transport transport = Transport::Unknown, int ibMaxCqSize = DefaultMaxCqSize,
+                 int ibMaxCqPollNum = DefaultMaxCqPollNum, int ibMaxSendWr = DefaultMaxSendWr,
+                 int ibMaxWrPerSend = DefaultMaxWrPerSend, int maxWriteQueueSize = -1)
+      : transport(transport),
+        ibMaxCqSize(ibMaxCqSize),
+        ibMaxCqPollNum(ibMaxCqPollNum),
+        ibMaxSendWr(ibMaxSendWr),
+        ibMaxWrPerSend(ibMaxWrPerSend),
+        maxWriteQueueSize(maxWriteQueueSize) {}
 };
 
 /// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
