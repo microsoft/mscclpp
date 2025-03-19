@@ -91,6 +91,7 @@ struct ncclComm {
   std::unordered_map<channelKey, ChannelInfo> channelScratchInfos;
   std::shared_ptr<char> scratchBuff;
   std::vector<mscclpp::RegisteredMemory> remoteScratchRegMemories;
+  std::vector<ChannelInfo> channelInfos;
 
   uint32_t numScratchBuff;
   uint32_t buffFlag;
@@ -268,10 +269,14 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
           setupMemoryChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
       ChannelInfo channelInfo{outChannels, setupMemoryChannelDeviceHandles(outChannels)};
       recvIt = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
+      if (mscclppDisableChannelCache == true) {
+        comm->channelInfos.push_back(channelInfo);
+      }
     }
 
     memoryChannels = sendIt->second.memoryChannelDeviceHandles.get();
-    memoryOutChannels = recvIt->second.memoryChannelDeviceHandles.get();
+    memoryOutChannels = mscclppDisableChannelCache == true ? comm->channelInfos.back().memoryChannelDeviceHandles.get()
+                                                           : recvIt->second.memoryChannelDeviceHandles.get();
   }
 
   Op reduceOp = getReduceOp(op);
@@ -346,9 +351,13 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
                    [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
     ChannelInfo channelInfo{channels, setupMemoryChannelDeviceHandles(channels)};
     it = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
+    if (mscclppDisableChannelCache == true) {
+      comm->channelInfos.push_back(channelInfo);
+    }
   }
 
-  memoryChannels = it->second.memoryChannelDeviceHandles.get();
+  memoryChannels = mscclppDisableChannelCache == true ? comm->channelInfos.back().memoryChannelDeviceHandles.get()
+                                                      : it->second.memoryChannelDeviceHandles.get();
   if ((char*)sendbuff == (char*)recvbuff + rank * sendcount) {
     CUDACHECK(allgather<false>((int*)sendbuff, (int*)nullptr, (int*)recvbuff, memoryChannels, offsetOut, rank,
                                NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
@@ -745,6 +754,12 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     }
   }
 
+  cudaStreamCaptureStatus status;
+  cudaStreamGetCaptureInfo(stream, &status);
+  if (status == cudaStreamCaptureStatusActive && rank == 0) {
+    WARN("capturing the graph with bytes %zu", bytes);
+  }
+
   if (plan == nullptr)
     return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
 
@@ -839,6 +854,9 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
         "or comm is nullptr.");
     return ncclInvalidArgument;
   }
+  // get capture status
+  cudaStreamCaptureStatus status;
+  cudaStreamIsCapturing(stream, &status);
 
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
