@@ -80,7 +80,7 @@ class Instruction(Enum):
     read_reduce_copy_send = "rrcs"
     reduce_send = "rs"
     copy = "copy"
-    reduce = "reduce"
+    reduce = "re"
     copy_packet = "cpkt"
     transform_to_packet = "tpkt"
     reduce_send_packet = "rspkt"
