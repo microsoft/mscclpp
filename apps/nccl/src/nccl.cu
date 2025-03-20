@@ -189,6 +189,7 @@ struct ncclComm {
   std::unordered_map<channelKey, ChannelInfo> channelScratchInfos;
   std::shared_ptr<char> scratchBuff;
   std::vector<mscclpp::RegisteredMemory> remoteScratchRegMemories;
+  std::vector<ChannelInfo> channelInfos;
 
   uint32_t numScratchBuff;
   uint32_t buffFlag;
@@ -235,6 +236,18 @@ static mscclpp::Transport getTransport(int, int) {
   //   return IBs[rank % nRanksPerNode];
   // }
   return mscclpp::Transport::CudaIpc;
+}
+
+static Op getReduceOp(ncclRedOp_t op) {
+  switch (op) {
+    case ncclSum:
+      return SUM;
+    case ncclMin:
+      return MIN;
+    default:
+      WARN("op is invalid, op: %d", op);
+      throw mscclpp::Error("Invalid operation", mscclpp::ErrorCode::InternalError);
+  }
 }
 
 static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
@@ -361,33 +374,38 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
           setupMemoryChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
       ChannelInfo channelInfo{outChannels, setupMemoryChannelDeviceHandles(outChannels)};
       recvIt = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
+      if (mscclppDisableChannelCache == true) {
+        comm->channelInfos.push_back(channelInfo);
+      }
     }
 
     memoryChannels = sendIt->second.memoryChannelDeviceHandles.get();
-    memoryOutChannels = recvIt->second.memoryChannelDeviceHandles.get();
+    memoryOutChannels = mscclppDisableChannelCache == true ? comm->channelInfos.back().memoryChannelDeviceHandles.get()
+                                                           : recvIt->second.memoryChannelDeviceHandles.get();
   }
 
+  Op reduceOp = getReduceOp(op);
   switch (datatype) {
     case ncclFloat16:
       CUDACHECK(allreduce((half*)sendbuff, (half*)comm->scratchBuff.get(), (half*)recvbuff, memoryChannels,
                           memoryOutChannels, offsetIn, offsetOut, offsetScratch, rank, NRANKS_PER_NODE,
-                          comm->comm->bootstrap()->getNranks(), count, stream));
+                          comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
       break;
     case ncclFloat32:
       CUDACHECK(allreduce((float*)sendbuff, (float*)comm->scratchBuff.get(), (float*)recvbuff, memoryChannels,
                           memoryOutChannels, offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(),
-                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream));
+                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
       break;
     case ncclBfloat16:
       CUDACHECK(allreduce((__bfloat16*)sendbuff, (__bfloat16*)comm->scratchBuff.get(), (__bfloat16*)recvbuff,
                           memoryChannels, memoryOutChannels, offsetIn, offsetOut, offsetScratch, rank, NRANKS_PER_NODE,
-                          comm->comm->bootstrap()->getNranks(), count, stream));
+                          comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
       break;
     case ncclInt32:
     case ncclUint32:
       CUDACHECK(allreduce((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels,
                           memoryOutChannels, offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(),
-                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream));
+                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
       break;
     default:
       WARN("datatype is invalid, datatype: %d", datatype);
@@ -442,8 +460,12 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
                      [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
       ChannelInfo channelInfo{channels, setupMemoryChannelDeviceHandles(channels)};
       it = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
+      if (mscclppDisableChannelCache == true) {
+        comm->channelInfos.push_back(channelInfo);
+      }
     }
-    memoryChannels = it->second.memoryChannelDeviceHandles.get();
+    memoryChannels = mscclppDisableChannelCache == true ? comm->channelInfos.back().memoryChannelDeviceHandles.get()
+                                                        : it->second.memoryChannelDeviceHandles.get();
   };
 
   if (bytes <= 32 * (1 << 20)) {
@@ -1118,10 +1140,10 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
       return ncclInternalError;
     }
   } catch (const mscclpp::CudaError& e) {
-    INFO(MSCCLPP_ALLOC, "Cuda error: %s", e.what());
+    WARN("Cuda error: %s", e.what());
     return ncclUnhandledCudaError;
   } catch (const mscclpp::CuError& e) {
-    INFO(MSCCLPP_ALLOC, "Cu error: %s", e.what());
+    WARN("Cu error: %s", e.what());
     return ncclUnhandledCudaError;
   } catch (const mscclpp::BaseError& e) {
     WARN("Base error: %s", e.what());
