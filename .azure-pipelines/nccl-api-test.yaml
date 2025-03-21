@@ -190,7 +190,7 @@ jobs:
           -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c " \
           cd; git clone https://github.com/NVIDIA/nccl.git;          \
           cd nccl;                                                   \
-          make -j src.build CUDA_HOME=/usr/local/cuda-12.4 NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80""'
+          make -j src.build NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80""'
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
