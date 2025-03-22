@@ -318,11 +318,6 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     return ncclInvalidArgument;
   }
 
-  if (op != ncclSum) {
-    WARN("Only ncclSum is supported in the fallback path");
-    return ncclInvalidArgument;
-  }
-
   // Declarating variables
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;
