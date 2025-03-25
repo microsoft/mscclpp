@@ -153,6 +153,26 @@ If MSCCL++ is built on AMD platforms, `libmscclpp_nccl.so` would replace the [RC
 
 See limitations of the current NCCL over MSCCL++ from [here](../design/nccl-over-mscclpp.md#limitations).
 
+MSCCL++ also supports fallback to NCCL/RCCL collectives by adding following environment variables.
+-x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE
+-x MSCCLPP_NCCL_LIB_PATH=/path_to_nccl_lib/libnccl.so or /path_to_rccl_lib/librccl.so (AMD platformis)
+-x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="list of collective name[s]"
+
+The value "list of collective name[s]" can be a combination of collectives, such as "allgather," "allreduce," "broadcast," and "reducescatter." Alternatively, it can simply be set to "all" to enable fallback for all these collectives.
+By default, if the parameter MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION is not specified, "all" will be applied.
+
+Example 1, Allreduce will fallback to NCCL ncclAllReduce since allreduce is in the fallback list.
+```bash
+mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/apps/nccl/libmscclpp_nccl.so -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=$NCCL_BUILD/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce,allgather" ./build/all_reduce_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
+```
+
+Example 2, ReduceScatter will still use msccl++ implementation since reducescatter is not in the fallbacklist.
+```bash
+mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/apps/nccl/libmscclpp_nccl.so -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=$NCCL_BUILD/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="broadcast" -x MSCCLPP_EXECUTION_PLAN_DIR=/$PATH_TO_EXECUTION_PLANS/execution-files ./build/reduce_scatter_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
+```
+
+On AMD platforms, you need to add RCCL_MSCCL_ENABLE=0 to avoid conflicts with the fallback features.
+
 ### C++ Benchmark (mscclpp-test, *Deprecated*)
 
 *NOTE: mscclpp-test is retired and maintained only as an example of C++ implementation. If you want to get the latest performance numbers, please use the Python benchmark or the NCCL APIs instead.*
