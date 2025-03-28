@@ -55,7 +55,7 @@ struct RegisteredMemory::Impl {
   std::vector<TransportInfo> transportInfos;
 
   // For sharing memory handle via file descriptor
-  int fileDesc = 0;
+  int fileDesc = -1;
 
   Impl(void* data, size_t size, TransportFlags transports, Context::Impl& contextImpl);
   /// Constructs a RegisteredMemory::Impl from a vector of data. The constructor should only be used for the remote

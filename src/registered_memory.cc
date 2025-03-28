@@ -301,7 +301,7 @@ RegisteredMemory::Impl::~Impl() {
       MSCCLPP_CULOG_WARN(cuMemUnmap((CUdeviceptr)base, size));
       MSCCLPP_CULOG_WARN(cuMemRelease(handle));
       MSCCLPP_CULOG_WARN(cuMemAddressFree((CUdeviceptr)base, size));
-      if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
+      if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR && fileDesc >= 0) {
         close(fileDesc);
       }
     } else {
@@ -313,7 +313,7 @@ RegisteredMemory::Impl::~Impl() {
       }
     }
     data = nullptr;
-    fileDesc = 0;
+    fileDesc = -1;
   }
 }
 
