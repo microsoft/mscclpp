@@ -108,8 +108,7 @@ void* gpuCallocPhysical(size_t bytes, size_t gran, size_t align) {
   CUmemAllocationProp prop = {};
   prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  prop.requestedHandleTypes =
-      (CUmemAllocationHandleType)(requestedHandleTypes);
+  prop.requestedHandleTypes = (CUmemAllocationHandleType)(requestedHandleTypes);
   prop.location.id = currentDevice;
 
   if (gran == 0) {
