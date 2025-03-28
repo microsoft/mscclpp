@@ -193,7 +193,7 @@ bool isNvlsSupported() {
     CUdevice dev;
     MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
     MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isMulticastSupported, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
-    result = (isMulticastSupported == 1);
+    return isMulticastSupported == 1;
   }
   return result;
 #endif
