@@ -87,7 +87,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
           throw mscclpp::SysError("getpid() failed", errno);
         }
         MSCCLPP_CUTHROW(cuMemExportToShareableHandle(&transportInfo.fileDesc, handle, getNvlsMemHandleType(), 0));
-        fileDesc = transportInfo.fileDesc;
+        this->fileDesc = transportInfo.fileDesc;
       }
       transportInfo.offsetFromBase = (char*)data - (char*)baseDataPtr;
       MSCCLPP_CUTHROW(cuMemRelease(handle));
@@ -255,15 +255,15 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
         if (rootPidFd < 0) {
           throw mscclpp::SysError("pidfd_open() failed", errno);
         }
-        int fileDesc = syscall(SYS_pidfd_getfd, rootPidFd, entry.fileDesc, 0);
-        if (fileDesc < 0) {
+        int fd = syscall(SYS_pidfd_getfd, rootPidFd, entry.fileDesc, 0);
+        if (fd < 0) {
           throw mscclpp::SysError("pidfd_getfd() failed", errno);
         }
-        INFO(MSCCLPP_P2P, "Get file descriptor %d from pidfd %d on peer 0x%lx", fileDesc, rootPidFd, hostHash);
-        MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, reinterpret_cast<void*>(fileDesc),
+        INFO(MSCCLPP_P2P, "Get file descriptor %d from pidfd %d on peer 0x%lx", fd, rootPidFd, hostHash);
+        MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, reinterpret_cast<void*>(fd),
                                                        CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
         close(rootPidFd);
-        close(fileDesc);
+        close(fd);
       }
       size_t minGran = detail::getMulticastGranularity(size, CU_MULTICAST_GRANULARITY_MINIMUM);
       size_t recommendedGran = detail::getMulticastGranularity(size, CU_MULTICAST_GRANULARITY_RECOMMENDED);
