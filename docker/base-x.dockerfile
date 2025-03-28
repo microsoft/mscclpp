@@ -20,16 +20,13 @@ RUN apt-get update && \
         lsb-release \
         openssh-client \
         openssh-server \
+        libopenmpi-dev \
         python3-dev \
         python3-pip \
         python3-setuptools \
         python3-wheel \
         sudo \
-        wget \
-        && \
-    apt-get autoremove && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /tmp/*
+        wget
 
 # Install OFED
 ARG OFED_VERSION=5.2-2.2.3.0
@@ -41,25 +38,21 @@ RUN cd /tmp && \
     MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-x86_64/mlnxofedinstall --user-space-only --without-fw-update --without-ucx-cuda --force --all && \
     rm -rf /tmp/MLNX_OFED_LINUX-${OFED_VERSION}*
 
-# Install OpenMPI
-ENV OPENMPI_VERSION=4.1.5
-RUN cd /tmp && \
-    export ompi_v_parsed="$(echo ${OPENMPI_VERSION} | sed -E 's/^([0-9]+)\.([0-9]+)\..*/\1.\2/')" && \
-    wget -q https://download.open-mpi.org/release/open-mpi/v${ompi_v_parsed}/openmpi-${OPENMPI_VERSION}.tar.gz && \
-    tar xzf openmpi-${OPENMPI_VERSION}.tar.gz && \
-    cd openmpi-${OPENMPI_VERSION} && \
-    ./configure --prefix=/usr/local/mpi && \
-    make -j && \
-    make install && \
-    cd .. && \
-    rm -rf /tmp/openmpi-${OPENMPI_VERSION}*
+# Install OpenMPI (should be done after the OFED installation) & clean apt cache
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libopenmpi-dev \
+        && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/*
 
-ARG EXTRA_LD_PATH=/usr/local/cuda-12.1/compat:/usr/local/cuda-12.1/lib64
-ENV PATH="/usr/local/mpi/bin:${PATH}" \
-    LD_LIBRARY_PATH="/usr/local/mpi/lib:${EXTRA_LD_PATH}:${LD_LIBRARY_PATH}"
+# OpenMPI short link (for compatibility with old images)
+RUN ln -s /usr/lib/x86_64-linux-gnu/openmpi /usr/local/mpi
 
-RUN echo PATH="${PATH}" > /etc/environment && \
-    echo LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" >> /etc/environment
+ARG EXTRA_LD_PATH=
+ENV LD_LIBRARY_PATH="${EXTRA_LD_PATH}:${LD_LIBRARY_PATH}"
+RUN echo LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" >> /etc/environment
 
 ENTRYPOINT []
 WORKDIR /
