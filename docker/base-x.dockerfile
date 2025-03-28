@@ -31,11 +31,12 @@ RUN apt-get update && \
 # Install OFED
 ARG OFED_VERSION=5.2-2.2.3.0
 RUN cd /tmp && \
+    ARCH=$(uname -m) && \
     OS_VERSION=$(lsb_release -rs) && \
     OS_VERSION=ubuntu${OS_VERSION} && \
-    wget -q https://content.mellanox.com/ofed/MLNX_OFED-${OFED_VERSION}/MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-x86_64.tgz && \
-    tar xzf MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-x86_64.tgz && \
-    MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-x86_64/mlnxofedinstall --user-space-only --without-fw-update --without-ucx-cuda --force --all && \
+    wget -q https://content.mellanox.com/ofed/MLNX_OFED-${OFED_VERSION}/MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-${ARCH}.tgz && \
+    tar xzf MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-${ARCH}.tgz && \
+    MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-${ARCH}/mlnxofedinstall --user-space-only --without-fw-update --without-ucx-cuda --force --all && \
     rm -rf /tmp/MLNX_OFED_LINUX-${OFED_VERSION}*
 
 # Install OpenMPI (should be done after the OFED installation) & clean apt cache

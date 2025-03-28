@@ -51,7 +51,16 @@ if [[ -z ${OFED_VERSION} ]]; then
     OFED_VERSION=${DEFAULT_OFED_VERSION}
 fi
 
-docker build -t ${GHCR}-common:base-${TARGET} \
+if [[ "$(uname -m)" == "x86_64" ]]; then
+    DOCKER_BUILD="docker build --platform linux/amd64"
+elif [[ "$(uname -m)" == "aarch64" ]]; then
+    DOCKER_BUILD="docker build --platform linux/arm64"
+else
+    echo "Unsupported architecture: $(uname -m)"
+    exit 1
+fi
+
+${DOCKER_BUILD} -t ${GHCR}-common:base-${TARGET} \
     -f docker/base-x.dockerfile \
     --build-arg BASE_IMAGE=${baseImageTable[${TARGET}]} \
     --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
@@ -60,7 +69,7 @@ docker build -t ${GHCR}-common:base-${TARGET} \
 
 if [[ ${TARGET} == rocm* ]]; then
     echo "Building ROCm base image..."
-    docker build -t ${GHCR}:base-${TARGET} \
+    ${DOCKER_BUILD} -t ${GHCR}:base-${TARGET} \
         -f docker/base-x-rocm.dockerfile \
         --build-arg BASE_IMAGE=${GHCR}-common:base-${TARGET} \
         --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
@@ -73,7 +82,7 @@ else
     docker rmi --no-prune ${GHCR}-common:base-${TARGET}
 fi
 
-docker build -t ${GHCR}:base-dev-${TARGET} \
+${DOCKER_BUILD} -t ${GHCR}:base-dev-${TARGET} \
     -f docker/base-dev-x.dockerfile \
     --build-arg BASE_IMAGE=${GHCR}:base-${TARGET} \
     --build-arg TARGET=${TARGET} .
