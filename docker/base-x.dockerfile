@@ -20,7 +20,6 @@ RUN apt-get update && \
         lsb-release \
         openssh-client \
         openssh-server \
-        libopenmpi-dev \
         python3-dev \
         python3-pip \
         python3-setuptools \
