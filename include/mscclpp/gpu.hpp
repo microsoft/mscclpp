@@ -101,8 +101,8 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 // NVLS
 #if !defined(__HIP_PLATFORM_AMD__)
 #include <linux/version.h>
-// We need CU_MEM_HANDLE_TYPE_FABRIC (instroduced in cuda12.3) to support sharing handles across GPUs via sockets
-#define CUDA_NVLS_SUPPORTED ((CUDART_VERSION >= 12030) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)))
+// We need CUDA 12.0 above and kernel 5.6.0 above for NVLS
+#define CUDA_NVLS_SUPPORTED ((CUDART_VERSION >= 12000) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)))
 #else  // !defined(__HIP_PLATFORM_AMD__)
 #define CUDA_NVLS_SUPPORTED 0
 #endif  // !defined(__HIP_PLATFORM_AMD__)
