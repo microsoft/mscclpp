@@ -24,7 +24,8 @@
     "runArgs": [
         "--net=host",
         "--ipc=host",
-        "--gpus=all"
+        "--gpus=all",
+        "--ulimit=memlock=-1:-1"
     ],
     "workspaceFolder": "/home/mscclpp/mscclpp",
     "workspaceMount": "source=${localWorkspaceFolder},target=/home/mscclpp/mscclpp,type=bind,consistency=cached"
