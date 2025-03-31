@@ -239,6 +239,7 @@ class GpuBuffer {
 #endif  // CUDA_NVLS_SUPPORTED
 
     bytes_ = nelems * sizeof(T);
+    MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 #if defined(__HIP_PLATFORM_AMD__)
     memory_ = detail::gpuCallocUncachedShared<T>(nelems);
 #else   // !defined(__HIP_PLATFORM_AMD__)
@@ -264,9 +265,14 @@ class GpuBuffer {
   /// @return A device pointer to the allocated memory.
   T* data() { return memory_.get(); }
 
+  /// Returns the device id of the allocated memory.
+  /// @return The device id.
+  int deviceId() const { return deviceId_; }
+
  private:
   size_t nelems_;
   size_t bytes_;
+  int deviceId_;
   std::shared_ptr<T> memory_;
 };
 
