@@ -193,6 +193,11 @@ void NvlsConnection::Impl::freeBuffer(size_t offset, size_t size) noexcept {
 }
 
 std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUdeviceptr devicePtr, size_t devBuffSize) {
+  if (!isCuMemMapAllocated((void*)devicePtr)) {
+    throw Error("This NVLS connection tried to bind a buffer that was not allocated with cuMemMap",
+                ErrorCode::InvalidUsage);
+  }
+
   devBuffSize = ((devBuffSize + minMcGran_ - 1) / minMcGran_) * minMcGran_;
   size_t offset = allocateBuffer(devBuffSize);
   MSCCLPP_CUTHROW(cuMulticastBindAddr(mcHandle_, offset /*mcOffset*/, devicePtr, devBuffSize, 0));

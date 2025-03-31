@@ -202,6 +202,11 @@ void gpuMemcpy(T* dst, const T* src, size_t nelems, cudaMemcpyKind kind = cudaMe
 /// @return True if NVLink SHARP (NVLS) is supported, false otherwise.
 bool isNvlsSupported();
 
+/// Check if ptr is allocaed by cuMemMap
+/// @param ptr The pointer to check.
+/// @return True if the pointer is allocated by cuMemMap, false otherwise.
+bool isCuMemMapAllocated([[maybe_unused]] void* ptr);
+
 /// Allocates a GPU memory space specialized for communication. The memory is zeroed out. Get the device pointer by
 /// `GpuBuffer::data()`.
 ///
