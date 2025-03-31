@@ -20,16 +20,34 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t nThread = blockDim.x * gridDim.x;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
+  const size_t peerRootIdx = (root == rank) ? nPeer : ((root < rank) ? root : (root - 1));
 
   __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> memChans[NRANKS_PER_NODE - 1];
+//  if (threadIdx.x < nPeer) {
+//    memChans[threadIdx.x] = memoryChannels[chanOffset + threadIdx.x];
+//    memChans[threadIdx.x].relaxedSignal();
+//    memChans[threadIdx.x].wait();
+//  }
+
   if (threadIdx.x < nPeer) {
+    // My Id in peer.
+    const size_t myIdInPeer = (threadIdx.x < rank) ? (rank - 1) : rank;
+    const size_t offset = myIdInPeer * sizeof(void *);
     memChans[threadIdx.x] = memoryChannels[chanOffset + threadIdx.x];
-    memChans[threadIdx.x].relaxedSignal();
+    // Write recvbuff (64 bytes).
+    void **dst = reinterpret_cast<void **>(memChans[threadIdx.x].dst_); // Peer's scratchbuff.
+    *(dst + offset) = recvbuff;
+    memChans[threadIdx.x].signal();
+    //memChans[threadIdx.x].relaxedSignal();
     memChans[threadIdx.x].wait();
   }
   __syncthreads();
 
-  const size_t peerRootIdx = (root == rank) ? nPeer : ((root < rank) ? root : (root - 1));
+  if (threadIdx.x < nPeer) {
+    void **scratch_ = reinterpret_cast<void **>(scratchbuff);  // My scratchbuff.
+    printf("rank = %ld, recvbuff = %p, recvbuff_[0] = %p, recvbuff_[1] = %p\n", rank, recvbuff, 
+		    *scratch_, *(scratch_ + sizeof(void *)));
+  }
 
   const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
   const size_t bytes = bytesPerGPU;
