@@ -1,0 +1,32 @@
+{
+    "name": "MSCCL++ Dev Container",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "args": {
+            "BASE_IMAGE": "ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.8"
+        }
+    },
+    "remoteUser": "mscclpp",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                // Python
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                // C++
+                "ms-vscode.cpptools",
+                "ms-vscode.cpptools-extension-pack",
+                "ms-vscode.cmake-tools"
+            ]
+        }
+    },
+    "privileged": true,
+    "runArgs": [
+        "--net=host",
+        "--ipc=host",
+        "--gpus=all",
+        "--ulimit=memlock=-1:-1"
+    ],
+    "workspaceFolder": "/home/mscclpp/mscclpp",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/home/mscclpp/mscclpp,type=bind,consistency=cached"
+}
