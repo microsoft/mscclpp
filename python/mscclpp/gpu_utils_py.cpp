@@ -13,7 +13,7 @@ constexpr int BYTE_BITS = 8;
 
 static DLDeviceType getDeviceType() {
 #if defined(__HIP_PLATFORM_AMD__)
-  return kDLROCm;
+  return kDLROCM;
 #else
   return kDLCUDA;
 #endif
