@@ -1,12 +1,15 @@
 #include <dlpack/dlpack.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/shared_ptr.h>
+#include <nanobind/stl/string.h>
 
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/gpu_utils.hpp>
 
 namespace nb = nanobind;
 using namespace mscclpp;
+
+constexpr int BYTE_BITS = 8;
 
 static DLDeviceType getDeviceType() {
 #if defined(__HIP_PLATFORM_AMD__)
@@ -35,7 +38,7 @@ static DLDataType getDlType(std::string type) {
 static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string type) {
   int64_t* shape = new int64_t[1];
   DLDataType dtype = getDlType(type);
-  shape[0] = buffer.nelems() / (dtype.bits / sizeof(char));
+  shape[0] = buffer.nelems() / ((dtype.bits * dtype.lanes + 7) / BYTE_BITS);
 
   DLManagedTensor* dlManagedTensor = new DLManagedTensor();
   dlManagedTensor->dl_tensor.data = buffer.data();
@@ -48,26 +51,28 @@ static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string type) {
   dlManagedTensor->dl_tensor.dtype = getDlType(type);
   dlManagedTensor->manager_ctx = new GpuBuffer<char>(buffer);
   dlManagedTensor->deleter = [](DLManagedTensor* self) {
-    auto buffer = static_cast<GpuBuffer<char>*>(self->manager_ctx);
-    delete buffer;
+    delete static_cast<GpuBuffer<char>*>(self->manager_ctx);
+    self->manager_ctx = nullptr;
     self->dl_tensor.data = nullptr;
     if (self->dl_tensor.shape != nullptr) {
       delete[] self->dl_tensor.shape;
-      self->dl_tensor.data = nullptr;
+      self->dl_tensor.shape = nullptr;
     }
     delete self;
   };
 
-  return nb::capsule(dlManagedTensor, [](void* self) noexcept {
-    DLManagedTensor* tensor = static_cast<DLManagedTensor*>(self);
-    auto buffer = static_cast<GpuBuffer<char>*>(tensor->manager_ctx);
-    delete buffer;
-    tensor->dl_tensor.data = nullptr;
-    if (tensor->dl_tensor.shape != nullptr) {
-      delete[] tensor->dl_tensor.shape;
-      tensor->dl_tensor.data = nullptr;
+  return nb::capsule(dlManagedTensor, "dltensor", [](void* self) noexcept {
+    nb::capsule* capsule = static_cast<nb::capsule*>(self);
+    if (strcmp(capsule->name(), "dltensor") != 0) {
+      return;
     }
-    delete tensor;
+    DLManagedTensor* tensor = static_cast<DLManagedTensor*>(capsule->data());
+    if (tensor == nullptr) {
+      return;
+    }
+    if (tensor->deleter) {
+      tensor->deleter(tensor);
+    }
   });
 }
 

@@ -229,6 +229,7 @@ class GpuBuffer {
       bytes_ = 0;
       return;
     }
+    MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 #if (CUDA_NVLS_SUPPORTED)
     if (isNvlsSupported()) {
       size_t gran = detail::getMulticastGranularity(nelems * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
@@ -239,7 +240,6 @@ class GpuBuffer {
 #endif  // CUDA_NVLS_SUPPORTED
 
     bytes_ = nelems * sizeof(T);
-    MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 #if defined(__HIP_PLATFORM_AMD__)
     memory_ = detail::gpuCallocUncachedShared<T>(nelems);
 #else   // !defined(__HIP_PLATFORM_AMD__)
