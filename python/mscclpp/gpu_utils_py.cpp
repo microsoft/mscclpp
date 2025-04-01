@@ -61,19 +61,22 @@ static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType) {
     delete self;
   };
 
-  return nb::capsule(dlManagedTensor, "dltensor", [](void* self) noexcept {
-    nb::capsule* capsule = static_cast<nb::capsule*>(self);
-    if (strcmp(capsule->name(), "dltensor") != 0) {
+  PyObject* dlCapsule = PyCapsule_New(static_cast<void*>(dlManagedTensor), "dltensor", [](PyObject* capsule) {
+    if (PyCapsule_IsValid(capsule, "used_dltensor")) {
       return;
     }
-    DLManagedTensor* tensor = static_cast<DLManagedTensor*>(capsule->data());
-    if (tensor == nullptr) {
+    if (!PyCapsule_IsValid(capsule, "dltensor")) {
       return;
     }
-    if (tensor->deleter) {
-      tensor->deleter(tensor);
+    DLManagedTensor* managedTensor = static_cast<DLManagedTensor*>(PyCapsule_GetPointer(capsule, "dltensor"));
+    if (managedTensor == nullptr) {
+      return;
+    }
+    if (managedTensor->deleter) {
+      managedTensor->deleter(managedTensor);
     }
   });
+  return nb::steal<nb::capsule>(dlCapsule);
 }
 
 void register_gpu_utils(nb::module_& m) {
