@@ -35,9 +35,9 @@ static DLDataType getDlType(std::string type) {
   }
 }
 
-static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string type) {
+static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType) {
   int64_t* shape = new int64_t[1];
-  DLDataType dtype = getDlType(type);
+  DLDataType dtype = getDlType(dataType);
   shape[0] = buffer.nelems() / ((dtype.bits * dtype.lanes + 7) / BYTE_BITS);
 
   DLManagedTensor* dlManagedTensor = new DLManagedTensor();
@@ -48,7 +48,7 @@ static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string type) {
   dlManagedTensor->dl_tensor.strides = nullptr;
   dlManagedTensor->dl_tensor.shape = shape;
   dlManagedTensor->dl_tensor.byte_offset = 0;
-  dlManagedTensor->dl_tensor.dtype = getDlType(type);
+  dlManagedTensor->dl_tensor.dtype = dtype;
   dlManagedTensor->manager_ctx = new GpuBuffer<char>(buffer);
   dlManagedTensor->deleter = [](DLManagedTensor* self) {
     delete static_cast<GpuBuffer<char>*>(self->manager_ctx);
@@ -85,5 +85,5 @@ void register_gpu_utils(nb::module_& m) {
       .def("bytes", &GpuBuffer<char>::bytes)
       .def("data", [](GpuBuffer<char>& self) { return reinterpret_cast<uintptr_t>(self.data()); })
       .def("device_id", &GpuBuffer<char>::deviceId)
-      .def("to_dlpack", &toDlpack, nb::arg("type"));
+      .def("to_dlpack", [](GpuBuffer<char>& self, std::string dataType) { return toDlpack(self, dataType); });
 }
