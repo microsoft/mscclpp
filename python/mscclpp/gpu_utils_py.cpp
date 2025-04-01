@@ -20,15 +20,15 @@ static DLDeviceType getDeviceType() {
 }
 
 static DLDataType getDlType(std::string type) {
-  if (type == "float") {
+  if (type == "torch.float") {
     return DLDataType{kDLFloat, 32, 1};
-  } else if (type == "int") {
+  } else if (type == "torch.int") {
     return DLDataType{kDLInt, 32, 1};
-  } else if (type == "uint") {
+  } else if (type == "torch.uint32") {
     return DLDataType{kDLUInt, 32, 1};
-  } else if (type == "bfloat") {
+  } else if (type == "torch.bfloat16") {
     return DLDataType{kDLBfloat, 16, 1};
-  } else if (type == "float16") {
+  } else if (type == "torch.float16") {
     return DLDataType{kDLFloat, 16, 1};
   } else {
     throw Error("Unsupported type: " + type, ErrorCode::InvalidUsage);
