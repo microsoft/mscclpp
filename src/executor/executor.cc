@@ -124,7 +124,7 @@ struct ExecutionContext {
   std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
-  std::vector<DeviceExecutionPlan> deviceExecutionPlansNoCache;
+  std::vector<std::vector<DeviceExecutionPlan>> deviceExecutionPlansNoCache;
   std::vector<std::shared_ptr<char>> deviceExecutionPlansBuffersNoCache;
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
   std::shared_ptr<char> scratchBuffer;
@@ -194,10 +194,10 @@ struct Executor::Impl {
       this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, rank, plan);
       if (mscclppDisableChannelCache == true) {
         this->contexts[key].deviceExecutionPlansBuffersNoCache.push_back(
-  	  GpuBuffer(this->contexts[key].deviceExecutionPlansNoCache.size() * sizeof(DeviceExecutionPlan)).memory());
+          GpuBuffer(this->contexts[key].deviceExecutionPlansNoCache.back().size() * sizeof(DeviceExecutionPlan)).memory());
         gpuMemcpy(this->contexts[key].deviceExecutionPlansBuffersNoCache.back().get(),
-  		(char*)this->contexts[key].deviceExecutionPlansNoCache.data(),
-  		this->contexts[key].deviceExecutionPlansNoCache.size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
+                  (char*)this->contexts[key].deviceExecutionPlansNoCache.back().data(),
+                  this->contexts[key].deviceExecutionPlansNoCache.back().size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
       } else {
       this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
           GpuBuffer(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
@@ -219,12 +219,12 @@ struct Executor::Impl {
 
     // Initialize memory pool with maxScratchBufferSize and initial blocks 10
     static MemoryPool memoryPool(maxScratchBufferSize, 10);
-    
+    std::shared_ptr<char> scratchBuffer;
     // Check if the scratch buffer exist or the size is the same as the previous allocation
     if (mscclppDisableChannelCache == true && (context.scratchBuffer == nullptr || context.scratchBufferSize != scratchBufferSize)) {
-      std::shared_ptr<char> scratchBuffer = memoryPool.allocate(scratchBufferSize);
+      scratchBuffer = memoryPool.allocate(scratchBufferSize);
     } else {
-      std::shared_ptr<char> scratchBuffer = GpuBuffer(scratchBufferSize).memory();
+      scratchBuffer = GpuBuffer(scratchBufferSize).memory();
     }
     context.scratchBuffer = scratchBuffer;
     context.scratchBufferSize = scratchBufferSize;
@@ -237,10 +237,10 @@ struct Executor::Impl {
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     if (mscclppDisableChannelCache == true) {
       context.deviceExecutionPlansBuffersNoCache.push_back(
-          GpuBuffer(context.deviceExecutionPlansNoCache.size() * sizeof(DeviceExecutionPlan)).memory());
+          GpuBuffer(context.deviceExecutionPlansNoCache.back().size() * sizeof(DeviceExecutionPlan)).memory());
       gpuMemcpy(context.deviceExecutionPlansBuffersNoCache.back().get(),
-                (char*)context.deviceExecutionPlansNoCache.data(),
-                context.deviceExecutionPlansNoCache.size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
+                (char*)context.deviceExecutionPlansNoCache.back().data(),
+                context.deviceExecutionPlansNoCache.back().size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
     } else {
     context.deviceExecutionPlansBuffers[devicePlanKey] =
         GpuBuffer(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
@@ -457,7 +457,7 @@ struct Executor::Impl {
       deviceExecutionPlans.push_back(deviceExecutionPlan);
     }
     if (mscclppDisableChannelCache) {
-      context.deviceExecutionPlansNoCache = std::move(deviceExecutionPlans);
+      context.deviceExecutionPlansNoCache.push_back(std::move(deviceExecutionPlans));
     } else {
     context.deviceExecutionPlans[key] = std::move(deviceExecutionPlans);
     }
