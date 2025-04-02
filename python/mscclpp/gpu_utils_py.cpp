@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <dlpack/dlpack.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/shared_ptr.h>
