@@ -5,11 +5,14 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/nvls.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mscclpp/env.hpp>
 #include <set>
 
 #include "debug.h"
 #include "execution_kernel.hpp"
 #include "execution_plan.hpp"
+
+static bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
 
 namespace mscclpp {
 struct ExecutionContextKey {
@@ -121,10 +124,42 @@ struct ExecutionContext {
   std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
+  std::vector<DeviceExecutionPlan> deviceExecutionPlansNoCache;
+  std::vector<std::shared_ptr<char>> deviceExecutionPlansBuffersNoCache;
+  std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
   std::shared_ptr<char> scratchBuffer;
   size_t scratchBufferSize;
   int nthreadsPerBlock;
   DeviceExecutionPlanKey currentDevicePlan;
+};
+
+struct MemoryPool {
+  size_t blockSize;
+  std::vector<std::shared_ptr<char>> pool;
+
+  MemoryPool(size_t blockSize, size_t initialBlocks) : blockSize(blockSize) {
+    for (size_t i = 0; i < initialBlocks; ++i) {
+      pool.push_back(std::shared_ptr<char>(new char[blockSize], std::default_delete<char[]>()));
+    }
+  }
+
+  std::shared_ptr<char> allocate(size_t size) {
+    if (size > blockSize) {
+      throw mscclpp::Error("Requested size exceeds block size", mscclpp::ErrorCode::InternalError);
+    }
+
+    if (!pool.empty()) {
+      auto buffer = pool.back();
+      pool.pop_back();
+      return buffer;
+    }
+
+    return std::shared_ptr<char>(new char[blockSize], std::default_delete<char[]>());
+  }
+
+  void deallocate(std::shared_ptr<char> buffer) {
+    pool.push_back(buffer);
+  }
 };
 
 struct Executor::Impl {
@@ -146,20 +181,30 @@ struct Executor::Impl {
     DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset};
     if (this->contexts.find(key) != this->contexts.end()) {
       auto& devicePlans = this->contexts[key].deviceExecutionPlans;
+      if (mscclppDisableChannelCache == false) {
       if (this->contexts[key].currentDevicePlan == devicePlanKey) {
         return this->contexts[key];
       } else if (devicePlans.find(devicePlanKey) != devicePlans.end()) {
         this->contexts[key].currentDevicePlan = devicePlanKey;
         return this->contexts[key];
       }
+      }
       plan.impl_->operationsReset();
       plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
       this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, rank, plan);
+      if (mscclppDisableChannelCache == true) {
+        this->contexts[key].deviceExecutionPlansBuffersNoCache.push_back(
+  	  GpuBuffer(this->contexts[key].deviceExecutionPlansNoCache.size() * sizeof(DeviceExecutionPlan)).memory());
+        gpuMemcpy(this->contexts[key].deviceExecutionPlansBuffersNoCache.back().get(),
+  		(char*)this->contexts[key].deviceExecutionPlansNoCache.data(),
+  		this->contexts[key].deviceExecutionPlansNoCache.size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
+      } else {
       this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
           GpuBuffer(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
       gpuMemcpy(this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey].get(),
                 (char*)devicePlans[devicePlanKey].data(),
                 devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
+      }
       this->contexts[key].currentDevicePlan = devicePlanKey;
       return this->contexts[key];
     }
@@ -171,7 +216,16 @@ struct Executor::Impl {
     size_t maxScratchBufferSize = plan.impl_->getMaxScratchBufferSize(rank);
     size_t scratchBufferSize =
         std::min(plan.impl_->getScratchBufferSize(rank, sendMemRange, recvMemRange), maxScratchBufferSize);
-    std::shared_ptr<char> scratchBuffer = GpuBuffer(scratchBufferSize).memory();
+
+    // Initialize memory pool with maxScratchBufferSize and initial blocks 10
+    static MemoryPool memoryPool(maxScratchBufferSize, 10);
+    
+    // Check if the scratch buffer exist or the size is the same as the previous allocation
+    if (mscclppDisableChannelCache == true && (context.scratchBuffer == nullptr || context.scratchBufferSize != scratchBufferSize)) {
+      std::shared_ptr<char> scratchBuffer = memoryPool.allocate(scratchBufferSize);
+    } else {
+      std::shared_ptr<char> scratchBuffer = GpuBuffer(scratchBufferSize).memory();
+    }
     context.scratchBuffer = scratchBuffer;
     context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
@@ -181,11 +235,19 @@ struct Executor::Impl {
     this->setupChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
+    if (mscclppDisableChannelCache == true) {
+      context.deviceExecutionPlansBuffersNoCache.push_back(
+          GpuBuffer(context.deviceExecutionPlansNoCache.size() * sizeof(DeviceExecutionPlan)).memory());
+      gpuMemcpy(context.deviceExecutionPlansBuffersNoCache.back().get(),
+                (char*)context.deviceExecutionPlansNoCache.data(),
+                context.deviceExecutionPlansNoCache.size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
+    } else {
     context.deviceExecutionPlansBuffers[devicePlanKey] =
         GpuBuffer(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
     gpuMemcpy(context.deviceExecutionPlansBuffers[devicePlanKey].get(),
               (char*)context.deviceExecutionPlans[devicePlanKey].data(),
               context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
+    }
     context.currentDevicePlan = devicePlanKey;
     context.proxyService->startProxy();
     this->contexts.insert({key, context});
@@ -285,6 +347,9 @@ struct Executor::Impl {
     std::vector<mscclpp::SemaphoreId> proxySemaphores;
     auto processChannelInfos = [&](std::vector<ChannelInfo>& channelInfos) {
       for (ChannelInfo& info : channelInfos) {
+        if (mscclppDisableChannelCache) {
+          context.channelInfos[rank].push_back(info);
+        }
         for (int peer : info.connectedPeers) {
           if (info.channelType == ChannelType::MEMORY) {
             memorySemaphores.push_back(
@@ -391,7 +456,11 @@ struct Executor::Impl {
       }
       deviceExecutionPlans.push_back(deviceExecutionPlan);
     }
+    if (mscclppDisableChannelCache) {
+      context.deviceExecutionPlansNoCache = std::move(deviceExecutionPlans);
+    } else {
     context.deviceExecutionPlans[key] = std::move(deviceExecutionPlans);
+    }
   }
 
   void launchKernel(ExecutionContext& context, int rank, void* sendbuff, void* recvbuff, DataType dataType,
