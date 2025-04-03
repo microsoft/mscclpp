@@ -455,7 +455,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
           for (int i = 0; i < operation.nOutputs; i++) {
             if (operation.channelType == mscclpp::ChannelType::NVLS) {
               BufferType dstBufferType = convertToBufferType(op["dstbuff"]);
-              operation.nvlsInputIndex =
+              operation.nvlsOutputIndex =
                   channelIndexes[{dstBufferType, dstBufferType, ChannelType::NVLS}][op["o_cids"][0]["id"]];
               chunkIndexes.push_back((uint32_t)op["dstoff"]);
             } else {
