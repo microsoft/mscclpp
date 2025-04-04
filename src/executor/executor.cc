@@ -112,27 +112,6 @@ static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Trans
 
 namespace mscclpp {
 
-struct ExecutionContext {
-  std::shared_ptr<ProxyService> proxyService;
-  std::unordered_map<int, std::shared_ptr<Connection>> connections;
-  std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
-  std::unordered_map<std::pair<BufferType, int>, mscclpp::RegisteredMemory> registeredMemories;
-  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
-  std::vector<mscclpp::SemaphoreId> proxySemaphores;
-  std::vector<mscclpp::MemoryChannel> memoryChannels;
-  std::vector<mscclpp::PortChannel> portChannels;
-  std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
-  std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
-  std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
-  std::vector<std::vector<DeviceExecutionPlan>> deviceExecutionPlansNoCache;
-  std::vector<std::shared_ptr<char>> deviceExecutionPlansBuffersNoCache;
-  std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
-  std::shared_ptr<char> scratchBuffer;
-  size_t scratchBufferSize;
-  int nthreadsPerBlock;
-  DeviceExecutionPlanKey currentDevicePlan;
-};
-
 struct MemoryPool {
   size_t blockSize;
   std::vector<std::shared_ptr<char>> pool;
@@ -160,6 +139,28 @@ struct MemoryPool {
   void deallocate(std::shared_ptr<char> buffer) {
     pool.push_back(buffer);
   }
+};
+
+struct ExecutionContext {
+  std::shared_ptr<ProxyService> proxyService;
+  std::unordered_map<int, std::shared_ptr<Connection>> connections;
+  std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
+  std::unordered_map<std::pair<BufferType, int>, mscclpp::RegisteredMemory> registeredMemories;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
+  std::vector<mscclpp::SemaphoreId> proxySemaphores;
+  std::vector<mscclpp::MemoryChannel> memoryChannels;
+  std::vector<mscclpp::PortChannel> portChannels;
+  std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
+  std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
+  std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
+  std::vector<std::vector<DeviceExecutionPlan>> deviceExecutionPlansNoCache;
+  std::vector<std::shared_ptr<char>> deviceExecutionPlansBuffersNoCache;
+  std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
+  std::shared_ptr<MemoryPool> memoryPool;
+  std::shared_ptr<char> scratchBuffer;
+  size_t scratchBufferSize;
+  int nthreadsPerBlock;
+  DeviceExecutionPlanKey currentDevicePlan;
 };
 
 struct Executor::Impl {
@@ -218,11 +219,13 @@ struct Executor::Impl {
         std::min(plan.impl_->getScratchBufferSize(rank, sendMemRange, recvMemRange), maxScratchBufferSize);
 
     // Initialize memory pool with maxScratchBufferSize and initial blocks 10
-    static MemoryPool memoryPool(maxScratchBufferSize, 10);
+    size_t initialBlocks = 10;
     std::shared_ptr<char> scratchBuffer;
     // Check if the scratch buffer exist or the size is the same as the previous allocation
     if (mscclppDisableChannelCache == true && (context.scratchBuffer == nullptr || context.scratchBufferSize != scratchBufferSize)) {
-      scratchBuffer = memoryPool.allocate(scratchBufferSize);
+      std::shared_ptr<MemoryPool> memoryPool = std::make_shared<MemoryPool>(maxScratchBufferSize, initialBlocks);
+      context.memoryPool = memoryPool;
+      scratchBuffer = context.memoryPool->allocate(scratchBufferSize);
     } else {
       scratchBuffer = GpuBuffer(scratchBufferSize).memory();
     }
@@ -467,7 +470,12 @@ struct Executor::Impl {
                     cudaStream_t stream, PacketType packetType) {
     static uint32_t flag = 0;
     DeviceExecutionPlanKey key = context.currentDevicePlan;
-    int nthreadblocks = context.deviceExecutionPlans[key].size();
+    int nthreadblocks = 0;
+    if (mscclppDisableChannelCache) {
+      nthreadblocks = context.deviceExecutionPlansNoCache.back().size();
+    } else {
+    nthreadblocks = context.deviceExecutionPlans[key].size();
+    }
 #if defined(ENABLE_NPKIT)
 #if defined(__HIP_PLATFORM_AMD__)
     if (nthreadblocks > NPKIT_MAX_NUM_GPU_THREADBLOCKS) {
@@ -483,16 +491,30 @@ struct Executor::Impl {
 #endif
     switch (packetType) {
       case PacketType::LL16:
+        if (mscclppDisableChannelCache) {
+        ExecutionKernel::launchKernel<LL16Packet>(
+            rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
+            context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffersNoCache.back().get(),
+            sharedMemSize, stream, ++flag);
+        } else {
         ExecutionKernel::launchKernel<LL16Packet>(
             rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
             context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
             sharedMemSize, stream, ++flag);
+        }
         break;
       case PacketType::LL8:
+        if (mscclppDisableChannelCache) {
+        ExecutionKernel::launchKernel<LL8Packet>(
+            rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
+            context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffersNoCache.back().get(),
+            sharedMemSize, stream, ++flag);
+	} else {
         ExecutionKernel::launchKernel<LL8Packet>(
             rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
             context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
             sharedMemSize, stream, ++flag);
+	}
         break;
       default:
         throw Error("Invalid packet type", ErrorCode::ExecutorError);
@@ -518,6 +540,11 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
       this->impl_->setupExecutionContext(rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, recvBuffSize,
                                          offsetIn, offsetOut, sendMemRange, recvMemRange, plan);
   this->impl_->launchKernel(context, rank, sendbuff, recvbuff, dataType, stream, packetType);
+
+  if (mscclppDisableChannelCache) {
+    // Deallocate the scratch buffer after kernel execution
+    context.memoryPool->deallocate(context.scratchBuffer);
+  }
 }
 
 Executor::~Executor() = default;
