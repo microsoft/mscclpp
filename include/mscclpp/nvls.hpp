@@ -30,7 +30,7 @@ class NvlsConnection {
     using DeviceHandle = DeviceMulticastPointerDeviceHandle;
     DeviceMulticastPointer(void* devicePtr, std::shared_ptr<char> mcPtr, size_t bufferSize)
         : devicePtr_(devicePtr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
-    DeviceHandle deviceHandle();
+    DeviceHandle deviceHandle() const;
     void* getDevicePtr();
 
     friend class NvlsConnection;

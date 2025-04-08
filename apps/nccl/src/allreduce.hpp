@@ -438,6 +438,35 @@ __forceinline__ __device__ void vectorSum(T* dst, T* src, size_t nElem) {
 }
 
 template <typename T>
+struct VectorType {
+  using type = T;
+  using nvls_type = T;
+  using nvls_type2 = T;
+};
+
+template <>
+struct VectorType<__half> {
+  using type = __half2;
+  using nvls_type = uint4;
+  using nvls_type2 = uint1;
+};
+
+template <>
+struct VectorType<__bfloat16> {
+  using type = __bfloat162;
+  using nvls_type = uint4;
+  using nvls_type2 = uint1;
+};
+
+template <>
+struct VectorType<float> {
+  using type = float;
+  using nvls_type = uint4;
+  using nvls_type2 = uint1;
+};
+
+
+template <typename T>
 __global__ void __launch_bounds__(32, 1)
     allreduceAllToAll(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
                       size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
@@ -737,11 +766,75 @@ __global__ void __launch_bounds__(512, 1)
   }
 }
 
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+template <typename T>
+MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* dst, T* src, uint32_t dstOffset, uint32_t srcOffset,
+                                                      size_t size) {
+  using vectorType = typename VectorType<T>::type;
+  using nvlsType = typename VectorType<T>::nvls_type;
+  // nvls can only handle 4 bytes alignment
+  assert(size % sizeof(vectorType) == 0);
+  const size_t nInt4 = size / sizeof(nvlsType);
+  const size_t srcOffset4 = srcOffset / sizeof(nvlsType);
+  const size_t dstOffset4 = dstOffset / sizeof(nvlsType);
+  nvlsType* src4 = (nvlsType*)src;
+  nvlsType* dst4 = (nvlsType*)dst;
+  for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
+    nvlsType val;
+    mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)(src4 + srcOffset4 + idx));
+    mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)(dst4 + dstOffset4 + idx));
+  }
+  // handle rest of data
+  size_t processed = nInt4 * sizeof(nvlsType);
+  using nvlsType2 = typename VectorType<T>::nvls_type2;
+  const size_t startIdx = (srcOffset + processed) / sizeof(nvlsType2);
+  const size_t endIdx = (dstOffset + size) / sizeof(nvlsType2);
+  for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
+    nvlsType2 val;
+    mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)src + idx);
+    mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)dst + idx);
+  }
+}
+#endif
+
+template <typename T>
+__global__ void __launch_bounds__(1024, 1)
+    allreduce9(mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
+               mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast, size_t size, int rank) {
+  int nBlocks = gridDim.x;
+  int bid = blockIdx.x;
+  size_t sizePerRank = size / 8;
+  size_t sizePerBlock = sizePerRank / nBlocks;
+  size_t rankOffset = sizePerRank * rank;
+  size_t blockOffset = sizePerBlock * bid + rankOffset;
+  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastPtr = multicast + bid;
+
+  const size_t chanOffset = (NRANKS_PER_NODE - 1) * blockIdx.x;
+  auto memoryChans = memoryChannels + chanOffset;
+  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[NRANKS_PER_NODE - 1];
+  const int lid = threadIdx.x % WARP_SIZE;
+  if (lid < NRANKS_PER_NODE - 1) {
+    channels[lid] = memoryChans[lid];
+  }
+  __syncwarp();
+  if (threadIdx.x < NPEERS) {
+    channels[threadIdx.x].signal();
+    channels[threadIdx.x].wait();
+  }
+  __syncthreads();
+  T* src = (T*)multicastPtr->mcPtr;
+  T* dst = (T*)multicastPtr->mcPtr;
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  handleMultiLoadReduceStore(src, dst, blockOffset, blockOffset, sizePerBlock);
+#endif
+}
+
 template <typename T>
 cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-                      mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryOutChannels, size_t channelInOffset,
-                      size_t channelOutOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
-                      Op op, size_t nelems, cudaStream_t stream) {
+                      mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryOutChannels,
+                      mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* nvlsChannels,
+                      size_t channelInOffset, size_t channelOutOffset, size_t channelScratchOffset, int rank,
+                      int nRanksPerNode, int worldSize, Op op, size_t nelems, cudaStream_t stream) {
   static uint32_t flag = 1;
 
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
@@ -750,7 +843,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
     allreduceAllToAll<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels,
                                                                 channelInOffset, channelScratchOffset, rank,
                                                                 nRanksPerNode, worldSize, op, nelems, flag++);
-  } else if (sizeof(T) * nelems <= (1 << 20)) {
+  } else if (sizeof(T) * nelems <= (1 << 12)) {
     int nBlocks = 28;
     int nThreadsPerBlock = 1024;
     if (nelems >= 8192) {
@@ -767,6 +860,10 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                                                          channelScratchOffset, rank, nRanksPerNode, worldSize, op,
                                                          nelems, flag++);
 #endif
+  } else if (sizeof(T) * nelems <= (1 << 28)) {
+    int nBlocks = 8;
+    int nThreadsPerBlock = 1024;
+    allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(memoryChannels, nvlsChannels, nelems * sizeof(T), rank);
   } else {
     int nBlocks = 35;
     int nThreadsPerBlock = 512;

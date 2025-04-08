@@ -265,7 +265,7 @@ NvlsConnection::DeviceMulticastPointer NvlsConnection::bindAllocatedMemory(CUdev
   return DeviceMulticastPointer((void*)devicePtr, mcPtr, size);
 }
 
-NvlsConnection::DeviceMulticastPointer::DeviceHandle NvlsConnection::DeviceMulticastPointer::deviceHandle() {
+NvlsConnection::DeviceMulticastPointer::DeviceHandle NvlsConnection::DeviceMulticastPointer::deviceHandle() const {
   NvlsConnection::DeviceMulticastPointer::DeviceHandle device;
   device.devicePtr = this->devicePtr_;
   device.mcPtr = this->mcPtr_.get();
