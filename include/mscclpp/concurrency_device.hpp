@@ -19,6 +19,14 @@ struct DeviceSyncer {
   ~DeviceSyncer() = default;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
+  MSCCLPP_DEVICE_INLINE void fence_acq_rel_gpu() {
+#if defined(__HIP_PLATFORM_AMD__)
+    __builtin_amdgcn_fence(mscclpp::memoryOrderAcqRel, "agent");
+#else
+    asm volatile("fence.acq_rel.gpu;":: : "memory");
+#endif
+  }
+
   /// Synchronize all threads inside a kernel. Guarantee that all previous work of all threads in cooperating blocks is
   /// finished.
   /// @param blockNum The number of blocks that will synchronize.
@@ -28,8 +36,8 @@ struct DeviceSyncer {
     __syncthreads();
     if (blockNum == 1) return;
     if (threadIdx.x == 0) {
-      // Need a `__threadfence()` before to flip `flag`.
-      __threadfence();
+      // Fence to establish release pattern
+      fence_acq_rel_gpu();
       unsigned int tmp = preFlag_ ^ 1;
       if (atomicInc(&count_, maxOldCnt) == maxOldCnt) {
         atomicStore(&flag_, tmp, memoryOrderRelaxed);
@@ -37,6 +45,8 @@ struct DeviceSyncer {
         POLL_MAYBE_JAILBREAK((atomicLoad(&flag_, memoryOrderRelaxed) != tmp), maxSpinCount);
       }
       preFlag_ = tmp;
+      // Fence to establish acquire pattern
+      fence_acq_rel_gpu();
     }
     // We need sync here because only a single thread is checking whether
     // the flag is flipped.
