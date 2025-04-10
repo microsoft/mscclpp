@@ -63,6 +63,7 @@ void* gpuCallocHost(size_t bytes);
 void* gpuCallocUncached(size_t bytes);
 #endif  // defined(__HIP_PLATFORM_AMD__)
 #if (CUDA_NVLS_SUPPORTED)
+extern CUmemAllocationHandleType nvlsCompatibleMemHandleType;
 void* gpuCallocPhysical(size_t bytes, size_t gran = 0, size_t align = 0);
 #endif  // CUDA_NVLS_SUPPORTED
 
@@ -201,6 +202,11 @@ void gpuMemcpy(T* dst, const T* src, size_t nelems, cudaMemcpyKind kind = cudaMe
 /// @return True if NVLink SHARP (NVLS) is supported, false otherwise.
 bool isNvlsSupported();
 
+/// Check if ptr is allocaed by cuMemMap
+/// @param ptr The pointer to check.
+/// @return True if the pointer is allocated by cuMemMap, false otherwise.
+bool isCuMemMapAllocated([[maybe_unused]] void* ptr);
+
 /// Allocates a GPU memory space specialized for communication. The memory is zeroed out. Get the device pointer by
 /// `GpuBuffer::data()`.
 ///
@@ -223,6 +229,7 @@ class GpuBuffer {
       bytes_ = 0;
       return;
     }
+    MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 #if (CUDA_NVLS_SUPPORTED)
     if (isNvlsSupported()) {
       size_t gran = detail::getMulticastGranularity(nelems * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
@@ -258,9 +265,14 @@ class GpuBuffer {
   /// @return A device pointer to the allocated memory.
   T* data() { return memory_.get(); }
 
+  /// Returns the device id of the allocated memory.
+  /// @return The device id.
+  int deviceId() const { return deviceId_; }
+
  private:
   size_t nelems_;
   size_t bytes_;
+  int deviceId_;
   std::shared_ptr<T> memory_;
 };
 

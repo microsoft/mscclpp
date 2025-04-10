@@ -30,6 +30,8 @@ bool CudaStreamWithFlags::empty() const { return stream_ == nullptr; }
 
 namespace detail {
 
+CUmemAllocationHandleType nvlsCompatibleMemHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+
 /// set memory access permission to read-write
 /// @param base Base memory pointer.
 /// @param size Size of the memory.
@@ -96,11 +98,17 @@ void* gpuCallocPhysical(size_t bytes, size_t gran, size_t align) {
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
   MSCCLPP_CUTHROW(cuDeviceGet(&currentDevice, deviceId));
 
+  int requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+  int isFabricSupported;
+  MSCCLPP_CUTHROW(
+      cuDeviceGetAttribute(&isFabricSupported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, currentDevice));
+  if (isFabricSupported) {
+    requestedHandleTypes |= CU_MEM_HANDLE_TYPE_FABRIC;
+  }
   CUmemAllocationProp prop = {};
   prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  prop.requestedHandleTypes =
-      (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
+  prop.requestedHandleTypes = (CUmemAllocationHandleType)(requestedHandleTypes);
   prop.location.id = currentDevice;
 
   if (gran == 0) {
@@ -110,7 +118,16 @@ void* gpuCallocPhysical(size_t bytes, size_t gran, size_t align) {
   // allocate physical memory
   CUmemGenericAllocationHandle memHandle;
   size_t nbytes = (bytes + gran - 1) / gran * gran;
-  MSCCLPP_CUTHROW(cuMemCreate(&memHandle, nbytes, &prop, 0 /*flags*/));
+  CUresult result = cuMemCreate(&memHandle, nbytes, &prop, 0);
+  if (requestedHandleTypes & CU_MEM_HANDLE_TYPE_FABRIC &&
+      (result == CUDA_ERROR_NOT_PERMITTED || result == CUDA_ERROR_NOT_SUPPORTED)) {
+    requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+    prop.requestedHandleTypes = (CUmemAllocationHandleType)requestedHandleTypes;
+    MSCCLPP_CUTHROW(cuMemCreate(&memHandle, nbytes, &prop, 0));
+  } else {
+    MSCCLPP_CUTHROW(result);
+  }
+  nvlsCompatibleMemHandleType = (CUmemAllocationHandleType)requestedHandleTypes;
 
   if (align == 0) {
     align = getMulticastGranularity(nbytes, CU_MULTICAST_GRANULARITY_MINIMUM);
@@ -172,16 +189,31 @@ bool isNvlsSupported() {
 #if (CUDA_NVLS_SUPPORTED)
   if (!isChecked) {
     int isMulticastSupported;
-    int isFabricSupported;
     CUdevice dev;
     MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
     MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isMulticastSupported, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
-    MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isFabricSupported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, dev));
-    result = (isMulticastSupported == 1 && isFabricSupported == 1);
+    return isMulticastSupported == 1;
   }
   return result;
 #endif
   return false;
+}
+
+bool isCuMemMapAllocated([[maybe_unused]] void* ptr) {
+#if defined(__HIP_PLATFORM_AMD__)
+  return false;
+#else
+  CUmemGenericAllocationHandle handle;
+  CUresult result = cuMemRetainAllocationHandle(&handle, ptr);
+  if (result != CUDA_SUCCESS) {
+    return false;
+  }
+  MSCCLPP_CUTHROW(cuMemRelease(handle));
+  if (!mscclpp::isNvlsSupported()) {
+    throw mscclpp::Error("cuMemMap is used in env without NVLS support", mscclpp::ErrorCode::InvalidUsage);
+  }
+  return true;
+#endif
 }
 
 }  // namespace mscclpp
