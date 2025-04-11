@@ -165,6 +165,72 @@ class MSCCLPPProgram:
 
     def generate_json(self):
         return ir_to_json(self.lower())
+    
+    def execute_operations(self):
+        operations = self.sort_dag.operation_order()
+        for op in operations:
+            if op.inst == Instruction.put:
+                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
+                c.put_exec(op.dst.rank, op.dst.buffer, op.dst.index, sendtb=op.tb, chan_type=op.channel_type)
+            elif op.inst == Instruction.put_packet:
+                src_format = op.extra.get("src_format")
+                temp_buffer = op.extra.get("temp_buffer")
+                temp_buffer_index = op.extra.get("temp_buffer_index")
+                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
+                c.put_packet_exec(
+                    op.dst.rank,
+                    op.dst.buffer,
+                    op.dst.index,
+                    sendtb=op.tb,
+                    src_format=src_format,
+                    chan_type=op.channel_type,
+                    temp_buffer=temp_buffer,
+                    temp_buffer_index=temp_buffer_index,
+                )
+            elif op.inst == Instruction.get:
+                c = chunk_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.dst.size)
+                c.get_exec(op.src.rank, op.src.buffer, op.src.index, op.tb, op.channel_type)
+            elif op.inst == Instruction.flush:
+                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
+                c.flush_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.tb, op.channel_type)
+            elif op.inst == Instruction.wait:
+                c = chunk_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.dst.size)
+                c.wait_exec(op.src.rank, op.src.buffer, op.src.index, op.tb, op.channel_type)
+            elif op.inst == Instruction.signal:
+                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
+                c.signal_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.tb, op.channel_type)
+            elif op.inst == Instruction.copy:
+                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
+                c.copy_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.tb)
+            elif op.inst == Instruction.copy_packet:
+                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
+                c.copy_packet_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.tb)
+            elif op.inst == Instruction.reduce:
+                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
+                c.reduce_exec(
+                    chunk_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.dst.size),
+                    recvtb=op.tb,
+                    channel_type=op.channel_type,
+                )
+            elif op.inst == Instruction.reduce_packet:
+                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
+                c.reduce_packet_exec(chunk_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.dst.size), recvtb=op.tb)
+            elif op.inst == Instruction.group_load_reduce:
+                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
+                c.group_load_reduce_exec(
+                    chunk_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.dst.size),
+                    recvtb=op.tb,
+                    channel_type=op.channel_type,
+                )
+            elif op.inst == Instruction.group_store:
+                dsts = op.extra.get("dsts")
+                index = op.extra.get("index")
+                buffer = op.extra.get("buffer")
+                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
+                c.group_store_exec(dsts=dsts, index=index, buffer=buffer, sendtb=op.tb, channel_type=op.channel_type)
+            elif op.inst == Instruction.barrier:
+                r = rank(op.rank)
+                r.barrier_exec(op.extra.get("tb_list"))
 
 
 def Json():
