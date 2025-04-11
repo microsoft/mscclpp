@@ -612,7 +612,7 @@ class Ref(ChunkRef):
         # add new op here
         self.prog.instr_dag.add_group_store(self.rank, self, other_chunkrefs, sendtb, chan_type)
 
-    def group_store_exec(self, dsts: list, index=-1, buffer=None, sendtb=-1, chan_type=ChannelType.nvls):
+    def group_store(self, dsts: list, index=-1, buffer=None, sendtb=-1, chan_type=ChannelType.nvls):
         extra = {"dsts": dsts, "index": index, "buffer": buffer}
         op = Op(
             inst=Instruction.group_store,
