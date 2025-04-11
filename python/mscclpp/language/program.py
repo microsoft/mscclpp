@@ -55,7 +55,7 @@ class MSCCLPPProgram:
         # Initialize the input buffers
         self.buffers = collective.init_buffers()
         self.instr_dag = InstructionDAG(self.num_ranks, self.buffers)
-        self.sort_dag = SortDAG(self)
+        self.sort_dag = SortDAG()
         self.ranks = []
         for r in range(self.num_ranks):
             self.ranks.append(Rank(r))
@@ -135,7 +135,7 @@ class MSCCLPPProgram:
 
     # Lower program to MSCCLPP
     def lower(self):
-        self.sort_dag.execute_operations()
+        self.execute_operations()
         self._convert_to_execution_plan()
         self.instr_dag.complete_channels()
         dag_optimizer = DagOptimizer(self.instr_dag)
