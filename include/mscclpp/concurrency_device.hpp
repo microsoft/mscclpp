@@ -28,13 +28,11 @@ struct DeviceSyncer {
     __syncthreads();
     if (blockNum == 1) return;
     if (threadIdx.x == 0) {
-      // Need a `__threadfence()` before to flip `flag`.
-      __threadfence();
       unsigned int tmp = preFlag_ ^ 1;
       if (atomicInc(&count_, maxOldCnt) == maxOldCnt) {
-        atomicStore(&flag_, tmp, memoryOrderRelaxed);
+        atomicStore<unsigned int, scopeDevice>(&flag_, tmp, memoryOrderRelease);
       } else {
-        POLL_MAYBE_JAILBREAK((atomicLoad(&flag_, memoryOrderRelaxed) != tmp), maxSpinCount);
+        POLL_MAYBE_JAILBREAK((atomicLoad<unsigned int, scopeDevice>(&flag_, memoryOrderAcquire) != tmp), maxSpinCount);
       }
       preFlag_ = tmp;
     }

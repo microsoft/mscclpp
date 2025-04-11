@@ -91,6 +91,10 @@ else()
     set(GPU_INCLUDE_DIRS ${hip_INCLUDE_DIRS})
 endif()
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  add_compile_definitions(DEBUG_BUILD)
+endif()
+
 # Format targets
 include(${PROJECT_SOURCE_DIR}/cmake/AddFormatTargets.cmake)
 
