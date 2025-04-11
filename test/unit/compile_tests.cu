@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 
-#undef NDEBUG
+#undef DEBUG_BUILD
 #include <assert.h>
 
 #include <mscclpp/poll_device.hpp>
