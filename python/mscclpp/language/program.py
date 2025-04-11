@@ -8,8 +8,7 @@ from mscclpp.language.types import DataFormat, ChannelType, ChunkRef, Replicatio
 from mscclpp.language.ir import *
 from mscclpp.language.dag import DagOptimizer, DagLower, InstructionDAG
 from mscclpp.language.rank import Rank
-from queue import Queue
-from typing import Dict, Tuple
+from mscclpp.language.topo_sort import SortDAG
 
 _current_program = None
 
@@ -56,7 +55,7 @@ class MSCCLPPProgram:
         # Initialize the input buffers
         self.buffers = collective.init_buffers()
         self.instr_dag = InstructionDAG(self.num_ranks, self.buffers)
-        self.order_dag = OrderDAG()
+        self.sort_dag = SortDAG(self)
         self.ranks = []
         for r in range(self.num_ranks):
             self.ranks.append(Rank(r))
@@ -136,6 +135,7 @@ class MSCCLPPProgram:
 
     # Lower program to MSCCLPP
     def lower(self):
+        self.sort_dag.execute_operations()
         self._convert_to_execution_plan()
         self.instr_dag.complete_channels()
         dag_optimizer = DagOptimizer(self.instr_dag)
@@ -164,7 +164,6 @@ class MSCCLPPProgram:
         return program
 
     def generate_json(self):
-        self.order_dag.execute_operations()
         return ir_to_json(self.lower())
 
 
@@ -187,7 +186,7 @@ class RankRef:
     def barrier(self, tb_list):
         extra = {"tb_list": tb_list}
         op = Op(inst=Instruction.barrier, rank=self.rank, src=None, dst=None, extra=extra)
-        self.prog.order_dag.insert_operation(op)
+        self.prog.sort_dag.insert_operation(op)
 
 
 @dataclass
@@ -279,9 +278,9 @@ class Ref(ChunkRef):
             channel_type=chan_type,
             extra=extra,
         )
-        self.prog.order_dag.insert_operation(op)
+        self.prog.sort_dag.insert_operation(op)
 
-    def put_packet(
+    def put_packet_exec(
         self,
         dst,
         buffer=None,
@@ -300,7 +299,30 @@ class Ref(ChunkRef):
             )
         return chunk_ref._put(dst, buffer, index, sendtb, src_format, chan_type, True)
 
-    def get(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.memory):
+    def put_packet(
+        self,
+        dst,
+        buffer=None,
+        index=-1,
+        sendtb=-1,
+        src_format=DataFormat.raw,
+        chan_type=ChannelType.memory,
+        temp_buffer=None,
+        temp_buffer_index=-1,
+    ):
+        extra = {"src_format": src_format, "temp_buffer": temp_buffer, "temp_buffer_index": temp_buffer_index}
+        op = Op(
+            inst=Instruction.put_packet,
+            rank=self.rank,
+            src=self,
+            dst=ChunkRef(dst, buffer, index, self.size),
+            tb=sendtb,
+            channel_type=chan_type,
+            extra=extra,
+        )
+        self.prog.sort_dag.insert_operation(op)
+
+    def get_exec(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.memory):
         self.prog.check_buffer_exists(src, buffer)
         sender = src
         receiver = self.rank
@@ -311,6 +333,17 @@ class Ref(ChunkRef):
 
         self.prog.apply_send(src, buffer, index, self.rank, self.buffer, self.index, self.size)
         self.prog.instr_dag.add_get(receiver, src_chunkref, self, recvtb, chan_type)
+
+    def get(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.memory):
+        op = Op(
+            inst=Instruction.get,
+            rank=self.rank,
+            src=ChunkRef(src, buffer, index, self.size),
+            dst=self,
+            tb=recvtb,
+            channel_type=chan_type,
+        )
+        self.prog.sort_dag.insert_operation(op)
 
     # for signal and wait, currently we assuem the pair will use the same tb index. In future we need
     # to infer the tb index from the instruction DAG Add a channel is define as (send_tb, src_buffer, recv_tb, dst_buffer, type).
@@ -333,10 +366,10 @@ class Ref(ChunkRef):
             tb=sendtb,
             channel_type=chan_type,
         )
-        self.prog.order_dag.insert_operation(op)
+        self.prog.sort_dag.insert_operation(op)
 
     # only port channel need to use this function
-    def flush(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.port):
+    def flush_exec(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.port):
         assert chan_type == ChannelType.port, "Only port channel can use flush"
         sender = self.rank
         receiver = dst
@@ -345,6 +378,17 @@ class Ref(ChunkRef):
 
         dst_chunkref = self.prog.get_ref(dst, buffer, index, self.size)
         self.prog.instr_dag.add_flush(sender, self, dst_chunkref, sendtb)
+
+    def flush(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.port):
+        op = Op(
+            inst=Instruction.flush,
+            rank=self.rank,
+            src=self,
+            dst=ChunkRef(dst, buffer, index, self.size),
+            tb=sendtb,
+            channel_type=chan_type,
+        )
+        self.prog.sort_dag.insert_operation(op)
 
     def wait_exec(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.memory):
         sender = src
@@ -364,7 +408,7 @@ class Ref(ChunkRef):
             tb=recvtb,
             channel_type=chan_type,
         )
-        self.prog.order_dag.insert_operation(op)
+        self.prog.sort_dag.insert_operation(op)
 
     def _copy(self, dst, buffer=None, index=-1, sendtb=-1, trans_from_packet=False, trans_to_packet=False):
         self.prog.check_buffer_exists(dst, buffer)
@@ -382,11 +426,25 @@ class Ref(ChunkRef):
         return dst_chunkref
 
     # Copies the chunk(s) referenced by this chunkref onto Rank dst at location (buffer, index)
-    def copy(self, dst, buffer=None, index=-1, sendtb=-1):
+    def copy_exec(self, dst, buffer=None, index=-1, sendtb=-1):
         return self._copy(dst, buffer, index, sendtb)
 
-    def copy_packet(self, dst, buffer=None, index=-1, sendtb=-1):
+    def copy(self, dst, buffer=None, index=-1, sendtb=-1):
+        op = Op(inst=Instruction.copy, rank=self.rank, src=self, dst=ChunkRef(dst, buffer, index, self.size), tb=sendtb)
+        self.prog.sort_dag.insert_operation(op)
+
+    def copy_packet_exec(self, dst, buffer=None, index=-1, sendtb=-1):
         return self._copy(dst, buffer, index, sendtb, trans_from_packet=True, trans_to_packet=False)
+
+    def copy_packet(self, dst, buffer=None, index=-1, sendtb=-1):
+        op = Op(
+            inst=Instruction.copy_packet,
+            rank=self.rank,
+            src=self,
+            dst=ChunkRef(dst, buffer, index, self.size),
+            tb=sendtb,
+        )
+        self.prog.sort_dag.insert_operation(op)
 
     def _reduce(self, other_chunkref, recvtb=-1, channel_type=ChannelType.memory, use_packet=False):
         dst = self.rank
@@ -413,18 +471,22 @@ class Ref(ChunkRef):
         op = Op(
             inst=Instruction.reduce, rank=self.rank, src=self, dst=other_chunkref, tb=recvtb, channel_type=channel_type
         )
-        self.prog.order_dag.insert_operation(op)
+        self.prog.sort_dag.insert_operation(op)
 
     # Reduces the chunk(s) referenced by other_chunkref into the chunk(s) referenced by this chunkref
-    def reduce_packet(self, other_chunkref, recvtb=-1):
+    def reduce_packet_exec(self, other_chunkref, recvtb=-1):
         return self._reduce(other_chunkref, recvtb, use_packet=True)
+
+    def reduce_packet(self, other_chunkref, recvtb=-1):
+        op = Op(inst=Instruction.reduce_packet, rank=self.rank, src=self, dst=other_chunkref, tb=recvtb)
+        self.prog.sort_dag.insert_operation(op)
 
     # """
     # Group operations. These operations are used to perform collective operations across multiple chunks.
     # For now, all chunks must has the same buffer type and offset.
     # """
     # Reads the chunk(s) referenced by other_chunkref and reduce into the chunk referenced by this chunkref
-    def group_load_reduce(self, other_chunkrefs: list, recvtb=-1, chan_type=ChannelType.nvls):
+    def group_load_reduce_exec(self, other_chunkrefs: list, recvtb=-1, chan_type=ChannelType.nvls):
         assert (
             len(other_chunkrefs) > 0 and chan_type == ChannelType.nvls
         ), "Group load reduce only supports nvls channel"
@@ -449,8 +511,19 @@ class Ref(ChunkRef):
         self.prog.instr_dag.add_group_load_reduce(self.rank, other_chunkrefs, self, recvtb, chan_type)
         return self
 
+    def group_load_reduce(self, other_chunkrefs: list, recvtb=-1, chan_type=ChannelType.nvls):
+        op = Op(
+            inst=Instruction.group_load_reduce,
+            rank=self.rank,
+            src=self,
+            dst=other_chunkrefs,
+            tb=recvtb,
+            channel_type=chan_type,
+        )
+        self.prog.sort_dag.insert_operation(op)
+
     # Copies the chunk(s) referenced by this chunkref onto other_chunkrefs
-    def group_store(self, dsts: list, index=-1, buffer=None, sendtb=-1, chan_type=ChannelType.nvls):
+    def group_store_exec(self, dsts: list, index=-1, buffer=None, sendtb=-1, chan_type=ChannelType.nvls):
         for dst in dsts:
             self.prog.check_buffer_exists(dst, buffer)
         assert index == -1 or self.index == index, "Group store only supports chunks with the same index"
@@ -473,6 +546,19 @@ class Ref(ChunkRef):
         # add new op here
         self.prog.instr_dag.add_group_store(self.rank, self, other_chunkrefs, sendtb, chan_type)
 
+    def group_store_exec(self, dsts: list, index=-1, buffer=None, sendtb=-1, chan_type=ChannelType.nvls):
+        extra = {"dsts": dsts, "index": index, "buffer": buffer}
+        op = Op(
+            inst=Instruction.group_store,
+            rank=self.rank,
+            src=self,
+            dst=None,
+            tb=sendtb,
+            channel_type=chan_type,
+            extra=extra,
+        )
+        self.prog.sort_dag.insert_operation(op)
+
     def get_origin_index(self, index=0):
         return self._get_chunk(index + self.index).origin_index
 
@@ -489,125 +575,16 @@ class Ref(ChunkRef):
         print(self._get_chunk(index + self.index))
 
 
-class OrderDAG:
-    start_nodes: list["Node"]
-    last_node: Dict[Tuple[int, int], int]
-    signalling: Dict[Tuple[int, int, int], Queue]
-    waiting: Dict[Tuple[int, int, int], Queue]
-
-    def __init__(self):
-        self.start_nodes = []
-        self.last_node = {}
-        self.signalling = {}
-        self.waiting = {}
-
-    def insert_operation(self, op: "Op"):
-        node = self.Node(op)
-        rank = op.rank
-        tb = op.tb
-
-        if op.inst == Instruction.barrier:
-            for tb in op.extra.get("tb_list", None):
-                if (rank, tb) not in self.last_node:
-                    self.last_node[(rank, tb)] = node
-                    self.start_nodes.append(node)
-                else:
-                    prev_node = self.last_node[(rank, tb)]
-                    prev_node.next_nodes.append(node)
-                    node.input += 1
-                    self.last_node[(rank, tb)] = node
-
-        else:
-            if (rank, tb) not in self.last_node:
-                self.last_node[(rank, tb)] = node
-                self.start_nodes.append(node)
-            else:
-                prev_node = self.last_node[(rank, tb)]
-                prev_node.next_nodes.append(node)
-                node.input += 1
-                self.last_node[(rank, tb)] = node
-
-        if op.inst == Instruction.signal:
-            if (op.src.rank, op.dst.rank, tb) not in self.waiting or self.waiting[
-                (op.src.rank, op.dst.rank, tb)
-            ].empty():
-                if (op.src.rank, op.dst.rank, tb) not in self.signalling:
-                    self.signalling[(op.src.rank, op.dst.rank, tb)] = Queue()
-                self.signalling[(op.src.rank, op.dst.rank, tb)].put(node)
-            else:
-                waiting_node = self.waiting[(op.src.rank, op.dst.rank, tb)].get()
-                node.next_nodes.append(waiting_node)
-                waiting_node.input += 1
-
-        if op.inst == Instruction.wait:
-            if (op.src.rank, op.dst.rank, tb) not in self.signalling or self.signalling[
-                (op.src.rank, op.dst.rank, tb)
-            ].empty():
-                if (op.src.rank, op.dst.rank, tb) not in self.waiting:
-                    self.waiting[(op.src.rank, op.dst.rank, tb)] = Queue()
-                self.waiting[(op.src.rank, op.dst.rank, tb)].put(node)
-            else:
-                signalling_node = self.signalling[(op.src.rank, op.dst.rank, tb)].get()
-                signalling_node.next_nodes.append(node)
-                node.input += 1
-
-    def execute_operations(self):
-        queue = Queue()
-        for node in self.start_nodes:
-            queue.put(node)
-
-        while not queue.empty():
-            node = queue.get()
-            op = node.operation
-
-            if op.inst == Instruction.signal:
-                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
-                c.signal_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.tb, op.channel_type)
-            elif op.inst == Instruction.wait:
-                c = chunk_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.dst.size)
-                c.wait_exec(op.src.rank, op.src.buffer, op.src.index, op.tb, op.channel_type)
-            elif op.inst == Instruction.put:
-                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
-                c.put_exec(op.dst.rank, op.dst.buffer, op.dst.index, sendtb=op.tb, chan_type=op.channel_type)
-            elif op.inst == Instruction.reduce:
-                c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
-                c.reduce_exec(
-                    chunk_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.dst.size),
-                    recvtb=op.tb,
-                    channel_type=op.channel_type,
-                )
-            elif op.inst == Instruction.barrier:
-                r = rank(op.rank)
-                r.barrier_exec(op.extra.get("tb_list", None))
-
-            for next_node in node.next_nodes:
-                next_node.reach += 1
-                if next_node.reach == next_node.input:
-                    queue.put(next_node)
-
-    class Node:
-        operation: "Op"
-        next_nodes: list
-        input: int
-        reach: int
-
-        def __init__(self, operation: "Op"):
-            self.operation = operation
-            self.next_nodes = []
-            self.input = 0
-            self.reach = 0
-
-
 def chunk(rank, buffer, index, size=1) -> Ref:
     return _curr().get_ref(rank, buffer, index, size)
 
 
-def chunk_exec(rank, buffer, index, size=1) -> Ref: 
+def chunk_exec(rank, buffer, index, size=1) -> Ref:
     if buffer not in _curr().buffers[rank] and buffer == Buffer.scratch:
         _curr().buffers[rank][buffer] = BufferSlice(Buffer.scratch, Buffer.scratch)
         _curr().buffers[rank][buffer].chunks.append(ChunkRef(rank, buffer, index, size))
         return _curr().get_ref(rank, buffer, index, size)
-        
+
     if _curr().buffers[rank][buffer][index] is None:
         return None
     return _curr().get_ref(rank, buffer, index, size)
