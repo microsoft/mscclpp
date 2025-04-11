@@ -27,8 +27,8 @@ struct Host2DeviceSemaphoreDeviceHandle {
   /// Wait for the host to signal.
   MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
-    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < (*expectedInboundSemaphoreId)),
-                         maxSpinCount);
+    uint64_t flag = (*expectedInboundSemaphoreId);
+    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < flag), maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
