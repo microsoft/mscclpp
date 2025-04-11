@@ -50,17 +50,17 @@ constexpr auto memoryOrderSeqCst = __ATOMIC_SEQ_CST;
 constexpr auto scopeSystem = 0;
 constexpr auto scopeDevice = 0;
 
-template <typename T, [[maybe_unused]] int scope = scopeSystem>
+template <typename T, int scope = scopeSystem>
 MSCCLPP_HOST_DEVICE_INLINE T atomicLoad(const T* ptr, int memoryOrder) {
   return __atomic_load_n(ptr, memoryOrder);
 }
 
-template <typename T, [[maybe_unused]] int scope = scopeSystem>
+template <typename T, int scope = scopeSystem>
 MSCCLPP_HOST_DEVICE_INLINE void atomicStore(T* ptr, const T& val, int memoryOrder) {
   __atomic_store_n(ptr, val, memoryOrder);
 }
 
-template <typename T, [[maybe_unused]] int scope = scopeSystem>
+template <typename T, int scope = scopeSystem>
 MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, int memoryOrder) {
   return __atomic_fetch_add(ptr, val, memoryOrder);
 }
