@@ -24,15 +24,15 @@ struct DeviceSyncer {
   /// @param blockNum The number of blocks that will synchronize.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void sync(int blockNum, int64_t maxSpinCount = 100000000) {
-    int maxOldCnt = blockNum;
+    int targetCnt = blockNum;
     __syncthreads();
     if (blockNum == 1) return;
     if (threadIdx.x == 0) {
       unsigned int tmp = preFlag_ ^ 1;
       int val = (tmp << 1) - 1;
-      maxOldCnt = val == 1 ? maxOldCnt : 0;
+      targetCnt = val == 1 ? targetCnt : 0;
       atomicFetchAdd(&count_, val, memoryOrderRelease);
-      POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&count_, memoryOrderAcquire) != maxOldCnt), maxSpinCount);
+      POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&count_, memoryOrderAcquire) != targetCnt), maxSpinCount);
       preFlag_ = tmp;
     }
     // We need sync here because only a single thread is checking whether
