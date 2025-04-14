@@ -7,8 +7,6 @@
 #include "atomic_device.hpp"
 #include "poll_device.hpp"
 
-#include <stdio.h>
-
 namespace mscclpp {
 
 /// A device-wide barrier.
