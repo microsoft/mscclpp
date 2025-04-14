@@ -34,6 +34,7 @@ class Env {
   const std::string forceNcclFallbackOperation;
   const bool enableNcclFallback;
   const bool disableChannelCache;
+  const bool disableNvls;
 
  private:
   Env();

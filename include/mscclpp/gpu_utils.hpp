@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "env.hpp"
 #include "errors.hpp"
 #include "gpu.hpp"
 #include "utils.hpp"
@@ -231,7 +232,7 @@ class GpuBuffer {
     }
     MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 #if (CUDA_NVLS_SUPPORTED)
-    if (isNvlsSupported()) {
+    if (isNvlsSupported() && mscclpp::env()->disableNvls == false) {
       size_t gran = detail::getMulticastGranularity(nelems * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
       bytes_ = (nelems * sizeof(T) + gran - 1) / gran * gran / sizeof(T) * sizeof(T);
       memory_ = detail::gpuCallocPhysicalShared<T>(nelems, gran);
