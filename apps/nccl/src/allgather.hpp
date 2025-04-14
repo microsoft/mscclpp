@@ -103,8 +103,6 @@ __global__ void __launch_bounds__(1024, 1)
     }
   }
 
-  deviceSyncer.sync(gridDim.x);
-
   if (threadIdx.x < nPeer) {
     memChans[threadIdx.x].relaxedSignal();
     memChans[threadIdx.x].wait();
@@ -206,6 +204,7 @@ __global__ void __launch_bounds__(1024, 1)
       }
     }
   }
+  __syncthreads();
 }
 
 template <bool IsOutOfPlace, typename T>
