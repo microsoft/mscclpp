@@ -31,7 +31,7 @@ struct DeviceSyncer {
       unsigned int tmp = preFlag_ ^ 1;
       int val = (tmp << 1) - 1;
       targetCnt = val == 1 ? targetCnt : 0;
-      atomicFetchAdd(&count_, val, memoryOrderRelease);
+      atomicFetchAdd<int, scopeDevice>(&count_, val, memoryOrderRelease);
       POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&count_, memoryOrderAcquire) != targetCnt), maxSpinCount);
       preFlag_ = tmp;
     }
