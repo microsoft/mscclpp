@@ -165,7 +165,7 @@ class MSCCLPPProgram:
 
     def generate_json(self):
         return ir_to_json(self.lower())
-    
+
     def execute_operations(self):
         operations = self.sort_dag.operation_order()
         for op in operations:
@@ -218,16 +218,16 @@ class MSCCLPPProgram:
             elif op.inst == Instruction.group_load_reduce:
                 c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
                 c.group_load_reduce_exec(
-                    chunk_exec(op.dst.rank, op.dst.buffer, op.dst.index, op.dst.size),
+                    other_chunkrefs=op.srcs,
                     recvtb=op.tb,
-                    channel_type=op.channel_type,
+                    chan_type=op.channel_type,
                 )
             elif op.inst == Instruction.group_store:
                 dsts = op.extra.get("dsts")
                 index = op.extra.get("index")
                 buffer = op.extra.get("buffer")
                 c = chunk_exec(op.src.rank, op.src.buffer, op.src.index, op.src.size)
-                c.group_store_exec(dsts=dsts, index=index, buffer=buffer, sendtb=op.tb, channel_type=op.channel_type)
+                c.group_store_exec(dsts=dsts, index=index, buffer=buffer, sendtb=op.tb, chan_type=op.channel_type)
             elif op.inst == Instruction.barrier:
                 r = rank(op.rank)
                 r.barrier_exec(op.extra.get("tb_list"))
@@ -346,6 +346,8 @@ class Ref(ChunkRef):
         )
         self.prog.sort_dag.insert_operation(op)
 
+        return Ref(dst, buffer, index, self.size, self.prog)
+
     def put_packet_exec(
         self,
         dst,
@@ -387,6 +389,8 @@ class Ref(ChunkRef):
             extra=extra,
         )
         self.prog.sort_dag.insert_operation(op)
+
+        return Ref(dst, buffer, index, self.size, self.prog)
 
     def get_exec(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.memory):
         self.prog.check_buffer_exists(src, buffer)
@@ -499,6 +503,8 @@ class Ref(ChunkRef):
         op = Op(inst=Instruction.copy, rank=self.rank, src=self, dst=ChunkRef(dst, buffer, index, self.size), tb=sendtb)
         self.prog.sort_dag.insert_operation(op)
 
+        return Ref(dst, buffer, index, self.size, self.prog)
+
     def copy_packet_exec(self, dst, buffer=None, index=-1, sendtb=-1):
         return self._copy(dst, buffer, index, sendtb, trans_from_packet=True, trans_to_packet=False)
 
@@ -511,6 +517,8 @@ class Ref(ChunkRef):
             tb=sendtb,
         )
         self.prog.sort_dag.insert_operation(op)
+
+        return Ref(dst, buffer, index, self.size, self.prog)
 
     def _reduce(self, other_chunkref, recvtb=-1, channel_type=ChannelType.memory, use_packet=False):
         dst = self.rank
@@ -539,6 +547,8 @@ class Ref(ChunkRef):
         )
         self.prog.sort_dag.insert_operation(op)
 
+        return self
+
     # Reduces the chunk(s) referenced by other_chunkref into the chunk(s) referenced by this chunkref
     def reduce_packet_exec(self, other_chunkref, recvtb=-1):
         return self._reduce(other_chunkref, recvtb, use_packet=True)
@@ -546,6 +556,8 @@ class Ref(ChunkRef):
     def reduce_packet(self, other_chunkref, recvtb=-1):
         op = Op(inst=Instruction.reduce_packet, rank=self.rank, src=self, dst=other_chunkref, tb=recvtb)
         self.prog.sort_dag.insert_operation(op)
+
+        return self
 
     # """
     # Group operations. These operations are used to perform collective operations across multiple chunks.
@@ -582,11 +594,14 @@ class Ref(ChunkRef):
             inst=Instruction.group_load_reduce,
             rank=self.rank,
             src=self,
-            dst=other_chunkrefs,
+            dst=None,
             tb=recvtb,
+            srcs=other_chunkrefs,
             channel_type=chan_type,
         )
         self.prog.sort_dag.insert_operation(op)
+
+        return self
 
     # Copies the chunk(s) referenced by this chunkref onto other_chunkrefs
     def group_store_exec(self, dsts: list, index=-1, buffer=None, sendtb=-1, chan_type=ChannelType.nvls):
