@@ -194,6 +194,9 @@ struct ncclComm {
   uint32_t numScratchBuff;
   uint32_t buffFlag;
 
+  uint64_t* deviceFlag;
+  mscclpp::DeviceSyncer *syncer;
+
   void* mscclppNcclComm;
 };
 
@@ -384,23 +387,25 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     case ncclFloat16:
       CUDACHECK(allreduce((half*)sendbuff, (half*)comm->scratchBuff.get(), (half*)recvbuff, memoryChannels,
                           memoryOutChannels, offsetIn, offsetOut, offsetScratch, rank, NRANKS_PER_NODE,
-                          comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
+                          comm->comm->bootstrap()->getNranks(), reduceOp, count, stream, comm->deviceFlag, comm->syncer));
       break;
     case ncclFloat32:
       CUDACHECK(allreduce((float*)sendbuff, (float*)comm->scratchBuff.get(), (float*)recvbuff, memoryChannels,
                           memoryOutChannels, offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(),
-                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
+                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), reduceOp, count, stream, 
+			  comm->deviceFlag, comm->syncer));
       break;
     case ncclBfloat16:
       CUDACHECK(allreduce((__bfloat16*)sendbuff, (__bfloat16*)comm->scratchBuff.get(), (__bfloat16*)recvbuff,
                           memoryChannels, memoryOutChannels, offsetIn, offsetOut, offsetScratch, rank, NRANKS_PER_NODE,
-                          comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
+                          comm->comm->bootstrap()->getNranks(), reduceOp, count, stream, comm->deviceFlag, comm->syncer));
       break;
     case ncclInt32:
     case ncclUint32:
       CUDACHECK(allreduce((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels,
                           memoryOutChannels, offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(),
-                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
+                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), reduceOp, count, stream, 
+			  comm->deviceFlag, comm->syncer));
       break;
     default:
       WARN("datatype is invalid, datatype: %d", datatype);
@@ -524,6 +529,13 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   commPtr->scratchBuff = mscclpp::GpuBuffer<char>(SCRATCH_SIZE).memory();
   commPtr->remoteScratchRegMemories =
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
+
+  hipMalloc((void**)&(commPtr->syncer), sizeof(mscclpp::DeviceSyncer));
+  hipMemset((void*)(commPtr->syncer), 0, sizeof(mscclpp::DeviceSyncer));
+
+  uint64_t initFlag = 1;
+  hipMalloc((void**)&(commPtr->deviceFlag), sizeof(uint64_t));
+  hipMemcpy((void*)(commPtr->deviceFlag), &initFlag, sizeof(uint64_t), hipMemcpyHostToDevice);
 }
 
 NCCL_API ncclResult_t ncclGetVersion(int* version) {
@@ -656,6 +668,8 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
     delete static_cast<ncclComm_t*>(comm->mscclppNcclComm);
   }
 
+  hipFree(comm->deviceFlag);
+  hipFree(comm->syncer);
   delete comm;
   return ncclSuccess;
 }

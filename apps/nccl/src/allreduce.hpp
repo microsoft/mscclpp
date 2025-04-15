@@ -441,11 +441,18 @@ template <typename T>
 __global__ void __launch_bounds__(32, 1)
     allreduceAllToAll(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
                       size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
-                      Op op, size_t nelems, uint32_t flag) {
+                      Op op, size_t nelems, uint64_t* deviceFlag, mscclpp::DeviceSyncer* deviceSyncer) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
   if (sizeof(T) == 2) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
   const int nPeers = nRanksPerNode - 1;
+
+  uint64_t commFlag = *deviceFlag;
+  uint32_t flag = (uint32_t) commFlag;
+
+  size_t scratchBaseOffset = (flag % 2) ? SCRATCH_SIZE/2 : 0;
+  channelScratchOffset = scratchBaseOffset;
+
   const int nBlocksPerPeer = gridDim.x / nPeers;
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
@@ -478,13 +485,20 @@ __global__ void __launch_bounds__(32, 1)
     }
     dst[idx] = data;
   }
+  __syncthreads();
+
+  deviceSyncer->sync(gridDim.x);
+
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
+         *deviceFlag = *deviceFlag + 1;
+  }
 }
 
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
                size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize, Op op,
-               size_t nelems, uint32_t flag
+               size_t nelems, uint64_t* deviceFlag, mscclpp::DeviceSyncer* deviceSyncer
 #if defined(ENABLE_NPKIT)
                ,
                NpKitEventCollectContext* npKitEventCollectContexts, uint64_t* cpuTimestamp) {
@@ -526,6 +540,13 @@ __global__ void __launch_bounds__(1024, 1)
 
   const int nPeers = nRanksPerNode - 1;
   const size_t nPkts = nelems / 2;
+
+  uint64_t commFlag = *deviceFlag;
+  uint32_t flag = (uint32_t) commFlag;
+
+  size_t scratchBaseOffset = (flag % 2) ? SCRATCH_SIZE/2 : 0;
+  channelScratchOffset = scratchBaseOffset;
+
 
   int nelemsPerRank = nelems / worldSize;
   if ((nelemsPerRank % 2)) nelemsPerRank = (nelemsPerRank * sizeof(T) + sizeof(T)) / sizeof(T);
@@ -580,6 +601,7 @@ __global__ void __launch_bounds__(1024, 1)
       channels[index].write(offset, packet);
     }
   }
+  __syncthreads();
   // step 3: get data result from scratch buffer
   mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)scratch + scratchResultOffset);
   const int dstOffset = remoteRank * nPktsPerRank;
@@ -589,6 +611,7 @@ __global__ void __launch_bounds__(1024, 1)
     result[idx].x = data.x;
     result[idx].y = data.y;
   }
+  __syncthreads();
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_KERNEL_ALLREDUCE_ENTRY) && \
     defined(ENABLE_NPKIT_EVENT_KERNEL_ALLREDUCE_EXIT)
   NpKit::CollectGpuEventShm(NPKIT_EVENT_KERNEL_ALLREDUCE_ENTRY, 0, 0, npkit_timestamp_entry, event_buffer,
@@ -599,6 +622,11 @@ __global__ void __launch_bounds__(1024, 1)
 #if defined(ENABLE_NPKIT)
   NpKit::StoreGpuEventShm(npKitEventCollectContexts, event_buffer, event_buffer_head);
 #endif
+  deviceSyncer->sync(gridDim.x);
+
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
+         *deviceFlag = *deviceFlag + 1;
+  }
 }
 
 template <typename T>
@@ -741,7 +769,7 @@ template <typename T>
 cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
                       mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryOutChannels, size_t channelInOffset,
                       size_t channelOutOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
-                      Op op, size_t nelems, cudaStream_t stream) {
+                      Op op, size_t nelems, cudaStream_t stream, uint64_t* deviceFlag, mscclpp::DeviceSyncer* syncer) {
   static uint32_t flag = 1;
 
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
@@ -749,7 +777,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
     int nThreadsPerBlock = 32;
     allreduceAllToAll<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels,
                                                                 channelInOffset, channelScratchOffset, rank,
-                                                                nRanksPerNode, worldSize, op, nelems, flag++);
+                                                                nRanksPerNode, worldSize, op, nelems, deviceFlag, syncer);
   } else if (sizeof(T) * nelems <= (1 << 20)) {
     int nBlocks = 28;
     int nThreadsPerBlock = 1024;
@@ -765,7 +793,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
 #else
     allreduce7<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, channelInOffset,
                                                          channelScratchOffset, rank, nRanksPerNode, worldSize, op,
-                                                         nelems, flag++);
+                                                         nelems, deviceFlag, syncer);
 #endif
   } else {
     int nBlocks = 35;
