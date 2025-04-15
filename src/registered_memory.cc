@@ -28,7 +28,7 @@
 
 namespace {
 CUmemAllocationHandleType getNvlsMemHandleType() {
-#if (CUDA_NVLS_SUPPORTED)
+#if (CUDA_NVLS_API_AVAILABLE)
   if (mscclpp::detail::nvlsCompatibleMemHandleType & CU_MEM_HANDLE_TYPE_FABRIC) {
     return CU_MEM_HANDLE_TYPE_FABRIC;
   } else {
@@ -228,7 +228,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
     if (this->isCuMemMapAlloc) {
-#if (CUDA_NVLS_SUPPORTED)
+#if (CUDA_NVLS_API_AVAILABLE)
       CUmemGenericAllocationHandle handle;
       if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
         MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsMemHandleType()));
