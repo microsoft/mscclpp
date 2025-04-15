@@ -57,6 +57,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     void* baseDataPtr;
     size_t baseDataSize;  // dummy
     MSCCLPP_CUTHROW(cuMemGetAddressRange((CUdeviceptr*)&baseDataPtr, &baseDataSize, (CUdeviceptr)data));
+    this->baseDataSize = baseDataSize;
     this->isCuMemMapAlloc = isCuMemMapAllocated(baseDataPtr);
     if (this->isCuMemMapAlloc) {
       CUmemGenericAllocationHandle handle;
@@ -121,6 +122,7 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
   std::copy_n(reinterpret_cast<char*>(&pimpl_->originalDataPtr), sizeof(pimpl_->originalDataPtr),
               std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->size), sizeof(pimpl_->size), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->baseDataSize), sizeof(pimpl_->baseDataSize), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->hostHash), sizeof(pimpl_->hostHash), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->pidHash), sizeof(pimpl_->pidHash), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->isCuMemMapAlloc), sizeof(pimpl_->isCuMemMapAlloc),
@@ -169,6 +171,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
   it += sizeof(this->originalDataPtr);
   std::copy_n(it, sizeof(this->size), reinterpret_cast<char*>(&this->size));
   it += sizeof(this->size);
+  std::copy_n(it, sizeof(this->baseDataSize), reinterpret_cast<char*>(&this->baseDataSize));
+  it += sizeof(this->baseDataSize);
   std::copy_n(it, sizeof(this->hostHash), reinterpret_cast<char*>(&this->hostHash));
   it += sizeof(this->hostHash);
   std::copy_n(it, sizeof(this->pidHash), reinterpret_cast<char*>(&this->pidHash));
@@ -247,9 +251,9 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
         close(rootPidFd);
         close(fd);
       }
-      size_t minGran = detail::getMulticastGranularity(size, CU_MULTICAST_GRANULARITY_MINIMUM);
-      size_t recommendedGran = detail::getMulticastGranularity(size, CU_MULTICAST_GRANULARITY_RECOMMENDED);
-      size_t size = (this->size + recommendedGran - 1) / recommendedGran * recommendedGran;
+      size_t minGran = detail::getMulticastGranularity(this->baseDataSize, CU_MULTICAST_GRANULARITY_MINIMUM);
+      size_t recommendedGran = detail::getMulticastGranularity(this->baseDataSize, CU_MULTICAST_GRANULARITY_RECOMMENDED);
+      size_t size = (this->baseDataSize + recommendedGran - 1) / recommendedGran * recommendedGran;
       MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&base, size, minGran, 0, 0));
       MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, size, 0, handle, 0));
       detail::setReadWriteMemoryAccess(base, size);
