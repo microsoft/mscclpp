@@ -48,6 +48,8 @@ struct RegisteredMemory::Impl {
   // This is the original data pointer the RegisteredMemory was created with.
   void* originalDataPtr;
   size_t size;
+  // This is the size returned by cuMemGetAddressRange of data
+  size_t baseDataSize;
   uint64_t hostHash;
   uint64_t pidHash;
   bool isCuMemMapAlloc;
