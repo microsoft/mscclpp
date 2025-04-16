@@ -166,6 +166,8 @@ class MSCCLPPProgram:
     def generate_json(self):
         return ir_to_json(self.lower())
 
+    # TODO: Refactor this by replacing the large if-else statement with a function inside the operation,
+    # such as op.execute(), and create an abstract class for the operations and subclasses for each operation
     def execute_operations(self):
         operations = self.sort_dag.operation_order()
         for op in operations:
