@@ -63,7 +63,9 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
     // This fence ensures that preceding writes are visible on the peer GPU before the incremented
     // `outboundSemaphoreId` is visible.
     semaphoreIncrement();
-    atomicStore(remoteInboundSemaphoreId, semaphoreGetLocal(), memoryOrderRelease);
+    // use memoryOrderSeqCst instead of memoryOrderRelease since memoryOrderSeqCst
+    // is more efficient on A100.
+    atomicStore(remoteInboundSemaphoreId, semaphoreGetLocal(), memoryOrderSeqCst);
   }
 
   /// Signal the remote device.
