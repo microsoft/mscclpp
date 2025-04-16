@@ -90,9 +90,9 @@ class SortDAG:
                 next_node.reach += 1
                 if next_node.reach == next_node.input:
                     queue.put(next_node)
-        
+
         return order
-    
+
     class Node:
         operation: "Op"
         next_nodes: list
