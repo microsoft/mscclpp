@@ -55,7 +55,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     transportInfo.transport = Transport::CudaIpc;
 
     void* baseDataPtr;
-    size_t baseDataSize;  // dummy
+    size_t baseDataSize;
     MSCCLPP_CUTHROW(cuMemGetAddressRange((CUdeviceptr*)&baseDataPtr, &baseDataSize, (CUdeviceptr)data));
     this->baseDataSize = baseDataSize;
     this->isCuMemMapAlloc = isCuMemMapAllocated(baseDataPtr);
