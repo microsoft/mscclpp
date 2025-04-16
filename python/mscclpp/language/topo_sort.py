@@ -9,7 +9,7 @@ class SortDAG:
     Supports topological sorting based on rank/threadblock execution and signal/wait synchronization.
     """
 
-    start_nodes: list["Node"]
+    start_nodes: List["Node"]
     last_node: Dict[Tuple[int, int], int]
     signalling: Dict[Tuple[int, int, int], Queue]
     waiting: Dict[Tuple[int, int, int], Queue]
