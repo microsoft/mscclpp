@@ -396,7 +396,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     if (nvlsIt == comm->channelNvlsInfos.end()) {
       std::vector<std::shared_ptr<mscclpp::NvlsConnection>> conns = setupNvlsConnections(comm, sendBytes);
       std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> channels =
-          setupNvlsChannels(comm, conns, (void*)sendbuff, bytes);
+          setupNvlsChannels(comm, conns, (void*)sendBasePtr, bytes);
       NvlsChannelInfo channelInfo{conns, channels, setupNvlsChannelDeviceHandles(channels)};
       nvlsIt = comm->channelNvlsInfos.emplace(sendKey, channelInfo).first;
     }
@@ -407,7 +407,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
         if (nvlsOutIt == comm->channelNvlsInfos.end()) {
           std::vector<std::shared_ptr<mscclpp::NvlsConnection>> conns = setupNvlsConnections(comm, recvBytes);
           std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> channels =
-              setupNvlsChannels(comm, conns, (void*)recvbuff, bytes);
+              setupNvlsChannels(comm, conns, (void*)recvBasePtr, bytes);
           NvlsChannelInfo channelInfo{conns, channels, setupNvlsChannelDeviceHandles(channels)};
           nvlsOutIt = comm->channelNvlsInfos.emplace(recvKey, channelInfo).first;
         }
