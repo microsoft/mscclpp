@@ -802,6 +802,7 @@ __global__ void __launch_bounds__(1024, 1)
                mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast,
                mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastOut,
                size_t channelInOffset, size_t channelOutOffset, size_t size, int rank) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   int nBlocks = gridDim.x;
   int bid = blockIdx.x;
   size_t sizePerRank = size / 8;
@@ -826,7 +827,6 @@ __global__ void __launch_bounds__(1024, 1)
   __syncthreads();
   T* src = (T*)multicastPtr->mcPtr;
   T* dst = (T*)multicastOutPtr->mcPtr;
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, sizePerBlock);
 #endif
 }
