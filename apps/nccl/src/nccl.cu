@@ -530,12 +530,12 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   commPtr->remoteScratchRegMemories =
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
 
-  hipMalloc((void**)&(commPtr->syncer), sizeof(mscclpp::DeviceSyncer));
-  hipMemset((void*)(commPtr->syncer), 0, sizeof(mscclpp::DeviceSyncer));
+  cudaMalloc((void**)&(commPtr->syncer), sizeof(mscclpp::DeviceSyncer));
+  cudaMemset((void*)(commPtr->syncer), 0, sizeof(mscclpp::DeviceSyncer));
 
   uint64_t initFlag = 1;
-  hipMalloc((void**)&(commPtr->deviceFlag), sizeof(uint64_t));
-  hipMemcpy((void*)(commPtr->deviceFlag), &initFlag, sizeof(uint64_t), hipMemcpyHostToDevice);
+  cudaMalloc((void**)&(commPtr->deviceFlag), sizeof(uint64_t));
+  cudaMemcpy((void*)(commPtr->deviceFlag), &initFlag, sizeof(uint64_t), cudaMemcpyHostToDevice);
 }
 
 NCCL_API ncclResult_t ncclGetVersion(int* version) {
@@ -668,8 +668,8 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
     delete static_cast<ncclComm_t*>(comm->mscclppNcclComm);
   }
 
-  hipFree(comm->deviceFlag);
-  hipFree(comm->syncer);
+  cudaFree(comm->deviceFlag);
+  cudaFree(comm->syncer);
   delete comm;
   return ncclSuccess;
 }
