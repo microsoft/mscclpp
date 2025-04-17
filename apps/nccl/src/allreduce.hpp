@@ -821,13 +821,18 @@ __global__ void __launch_bounds__(1024, 1)
   }
   __syncwarp();
   if (threadIdx.x < NPEERS) {
-    channels[threadIdx.x].signal();
+    channels[threadIdx.x].relaxedSignal();
     channels[threadIdx.x].wait();
   }
   __syncthreads();
   T* src = (T*)multicastPtr->mcPtr;
   T* dst = (T*)multicastOutPtr->mcPtr;
   handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, sizePerBlock);
+  __syncthreads();
+  if (threadIdx.x < NPEERS) {
+    channels[threadIdx.x].relaxedSignal();
+    channels[threadIdx.x].wait();
+  }
 #endif
 }
 
@@ -846,7 +851,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
     allreduceAllToAll<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels,
                                                                 channelInOffset, channelScratchOffset, rank,
                                                                 nRanksPerNode, worldSize, op, nelems, flag++);
-  } else if (sizeof(T) * nelems <= (1 << 12) || (sizeof(T) * nelems <= (1 << 20) && !mscclpp::isNvlsSupported())) {
+  } else if (sizeof(T) * nelems <= (1 << 16) || (sizeof(T) * nelems <= (1 << 20) && !mscclpp::isNvlsSupported())) {
     int nBlocks = 28;
     int nThreadsPerBlock = 1024;
     if (nelems >= 8192) {
