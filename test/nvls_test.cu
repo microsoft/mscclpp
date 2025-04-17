@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 #include <mscclpp/gpu.hpp>
-#if (CUDA_NVLS_SUPPORTED)
+#if (CUDA_NVLS_API_AVAILABLE)
 #include <cuda.h>
 #include <cudaTypedefs.h>
 #include <cuda_runtime.h>
@@ -202,11 +202,11 @@ int main() {
   return 0;
 }
 
-#else  // !(CUDA_NVLS_SUPPORTED)
+#else  // !(CUDA_NVLS_API_AVAILABLE)
 
 int main() {
   printf("This test requires NVLS to be enabled\n");
   return 0;
 }
 
-#endif  // !(CUDA_NVLS_SUPPORTED)
+#endif  // !(CUDA_NVLS_API_AVAILABLE)
