@@ -7,6 +7,8 @@
 #include "atomic_device.hpp"
 #include "poll_device.hpp"
 
+#define NUM_DEVICE_SYNCER_COUNTER 3
+
 namespace mscclpp {
 
 /// A device-wide barrier.
@@ -28,8 +30,8 @@ struct DeviceSyncer {
     __syncthreads();
     if (blockNum == 1) return;
     if (threadIdx.x == 0) {
-      unsigned int tmp = (preFlag_ + 1) % 3;
-      unsigned int next = (tmp + 1) % 3;
+      unsigned int tmp = (preFlag_ + 1) % NUM_DEVICE_SYNCER_COUNTER;
+      unsigned int next = (tmp + 1) % NUM_DEVICE_SYNCER_COUNTER;
       unsigned int* count = &count_[tmp];
       count_[next] = 0;
       atomicFetchAdd<unsigned int, scopeDevice>(count, 1U, memoryOrderRelease);
@@ -45,7 +47,7 @@ struct DeviceSyncer {
 
  private:
   /// The counter of synchronized blocks.
-  unsigned int count_[3];
+  unsigned int count_[NUM_DEVICE_SYNCER_COUNTER];
   /// The flag to indicate whether to increase or decrease @ref flag_.
   unsigned int preFlag_;
 };
