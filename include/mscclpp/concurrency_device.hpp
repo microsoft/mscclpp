@@ -28,11 +28,13 @@ struct DeviceSyncer {
     __syncthreads();
     if (blockNum == 1) return;
     if (threadIdx.x == 0) {
-      unsigned int tmp = preFlag_ ^ 1;
-      int val = (tmp << 1) - 1;
-      targetCnt = val == 1 ? targetCnt : 0;
-      atomicFetchAdd<int, scopeDevice>(&count_, val, memoryOrderRelease);
-      POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&count_, memoryOrderAcquire) != targetCnt), maxSpinCount);
+      unsigned int tmp = (preFlag_ + 1) % 3;
+      unsigned int next = (tmp + 1) % 3;
+      unsigned int* count = &count_[tmp];
+      count_[next] = 0;
+      atomicFetchAdd<unsigned int, scopeDevice>(count, 1U, memoryOrderRelease);
+      POLL_MAYBE_JAILBREAK((atomicLoad<unsigned int, scopeDevice>(count, memoryOrderAcquire) != targetCnt),
+                           maxSpinCount);
       preFlag_ = tmp;
     }
     // We need sync here because only a single thread is checking whether
@@ -43,7 +45,7 @@ struct DeviceSyncer {
 
  private:
   /// The counter of synchronized blocks.
-  int count_;
+  unsigned int count_[3];
   /// The flag to indicate whether to increase or decrease @ref flag_.
   unsigned int preFlag_;
 };
