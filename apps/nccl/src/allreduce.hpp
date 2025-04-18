@@ -844,6 +844,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                       size_t channelInOffset, size_t channelOutOffset, size_t channelScratchOffset, int rank,
                       int nRanksPerNode, int worldSize, Op op, size_t nelems, cudaStream_t stream) {
   static uint32_t flag = 1;
+  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
 
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
     int nBlocks = 7;
@@ -851,7 +852,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
     allreduceAllToAll<<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels,
                                                                 channelInOffset, channelScratchOffset, rank,
                                                                 nRanksPerNode, worldSize, op, nelems, flag++);
-  } else if (sizeof(T) * nelems <= (1 << 16) || (sizeof(T) * nelems <= (1 << 20) && !mscclpp::isNvlsSupported())) {
+  } else if (sizeof(T) * nelems <= (1 << 16) || (sizeof(T) * nelems <= (1 << 20) && !useNvlsWithZeroCopy)) {
     int nBlocks = 28;
     int nThreadsPerBlock = 1024;
     if (nelems >= 8192) {
@@ -868,7 +869,7 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                                                          channelScratchOffset, rank, nRanksPerNode, worldSize, op,
                                                          nelems, flag++);
 #endif
-  } else if (mscclpp::isNvlsSupported()) {
+  } else if (useNvlsWithZeroCopy) {
     int nBlocks = 8;
     int nThreadsPerBlock = 1024;
     allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(

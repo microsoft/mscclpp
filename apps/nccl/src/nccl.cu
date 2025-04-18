@@ -39,6 +39,7 @@
 
 #define NUM_CHANNELS_PER_CONNECTION 64
 #define NUM_NVLS_CONNECTION 8
+static constexpr size_t NVLS_BUFFER_SIZE = (1 << 30);
 
 typedef enum mscclppNcclDlopenErr {
   dlopenSuccess = 0,
@@ -141,7 +142,6 @@ static inline int mscclppNcclInFallbackList(const char* collOps, const char* fal
 
 // Declare the global map to store associations between raw pointer and shared pointer
 static std::unordered_map<void*, std::shared_ptr<char>> ptrMap;
-static bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
 
 struct channelKey {
   const void* buff;
@@ -200,9 +200,7 @@ struct ncclComm {
   std::unordered_map<channelKey, NvlsChannelInfo> channelNvlsInfos;
   std::shared_ptr<char> scratchBuff;
   std::vector<mscclpp::RegisteredMemory> remoteScratchRegMemories;
-  std::queue<ChannelInfo> channelInfos;
-  std::queue<NvlsChannelInfo> channelNvlsInfosQueue;
-  std::queue<NvlsChannelInfo> channelOutNvlsInfosQueue;
+  std::vector<ChannelInfo> channelInfos;
 
   uint32_t numScratchBuff;
   uint32_t buffFlag;
@@ -392,18 +390,14 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* nvlsChannels = nullptr;
   mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* nvlsOutChannels = nullptr;
   size_t bytes = count * ncclTypeSize(datatype);
+  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
 
   // Creating the channels
-  if (mscclpp::isNvlsSupported()) {
+  if (useNvlsWithZeroCopy) {
     auto nvlsIt = comm->channelNvlsInfos.find(sendKey);
     if (nvlsIt == comm->channelNvlsInfos.end()) {
-      if (mscclppDisableChannelCache) {
-        sendBytes = bytes;
-        sendBasePtr = (CUdeviceptr)sendbuff;
-        offsetIn = 0;
-      }
       std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> channels =
-          setupNvlsChannels(comm, comm->nvlsConnections, (void*)sendBasePtr, bytes);
+          setupNvlsChannels(comm, comm->nvlsConnections, (void*)sendBasePtr, sendBytes);
       NvlsChannelInfo channelInfo{channels, setupNvlsChannelDeviceHandles(channels)};
       nvlsIt = comm->channelNvlsInfos.emplace(sendKey, channelInfo).first;
     }
@@ -411,13 +405,8 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     if (recvbuff != sendbuff) {
       auto nvlsOutIt = comm->channelNvlsInfos.find(recvKey);
       if (nvlsOutIt == comm->channelNvlsInfos.end()) {
-        if (mscclppDisableChannelCache == true || mscclppDisableChannelCache) {
-          recvBytes = bytes;
-          recvBasePtr = (CUdeviceptr)recvbuff;
-          offsetOut = 0;
-        }
         std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> channels =
-            setupNvlsChannels(comm, comm->nvlsConnectionsOut, (void*)recvBasePtr, bytes);
+            setupNvlsChannels(comm, comm->nvlsConnectionsOut, (void*)recvBasePtr, recvBytes);
         NvlsChannelInfo channelInfo{channels, setupNvlsChannelDeviceHandles(channels)};
         nvlsOutIt = comm->channelNvlsInfos.emplace(recvKey, channelInfo).first;
       }
@@ -427,7 +416,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     }
   }
 
-  if (count * ncclTypeSize(datatype) <= (1 << 20) || mscclpp::isNvlsSupported()) {
+  if (count * ncclTypeSize(datatype) <= (1 << 20) || useNvlsWithZeroCopy) {
     auto sendIt = comm->channelScratchInfos.find(sendKey);
     if (sendIt == comm->channelScratchInfos.end()) {
       std::vector<mscclpp::MemoryChannel> channels =
@@ -462,10 +451,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
       ChannelInfo channelInfo{outChannels, setupMemoryChannelDeviceHandles(outChannels)};
       recvIt = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
       if (mscclppDisableChannelCache == true) {
-        while (comm->channelInfos.size() > 1) {
-          comm->channelInfos.pop();
-        }
-        comm->channelInfos.push(channelInfo);
+        comm->channelInfos.push_back(channelInfo);
       }
     }
 
@@ -554,10 +540,7 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
       ChannelInfo channelInfo{channels, setupMemoryChannelDeviceHandles(channels)};
       it = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
       if (mscclppDisableChannelCache == true) {
-        while (comm->channelInfos.size() > 1) {
-          comm->channelInfos.pop();
-        }
-        comm->channelInfos.push(channelInfo);
+        comm->channelInfos.push_back(channelInfo);
       }
     }
     memoryChannels = mscclppDisableChannelCache == true ? comm->channelInfos.back().memoryChannelDeviceHandles.get()
@@ -619,8 +602,10 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
 
   mscclppComm->setup();
   commPtr->connections = std::move(connections);
-  commPtr->nvlsConnections = setupNvlsConnections(commPtr, 1 << 30);
-  commPtr->nvlsConnectionsOut = setupNvlsConnections(commPtr, 1 << 30);
+  if (mscclpp::isNvlsSupported()) {
+    commPtr->nvlsConnections = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
+    commPtr->nvlsConnectionsOut = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
+  }
   commPtr->memorySemaphores = std::move(memorySemaphores);
   commPtr->buffFlag = 0;
   commPtr->numScratchBuff = 2;
