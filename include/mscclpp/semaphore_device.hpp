@@ -54,6 +54,17 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
     POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < flag), maxSpinCount);
   }
 
+  /// Wait for the remote device to signal.
+  ///
+  /// This function is a relaxed version of Wait() and provides no guarantee on the completion of memory operations.
+  /// User requires to call proper fencing before using this function.
+  ///
+  MSCCLPP_DEVICE_INLINE void relaxedWait(int64_t maxSpinCount = 100000000) {
+    (*expectedInboundSemaphoreId) += 1;
+    uint64_t flag = (*expectedInboundSemaphoreId);
+    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderRelaxed) < flag), maxSpinCount);
+  }
+
   /// Signal the remote device.
   ///
   /// This function guarantees that all the memory operation before this function is completed before the remote
