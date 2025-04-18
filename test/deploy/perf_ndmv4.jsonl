@@ -3,7 +3,7 @@
 {"name":"allgather", "kernel":3, "ranks":8, "ranksPerNode":8, "algBw":0.1112, "busBw":0.0973, "size":8192,       "time":73.63,   "target":"latency"}
 {"name":"allreduce", "kernel":1, "ranks":8, "ranksPerNode":8, "algBw":139.41, "busBw":243.96, "size":1073741824, "time":7701.98, "target":"throughput"}
 {"name":"allreduce", "kernel":2, "ranks":8, "ranksPerNode":8, "algBw":1.25,   "busBw":2.19,   "size":8192,       "time":6.51,    "target":"latency"}
-{"name":"allreduce", "kernel":2, "ranks":16,"ranksPerNode":8, "algBw":0.51,   "busBw":0.96,   "size":8192,       "time":15.96,   "target":"latency"}
+{"name":"allreduce", "kernel":2, "ranks":16,"ranksPerNode":8, "algBw":0.44,   "busBw":0.83,   "size":8192,       "time":18.42,   "target":"latency"}
 {"name":"allreduce", "kernel":3, "ranks":8, "ranksPerNode":8, "algBw":139.08, "busBw":243.40, "size":1073741824, "time":7719.85, "target":"throughput"}
 {"name":"allreduce", "kernel":4, "ranks":8, "ranksPerNode":8, "algBw":106.98, "busBw":187.22, "size":16777216,   "time":156.81,  "target":"throughput"}
 {"name":"allreduce", "kernel":4, "ranks":8, "ranksPerNode":8, "algBw":116.24, "busBw":203.42, "size":33554432,   "time":288.65,  "target":"throughput"}

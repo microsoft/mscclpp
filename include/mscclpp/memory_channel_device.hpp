@@ -273,6 +273,14 @@ struct MemoryChannelDeviceHandle {
   /// Wait for the remote semaphore to send a signal.
   /// @param maxSpinCount The maximum number of spins before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) { semaphore_.wait(maxSpinCount); }
+
+  /// Wait for the remote semaphore to send a signal.
+  ///
+  /// This function is a relaxed version of signal() and provides no guarantee on the completion of memory operations.
+  /// User requires to call proper fencing before using this function.
+  ///
+  /// @param maxSpinCount The maximum number of spins before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void relaxedWait() { semaphore_.relaxedWait(); }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
