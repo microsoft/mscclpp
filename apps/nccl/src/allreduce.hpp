@@ -157,55 +157,11 @@ __forceinline__ __device__ int cal_vectors_helper(int a, int b) {
   return bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a), bit_cast<T, int>(b)));
 }
 
-template <typename T, Op OpType>
-__forceinline__ __device__ int4 cal_vectors(int4 a, int4 b) {
+template <typename T, Op OpType, typename DataType>
+__forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
   using CompType = typename std::conditional_t<std::is_same_v<T, __half>, __half2,
                                                std::conditional_t<std::is_same_v<T, __bfloat16>, __bfloat162, T>>;
   return cal_vectors_helper<CompType, OpType>(a, b);
-}
-
-template <typename T, Op OpType>
-__forceinline__ __device__ uint2 cal_vectors(uint2 a, uint2 b) {
-  using CompType = typename std::conditional_t<std::is_same_v<T, __half>, __half2,
-                                               std::conditional_t<std::is_same_v<T, __bfloat16>, __bfloat162, T>>;
-  return cal_vectors_helper<CompType, OpType>(a, b);
-}
-
-template <typename T, Op OpType>
-__forceinline__ __device__ int cal_vectors(int a, int b) {
-  using CompType = typename std::conditional_t<std::is_same_v<T, __half>, __half2,
-                                               std::conditional_t<std::is_same_v<T, __bfloat16>, __bfloat162, T>>;
-  return cal_vectors_helper<CompType, OpType>(a, b);
-}
-
-template <typename T>
-__forceinline__ __device__ int4 cal_vectors(int4 a, int4 b, Op op) {
-  if (op == SUM) {
-    return cal_vectors<T, SUM>(a, b);
-  } else if (op == MIN) {
-    return cal_vectors<T, MIN>(a, b);
-  }
-  return a;
-}
-
-template <typename T>
-__forceinline__ __device__ uint2 cal_vectors(uint2 a, uint2 b, Op op) {
-  if (op == SUM) {
-    return cal_vectors<T, SUM>(a, b);
-  } else if (op == MIN) {
-    return cal_vectors<T, MIN>(a, b);
-  }
-  return a;
-}
-
-template <typename T>
-__forceinline__ __device__ int cal_vectors(int a, int b, Op op) {
-  if (op == SUM) {
-    return cal_vectors<T, SUM>(a, b);
-  } else if (op == MIN) {
-    return cal_vectors<T, MIN>(a, b);
-  }
-  return a;
 }
 
 template <Op OpType, typename T>
