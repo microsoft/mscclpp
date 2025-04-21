@@ -844,16 +844,22 @@ __global__ void __launch_bounds__(1024, 1)
                 int rank) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   int nBlocks = gridDim.x;
+  int nBlocksPerNvlsConn = nBlocks / NUM_NVLS_CONNECTION;
   int bid = blockIdx.x;
   size_t sizePerRank = size / NRANKS_PER_NODE;
   constexpr size_t scratchSizePerRank = SCRATCH_SIZE / NRANKS_PER_NODE;
-  size_t sizePerBlock = sizePerRank / nBlocks;
-  size_t scratchSizePerBlock = scratchSizePerRank / nBlocks;
-  size_t rankOffset = sizePerRank * rank;
-  size_t blockOffset = sizePerBlock * bid + rankOffset;
+  const size_t maxSizePerBlock = (sizePerRank + nBlocks - 1) / nBlocks;
+  size_t start = bid * maxSizePerBlock;
+  size_t end = min(start + maxSizePerBlock, sizePerRank);
+  size_t sizePerBlock = end - start;
+  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastPtr =
+      multicast + bid / nBlocksPerNvlsConn;
+  size_t copyPerIter = 1024 * 16;
+  if (sizePerBlock >= 1024 * 64) {
+    copyPerIter = 1024 * 32;
+  }
+  size_t scratchSizePerBlock = (scratchSizePerRank / nBlocks) / copyPerIter * copyPerIter;
   size_t blockScratchOffset = scratchSizePerBlock * bid + scratchSizePerRank * rank;
-  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastPtr = multicast + bid / 4;
-  const size_t copyPerIter = 1024 * 32;
   constexpr int NCOPY_WARPS = 14;
   constexpr int NREDUCE_WARPS = 4;
   constexpr int NRECV_COPY_WARPS = 14;
@@ -862,7 +868,12 @@ __global__ void __launch_bounds__(1024, 1)
   constexpr int endRecvCopyWid = NCOPY_WARPS + NRECV_COPY_WARPS;
   constexpr int endReduceWid = NCOPY_WARPS + NREDUCE_WARPS + NRECV_COPY_WARPS;
   const int warpId = threadIdx.x / WARP_SIZE;
-  const size_t nIter = sizePerBlock / copyPerIter;
+  size_t nIter = sizePerBlock / copyPerIter;
+  size_t lastIterSize = copyPerIter;
+  if (sizePerBlock % copyPerIter != 0) {
+    nIter += 1;
+    lastIterSize = sizePerBlock % copyPerIter;
+  }
 
   const size_t chanOffset = (NRANKS_PER_NODE - 1) * blockIdx.x * 2;
   auto memoryChans = memoryChannels + chanOffset;
@@ -873,7 +884,8 @@ __global__ void __launch_bounds__(1024, 1)
   }
   __syncwarp();
   for (int it = 0; it < nIter; it++) {
-    if (warpId < NCOPY_WARPS) {
+    const size_t iterSize = (it == nIter - 1) ? lastIterSize : copyPerIter;
+    if (warpId < endCopyWid) {
       int tidInCopy = threadIdx.x;
       for (int i = 0; i < NRANKS_PER_NODE; i++) {
         size_t offset = i * sizePerRank + sizePerBlock * bid + it * copyPerIter;
@@ -881,7 +893,7 @@ __global__ void __launch_bounds__(1024, 1)
             i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
         char* srcData = (char*)src + offset;
         char* dstData = (char*)scrach + offsetScratch;
-        mscclpp::MemoryChannelDeviceHandle::copy(dstData, srcData, copyPerIter, tidInCopy, NCOPY_WARPS * WARP_SIZE);
+        mscclpp::MemoryChannelDeviceHandle::copy(dstData, srcData, iterSize, tidInCopy, NCOPY_WARPS * WARP_SIZE);
       }
       asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(NCOPY_WARPS * WARP_SIZE) : "memory");
       if (tidInCopy < NPEERS) {
@@ -895,8 +907,7 @@ __global__ void __launch_bounds__(1024, 1)
       asm volatile("bar.sync %0, %1;" ::"r"(1), "r"((NCOPY_WARPS + NREDUCE_WARPS) * WARP_SIZE) : "memory");
       T* mcBuff = (T*)multicastPtr->mcPtr;
       size_t offset = blockScratchOffset + (it * copyPerIter) % scratchSizePerBlock;
-      // size_t offset = blockOffset + it * copyPerIter;
-      handleMultiLoadReduceStore(mcBuff, mcBuff, offset, offset, copyPerIter, tidInReduce, NREDUCE_WARPS * WARP_SIZE);
+      handleMultiLoadReduceStore(mcBuff, mcBuff, offset, offset, iterSize, tidInReduce, NREDUCE_WARPS * WARP_SIZE);
       asm volatile("bar.sync %0, %1;" ::"r"(2), "r"((NRECV_COPY_WARPS + NREDUCE_WARPS) * WARP_SIZE) : "memory");
     }
     if (warpId >= startRecvCopyWid && warpId < endRecvCopyWid) {
@@ -913,7 +924,7 @@ __global__ void __launch_bounds__(1024, 1)
             i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
         char* srcData = (char*)scrach + offsetScratch;
         char* dstData = (char*)dst + offset;
-        mscclpp::MemoryChannelDeviceHandle::copy(dstData, srcData, copyPerIter, tidInRecvCopy,
+        mscclpp::MemoryChannelDeviceHandle::copy(dstData, srcData, iterSize, tidInRecvCopy,
                                                  NRECV_COPY_WARPS * WARP_SIZE);
       }
     }

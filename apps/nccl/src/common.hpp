@@ -13,6 +13,8 @@
 #define WARP_SIZE 32
 #endif
 
+constexpr int NUM_NVLS_CONNECTION = 8;
+
 constexpr int NRANKS_PER_NODE = 8;
 constexpr int NPEERS = 7;
 

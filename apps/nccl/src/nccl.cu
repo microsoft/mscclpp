@@ -38,7 +38,6 @@
   } while (0)
 
 #define NUM_CHANNELS_PER_CONNECTION 64
-#define NUM_NVLS_CONNECTION 8
 static constexpr size_t NVLS_BUFFER_SIZE = (1 << 30);
 
 typedef enum mscclppNcclDlopenErr {
