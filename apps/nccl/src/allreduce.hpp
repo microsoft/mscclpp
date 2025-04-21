@@ -768,7 +768,7 @@ __global__ void __launch_bounds__(512, 1)
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 template <typename T>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, uint32_t srcOffset, uint32_t dstOffset,
-                                                      size_t size) {
+                                                      size_t size, int tid, int nThreads) {
   using vectorType = typename VectorType<T>::type;
   using nvlsType = typename VectorType<T>::nvls_type;
   // nvls can only handle 4 bytes alignment
@@ -778,7 +778,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, uint32_t s
   const size_t dstOffset4 = dstOffset / sizeof(nvlsType);
   nvlsType* src4 = (nvlsType*)src;
   nvlsType* dst4 = (nvlsType*)dst;
-  for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
+  for (size_t idx = tid; idx < nInt4; idx += nThreads) {
     nvlsType val;
     mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)(src4 + srcOffset4 + idx));
     mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)(dst4 + dstOffset4 + idx));
@@ -788,7 +788,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, uint32_t s
   using nvlsType2 = typename VectorType<T>::nvls_type2;
   const size_t startIdx = (srcOffset + processed) / sizeof(nvlsType2);
   const size_t endIdx = (dstOffset + size) / sizeof(nvlsType2);
-  for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
+  for (size_t idx = tid + startIdx; idx < endIdx; idx += nThreads) {
     nvlsType2 val;
     mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)src + idx);
     mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)dst + idx);
@@ -827,11 +827,96 @@ __global__ void __launch_bounds__(1024, 1)
   __syncthreads();
   T* src = (T*)multicastPtr->mcPtr;
   T* dst = (T*)multicastOutPtr->mcPtr;
-  handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, sizePerBlock);
+  handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, sizePerBlock,
+                             threadIdx.x, blockDim.x);
   __syncthreads();
   if (threadIdx.x < NPEERS) {
     channels[threadIdx.x].relaxedSignal();
     channels[threadIdx.x].wait();
+  }
+#endif
+}
+
+template <typename T>
+__global__ void __launch_bounds__(1024, 1)
+    allreduce10(T* src, T* scrach, T* dst, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
+                mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast, size_t size,
+                int rank) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  int nBlocks = gridDim.x;
+  int bid = blockIdx.x;
+  size_t sizePerRank = size / NRANKS_PER_NODE;
+  constexpr size_t scratchSizePerRank = SCRATCH_SIZE / NRANKS_PER_NODE;
+  size_t sizePerBlock = sizePerRank / nBlocks;
+  size_t scratchSizePerBlock = scratchSizePerRank / nBlocks;
+  size_t rankOffset = sizePerRank * rank;
+  size_t blockOffset = sizePerBlock * bid + rankOffset;
+  size_t blockScratchOffset = scratchSizePerBlock * bid + scratchSizePerRank * rank;
+  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastPtr = multicast + bid / 4;
+  const size_t copyPerIter = 1024 * 32;
+  constexpr int NCOPY_WARPS = 14;
+  constexpr int NREDUCE_WARPS = 4;
+  constexpr int NRECV_COPY_WARPS = 14;
+  constexpr int endCopyWid = NCOPY_WARPS;
+  constexpr int startRecvCopyWid = NCOPY_WARPS;
+  constexpr int endRecvCopyWid = NCOPY_WARPS + NRECV_COPY_WARPS;
+  constexpr int endReduceWid = NCOPY_WARPS + NREDUCE_WARPS + NRECV_COPY_WARPS;
+  const int warpId = threadIdx.x / WARP_SIZE;
+  const size_t nIter = sizePerBlock / copyPerIter;
+
+  const size_t chanOffset = (NRANKS_PER_NODE - 1) * blockIdx.x * 2;
+  auto memoryChans = memoryChannels + chanOffset;
+  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[(NRANKS_PER_NODE - 1) * 2];
+  const int lid = threadIdx.x % WARP_SIZE;
+  if (lid < (NRANKS_PER_NODE - 1) * 2) {
+    channels[lid] = memoryChans[lid];
+  }
+  __syncwarp();
+  for (int it = 0; it < nIter; it++) {
+    if (warpId < NCOPY_WARPS) {
+      int tidInCopy = threadIdx.x;
+      for (int i = 0; i < NRANKS_PER_NODE; i++) {
+        size_t offset = i * sizePerRank + sizePerBlock * bid + it * copyPerIter;
+        size_t offsetScratch =
+            i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
+        char* srcData = (char*)src + offset;
+        char* dstData = (char*)scrach + offsetScratch;
+        mscclpp::MemoryChannelDeviceHandle::copy(dstData, srcData, copyPerIter, tidInCopy, NCOPY_WARPS * WARP_SIZE);
+      }
+      asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(NCOPY_WARPS * WARP_SIZE) : "memory");
+      if (tidInCopy < NPEERS) {
+        channels[tidInCopy].signal();
+        channels[tidInCopy].wait();
+      }
+      asm volatile("bar.sync %0, %1;" ::"r"(1), "r"((NCOPY_WARPS + NREDUCE_WARPS) * WARP_SIZE) : "memory");
+    }
+    if (warpId >= endRecvCopyWid && warpId < endReduceWid) {
+      int tidInReduce = threadIdx.x - endRecvCopyWid * WARP_SIZE;
+      asm volatile("bar.sync %0, %1;" ::"r"(1), "r"((NCOPY_WARPS + NREDUCE_WARPS) * WARP_SIZE) : "memory");
+      T* mcBuff = (T*)multicastPtr->mcPtr;
+      size_t offset = blockScratchOffset + (it * copyPerIter) % scratchSizePerBlock;
+      // size_t offset = blockOffset + it * copyPerIter;
+      handleMultiLoadReduceStore(mcBuff, mcBuff, offset, offset, copyPerIter, tidInReduce, NREDUCE_WARPS * WARP_SIZE);
+      asm volatile("bar.sync %0, %1;" ::"r"(2), "r"((NRECV_COPY_WARPS + NREDUCE_WARPS) * WARP_SIZE) : "memory");
+    }
+    if (warpId >= startRecvCopyWid && warpId < endRecvCopyWid) {
+      int tidInRecvCopy = threadIdx.x - startRecvCopyWid * WARP_SIZE;
+      asm volatile("bar.sync %0, %1;" ::"r"(2), "r"((NRECV_COPY_WARPS + NREDUCE_WARPS) * WARP_SIZE) : "memory");
+      if (tidInRecvCopy < NPEERS) {
+        channels[tidInRecvCopy + NPEERS].signal();
+        channels[tidInRecvCopy + NPEERS].wait();
+      }
+      asm volatile("bar.sync %0, %1;" ::"r"(3), "r"((NRECV_COPY_WARPS)*WARP_SIZE) : "memory");
+      for (int i = 0; i < NRANKS_PER_NODE; i++) {
+        size_t offset = i * sizePerRank + sizePerBlock * bid + it * copyPerIter;
+        size_t offsetScratch =
+            i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
+        char* srcData = (char*)scrach + offsetScratch;
+        char* dstData = (char*)dst + offset;
+        mscclpp::MemoryChannelDeviceHandle::copy(dstData, srcData, copyPerIter, tidInRecvCopy,
+                                                 NRECV_COPY_WARPS * WARP_SIZE);
+      }
+    }
   }
 #endif
 }
@@ -874,6 +959,11 @@ cudaError_t allreduce(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
     int nThreadsPerBlock = 1024;
     allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         memoryChannels, nvlsChannels, nvlsOutChannels, channelInOffset, channelOutOffset, nelems * sizeof(T), rank);
+  } else if (mscclpp::isNvlsSupported()) {
+    int nBlocks = 32;
+    int nThreadsPerBlock = 1024;
+    allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
+                                                             nelems * sizeof(T), rank);
   } else {
     int nBlocks = 35;
     int nThreadsPerBlock = 512;
