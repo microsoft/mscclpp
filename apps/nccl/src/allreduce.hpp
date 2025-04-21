@@ -129,9 +129,9 @@ __forceinline__ __device__ T cal_elements(T a, T b) {
     return add_elements(a, b);
   } else if constexpr (OpType == MIN) {
     return min_elements(a, b);
-  } else {
-    static_assert(false, "Unsupported operation");
   }
+  // Should never reach here
+  return a;
 }
 
 template <typename T, Op OpType>
