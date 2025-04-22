@@ -80,17 +80,6 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
     atomicStore(remoteInboundSemaphoreId, semaphoreGetLocal(), memoryOrderRelaxed);
   }
 
-  /// Signal the remote device for copied packets.
-  ///
-  /// Unlike @ref signal(), this function provides no guarantee on the completion of memory operations. This is
-  /// intended to be used with @ref putPackets() and @ref getPackets() that use flags inside packets to indicate the
-  /// completion of copies.
-  ///
-  MSCCLPP_DEVICE_INLINE void signalPacket() {
-    semaphoreIncrement();
-    *remoteInboundSemaphoreId = semaphoreGetLocal();
-  }
-
   /// Increase the counter of the local semaphore.
   MSCCLPP_DEVICE_INLINE void semaphoreIncrement() { *outboundSemaphoreId += 1; }
 

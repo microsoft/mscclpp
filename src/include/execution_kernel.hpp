@@ -425,7 +425,8 @@ MSCCLPP_DEVICE_INLINE void handleTransformToPacket(void* dst, void* src, size_t 
                                                    uint32_t srcOffset, size_t size, uint32_t flag) {
   const size_t outputScratchBaseOffset = flag & 0x1 ? 0 : dstSize >> 1;
   dstOffset = dstOffset * 2 + outputScratchBaseOffset;
-  mscclpp::putPackets<PacketType>(dst, dstOffset, src, srcOffset, size, threadIdx.x, blockDim.x, flag);
+  mscclpp::copyToPackets<PacketType>((char*)dst + dstOffset, (char*)src + srcOffset, size, threadIdx.x, blockDim.x,
+                                     flag);
 }
 
 template <typename T, bool SendToRemote = true>
@@ -477,7 +478,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
 MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
   char* srcData = (char*)src + srcOffset;
   char* dstData = (char*)dst + dstOffset;
-  Element::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
+  detail::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
 }
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
