@@ -53,6 +53,44 @@ struct CudaStreamWithFlags {
   cudaStream_t stream_;
 };
 
+class GpuStreamPool;
+
+/// A managed GPU stream object created by GpuStreamPool.
+/// When this object is destroyed, it will return the underlying CudaStreamWithFlags to the pool.
+class GpuStream {
+ public:
+  GpuStream(std::shared_ptr<GpuStreamPool> pool, std::shared_ptr<CudaStreamWithFlags> stream);
+
+  ~GpuStream();
+
+  operator cudaStream_t() const { return stream_->stream_; }
+
+ private:
+  friend class GpuStreamPool;
+
+  std::shared_ptr<GpuStreamPool> pool_;
+  std::shared_ptr<CudaStreamWithFlags> stream_;
+};
+
+/// A pool of managed GPU streams.
+/// This is intended to be used for reusing temporal streams.
+class GpuStreamPool : public std::enable_shared_from_this<GpuStreamPool> {
+ public:
+  GpuStreamPool();
+
+  GpuStream getStream(unsigned int flags);
+
+  void clear();
+
+ protected:
+  friend class GpuStream;
+  std::vector<std::shared_ptr<CudaStreamWithFlags>> streams_;
+};
+
+/// Get the singleton instance of GpuStreamPool.
+/// @return A shared pointer to the GpuStreamPool instance.
+std::shared_ptr<GpuStreamPool> gpuStreamPool();
+
 namespace detail {
 
 void setReadWriteMemoryAccess(void* base, size_t size);
