@@ -55,7 +55,7 @@ struct BaseMemoryChannelDeviceHandle {
   /// User requires to call proper fencing before using this function.
   ///
   /// @param maxSpinCount The maximum number of spins before asserting. Never assert if negative.
-  MSCCLPP_DEVICE_INLINE void relaxedWait() { semaphore_.relaxedWait(); }
+  MSCCLPP_DEVICE_INLINE void relaxedWait(int64_t maxSpinCount = 10000000) { semaphore_.relaxedWait(maxSpinCount); }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
