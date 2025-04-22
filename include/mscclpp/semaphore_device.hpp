@@ -27,8 +27,8 @@ struct Host2DeviceSemaphoreDeviceHandle {
   /// Wait for the host to signal.
   MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
-    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < (*expectedInboundSemaphoreId)),
-                         maxSpinCount);
+    uint64_t flag = (*expectedInboundSemaphoreId);
+    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < flag), maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
@@ -50,8 +50,8 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
   /// Wait for the remote device to signal.
   MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
-    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < (*expectedInboundSemaphoreId)),
-                         maxSpinCount);
+    uint64_t flag = (*expectedInboundSemaphoreId);
+    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < flag), maxSpinCount);
   }
 
   /// Signal the remote device.
@@ -63,6 +63,8 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
     // This fence ensures that preceding writes are visible on the peer GPU before the incremented
     // `outboundSemaphoreId` is visible.
     semaphoreIncrement();
+    // use memoryOrderSeqCst instead of memoryOrderRelease since memoryOrderSeqCst
+    // is more efficient on A100.
     atomicStore(remoteInboundSemaphoreId, semaphoreGetLocal(), memoryOrderSeqCst);
   }
 
