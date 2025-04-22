@@ -5,6 +5,7 @@
 #define NCCL_COMMON_HPP_
 
 #include <mscclpp/concurrency_device.hpp>
+#include <mscclpp/env.hpp>
 
 #if defined(__HIP_PLATFORM_AMD__)
 #define WARP_SIZE 64
