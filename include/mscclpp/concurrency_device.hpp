@@ -26,7 +26,7 @@ struct DeviceSyncer {
   /// @param blockNum The number of blocks that will synchronize.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void sync(int blockNum, int64_t maxSpinCount = 100000000) {
-    int targetCnt = blockNum;
+    unsigned int targetCnt = blockNum;
     __syncthreads();
     if (blockNum == 1) return;
     if (threadIdx.x == 0) {

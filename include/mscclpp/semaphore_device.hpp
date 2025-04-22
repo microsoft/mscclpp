@@ -76,7 +76,11 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
     semaphoreIncrement();
     // use memoryOrderSeqCst instead of memoryOrderRelease since memoryOrderSeqCst
     // is more efficient on A100.
+#if __CUDA_ARCH__ == 800
     atomicStore(remoteInboundSemaphoreId, semaphoreGetLocal(), memoryOrderSeqCst);
+#else
+    atomicStore(remoteInboundSemaphoreId, semaphoreGetLocal(), memoryOrderRelease);
+#endif
   }
 
   /// Signal the remote device.
