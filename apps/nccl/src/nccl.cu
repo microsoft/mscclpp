@@ -428,7 +428,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     nvlsChannels = nvlsIt->second.nvlsChannelDeviceHandles.get();
   }
 
-  if (count * ncclTypeSize(datatype) <= (1 << 20) || useNvlsWithZeroCopy || useNvlsWithCopy) {
+  if (count * ncclTypeSize(datatype) <= (1 << 20) || mscclpp::isNvlsSupported()) {
     auto sendIt = comm->channelScratchInfos.find(sendKey);
     if (sendIt == comm->channelScratchInfos.end()) {
       std::vector<mscclpp::MemoryChannel> channels =
@@ -528,7 +528,7 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)sendbuff));
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
   channelKey recvKey{(void*)recvBasePtr, recvBytes};
-  [[maybe_unused]] channelKey sendKey{(void*)sendBasePtr, sendBytes};
+  [[maybe_unused]] channelKey sendKey{(void*)comm->scratchBuff.get(), SCRATCH_SIZE};
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = nullptr;
