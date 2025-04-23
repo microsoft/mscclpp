@@ -83,6 +83,7 @@ class TcpBootstrap::Impl {
   int getNranks();
   int getNranksPerNode();
   void allGather(void* allData, int size);
+  void broadcast(void* data, int size, int root);
   void send(void* data, int size, int peer, int tag);
   void recv(void* data, int size, int peer, int tag);
   void barrier();
@@ -465,6 +466,40 @@ void TcpBootstrap::Impl::allGather(void* allData, int size) {
   TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d - DONE", rank, nRanks, size);
 }
 
+void TcpBootstrap::Impl::broadcast(void* data, int size, int root) {
+  int rank = rank_;
+  int nRanks = nRanks_;
+
+  if (nRanks == 1) return;
+
+  TRACE(MSCCLPP_INIT, "rank %d nranks %d root %d size %d", rank, nRanks, root, size);
+
+  /*Ring-based broadcast, propagate data in nRanks-1 steps*/
+
+  // For ring-based broadcast, propagate data in nRanks-1 steps
+  for (int step = 0; step < nRanks - 1; step++) {
+    if (rank == root) {
+      // Root sends data to next rank in first step
+      if (step == 0) {
+        netSend(ringSendSocket_.get(), data, size);
+      }
+    } else {
+      // Calculate when this rank should receive data
+      int receiveStep = (rank - root - 1 + nRanks) % nRanks;
+      if (step == receiveStep) {
+        // Receive from previous rank
+        netRecv(ringRecvSocket_.get(), data, size);
+        // Forward to next rank (if not last step)
+        if (step < nRanks - 2) {
+          netSend(ringSendSocket_.get(), data, size);
+        }
+      }
+    }
+  }
+
+  TRACE(MSCCLPP_INIT, "rank %d nranks %d root %d size %d - DONE", rank, nRanks, root, size);
+}
+
 std::shared_ptr<Socket> TcpBootstrap::Impl::getPeerSendSocket(int peer, int tag) {
   auto it = peerSendSockets_.find(std::make_pair(peer, tag));
   if (it != peerSendSockets_.end()) {
@@ -554,6 +589,8 @@ MSCCLPP_API_CPP void TcpBootstrap::recv(void* data, int size, int peer, int tag)
 }
 
 MSCCLPP_API_CPP void TcpBootstrap::allGather(void* allData, int size) { pimpl_->allGather(allData, size); }
+
+MSCCLPP_API_CPP void TcpBootstrap::broadcast(void* data, int size, int root) { pimpl_->broadcast(data, size, root); }
 
 MSCCLPP_API_CPP void TcpBootstrap::initialize(UniqueId uniqueId, int64_t timeoutSec) {
   pimpl_->initialize(uniqueId, timeoutSec);

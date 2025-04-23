@@ -114,6 +114,17 @@ class TcpBootstrap : public Bootstrap {
   /// @param size The size of the data each rank sends.
   void allGather(void* allData, int size) override;
 
+  /// Broadcast data from the root process to all processes using a ring-based algorithm.
+  ///
+  /// When called by the root rank, this sends the `size` bytes starting at memory location `data` to all other
+  /// ranks. Non-root ranks receive these bytes into their own `data` buffer, overwriting its previous contents.
+  /// The data propagates sequentially through a logical ring of processes until all ranks have received it.
+  ///
+  /// @param data Pointer to the send buffer (root) or receive buffer (non-root)
+  /// @param size Number of bytes to broadcast
+  /// @param root Rank initiating the broadcast
+  void broadcast(void* data, int size, int root);
+
   /// Synchronize all processes.
   void barrier() override;
 

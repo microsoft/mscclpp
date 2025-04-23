@@ -30,7 +30,11 @@ class Env {
   const std::string executionPlanDir;
   const std::string npkitDumpDir;
   const bool cudaIpcUseDefaultStream;
+  const std::string ncclSharedLibPath;
+  const std::string forceNcclFallbackOperation;
+  const bool enableNcclFallback;
   const bool disableChannelCache;
+  const bool forceDisableNvls;
 
  private:
   Env();

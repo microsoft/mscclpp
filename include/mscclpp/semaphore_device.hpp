@@ -27,8 +27,8 @@ struct Host2DeviceSemaphoreDeviceHandle {
   /// Wait for the host to signal.
   MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
-    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < (*expectedInboundSemaphoreId)),
-                         maxSpinCount);
+    uint64_t flag = (*expectedInboundSemaphoreId);
+    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < flag), maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
@@ -50,8 +50,19 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
   /// Wait for the remote device to signal.
   MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
-    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < (*expectedInboundSemaphoreId)),
-                         maxSpinCount);
+    uint64_t flag = (*expectedInboundSemaphoreId);
+    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < flag), maxSpinCount);
+  }
+
+  /// Wait for the remote device to signal.
+  ///
+  /// This function is a relaxed version of Wait() and provides no guarantee on the completion of memory operations.
+  /// User requires to call proper fencing before using this function.
+  ///
+  MSCCLPP_DEVICE_INLINE void relaxedWait(int64_t maxSpinCount = 100000000) {
+    (*expectedInboundSemaphoreId) += 1;
+    uint64_t flag = (*expectedInboundSemaphoreId);
+    POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderRelaxed) < flag), maxSpinCount);
   }
 
   /// Signal the remote device.
@@ -63,7 +74,13 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
     // This fence ensures that preceding writes are visible on the peer GPU before the incremented
     // `outboundSemaphoreId` is visible.
     semaphoreIncrement();
+    // use memoryOrderSeqCst instead of memoryOrderRelease since memoryOrderSeqCst
+    // is more efficient on A100.
+#if __CUDA_ARCH__ == 800
     atomicStore(remoteInboundSemaphoreId, semaphoreGetLocal(), memoryOrderSeqCst);
+#else
+    atomicStore(remoteInboundSemaphoreId, semaphoreGetLocal(), memoryOrderRelease);
+#endif
   }
 
   /// Signal the remote device.

@@ -15,7 +15,7 @@
 
 namespace mscclpp {
 
-#if (CUDA_NVLS_SUPPORTED)
+#if (CUDA_NVLS_API_AVAILABLE)
 class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection::Impl> {
  public:
   // use this only for the root of the NVLS
@@ -193,6 +193,11 @@ void NvlsConnection::Impl::freeBuffer(size_t offset, size_t size) noexcept {
 }
 
 std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUdeviceptr devicePtr, size_t devBuffSize) {
+  if (!isCuMemMapAllocated((void*)devicePtr)) {
+    throw Error("This NVLS connection tried to bind a buffer that was not allocated with cuMemMap",
+                ErrorCode::InvalidUsage);
+  }
+
   devBuffSize = ((devBuffSize + minMcGran_ - 1) / minMcGran_) * minMcGran_;
   size_t offset = allocateBuffer(devBuffSize);
   MSCCLPP_CUTHROW(cuMulticastBindAddr(mcHandle_, offset /*mcOffset*/, devicePtr, devBuffSize, 0));
@@ -217,7 +222,7 @@ std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUdeviceptr devicePtr, si
   return std::shared_ptr<char>(mcPtr, deleter);
 }
 
-#else   // !(CUDA_NVLS_SUPPORTED)
+#else   // !(CUDA_NVLS_API_AVAILABLE)
 class NvlsConnection::Impl {
  public:
   // use this only for the root of the NVLS
@@ -238,7 +243,7 @@ class NvlsConnection::Impl {
   Error notSupportedError =
       Error("NVLS is not supported on this CUDA version (< 12.3) or kernel version (< 5.6.0)", ErrorCode::InvalidUsage);
 };
-#endif  // !(CUDA_NVLS_SUPPORTED)
+#endif  // !(CUDA_NVLS_API_AVAILABLE)
 
 NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices)
     : pimpl_(std::make_shared<Impl>(bufferSize, numDevices)) {}
