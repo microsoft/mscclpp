@@ -10,6 +10,7 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
+#include <mscclpp/nvls.hpp>
 #include <mscclpp/packet_device.hpp>
 
 #if defined(ENABLE_NPKIT)
@@ -798,10 +799,11 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, uint32_t s
 
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
-    allreduce9(mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-               mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast,
-               mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastOut,
-               size_t channelInOffset, size_t channelOutOffset, size_t size, int rank) {
+    allreduce9([[maybe_unused]] mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
+               [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast,
+               [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastOut,
+               [[maybe_unused]] size_t channelInOffset, [[maybe_unused]] size_t channelOutOffset,
+               [[maybe_unused]] size_t size, [[maybe_unused]] int rank) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   int nBlocks = gridDim.x;
   int bid = blockIdx.x;
@@ -839,9 +841,10 @@ __global__ void __launch_bounds__(1024, 1)
 
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
-    allreduce10(T* src, T* scrach, T* dst, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-                mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast, size_t size,
-                int rank) {
+    allreduce10([[maybe_unused]] T* src, [[maybe_unused]] T* scrach, [[maybe_unused]] T* dst,
+                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
+                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast,
+                [[maybe_unused]] size_t size, [[maybe_unused]] int rank) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   int nBlocks = gridDim.x;
   int nBlocksPerNvlsConn = nBlocks / NUM_NVLS_CONNECTION;

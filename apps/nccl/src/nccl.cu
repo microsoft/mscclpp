@@ -312,7 +312,7 @@ static std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> setupNvlsCha
   std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> channels;
   size_t nConnections = comm->connections.size();
 
-  for (size_t idx = 0; idx < NUM_NVLS_CONNECTION; ++idx) {
+  for (size_t idx = 0; idx < nConnections; ++idx) {
     std::shared_ptr<mscclpp::NvlsConnection> nvlsConnection = conns[idx];
     mscclpp::NvlsConnection::DeviceMulticastPointer deviceMulticastPointer =
         nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, bufferSize);
