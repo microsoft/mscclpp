@@ -342,7 +342,7 @@ class Ref(ChunkRef):
         return self._copy(dst, buffer, index, sendtb)
 
     def copy_packet(self, dst, buffer=None, index=-1, sendtb=-1):
-        op = Op(inst=Instruction.copy_packet, rank=self.rank, src=self)
+        op = Op(inst=Instruction.copy_packet, rank=self.rank, src=self, dst=ChunkRef(dst, buffer, index, self.size))
         self.prog.sort_dag.insert_operation(op)
 
         return self._copy(dst, buffer, index, sendtb, trans_from_packet=True, trans_to_packet=False)
@@ -445,7 +445,7 @@ def chunk(rank, buffer, index, size=1) -> Ref:
     if buffer is Buffer.scratch:
         if buffer not in _curr().buffers[rank]:
             _curr().buffers[rank][buffer] = BufferSlice(Buffer.scratch, buffer)
-        if index >= len(_curr().buffers[rank][buffer]):
+        if index >= len(_curr().buffers[rank][buffer]) or _curr().buffers[rank][buffer][index] is None:
             _curr().buffers[rank][buffer][index] = ChunkRef(rank, buffer, index, size)
 
     if _curr().buffers[rank][buffer][index] is None:

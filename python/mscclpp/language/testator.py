@@ -62,7 +62,7 @@ class Testator:
         chunk_ref = src
         if chan_type == ChannelType.port and src_format == DataFormat.raw:
             self._copy(src.rank, temp_buffer, temp_buffer_index)
-        self._put(chunk_ref, dst, buffer, index, sendtb, src_format, chan_type, True)
+        self._put(chunk_ref, dst, buffer, index)
 
     def _get(self, dst, src, buffer=None, index=-1):
         self.check_buffer_exists(src, buffer)
