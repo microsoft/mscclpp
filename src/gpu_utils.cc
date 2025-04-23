@@ -75,7 +75,7 @@ void* gpuCallocUncached(size_t bytes) {
 }
 #endif  // defined(__HIP_PLATFORM_AMD__)
 
-#if (CUDA_NVLS_SUPPORTED)
+#if (CUDA_NVLS_API_AVAILABLE)
 size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
   size_t gran = 0;
   int numDevices = 0;
@@ -143,7 +143,7 @@ void* gpuCallocPhysical(size_t bytes, size_t gran, size_t align) {
 
   return devicePtr;
 }
-#endif  // CUDA_NVLS_SUPPORTED
+#endif  // CUDA_NVLS_API_AVAILABLE
 
 void gpuFree(void* ptr) {
   AvoidCudaGraphCaptureGuard cgcGuard;
@@ -155,7 +155,7 @@ void gpuFreeHost(void* ptr) {
   MSCCLPP_CUDATHROW(cudaFreeHost(ptr));
 }
 
-#if (CUDA_NVLS_SUPPORTED)
+#if (CUDA_NVLS_API_AVAILABLE)
 void gpuFreePhysical(void* ptr) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   CUmemGenericAllocationHandle handle;
@@ -167,7 +167,7 @@ void gpuFreePhysical(void* ptr) {
   MSCCLPP_CUTHROW(cuMemRelease(handle));
   MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, size));
 }
-#endif  // CUDA_NVLS_SUPPORTED
+#endif  // CUDA_NVLS_API_AVAILABLE
 
 void gpuMemcpyAsync(void* dst, const void* src, size_t bytes, cudaStream_t stream, cudaMemcpyKind kind) {
   AvoidCudaGraphCaptureGuard cgcGuard;
@@ -184,9 +184,12 @@ void gpuMemcpy(void* dst, const void* src, size_t bytes, cudaMemcpyKind kind) {
 }  // namespace detail
 
 bool isNvlsSupported() {
+  if (env()->forceDisableNvls) {
+    return false;
+  }
   [[maybe_unused]] static bool result = false;
   [[maybe_unused]] static bool isChecked = false;
-#if (CUDA_NVLS_SUPPORTED)
+#if (CUDA_NVLS_API_AVAILABLE)
   if (!isChecked) {
     int isMulticastSupported;
     CUdevice dev;
