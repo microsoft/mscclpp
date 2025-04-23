@@ -8,6 +8,8 @@ from mscclpp.language.types import DataFormat, ChannelType, ChunkRef, Replicatio
 from mscclpp.language.ir import *
 from mscclpp.language.dag import DagOptimizer, DagLower, InstructionDAG
 from mscclpp.language.rank import Rank
+from mscclpp.language.topo_sort import SortDAG
+from mscclpp.language.testator import Testator
 
 _current_program = None
 
@@ -54,6 +56,8 @@ class MSCCLPPProgram:
         # Initialize the input buffers
         self.buffers = collective.init_buffers()
         self.instr_dag = InstructionDAG(self.num_ranks, self.buffers)
+        self.sort_dag = SortDAG()
+        self.testator = Testator()
         self.ranks = []
         for r in range(self.num_ranks):
             self.ranks.append(Rank(r))
@@ -89,26 +93,6 @@ class MSCCLPPProgram:
     def get_rank_ref(self, rank):
         return RankRef(rank, self)
 
-    # Tracks a send operation on the buffers
-    def apply_send(self, src, src_buffer, src_index, dst, dst_buffer, dst_index, size):
-        src_buffer, src_index = self.collective.get_buffer_index(src, src_buffer, src_index)
-        dst_buffer, dst_index = self.collective.get_buffer_index(dst, dst_buffer, dst_index)
-        sb = self.buffers[src][src_buffer]
-        db = self.buffers[dst][dst_buffer]
-        for i in range(size):
-            db[dst_index + i] = sb[src_index + i]
-
-    # Tracks a reduce operation on the buffers
-    def apply_reduce(self, src, src_buffer, src_index, dst, dst_buffer, dst_index, size):
-        src_buffer, src_index = self.collective.get_buffer_index(src, src_buffer, src_index)
-        dst_buffer, dst_index = self.collective.get_buffer_index(dst, dst_buffer, dst_index)
-        sb = self.buffers[src][src_buffer]
-        db = self.buffers[dst][dst_buffer]
-        for i in range(size):
-            reduce_chunk = db[dst_index + i]
-            sent_chunk = sb[src_index + i]
-            db[dst_index + i] = reduce_chunk.reduce(dst, sent_chunk)
-
     def get_ref(self, rank, buffer, index, size):
         buffer, index = self.collective.get_buffer_index(rank, buffer, index)
         return Ref(rank, buffer, index, size, self)
@@ -129,7 +113,7 @@ class MSCCLPPProgram:
     # Checks that all chunks that should be on each rank
     # are present in the output buffer.
     def check(self):
-        return self.collective.check(self)
+        return self.testator.check(self.collective, self.sort_dag.operation_order())
 
     # Lower program to MSCCLPP
     def lower(self):
@@ -238,7 +222,6 @@ class Ref(ChunkRef):
         buffer, index = self._get_buffer_index(dst, buffer, index)
 
         dst_chunkref = self.prog.get_ref(dst, buffer, index, self.size)
-        self.prog.apply_send(self.rank, self.buffer, self.index, dst, buffer, index, self.size)
         if use_packet:
             self.prog.instr_dag.add_put(self.rank, self, dst_chunkref, sendtb, src_format, chan_type, True)
             self.prog.instr_dag.add_signal(self.rank, self, dst_chunkref, -1, ChannelType.none)
@@ -248,6 +231,9 @@ class Ref(ChunkRef):
         return dst_chunkref
 
     def put(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.memory):
+        op = Op(inst=Instruction.put, rank=self.rank, src=self, dst=ChunkRef(dst, buffer, index, self.size))
+        self.prog.sort_dag.insert_operation(op)
+
         return self._put(dst, buffer, index, sendtb, DataFormat.raw, chan_type)
 
     def put_packet(
@@ -261,6 +247,16 @@ class Ref(ChunkRef):
         temp_buffer=None,
         temp_buffer_index=-1,
     ):
+        extra = {"src_format": src_format, "temp_buffer": temp_buffer, "temp_buffer_index": temp_buffer_index}
+        op = Op(
+            inst=Instruction.put_packet,
+            rank=self.rank,
+            src=self,
+            dst=ChunkRef(dst, buffer, index, self.size),
+            extra=extra,
+        )
+        self.prog.sort_dag.insert_operation(op)
+
         chunk_ref = self
         if chan_type == ChannelType.port and src_format == DataFormat.raw:
             assert temp_buffer is not None, "Need to specify a temporary buffer for port channels"
@@ -270,6 +266,9 @@ class Ref(ChunkRef):
         return chunk_ref._put(dst, buffer, index, sendtb, src_format, chan_type, True)
 
     def get(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.memory):
+        op = Op(inst=Instruction.get, rank=self.rank, src=ChunkRef(src, buffer, index, self.size), dst=self)
+        self.prog.sort_dag.insert_operation(op)
+
         self.prog.check_buffer_exists(src, buffer)
         sender = src
         receiver = self.rank
@@ -278,13 +277,15 @@ class Ref(ChunkRef):
 
         src_chunkref = self.prog.get_ref(src, buffer, index, self.size)
 
-        self.prog.apply_send(src, buffer, index, self.rank, self.buffer, self.index, self.size)
         self.prog.instr_dag.add_get(receiver, src_chunkref, self, recvtb, chan_type)
 
     # for signal and wait, currently we assuem the pair will use the same tb index. In future we need
     # to infer the tb index from the instruction DAG Add a channel is define as (send_tb, src_buffer, recv_tb, dst_buffer, type).
     # Then we can use DAG info to reduce the number of channels.
     def signal(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.memory):
+        op = Op(inst=Instruction.signal, rank=self.rank, src=self, dst=ChunkRef(dst, buffer, index, self.size))
+        self.prog.sort_dag.insert_operation(op)
+
         sender = self.rank
         receiver = dst
         assert sender != receiver, "Cannot signal to the same rank"
@@ -295,6 +296,9 @@ class Ref(ChunkRef):
 
     # only port channel need to use this function
     def flush(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.port):
+        op = Op(inst=Instruction.flush, rank=self.rank, src=self, dst=ChunkRef(dst, buffer, index, self.size))
+        self.prog.sort_dag.insert_operation(op)
+
         assert chan_type == ChannelType.port, "Only port channel can use flush"
         sender = self.rank
         receiver = dst
@@ -305,6 +309,9 @@ class Ref(ChunkRef):
         self.prog.instr_dag.add_flush(sender, self, dst_chunkref, sendtb)
 
     def wait(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.memory):
+        op = Op(inst=Instruction.wait, rank=self.rank, src=ChunkRef(src, buffer, index, self.size), dst=self)
+        self.prog.sort_dag.insert_operation(op)
+
         sender = src
         receiver = self.rank
         assert sender != receiver, "Cannot wait on the same rank"
@@ -321,7 +328,6 @@ class Ref(ChunkRef):
         # Check if we are copying the chunk to the same index (easy mistake when we are using inplace)
         if dst_chunkref == self:
             return
-        self.prog.apply_send(self.rank, self.buffer, self.index, dst, buffer, index, self.size)
 
         assert self.rank == dst, "Chunk copy only supports intra-rank communication"
         self.prog.instr_dag.add_copy(self.rank, self, dst_chunkref, sendtb, trans_from_packet, trans_to_packet)
@@ -330,18 +336,21 @@ class Ref(ChunkRef):
 
     # Copies the chunk(s) referenced by this chunkref onto Rank dst at location (buffer, index)
     def copy(self, dst, buffer=None, index=-1, sendtb=-1):
+        op = Op(inst=Instruction.copy, rank=self.rank, src=self, dst=ChunkRef(dst, buffer, index, self.size))
+        self.prog.sort_dag.insert_operation(op)
+
         return self._copy(dst, buffer, index, sendtb)
 
     def copy_packet(self, dst, buffer=None, index=-1, sendtb=-1):
+        op = Op(inst=Instruction.copy_packet, rank=self.rank, src=self)
+        self.prog.sort_dag.insert_operation(op)
+
         return self._copy(dst, buffer, index, sendtb, trans_from_packet=True, trans_to_packet=False)
 
     def _reduce(self, other_chunkref, recvtb=-1, channel_type=ChannelType.memory, use_packet=False):
         dst = self.rank
         src = other_chunkref.rank
 
-        self.prog.apply_reduce(
-            src, other_chunkref.buffer, other_chunkref.index, dst, self.buffer, self.index, self.size
-        )
         if use_packet:
             assert src == dst, "Packet reduce only supports intra-rank communication"
 
@@ -354,10 +363,16 @@ class Ref(ChunkRef):
 
     # Reduces the chunk(s) referenced by other_chunkref into the chunk(s) referenced by this chunkref
     def reduce(self, other_chunkref, recvtb=-1, channel_type=ChannelType.memory):
+        op = Op(inst=Instruction.reduce, rank=self.rank, src=self, dst=other_chunkref)
+        self.prog.sort_dag.insert_operation(op)
+
         return self._reduce(other_chunkref, recvtb, channel_type)
 
     # Reduces the chunk(s) referenced by other_chunkref into the chunk(s) referenced by this chunkref
     def reduce_packet(self, other_chunkref, recvtb=-1):
+        op = Op(inst=Instruction.reduce_packet, rank=self.rank, src=self, dst=other_chunkref)
+        self.prog.sort_dag.insert_operation(op)
+
         return self._reduce(other_chunkref, recvtb, use_packet=True)
 
     # """
@@ -366,6 +381,9 @@ class Ref(ChunkRef):
     # """
     # Reads the chunk(s) referenced by other_chunkref and reduce into the chunk referenced by this chunkref
     def group_load_reduce(self, other_chunkrefs: list, recvtb=-1, chan_type=ChannelType.nvls):
+        op = Op(inst=Instruction.group_load_reduce, rank=self.rank, src=self, dst=None, srcs=other_chunkrefs)
+        self.prog.sort_dag.insert_operation(op)
+
         assert (
             len(other_chunkrefs) > 0 and chan_type == ChannelType.nvls
         ), "Group load reduce only supports nvls channel"
@@ -377,21 +395,15 @@ class Ref(ChunkRef):
             assert self.buffer == other_chunkref.buffer, "Group load reduce only supports chunks with the same buffer"
             assert self.index == other_chunkref.index, "Group load reduce only supports chunks with the same index"
 
-            src_chunkref = other_chunkref
-            self.prog.apply_reduce(
-                src_chunkref.rank,
-                src_chunkref.buffer,
-                src_chunkref.index,
-                self.rank,
-                self.buffer,
-                self.index,
-                self.size,
-            )
         self.prog.instr_dag.add_group_load_reduce(self.rank, other_chunkrefs, self, recvtb, chan_type)
         return self
 
     # Copies the chunk(s) referenced by this chunkref onto other_chunkrefs
     def group_store(self, dsts: list, index=-1, buffer=None, sendtb=-1, chan_type=ChannelType.nvls):
+        extra = {"dsts": dsts, "index": index, "buffer": buffer}
+        op = Op(inst=Instruction.group_store, rank=self.rank, src=self, dst=None, extra=extra)
+        self.prog.sort_dag.insert_operation(op)
+
         for dst in dsts:
             self.prog.check_buffer_exists(dst, buffer)
         assert index == -1 or self.index == index, "Group store only supports chunks with the same index"
@@ -409,7 +421,6 @@ class Ref(ChunkRef):
             ), "Group store only supports chunks on the same node"
 
             dst_chunkref = self.prog.get_ref(dst, buffer, index, self.size)
-            self.prog.apply_send(self.rank, self.buffer, self.index, dst, buffer, index, self.size)
             other_chunkrefs.append(dst_chunkref)
         # add new op here
         self.prog.instr_dag.add_group_store(self.rank, self, other_chunkrefs, sendtb, chan_type)
