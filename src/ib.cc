@@ -50,9 +50,22 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   }
   uintptr_t addr = reinterpret_cast<uintptr_t>(buff) & -pageSize;
   std::size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;
+
+  CUdeviceptr dptr = reinterpret_cast<CUdeviceptr>(addr);
+  bool cuMemAlloc = mscclpp::details::isCuMemMapAllocated(dptr);
+  err << "cuMemAlloc:" << cuMemAlloc << "\n";
+  if (cuMemAlloc) {
+    int fd;
+    cuMemGetHandleForAddressRange(&fd, dptr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
+    this->mr = IBVerbs::ibv_reg_dmabuf_mr(pd, 0, pages * pageSize, reinterpret_cast<void*>(addr), fd,
+                                    IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
+                                        IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
+  } else {
   this->mr = IBVerbs::ibv_reg_mr2(pd, reinterpret_cast<void*>(addr), pages * pageSize,
                                   IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                                       IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
+  }
+
   if (this->mr == nullptr) {
     std::stringstream err;
     err << "ibv_reg_mr failed (errno " << errno << ")";
