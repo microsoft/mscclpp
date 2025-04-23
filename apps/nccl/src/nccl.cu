@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/env.hpp>
@@ -472,35 +473,42 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   }
 
   Op reduceOp = getReduceOp(op);
-  switch (datatype) {
-    case ncclFloat16:
-      CUDACHECK(allreduce((half*)sendbuff, (half*)comm->scratchBuff.get(), (half*)recvbuff, memoryChannels,
-                          memoryOutChannels, nvlsChannels, nvlsOutChannels, offsetIn, offsetOut, offsetScratch, rank,
-                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), reduceOp, count, stream));
-      break;
-    case ncclFloat32:
-      CUDACHECK(allreduce((float*)sendbuff, (float*)comm->scratchBuff.get(), (float*)recvbuff, memoryChannels,
-                          memoryOutChannels, nvlsChannels, nvlsOutChannels, offsetIn, offsetOut, offsetScratch,
-                          comm->comm->bootstrap()->getRank(), NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(),
-                          reduceOp, count, stream));
-      break;
-    case ncclBfloat16:
-      CUDACHECK(allreduce((__bfloat16*)sendbuff, (__bfloat16*)comm->scratchBuff.get(), (__bfloat16*)recvbuff,
-                          memoryChannels, memoryOutChannels, nvlsChannels, nvlsOutChannels, offsetIn, offsetOut,
-                          offsetScratch, rank, NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), reduceOp, count,
-                          stream));
-      break;
-    case ncclInt32:
-    case ncclUint32:
-      CUDACHECK(allreduce((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels,
-                          memoryOutChannels, nvlsChannels, nvlsOutChannels, offsetIn, offsetOut, offsetScratch,
-                          comm->comm->bootstrap()->getRank(), NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(),
-                          reduceOp, count, stream));
-      break;
-    default:
+  std::function<cudaError_t(const void*, void*, void*, mscclpp::DeviceHandle<mscclpp::MemoryChannel>*,
+                            mscclpp::DeviceHandle<mscclpp::MemoryChannel>*,
+                            mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>*,
+                            mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>*, size_t, size_t,
+                            size_t, int, int, int, size_t, cudaStream_t)>
+      allreduceFunc;
+  if (reduceOp == SUM) {
+    if (datatype == ncclFloat16) {
+      allreduceFunc = allreduce<SUM, half>;
+    } else if (datatype == ncclFloat32) {
+      allreduceFunc = allreduce<SUM, float>;
+    } else if (datatype == ncclBfloat16) {
+      allreduceFunc = allreduce<SUM, __bfloat16>;
+    } else if (datatype == ncclInt32 || datatype == ncclUint32) {
+      allreduceFunc = allreduce<SUM, int>;
+    } else {
       WARN("datatype is invalid, datatype: %d", datatype);
       return ncclInvalidArgument;
+    }
+  } else if (reduceOp == MIN) {
+    if (datatype == ncclFloat16) {
+      allreduceFunc = allreduce<MIN, half>;
+    } else if (datatype == ncclFloat32) {
+      allreduceFunc = allreduce<MIN, float>;
+    } else if (datatype == ncclBfloat16) {
+      allreduceFunc = allreduce<MIN, __bfloat16>;
+    } else if (datatype == ncclInt32 || datatype == ncclUint32) {
+      allreduceFunc = allreduce<MIN, int>;
+    } else {
+      WARN("datatype is invalid, datatype: %d", datatype);
+      return ncclInvalidArgument;
+    }
   }
+  CUDACHECK(allreduceFunc(sendbuff, comm->scratchBuff.get(), recvbuff, memoryChannels, memoryOutChannels, nvlsChannels,
+                          nvlsOutChannels, offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(),
+                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream));
   return ncclSuccess;
 }
 
