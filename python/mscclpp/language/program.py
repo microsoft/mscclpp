@@ -89,7 +89,7 @@ class MSCCLPPProgram:
                 self.instr_dag.tbs[rank][tbid] = Threadblock(id=tbid)
             tb = self.instr_dag.tbs[rank][tbid]
             tb.ops.append(op)
-    
+
     def get_rank_ref(self, rank):
         return RankRef(rank, self)
 
