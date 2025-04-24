@@ -287,7 +287,7 @@ class Ref(ChunkRef):
 
         src_chunkref = self.prog.get_ref(src, buffer, index, self.size)
 
-        self.prog.apply_send(self.rank, self.buffer, self.index, dst, buffer, index, self.size)
+        self.prog.apply_send(src, buffer, index, self.rank, self.buffer, self.index, self.size)
         self.prog.instr_dag.add_get(receiver, src_chunkref, self, recvtb, chan_type)
 
     # for signal and wait, currently we assuem the pair will use the same tb index. In future we need
