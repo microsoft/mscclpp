@@ -418,8 +418,9 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   }
   CUDACHECK(allreduceFunc(sendbuff, comm->scratchBuff.get(), recvbuff, memoryChannels, memoryOutChannels, offsetIn,
                           offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(), NRANKS_PER_NODE,
-                          comm->comm->bootstrap()->getNranks(), count, stream, (uint32_t*)comm->deviceFlag7.get(), 
-			  (uint32_t*)comm->deviceFlag28.get(), (uint32_t*)comm->deviceFlag56.get(), comm->numScratchBuff));
+                          comm->comm->bootstrap()->getNranks(), count, stream, (uint32_t*)comm->deviceFlag7.get(),
+                          (uint32_t*)comm->deviceFlag28.get(), (uint32_t*)comm->deviceFlag56.get(),
+                          comm->numScratchBuff));
   return ncclSuccess;
 }
 

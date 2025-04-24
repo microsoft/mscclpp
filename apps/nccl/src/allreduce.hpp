@@ -176,7 +176,7 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff,
 
   uint32_t flag = deviceFlag[blockIdx.x];
 
-  size_t scratchBaseOffset = (flag % numScratchBuff) ? SCRATCH_SIZE/numScratchBuff : 0;
+  size_t scratchBaseOffset = (flag % numScratchBuff) ? SCRATCH_SIZE / numScratchBuff : 0;
   channelScratchOffset = scratchBaseOffset;
 
   const int nBlocksPerPeer = gridDim.x / nPeers;
@@ -206,7 +206,7 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff,
   }
   __syncthreads();
   if (threadIdx.x == 0) {
-  	deviceFlag[blockIdx.x] = deviceFlag[blockIdx.x] + 1;
+    deviceFlag[blockIdx.x] = deviceFlag[blockIdx.x] + 1;
   }
 }
 
@@ -257,9 +257,9 @@ __global__ void __launch_bounds__(1024, 1)
   const int nPeers = nRanksPerNode - 1;
   const size_t nPkts = nelems / 2;
 
-  uint32_t flag = (uint32_t) deviceFlag[blockIdx.x];
+  uint32_t flag = (uint32_t)deviceFlag[blockIdx.x];
 
-  size_t scratchBaseOffset = (flag % numScratchBuff) ? SCRATCH_SIZE/numScratchBuff : 0;
+  size_t scratchBaseOffset = (flag % numScratchBuff) ? SCRATCH_SIZE / numScratchBuff : 0;
   channelScratchOffset = scratchBaseOffset;
 
   int nelemsPerRank = nelems / worldSize;
@@ -337,7 +337,7 @@ __global__ void __launch_bounds__(1024, 1)
   NpKit::StoreGpuEventShm(npKitEventCollectContexts, event_buffer, event_buffer_head);
 #endif
   if (threadIdx.x == 0) {
-         deviceFlag[blockIdx.x] = deviceFlag[blockIdx.x] + 1;
+    deviceFlag[blockIdx.x] = deviceFlag[blockIdx.x] + 1;
   }
 }
 
@@ -483,8 +483,7 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
                       mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryOutChannels, size_t channelInOffset,
                       size_t channelOutOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
                       size_t nelems, cudaStream_t stream, uint32_t* deviceFlag7, uint32_t* deviceFlag28,
-		      uint32_t* deviceFlag56, uint32_t numScratchBuff) {
-
+                      uint32_t* deviceFlag56, uint32_t numScratchBuff) {
   uint32_t* deviceFlag;
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
     int nBlocks = 7;
@@ -511,12 +510,12 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
     size_t NpkitSharedMemSize = NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
     allreduce7<OpType><<<nBlocks, nThreadsPerBlock, NpkitSharedMemSize, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
-        nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff, NpKit::GetGpuEventCollectContexts(), 
-	NpKit::GetCpuTimestamp());
+        nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff, NpKit::GetGpuEventCollectContexts(),
+        NpKit::GetCpuTimestamp());
 #else
-    allreduce7<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels,
-                                                                 channelInOffset, channelScratchOffset, rank,
-                                                                 nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff);
+    allreduce7<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
+        nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff);
 #endif
   } else {
     int nBlocks = 35;
