@@ -15,7 +15,7 @@ namespace mscclpp {
 struct BaseMemoryChannelDeviceHandle {
   MemoryDevice2DeviceSemaphoreDeviceHandle semaphore_;
 
-  MSCCLPP_HOST_DEVICE_INLINE BaseMemoryChannelDeviceHandle() {}
+  MSCCLPP_HOST_DEVICE_INLINE BaseMemoryChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BaseMemoryChannelDeviceHandle(MemoryDevice2DeviceSemaphoreDeviceHandle semaphore)
       : semaphore_(semaphore) {}
@@ -65,7 +65,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
   void* src_;
   void* packetBuffer_;
 
-  MSCCLPP_HOST_DEVICE_INLINE MemoryChannelDeviceHandle() {}
+  MSCCLPP_HOST_DEVICE_INLINE MemoryChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE MemoryChannelDeviceHandle(MemoryDevice2DeviceSemaphoreDeviceHandle semaphore, void* dst,
                                                        void* src, void* packetBuffer)
