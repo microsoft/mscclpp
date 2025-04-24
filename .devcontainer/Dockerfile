@@ -10,4 +10,17 @@ RUN groupadd --gid $USER_GID $USERNAME && \
     echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME && \
     chmod 0440 /etc/sudoers.d/$USERNAME
 
+# Dev tools
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    clang-format \
+    htop \
+    openssh-server \
+    && \
+    apt-get autoremove && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/*
+RUN python3 -m pip install --no-cache-dir \
+    black
+
 USER $USERNAME
