@@ -70,7 +70,8 @@ struct MemoryChannelDeviceHandle {
 
   /// this is a helper for copy function
   template <typename T, bool CopyRemainder = true>
-  MSCCLPP_DEVICE_INLINE void copy_helper(void* dst, void* src, uint64_t bytes, uint32_t threadId, uint32_t numThreads) {
+  MSCCLPP_DEVICE_INLINE static void copy_helper(void* dst, void* src, uint64_t bytes, uint32_t threadId,
+                                                uint32_t numThreads) {
     int* dstInt = reinterpret_cast<int*>(dst);
     int* srcInt = reinterpret_cast<int*>(src);
     const uintptr_t dstPtr = reinterpret_cast<uintptr_t>(dst);
@@ -109,7 +110,7 @@ struct MemoryChannelDeviceHandle {
   /// @param numThreads The total number of threads that run this function.
   ///
   template <int Alignment = 16, bool CopyRemainder = true>
-  MSCCLPP_DEVICE_INLINE void copy(void* dst, void* src, uint64_t bytes, uint32_t threadId, uint32_t numThreads) {
+  MSCCLPP_DEVICE_INLINE static void copy(void* dst, void* src, uint64_t bytes, uint32_t threadId, uint32_t numThreads) {
     if (Alignment == 4) {
       copy_helper<int, CopyRemainder>(dst, src, bytes, threadId, numThreads);
     } else if (Alignment == 8) {
