@@ -104,10 +104,10 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #if CUDART_VERSION < 12030
 #define CU_MEM_HANDLE_TYPE_FABRIC ((CUmemAllocationHandleType)0x8ULL)
 #endif
-// We need CUDA 12.0 above and kernel 5.6.0 above for NVLS
-#define CUDA_NVLS_SUPPORTED ((CUDART_VERSION >= 12000) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)))
+// We need CUDA 12.3 above and kernel 5.6.0 above for NVLS API
+#define CUDA_NVLS_API_AVAILABLE ((CUDART_VERSION >= 12030) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)))
 #else  // defined(__HIP_PLATFORM_AMD__)
-#define CUDA_NVLS_SUPPORTED 0
+#define CUDA_NVLS_API_AVAILABLE 0
 // NVLS is not supported on AMD platform, just to avoid compilation error
 #define CU_MEM_HANDLE_TYPE_FABRIC (0x8ULL)
 #endif  // !defined(__HIP_PLATFORM_AMD__)
