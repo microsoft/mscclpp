@@ -544,7 +544,7 @@ __global__ void __launch_bounds__(1024, 1)
   __syncwarp();
   if (threadIdx.x < NPEERS) {
     channels[threadIdx.x].relaxedSignal();
-    channels[threadIdx.x].wait();
+    channels[threadIdx.x].relaxedWait();
   }
   __syncthreads();
   T* src = (T*)multicastPtr->mcPtr;
@@ -554,7 +554,7 @@ __global__ void __launch_bounds__(1024, 1)
   __syncthreads();
   if (threadIdx.x < NPEERS) {
     channels[threadIdx.x].relaxedSignal();
-    channels[threadIdx.x].wait();
+    channels[threadIdx.x].relaxedWait();
   }
 #endif
 }
