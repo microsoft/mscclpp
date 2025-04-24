@@ -29,14 +29,9 @@ union alignas(16) LL16Packet {
 #if defined(MSCCLPP_DEVICE_COMPILE)
   ulonglong2 raw_;
 
-  MSCCLPP_DEVICE_INLINE LL16Packet() {}
+  MSCCLPP_DEVICE_INLINE LL16Packet() = default;
 
-  MSCCLPP_DEVICE_INLINE LL16Packet(uint2 val, uint32_t flag) {
-    data1 = val.x;
-    flag1 = flag;
-    data2 = val.y;
-    flag2 = flag;
-  }
+  MSCCLPP_DEVICE_INLINE LL16Packet(uint2 val, uint32_t flag) : data1(val.x), flag1(flag), data2(val.y), flag2(flag) {}
 
   /// Write 8 bytes of data to the packet.
   /// @param val1 The first 4-byte data to write.
@@ -112,12 +107,9 @@ union alignas(8) LL8Packet {
   using Payload = uint32_t;
 #if defined(MSCCLPP_DEVICE_COMPILE)
 
-  MSCCLPP_DEVICE_INLINE LL8Packet() {}
+  MSCCLPP_DEVICE_INLINE LL8Packet() = default;
 
-  MSCCLPP_DEVICE_INLINE LL8Packet(uint32_t val, uint32_t flag) {
-    this->data = val;
-    this->flag = flag;
-  }
+  MSCCLPP_DEVICE_INLINE LL8Packet(uint32_t val, uint32_t flag) : data(val), flag(flag) {}
 
   MSCCLPP_DEVICE_INLINE void write(uint32_t val, uint32_t flag) {
 #if defined(MSCCLPP_DEVICE_CUDA)
