@@ -478,7 +478,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
 MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
   char* srcData = (char*)src + srcOffset;
   char* dstData = (char*)dst + dstOffset;
-  detail::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
+  mscclpp::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
 }
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900

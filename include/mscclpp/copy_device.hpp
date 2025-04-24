@@ -54,7 +54,7 @@ MSCCLPP_DEVICE_INLINE void copyHelper(void* dst, void* src, uint64_t bytes, uint
   T* dstElem = reinterpret_cast<T*>((dstPtr + sizeof(T) - 1) / sizeof(T) * sizeof(T));
   T* srcElem = reinterpret_cast<T*>((srcPtr + sizeof(T) - 1) / sizeof(T) * sizeof(T));
   uint64_t nFirstInt = (reinterpret_cast<uintptr_t>(dstElem) - dstPtr) / sizeof(int);
-  if (CopyRemainder) {
+  if constexpr (CopyRemainder) {
     // Copy the remainder integers at the beginning.
     detail::copy<int>(dstInt, srcInt, nFirstInt, threadId, numThreads);
   }
@@ -62,7 +62,7 @@ MSCCLPP_DEVICE_INLINE void copyHelper(void* dst, void* src, uint64_t bytes, uint
   constexpr uint64_t nIntPerElem = sizeof(T) / sizeof(int);
   uint64_t nElem = (numInt - nFirstInt) / nIntPerElem;
   detail::copy<T>(dstElem, srcElem, nElem, threadId, numThreads);
-  if (CopyRemainder && nIntPerElem > 1) {
+  if constexpr (CopyRemainder && nIntPerElem > 1) {
     // Copy the remainder integers at the end.
     uint64_t nLastInt = (numInt - nFirstInt) % nIntPerElem;
     detail::copy<int>(dstInt + nFirstInt + nElem * nIntPerElem, srcInt + nFirstInt + nElem * nIntPerElem, nLastInt,
@@ -85,11 +85,11 @@ MSCCLPP_DEVICE_INLINE void copyHelper(void* dst, void* src, uint64_t bytes, uint
 ///
 template <int Alignment = 16, bool CopyRemainder = true>
 MSCCLPP_DEVICE_INLINE void copy(void* dst, void* src, uint64_t bytes, uint32_t threadId, uint32_t numThreads) {
-  if (Alignment == 4) {
+  if constexpr (Alignment == 4) {
     copyHelper<int, CopyRemainder>(dst, src, bytes, threadId, numThreads);
-  } else if (Alignment == 8) {
+  } else if constexpr (Alignment == 8) {
     copyHelper<long long, CopyRemainder>(dst, src, bytes, threadId, numThreads);
-  } else if (Alignment == 16) {
+  } else if constexpr (Alignment == 16) {
     copyHelper<longlong2, CopyRemainder>(dst, src, bytes, threadId, numThreads);
   } else {
     static_assert(Alignment == 4 || Alignment == 8 || Alignment == 16, "Unsupported alignment");
