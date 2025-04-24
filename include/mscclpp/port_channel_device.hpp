@@ -49,7 +49,7 @@ union ChannelTrigger {
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Default constructor.
-  MSCCLPP_DEVICE_INLINE ChannelTrigger() {}
+  MSCCLPP_DEVICE_INLINE ChannelTrigger() = default;
 
   /// Copy constructor.
   MSCCLPP_DEVICE_INLINE ChannelTrigger(ProxyTrigger value) : value(value) {}
@@ -92,7 +92,7 @@ struct BasePortChannelDeviceHandle {
   // can produce for and the sole proxy thread consumes it.
   FifoDeviceHandle fifo_;
 
-  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle() {}
+  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                          Host2DeviceSemaphoreDeviceHandle semaphore,
@@ -186,7 +186,7 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   MemoryId dst_;
   MemoryId src_;
 
-  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(){};
+  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                      Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
