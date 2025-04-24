@@ -89,9 +89,18 @@ class MSCCLPPProgram:
                 self.instr_dag.tbs[rank][tbid] = Threadblock(id=tbid)
             tb = self.instr_dag.tbs[rank][tbid]
             tb.ops.append(op)
-
+    
     def get_rank_ref(self, rank):
         return RankRef(rank, self)
+
+    # Tracks a send operation on the buffers
+    def apply_send(self, src, src_buffer, src_index, dst, dst_buffer, dst_index, size):
+        src_buffer, src_index = self.collective.get_buffer_index(src, src_buffer, src_index)
+        dst_buffer, dst_index = self.collective.get_buffer_index(dst, dst_buffer, dst_index)
+        sb = self.buffers[src][src_buffer]
+        db = self.buffers[dst][dst_buffer]
+        for i in range(size):
+            db[dst_index + i] = sb[src_index + i]
 
     def get_ref(self, rank, buffer, index, size):
         buffer, index = self.collective.get_buffer_index(rank, buffer, index)
@@ -222,6 +231,7 @@ class Ref(ChunkRef):
         buffer, index = self._get_buffer_index(dst, buffer, index)
 
         dst_chunkref = self.prog.get_ref(dst, buffer, index, self.size)
+        self.prog.apply_send(self.rank, self.buffer, self.index, dst, buffer, index, self.size)
         if use_packet:
             self.prog.instr_dag.add_put(self.rank, self, dst_chunkref, sendtb, src_format, chan_type, True)
             self.prog.instr_dag.add_signal(self.rank, self, dst_chunkref, -1, ChannelType.none)
@@ -277,6 +287,7 @@ class Ref(ChunkRef):
 
         src_chunkref = self.prog.get_ref(src, buffer, index, self.size)
 
+        self.prog.apply_send(self.rank, self.buffer, self.index, dst, buffer, index, self.size)
         self.prog.instr_dag.add_get(receiver, src_chunkref, self, recvtb, chan_type)
 
     # for signal and wait, currently we assuem the pair will use the same tb index. In future we need
@@ -328,6 +339,7 @@ class Ref(ChunkRef):
         # Check if we are copying the chunk to the same index (easy mistake when we are using inplace)
         if dst_chunkref == self:
             return
+        self.prog.apply_send(self.rank, self.buffer, self.index, dst, buffer, index, self.size)
 
         assert self.rank == dst, "Chunk copy only supports intra-rank communication"
         self.prog.instr_dag.add_copy(self.rank, self, dst_chunkref, sendtb, trans_from_packet, trans_to_packet)
@@ -421,6 +433,7 @@ class Ref(ChunkRef):
             ), "Group store only supports chunks on the same node"
 
             dst_chunkref = self.prog.get_ref(dst, buffer, index, self.size)
+            self.prog.apply_send(self.rank, self.buffer, self.index, dst, buffer, index, self.size)
             other_chunkrefs.append(dst_chunkref)
         # add new op here
         self.prog.instr_dag.add_group_store(self.rank, self, other_chunkrefs, sendtb, chan_type)
