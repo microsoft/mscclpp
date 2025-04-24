@@ -561,7 +561,7 @@ __global__ void __launch_bounds__(1024, 1)
 
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
-    allreduce10([[maybe_unused]] const void* src, [[maybe_unused]] void* scrach, [[maybe_unused]] void* dst,
+    allreduce10([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch, [[maybe_unused]] void* dst,
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast,
                 [[maybe_unused]] size_t size, [[maybe_unused]] int rank) {
@@ -615,7 +615,7 @@ __global__ void __launch_bounds__(1024, 1)
         size_t offsetScratch =
             i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
         char* srcData = (char*)src + offset;
-        char* dstData = (char*)scrach + offsetScratch;
+        char* dstData = (char*)scratch + offsetScratch;
         mscclpp::MemoryChannelDeviceHandle::copy(dstData, srcData, iterSize, tidInCopy, NCOPY_WARPS * WARP_SIZE);
       }
       asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(NCOPY_WARPS * WARP_SIZE) : "memory");
@@ -645,7 +645,7 @@ __global__ void __launch_bounds__(1024, 1)
         size_t offset = i * sizePerRank + sizePerBlock * bid + it * copyPerIter;
         size_t offsetScratch =
             i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
-        char* srcData = (char*)scrach + offsetScratch;
+        char* srcData = (char*)scratch + offsetScratch;
         char* dstData = (char*)dst + offset;
         mscclpp::MemoryChannelDeviceHandle::copy(dstData, srcData, iterSize, tidInRecvCopy,
                                                  NRECV_COPY_WARPS * WARP_SIZE);
