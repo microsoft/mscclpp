@@ -636,7 +636,7 @@ __global__ void __launch_bounds__(1024, 1)
             i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
         char* srcData = (char*)src + offset;
         char* dstData = (char*)scratch + offsetScratch;
-        mscclpp::MemoryChannelDeviceHandle::copy(dstData, srcData, iterSize, tidInCopy, NCOPY_WARPS * WARP_SIZE);
+        mscclpp::copy(dstData, srcData, iterSize, tidInCopy, NCOPY_WARPS * WARP_SIZE);
       }
       asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(NCOPY_WARPS * WARP_SIZE) : "memory");
       if (tidInCopy < NPEERS) {
@@ -667,8 +667,7 @@ __global__ void __launch_bounds__(1024, 1)
             i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
         char* srcData = (char*)scratch + offsetScratch;
         char* dstData = (char*)dst + offset;
-        mscclpp::MemoryChannelDeviceHandle::copy(dstData, srcData, iterSize, tidInRecvCopy,
-                                                 NRECV_COPY_WARPS * WARP_SIZE);
+        mscclpp::copy(dstData, srcData, iterSize, tidInRecvCopy, NRECV_COPY_WARPS * WARP_SIZE);
       }
     }
   }
@@ -701,7 +700,7 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
   } else if (sizeof(T) * nelems <= (1 << 16) || (sizeof(T) * nelems <= (1 << 20) && !useNvlsWithZeroCopy)) {
     int nBlocks = 28;
     int nThreadsPerBlock = 1024;
-    deviceFlag = deviceFlag28;
+    uint32_t* deviceFlag = deviceFlag28;
     if (nelems >= 8192) {
       nBlocks = 56;
       nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
