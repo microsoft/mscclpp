@@ -98,11 +98,11 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
 
   if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
 
-  uint64_t* gpuData;
-  hipMalloc(&gpuData, sizeof(uint64_t));
-  hipMemcpy(gpuData, src, sizeof(uint64_t), cudaMemcpyHostToDevice);
+  // uint64_t* gpuData;
+  // hipMalloc(&gpuData, sizeof(uint64_t));
+  // hipMemcpy(gpuData, src, sizeof(uint64_t), cudaMemcpyHostToDevice);
 
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr, gpuData, sizeof(uint64_t), cudaMemcpyDeviceToDevice, *stream_));
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr, src, sizeof(uint64_t), cudaMemcpyDeviceToDevice, *stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
        newValue);
 

@@ -53,7 +53,8 @@ __device__ void allgather0(DeviceHandle<mscclpp::PortChannel> portChan, int rank
 
   // this thread's role is a sender role
   // put your data asynchronously
-  if ((threadIdx.x % WARP_SIZE) == 0) portChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
+  if ((threadIdx.x % WARP_SIZE) == 0)
+    portChan.putWithSignal(rank * nelemsPerGPU * sizeof(int), nelemsPerGPU * sizeof(int));
   // make sure everyone is put their data before some thread randomly blocks everyone else in signal
   __syncthreads();
   // push with flag and sync to make sure the data is received
@@ -416,7 +417,7 @@ int main(int argc, const char* argv[]) {
     cudaStream_t stream;
     CUDACHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     CUDACHECK(cudaDeviceSynchronize());
-    kernel<<<1, WARP_SIZE * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
+    kernel<<<1, WARP_SIZE*(world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
     CUDACHECK(cudaDeviceSynchronize());
     CUDACHECK(cudaMemcpy(data_h, data_d, dataSize, cudaMemcpyDeviceToHost));
 
@@ -438,7 +439,7 @@ int main(int argc, const char* argv[]) {
     CUDACHECK(cudaStreamSynchronize(stream));
     bootstrap->allGather(tmp, sizeof(int));
     for (int i = 0; i < iterwithoutcudagraph; ++i) {
-      kernel<<<1, WARP_SIZE * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
+      kernel<<<1, WARP_SIZE*(world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
     }
     CUDACHECK(cudaStreamSynchronize(stream));
     bootstrap->allGather(tmp, sizeof(int));
@@ -450,7 +451,7 @@ int main(int argc, const char* argv[]) {
     cudaGraphExec_t instance;
     CUDACHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
     for (int i = 0; i < cudagraphiter; ++i) {
-      kernel<<<1, WARP_SIZE * (world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
+      kernel<<<1, WARP_SIZE*(world_size - 1), 0, stream>>>(rank, world_size, nranksPerNode, nelemsPerGPU, kernelNum);
     }
     CUDACHECK(cudaStreamEndCapture(stream, &graph));
     CUDACHECK(cudaGraphInstantiate(&instance, graph, NULL, NULL, 0));
