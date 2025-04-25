@@ -154,8 +154,8 @@ struct IBVerbs {
   }
 
   // Static method to register a dma-buf based memory region
-  static struct ibv_mr* ibv_reg_dmabuf_mr2(struct ibv_pd* pd, uint64_t offset, size_t length, uint64_t iova, int fd,
-                                           int access) {
+  static struct ibv_mr* ibv_reg_dmabuf_mr(struct ibv_pd* pd, uint64_t offset, size_t length, uint64_t iova, int fd,
+                                          int access) {
     if (!initialized) initialize();
     if (ibv_reg_dmabuf_mr_lib) {
       return ibv_reg_dmabuf_mr_lib(pd, offset, length, iova, fd, access);
