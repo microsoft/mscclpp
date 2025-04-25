@@ -26,9 +26,9 @@ void register_memory_channel(nb::module_& m) {
   nb::class_<MemoryChannel::DeviceHandle>(m, "MemoryChannelDeviceHandle")
       .def(nb::init<>())
       .def_rw("semaphore_", &MemoryChannel::DeviceHandle::semaphore_)
-      .def_rw("src_", &MemoryChannel::DeviceHandle::src_)
       .def_rw("dst_", &MemoryChannel::DeviceHandle::dst_)
-      .def_rw("getPacketBuffer_", &MemoryChannel::DeviceHandle::getPacketBuffer_)
+      .def_rw("src_", &MemoryChannel::DeviceHandle::src_)
+      .def_rw("packetBuffer_", &MemoryChannel::DeviceHandle::packetBuffer_)
       .def_prop_ro("raw", [](const MemoryChannel::DeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
