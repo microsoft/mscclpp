@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <mscclpp/packet_device.hpp>
+#include <mscclpp/copy_device.hpp>
 #include <mscclpp/port_channel_device.hpp>
 
 // be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
@@ -18,14 +18,14 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   __syncthreads();
   int flag = 123;
   if (use_packet) {
-    mscclpp::putPackets(scratch, 2 * my_offset, data, my_offset, size_per_rank, tid, nthreads, flag);
+    mscclpp::copyToPackets((char*)scratch + 2 * my_offset, (char*)data + my_offset, size_per_rank, tid, nthreads, flag);
     __syncthreads();
     if (tid < nranks && tid != my_rank) {
       channels[tid].put(2 * my_offset, 2 * my_offset, 2 * size_per_rank);
     }
     if (my_nghr != my_rank && my_nghr < nranks)
-      mscclpp::getPackets(scratch, 2 * my_nghr_offset, data, my_nghr_offset, size_per_rank, tid % nthreads_per_rank,
-                          nthreads_per_rank, flag);
+      mscclpp::copyFromPackets((char*)data + my_nghr_offset, (char*)scratch + 2 * my_nghr_offset, size_per_rank,
+                               tid % nthreads_per_rank, nthreads_per_rank, flag);
   } else {
     if (tid < nranks && tid != my_rank) {
       channels[tid].putWithSignalAndFlush(my_offset, my_offset, size_per_rank);

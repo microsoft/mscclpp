@@ -195,6 +195,10 @@ struct ncclComm {
   uint32_t numScratchBuff;
   uint32_t buffFlag;
 
+  std::shared_ptr<uint32_t> deviceFlag7;
+  std::shared_ptr<uint32_t> deviceFlag28;
+  std::shared_ptr<uint32_t> deviceFlag56;
+
   void* mscclppNcclComm;
 };
 
@@ -383,7 +387,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   Op reduceOp = getReduceOp(op);
   std::function<cudaError_t(const void*, void*, void*, mscclpp::DeviceHandle<mscclpp::MemoryChannel>*,
                             mscclpp::DeviceHandle<mscclpp::MemoryChannel>*, size_t, size_t, size_t, int, int, int,
-                            size_t, cudaStream_t)>
+                            size_t, cudaStream_t, uint32_t*, uint32_t*, uint32_t*, int)>
       allreduceFunc;
   if (reduceOp == SUM) {
     if (datatype == ncclFloat16) {
@@ -414,7 +418,9 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   }
   CUDACHECK(allreduceFunc(sendbuff, comm->scratchBuff.get(), recvbuff, memoryChannels, memoryOutChannels, offsetIn,
                           offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(), NRANKS_PER_NODE,
-                          comm->comm->bootstrap()->getNranks(), count, stream));
+                          comm->comm->bootstrap()->getNranks(), count, stream, (uint32_t*)comm->deviceFlag7.get(),
+                          (uint32_t*)comm->deviceFlag28.get(), (uint32_t*)comm->deviceFlag56.get(),
+                          comm->numScratchBuff));
   return ncclSuccess;
 }
 
@@ -533,6 +539,19 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   commPtr->scratchBuff = mscclpp::GpuBuffer<char>(SCRATCH_SIZE).memory();
   commPtr->remoteScratchRegMemories =
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
+
+  commPtr->deviceFlag7 = mscclpp::detail::gpuCallocShared<uint32_t>(7);
+  commPtr->deviceFlag28 = mscclpp::detail::gpuCallocShared<uint32_t>(28);
+  commPtr->deviceFlag56 = mscclpp::detail::gpuCallocShared<uint32_t>(56);
+
+  std::vector<uint32_t> initFlag(56);
+  for (int i = 0; i < 56; ++i) {
+    initFlag[i] = 1;
+  }
+
+  mscclpp::gpuMemcpy<uint32_t>(commPtr->deviceFlag7.get(), initFlag.data(), 7, cudaMemcpyHostToDevice);
+  mscclpp::gpuMemcpy<uint32_t>(commPtr->deviceFlag28.get(), initFlag.data(), 28, cudaMemcpyHostToDevice);
+  mscclpp::gpuMemcpy<uint32_t>(commPtr->deviceFlag56.get(), initFlag.data(), 56, cudaMemcpyHostToDevice);
 }
 
 NCCL_API ncclResult_t ncclGetVersion(int* version) {

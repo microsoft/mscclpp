@@ -859,8 +859,8 @@ __global__ void __launch_bounds__(1024)
   int2* src = (int2*)buff;
   int2* res = (int2*)result;
   // double buffering
-  size_t scratchOffset = (flag & 1) ? 0 : nPkts * max(numPeersPerNode, 1) * sizeof(mscclpp::LLPacket);
-  mscclpp::LLPacket* scratchPtr = (mscclpp::LLPacket*)((char*)scratch + scratchOffset);
+  size_t scratchBaseIndex = (flag & 1) ? 0 : nPkts * max(numPeersPerNode, 1);
+  size_t scratchOffset = scratchBaseIndex * sizeof(mscclpp::LLPacket);
   size_t pktBufOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LLPacket);
   mscclpp::LLPacket* getPktPtr = (mscclpp::LLPacket*)((char*)getPktBuf + pktBufOffset);
   mscclpp::LLPacket* putPktPtr = (mscclpp::LLPacket*)((char*)putPktBuf + pktBufOffset);
@@ -887,18 +887,15 @@ __global__ void __launch_bounds__(1024)
       int x = 0;
       int y = 0;
       for (int peerIdx = 0; peerIdx < numPeersPerNode / 2; ++peerIdx) {
-        mscclpp::LLPacket* pkt0 = scratchPtr + 2 * peerIdx * nPkts;
-        mscclpp::LLPacket* pkt1 = scratchPtr + (2 * peerIdx + 1) * nPkts;
-        uint2 data0 = pkt0[idx].read(flag);
-        uint2 data1 = pkt1[idx].read(flag);
+        uint2 data0 = memChan.unpackPacket(scratchBaseIndex + 2 * peerIdx * nPkts + idx, flag);
+        uint2 data1 = memChan.unpackPacket(scratchBaseIndex + (2 * peerIdx + 1) * nPkts + idx, flag);
         x += (int)data0.x;
         y += (int)data0.y;
         x += (int)data1.x;
         y += (int)data1.y;
       }
       if (numPeersPerNode & 1) {
-        mscclpp::LLPacket* pkt = scratchPtr + (numPeersPerNode - 1) * nPkts;
-        uint2 data = pkt[idx].read(flag);
+        uint2 data = memChan.unpackPacket(scratchBaseIndex + (numPeersPerNode - 1) * nPkts + idx, flag);
         x += (int)data.x;
         y += (int)data.y;
       }
@@ -988,11 +985,10 @@ __global__ void __launch_bounds__(1024)
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   // double buffering
-  size_t scratchBaseOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LLPacket);
-  void* scratchBuff = (void*)((char*)scratch + scratchBaseOffset);
+  size_t scratchBaseIndex = (flag & 1) ? 0 : nPkts;
+  size_t scratchBaseOffset = scratchBaseIndex * sizeof(mscclpp::LLPacket);
   size_t scratchOffset = scratchBaseOffset + rank * nPktsPerRank * sizeof(mscclpp::LLPacket);
-  size_t scratchResultOffset =
-      (flag & 1) ? 2 * nPkts * sizeof(mscclpp::LLPacket) : 3 * nPkts * sizeof(mscclpp::LLPacket);
+  size_t scratchResultIndex = (flag & 1) ? 2 * nPkts : 3 * nPkts;
   size_t srcOffset = remoteRank * nelemsPerRank * sizeof(int);
   uint2* src = (uint2*)((char*)buff + rank * nelemsPerRank * sizeof(int));
   uint2* dst = (uint2*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
@@ -1005,8 +1001,8 @@ __global__ void __launch_bounds__(1024)
     uint2 data = make_uint2(0, 0);
     for (int index = 0; index < nPeers; index++) {
       const int remoteRank = index < rank ? index : index + 1;
-      mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
-      uint2 val = dstPkt[idx].read(flag);
+      uint2 val =
+          constMemOutOfPlaceChans[peerIdx].unpackPacket(scratchBaseIndex + remoteRank * nPktsPerRank + idx, flag);
       data.x += val.x;
       data.y += val.y;
     }
@@ -1019,17 +1015,16 @@ __global__ void __launch_bounds__(1024)
     packet.flag1 = flag;
     packet.data2 = data.y;
     packet.flag2 = flag;
-    size_t offset = scratchResultOffset / sizeof(mscclpp::LLPacket) + (idx + rank * nPktsPerRank);
+    size_t offset = scratchResultIndex + (idx + rank * nPktsPerRank);
     for (int index = 0; index < nPeers; index++) {
       constMemOutOfPlaceChans[index].write(offset, packet);
     }
   }
   // step 3: get data result from scratch buffer
-  mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)((char*)scratch + scratchResultOffset);
   const int dstOffset = remoteRank * nPktsPerRank;
   uint2* result = (uint2*)((char*)resultBuff + remoteRank * nelemsPerRank * sizeof(int));
   for (int idx = threadIdx.x + localBlockIdx * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * nBlocksPerPeer) {
-    uint2 data = dstPkt[idx + dstOffset].read(flag);
+    uint2 data = constMemOutOfPlaceChans[peerIdx].unpackPacket(scratchResultIndex + dstOffset + idx, flag);
     result[idx].x = data.x;
     result[idx].y = data.y;
   }
@@ -1054,11 +1049,9 @@ __global__ void __launch_bounds__(1024)
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   // double buffering
-  size_t scratchBaseOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LL8Packet);
-  void* scratchBuff = (void*)((char*)scratch + scratchBaseOffset);
-  size_t scratchOffset = scratchBaseOffset + rank * nPktsPerRank * sizeof(mscclpp::LL8Packet);
-  size_t scratchResultOffset =
-      (flag & 1) ? 2 * nPkts * sizeof(mscclpp::LL8Packet) : 3 * nPkts * sizeof(mscclpp::LL8Packet);
+  size_t scratchBaseIndex = (flag & 1) ? 0 : nPkts;
+  size_t scratchOffset = (scratchBaseIndex + rank * nPktsPerRank) * sizeof(mscclpp::LL8Packet);
+  size_t scratchResultIndex = (flag & 1) ? 2 * nPkts : 3 * nPkts;
   size_t srcOffset = remoteRank * nelemsPerRank * sizeof(int);
   uint32_t* src = (uint32_t*)((char*)buff + rank * nelemsPerRank * sizeof(int));
   uint32_t* dst = (uint32_t*)((char*)resultBuff + rank * nelemsPerRank * sizeof(int));
@@ -1071,8 +1064,8 @@ __global__ void __launch_bounds__(1024)
     uint32_t data = 0;
     for (int index = 0; index < nPeers; index++) {
       const int remoteRank = index < rank ? index : index + 1;
-      mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)scratchBuff + remoteRank * nPktsPerRank;
-      uint32_t val = dstPkt[idx].read(flag);
+      uint32_t val = constMemOutOfPlaceChans[peerIdx].unpackPacket<mscclpp::LL8Packet>(
+          scratchBaseIndex + remoteRank * nPktsPerRank + idx, flag);
       data += val;
     }
     data += src[idx];
@@ -1081,17 +1074,17 @@ __global__ void __launch_bounds__(1024)
     mscclpp::LL8Packet packet;
     packet.data = data;
     packet.flag = flag;
-    size_t offset = scratchResultOffset / sizeof(mscclpp::LL8Packet) + (idx + rank * nPktsPerRank);
+    size_t offset = scratchResultIndex + (idx + rank * nPktsPerRank);
     for (int index = 0; index < nPeers; index++) {
       constMemOutOfPlaceChans[index].write(offset, packet);
     }
   }
   // step 3: get data result from scratch buffer
-  mscclpp::LL8Packet* dstPkt = (mscclpp::LL8Packet*)((char*)scratch + scratchResultOffset);
   const int dstOffset = remoteRank * nPktsPerRank;
   uint32_t* result = (uint32_t*)((char*)resultBuff + remoteRank * nelemsPerRank * sizeof(int));
   for (int idx = threadIdx.x + localBlockIdx * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * nBlocksPerPeer) {
-    uint32_t data = dstPkt[idx + dstOffset].read(flag);
+    uint32_t data =
+        constMemOutOfPlaceChans[peerIdx].unpackPacket<mscclpp::LL8Packet>(scratchResultIndex + dstOffset + idx, flag);
     result[idx] = data;
   }
   if (threadIdx.x == 0 && blockIdx.x == 0) {

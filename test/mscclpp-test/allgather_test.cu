@@ -451,7 +451,7 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t peerIdx = wid % nPeer;
     const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * remoteRankLocalIndex + (wid / nPeer) * unitBytesPerWarp;
-    memChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
+    memChans[peerIdx].unpackPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
   }
 
   for (size_t i = 1; i < nLoop; ++i) {
@@ -466,7 +466,7 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t peerIdx = gWid % nPeer;
     const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * remoteRankLocalIndex + (gWid / nPeer) * unitBytesPerWarp;
-    memChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
+    memChans[peerIdx].unpackPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
   }
 
   if (bytes % unitBytes > 0) {
@@ -491,7 +491,7 @@ __global__ void __launch_bounds__(1024, 1)
                                    ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
                                    : unitBytesPerWarp;
     if (remainBytes > 0) {
-      memChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
+      memChans[peerIdx].unpackPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
     }
   }
 

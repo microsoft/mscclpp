@@ -316,8 +316,8 @@ __global__ void kernelMemLL8PacketPingPong(int* buff, int rank, int nElem, int* 
       // __syncthreads();
       memChan.putPackets<mscclpp::LL8Packet>(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
     } else {
-      memChan.getPackets<mscclpp::LL8Packet>(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
-      // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
+      memChan.unpackPackets<mscclpp::LL8Packet>(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      // If each thread reads 8 bytes at once, we don't need a barrier after unpackPackets().
       // __syncthreads();
       for (int j = threadIdx.x; j < nElem; j += blockDim.x) {
         if (sendBuff[j] != getOffset + i + j) {
@@ -353,8 +353,8 @@ __global__ void kernelMemLL16PacketPingPong(int* buff, int rank, int nElem, int*
       // __syncthreads();
       memChan.putPackets<mscclpp::LL16Packet>(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
     } else {
-      memChan.getPackets<mscclpp::LL16Packet>(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
-      // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
+      memChan.unpackPackets<mscclpp::LL16Packet>(0, 0, nElem * sizeof(int), threadIdx.x, blockDim.x, flag);
+      // If each thread reads 8 bytes at once, we don't need a barrier after unpackPackets().
       // __syncthreads();
       for (int j = threadIdx.x; j < nElem / 2; j += blockDim.x) {
         if (sendBuff[2 * j] != getOffset + i + 2 * j) {
