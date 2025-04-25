@@ -29,14 +29,9 @@ union alignas(16) LL16Packet {
 #if defined(MSCCLPP_DEVICE_COMPILE)
   ulonglong2 raw_;
 
-  MSCCLPP_DEVICE_INLINE LL16Packet() {}
+  MSCCLPP_DEVICE_INLINE LL16Packet() = default;
 
-  MSCCLPP_DEVICE_INLINE LL16Packet(uint2 val, uint32_t flag) {
-    data1 = val.x;
-    flag1 = flag;
-    data2 = val.y;
-    flag2 = flag;
-  }
+  MSCCLPP_DEVICE_INLINE LL16Packet(uint2 val, uint32_t flag) : data1(val.x), flag1(flag), data2(val.y), flag2(flag) {}
 
   /// Write 8 bytes of data to the packet.
   /// @param val1 The first 4-byte data to write.
@@ -112,12 +107,9 @@ union alignas(8) LL8Packet {
   using Payload = uint32_t;
 #if defined(MSCCLPP_DEVICE_COMPILE)
 
-  MSCCLPP_DEVICE_INLINE LL8Packet() {}
+  MSCCLPP_DEVICE_INLINE LL8Packet() = default;
 
-  MSCCLPP_DEVICE_INLINE LL8Packet(uint32_t val, uint32_t flag) {
-    this->data = val;
-    this->flag = flag;
-  }
+  MSCCLPP_DEVICE_INLINE LL8Packet(uint32_t val, uint32_t flag) : data(val), flag(flag) {}
 
   MSCCLPP_DEVICE_INLINE void write(uint32_t val, uint32_t flag) {
 #if defined(MSCCLPP_DEVICE_CUDA)
@@ -156,156 +148,6 @@ union alignas(8) LL8Packet {
 
 using LLPacket = LL16Packet;
 
-#if defined(MSCCLPP_DEVICE_COMPILE)
-/// Read data from the origin and write LL16Packets to the target buffer.
-///
-/// @param targetPtr The target buffer.
-/// @param targetOffset The offset in the target buffer.
-/// @param originPtr The origin buffer.
-/// @param originOffset The offset in the origin buffer.
-/// @param originBytes The number of bytes to write to the target buffer.
-/// @param threadId The thread ID. The thread ID should be less than @p numThreads.
-/// @param numThreads The number of threads that call this function.
-/// @param flag The flag to write.
-///
-MSCCLPP_DEVICE_INLINE void putLL16Packets(void* targetPtr, uint64_t targetOffset, const void* originPtr,
-                                          uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
-                                          uint32_t numThreads, uint32_t flag) {
-  // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-  const uint32_t* originBase = (const uint32_t*)((const char*)originPtr + originOffset);
-  LL16Packet* targetBase = (LL16Packet*)((char*)targetPtr + targetOffset);
-  size_t nElem = originBytes / sizeof(uint64_t);
-  for (size_t i = threadId; i < nElem; i += numThreads) {
-    LL16Packet* pkt = &targetBase[i];
-    pkt->write(originBase[2 * i], originBase[2 * i + 1], flag);
-  }
-}
-
-/// Read LL16Packets from the target buffer and write retrieved data to the origin.
-///
-/// @param targetPtr The target buffer.
-/// @param targetOffset The offset in the target buffer.
-/// @param originPtr The origin buffer.
-/// @param originOffset The offset in the origin buffer.
-/// @param originBytes The number of bytes to write to the target buffer.
-/// @param threadId The thread ID. The thread ID should be less than @p numThreads.
-/// @param numThreads The number of threads that call this function.
-/// @param flag The flag to write.
-///
-MSCCLPP_DEVICE_INLINE void getLL16Packets(const void* targetPtr, uint64_t targetOffset, void* originPtr,
-                                          uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
-                                          uint32_t numThreads, uint32_t flag) {
-  // Offsets should be aligned to 8 bytes & size should be a multiple of 8 bytes
-  const LL16Packet* targetBase = (const LL16Packet*)((const char*)targetPtr + targetOffset);
-  uint2* originBase = (uint2*)((char*)originPtr + originOffset);
-  size_t nElem = originBytes / sizeof(uint2);
-  for (size_t i = threadId; i < nElem; i += numThreads) {
-    const LL16Packet* pkt = &targetBase[i];
-    originBase[i] = pkt->read(flag);
-  }
-}
-
-/// Read data from the origin and write LL8Packets to the target buffer.
-///
-/// @param targetPtr The target buffer.
-/// @param targetOffset The offset in the target buffer.
-/// @param originPtr The origin buffer.
-/// @param originOffset The offset in the origin buffer.
-/// @param originBytes The number of bytes to write to the target buffer.
-/// @param threadId The thread ID. The thread ID should be less than @p numThreads.
-/// @param numThreads The number of threads that call this function.
-/// @param flag The flag to write.
-///
-MSCCLPP_DEVICE_INLINE void putLL8Packets(void* targetPtr, uint64_t targetOffset, const void* originPtr,
-                                         uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
-                                         uint32_t numThreads, uint32_t flag) {
-  // Offsets should be aligned to 4 bytes & size should be a multiple of 4 bytes
-  const uint32_t* originBase = (const uint32_t*)((const char*)originPtr + originOffset);
-  LL8Packet* targetBase = (LL8Packet*)((char*)targetPtr + targetOffset);
-  size_t nElem = originBytes / sizeof(uint32_t);
-  for (size_t i = threadId; i < nElem; i += numThreads) {
-    LL8Packet* pkt = &targetBase[i];
-    pkt->write(originBase[i], flag);
-  }
-}
-
-/// Read LL8Packets from the target buffer and write retrieved data to the origin.
-///
-/// @param targetPtr The target buffer.
-/// @param targetOffset The offset in the target buffer.
-/// @param originPtr The origin buffer.
-/// @param originOffset The offset in the origin buffer.
-/// @param originBytes The number of bytes to write to the target buffer.
-/// @param threadId The thread ID. The thread ID should be less than @p numThreads.
-/// @param numThreads The number of threads that call this function.
-/// @param flag The flag to write.
-///
-MSCCLPP_DEVICE_INLINE void getLL8Packets(const void* targetPtr, uint64_t targetOffset, void* originPtr,
-                                         uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
-                                         uint32_t numThreads, uint32_t flag) {
-  // Offsets should be aligned to 4 bytes & size should be a multiple of 4 bytes
-  const LL8Packet* targetBase = (const LL8Packet*)((const char*)targetPtr + targetOffset);
-  uint32_t* originBase = (uint32_t*)((char*)originPtr + originOffset);
-  size_t nElem = originBytes / sizeof(uint32_t);
-  for (size_t i = threadId; i < nElem; i += numThreads) {
-    const LL8Packet* pkt = &targetBase[i];
-    originBase[i] = pkt->read(flag);
-  }
-}
-
-/// Read data from the origin and write packets to the target buffer.
-///
-/// @param targetPtr The target buffer.
-/// @param targetOffset The offset in the target buffer.
-/// @param originPtr The origin buffer.
-/// @param originOffset The offset in the origin buffer.
-/// @param originBytes The number of bytes to write to the target buffer.
-/// @param threadId The thread ID. The thread ID should be less than @p numThreads.
-/// @param numThreads The number of threads that call this function.
-/// @param flag The flag to write.
-/// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
-///
-template <typename PacketType = LL16Packet>
-MSCCLPP_DEVICE_INLINE void putPackets(void* targetPtr, uint64_t targetOffset, const void* originPtr,
-                                      uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
-                                      uint32_t numThreads, uint32_t flag) {
-  if constexpr (std::is_same<PacketType, LL16Packet>::value) {
-    putLL16Packets(targetPtr, targetOffset, originPtr, originOffset, originBytes, threadId, numThreads, flag);
-  } else if constexpr (std::is_same<PacketType, LL8Packet>::value) {
-    putLL8Packets(targetPtr, targetOffset, originPtr, originOffset, originBytes, threadId, numThreads, flag);
-  } else {
-    static_assert(std::is_same<PacketType, LL16Packet>::value || std::is_same<PacketType, LL8Packet>::value,
-                  "Unsupported packet type");
-  }
-}
-
-/// Read packets from the target buffer and write retrieved data to the origin.
-///
-/// @param targetPtr The target buffer.
-/// @param targetOffset The offset in the target buffer.
-/// @param originPtr The origin buffer.
-/// @param originOffset The offset in the origin buffer.
-/// @param originBytes The number of bytes to read from the origin buffer.
-/// @param threadId The thread ID. The thread ID should be less than @p numThreads.
-/// @param numThreads The number of threads that call this function.
-/// @param flag The flag to read.
-/// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
-///
-template <typename PacketType = LL16Packet>
-MSCCLPP_DEVICE_INLINE void getPackets(const void* targetPtr, uint64_t targetOffset, void* originPtr,
-                                      uint64_t originOffset, uint64_t originBytes, uint32_t threadId,
-                                      uint32_t numThreads, uint32_t flag) {
-  if constexpr (std::is_same<PacketType, LL16Packet>::value) {
-    getLL16Packets(targetPtr, targetOffset, originPtr, originOffset, originBytes, threadId, numThreads, flag);
-  } else if constexpr (std::is_same<PacketType, LL8Packet>::value) {
-    getLL8Packets(targetPtr, targetOffset, originPtr, originOffset, originBytes, threadId, numThreads, flag);
-  } else {
-    static_assert(std::is_same<PacketType, LL16Packet>::value || std::is_same<PacketType, LL8Packet>::value,
-                  "Unsupported packet type");
-  }
-}
-#endif  // defined(MSCCLPP_DEVICE_COMPILE)
-
-};  // namespace mscclpp
+}  // namespace mscclpp
 
 #endif  // MSCCLPP_PACKET_DEVICE_HPP_
