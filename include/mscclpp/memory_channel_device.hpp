@@ -187,13 +187,13 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
     return reinterpret_cast<PacketType*>(packetBuffer_)[index].read(flag, maxSpinCount);
   }
 
-  /// Retrieve data from packets in the local packet buffer (origin) and write to the local memory (target).
+  /// Retrieve data from packets in the local packet buffer (target) and write to the local memory (origin).
   ///
   /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
   ///
   /// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
-  /// @param targetOffset The offset in bytes of the local address.
-  /// @param originOffset The offset in bytes of the local packet buffer.
+  /// @param targetOffset The offset in bytes of the local packet buffer.
+  /// @param originOffset The offset in bytes of the local address.
   /// @param originBytes Bytes of the origin to be copied.
   /// @param threadId The index of the current thread among all threads running this function. This is different from
   /// the `threadIdx` in CUDA.
@@ -208,8 +208,8 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
     static_assert(std::is_same<PacketType, LL16Packet>::value || std::is_same<PacketType, LL8Packet>::value,
                   "Unsupported packet type");
     assert_device(packetBuffer_ != nullptr, "Packet buffer is null");
-    copyFromPackets<PacketType>(reinterpret_cast<char*>(src_) + targetOffset,
-                                reinterpret_cast<char*>(packetBuffer_) + originOffset, originBytes, threadId,
+    copyFromPackets<PacketType>(reinterpret_cast<char*>(src_) + originOffset,
+                                reinterpret_cast<char*>(packetBuffer_) + targetOffset, originBytes, threadId,
                                 numThreads, flag, maxSpinCount);
   }
 
