@@ -81,7 +81,8 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
     }
 
     int fd;
-    MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, base + alignedOffset, alignedUserBufferSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
+    MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, base + alignedOffset, alignedUserBufferSize,
+                                                  CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
 
     // Compute offset of dptr within the DMA-BUF
     size_t offsetInDmaBuf = offset - alignedOffset;
