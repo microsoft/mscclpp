@@ -55,13 +55,38 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   bool cuMemAlloc = mscclpp::isCuMemMapAllocated((void*)dptr);
   CUdevice dev;
   int dmaBufSupported = 0;
+#if !defined(__HIP_PLATFORM_AMD__)
   MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
   MSCCLPP_CUTHROW(cuDeviceGetAttribute(&dmaBufSupported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, dev));
+#endif  // !defined(__HIP_PLATFORM_AMD__)
   if (cuMemAlloc && dmaBufSupported) {
 #if !defined(__HIP_PLATFORM_AMD__)
+    CUdeviceptr base;
+    size_t actualSize;
+    MSCCLPP_CUTHROW(cuMemGetAddressRange(&base, &actualSize, dptr));
+
+    size_t offset = static_cast<size_t>(dptr - base);
+
+    // Align offset down to the nearest page
+    size_t alignedOffset = (offset / pageSize) * pageSize;
+
+    // Align userBufferSize up to the nearest page
+    size_t alignedUserBufferSize = ((size + pageSize - 1) / pageSize) * pageSize;
+
+    // Ensure aligned range fits within the original allocation
+    if (alignedOffset + alignedUserBufferSize > actualSize) {
+      std::stringstream err;
+      err << "aligned range excceeds original allocation (errno " << errno << ")";
+      throw mscclpp::IbError(err.str(), errno);
+    }
+
     int fd;
-    cuMemGetHandleForAddressRange(&fd, dptr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
-    this->mr = IBVerbs::ibv_reg_dmabuf_mr(pd, 0, pages * pageSize, addr, fd,
+    MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, base + alignedOffset, alignedUserBufferSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
+
+    // Compute offset of dptr within the DMA-BUF
+    size_t offsetInDmaBuf = offset - alignedOffset;
+
+    this->mr = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, (uint64_t)dptr, fd,
                                           IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                                               IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
 #endif  // !defined(__HIP_PLATFORM_AMD__)
