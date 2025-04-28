@@ -8,7 +8,7 @@ from mscclpp.language.types import DataFormat, ChannelType, ChunkRef, Replicatio
 from mscclpp.language.ir import *
 
 
-class Testator:
+class CollectiveChecker:
     def __init__(self):
         self.collective = None
         self.buffers = None

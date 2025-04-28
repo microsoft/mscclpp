@@ -3,24 +3,19 @@ from queue import Queue
 from typing import Dict, Tuple
 
 
-class SortDAG:
+class OperationDependencyGraph:
     """
     A DAG structure to enforce correct execution order of collective communication operations.
     Supports topological sorting based on rank/threadblock execution and signal/wait synchronization.
     """
 
-    start_nodes: List["Node"]
-    last_node: Dict[Tuple[int, int], int]
-    signalling: Dict[Tuple[int, int, int], Queue]
-    waiting: Dict[Tuple[int, int, int], Queue]
-
     def __init__(self):
-        self.start_nodes = []
-        self.last_node = {}
-        self.signalling = {}
-        self.waiting = {}
+        self.root_nodes: List["Node"] = []
+        self.previous_node: Dict[Tuple[int, int], int] = {}
+        self.signalling: Dict[Tuple[int, int, int], Queue] = {}
+        self.waiting: Dict[Tuple[int, int, int], Queue] = {}
 
-    def insert_operation(self, op: "Op"):
+    def add_operation(self, op: "Op"):
         """
         Inserts an operation into the DAG, adding edges based on dependencies.
         """
@@ -29,25 +24,25 @@ class SortDAG:
         tb = op.tb
 
         if op.inst == Instruction.barrier:
-            for tb in op.extra.get("tb_list", None):
-                if (rank, tb) not in self.last_node:
-                    self.last_node[(rank, tb)] = node
-                    self.start_nodes.append(node)
+            for tb in op.extra.get("tb_list", []):
+                if (rank, tb) not in self.previous_node:
+                    self.previous_node[(rank, tb)] = node
+                    self.root_nodes.append(node)
                 else:
-                    prev_node = self.last_node[(rank, tb)]
+                    prev_node = self.previous_node[(rank, tb)]
                     prev_node.next_nodes.append(node)
                     node.input += 1
-                    self.last_node[(rank, tb)] = node
+                    self.previous_node[(rank, tb)] = node
 
         else:
-            if (rank, tb) not in self.last_node:
-                self.last_node[(rank, tb)] = node
-                self.start_nodes.append(node)
+            if (rank, tb) not in self.previous_node:
+                self.previous_node[(rank, tb)] = node
+                self.root_nodes.append(node)
             else:
-                prev_node = self.last_node[(rank, tb)]
+                prev_node = self.previous_node[(rank, tb)]
                 prev_node.next_nodes.append(node)
                 node.input += 1
-                self.last_node[(rank, tb)] = node
+                self.previous_node[(rank, tb)] = node
 
         if op.inst == Instruction.signal:
             if (op.src.rank, op.dst.rank, tb) not in self.waiting or self.waiting[
@@ -73,13 +68,13 @@ class SortDAG:
                 signalling_node.next_nodes.append(node)
                 node.input += 1
 
-    def operation_order(self):
+    def get_execution_order(self):
         """
         Returns the order of operations in the DAG.
         """
         order = []
         queue = Queue()
-        for node in self.start_nodes:
+        for node in self.root_nodes:
             queue.put(node)
 
         while not queue.empty():

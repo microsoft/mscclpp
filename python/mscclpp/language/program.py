@@ -8,8 +8,8 @@ from mscclpp.language.types import DataFormat, ChannelType, ChunkRef, Replicatio
 from mscclpp.language.ir import *
 from mscclpp.language.dag import DagOptimizer, DagLower, InstructionDAG
 from mscclpp.language.rank import Rank
-from mscclpp.language.topo_sort import SortDAG
-from mscclpp.language.testator import Testator
+from mscclpp.language.topo_sort import OperationDependencyGraph
+from mscclpp.language.collective_checker import CollectiveChecker
 
 _current_program = None
 
@@ -56,8 +56,8 @@ class MSCCLPPProgram:
         # Initialize the input buffers
         self.buffers = collective.init_buffers()
         self.instr_dag = InstructionDAG(self.num_ranks, self.buffers)
-        self.sort_dag = SortDAG()
-        self.testator = Testator()
+        self.op_dep_dag = OperationDependencyGraph()
+        self.collective_checker = CollectiveChecker()
         self.ranks = []
         for r in range(self.num_ranks):
             self.ranks.append(Rank(r))
@@ -122,7 +122,7 @@ class MSCCLPPProgram:
     # Checks that all chunks that should be on each rank
     # are present in the output buffer.
     def check(self):
-        return self.testator.check(self.collective, self.sort_dag.operation_order())
+        return self.collective_checker.check(self.collective, self.op_dep_dag.get_execution_order())
 
     # Lower program to MSCCLPP
     def lower(self):
@@ -242,7 +242,7 @@ class Ref(ChunkRef):
 
     def put(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.memory):
         op = Op(inst=Instruction.put, rank=self.rank, src=self, dst=ChunkRef(dst, buffer, index, self.size))
-        self.prog.sort_dag.insert_operation(op)
+        self.prog.op_dep_dag.add_operation(op)
 
         return self._put(dst, buffer, index, sendtb, DataFormat.raw, chan_type)
 
@@ -265,7 +265,7 @@ class Ref(ChunkRef):
             dst=ChunkRef(dst, buffer, index, self.size),
             extra=extra,
         )
-        self.prog.sort_dag.insert_operation(op)
+        self.prog.op_dep_dag.add_operation(op)
 
         chunk_ref = self
         if chan_type == ChannelType.port and src_format == DataFormat.raw:
@@ -277,7 +277,7 @@ class Ref(ChunkRef):
 
     def get(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.memory):
         op = Op(inst=Instruction.get, rank=self.rank, src=ChunkRef(src, buffer, index, self.size), dst=self)
-        self.prog.sort_dag.insert_operation(op)
+        self.prog.op_dep_dag.add_operation(op)
 
         self.prog.check_buffer_exists(src, buffer)
         sender = src
@@ -295,7 +295,7 @@ class Ref(ChunkRef):
     # Then we can use DAG info to reduce the number of channels.
     def signal(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.memory):
         op = Op(inst=Instruction.signal, rank=self.rank, src=self, dst=ChunkRef(dst, buffer, index, self.size))
-        self.prog.sort_dag.insert_operation(op)
+        self.prog.op_dep_dag.add_operation(op)
 
         sender = self.rank
         receiver = dst
@@ -308,7 +308,7 @@ class Ref(ChunkRef):
     # only port channel need to use this function
     def flush(self, dst, buffer=None, index=-1, sendtb=-1, chan_type=ChannelType.port):
         op = Op(inst=Instruction.flush, rank=self.rank, src=self, dst=ChunkRef(dst, buffer, index, self.size))
-        self.prog.sort_dag.insert_operation(op)
+        self.prog.op_dep_dag.add_operation(op)
 
         assert chan_type == ChannelType.port, "Only port channel can use flush"
         sender = self.rank
@@ -321,7 +321,7 @@ class Ref(ChunkRef):
 
     def wait(self, src, buffer=None, index=-1, recvtb=-1, chan_type=ChannelType.memory):
         op = Op(inst=Instruction.wait, rank=self.rank, src=ChunkRef(src, buffer, index, self.size), dst=self)
-        self.prog.sort_dag.insert_operation(op)
+        self.prog.op_dep_dag.add_operation(op)
 
         sender = src
         receiver = self.rank
@@ -349,13 +349,13 @@ class Ref(ChunkRef):
     # Copies the chunk(s) referenced by this chunkref onto Rank dst at location (buffer, index)
     def copy(self, dst, buffer=None, index=-1, sendtb=-1):
         op = Op(inst=Instruction.copy, rank=self.rank, src=self, dst=ChunkRef(dst, buffer, index, self.size))
-        self.prog.sort_dag.insert_operation(op)
+        self.prog.op_dep_dag.add_operation(op)
 
         return self._copy(dst, buffer, index, sendtb)
 
     def copy_packet(self, dst, buffer=None, index=-1, sendtb=-1):
         op = Op(inst=Instruction.copy_packet, rank=self.rank, src=self, dst=ChunkRef(dst, buffer, index, self.size))
-        self.prog.sort_dag.insert_operation(op)
+        self.prog.op_dep_dag.add_operation(op)
 
         return self._copy(dst, buffer, index, sendtb, trans_from_packet=True, trans_to_packet=False)
 
@@ -376,14 +376,14 @@ class Ref(ChunkRef):
     # Reduces the chunk(s) referenced by other_chunkref into the chunk(s) referenced by this chunkref
     def reduce(self, other_chunkref, recvtb=-1, channel_type=ChannelType.memory):
         op = Op(inst=Instruction.reduce, rank=self.rank, src=self, dst=other_chunkref)
-        self.prog.sort_dag.insert_operation(op)
+        self.prog.op_dep_dag.add_operation(op)
 
         return self._reduce(other_chunkref, recvtb, channel_type)
 
     # Reduces the chunk(s) referenced by other_chunkref into the chunk(s) referenced by this chunkref
     def reduce_packet(self, other_chunkref, recvtb=-1):
         op = Op(inst=Instruction.reduce_packet, rank=self.rank, src=self, dst=other_chunkref)
-        self.prog.sort_dag.insert_operation(op)
+        self.prog.op_dep_dag.add_operation(op)
 
         return self._reduce(other_chunkref, recvtb, use_packet=True)
 
@@ -394,7 +394,7 @@ class Ref(ChunkRef):
     # Reads the chunk(s) referenced by other_chunkref and reduce into the chunk referenced by this chunkref
     def group_load_reduce(self, other_chunkrefs: list, recvtb=-1, chan_type=ChannelType.nvls):
         op = Op(inst=Instruction.group_load_reduce, rank=self.rank, src=self, dst=None, srcs=other_chunkrefs)
-        self.prog.sort_dag.insert_operation(op)
+        self.prog.op_dep_dag.add_operation(op)
 
         assert (
             len(other_chunkrefs) > 0 and chan_type == ChannelType.nvls
@@ -414,7 +414,7 @@ class Ref(ChunkRef):
     def group_store(self, dsts: list, index=-1, buffer=None, sendtb=-1, chan_type=ChannelType.nvls):
         extra = {"dsts": dsts, "index": index, "buffer": buffer}
         op = Op(inst=Instruction.group_store, rank=self.rank, src=self, dst=None, extra=extra)
-        self.prog.sort_dag.insert_operation(op)
+        self.prog.op_dep_dag.add_operation(op)
 
         for dst in dsts:
             self.prog.check_buffer_exists(dst, buffer)
