@@ -10,6 +10,7 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
+#include <mscclpp/nvls.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <type_traits>
 
@@ -164,15 +165,49 @@ __forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
   return cal_vectors_helper<CompType, OpType>(a, b);
 }
 
+template <typename T>
+struct VectorType {
+  using type = T;
+  using nvls_type = T;
+  using nvls_type2 = T;
+};
+
+template <>
+struct VectorType<__half> {
+  using type = __half2;
+  using nvls_type = uint4;
+  using nvls_type2 = uint1;
+};
+
+template <>
+struct VectorType<__bfloat16> {
+  using type = __bfloat162;
+  using nvls_type = uint4;
+  using nvls_type2 = uint1;
+};
+
+template <>
+struct VectorType<float> {
+  using type = float;
+  using nvls_type = uint4;
+  using nvls_type2 = uint1;
+};
+
 template <Op OpType, typename T>
 __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff,
                                   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
                                   size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode,
-                                  int worldSize, size_t nelems, uint32_t flag) {
+                                  int worldSize, size_t nelems, uint32_t* deviceFlag, uint32_t numScratchBuff) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
   if (sizeof(T) == 2) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
   const int nPeers = nRanksPerNode - 1;
+
+  uint32_t flag = deviceFlag[blockIdx.x];
+
+  size_t scratchBaseOffset = (flag % numScratchBuff) ? SCRATCH_SIZE / numScratchBuff : 0;
+  channelScratchOffset = scratchBaseOffset;
+
   const int nBlocksPerPeer = gridDim.x / nPeers;
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
@@ -198,13 +233,17 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff,
     }
     dst[idx] = data;
   }
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    deviceFlag[blockIdx.x] = deviceFlag[blockIdx.x] + 1;
+  }
 }
 
 template <Op OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
                size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
-               size_t nelems, uint32_t flag
+               size_t nelems, uint32_t* deviceFlag, uint32_t numScratchBuff
 #if defined(ENABLE_NPKIT)
                ,
                NpKitEventCollectContext* npKitEventCollectContexts, uint64_t* cpuTimestamp) {
@@ -246,6 +285,11 @@ __global__ void __launch_bounds__(1024, 1)
 
   const int nPeers = nRanksPerNode - 1;
   const size_t nPkts = nelems / 2;
+
+  uint32_t flag = (uint32_t)deviceFlag[blockIdx.x];
+
+  size_t scratchBaseOffset = (flag % numScratchBuff) ? SCRATCH_SIZE / numScratchBuff : 0;
+  channelScratchOffset = scratchBaseOffset;
 
   int nelemsPerRank = nelems / worldSize;
   if ((nelemsPerRank % 2)) nelemsPerRank = (nelemsPerRank * sizeof(T) + sizeof(T)) / sizeof(T);
@@ -309,6 +353,8 @@ __global__ void __launch_bounds__(1024, 1)
     result[idx].x = data.x;
     result[idx].y = data.y;
   }
+
+  __syncthreads();
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_KERNEL_ALLREDUCE_ENTRY) && \
     defined(ENABLE_NPKIT_EVENT_KERNEL_ALLREDUCE_EXIT)
   NpKit::CollectGpuEventShm(NPKIT_EVENT_KERNEL_ALLREDUCE_ENTRY, 0, 0, npkit_timestamp_entry, event_buffer,
@@ -319,6 +365,9 @@ __global__ void __launch_bounds__(1024, 1)
 #if defined(ENABLE_NPKIT)
   NpKit::StoreGpuEventShm(npKitEventCollectContexts, event_buffer, event_buffer_head);
 #endif
+  if (threadIdx.x == 0) {
+    deviceFlag[blockIdx.x] = deviceFlag[blockIdx.x] + 1;
+  }
 }
 
 template <Op OpType, typename T>
@@ -457,43 +506,227 @@ __global__ void __launch_bounds__(512, 1)
   }
 }
 
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+template <typename T>
+MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, uint32_t srcOffset, uint32_t dstOffset,
+                                                      size_t size, int tid, int nThreads) {
+  using vectorType = typename VectorType<T>::type;
+  using nvlsType = typename VectorType<T>::nvls_type;
+  // nvls can only handle 4 bytes alignment
+  assert(size % sizeof(vectorType) == 0);
+  const size_t nInt4 = size / sizeof(nvlsType);
+  const size_t srcOffset4 = srcOffset / sizeof(nvlsType);
+  const size_t dstOffset4 = dstOffset / sizeof(nvlsType);
+  nvlsType* src4 = (nvlsType*)src;
+  nvlsType* dst4 = (nvlsType*)dst;
+  for (size_t idx = tid; idx < nInt4; idx += nThreads) {
+    nvlsType val;
+    mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)(src4 + srcOffset4 + idx));
+    mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)(dst4 + dstOffset4 + idx));
+  }
+  // handle rest of data
+  size_t processed = nInt4 * sizeof(nvlsType);
+  using nvlsType2 = typename VectorType<T>::nvls_type2;
+  const size_t startIdx = (srcOffset + processed) / sizeof(nvlsType2);
+  const size_t endIdx = (dstOffset + size) / sizeof(nvlsType2);
+  for (size_t idx = tid + startIdx; idx < endIdx; idx += nThreads) {
+    nvlsType2 val;
+    mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)src + idx);
+    mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)dst + idx);
+  }
+}
+#endif
+
+template <typename T>
+__global__ void __launch_bounds__(1024, 1)
+    allreduce9([[maybe_unused]] mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
+               [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast,
+               [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastOut,
+               [[maybe_unused]] size_t channelInOffset, [[maybe_unused]] size_t channelOutOffset,
+               [[maybe_unused]] size_t size, [[maybe_unused]] int rank) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  int nBlocks = gridDim.x;
+  int bid = blockIdx.x;
+  size_t sizePerRank = size / 8;
+  size_t sizePerBlock = sizePerRank / nBlocks;
+  size_t rankOffset = sizePerRank * rank;
+  size_t blockOffset = sizePerBlock * bid + rankOffset;
+  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastPtr = multicast + bid;
+  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastOutPtr = multicastOut + bid;
+
+  const size_t chanOffset = (NRANKS_PER_NODE - 1) * blockIdx.x;
+  auto memoryChans = memoryChannels + chanOffset;
+  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[NRANKS_PER_NODE - 1];
+  const int lid = threadIdx.x % WARP_SIZE;
+  if (lid < NRANKS_PER_NODE - 1) {
+    channels[lid] = memoryChans[lid];
+  }
+  __syncwarp();
+  if (threadIdx.x < NPEERS) {
+    channels[threadIdx.x].relaxedSignal();
+    channels[threadIdx.x].relaxedWait();
+  }
+  __syncthreads();
+  T* src = (T*)multicastPtr->mcPtr;
+  T* dst = (T*)multicastOutPtr->mcPtr;
+  handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, sizePerBlock,
+                             threadIdx.x, blockDim.x);
+  __syncthreads();
+  if (threadIdx.x < NPEERS) {
+    channels[threadIdx.x].relaxedSignal();
+    channels[threadIdx.x].relaxedWait();
+  }
+#endif
+}
+
+template <typename T>
+__global__ void __launch_bounds__(1024, 1)
+    allreduce10([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch, [[maybe_unused]] void* dst,
+                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
+                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast,
+                [[maybe_unused]] size_t size, [[maybe_unused]] int rank) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  int nBlocks = gridDim.x;
+  int nBlocksPerNvlsConn = nBlocks / NUM_NVLS_CONNECTION;
+  int bid = blockIdx.x;
+  size_t sizePerRank = size / NRANKS_PER_NODE;
+  constexpr size_t scratchSizePerRank = SCRATCH_SIZE / NRANKS_PER_NODE;
+  const size_t maxSizePerBlock = (sizePerRank + nBlocks - 1) / nBlocks;
+  size_t start = bid * maxSizePerBlock;
+  size_t end = min(start + maxSizePerBlock, sizePerRank);
+  size_t sizePerBlock = end - start;
+  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastPtr =
+      multicast + bid / nBlocksPerNvlsConn;
+  size_t copyPerIter = 1024 * 16;
+  if (sizePerBlock >= 1024 * 64) {
+    copyPerIter = 1024 * 32;
+  }
+  size_t scratchSizePerBlock = (scratchSizePerRank / nBlocks) / copyPerIter * copyPerIter;
+  size_t blockScratchOffset = scratchSizePerBlock * bid + scratchSizePerRank * rank;
+  constexpr int NCOPY_WARPS = 14;
+  constexpr int NREDUCE_WARPS = 4;
+  constexpr int NRECV_COPY_WARPS = 14;
+  constexpr int endCopyWid = NCOPY_WARPS;
+  constexpr int startRecvCopyWid = NCOPY_WARPS;
+  constexpr int endRecvCopyWid = NCOPY_WARPS + NRECV_COPY_WARPS;
+  constexpr int endReduceWid = NCOPY_WARPS + NREDUCE_WARPS + NRECV_COPY_WARPS;
+  const int warpId = threadIdx.x / WARP_SIZE;
+  size_t nIter = sizePerBlock / copyPerIter;
+  size_t lastIterSize = copyPerIter;
+  if (sizePerBlock % copyPerIter != 0) {
+    nIter += 1;
+    lastIterSize = sizePerBlock % copyPerIter;
+  }
+
+  const size_t chanOffset = (NRANKS_PER_NODE - 1) * blockIdx.x * 2;
+  auto memoryChans = memoryChannels + chanOffset;
+  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[(NRANKS_PER_NODE - 1) * 2];
+  const int lid = threadIdx.x % WARP_SIZE;
+  if (lid < (NRANKS_PER_NODE - 1) * 2) {
+    channels[lid] = memoryChans[lid];
+  }
+  __syncwarp();
+  for (int it = 0; it < nIter; it++) {
+    const size_t iterSize = (it == nIter - 1) ? lastIterSize : copyPerIter;
+    if (warpId < endCopyWid) {
+      int tidInCopy = threadIdx.x;
+      for (int i = 0; i < NRANKS_PER_NODE; i++) {
+        size_t offset = i * sizePerRank + sizePerBlock * bid + it * copyPerIter;
+        size_t offsetScratch =
+            i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
+        char* srcData = (char*)src + offset;
+        char* dstData = (char*)scratch + offsetScratch;
+        mscclpp::copy(dstData, srcData, iterSize, tidInCopy, NCOPY_WARPS * WARP_SIZE);
+      }
+      asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(NCOPY_WARPS * WARP_SIZE) : "memory");
+      if (tidInCopy < NPEERS) {
+        channels[tidInCopy].signal();
+        channels[tidInCopy].wait();
+      }
+      asm volatile("bar.sync %0, %1;" ::"r"(1), "r"((NCOPY_WARPS + NREDUCE_WARPS) * WARP_SIZE) : "memory");
+    }
+    if (warpId >= endRecvCopyWid && warpId < endReduceWid) {
+      int tidInReduce = threadIdx.x - endRecvCopyWid * WARP_SIZE;
+      asm volatile("bar.sync %0, %1;" ::"r"(1), "r"((NCOPY_WARPS + NREDUCE_WARPS) * WARP_SIZE) : "memory");
+      T* mcBuff = (T*)multicastPtr->mcPtr;
+      size_t offset = blockScratchOffset + (it * copyPerIter) % scratchSizePerBlock;
+      handleMultiLoadReduceStore(mcBuff, mcBuff, offset, offset, iterSize, tidInReduce, NREDUCE_WARPS * WARP_SIZE);
+      asm volatile("bar.sync %0, %1;" ::"r"(2), "r"((NRECV_COPY_WARPS + NREDUCE_WARPS) * WARP_SIZE) : "memory");
+    }
+    if (warpId >= startRecvCopyWid && warpId < endRecvCopyWid) {
+      int tidInRecvCopy = threadIdx.x - startRecvCopyWid * WARP_SIZE;
+      asm volatile("bar.sync %0, %1;" ::"r"(2), "r"((NRECV_COPY_WARPS + NREDUCE_WARPS) * WARP_SIZE) : "memory");
+      if (tidInRecvCopy < NPEERS) {
+        channels[tidInRecvCopy + NPEERS].signal();
+        channels[tidInRecvCopy + NPEERS].wait();
+      }
+      asm volatile("bar.sync %0, %1;" ::"r"(3), "r"((NRECV_COPY_WARPS)*WARP_SIZE) : "memory");
+      for (int i = 0; i < NRANKS_PER_NODE; i++) {
+        size_t offset = i * sizePerRank + sizePerBlock * bid + it * copyPerIter;
+        size_t offsetScratch =
+            i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
+        char* srcData = (char*)scratch + offsetScratch;
+        char* dstData = (char*)dst + offset;
+        mscclpp::copy(dstData, srcData, iterSize, tidInRecvCopy, NRECV_COPY_WARPS * WARP_SIZE);
+      }
+    }
+  }
+#endif
+}
+
 template <Op OpType, typename T>
 cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
                       mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-                      mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryOutChannels, size_t channelInOffset,
-                      size_t channelOutOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
-                      size_t nelems, cudaStream_t stream) {
-  static uint32_t flag = 1;
+                      mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryOutChannels,
+                      mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* nvlsChannels,
+                      mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* nvlsOutChannels,
+                      size_t channelInOffset, size_t channelOutOffset, size_t channelScratchOffset, int rank,
+                      int nRanksPerNode, int worldSize, size_t nelems, cudaStream_t stream, uint32_t* deviceFlag7,
+                      uint32_t* deviceFlag28, uint32_t* deviceFlag56, uint32_t numScratchBuff) {
+  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
 
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
     int nBlocks = 7;
     int nThreadsPerBlock = 32;
     allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
-        nRanksPerNode, worldSize, nelems, flag++);
+        nRanksPerNode, worldSize, nelems, deviceFlag7, numScratchBuff);
   } else if (sizeof(T) * nelems <= (1 << 14)) {
     int nBlocks = 28;
     int nThreadsPerBlock = 512;
     allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
-        nRanksPerNode, worldSize, nelems, flag++);
-  } else if (sizeof(T) * nelems <= (1 << 20)) {
+        nRanksPerNode, worldSize, nelems, deviceFlag28, numScratchBuff);
+  } else if (sizeof(T) * nelems <= (1 << 16) || (sizeof(T) * nelems <= (1 << 20) && !useNvlsWithZeroCopy)) {
     int nBlocks = 28;
     int nThreadsPerBlock = 1024;
+    uint32_t* deviceFlag = deviceFlag28;
     if (nelems >= 8192) {
       nBlocks = 56;
       nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
+      deviceFlag = deviceFlag56;
     }
 #if defined(ENABLE_NPKIT)
     size_t NpkitSharedMemSize = NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
     allreduce7<OpType><<<nBlocks, nThreadsPerBlock, NpkitSharedMemSize, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
-        nRanksPerNode, worldSize, nelems, flag++, NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+        nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff, NpKit::GetGpuEventCollectContexts(),
+        NpKit::GetCpuTimestamp());
 #else
-    allreduce7<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels,
-                                                                 channelInOffset, channelScratchOffset, rank,
-                                                                 nRanksPerNode, worldSize, nelems, flag++);
+    allreduce7<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
+        nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff);
 #endif
+  } else if (useNvlsWithZeroCopy) {
+    int nBlocks = 8;
+    int nThreadsPerBlock = 1024;
+    allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+        memoryChannels, nvlsChannels, nvlsOutChannels, channelInOffset, channelOutOffset, nelems * sizeof(T), rank);
+  } else if (mscclpp::isNvlsSupported()) {
+    int nBlocks = 32;
+    int nThreadsPerBlock = 1024;
+    allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
+                                                             nelems * sizeof(T), rank);
   } else {
     int nBlocks = 35;
     int nThreadsPerBlock = 512;

@@ -88,8 +88,8 @@ __device__ void gpuKernel(mscclpp::MemoryChannelDeviceHandle* memChans, int flag
 
 // Running on rank 1
 __device__ void gpuKernel(mscclpp::MemoryChannelDeviceHandle* memChans, int flag) {
-  memChans[0].getPackets(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x,
-                        /*flag=*/ flag);
+  memChans[0].unpackPackets(/*dstOffset=*/ 0, /*srcOffset=*/ 0, /*size=*/ 1024, /*threadId*/ threadIdx.x, /*numThreads*/ blockDim.x,
+                            /*flag=*/ flag);
   // Data is ready to use
 }
 ```
