@@ -1,11 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from dataclasses import dataclass
 from mscclpp.language.collectives import Collective
-from mscclpp.language.buffer import *
-from mscclpp.language.types import DataFormat, ChannelType, ChunkRef, ReplicationPolicy, Threadblock
-from mscclpp.language.ir import *
+from mscclpp.language.types import DataFormat, ChannelType, ChunkRef
 
 
 class CollectiveChecker:

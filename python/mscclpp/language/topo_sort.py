@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from mscclpp.language.types import *
 from queue import Queue
 from typing import Dict, Tuple
