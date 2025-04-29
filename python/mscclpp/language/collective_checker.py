@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+from typing import List
+from mscclpp.language.buffer import *
 from mscclpp.language.collectives import Collective
 from mscclpp.language.types import DataFormat, ChannelType, ChunkRef
-
+from mscclpp.language.ir import *
 
 class CollectiveChecker:
     def __init__(self):
