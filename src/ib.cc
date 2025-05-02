@@ -53,9 +53,9 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
 
   CUdeviceptr dptr = reinterpret_cast<CUdeviceptr>(buff);
   bool cuMemAlloc = mscclpp::isCuMemMapAllocated((void*)dptr);
-  CUdevice dev;
   int dmaBufSupported = 0;
 #if !defined(__HIP_PLATFORM_AMD__)
+  CUdevice dev;
   MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
   MSCCLPP_CUTHROW(cuDeviceGetAttribute(&dmaBufSupported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, dev));
 #endif  // !defined(__HIP_PLATFORM_AMD__)
@@ -74,7 +74,8 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
       throw mscclpp::IbError(err.str(), errno);
     }
 #else
-    throw mscclpp::Error("Registeration of dma-buf based memory region failed on HIP platform", ErrorCode::InvalidUsage);
+    throw mscclpp::Error("Registeration of dma-buf based memory region failed on HIP platform",
+                         ErrorCode::InvalidUsage);
 #endif  // !defined(__HIP_PLATFORM_AMD__)
   } else {
     this->mr = IBVerbs::ibv_reg_mr2(pd, reinterpret_cast<void*>(addr), pages * pageSize,
