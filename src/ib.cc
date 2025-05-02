@@ -74,9 +74,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
       throw mscclpp::IbError(err.str(), errno);
     }
 #else
-    std::stringstream err;
-    err << "Registeration of dma-buf based memory region failed on HIP platform (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
+    throw mscclpp::Error("Registeration of dma-buf based memory region failed on HIP platform", ErrorCode::InvalidUsage);
 #endif  // !defined(__HIP_PLATFORM_AMD__)
   } else {
     this->mr = IBVerbs::ibv_reg_mr2(pd, reinterpret_cast<void*>(addr), pages * pageSize,
