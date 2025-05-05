@@ -12,7 +12,7 @@ Rank.reduce(dst_chunk, src_chunk, op="sum", tb=0)
 ### Channel
 All cross ranks related op is done through channels. A channel is a communication medium between ranks. It can be a network socket, shared memory, or any other form of IPC. The channel is responsible for sending and receiving messages between ranks.
 
-Exmpales:
+Examples:
 ```python
 channel = Channel(dst_rank, src_rank, channel_type, tag)
 channel.put(dst_chunk, src_chunk, tb=0)
