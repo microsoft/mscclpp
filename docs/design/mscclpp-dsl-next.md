@@ -82,7 +82,7 @@ sem.acquire(tb=0)
 sem.release(tb=0)
 ```
 
-The synchronization inside the thread-block can be infered by MSCCL++ DSL auotmaticly. Which mean if we have data dependence between two operations, we will insert a synchronization point between them. 
+The synchronization inside the thread-block can be inferred by MSCCL++ DSL auotmaticly. Which mean if we have data dependence between two operations, we will insert a synchronization point between them. 
 
 But for multi-thread-blocks synchronization and cross ranks synchronization, we need to insert the synchronization point manually.
 
