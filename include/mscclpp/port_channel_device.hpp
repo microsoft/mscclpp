@@ -169,6 +169,7 @@ struct BasePortChannelDeviceHandle {
   }
 
   /// Push a @ref TriggerSync to the FIFO.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
     uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, semaphoreId_).value);
     fifo_.sync(curFifoHead, maxSpinCount);
