@@ -148,6 +148,7 @@ struct BasePortChannelDeviceHandle {
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
                                                    uint64_t size, int64_t maxSpinCount = 1000000) {
     uint64_t curFifoHead = fifo_.push(
@@ -161,6 +162,7 @@ struct BasePortChannelDeviceHandle {
   /// @param src The source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000) {
     putWithSignalAndFlush(dst, offset, src, offset, size, maxSpinCount);
@@ -225,6 +227,7 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000) {
     BasePortChannelDeviceHandle::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size, maxSpinCount);
