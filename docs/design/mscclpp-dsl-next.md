@@ -10,13 +10,24 @@ channel.signal(tb=0, sync="before")
 channel.wait(tb=0, sync="after")
 ```
 
+Here is the example for two ranks synchonization with each others.
+```python
+nranks = 2
+for i in range(nranks):
+    src_rank = i
+    dst_rank = (i + 1) % nranks
+    channel = Channel(dst_rank, src_rank, channel_type=Channel.memory, tag=0)
+    channel.relaxSignal(tb=0, sync=None)
+    channel.wait(tb=0, sync="after")
+```
+
 #### For nvls based channel
 NVLS channel need to bind with a group of buffers from a set of ranks. Each operation on the channel will be performed on the buffers in the group.
 
 ```python
-nvls_chan = SwitchChannel(rank_list=[], buffer_type=Buffer.input, tag=0)
-nvls_chan.group_reduce(index1, size1)
-nvls_chan.group_broadcast(index, size)
+nvls_chan = SwitchChannel(rank_list=[], buffer=Buffer.input, tag=0) # this interface may need to refine
+nvls_chan.group_load_reduce(index1, size1, op="sum", tb=0)
+nvls_chan.group_store(index, size, tb=0)
 ```
 
 ### Chunk/Tensor
