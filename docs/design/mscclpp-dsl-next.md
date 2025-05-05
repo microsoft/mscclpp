@@ -1,4 +1,14 @@
 # MSCCL++ DSL Concepts
+### Chunk/Tensor
+Chunk is a data structure that holds the data to be sent or received. For some local operations, such as copy/reduce we provide some functions to manipulate the chunk.
+
+```python
+dst = Chunk(rank, index, size)
+scr = Chunk(rank, index + 1, size)
+Rank.copy(dst_chunk, src_chunk, tb=0)
+Rank.reduce(dst_chunk, src_chunk, op="sum", tb=0)
+```
+
 ### Channel
 All cross ranks related op is done through channels. A channel is a communication medium between ranks. It can be a network socket, shared memory, or any other form of IPC. The channel is responsible for sending and receiving messages between ranks.
 
@@ -61,16 +71,6 @@ for i in range(nranks):
     dst_chunk = Chunk(src_rank, Buffer.output, chunk_index, 1)
     src_chunk = Chunk(src_rank, Buffer.scratch, chunk_index, 1)
     rank.copy(dst_chunk, src_chunk, tb=0)
-```
-
-### Chunk/Tensor
-Chunk is a data structure that holds the data to be sent or received. For some local operations, such as copy/reduce we provide some functions to manipulate the chunk.
-
-```python
-dst = Chunk(rank, index, size)
-scr = Chunk(rank, index + 1, size)
-Rank.copy(dst_chunk, src_chunk, tb=0)
-Rank.reduce(dst_chunk, src_chunk, op="sum", tb=0)
 ```
 
 ### Synchronization
