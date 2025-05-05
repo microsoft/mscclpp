@@ -112,3 +112,42 @@ with Loop.iteration(unit=2**20, num_chunks=1) as iter:
     sme.acquire(tb=1)
     channel.put(dst_chunk, src_chunk, tb=1, iter_context=iter)
 ``` 
+
+
+Here is the example for two ranks allreduce. Which achieve non-zero copy and use nvls. We use 3 thread-blocks to do the allreduce.
+The first thread-block is used to copy data from input buffer to scratch buffer, the second thread-block is used to do allreduce in scratch buffer, and the third thread-block is used to copy data from scratch buffer to output buffer.  The thread-blocks are synchronized by semaphores.
+```python
+nvls_chan = SwitchChannel(rank_list=[0, 1], buffer=Buffer.scratch, tag=0)
+nranks = 2
+for i in range(nranks):
+    src_rank = i
+    dst_rank = (i + 1) % nranks
+    chan = Channel(dst_rank, src_rank, channel_type=Channel.memory, tag=0)
+    chan1 = Channel(dst_rank, src_rank, channel_type=Channel.memory, tag=1)
+    rank = Rank(i)
+    chunk_index = src_rank
+    sem0 = Rank.Semaphore(size=1, tag=0)
+    sem1 = Rank.Semaphore(size=1, tag=1)
+    with Loop.iteration(unit=2**20, num_chunks=1) as iter:
+        # copy data to scratch buffer
+        dst_chunk = Chunk(src_rank, Buffer.scatch, chunk_index, 1)
+        src_chunk = Chunk(src_rank, Buffer.input, chunk_index, 1)
+        rank.copy(dst_chunk, src_chunk, tb=0, iter_context=iter)
+        chan.signal(tb=0, sync="before")
+        chan.wait(tb=0, sync="after")
+        sem0.release(tb=0)
+
+        # do allreduce in scratch buffer
+        sem0.acquire(tb=1, sync="after")
+        nvls_chan.group_load_reduce(chunk_index, 1, op="sum", tb=0, iter_context=iter)
+        nvls_chan.group_store(chunk_index, 1, tb=0, iter_context=iter)
+        chan1.signal(tb=1, sync="before")
+        sem1.release(tb=1)
+
+        # copy data back to output buffer
+        sem1.acquire(tb=2)
+        chan1.wait(tb=2, sync="after")
+        dst_chunk = Chunk(src_rank, Buffer.output, chunk_index, 1)
+        src_chunk = Chunk(src_rank, Buffer.scratch, chunk_index, 1)
+        rank.copy(dst_chunk, src_chunk, tb=2, iter_context=iter)
+```
