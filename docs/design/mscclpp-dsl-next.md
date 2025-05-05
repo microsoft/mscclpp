@@ -30,6 +30,39 @@ nvls_chan.group_load_reduce(index1, size1, op="sum", tb=0)
 nvls_chan.group_store(index, size, tb=0)
 ```
 
+Example for two ranks allreduce.
+```python
+# allreduce for 2 ranks.
+# 1. copy data from input buffer to scratch buffer
+# 2. allreduce the data in scratch buffer
+# 3. copy data from scratch buffer to output buffer
+nvls_chan = SwitchChannel(rank_list=[0, 1], buffer=Buffer.scratch, tag=0)
+nranks = 2
+for i in range(nranks):
+    src_rank = i
+    dst_rank = (i + 1) % nranks
+    chan = Channel(dst_rank, src_rank, channel_type=Channel.memory, tag=0)
+    rank = Rank(i)
+    chunk_index = src_rank
+    # copy data to scratch buffer
+    dst_chunk = Chunk(src_rank, Buffer.scatch, chunk_index, 1)
+    src_chunk = Chunk(src_rank, Buffer.input, chunk_index, 1)
+    rank.copy(dst_chunk, src_chunk, tb=0)
+    chan.signal(tb=0, sync="before")
+    chan.wait(tb=0, sync="after")
+
+    # do allreduce in scratch buffer
+    nvls_chan.group_load_reduce(chunk_index, 1, op="sum", tb=0)
+    nvls_chan.group_store(chunk_index, 1, tb=0)
+
+    # copy data back to output buffer
+    chan.signal(tb=0, sync="before")
+    chan.wait(tb=0, sync="after")
+    dst_chunk = Chunk(src_rank, Buffer.output, chunk_index, 1)
+    src_chunk = Chunk(src_rank, Buffer.scratch, chunk_index, 1)
+    rank.copy(dst_chunk, src_chunk, tb=0)
+```
+
 ### Chunk/Tensor
 Chunk is a data structure that holds the data to be sent or received. For some local operations, such as copy/reduce we provide some functions to manipulate the chunk.
 
