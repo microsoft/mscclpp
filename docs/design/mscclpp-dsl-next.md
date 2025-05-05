@@ -18,7 +18,7 @@ for i in range(nranks):
     dst_rank = (i + 1) % nranks
     channel = Channel(dst_rank, src_rank, channel_type=Channel.memory, tag=0)
     channel.relaxSignal(tb=0, sync=None)
-    channel.wait(tb=0, sync="after")
+    channel.relaxWait(tb=0, sync="after")
 ```
 
 #### For nvls based channel
