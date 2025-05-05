@@ -77,7 +77,7 @@ Rank.reduce(dst_chunk, src_chunk, op="sum", tb=0)
 We provide some synchronization primitives to sync threadblocks inside a rank. The synchronization is done through a barrier or semaphore. The barrier is used to synchronize all threadblocks in a rank, while the semaphore is used to synchronize a specific threadblock.
 ```python
 rank.barrier(tb_list=[])
-sem = Rank.Semaphore(size=1, tag=0)
+sem = Rank.Semaphore(rank=0, size=1, tag=0)
 sem.acquire(tb=0)
 sem.release(tb=0)
 ```
@@ -93,7 +93,7 @@ We only fuse the kernel that in the same thread-block. We still need to construc
 ## For Pipeline Loop
 For some cases, we need to pipeline the kernel to overlap some operations. For example, the first stage is copy data from input buffer to scratch buffer, the second stage is transfer data from scratch buffer to other peers. We could use `Rank.semphore` to synchronize the two stages. 
 ```python
-sem = Rank.Semaphore(size=1, tag=0)
+sem = Rank.Semaphore(rank=0, size=1, tag=0)
 Rank.copy(dst_chunk, src_chunk, tb=0)
 sem.release(tb=0)
 channel = Channel(dst_rank, src_rank, channel_type, tag)
@@ -103,7 +103,7 @@ channel.put(dst_chunk, src_chunk, tb=1)
 
 Also we could provide some gramar sugar to make the pipeline more readable. For example, we could use `Loop` to construct the pipeline. 
 ```python
-sem = Rank.Semaphore(size=1, tag=0)
+sem = Rank.Semaphore(rank=rank, size=1, tag=0)
 with Loop.iteration(unit=2**20, num_chunks=1) as iter:
     # the dst_chunk and src_chunk size but same as loop context
     Rank.copy(dst_chunk, src_chunk, tb=0, iter_context=iter)
@@ -126,8 +126,8 @@ for i in range(nranks):
     chan1 = Channel(dst_rank, src_rank, channel_type=Channel.memory, tag=1)
     rank = Rank(i)
     chunk_index = src_rank
-    sem0 = Rank.Semaphore(size=1, tag=0)
-    sem1 = Rank.Semaphore(size=1, tag=1)
+    sem0 = Rank.Semaphore(rank=i, size=1, tag=0)
+    sem1 = Rank.Semaphore(rank=i, size=1, tag=1)
     with Loop.iteration(unit=2**20, num_chunks=1) as iter:
         # copy data to scratch buffer
         dst_chunk = Chunk(src_rank, Buffer.scatch, chunk_index, 1)
