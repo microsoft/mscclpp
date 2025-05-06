@@ -84,13 +84,15 @@ We provide some synchronization primitives to sync threadblocks inside a rank. T
 ```python
 rank.barrier(tb_list=[])
 sem = Rank.Semaphore(rank=0, size=1, tag=0)
-sem.acquire(tb=0)
-sem.release(tb=0)
+sem.acquire(tb=0, sync="after")
+sem.release(tb=0, sync="before")
 ```
 
 The synchronization inside the thread-block can be inferred by MSCCL++ DSL automatically. Which mean if we have data dependence between two operations, we will insert a synchronization point between them. 
 
 But for multi-thread-blocks synchronization and cross ranks synchronization, we need to insert the synchronization point manually.
+
+We could use atomic operation to implement the semaphore machanism.
 
 ## For kernel fusion
 We only fuse the kernel that in the same thread-block. We still need to construct the DAG for each thread-block. Track the chunk usage and see if we can fuse the kernel.
@@ -161,3 +163,6 @@ for i in range(nranks):
             src_chunk = Chunk(src_rank, Buffer.scratch, chunk_index, 1)
             rank.copy(dst_chunk, src_chunk, tb=2, iter_context=iter)
 ```
+
+## All2All support
+For now, DSL only support static all2all algorithm. For all2allv support, we need to get the send/recv size at the runtime. It may require some placeholder at the Json execution plan and relace to the real size at the runtime. If we could make chunk size be variable, we could use the same way to support all2allv.
