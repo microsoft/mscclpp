@@ -74,7 +74,8 @@ for i in range(nranks):
 ```
 
 ### Synchronization
-We provide some synchronization primitives to sync threadblocks inside a rank. The synchronization is done through a barrier or semaphore. The barrier is used to synchronize all threadblocks in a rank, while the semaphore is used to synchronize a specific threadblock.
+We provide some synchronization primitives to sync threadblocks inside a rank. The synchronization is done through a barrier or semaphore. The barrier is used to synchronize a set of thread blocks in the rank, while the semaphore allows asynchronous signaling and waiting between thread blocks.
+
 ```python
 rank.barrier(tb_list=[])
 sem = Rank.Semaphore(rank=0, size=1, tag=0)
@@ -82,7 +83,7 @@ sem.acquire(tb=0)
 sem.release(tb=0)
 ```
 
-The synchronization inside the thread-block can be inferred by MSCCL++ DSL auotmaticly. Which mean if we have data dependence between two operations, we will insert a synchronization point between them. 
+The synchronization inside the thread-block can be inferred by MSCCL++ DSL automatically. Which mean if we have data dependence between two operations, we will insert a synchronization point between them. 
 
 But for multi-thread-blocks synchronization and cross ranks synchronization, we need to insert the synchronization point manually.
 
