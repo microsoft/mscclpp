@@ -3,10 +3,11 @@
 Chunk is a data structure that holds the data to be sent or received. For some local operations, such as copy/reduce we provide some functions to manipulate the chunk.
 
 ```python
-dst = Chunk(rank, index, size)
-scr = Chunk(rank, index + 1, size)
-Rank.copy(dst_chunk, src_chunk, tb=0)
-Rank.reduce(dst_chunk, src_chunk, op="sum", tb=0)
+rank = Rank(rank_id)
+dst_chunk = Chunk(rank, index, size)
+scr_chunk = Chunk(rank, index + 1, size)
+rank.copy(dst_chunk, src_chunk, tb=0)
+rank.reduce(dst_chunk, src_chunk, op="sum", tb=0)
 ```
 
 ### Channel
@@ -53,24 +54,28 @@ for i in range(nranks):
     dst_rank = (i + 1) % nranks
     chan = Channel(dst_rank, src_rank, channel_type=Channel.memory, tag=0)
     rank = Rank(i)
-    chunk_index = src_rank
-    # copy data to scratch buffer
-    dst_chunk = Chunk(src_rank, Buffer.scatch, chunk_index, 1)
-    src_chunk = Chunk(src_rank, Buffer.input, chunk_index, 1)
-    rank.copy(dst_chunk, src_chunk, tb=0)
+    for index in range(nranks):
+        chunk_index = index
+        # copy data to scratch buffer
+        dst_chunk = Chunk(src_rank, Buffer.scatch, chunk_index, 1)
+        src_chunk = Chunk(src_rank, Buffer.input, chunk_index, 1)
+        rank.copy(dst_chunk, src_chunk, tb=0)
     chan.signal(tb=0, sync="before")
     chan.wait(tb=0, sync="after")
 
     # do allreduce in scratch buffer
+    chunk_index = src_rank
     nvls_chan.group_load_reduce(chunk_index, 1, op="sum", tb=0)
     nvls_chan.group_store(chunk_index, 1, tb=0)
 
     # copy data back to output buffer
     chan.signal(tb=0, sync="before")
     chan.wait(tb=0, sync="after")
-    dst_chunk = Chunk(src_rank, Buffer.output, chunk_index, 1)
-    src_chunk = Chunk(src_rank, Buffer.scratch, chunk_index, 1)
-    rank.copy(dst_chunk, src_chunk, tb=0)
+    for index in range(nranks):
+        chunk_index = index
+        dst_chunk = Chunk(src_rank, Buffer.output, chunk_index, 1)
+        src_chunk = Chunk(src_rank, Buffer.scratch, chunk_index, 1)
+        rank.copy(dst_chunk, src_chunk, tb=0)
 ```
 
 ### Synchronization
@@ -126,29 +131,33 @@ for i in range(nranks):
     chan = Channel(dst_rank, src_rank, channel_type=Channel.memory, tag=0)
     chan1 = Channel(dst_rank, src_rank, channel_type=Channel.memory, tag=1)
     rank = Rank(i)
-    chunk_index = src_rank
     sem0 = Rank.Semaphore(rank=i, size=1, tag=0)
     sem1 = Rank.Semaphore(rank=i, size=1, tag=1)
     with Loop.iteration(unit=2**20, num_chunks=1) as iter:
         # copy data to scratch buffer
-        dst_chunk = Chunk(src_rank, Buffer.scatch, chunk_index, 1)
-        src_chunk = Chunk(src_rank, Buffer.input, chunk_index, 1)
-        rank.copy(dst_chunk, src_chunk, tb=0, iter_context=iter)
+        for index in range(nranks):
+            chunk_index = src_rank
+            dst_chunk = Chunk(src_rank, Buffer.scatch, chunk_index, 1)
+            src_chunk = Chunk(src_rank, Buffer.input, chunk_index, 1)
+            rank.copy(dst_chunk, src_chunk, tb=0, iter_context=iter)
         chan.signal(tb=0, sync="before")
         chan.wait(tb=0, sync="after")
         sem0.release(tb=0)
 
         # do allreduce in scratch buffer
+        chunk_index = src_rank
         sem0.acquire(tb=1, sync="after")
-        nvls_chan.group_load_reduce(chunk_index, 1, op="sum", tb=0, iter_context=iter)
-        nvls_chan.group_store(chunk_index, 1, tb=0, iter_context=iter)
+        nvls_chan.group_load_reduce(chunk_index, size=1, op="sum", tb=0, iter_context=iter)
+        nvls_chan.group_store(chunk_index, size=1, tb=0, iter_context=iter)
         chan1.signal(tb=1, sync="before")
         sem1.release(tb=1)
 
         # copy data back to output buffer
         sem1.acquire(tb=2)
         chan1.wait(tb=2, sync="after")
-        dst_chunk = Chunk(src_rank, Buffer.output, chunk_index, 1)
-        src_chunk = Chunk(src_rank, Buffer.scratch, chunk_index, 1)
-        rank.copy(dst_chunk, src_chunk, tb=2, iter_context=iter)
+        for index in range(nranks):
+            chunk_index = src_rank
+            dst_chunk = Chunk(src_rank, Buffer.output, chunk_index, 1)
+            src_chunk = Chunk(src_rank, Buffer.scratch, chunk_index, 1)
+            rank.copy(dst_chunk, src_chunk, tb=2, iter_context=iter)
 ```
