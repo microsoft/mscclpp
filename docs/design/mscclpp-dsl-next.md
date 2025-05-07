@@ -4,8 +4,9 @@ Chunk is a data structure that holds the data to be sent or received. For some l
 
 ```python
 rank = Rank(rank_id)
-dst_chunk = Chunk(rank, index, size)
-scr_chunk = Chunk(rank, index + 1, size)
+input_buffer = rank.get_input_buffer()
+dst_chunk = input_buffer[0:1]
+scr_chunk = intput_buffer[1:2]
 rank.copy(dst_chunk, src_chunk, tb=0)
 rank.reduce(dst_chunk, src_chunk, op="sum", tb=0)
 ```
@@ -57,28 +58,29 @@ for i in range(nranks):
     dst_rank = (i + 1) % nranks
     chan = Channel(dst_rank, src_rank, channel_type=Channel.memory)
     rank = Rank(i)
-    for index in range(nranks):
-        chunk_index = index
+    input_buffer = rank.get_input_buffer()
+    output_buffer = rank.get_output_buffer()
+    scratch_buffer = Buffer(nranks)
+    for offset in range(nranks):
         # copy data to scratch buffer
-        dst_chunk = Chunk(src_rank, Buffer.scatch, chunk_index, 1)
-        src_chunk = Chunk(src_rank, Buffer.input, chunk_index, 1)
+        dst_chunk = scratch_buffer[offset:offset+1]
+        src_chunk = input_buffer[offset:offset+1]
         rank.copy(dst_chunk, src_chunk, tb=0)
     chan.signal(tb=0, sync="before")
     chan.wait(tb=0, sync="after")
 
     # do allreduce in scratch buffer
-    chunk_index = src_rank
-    nvls_chan.group_load_reduce(chunk_index, 1, op="sum", tb=0)
-    nvls_chan.group_store(chunk_index, 1, tb=0)
+    buffer_offset = src_rank
+    nvls_chan.group_load_reduce(buffer_offset, 1, op="sum", tb=0)
+    nvls_chan.group_store(buffer_offset, 1, tb=0)
 
     # copy data back to output buffer
     chan.signal(tb=0, sync="before")
     chan.wait(tb=0, sync="after")
-    for index in range(nranks):
-        chunk_index = index
-        dst_chunk = Chunk(src_rank, Buffer.output, chunk_index, 1)
-        src_chunk = Chunk(src_rank, Buffer.scratch, chunk_index, 1)
-        rank.copy(dst_chunk, src_chunk, tb=0)
+    for offset in range(nranks):
+        dst_buffer = output_buffer[offset:offset+1]
+        src_buffer = scratch_buffer[offset:offset+1]
+        rank.copy(dst_buffer, src_buffer, tb=0)
 ```
 
 ### Synchronization
@@ -116,11 +118,12 @@ channel.put(dst_chunk, src_chunk, tb=1)
 Also we could provide some gramar sugar to make the pipeline more readable. For example, we could use `Loop` to construct the pipeline. 
 ```python
 sem = Rank.Semaphore(rank=rank, size=1, tag=0)
+rank = Rank(src_rank)
 with Loop.iteration(unit=2**20, num_chunks=1) as iter:
     # the dst_chunk and src_chunk size but same as loop context
-    Rank.copy(dst_chunk, src_chunk, tb=0, iter_context=iter)
+    rank.copy(dst_chunk, src_chunk, tb=0, iter_context=iter)
     sem.release(tb=0)
-    channel = Channel(dst_rank, src_rank, channel_type, tag)
+    channel = Channel(dst_rank, src_rank, channel_type)
     sme.acquire(tb=1)
     channel.put(dst_chunk, src_chunk, tb=1, iter_context=iter)
 ``` 
@@ -139,22 +142,23 @@ for i in range(nranks):
     rank = Rank(i)
     sem0 = Rank.Semaphore(rank=i, size=1, tag=0)
     sem1 = Rank.Semaphore(rank=i, size=1, tag=1)
+    input_buffer = rank.get_input_buffer()
+    output_buffer = rank.get_output_buffer()
+    scratch_buffer = Buffer(scratch_buffer_size)
     with Loop.iteration(unit=2**20, num_chunks=1) as iter:
         # copy data to scratch buffer
-        for index in range(nranks):
-            chunk_index = src_rank
-            dst_chunk = Chunk(src_rank, Buffer.scatch, chunk_index, 1)
-            src_chunk = Chunk(src_rank, Buffer.input, chunk_index, 1)
+        for offset in range(nranks):
+            dst_chunk = scratch_buffer[offset:offset+1]
+            src_chunk = input_buffer[offset:offset+1]
             rank.copy(dst_chunk, src_chunk, tb=0, iter_context=iter)
         chan.signal(tb=0, sync="before")
         chan.wait(tb=0, sync="after")
         sem0.release(tb=0)
 
         # do allreduce in scratch buffer
-        chunk_index = src_rank
         sem0.acquire(tb=1, sync="after")
-        nvls_chan.group_load_reduce(chunk_index, size=1, op="sum", tb=0, iter_context=iter)
-        nvls_chan.group_store(chunk_index, size=1, tb=0, iter_context=iter)
+        nvls_chan.group_load_reduce(offset, size=1, op="sum", tb=0, iter_context=iter)
+        nvls_chan.group_store(offset, size=1, tb=0, iter_context=iter)
         chan1.signal(tb=1, sync="before")
         sem1.release(tb=1)
 
@@ -162,9 +166,8 @@ for i in range(nranks):
         sem1.acquire(tb=2)
         chan1.wait(tb=2, sync="after")
         for index in range(nranks):
-            chunk_index = src_rank
-            dst_chunk = Chunk(src_rank, Buffer.output, chunk_index, 1)
-            src_chunk = Chunk(src_rank, Buffer.scratch, chunk_index, 1)
+            dst_chunk = output_buffer[index:index+1]
+            src_chunk = scratch_buffer[index:index+1]
             rank.copy(dst_chunk, src_chunk, tb=2, iter_context=iter)
 ```
 
