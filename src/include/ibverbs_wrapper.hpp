@@ -45,11 +45,14 @@ struct IBVerbs {
     if (!ibv_get_device_list_lib || !ibv_free_device_list_lib || !ibv_alloc_pd_lib || !ibv_dealloc_pd_lib ||
         !ibv_open_device_lib || !ibv_close_device_lib || !ibv_query_device_lib || !ibv_create_cq_lib ||
         !ibv_create_qp_lib || !ibv_destroy_cq_lib || !ibv_reg_mr_lib || !ibv_dereg_mr_lib || !ibv_query_gid_lib ||
-        !ibv_reg_mr_iova2_lib || !ibv_modify_qp_lib || !ibv_destroy_qp_lib || !ibv_query_port_lib ||
-        !ibv_reg_dmabuf_mr_lib) {
+        !ibv_reg_mr_iova2_lib || !ibv_modify_qp_lib || !ibv_destroy_qp_lib || !ibv_query_port_lib) {
       throw mscclpp::IbError("Failed to load one or more function in the ibibverbs library: " + std::string(dlerror()),
                              errno);
       dlclose(handle);
+    }
+
+    if (!ibv_reg_dmabuf_mr_lib) {
+      WARN("ibv_reg_dmabuf_mr is not support in current ibverbs.");
     }
   }
 
@@ -260,7 +263,7 @@ struct IBVerbs {
   typedef struct ibv_mr* (*ibv_reg_mr_iova2_t)(struct ibv_pd* pd, void* addr, size_t length, uint64_t iova,
                                                unsigned int access);
 
-  static inline ibv_get_device_list_t ibv_get_device_list_lib;
+  static inline ibv_get_device_list_t ibv_get_device_list_lib = nullptr;
   static inline ibv_free_device_list_t ibv_free_device_list_lib = nullptr;
   static inline ibv_alloc_pd_t ibv_alloc_pd_lib = nullptr;
   static inline ibv_dealloc_pd_t ibv_dealloc_pd_lib = nullptr;
