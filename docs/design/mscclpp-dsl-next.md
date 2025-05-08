@@ -60,7 +60,7 @@ for i in range(nranks):
     rank = Rank(i)
     input_buffer = rank.get_input_buffer()
     output_buffer = rank.get_output_buffer()
-    scratch_buffer = Buffer(nranks)
+    scratch_buffer = rank.Buffer(nranks)
     for offset in range(nranks):
         # copy data to scratch buffer
         dst_chunk = scratch_buffer[offset:offset+1]
@@ -111,7 +111,7 @@ rank = Rank(0)
 rank.copy(dst_chunk, src_chunk, tb=0)
 sem.release(tb=0)
 channel = Channel(dst_rank, src_rank, channel_type)
-sme.acquire(tb=1)
+sem.acquire(tb=1)
 channel.put(dst_chunk, src_chunk, tb=1)
 ```
 
@@ -124,7 +124,7 @@ with Loop.iteration(unit=2**20, num_chunks=1) as iter:
     rank.copy(dst_chunk, src_chunk, tb=0, iter_context=iter)
     sem.release(tb=0)
     channel = Channel(dst_rank, src_rank, channel_type)
-    sme.acquire(tb=1)
+    sem.acquire(tb=1)
     channel.put(dst_chunk, src_chunk, tb=1, iter_context=iter)
 ``` 
 
@@ -144,7 +144,7 @@ for i in range(nranks):
     sem1 = Rank.Semaphore(rank=i, size=1)
     input_buffer = rank.get_input_buffer()
     output_buffer = rank.get_output_buffer()
-    scratch_buffer = Buffer(scratch_buffer_size)
+    scratch_buffer = rank.Buffer(scratch_buffer_size)
     with Loop.iteration(unit=2**20, num_chunks=1) as iter:
         # copy data to scratch buffer
         for offset in range(nranks):
