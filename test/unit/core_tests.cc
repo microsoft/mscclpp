@@ -18,20 +18,6 @@ class LocalCommunicatorTest : public ::testing::Test {
   std::shared_ptr<mscclpp::Communicator> comm;
 };
 
-class MockSetuppable : public mscclpp::Setuppable {
- public:
-  MOCK_METHOD(void, beginSetup, (std::shared_ptr<mscclpp::Bootstrap> bootstrap), (override));
-  MOCK_METHOD(void, endSetup, (std::shared_ptr<mscclpp::Bootstrap> bootstrap), (override));
-};
-
-TEST_F(LocalCommunicatorTest, OnSetup) {
-  auto mockSetuppable = std::make_shared<MockSetuppable>();
-  comm->onSetup(mockSetuppable);
-  EXPECT_CALL(*mockSetuppable, beginSetup(std::dynamic_pointer_cast<mscclpp::Bootstrap>(bootstrap)));
-  EXPECT_CALL(*mockSetuppable, endSetup(std::dynamic_pointer_cast<mscclpp::Bootstrap>(bootstrap)));
-  comm->setup();
-}
-
 TEST_F(LocalCommunicatorTest, RegisterMemory) {
   int dummy[42];
   auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
