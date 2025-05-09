@@ -684,10 +684,14 @@ __global__ void __launch_bounds__(1024, 1)
   constexpr int nBlocksForCopy = 8;
   constexpr int nBlocksForReduce = 8;
   size_t sizePerBlock = size / nBlocksForCopy;
-  const int unitSize = 1 << 20;
-  int nIter = (sizePerBlock + unitSize - 1) / unitSize;
+  const int unitSize = 1 << 19;
+  int nIter = sizePerBlock / unitSize;
   int bid = blockIdx.x;
-  size_t lastIterSize = sizePerBlock % unitSize;
+  size_t lastIterSize = unitSize;
+  if (sizePerBlock % unitSize != 0) {
+    nIter += 1;
+    lastIterSize = sizePerBlock % unitSize;
+  }
   int chanId = bid * NPEERS + threadIdx.x;
   for (int it = 0; it < nIter; it++) {
     const size_t iterSize = (it == nIter - 1) ? lastIterSize : unitSize;
@@ -704,15 +708,15 @@ __global__ void __launch_bounds__(1024, 1)
         channels->wait();
       }
       __syncthreads();
-      if (threadIdx.x == 0) {
+      if (threadIdx.x == 0 && bid == rank) {
         deviceSemaphore[bid].release();
       }
     }
     if (bid >= nBlocksForCopy && bid < nBlocksForCopy + nBlocksForReduce) {
       mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastPtr = multicast;
       int tid = (bid - nBlocksForCopy) * blockDim.x + threadIdx.x;
-      if (tid < nBlocksForCopy) {
-        deviceSemaphore[tid].acquire();
+      if (tid == rank) {
+        deviceSemaphore[rank].acquire();
       }
       deviceSyncer.sync(nBlocksForReduce);
       T* mcBuff = (T*)multicastPtr->mcPtr;
