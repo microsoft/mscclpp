@@ -15,6 +15,7 @@
 #endif
 
 constexpr int NUM_NVLS_CONNECTION = 8;
+constexpr int NUM_SEMAPHORES = 32;
 
 constexpr int NRANKS_PER_NODE = 8;
 constexpr int NPEERS = 7;
@@ -23,5 +24,6 @@ constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread
 static bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
+__constant__ mscclpp::DeviceSemaphore deviceSemaphore[32];
 
 #endif  // NCCL_COMMON_HPP_

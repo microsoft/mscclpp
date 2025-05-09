@@ -55,23 +55,24 @@ struct DeviceSyncer {
 struct DeviceSemaphore {
  public:
   /// Construct a new ThreadBlockSemaphore object.
-  DeviceSemaphore(uint32_t size = 0) : semaphore_(size) {}
+  DeviceSemaphore() = default;
 
   /// Destroy the ThreadBlockSemaphore object.
   ~DeviceSemaphore() = default;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  void acquire() {
-    while (atomicFetchAdd<int, scopeDevice>(&semaphore_, -1, memoryOrderAcquire) > 0) {
+  MSCCLPP_DEVICE_INLINE void acquire() {
+    atomicFetchAdd<int, scopeDevice>(&semaphore_, -1, memoryOrderRelaxed);
+    while (atomicLoad<int, scopeDevice>(&semaphore_, memoryOrderAcquire) < 0) {
     }
   }
 
-  void release() { atomicFetchAdd<int, scopeDevice>(&semaphore_, 1, memoryOrderRelease); }
+  MSCCLPP_DEVICE_INLINE void release() { atomicFetchAdd<int, scopeDevice>(&semaphore_, 1, memoryOrderRelease); }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
  private:
   /// The semaphore value.
-  int semaphore_ = 0;
+  int semaphore_;
 };
 
 }  // namespace mscclpp
