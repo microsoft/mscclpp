@@ -107,7 +107,7 @@ class CommGroup:
         return connections
 
     def register_tensor_with_connections(
-        self, tensor: Type[cp.ndarray] or Type[np.ndarray], connections: dict[int, Connection]
+        self, tensor: Type[cp.ndarray] | Type[np.ndarray], connections: dict[int, Connection]
     ) -> dict[int, RegisteredMemory]:
         transport_flags = TransportFlags()
         for rank in connections:
@@ -135,7 +135,7 @@ class CommGroup:
     def make_semaphore(
         self,
         connections: dict[int, Connection],
-        semaphore_type: Type[Host2HostSemaphore] or Type[Host2DeviceSemaphore] or Type[MemoryDevice2DeviceSemaphore],
+        semaphore_type: Type[Host2HostSemaphore] | Type[Host2DeviceSemaphore] | Type[MemoryDevice2DeviceSemaphore],
     ) -> dict[int, Host2HostSemaphore]:
         semaphores = {}
         for rank in connections:

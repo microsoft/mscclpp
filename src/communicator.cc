@@ -31,23 +31,31 @@ MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t 
 }
 
 MSCCLPP_API_CPP void Communicator::sendMemory(RegisteredMemory memory, int remoteRank, int tag) {
-  pimpl_->bootstrap_->send(memory.serialize(), remoteRank, tag);
+  bootstrap()->send(memory.serialize(), remoteRank, tag);
 }
 
 MSCCLPP_API_CPP std::shared_future<RegisteredMemory> Communicator::recvMemory(int remoteRank, int tag) {
-  return std::async(std::launch::deferred, [this, remoteRank, tag]() {
+  size_t numRecvItemsAhead = pimpl_->recvQueues_.getNumRecvItems(remoteRank, tag);
+  auto future = std::async(std::launch::deferred, [this, remoteRank, tag, numRecvItemsAhead]() {
+    pimpl_->recvQueues_.waitN(remoteRank, tag, numRecvItemsAhead);
     std::vector<char> data;
     bootstrap()->recv(data, remoteRank, tag);
     return RegisteredMemory::deserialize(data);
   });
+  auto shared_future = std::shared_future<RegisteredMemory>(std::move(future));
+  pimpl_->recvQueues_.addRecvItem(remoteRank, tag, shared_future);
+  return shared_future;
 }
 
 MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(int remoteRank, int tag,
                                                                                       EndpointConfig localConfig) {
-  auto localEndpoint = pimpl_->context_->createEndpoint(localConfig);
-  pimpl_->bootstrap_->send(localEndpoint.serialize(), remoteRank, tag);
+  auto localEndpoint = context()->createEndpoint(localConfig);
+  bootstrap()->send(localEndpoint.serialize(), remoteRank, tag);
 
-  return std::async(std::launch::deferred, [this, remoteRank, tag, localEndpoint = std::move(localEndpoint)]() mutable {
+  size_t numRecvItemsAhead = pimpl_->recvQueues_.getNumRecvItems(remoteRank, tag);
+  auto future = std::async(std::launch::deferred, [this, remoteRank, tag, numRecvItemsAhead,
+                                                   localEndpoint = std::move(localEndpoint)]() mutable {
+    pimpl_->recvQueues_.waitN(remoteRank, tag, numRecvItemsAhead);
     std::vector<char> data;
     bootstrap()->recv(data, remoteRank, tag);
     auto remoteEndpoint = Endpoint::deserialize(data);
@@ -55,6 +63,9 @@ MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::co
     pimpl_->connectionInfos_[connection.get()] = {remoteRank, tag};
     return connection;
   });
+  auto shared_future = std::shared_future<std::shared_ptr<Connection>>(std::move(future));
+  pimpl_->recvQueues_.addRecvItem(remoteRank, tag, shared_future);
+  return shared_future;
 }
 
 MSCCLPP_API_CPP int Communicator::remoteRankOf(const Connection& connection) {
