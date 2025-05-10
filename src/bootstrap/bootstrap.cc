@@ -528,6 +528,7 @@ std::shared_ptr<Socket> TcpBootstrap::Impl::getPeerRecvSocket(int peer, int tag)
     if (recvPeer == peer && recvTag == tag) {
       return sock;
     }
+    // TODO(chhwang): set an exit condition or timeout
   }
 }
 
