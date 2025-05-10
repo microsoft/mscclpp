@@ -24,6 +24,6 @@ constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread
 static bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
-__constant__ mscclpp::DeviceSemaphore deviceSemaphore[32];
+__constant__ mscclpp::DeviceSemaphore deviceSemaphore[64];
 
 #endif  // NCCL_COMMON_HPP_

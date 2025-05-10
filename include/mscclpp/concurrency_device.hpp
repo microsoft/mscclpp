@@ -61,6 +61,8 @@ struct DeviceSemaphore {
   ~DeviceSemaphore() = default;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
+  MSCCLPP_DEVICE_INLINE void set(int value) { atomicStore<int, scopeDevice>(&semaphore_, value, memoryOrderRelaxed); }
+
   MSCCLPP_DEVICE_INLINE void acquire() {
     atomicFetchAdd<int, scopeDevice>(&semaphore_, -1, memoryOrderRelaxed);
     while (atomicLoad<int, scopeDevice>(&semaphore_, memoryOrderAcquire) < 0) {
