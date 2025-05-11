@@ -681,19 +681,33 @@ __global__ void __launch_bounds__(1024, 1)
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast,
                 [[maybe_unused]] size_t size, [[maybe_unused]] int rank) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  constexpr int alignSize = 16;
   constexpr int nBlocksForCopy = 16;
   constexpr int nBlocksForReduce = 8;
   constexpr int copyDeviceReduceRatio = nBlocksForCopy / nBlocksForReduce;
   constexpr size_t scratchSizePerRank = SCRATCH_SIZE / NRANKS_PER_NODE;
-  size_t sizePerRank = size / NRANKS_PER_NODE;
-  const size_t sizePerBlock = sizePerRank / nBlocksForCopy / sizeof(T) * sizeof(T);
-  const int unitSize = 1 << 17;
-  int nIter = sizePerBlock / unitSize;
+  uint32_t sizePerRank = size / NRANKS_PER_NODE;
+  assert(sizePerRank % alignSize == 0);
+  uint32_t sizePerBlock =
+      ((sizePerRank + (nBlocksForCopy - 1)) / nBlocksForCopy + alignSize - 1) / alignSize * alignSize;
+  uint32_t lastBlockSize = sizePerRank - (nBlocksForCopy - 1) * sizePerBlock;
   int bid = blockIdx.x;
-  size_t lastIterSize = unitSize;
+  uint32_t unitSize = 1 << 17;
+  if (size <= 1024 * 1024 * 128) {
+    unitSize = 1 << 16;
+  }
+  int nIter = sizePerBlock / unitSize;
+  uint32_t lastIterSize = unitSize;
+  uint32_t lastBlockIterSize = unitSize;
   if (sizePerBlock % unitSize != 0) {
     nIter += 1;
     lastIterSize = sizePerBlock % unitSize;
+  }
+  if (lastBlockSize % unitSize != 0) {
+    lastBlockIterSize = lastBlockSize % unitSize;
+  }
+  if (bid == nBlocksForCopy - 1 || bid == 2 * nBlocksForCopy + nBlocksForReduce - 1) {
+    lastIterSize = lastBlockIterSize;
   }
   size_t scratchSizePerBlock = (scratchSizePerRank / nBlocksForCopy) / unitSize * unitSize;
   size_t maxItersForScatch = scratchSizePerBlock / unitSize;
@@ -701,7 +715,7 @@ __global__ void __launch_bounds__(1024, 1)
     deviceSemaphore[bid + 2 * nBlocksForCopy].set(maxItersForScatch);
   }
   for (int it = 0; it < nIter; it++) {
-    const size_t iterSize = (it == nIter - 1) ? lastIterSize : unitSize;
+    const uint32_t iterSize = (it == nIter - 1) ? lastIterSize : unitSize;
     const uint32_t scratchIt = it % maxItersForScatch;
     if (bid < nBlocksForCopy) {
       if (threadIdx.x == 0) {
@@ -733,20 +747,24 @@ __global__ void __launch_bounds__(1024, 1)
       int tid = threadIdx.x;
       T* mcBuff = (T*)multicastPtr->mcPtr;
       for (int i = 0; i < copyDeviceReduceRatio; i++) {
-        size_t offset = rank * scratchSizePerRank + scratchIt * unitSize +
-                        (bidForReduce * copyDeviceReduceRatio + i) * scratchSizePerBlock;
+        int oriBid = bidForReduce * copyDeviceReduceRatio + i;
+        size_t offset = rank * scratchSizePerRank + scratchIt * unitSize + oriBid * scratchSizePerBlock;
+        uint32_t reduceIterSize = iterSize;
+        if ((oriBid == nBlocksForCopy - 1) && (it == nIter - 1)) {
+          reduceIterSize = lastBlockIterSize;
+        }
         if (tid == 0) {
-          deviceSemaphore[bidForReduce * copyDeviceReduceRatio + i].acquire();
+          deviceSemaphore[oriBid].acquire();
         }
         __syncthreads();
-        handleMultiLoadReduceStore(mcBuff, mcBuff, offset, offset, iterSize, tid, blockDim.x);
+        handleMultiLoadReduceStore(mcBuff, mcBuff, offset, offset, reduceIterSize, tid, blockDim.x);
         __syncthreads();
         if (tid == 0) {
           deviceSemaphore[nBlocksForCopy + bidForReduce * copyDeviceReduceRatio + i].release();
         }
       }
     }
-    if (bid >= nBlocksForCopy + nBlocksForReduce) {
+    if (bid >= nBlocksForCopy + nBlocksForReduce && bid < nBlocksForCopy + nBlocksForReduce + nBlocksForCopy) {
       int bidForCopy = bid - nBlocksForCopy - nBlocksForReduce;
       if (threadIdx.x == 0) {
         deviceSemaphore[bid - nBlocksForReduce].acquire();
