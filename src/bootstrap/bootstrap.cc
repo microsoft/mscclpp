@@ -52,14 +52,14 @@ MSCCLPP_API_CPP void Bootstrap::groupBarrier(const std::vector<int>& ranks) {
 MSCCLPP_API_CPP void Bootstrap::send(const std::vector<char>& data, int peer, int tag) {
   size_t size = data.size();
   send((void*)&size, sizeof(size_t), peer, tag);
-  send((void*)data.data(), data.size(), peer, tag + 1);
+  send((void*)data.data(), data.size(), peer, tag);
 }
 
 MSCCLPP_API_CPP void Bootstrap::recv(std::vector<char>& data, int peer, int tag) {
   size_t size;
   recv((void*)&size, sizeof(size_t), peer, tag);
   data.resize(size);
-  recv((void*)data.data(), data.size(), peer, tag + 1);
+  recv((void*)data.data(), data.size(), peer, tag);
 }
 
 struct UniqueIdInternal {
