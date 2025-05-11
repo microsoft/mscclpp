@@ -27,8 +27,8 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
   if (useIb) transport |= ibTransport;
   if (useEthernet) transport |= mscclpp::Transport::Ethernet;
 
-  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures(worldSize);
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
+  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures(worldSize);
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
 
   mscclpp::RegisteredMemory sendBufRegMem = communicator->registerMemory(sendBuff, sendBuffBytes, transport);
   mscclpp::RegisteredMemory recvBufRegMem;
@@ -41,22 +41,20 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
       continue;
     }
     if ((rankToNode(r) == rankToNode(gEnv->rank)) && useIPC) {
-      connectionFutures[r] = communicator->connectOnSetup(r, 0, mscclpp::Transport::CudaIpc);
+      connectionFutures[r] = communicator->connect(r, 0, mscclpp::Transport::CudaIpc);
     } else if (useIb) {
-      connectionFutures[r] = communicator->connectOnSetup(r, 0, ibTransport);
+      connectionFutures[r] = communicator->connect(r, 0, ibTransport);
     } else if (useEthernet) {
-      connectionFutures[r] = communicator->connectOnSetup(r, 0, mscclpp::Transport::Ethernet);
+      connectionFutures[r] = communicator->connect(r, 0, mscclpp::Transport::Ethernet);
     }
 
     if (isInPlace) {
-      communicator->sendMemoryOnSetup(sendBufRegMem, r, 0);
+      communicator->sendMemory(sendBufRegMem, r, 0);
     } else {
-      communicator->sendMemoryOnSetup(recvBufRegMem, r, 0);
+      communicator->sendMemory(recvBufRegMem, r, 0);
     }
-    remoteMemFutures[r] = communicator->recvMemoryOnSetup(r, 0);
+    remoteMemFutures[r] = communicator->recvMemory(r, 0);
   }
-
-  communicator->setup();
 
   for (int r = 0; r < worldSize; r++) {
     if (r == rank) {
@@ -67,8 +65,6 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
     portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
                                                         proxyService->addMemory(sendBufRegMem)));
   }
-
-  communicator->setup();
 }
 
 __constant__ DeviceHandle<mscclpp::PortChannel> gChannelOneToOneTestConstPortChans;

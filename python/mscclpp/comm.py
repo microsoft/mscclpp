@@ -101,8 +101,7 @@ class CommGroup:
             if endpoint.transport == Transport.Nvls:
                 return connect_nvls_collective(self.communicator, all_ranks, 2**30)
             else:
-                connections[rank] = self.communicator.connect_on_setup(rank, 0, endpoint)
-        self.communicator.setup()
+                connections[rank] = self.communicator.connect(rank, 0, endpoint)
         connections = {rank: connections[rank].get() for rank in connections}
         return connections
 
@@ -125,9 +124,8 @@ class CommGroup:
         all_registered_memories[self.my_rank] = local_reg_memory
         future_memories = {}
         for rank in connections:
-            self.communicator.send_memory_on_setup(local_reg_memory, rank, 0)
-            future_memories[rank] = self.communicator.recv_memory_on_setup(rank, 0)
-        self.communicator.setup()
+            self.communicator.send_memory(local_reg_memory, rank, 0)
+            future_memories[rank] = self.communicator.recv_memory(rank, 0)
         for rank in connections:
             all_registered_memories[rank] = future_memories[rank].get()
         return all_registered_memories
@@ -140,7 +138,6 @@ class CommGroup:
         semaphores = {}
         for rank in connections:
             semaphores[rank] = semaphore_type(self.communicator, connections[rank])
-        self.communicator.setup()
         return semaphores
 
     def make_memory_channels(self, tensor: cp.ndarray, connections: dict[int, Connection]) -> dict[int, MemoryChannel]:
