@@ -205,6 +205,10 @@ struct ncclComm {
   uint32_t numScratchBuff;
   uint32_t buffFlag;
 
+  std::shared_ptr<uint32_t> deviceFlag7;
+  std::shared_ptr<uint32_t> deviceFlag28;
+  std::shared_ptr<uint32_t> deviceFlag56;
+
   void* mscclppNcclComm;
 };
 
@@ -266,13 +270,12 @@ static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_pt
                                                                   mscclpp::TransportFlags transport) {
   std::vector<mscclpp::RegisteredMemory> remoteMemories;
   mscclpp::RegisteredMemory memory = comm->registerMemory(buff, bytes, transport);
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
   for (int i = 0; i < comm->bootstrap()->getNranks(); i++) {
     if (i == rank) continue;
-    remoteRegMemoryFutures.push_back(comm->recvMemoryOnSetup(i, 0));
-    comm->sendMemoryOnSetup(memory, i, 0);
+    remoteRegMemoryFutures.push_back(comm->recvMemory(i, 0));
+    comm->sendMemory(memory, i, 0);
   }
-  comm->setup();
   std::transform(remoteRegMemoryFutures.begin(), remoteRegMemoryFutures.end(), std::back_inserter(remoteMemories),
                  [](const auto& future) { return future.get(); });
   return remoteMemories;
@@ -477,7 +480,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
                             mscclpp::DeviceHandle<mscclpp::MemoryChannel>*,
                             mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>*,
                             mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>*, size_t, size_t,
-                            size_t, int, int, int, size_t, cudaStream_t)>
+                            size_t, int, int, int, size_t, cudaStream_t, uint32_t*, uint32_t*, uint32_t*, int)>
       allreduceFunc;
   if (reduceOp == SUM) {
     if (datatype == ncclFloat16) {
@@ -508,7 +511,9 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   }
   CUDACHECK(allreduceFunc(sendbuff, comm->scratchBuff.get(), recvbuff, memoryChannels, memoryOutChannels, nvlsChannels,
                           nvlsOutChannels, offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(),
-                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream));
+                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream,
+                          (uint32_t*)comm->deviceFlag7.get(), (uint32_t*)comm->deviceFlag28.get(),
+                          (uint32_t*)comm->deviceFlag56.get(), comm->numScratchBuff));
   return ncclSuccess;
 }
 
@@ -596,15 +601,13 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
 
 static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_ptr<mscclpp::Communicator> mscclppComm,
                                                int rank) {
-  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
 
   for (int i = 0; i < mscclppComm->bootstrap()->getNranks(); i++) {
     if (i == rank) continue;
     mscclpp::Transport transport = getTransport(rank, i);
-    connectionFutures.push_back(mscclppComm->connectOnSetup(i, 0, transport));
+    connectionFutures.push_back(mscclppComm->connect(i, 0, transport));
   }
-  mscclppComm->setup();
-
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
   std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
                  [](const auto& future) { return future.get(); });
@@ -619,7 +622,6 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
     }
   }
 
-  mscclppComm->setup();
   commPtr->connections = std::move(connections);
   if (mscclpp::isNvlsSupported()) {
     commPtr->nvlsConnections = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
@@ -631,6 +633,19 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   commPtr->scratchBuff = mscclpp::GpuBuffer<char>(SCRATCH_SIZE).memory();
   commPtr->remoteScratchRegMemories =
       setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
+
+  commPtr->deviceFlag7 = mscclpp::detail::gpuCallocShared<uint32_t>(7);
+  commPtr->deviceFlag28 = mscclpp::detail::gpuCallocShared<uint32_t>(28);
+  commPtr->deviceFlag56 = mscclpp::detail::gpuCallocShared<uint32_t>(56);
+
+  std::vector<uint32_t> initFlag(56);
+  for (int i = 0; i < 56; ++i) {
+    initFlag[i] = 1;
+  }
+
+  mscclpp::gpuMemcpy<uint32_t>(commPtr->deviceFlag7.get(), initFlag.data(), 7, cudaMemcpyHostToDevice);
+  mscclpp::gpuMemcpy<uint32_t>(commPtr->deviceFlag28.get(), initFlag.data(), 28, cudaMemcpyHostToDevice);
+  mscclpp::gpuMemcpy<uint32_t>(commPtr->deviceFlag56.get(), initFlag.data(), 56, cudaMemcpyHostToDevice);
 }
 
 NCCL_API ncclResult_t ncclGetVersion(int* version) {

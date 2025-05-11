@@ -27,8 +27,8 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
   if (useIb) transport |= ibTransport;
   if (useEthernet) transport |= mscclpp::Transport::Ethernet;
 
-  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures(worldSize);
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
+  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures(worldSize);
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
 
   mscclpp::RegisteredMemory sendBufRegMem = communicator->registerMemory(sendBuff, sendBuffBytes, transport);
   mscclpp::RegisteredMemory recvBufRegMem;
@@ -41,22 +41,20 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
       continue;
     }
     if ((rankToNode(r) == rankToNode(gEnv->rank)) && useIPC) {
-      connectionFutures[r] = communicator->connectOnSetup(r, 0, mscclpp::Transport::CudaIpc);
+      connectionFutures[r] = communicator->connect(r, 0, mscclpp::Transport::CudaIpc);
     } else if (useIb) {
-      connectionFutures[r] = communicator->connectOnSetup(r, 0, ibTransport);
+      connectionFutures[r] = communicator->connect(r, 0, ibTransport);
     } else if (useEthernet) {
-      connectionFutures[r] = communicator->connectOnSetup(r, 0, mscclpp::Transport::Ethernet);
+      connectionFutures[r] = communicator->connect(r, 0, mscclpp::Transport::Ethernet);
     }
 
     if (isInPlace) {
-      communicator->sendMemoryOnSetup(sendBufRegMem, r, 0);
+      communicator->sendMemory(sendBufRegMem, r, 0);
     } else {
-      communicator->sendMemoryOnSetup(recvBufRegMem, r, 0);
+      communicator->sendMemory(recvBufRegMem, r, 0);
     }
-    remoteMemFutures[r] = communicator->recvMemoryOnSetup(r, 0);
+    remoteMemFutures[r] = communicator->recvMemory(r, 0);
   }
-
-  communicator->setup();
 
   for (int r = 0; r < worldSize; r++) {
     if (r == rank) {
@@ -67,8 +65,6 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
     portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
                                                         proxyService->addMemory(sendBufRegMem)));
   }
-
-  communicator->setup();
 }
 
 __constant__ DeviceHandle<mscclpp::PortChannel> gChannelOneToOneTestConstPortChans;
@@ -294,14 +290,14 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
     // rank=1: 1, 0, 1, 0, ...
     if ((rank ^ (i & 1)) == 0) {
       if (CheckCorrectness) {
-        // If each thread writes 8 bytes at once, we don't need a barrier before putPackets().
+        // If each thread writes 8 bytes at once, we don't need a barrier before copyToPackets().
         for (int j = threadId; j < nPkt; j += numThreads) {
           buffPtr[2 * j] = putOffset + i + 2 * j;
           buffPtr[2 * j + 1] = putOffset + i + 2 * j + 1;
         }
         // __syncthreads();
       }
-      mscclpp::putPackets(putPktBuf, 0, buff, 0, nElem * sizeof(int), threadId, numThreads, flag);
+      mscclpp::copyToPackets(putPktBuf, buff, nElem * sizeof(int), threadId, numThreads, flag);
       gChannelOneToOneTestPortChansSyncer.sync(gridDim.x);
       if (threadId == 0) {
         // Send data from the local putPacketBuffer to the remote getPacketBuffer
@@ -313,9 +309,9 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
         flusher = 0;
       }
     } else {
-      mscclpp::getPackets(getPktBuf, 0, buff, 0, nElem * sizeof(int), threadId, numThreads, flag);
+      mscclpp::copyFromPackets(buff, getPktBuf, nElem * sizeof(int), threadId, numThreads, flag);
       if (CheckCorrectness) {
-        // If each thread reads 8 bytes at once, we don't need a barrier after getPackets().
+        // If each thread reads 8 bytes at once, we don't need a barrier after copyFromPackets().
         // __syncthreads();
         for (int j = threadId; j < nPkt; j += numThreads) {
           if (buffPtr[2 * j] != getOffset + i + 2 * j) {
