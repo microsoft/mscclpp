@@ -35,6 +35,9 @@ MSCCLPP_API_CPP void Communicator::sendMemory(RegisteredMemory memory, int remot
 }
 
 MSCCLPP_API_CPP std::shared_future<RegisteredMemory> Communicator::recvMemory(int remoteRank, int tag) {
+  if (pimpl_->lastRecvItem_ && pimpl_->lastRecvItem_->isReady()) {
+    pimpl_->lastRecvItem_.reset();
+  }
   auto future = std::async(std::launch::deferred, [this, remoteRank, tag, lastRecvItem = pimpl_->lastRecvItem_]() {
     if (lastRecvItem) {
       lastRecvItem->wait();
@@ -53,6 +56,9 @@ MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::co
   auto localEndpoint = context()->createEndpoint(localConfig);
   bootstrap()->send(localEndpoint.serialize(), remoteRank, tag);
 
+  if (pimpl_->lastRecvItem_ && pimpl_->lastRecvItem_->isReady()) {
+    pimpl_->lastRecvItem_.reset();
+  }
   auto future = std::async(std::launch::deferred, [this, remoteRank, tag, lastRecvItem = pimpl_->lastRecvItem_,
                                                    localEndpoint = std::move(localEndpoint)]() mutable {
     if (lastRecvItem) {

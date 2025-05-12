@@ -17,6 +17,7 @@ class BaseRecvItem {
  public:
   virtual ~BaseRecvItem() = default;
   virtual void wait() = 0;
+  virtual bool isReady() const = 0;
 };
 
 template <typename T>
@@ -25,6 +26,8 @@ class RecvItem : public BaseRecvItem {
   RecvItem(std::shared_future<T> future) : future_(future) {}
 
   void wait() { future_.wait(); }
+
+  bool isReady() const { return future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready; }
 
  private:
   std::shared_future<T> future_;
