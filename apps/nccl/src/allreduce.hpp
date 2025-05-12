@@ -681,15 +681,15 @@ __global__ void __launch_bounds__(1024, 1)
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast,
                 [[maybe_unused]] size_t size, [[maybe_unused]] int rank) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
-  constexpr int alignSize = 16;
+  constexpr int alignment = 16;
   constexpr int nBlocksForCopy = 16;
   constexpr int nBlocksForReduce = 8;
   constexpr int copyDeviceReduceRatio = nBlocksForCopy / nBlocksForReduce;
   constexpr size_t scratchSizePerRank = SCRATCH_SIZE / NRANKS_PER_NODE;
   uint32_t sizePerRank = size / NRANKS_PER_NODE;
-  assert(sizePerRank % alignSize == 0);
+  assert(sizePerRank % alignment == 0);
   uint32_t sizePerBlock =
-      ((sizePerRank + (nBlocksForCopy - 1)) / nBlocksForCopy + alignSize - 1) / alignSize * alignSize;
+      ((sizePerRank + (nBlocksForCopy - 1)) / nBlocksForCopy + alignment - 1) / alignment * alignment;
   uint32_t lastBlockSize = sizePerRank - (nBlocksForCopy - 1) * sizePerBlock;
   int bid = blockIdx.x;
   uint32_t unitSize = 1 << 17;
@@ -848,10 +848,17 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
     allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         memoryChannels, nvlsChannels, nvlsOutChannels, channelInOffset, channelOutOffset, nelems * sizeof(T), rank);
   } else if (mscclpp::isNvlsSupported()) {
-    int nBlocks = 40;
-    int nThreadsPerBlock = 1024;
-    allreduce11<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
-                                                             nelems * sizeof(T), rank);
+    if (sizeof(T) * nelems < (1 << 24)) {
+      int nBlocks = 32;
+      int nThreadsPerBlock = 1024;
+      allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
+                                                               nelems * sizeof(T), rank);
+    } else {
+      int nBlocks = 40;
+      int nThreadsPerBlock = 1024;
+      allreduce11<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
+                                                               nelems * sizeof(T), rank);
+    }
   } else {
     int nBlocks = 35;
     int nThreadsPerBlock = 512;
