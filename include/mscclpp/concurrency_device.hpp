@@ -63,10 +63,9 @@ struct DeviceSemaphore {
 #if defined(MSCCLPP_DEVICE_COMPILE)
   MSCCLPP_DEVICE_INLINE void set(int value) { atomicStore<int, scopeDevice>(&semaphore_, value, memoryOrderRelaxed); }
 
-  MSCCLPP_DEVICE_INLINE void acquire() {
+  MSCCLPP_DEVICE_INLINE void acquire(int maxSpinCount = 100000000) {
     atomicFetchAdd<int, scopeDevice>(&semaphore_, -1, memoryOrderRelaxed);
-    while (atomicLoad<int, scopeDevice>(&semaphore_, memoryOrderAcquire) < 0) {
-    }
+    POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&semaphore_, memoryOrderAcquire) < 0), maxSpinCount);
   }
 
   MSCCLPP_DEVICE_INLINE void release() { atomicFetchAdd<int, scopeDevice>(&semaphore_, 1, memoryOrderRelease); }
