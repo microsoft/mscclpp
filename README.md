@@ -15,6 +15,8 @@ A GPU-driven communication stack for scalable AI applications.
 
 See [Quick Start](https://microsoft.github.io/mscclpp/getting-started/quickstart.html) to quickly get started.
 
+Check our [paper](https://arxiv.org/abs/2504.09014) to know more about MSCCL++.
+
 ## Overview
 
 MSCCL++ redefines inter-GPU communication interfaces, thereby delivering a highly efficient and customizable communication stack for distributed GPU applications. Its design is specifically tailored to accommodate diverse performance optimization scenarios often encountered in state-of-the-art AI applications. Figure below provides a high-level overview of MSCCL++ abstractions in CUDA, C, and Python.
@@ -175,3 +177,18 @@ trademarks or logos is subject to and must follow
 [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
 Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
 Any use of third-party trademarks or logos are subject to those third-party's policies.
+
+## Citation
+
+If you use this project for your work, please cite our [paper](https://arxiv.org/abs/2504.09014):
+```bibtex
+@misc{ShahJLRHJMSCZDMY2025,
+      title={MSCCL++: Rethinking GPU Communication Abstractions for Cutting-edge AI Applications}, 
+      author={Aashaka Shah and Abhinav Jangda and Binyang Li and Caio Rocha and Changho Hwang and Jithin Jose and Madan Musuvathi and Olli Saarikivi and Peng Cheng and Qinghua Zhou and Roshan Dathathri and Saeed Maleki and Ziyue Yang},
+      year={2025},
+      eprint={2504.09014},
+      archivePrefix={arXiv},
+      primaryClass={cs.DC},
+      url={https://arxiv.org/abs/2504.09014}, 
+}
+```
