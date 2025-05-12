@@ -16,6 +16,8 @@ RUN apt-get update && \
     clang-format \
     htop \
     openssh-server \
+    gdb \
+    python3-dbg \
     && \
     apt-get autoremove && \
     apt-get clean && \
