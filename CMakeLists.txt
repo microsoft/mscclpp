@@ -22,6 +22,7 @@ option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
 option(MSCCLPP_NPKIT_FLAGS "Enable NPKIT" OFF)
+set(MSCCLPP_GPU_ARCHS "" CACHE STRING "Specify GPU architectures with delimiters (comma, space, or semicolon).")
 
 if(MSCCLPP_BYPASS_GPU_CHECK)
     if(MSCCLPP_USE_CUDA)
@@ -56,6 +57,44 @@ else()
     endif()
 endif()
 
+if(MSCCLPP_GPU_ARCHS)
+    # Remove any leading/trailing whitespace
+    string(STRIP "${MSCCLPP_GPU_ARCHS}" MSCCLPP_GPU_ARCHS)
+
+    # Split the string into a list
+    string(REPLACE " " ";" MSCCLPP_GPU_ARCHS "${MSCCLPP_GPU_ARCHS}")
+    string(REPLACE "," ";" MSCCLPP_GPU_ARCHS "${MSCCLPP_GPU_ARCHS}")
+
+    # Check if the list is empty
+    if(NOT MSCCLPP_GPU_ARCHS)
+        message(FATAL_ERROR "MSCCLPP_GPU_ARCHS is given empty. Please specify GPU architectures or do not set MSCCLPP_GPU_ARCHS.")
+    endif()
+elseif(MSCCLPP_USE_CUDA)
+    # CUDA 11 or higher is required
+    if(CUDAToolkit_VERSION_MAJOR LESS 11)
+        message(FATAL_ERROR "CUDA 11 or higher is required but detected ${CUDAToolkit_VERSION}")
+    endif()
+
+    # Ampere architecture
+    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 11)
+        set(MSCCLPP_GPU_ARCHS 80)
+    endif()
+
+    # Hopper architecture
+    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12)
+        set(MSCCLPP_GPU_ARCHS ${MSCCLPP_GPU_ARCHS} 90)
+    endif()
+
+    # Blackwell architecture
+    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12 AND CUDAToolkit_VERSION_MINOR GREATER_EQUAL 8)
+        set(MSCCLPP_GPU_ARCHS ${MSCCLPP_GPU_ARCHS} 100)
+    endif()
+elseif(MSCCLPP_USE_ROCM)
+    set(CMAKE_HIP_ARCHITECTURES gfx90a gfx941 gfx942)
+endif()
+
+message(STATUS "GPU architectures: ${MSCCLPP_GPU_ARCHS}")
+
 # Declare project
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
@@ -64,20 +103,7 @@ if(MSCCLPP_USE_CUDA)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall,-Wextra")
     enable_language(CUDA)
 
-    # CUDA 11 or higher is required
-    if(CUDAToolkit_VERSION_MAJOR LESS 11)
-        message(FATAL_ERROR "CUDA 11 or higher is required but detected ${CUDAToolkit_VERSION}")
-    endif()
-
-    # Set CUDA architectures
-    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 11)
-        set(CMAKE_CUDA_ARCHITECTURES 80)
-    endif()
-
-    # Hopper architecture
-    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12)
-        set(CMAKE_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES} 90)
-    endif()
+    set(CMAKE_CUDA_ARCHITECTURES ${MSCCLPP_GPU_ARCHS})
 
     set(GPU_LIBRARIES CUDA::cudart CUDA::cuda_driver)
     set(GPU_INCLUDE_DIRS ${CUDAToolkit_INCLUDE_DIRS})
@@ -85,7 +111,7 @@ else()
     set(CMAKE_HIP_STANDARD 17)
     set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -Wall -Wextra")
 
-    set(CMAKE_HIP_ARCHITECTURES gfx90a gfx941 gfx942)
+    set(CMAKE_HIP_ARCHITECTURES ${MSCCLPP_GPU_ARCHS})
 
     set(GPU_LIBRARIES hip::device)
     set(GPU_INCLUDE_DIRS ${hip_INCLUDE_DIRS})
