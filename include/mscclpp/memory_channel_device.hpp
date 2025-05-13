@@ -183,7 +183,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
   ///
   template <typename PacketType = LL16Packet>
   MSCCLPP_DEVICE_INLINE auto unpackPacket(uint64_t index, uint32_t flag, int64_t maxSpinCount = -1) {
-    assert_device(packetBuffer_ != nullptr, "Packet buffer is null");
+    mscclpp_assert_device(packetBuffer_ != nullptr, "Packet buffer is null");
     return reinterpret_cast<PacketType*>(packetBuffer_)[index].read(flag, maxSpinCount);
   }
 
@@ -207,7 +207,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
                                            int64_t maxSpinCount = -1) {
     static_assert(std::is_same<PacketType, LL16Packet>::value || std::is_same<PacketType, LL8Packet>::value,
                   "Unsupported packet type");
-    assert_device(packetBuffer_ != nullptr, "Packet buffer is null");
+    mscclpp_assert_device(packetBuffer_ != nullptr, "Packet buffer is null");
     copyFromPackets<PacketType>(reinterpret_cast<char*>(src_) + originOffset,
                                 reinterpret_cast<char*>(packetBuffer_) + targetOffset, originBytes, threadId,
                                 numThreads, flag, maxSpinCount);
