@@ -3,7 +3,7 @@
 
 target_sources(unit_tests PRIVATE
     core_tests.cc
-    cuda_utils_tests.cc
+    gpu_utils_tests.cc
     errors_tests.cc
     fifo_tests.cu
     numa_tests.cc
