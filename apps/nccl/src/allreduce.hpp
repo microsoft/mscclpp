@@ -632,7 +632,7 @@ __global__ void __launch_bounds__(1024, 1)
     if (warpId < endCopyWid) {
       int tidInCopy = threadIdx.x;
       for (int i = 0; i < NRANKS_PER_NODE; i++) {
-        size_t offset = i * sizePerRank + sizePerBlock * bid + it * copyPerIter;
+        size_t offset = i * sizePerRank + maxSizePerBlock * bid + it * copyPerIter;
         size_t offsetScratch =
             i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
         char* srcData = (char*)src + offset;
@@ -663,7 +663,7 @@ __global__ void __launch_bounds__(1024, 1)
       }
       asm volatile("bar.sync %0, %1;" ::"r"(3), "r"((NRECV_COPY_WARPS)*WARP_SIZE) : "memory");
       for (int i = 0; i < NRANKS_PER_NODE; i++) {
-        size_t offset = i * sizePerRank + sizePerBlock * bid + it * copyPerIter;
+        size_t offset = i * sizePerRank + maxSizePerBlock * bid + it * copyPerIter;
         size_t offsetScratch =
             i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
         char* srcData = (char*)scratch + offsetScratch;
