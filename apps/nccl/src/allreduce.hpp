@@ -714,13 +714,13 @@ __global__ void __launch_bounds__(1024, 1)
     nIter = nIterLastBlock;
   }
   size_t scratchSizePerBlock = (scratchSizePerRank / nBlocksForCopy) / unitSize * unitSize;
-  size_t maxItersForScatch = scratchSizePerBlock / unitSize;
+  size_t maxItersForScratch = scratchSizePerBlock / unitSize;
   if (bid < nBlocksForCopy && threadIdx.x == 0) {
-    deviceSemaphore[bid + 2 * nBlocksForCopy].set(maxItersForScatch);
+    deviceSemaphore[bid + 2 * nBlocksForCopy].set(maxItersForScratch);
   }
   for (int it = 0; it < nIter; it++) {
     const uint32_t iterSize = (it == nIter - 1) ? lastIterSize : unitSize;
-    const uint32_t scratchIt = it % maxItersForScatch;
+    const uint32_t scratchIt = it % maxItersForScratch;
     if (bid < nBlocksForCopy) {
       if (threadIdx.x == 0) {
         deviceSemaphore[bid + 2 * nBlocksForCopy].acquire();
