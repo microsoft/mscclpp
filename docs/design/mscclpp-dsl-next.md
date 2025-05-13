@@ -112,7 +112,7 @@ rank.copy(dst_chunk, src_chunk, tb=0)
 sem.release(tb=0)
 channel = Channel(dst_rank, src_rank, channel_type)
 sem.acquire(tb=1)
-channel.put(dst_chunk, src_chunk, tb=1)
+channel.put(other_peer_chunk, dst_chunk, tb=1)
 ```
 
 Also we could provide some gramar sugar to make the pipeline more readable. For example, we could use `Loop` to construct the pipeline. 
@@ -120,12 +120,12 @@ Also we could provide some gramar sugar to make the pipeline more readable. For 
 sem = Rank.Semaphore(rank=rank, size=1)
 rank = Rank(src_rank)
 with Loop.iteration(unit=2**20, num_chunks=1) as iter:
-    # the dst_chunk and src_chunk size but same as loop context
+    # The dst_chunk and src_chunk sizes should match the num_chunks parameter in the loop context.
     rank.copy(dst_chunk, src_chunk, tb=0, iter_context=iter)
     sem.release(tb=0)
     channel = Channel(dst_rank, src_rank, channel_type)
     sem.acquire(tb=1)
-    channel.put(dst_chunk, src_chunk, tb=1, iter_context=iter)
+    channel.put(other_peer_chunk, dst_chunk, tb=1, iter_context=iter)
 ``` 
 
 
@@ -157,8 +157,8 @@ for i in range(nranks):
 
         # do allreduce in scratch buffer
         sem0.acquire(tb=1, sync="after")
-        nvls_chan.group_load_reduce(offset, size=1, op="sum", tb=0, iter_context=iter)
-        nvls_chan.group_store(offset, size=1, tb=0, iter_context=iter)
+        nvls_chan.group_load_reduce(offset, size=1, op="sum", tb=1, iter_context=iter)
+        nvls_chan.group_store(offset, size=1, tb=1, iter_context=iter)
         chan1.signal(tb=1, sync="before")
         sem1.release(tb=1)
 
