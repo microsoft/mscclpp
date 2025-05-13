@@ -181,7 +181,7 @@ The python based DSL will generate a json file. The json file will contain the e
 ### The json field for device semaphore
 ```json
 {
-    "name": "semaphore_acquire",
+    "name": "sem_acquire",
     "sync": "after",
     "id": 0,
 }
@@ -209,7 +209,7 @@ The pipeline loop is used to overlap the operations. The pipeline loop will be u
             "count": 1,
         },
         {
-            "name": "semaphore_release",
+            "name": "sem_release",
             "sync": "before",
             "id": 0,
         }
@@ -219,12 +219,12 @@ The pipeline loop is used to overlap the operations. The pipeline loop will be u
     "id": 1,
     "ops": [
         {
-            "name": "semaphore_acquire",
+            "name": "sem_acquire",
             "sync": "after",
             "id": 0,
         },
         {
-            "name": "channel_put",
+            "name": "put",
             "src_chunk": {
                 "rank": 0,
                 "buffer": "s",
