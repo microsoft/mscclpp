@@ -586,12 +586,13 @@ __global__ void __launch_bounds__(1024, 1)
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast,
                 [[maybe_unused]] size_t size, [[maybe_unused]] int rank) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  constexpr int alignment = 16;
   int nBlocks = gridDim.x;
   int nBlocksPerNvlsConn = nBlocks / NUM_NVLS_CONNECTION;
   int bid = blockIdx.x;
   size_t sizePerRank = size / NRANKS_PER_NODE;
   constexpr size_t scratchSizePerRank = SCRATCH_SIZE / NRANKS_PER_NODE;
-  const size_t maxSizePerBlock = (sizePerRank + nBlocks - 1) / nBlocks;
+  const size_t maxSizePerBlock = ((sizePerRank + nBlocks - 1) / nBlocks + alignment - 1) / alignment * alignment;
   size_t start = bid * maxSizePerBlock;
   size_t end = min(start + maxSizePerBlock, sizePerRank);
   size_t sizePerBlock = end - start;
@@ -697,6 +698,7 @@ __global__ void __launch_bounds__(1024, 1)
     unitSize = 1 << 16;
   }
   int nIter = sizePerBlock / unitSize;
+  int nIterLastBlock = lastBlockSize / unitSize;
   uint32_t lastIterSize = unitSize;
   uint32_t lastBlockIterSize = unitSize;
   if (sizePerBlock % unitSize != 0) {
@@ -704,10 +706,12 @@ __global__ void __launch_bounds__(1024, 1)
     lastIterSize = sizePerBlock % unitSize;
   }
   if (lastBlockSize % unitSize != 0) {
+    nIterLastBlock += 1;
     lastBlockIterSize = lastBlockSize % unitSize;
   }
   if (bid == nBlocksForCopy - 1 || bid == 2 * nBlocksForCopy + nBlocksForReduce - 1) {
     lastIterSize = lastBlockIterSize;
+    nIter = nIterLastBlock;
   }
   size_t scratchSizePerBlock = (scratchSizePerRank / nBlocksForCopy) / unitSize * unitSize;
   size_t maxItersForScatch = scratchSizePerBlock / unitSize;
@@ -750,7 +754,10 @@ __global__ void __launch_bounds__(1024, 1)
         int oriBid = bidForReduce * copyDeviceReduceRatio + i;
         size_t offset = rank * scratchSizePerRank + scratchIt * unitSize + oriBid * scratchSizePerBlock;
         uint32_t reduceIterSize = iterSize;
-        if ((oriBid == nBlocksForCopy - 1) && (it == nIter - 1)) {
+        if ((oriBid == nBlocksForCopy - 1) && (it >= nIterLastBlock - 1)) {
+          if (it > nIterLastBlock - 1) {
+            continue;
+          }
           reduceIterSize = lastBlockIterSize;
         }
         if (tid == 0) {
