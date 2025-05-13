@@ -15,10 +15,10 @@ namespace mscclpp {
 struct DeviceSyncer {
  public:
   /// Construct a new DeviceSyncer object.
-  DeviceSyncer() = default;
+  MSCCLPP_INLINE DeviceSyncer() = default;
 
   /// Destroy the DeviceSyncer object.
-  ~DeviceSyncer() = default;
+  MSCCLPP_INLINE ~DeviceSyncer() = default;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Synchronize all threads inside a kernel. Guarantee that all previous work of all threads in cooperating blocks is
