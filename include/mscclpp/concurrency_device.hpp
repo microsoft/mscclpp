@@ -61,13 +61,18 @@ struct DeviceSemaphore {
   ~DeviceSemaphore() = default;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
+  /// set the semaphore value.
+  /// @param value The value to set.
   MSCCLPP_DEVICE_INLINE void set(int value) { atomicStore<int, scopeDevice>(&semaphore_, value, memoryOrderRelaxed); }
 
+  /// Acquire the semaphore.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void acquire(int maxSpinCount = 100000000) {
     atomicFetchAdd<int, scopeDevice>(&semaphore_, -1, memoryOrderRelaxed);
     POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&semaphore_, memoryOrderAcquire) < 0), maxSpinCount);
   }
 
+  /// Release the semaphore.
   MSCCLPP_DEVICE_INLINE void release() { atomicFetchAdd<int, scopeDevice>(&semaphore_, 1, memoryOrderRelease); }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
