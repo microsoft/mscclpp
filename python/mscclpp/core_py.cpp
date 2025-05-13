@@ -29,9 +29,7 @@ extern void register_gpu_utils(nb::module_& m);
 template <typename T>
 void def_nonblocking_future(nb::handle& m, const std::string& typestr) {
   std::string pyclass_name = std::string("NonblockingFuture") + typestr;
-  nb::class_<NonblockingFuture<T>>(m, pyclass_name.c_str())
-      .def("ready", &NonblockingFuture<T>::ready)
-      .def("get", &NonblockingFuture<T>::get);
+  nb::class_<NonblockingFuture<T>>(m, pyclass_name.c_str()).def("get", &NonblockingFuture<T>::get);
 }
 
 void register_core(nb::module_& m) {
