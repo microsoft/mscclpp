@@ -17,6 +17,22 @@ Communicator::Impl::Impl(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<C
   }
 }
 
+void Communicator::Impl::setLastRecvItem(int remoteRank, int tag, std::shared_ptr<BaseRecvItem> item) {
+  lastRecvItems_[{remoteRank, tag}] = item;
+}
+
+std::shared_ptr<BaseRecvItem> Communicator::Impl::getLastRecvItem(int remoteRank, int tag) {
+  auto it = lastRecvItems_.find({remoteRank, tag});
+  if (it == lastRecvItems_.end()) {
+    return nullptr;
+  }
+  if (it->second->isReady()) {
+    lastRecvItems_.erase(it);
+    return nullptr;
+  }
+  return it->second;
+}
+
 MSCCLPP_API_CPP Communicator::~Communicator() = default;
 
 MSCCLPP_API_CPP Communicator::Communicator(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<Context> context)
@@ -35,19 +51,18 @@ MSCCLPP_API_CPP void Communicator::sendMemory(RegisteredMemory memory, int remot
 }
 
 MSCCLPP_API_CPP std::shared_future<RegisteredMemory> Communicator::recvMemory(int remoteRank, int tag) {
-  if (pimpl_->lastRecvItem_ && pimpl_->lastRecvItem_->isReady()) {
-    pimpl_->lastRecvItem_.reset();
-  }
-  auto future = std::async(std::launch::deferred, [this, remoteRank, tag, lastRecvItem = pimpl_->lastRecvItem_]() {
-    if (lastRecvItem) {
-      lastRecvItem->wait();
-    }
-    std::vector<char> data;
-    bootstrap()->recv(data, remoteRank, tag);
-    return RegisteredMemory::deserialize(data);
-  });
+  auto future = std::async(std::launch::deferred,
+                           [this, remoteRank, tag, lastRecvItem = pimpl_->getLastRecvItem(remoteRank, tag)]() {
+                             if (lastRecvItem) {
+                               // Recursive call to the previous receive items
+                               lastRecvItem->wait();
+                             }
+                             std::vector<char> data;
+                             bootstrap()->recv(data, remoteRank, tag);
+                             return RegisteredMemory::deserialize(data);
+                           });
   auto shared_future = std::shared_future<RegisteredMemory>(std::move(future));
-  pimpl_->lastRecvItem_ = std::make_shared<RecvItem<RegisteredMemory>>(shared_future);
+  pimpl_->setLastRecvItem(remoteRank, tag, std::make_shared<RecvItem<RegisteredMemory>>(shared_future));
   return shared_future;
 }
 
@@ -56,24 +71,22 @@ MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::co
   auto localEndpoint = context()->createEndpoint(localConfig);
   bootstrap()->send(localEndpoint.serialize(), remoteRank, tag);
 
-  if (pimpl_->lastRecvItem_ && pimpl_->lastRecvItem_->isReady()) {
-    pimpl_->lastRecvItem_.reset();
-  }
-  auto future = std::async(std::launch::deferred, [this, remoteRank, tag, lastRecvItem = pimpl_->lastRecvItem_,
-                                                   localEndpoint = std::move(localEndpoint)]() mutable {
-    if (lastRecvItem) {
-      // Recursive call to the previous receive items
-      lastRecvItem->wait();
-    }
-    std::vector<char> data;
-    bootstrap()->recv(data, remoteRank, tag);
-    auto remoteEndpoint = Endpoint::deserialize(data);
-    auto connection = context()->connect(localEndpoint, remoteEndpoint);
-    pimpl_->connectionInfos_[connection.get()] = {remoteRank, tag};
-    return connection;
-  });
+  auto future =
+      std::async(std::launch::deferred, [this, remoteRank, tag, lastRecvItem = pimpl_->getLastRecvItem(remoteRank, tag),
+                                         localEndpoint = std::move(localEndpoint)]() mutable {
+        if (lastRecvItem) {
+          // Recursive call to the previous receive items
+          lastRecvItem->wait();
+        }
+        std::vector<char> data;
+        bootstrap()->recv(data, remoteRank, tag);
+        auto remoteEndpoint = Endpoint::deserialize(data);
+        auto connection = context()->connect(localEndpoint, remoteEndpoint);
+        pimpl_->connectionInfos_[connection.get()] = {remoteRank, tag};
+        return connection;
+      });
   auto shared_future = std::shared_future<std::shared_ptr<Connection>>(std::move(future));
-  pimpl_->lastRecvItem_ = std::make_shared<RecvItem<std::shared_ptr<Connection>>>(shared_future);
+  pimpl_->setLastRecvItem(remoteRank, tag, std::make_shared<RecvItem<std::shared_ptr<Connection>>>(shared_future));
   return shared_future;
 }
 

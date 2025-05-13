@@ -44,7 +44,19 @@ struct Communicator::Impl {
   std::unordered_map<const Connection*, ConnectionInfo> connectionInfos_;
   std::shared_ptr<BaseRecvItem> lastRecvItem_;
 
+  // Temporary storage for the latest RecvItem of each {remoteRank, tag} pair.
+  // If the RecvItem gets ready, it will be removed at the next call to getLastRecvItem.
+  std::unordered_map<std::pair<int, int>, std::shared_ptr<BaseRecvItem>, PairHash> lastRecvItems_;
+
   Impl(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<Context> context);
+
+  // Set the last RecvItem for a {remoteRank, tag} pair.
+  // This is used to store the corresponding RecvItem of a future returned by recvMemory() or connect().
+  void setLastRecvItem(int remoteRank, int tag, std::shared_ptr<BaseRecvItem> item);
+
+  // Return the last RecvItem that is not ready.
+  // If the item is ready, it will be removed from the map and nullptr will be returned.
+  std::shared_ptr<BaseRecvItem> getLastRecvItem(int remoteRank, int tag);
 
   struct Connector;
 };
