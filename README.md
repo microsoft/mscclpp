@@ -156,6 +156,18 @@ Customized proxies can be used for conducting a series of pre-defined data trans
 
 MSCCL++ provides Python bindings and interfaces, which simplifies integration with Python applications.
 
+## Projects using MSCCL++
+MSCCL++ is being used in many amazing projects to power their communication needs. Some projects include:
+
+- ARK: A GPU-driven system framework for scalable AI applications [[Paper link](https://www.usenix.org/conference/nsdi23/presentation/hwang)], Accepted at NSDI 2023 [![GitHub stars](https://img.shields.io/github/stars/microsoft/ark?style=social)](https://github.com/microsoft/ark)
+- FlashInfer: A Kernel Library for LLM Serving [![GitHub stars](https://img.shields.io/github/stars/flashinfer-ai/flashinfer?style=social)](https://github.com/flashinfer-ai/flashinfer)
+- ForestColl: Throughput-Optimal Collective Communications on Heterogeneous Network Fabrics [[Paper link](https://arxiv.org/abs/2402.06787)]
+- LMDeploy: A toolkit for compressing, deploying, and serving LLMs [![GitHub stars](https://img.shields.io/github/stars/InternLM/lmdeploy?style=social)](https://github.com/InternLM/lmdeploy)
+- Nanoflow: A throughput-oriented high-performance serving framework for LLMs [[Paper link](https://arxiv.org/abs/2408.12757)] [![GitHub stars](https://img.shields.io/github/stars/efeslab/Nanoflow?style=social)](https://github.com/efeslab/Nanoflow)
+- ROCm Communication Collectives Library (RCCL) [![GitHub stars](https://img.shields.io/github/stars/ROCm/rccl?style=social)]( https://github.com/ROCm/rccl)
+- Splitwise: Efficient generative LLM inference using phase splitting [[Paper link](https://arxiv.org/abs/2311.18677)], Accepted at ISCA 2024, Best Paper Nominee
+- TVM: Open deep learning compiler stack for cpu, gpu and specialized accelerators [![GitHub stars](https://img.shields.io/github/stars/apache/tvm?style=social)](https://github.com/apache/tvm)
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
