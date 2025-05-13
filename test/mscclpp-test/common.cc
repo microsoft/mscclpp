@@ -362,13 +362,13 @@ std::shared_ptr<mscclpp::BaseProxyService> BaseTestEngine::createProxyService() 
 
 void BaseTestEngine::setupMeshConnectionsInternal(
     std::vector<std::shared_ptr<mscclpp::Connection>>& connections, mscclpp::RegisteredMemory& localRegMemory,
-    std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteRegMemories, bool addConnections) {
+    std::vector<std::shared_future<mscclpp::RegisteredMemory>>& remoteRegMemories, bool addConnections) {
   const int worldSize = args_.totalRanks;
   const int rank = args_.rank;
   const int nRanksPerNode = args_.nRanksPerNode;
   const int thisNode = rank / nRanksPerNode;
   const mscclpp::Transport ibTransport = IBs[args_.gpuNum];
-  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
 
   auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
   for (int r = 0; r < worldSize; r++) {
@@ -383,16 +383,14 @@ void BaseTestEngine::setupMeshConnectionsInternal(
         transport = ibTransport;
       }
       // Connect with all other ranks
-      connectionFutures.push_back(comm_->connectOnSetup(r, 0, transport));
+      connectionFutures.push_back(comm_->connect(r, 0, transport));
     }
-    comm_->sendMemoryOnSetup(localRegMemory, r, 0);
-    auto remoteMemory = comm_->recvMemoryOnSetup(r, 0);
+    comm_->sendMemory(localRegMemory, r, 0);
+    auto remoteMemory = comm_->recvMemory(r, 0);
     remoteRegMemories.push_back(remoteMemory);
   }
-  comm_->setup();
-  std::transform(
-      connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
-      [](const mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>& future) { return future.get(); });
+  std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
+                 [](const std::shared_future<std::shared_ptr<mscclpp::Connection>>& future) { return future.get(); });
 }
 
 // Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
@@ -409,7 +407,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::Port
   }
 
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemories;
   mscclpp::RegisteredMemory& localRegMemory = (outputBuff) ? outputBufRegMem : inputBufRegMem;
 
   setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
@@ -424,8 +422,6 @@ void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::Port
                                service->addMemory(remoteRegMemories[i].get()), service->addMemory(inputBufRegMem))));
     }
   }
-
-  comm_->setup();
 }
 
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& memoryChannels, void* inputBuff,
@@ -441,7 +437,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
   }
 
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemories;
   mscclpp::RegisteredMemory& localRegMemory =
       (outputBuff && semantic == ChannelSemantic::PUT) ? outputBufRegMem : inputBufRegMem;
   setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
@@ -455,7 +451,6 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
       }
     }
   }
-  comm_->setup();
 
   for (size_t i = 0; i < nChannelPerConnection; ++i) {
     for (size_t cid = 0; cid < connections.size(); ++cid) {
@@ -490,13 +485,13 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
   }
 
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemories;
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemories;
   mscclpp::RegisteredMemory& localRegMemory =
       (getPacketBuff) ? getPacketBufRegMem : ((outputBuff) ? outputBufRegMem : inputBufRegMem);
 
   setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
 
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoriesOutput;
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemoriesOutput;
   if (outputBuff) {
     setupMeshConnectionsInternal(connections, outputBufRegMem, remoteRegMemoriesOutput, false);
   }
@@ -512,7 +507,6 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
       connIdToSemId[cid] = service->buildAndAddSemaphore(*comm_, connections[cid]);
     }
   }
-  comm_->setup();
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {

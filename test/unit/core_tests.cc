@@ -29,9 +29,8 @@ TEST_F(LocalCommunicatorTest, RegisterMemory) {
 TEST_F(LocalCommunicatorTest, SendMemoryToSelf) {
   int dummy[42];
   auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
-  comm->sendMemoryOnSetup(memory, 0, 0);
-  auto memoryFuture = comm->recvMemoryOnSetup(0, 0);
-  comm->setup();
+  comm->sendMemory(memory, 0, 0);
+  auto memoryFuture = comm->recvMemory(0, 0);
   auto sameMemory = memoryFuture.get();
   EXPECT_EQ(sameMemory.data(), memory.data());
   EXPECT_EQ(sameMemory.size(), memory.size());
