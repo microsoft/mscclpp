@@ -195,23 +195,32 @@ The pipeline loop is used to overlap the operations. The pipeline loop will be u
     "id": 0,
     "ops": [
         {
-            "name": "copy",
-            "src_chunk": {
-                "rank": 0,
-                "offset": 0,
-                "buffer": "i",
+            "name": "pipeline_loop",
+            "iter_context": {
+                "unit": 2**20,
+                "num_chunks": 1,
             },
-            "dst_chunk": {
-                "rank": 0,
-                "buffer": "s",
-                "offset": 0,
-            },
-            "count": 1,
-        },
-        {
-            "name": "sem_release",
-            "sync": "before",
-            "id": 0,
+            "ops": [
+                {
+                    "name": "copy",
+                    "src_chunk": {
+                        "rank": 0,
+                        "offset": 0,
+                        "buffer": "i",
+                    },
+                    "dst_chunk": {
+                        "rank": 0,
+                        "buffer": "s",
+                        "offset": 0,
+                    },
+                    "count": 1,
+                },
+                {
+                    "name": "sem_release",
+                    "sync": "before",
+                    "id": 0,
+                }
+            ]
         }
     ]
 },
@@ -219,24 +228,33 @@ The pipeline loop is used to overlap the operations. The pipeline loop will be u
     "id": 1,
     "ops": [
         {
-            "name": "sem_acquire",
-            "sync": "after",
-            "id": 0,
-        },
-        {
-            "name": "put",
-            "src_chunk": {
-                "rank": 0,
-                "buffer": "s",
-                "offset": 0,
+            "name": "pipeline_loop",
+            "iter_context": {
+                "unit": 2**20,
+                "num_chunks": 1,
             },
-            "dst_chunk": {
-                "rank": 1,
-                "buffer": "s",
-                "offset": 0,
-            },
-            "count": 1,
-            "channel_id": 0,
+            "ops": [
+                {
+                    "name": "sem_acquire",
+                    "sync": "after",
+                    "id": 0,
+                },
+                {
+                    "name": "put",
+                    "src_chunk": {
+                        "rank": 0,
+                        "buffer": "s",
+                        "offset": 0,
+                    },
+                    "dst_chunk": {
+                        "rank": 1,
+                        "buffer": "s",
+                        "offset": 0,
+                    },
+                    "count": 1,
+                    "channel_id": 0,
+                }
+            ]
         }
     ],
     "channels": [
