@@ -54,10 +54,10 @@ struct DeviceSyncer {
 
 struct DeviceSemaphore {
  public:
-  /// Construct a new ThreadBlockSemaphore object.
+  /// Construct a new DeviceSemaphore object.
   DeviceSemaphore() = default;
 
-  /// Destroy the ThreadBlockSemaphore object.
+  /// Destroy the DeviceSemaphore object.
   ~DeviceSemaphore() = default;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)

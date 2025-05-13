@@ -685,7 +685,7 @@ __global__ void __launch_bounds__(1024, 1)
   constexpr int alignment = 16;
   constexpr int nBlocksForCopy = 16;
   constexpr int nBlocksForReduce = 8;
-  constexpr int copyDeviceReduceRatio = nBlocksForCopy / nBlocksForReduce;
+  constexpr int copyReduceRatio = nBlocksForCopy / nBlocksForReduce;
   constexpr size_t scratchSizePerRank = SCRATCH_SIZE / NRANKS_PER_NODE;
   uint32_t sizePerRank = size / NRANKS_PER_NODE;
   assert(sizePerRank % alignment == 0);
@@ -750,8 +750,8 @@ __global__ void __launch_bounds__(1024, 1)
       mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastPtr = multicast + bidForReduce;
       int tid = threadIdx.x;
       T* mcBuff = (T*)multicastPtr->mcPtr;
-      for (int i = 0; i < copyDeviceReduceRatio; i++) {
-        int oriBid = bidForReduce * copyDeviceReduceRatio + i;
+      for (int i = 0; i < copyReduceRatio; i++) {
+        int oriBid = bidForReduce * copyReduceRatio + i;
         size_t offset = rank * scratchSizePerRank + scratchIt * unitSize + oriBid * scratchSizePerBlock;
         uint32_t reduceIterSize = iterSize;
         if ((oriBid == nBlocksForCopy - 1) && (it >= nIterLastBlock - 1)) {
@@ -767,7 +767,7 @@ __global__ void __launch_bounds__(1024, 1)
         handleMultiLoadReduceStore(mcBuff, mcBuff, offset, offset, reduceIterSize, tid, blockDim.x);
         __syncthreads();
         if (tid == 0) {
-          deviceSemaphore[nBlocksForCopy + bidForReduce * copyDeviceReduceRatio + i].release();
+          deviceSemaphore[nBlocksForCopy + bidForReduce * copyReduceRatio + i].release();
         }
       }
     }
