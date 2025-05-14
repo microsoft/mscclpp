@@ -1,4 +1,4 @@
-# .azure-pipelines/templates/nccl-test.yml
+# .azure-pipelines/templates/nccl-test.yaml
 # ----------------------------------------
 # A step‐template that runs the entire MSCCLPP→NCCL test suite on one pool/container.
 #
