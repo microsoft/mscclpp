@@ -469,8 +469,8 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* dst, T* src, uint32_t d
     VectorType<T, 1>* srcElem = reinterpret_cast<VectorType<T, 1>*>(src + srcOffsetElem);
     VectorType<T, 1>* dstElem = reinterpret_cast<VectorType<T, 1>*>(dst + dstOffsetElem);
     for (size_t idx = threadIdx.x; idx < nElem; idx += blockDim.x) {
-      auto val = DeviceMulticastPointerDeviceHandle::multimemLoadReduce(srcElem + idx);
-      DeviceMulticastPointerDeviceHandle::multimemStore(val, dstElem + idx);
+      auto val = SwitchChannelDeviceHandle::multimemLoadReduce(srcElem + idx);
+      SwitchChannelDeviceHandle::multimemStore(val, dstElem + idx);
     }
   } else {
     // handle data in 16-byte unit
@@ -481,8 +481,8 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* dst, T* src, uint32_t d
     Type16* src16 = reinterpret_cast<Type16*>(src) + srcOffset16;
     Type16* dst16 = reinterpret_cast<Type16*>(dst) + dstOffset16;
     for (size_t idx = threadIdx.x; idx < nType16; idx += blockDim.x) {
-      Type16 val = DeviceMulticastPointerDeviceHandle::multimemLoadReduce(src16 + idx);
-      DeviceMulticastPointerDeviceHandle::multimemStore(val, dst16 + idx);
+      Type16 val = SwitchChannelDeviceHandle::multimemLoadReduce(src16 + idx);
+      SwitchChannelDeviceHandle::multimemStore(val, dst16 + idx);
     }
     // handle rest of data
     constexpr int RedBytes = (sizeof(T) == 8) ? 8 : 4;
@@ -492,8 +492,8 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* dst, T* src, uint32_t d
     TypeRest* srcR = reinterpret_cast<TypeRest*>(src + srcOffset + processed);
     TypeRest* dstR = reinterpret_cast<TypeRest*>(dst + dstOffset + processed);
     for (size_t idx = threadIdx.x; idx < nRest; idx += blockDim.x) {
-      TypeRest val = DeviceMulticastPointerDeviceHandle::multimemLoadReduce(srcR + idx);
-      DeviceMulticastPointerDeviceHandle::multimemStore(val, dstR + idx);
+      TypeRest val = SwitchChannelDeviceHandle::multimemLoadReduce(srcR + idx);
+      SwitchChannelDeviceHandle::multimemStore(val, dstR + idx);
     }
   }
 }
@@ -531,8 +531,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   Operation* operations = localPlan->operations;
   DeviceHandle<MemoryChannel>* memoryChannels = localPlan->channels.memoryChannels;
   DeviceHandle<PortChannel>* portChannels = localPlan->channels.portChannels;
-  [[maybe_unused]] DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels =
-      localPlan->channels.nvlsChannels;
+  [[maybe_unused]] DeviceHandle<SwitchChannel>* nvlsChannels = localPlan->channels.nvlsChannels;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
 #if defined(MSCCLPP_DEVICE_HIP)

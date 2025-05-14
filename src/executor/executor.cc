@@ -118,7 +118,7 @@ struct ExecutionContext {
   std::vector<mscclpp::SemaphoreId> proxySemaphores;
   std::vector<mscclpp::MemoryChannel> memoryChannels;
   std::vector<mscclpp::PortChannel> portChannels;
-  std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
+  std::vector<mscclpp::SwitchChannel> nvlsChannels;
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
   std::shared_ptr<char> scratchBuffer;
@@ -351,9 +351,8 @@ struct Executor::Impl {
       std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[i];
       NvlsInfo info = nvlsInfos[i];
       void* buffer = getBuffer(info.bufferType, sendbuff, recvbuff, context.scratchBuffer.get());
-      NvlsConnection::DeviceMulticastPointer deviceMulticastPointer =
-          nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, info.bufferSize);
-      context.nvlsChannels.push_back(deviceMulticastPointer);
+      SwitchChannel switchChannel = nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, info.bufferSize);
+      context.nvlsChannels.push_back(switchChannel);
     }
   }
 

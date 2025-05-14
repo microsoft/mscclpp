@@ -9,6 +9,24 @@
 
 namespace mscclpp {
 
+class NvlsConnection;
+
+struct SwitchChannel {
+ private:
+  void* devicePtr_;
+  std::shared_ptr<char> mcPtr_;
+  size_t bufferSize_;
+
+ public:
+  using DeviceHandle = SwitchChannelDeviceHandle;
+  SwitchChannel(void* devicePtr, std::shared_ptr<char> mcPtr, size_t bufferSize)
+      : devicePtr_(devicePtr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
+  DeviceHandle deviceHandle() const;
+  void* getDevicePtr();
+
+  friend class NvlsConnection;
+};
+
 class NvlsConnection {
  public:
   NvlsConnection(size_t bufferSize, int numDevices);
@@ -20,28 +38,12 @@ class NvlsConnection {
   void addDevice();
   void addDevice(int cudaDeviceId);
 
-  struct DeviceMulticastPointer {
-   private:
-    void* devicePtr_;
-    std::shared_ptr<char> mcPtr_;
-    size_t bufferSize_;
-
-   public:
-    using DeviceHandle = DeviceMulticastPointerDeviceHandle;
-    DeviceMulticastPointer(void* devicePtr, std::shared_ptr<char> mcPtr, size_t bufferSize)
-        : devicePtr_(devicePtr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
-    DeviceHandle deviceHandle() const;
-    void* getDevicePtr();
-
-    friend class NvlsConnection;
-  };
-
   /// @brief bind the memory allocated via @ref mscclpp::GpuBuffer to the multicast handle. The behavior
   /// is undefined if the devicePtr is not allocated by @ref mscclpp::GpuBuffer.
   /// @param devicePtr The device pointer returned by `mscclpp::GpuBuffer::data()`.
   /// @param size The bytes of the memory to bind to the multicast handle.
-  /// @return DeviceMulticastPointer with devicePtr, mcPtr and bufferSize
-  DeviceMulticastPointer bindAllocatedMemory(CUdeviceptr devicePtr, size_t size);
+  /// @return SwitchChannel with devicePtr, mcPtr and bufferSize
+  SwitchChannel bindAllocatedMemory(CUdeviceptr devicePtr, size_t size);
 
   size_t getMultiCastMinGranularity();
 

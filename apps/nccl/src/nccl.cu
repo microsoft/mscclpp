@@ -175,8 +175,8 @@ struct ChannelInfo {
 };
 
 struct NvlsChannelInfo {
-  std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>> nvlsChannelDeviceHandles;
+  std::vector<mscclpp::SwitchChannel> nvlsChannels;
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> nvlsChannelDeviceHandles;
 };
 
 struct splitCommInfo {
@@ -311,15 +311,14 @@ static std::vector<std::shared_ptr<mscclpp::NvlsConnection>> setupNvlsConnection
   return nvlsConnections;
 }
 
-static std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> setupNvlsChannels(
+static std::vector<mscclpp::SwitchChannel> setupNvlsChannels(
     std::vector<std::shared_ptr<mscclpp::NvlsConnection>> conns, void* buffer, size_t bufferSize) {
-  std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> channels;
+  std::vector<mscclpp::SwitchChannel> channels;
 
   for (size_t idx = 0; idx < NUM_NVLS_CONNECTION; ++idx) {
     std::shared_ptr<mscclpp::NvlsConnection> nvlsConnection = conns[idx];
-    mscclpp::NvlsConnection::DeviceMulticastPointer deviceMulticastPointer =
-        nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, bufferSize);
-    channels.push_back(deviceMulticastPointer);
+    mscclpp::SwitchChannel SwitchChannel = nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, bufferSize);
+    channels.push_back(SwitchChannel);
   }
   return channels;
 }
@@ -344,17 +343,14 @@ static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemor
   return ptr;
 }
 
-static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>>
-setupNvlsChannelDeviceHandles(const std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer>& nvlsChannels) {
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>> ptr =
-      mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>>(
-          nvlsChannels.size());
-  std::vector<mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>> nvlsChannelDeviceHandles;
+static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> setupNvlsChannelDeviceHandles(
+    const std::vector<mscclpp::SwitchChannel>& nvlsChannels) {
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> ptr =
+      mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::SwitchChannel>>(nvlsChannels.size());
+  std::vector<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> nvlsChannelDeviceHandles;
   std::transform(nvlsChannels.begin(), nvlsChannels.end(), std::back_inserter(nvlsChannelDeviceHandles),
-                 [](const mscclpp::NvlsConnection::DeviceMulticastPointer& nvlsChannel) {
-                   return mscclpp::deviceHandle(nvlsChannel);
-                 });
-  mscclpp::gpuMemcpy<mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>>(
+                 [](const mscclpp::SwitchChannel& nvlsChannel) { return mscclpp::deviceHandle(nvlsChannel); });
+  mscclpp::gpuMemcpy<mscclpp::DeviceHandle<mscclpp::SwitchChannel>>(
       ptr.get(), nvlsChannelDeviceHandles.data(), nvlsChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
   return ptr;
 }
@@ -389,8 +385,8 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   channelKey recvKey{(void*)recvBasePtr, recvBytes};
   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = nullptr;
   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryOutChannels = nullptr;
-  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* nvlsChannels = nullptr;
-  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* nvlsOutChannels = nullptr;
+  mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsChannels = nullptr;
+  mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels = nullptr;
   size_t bytes = count * ncclTypeSize(datatype);
   bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
   bool useNvlsWithCopy = mscclpp::isNvlsSupported() && mscclppDisableChannelCache;
@@ -399,7 +395,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   if (useNvlsWithZeroCopy) {
     auto nvlsIt = comm->channelNvlsInfos.find(sendKey);
     if (nvlsIt == comm->channelNvlsInfos.end()) {
-      std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> channels =
+      std::vector<mscclpp::SwitchChannel> channels =
           setupNvlsChannels(comm->nvlsConnections, (void*)sendBasePtr, sendBytes);
       NvlsChannelInfo channelInfo{channels, setupNvlsChannelDeviceHandles(channels)};
       nvlsIt = comm->channelNvlsInfos.emplace(sendKey, channelInfo).first;
@@ -408,7 +404,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     if (recvbuff != sendbuff) {
       auto nvlsOutIt = comm->channelNvlsInfos.find(recvKey);
       if (nvlsOutIt == comm->channelNvlsInfos.end()) {
-        std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> channels =
+        std::vector<mscclpp::SwitchChannel> channels =
             setupNvlsChannels(comm->nvlsConnectionsOut, (void*)recvBasePtr, recvBytes);
         NvlsChannelInfo channelInfo{channels, setupNvlsChannelDeviceHandles(channels)};
         nvlsOutIt = comm->channelNvlsInfos.emplace(recvKey, channelInfo).first;
@@ -423,7 +419,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     channelKey sendKey{(void*)(comm->scratchBuff.get()), SCRATCH_SIZE};
     auto nvlsIt = comm->channelNvlsInfos.find(sendKey);
     if (nvlsIt == comm->channelNvlsInfos.end()) {
-      std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> channels =
+      std::vector<mscclpp::SwitchChannel> channels =
           setupNvlsChannels(comm->nvlsConnections, (void*)comm->scratchBuff.get(), SCRATCH_SIZE);
       NvlsChannelInfo channelInfo{channels, setupNvlsChannelDeviceHandles(channels)};
       nvlsIt = comm->channelNvlsInfos.emplace(sendKey, channelInfo).first;
@@ -478,9 +474,9 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   Op reduceOp = getReduceOp(op);
   std::function<cudaError_t(const void*, void*, void*, mscclpp::DeviceHandle<mscclpp::MemoryChannel>*,
                             mscclpp::DeviceHandle<mscclpp::MemoryChannel>*,
-                            mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>*,
-                            mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>*, size_t, size_t,
-                            size_t, int, int, int, size_t, cudaStream_t, uint32_t*, uint32_t*, uint32_t*, int)>
+                            mscclpp::DeviceHandle<mscclpp::SwitchChannel>*,
+                            mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t, int, int, int,
+                            size_t, cudaStream_t, uint32_t*, uint32_t*, uint32_t*, int)>
       allreduceFunc;
   if (reduceOp == SUM) {
     if (datatype == ncclFloat16) {
@@ -601,6 +597,11 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
 
 static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_ptr<mscclpp::Communicator> mscclppComm,
                                                int rank) {
+  if (mscclpp::isNvlsSupported()) {
+    commPtr->nvlsConnections = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
+    commPtr->nvlsConnectionsOut = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
+  }
+
   std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
 
   for (int i = 0; i < mscclppComm->bootstrap()->getNranks(); i++) {
@@ -623,10 +624,6 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   }
 
   commPtr->connections = std::move(connections);
-  if (mscclpp::isNvlsSupported()) {
-    commPtr->nvlsConnections = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
-    commPtr->nvlsConnectionsOut = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
-  }
   commPtr->memorySemaphores = std::move(memorySemaphores);
   commPtr->buffFlag = 0;
   commPtr->numScratchBuff = 2;

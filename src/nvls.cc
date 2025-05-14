@@ -265,20 +265,20 @@ NvlsConnection::NvlsConnection(const std::vector<char>& data) : pimpl_(std::make
 
 std::vector<char> NvlsConnection::serialize() { return pimpl_->serialize(); }
 
-NvlsConnection::DeviceMulticastPointer NvlsConnection::bindAllocatedMemory(CUdeviceptr devicePtr, size_t size) {
+SwitchChannel NvlsConnection::bindAllocatedMemory(CUdeviceptr devicePtr, size_t size) {
   auto mcPtr = pimpl_->bindMemory(devicePtr, size);
-  return DeviceMulticastPointer((void*)devicePtr, mcPtr, size);
+  return SwitchChannel((void*)devicePtr, mcPtr, size);
 }
 
-NvlsConnection::DeviceMulticastPointer::DeviceHandle NvlsConnection::DeviceMulticastPointer::deviceHandle() const {
-  NvlsConnection::DeviceMulticastPointer::DeviceHandle device;
+SwitchChannel::DeviceHandle SwitchChannel::deviceHandle() const {
+  SwitchChannel::DeviceHandle device;
   device.devicePtr = this->devicePtr_;
   device.mcPtr = this->mcPtr_.get();
   device.bufferSize = this->bufferSize_;
   return device;
 };
 
-void* NvlsConnection::DeviceMulticastPointer::getDevicePtr() { return devicePtr_; };
+void* SwitchChannel::getDevicePtr() { return devicePtr_; };
 
 size_t NvlsConnection::getMultiCastMinGranularity() { return pimpl_->getMinMcGran(); }
 
