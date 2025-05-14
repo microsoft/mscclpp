@@ -1,20 +1,19 @@
 # MSCCL++ DSL Json File
-The case of use of the MSCCL++ DSL consist of creating a JSON file wich will generate of the python script algorithm, in this JSON file will have all the detailed description of the operation defined in the algorithm. This JSON file needs to be spread for all the machines after this the MSCCL++ executor can be trigger to use 
-this JSON file to generate the execution plan to execute the algorithm.
+The MSCCL++ DSL is used to define a JSON file that describes the structure and behavior of a collective communication algorithm. It contains a detailed specification of the operations involved and must be distributed to all participating machines. Once distributed, the MSCCL++ executor can be triggered to use this JSON file to generate an execution plan and run the algorithm.
 
 ![alt text](../figs/mscclpp_dsl_json_schema.png)
 
 The generic structure of the JSON file consist of the following fields:
 
-- ```name```: Consist of the name of the algorithm, this is usefull if you want to use different algorithm for the same collective, for instance two allreduce algorithm, the name can differ them and create/store to setups one for each case.
-- ```collective```: Consist in the collective algorotihm, for instance it can assume the values: allreduce, allgather, reducescatter, broadcast, alltoall.
-- ```protocol```: Consist of the how the data will be storage, it can be Simple or LL for low latency protocol. The LL case the data will be storage with a flag to avoid signal and await sinchronization and use the scratch buffer as a intermediary buffer to store the data in this different format.
-- ```inplace```: Consist in the flag to setup the envinronment for inplace or outplace algorithm.
-- ```gpus```: This will describe all the details of the gpu and the operation execute on it. We will go deep on this in the next sections
-- ```num_threads_per_block```: Consiste in the number of threads inside each thread block, for instance it can be: 256, 512, 768, 1024. Depending on your necessity.
-- ```use_double_scratch_buffer```: Consist in a bollean value flag to give the option to duplicate the buffer, each executor call will use one side of the buffer, allowing avoid conflicts in some algorithms.
-- ```min_message_size```: Consist in the minimum message size that this algorithm support, so if the message sizes is smaller than this this JSON file will not be choose to run.
-- ```max_message_size```: Consist in the maximum message size that this algorithm support, so if the message sizes is bigger than this this JSON file will not be choose to run.
+- ```name```: The name of the algorithm. This is useful when you want to define multiple algorithms for the same collective operation (e.g., two different allreduce algorithms). The name helps distinguish and store two different execution plan and context for them.
+- ```collective```: Specifies the type of collective operation. Supported values include: ```allreduce```, ```allgather```, ```reducescatter```, ```broadcast```, and ```alltoall```.
+- ```protocol```: Defines how the data is stored and transferred. It can be either Simple or LL (Low Latency). In the LL case, data is stored with flags to avoid signal-based synchronization and uses a scratch buffer as an intermediate storage format.
+- ```inplace```: A boolean flag indicating whether the algorithm operates in-place or out-of-place.
+- ```gpus```: Describes the GPU-specific configuration and the operations executed on each GPU. This will be detailed in the following sections.
+- ```num_threads_per_block```: Specifies the number of threads per thread block. Typical values include 256, 512, 768, or 1024, depending on performance requirements.
+- ```use_double_scratch_buffer```: A boolean flag that enables to double the scratch buffer. When set to true, the scratch buffer double the size and is logically divided into two halves. This allows alternating executions of the same algorithm to use different halves of the buffer, for instance, odd-numbered executions use the first half, and even-numbered executions use the second. This strategy helps avoid memory conflicts when the same algorithm is invoked multiple times.
+- ```min_message_size```: The minimum message size supported by this algorithm. If the message is smaller than this value, the algorithm will not be selected for execution.
+- ```max_message_size```: The maximum message size supported by this algorithm. If the message exceeds this value, the algorithm will not be selected for execution.
 
 Example:
 
@@ -128,19 +127,19 @@ The thread block field describe the operation inside each thread block, we have 
 
 The most important field here is the ops fields, where there is the description for all the operations, each operation has specific fields, let's given an overview in all the possible fields and after this go throught each of them:
 
-- ```name```:
-- ```ctype```:
-- ```i_cids```:
-- ```i_buff```
-- ```srcs```:
-- ```o_cids```:
-- ```o_buff```
-- ```dsts```:
-- ```srcbuff```:
-- ```srcoff```:
-- ```dstbuff```:
-- ```dstoff```:
-- ```cnt```:
+- ```name```: Operation name, it include: signal, wait, put, get.
+- ```ctype```: Channel type, it include: memory, port, switch.
+- ```i_cids```: The channel id of the channels used in the receive operations.
+- ```i_buff```: Buffer information in the receive operations.
+- ```srcs```: Thinking in remove this field.
+- ```o_cids```: The channel id of the channels used in inter machine the send operations.
+- ```o_buff```: Buffer information in the send operations.
+- ```dsts```: Thinking in remove this field.
+- ```srcbuff```: Buffer type in the source in intra machine operations.
+- ```srcoff```: Source offset in the source buffer in intra machine operations.
+- ```dstbuff```: Buffer type in the destine in intra machine operations.
+- ```dstoff```: Destine offset in the destine buffer in intra machine operations.
+- ```cnt```: Data size in intra machine operations.
 - ```barrier_id```:
 - ```nthread_blocks```:
 
@@ -189,10 +188,10 @@ The put operation is composed by the field ```name```, ```o_buff```, ```o_cids``
     "name": "put",
     "o_buff": [
       {
-      "src": "o",
-      "src_off": 0,
-      "dst": "o",
-      "dst_off": 0,
+      "srcbuff": "o",
+      "srcoff": 0,
+      "dstbuff": "o",
+      "dstoff": 0,
       "cnt": 1
       }
     ],
