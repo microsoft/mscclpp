@@ -57,7 +57,7 @@ steps:
     scriptType: bash
     scriptLocation: inlineScript
     inlineScript: |
-      az vmss start --name $${{ parameters.vmssName }} --resource-group mscclpp
+      az vmss start --name ${{ parameters.vmssName }} --resource-group mscclpp
 - task: Bash@3
   name: DeployTestEnv
   displayName: Deploy Test Env
