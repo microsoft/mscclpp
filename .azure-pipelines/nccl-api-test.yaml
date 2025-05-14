@@ -14,14 +14,19 @@ jobs:
   displayName: Run MSCCLPP over NCCL Test
   strategy:
     matrix:
-      cuda11:
+      cuda11-A100:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
-      cuda12:
+        poolName: msccl-ci
+      cuda12-A100:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+        poolName: msccl-ci
+      cuda12-H100:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+        poolName: msccl-ci-h100
   pool:
-    name: msccl-ci
+    name: ${{ matrix.poolName }}
   container:
-    image: $[ variables['containerImage'] ]
+    image: ${{ matrix.containerImage }}
 
   steps:
   - checkout: self
