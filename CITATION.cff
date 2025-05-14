@@ -1,53 +1,56 @@
 cff-version: 1.2.0
-title: "MSCCL++: A GPU-driven communication stack for scalable AI applications"
-version: 0.6.0
+title: >-
+  MSCCL++: Rethinking GPU Communication Abstractions for
+  Cutting-edge AI Applications
 message: >-
-  If you use this project in your research, please cite it as below.
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
 authors:
-  - given-names: Peng
-    family-names: Cheng
-    affiliation: Microsoft Research
-  - given-names: Roshan
-    family-names: Dathathri
-    affiliation: Microsoft Research
-  - given-names: Changho
-    family-names: Hwang
+  - given-names: Aashaka
+    family-names: Shah
     affiliation: Microsoft Research
   - given-names: Abhinav
     family-names: Jangda
     affiliation: Microsoft Research
-  - given-names: Suriya
-    family-names: Kalivardhan
-    affiliation: Microsoft Azure
   - given-names: Binyang
     family-names: Li
     affiliation: Microsoft Azure
-  - given-names: Shuguang
-    family-names: Liu
-    affiliation: Microsoft Azure
-  - given-names: Saeed
-    family-names: Maleki
-    affiliation: Microsoft Research
-  - given-names: Madan
-    family-names: Musuvathi
-    affiliation: Microsoft Research
   - given-names: Caio
     family-names: Rocha
     affiliation: Microsoft Azure
+  - given-names: Changho
+    family-names: Hwang
+    affiliation: Microsoft Research
+  - given-names: Jithin
+    family-names: Jose
+    affiliation: Microsoft Azure
+  - given-names: Madan
+    family-names: Musuvathi
+    affiliation: Microsoft Research
   - given-names: Olli
     family-names: Saarikivi
     affiliation: Microsoft Research
-  - given-names: Aashaka
-    family-names: Shah
+  - given-names: Peng
+    family-names: Cheng
     affiliation: Microsoft Research
-  - given-names: Wei
-    family-names: Tsui
+  - given-names: Qinghua
+    family-names: Zhou
+    affiliation: Microsoft Azure
+  - given-names: Roshan
+    family-names: Dathathri
+    affiliation: Microsoft Research
+  - given-names: Saeed
+    family-names: Maleki
     affiliation: Microsoft Research
   - given-names: Ziyue
     family-names: Yang
     affiliation: Microsoft Research
-
+identifiers:
+  - type: other
+    value: 'arxiv:2504.09014'
 repository-code: 'https://github.com/microsoft/mscclpp'
+url: 'https://microsoft.github.io/mscclpp/index.html'
 abstract: >-
   MSCCL++ redefines the interface for inter-GPU communication, thereby
   delivering a highly efficient and customizable communication stack
