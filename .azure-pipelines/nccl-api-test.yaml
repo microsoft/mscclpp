@@ -17,12 +17,15 @@ jobs:
       cuda11-A100:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
         poolName: msccl-ci
+        azureSubscription: mscclpp-ci
       cuda12-A100:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
         poolName: msccl-ci
+        azureSubscription: mscclpp-ci
       cuda12-H100:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
         poolName: msccl-ci-h100
+        azureSubscription: mscclpp-ci-h100
   pool:
     name: $(poolName)
   container:
@@ -62,7 +65,7 @@ jobs:
     name: StartVMSS
     displayName: Start VMSS
     inputs:
-      azureSubscription: mscclpp-ci
+      azureSubscription: $(azureSubscription)
       scriptType: bash
       scriptLocation: inlineScript
       inlineScript: |
