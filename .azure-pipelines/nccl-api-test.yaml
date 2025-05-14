@@ -24,9 +24,9 @@ jobs:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
         poolName: msccl-ci-h100
   pool:
-    name: ${{ matrix.poolName }}
+    name: $(poolName)
   container:
-    image: ${{ matrix.containerImage }}
+    image: $(containerImage)
 
   steps:
   - checkout: self
