@@ -65,7 +65,7 @@ jobs:
     name: StartVMSS
     displayName: Start VMSS
     inputs:
-      azureSubscription: $(azureSubscription)
+      azureSubscription: ${{ matrix.azureSubscription }}
       scriptType: bash
       scriptLocation: inlineScript
       inlineScript: |
