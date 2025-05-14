@@ -17,6 +17,9 @@ parameters:
   type: string
 - name: hostfilePath
   type: string
+- name: nvccGencode
+  type: string
+  default: "-gencode=arch=compute_80,code=sm_80"
 
 steps:
 - checkout: self
@@ -183,7 +186,7 @@ steps:
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c " \
         cd; git clone https://github.com/NVIDIA/nccl.git;          \
         cd nccl;                                                   \
-        make -j src.build NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80""'
+        make -j src.build NVCC_GENCODE=${{ parameters.nvccGencode }}"'
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
