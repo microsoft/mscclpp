@@ -33,6 +33,12 @@ class Collective:
     def get_buffer_index(self, rank, buffer, index):
         return buffer, index
 
+    def get_output_chunk_count(self, buffer_length, instances):
+        if self.inplace:
+            return 0
+        else:
+            return buffer_length * instances
+
 
 class AllToAll(Collective):
     def __init__(self, num_ranks, chunk_factor, inplace):
@@ -82,28 +88,19 @@ class AllGather(Collective):
     # Initializes input buffer for an allgather
     def init_buffers(self):
         rank_buffers = []
-        if self.inplace:
-            # Inplace AllGather only uses the output buffer
-            for r in range(self.num_ranks):
-                output_buffer = [None] * (self.num_ranks * self.chunk_factor)
-                for rank in range(self.num_ranks):
-                    for ch in range(self.chunk_factor):
-                        output_buffer[rank * self.chunk_factor + ch] = Chunk(
-                            rank, ch, -1, rank * self.chunk_factor + ch
-                        )
-                buffers = {
-                    Buffer.input: output_buffer[r * self.chunk_factor : (r + 1) * self.chunk_factor],
-                    Buffer.output: output_buffer,
-                }
-                rank_buffers.append(buffers)
-        else:
-            for r in range(self.num_ranks):
+        for r in range(self.num_ranks):
+            output_buffer = [None] * (self.num_ranks * self.chunk_factor)
+            for rank in range(self.num_ranks):
+                for ch in range(self.chunk_factor):
+                    output_buffer[rank * self.chunk_factor + ch] = Chunk(rank, ch, -1, rank * self.chunk_factor + ch)
+            if self.inplace:
+                input_buffer = output_buffer[r * self.chunk_factor : (r + 1) * self.chunk_factor]
+            else:
                 input_buffer = [None] * self.chunk_factor
-                output_buffer = [None] * (self.num_ranks * self.chunk_factor)
                 for ch in range(self.chunk_factor):
                     input_buffer[ch] = Chunk(r, ch, -1, r * self.chunk_factor + ch)
-                buffers = {Buffer.input: input_buffer, Buffer.output: output_buffer}
-                rank_buffers.append(buffers)
+            buffers = {Buffer.input: input_buffer, Buffer.output: output_buffer}
+            rank_buffers.append(buffers)
         return rank_buffers
 
     # Expected output buffer for allgather
@@ -132,6 +129,9 @@ class AllGather(Collective):
             return Buffer.output, index + rank * self.chunk_factor
         else:
             return buffer, index
+
+    def get_output_chunk_count(self, buffer_length, instances):
+        return buffer_length * instances
 
 
 class AllReduce(Collective):
@@ -202,7 +202,10 @@ class ReduceScatter(Collective):
                 for i in range(self.num_ranks):
                     for c in range(self.chunk_factor):
                         input_buffer.append(Chunk(r, i * self.chunk_factor + c, i, c))
-                buffers = {Buffer.input: input_buffer}
+                buffers = {
+                    Buffer.input: input_buffer,
+                    Buffer.output: input_buffer[r * self.chunk_factor : (r + 1) * self.chunk_factor],
+                }
                 rank_buffers.append(buffers)
             else:
                 input_buffer = []

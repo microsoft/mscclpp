@@ -35,7 +35,7 @@ def allreduce_allpairs(gpus, instances):
                 remote_rank = tb
                 index = remote_rank * size
                 c = chunk(r1, Buffer.input, index, size)
-                c.put_packet(remote_rank, "scratch", index=r1 * size, sendtb=tb)
+                c.put_packet(remote_rank, Buffer.scratch, index=r1 * size, sendtb=tb)
 
         # Each rank performs a local reduction on the nth chunk
         # Utilize 8 threadblocks for this reduction for better parallelism
@@ -44,16 +44,16 @@ def allreduce_allpairs(gpus, instances):
                 c = chunk(r, Buffer.input, r * size + index)
                 for peer in range(size):
                     if peer != r:
-                        c.reduce_packet(chunk(r, "scratch", peer * size + index), recvtb=index)
+                        c.reduce_packet(chunk(r, Buffer.scratch, peer * size + index), recvtb=index)
                 for peer in range(size):
                     if peer != r:
-                        c.put_packet(peer, "scratch", (size * size) + r * size + index, sendtb=index)
+                        c.put_packet(peer, Buffer.scratch, (size * size) + r * size + index, sendtb=index)
 
         # Each rank get final result from scratch space
         for r in range(size):
             for peer in range(size):
                 if peer != r:
-                    c = chunk(r, "scratch", size * size + peer * size, size)
+                    c = chunk(r, Buffer.scratch, size * size + peer * size, size)
                     c.copy_packet(r, Buffer.input, peer * size, sendtb=peer)
 
         Json()

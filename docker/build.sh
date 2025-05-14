@@ -9,12 +9,12 @@ baseImageTable=(
     ["cuda12.2"]="nvidia/cuda:12.2.2-devel-ubuntu20.04"
     ["cuda12.3"]="nvidia/cuda:12.3.2-devel-ubuntu20.04"
     ["cuda12.4"]="nvidia/cuda:12.4.1-devel-ubuntu22.04"
+    ["cuda12.8"]="nvidia/cuda:12.8.1-devel-ubuntu22.04"
     ["rocm6.2"]="rocm/rocm-terminal:6.2.1"
 )
 
 declare -A extraLdPathTable
 extraLdPathTable=(
-    ["cuda11.8"]="/usr/local/cuda-11.8/lib64"
     ["cuda12.1"]="/usr/local/cuda-12.1/compat:/usr/local/cuda-12.1/lib64"
     ["cuda12.2"]="/usr/local/cuda-12.2/compat:/usr/local/cuda-12.2/lib64"
     ["cuda12.3"]="/usr/local/cuda-12.3/compat:/usr/local/cuda-12.3/lib64"
@@ -24,13 +24,14 @@ extraLdPathTable=(
 declare -A ofedVersionTable
 ofedVersionTable=(
     ["cuda12.4"]="23.07-0.5.1.2"
+    ["cuda12.8"]="24.10-1.1.4.0"
 )
 
 GHCR="ghcr.io/microsoft/mscclpp/mscclpp"
 TARGET=${1}
 
 print_usage() {
-    echo "Usage: $0 [cuda11.8|cuda12.1|cuda12.2|cuda12.3|cuda12.4|rocm6.2]"
+    echo "Usage: $0 [cuda11.8|cuda12.1|cuda12.2|cuda12.3|cuda12.4|cuda12.8|rocm6.2]"
 }
 
 if [[ ! -v "baseImageTable[${TARGET}]" ]]; then
@@ -65,9 +66,11 @@ if [[ ${TARGET} == rocm* ]]; then
         --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
         --build-arg TARGET=${TARGET} \
         --build-arg ARCH="gfx942" .
+    docker rmi ${GHCR}-common:base-${TARGET}
 else
     echo "Building CUDA base image..."
     docker tag ${GHCR}-common:base-${TARGET} ${GHCR}:base-${TARGET}
+    docker rmi --no-prune ${GHCR}-common:base-${TARGET}
 fi
 
 docker build -t ${GHCR}:base-dev-${TARGET} \

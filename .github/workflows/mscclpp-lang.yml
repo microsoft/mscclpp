@@ -15,10 +15,14 @@ jobs:
     strategy:
         fail-fast: false
         matrix:
-          version: [ 'cuda11.8', 'cuda12.2' ]
+          version: [ 'cuda11.8', 'cuda12.8' ]
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Set environment variable
+      run: echo "LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/local/cuda/lib64" >> $GITHUB_ENV
+
     - name: Install mscclpp
       run: |
         CMAKE_ARGS="-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON" pip3 install .

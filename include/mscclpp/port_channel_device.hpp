@@ -49,7 +49,7 @@ union ChannelTrigger {
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Default constructor.
-  MSCCLPP_DEVICE_INLINE ChannelTrigger() {}
+  MSCCLPP_DEVICE_INLINE ChannelTrigger() = default;
 
   /// Copy constructor.
   MSCCLPP_DEVICE_INLINE ChannelTrigger(ProxyTrigger value) : value(value) {}
@@ -92,7 +92,7 @@ struct BasePortChannelDeviceHandle {
   // can produce for and the sole proxy thread consumes it.
   FifoDeviceHandle fifo_;
 
-  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle() {}
+  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                          Host2DeviceSemaphoreDeviceHandle semaphore,
@@ -148,12 +148,13 @@ struct BasePortChannelDeviceHandle {
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
-                                                   uint64_t size) {
+                                                   uint64_t size, int64_t maxSpinCount = 1000000) {
     uint64_t curFifoHead = fifo_.push(
         ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, semaphoreId_)
             .value);
-    fifo_.sync(curFifoHead);
+    fifo_.sync(curFifoHead, maxSpinCount);
   }
 
   /// Push a @ref TriggerData, a @ref TriggerFlag, and a @ref TriggerSync at the same time to the FIFO.
@@ -161,14 +162,17 @@ struct BasePortChannelDeviceHandle {
   /// @param src The source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
-    putWithSignalAndFlush(dst, offset, src, offset, size);
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size,
+                                                   int64_t maxSpinCount = 1000000) {
+    putWithSignalAndFlush(dst, offset, src, offset, size, maxSpinCount);
   }
 
   /// Push a @ref TriggerSync to the FIFO.
-  MSCCLPP_DEVICE_INLINE void flush() {
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
     uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, semaphoreId_).value);
-    fifo_.sync(curFifoHead);
+    fifo_.sync(curFifoHead, maxSpinCount);
   }
 
   /// Check if the port channel has been signaled.
@@ -186,7 +190,7 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   MemoryId dst_;
   MemoryId src_;
 
-  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(){};
+  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                      Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
@@ -224,8 +228,10 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BasePortChannelDeviceHandle::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size);
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
+                                                   int64_t maxSpinCount = 1000000) {
+    BasePortChannelDeviceHandle::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size, maxSpinCount);
   }
 
   /// Push a @ref TriggerData, a @ref TriggerFlag, and a @ref TriggerSync at the same time to the FIFO.

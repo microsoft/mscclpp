@@ -30,5 +30,9 @@
     {
         "filename": "allreduce_nvls.py",
         "args": ["8", "2"]
+    },
+    {
+        "filename": "allgather_allpairs_multinodes_packets.py",
+        "args": ["16", "8", "1"]
     }
 ]

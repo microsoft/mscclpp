@@ -37,6 +37,7 @@ def merge_op(op: Op, other_op: Op):
 def circular_dep_after_merge(op: Op, other_op: Op):
     root = set([op, other_op])
     frontier = set(op.next)
+    visited = set()
     if other_op in frontier:
         frontier.remove(other_op)
     frontier = list(frontier.union(other_op.next))
@@ -46,7 +47,9 @@ def circular_dep_after_merge(op: Op, other_op: Op):
             # The root node will be visited again if there is a circular dependency
             if n in root:
                 return True
-            frontier.append(n)
+            if n not in visited:
+                frontier.append(n)
+                visited.add(n)
         frontier = frontier[1:]
 
 

@@ -203,7 +203,7 @@ MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<MemoryChannel>* memoryChannel,
   for (int i = 0; i < count; i++) {
     uint32_t dstOffset = dstOffsets[i];
     uint32_t srcOffset = srcOffsets[i];
-    memoryChannel[srcChannelIndexes[i]].get(dstOffset, srcOffset, size, threadIdx.x, blockDim.x);
+    memoryChannel[srcChannelIndexes[i]].get(srcOffset, dstOffset, size, threadIdx.x, blockDim.x);
   }
 }
 
@@ -300,9 +300,50 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<Memo
       return;
     }
     // For port channel, we assume src and dst are in packet format
+    // TODO: support non-packet format and remove packet format(packet format should be handle in handleReadPutPacket)
     uint32_t dstOffset = (dstOffsets[tid] << 1) + scratchBaseOffset;
     uint32_t srcOffset = (srcOffsets[tid] << 1) + scratchBaseOffset;
     portChannels[dstChannelIndexes[tid]].put(dstOffset, srcOffset, size << 1);
+  }
+}
+
+template <typename PacketType>
+MSCCLPP_DEVICE_INLINE void handleReadPutPacket(int rank, void* scratch, size_t scratchSize,
+                                               DeviceHandle<SmChannel>* smChannels,
+                                               DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
+                                               uint32_t* dstOffsets, uint32_t* srcOffsets, int nDstChannels,
+                                               uint32_t size, ChannelType chType, uint32_t flag) {
+  const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
+  if (chType == ChannelType::MEMORY) {
+    size_t nPackets = size * 2 / sizeof(PacketType);
+    for (size_t pkt_idx = threadIdx.x; pkt_idx < nPackets; pkt_idx += blockDim.x) {
+      for (int ch_idx = 0; ch_idx < nDstChannels; ++ch_idx) {
+        PacketType* pkts = (PacketType*)((char*)scratch + scratchBaseOffset + srcOffsets[ch_idx] * 2);
+        PacketPayload<PacketType> data = pkts[pkt_idx].read(flag);
+        PacketType pkt(data, flag);
+        size_t offset = (scratchBaseOffset + dstOffsets[ch_idx] * 2) / sizeof(PacketType);
+        smChannels[dstChannelIndexes[ch_idx]].write(offset + pkt_idx, pkt);
+      }
+    }
+  } else if (chType == ChannelType::PORT) {
+    // Ensuring Data Is Ready
+    size_t nPackets = size * 2 / sizeof(PacketType);
+    for (size_t pkt_idx = threadIdx.x; pkt_idx < nPackets; pkt_idx += blockDim.x) {
+      for (int ch_idx = 0; ch_idx < nDstChannels; ++ch_idx) {
+        PacketType* pkts = (PacketType*)((char*)scratch + scratchBaseOffset + srcOffsets[ch_idx] * 2);
+        PacketPayload<PacketType> data = pkts[pkt_idx].read(flag);
+      }
+    }
+    __syncthreads();
+
+    // Putting the data
+    int ch_idx = threadIdx.x;
+    if (ch_idx >= nDstChannels) {
+      return;
+    }
+    uint32_t dstOffset = scratchBaseOffset + dstOffsets[ch_idx] * 2;
+    uint32_t srcOffset = scratchBaseOffset + srcOffsets[ch_idx] * 2;
+    proxyChannels[dstChannelIndexes[ch_idx]].put(dstOffset, srcOffset, size * 2);
   }
 }
 
@@ -356,12 +397,13 @@ MSCCLPP_DEVICE_INLINE void handleTransformToPacket(void* dst, void* src, size_t 
                                                    uint32_t srcOffset, size_t size, uint32_t flag) {
   const size_t outputScratchBaseOffset = flag & 0x1 ? 0 : dstSize >> 1;
   dstOffset = dstOffset * 2 + outputScratchBaseOffset;
-  mscclpp::putPackets<PacketType>(dst, dstOffset, src, srcOffset, size, threadIdx.x, blockDim.x, flag);
+  mscclpp::copyToPackets<PacketType>((char*)dst + dstOffset, (char*)src + srcOffset, size, threadIdx.x, blockDim.x,
+                                     flag);
 }
 
-template <typename T>
+template <typename T, bool SendToRemote = true>
 MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T* src, uint32_t srcOffsetByBytes,
-                                            T* input, uint32_t* inputOffsets,
+                                            T* input, uint32_t* inputOffsets, int nSrcs,
                                             DeviceHandle<MemoryChannel>* memoryChannels, uint8_t* outputChannelIndexes,
                                             uint32_t* outputOffsets, int nOutChannels, uint32_t size) {
   const size_t nInt4 = size / sizeof(int4);
@@ -372,15 +414,17 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
   int4* input4 = (int4*)input;
   for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
     int4 tmp = src4[srcOffset4 + idx];
-    for (int index = 0; index < nOutChannels; ++index) {
+    for (int index = 0; index < nSrcs; ++index) {
       size_t offset = inputOffsets[index] / sizeof(int4);
       int4 val = input4[offset + idx];
       tmp = add_vectors<T>(tmp, val);
     }
     dst4[dstOffset4 + idx] = tmp;
-    for (int index = 0; index < nOutChannels; ++index) {
-      size_t offset = outputOffsets[index] / sizeof(int4);
-      memoryChannels[outputChannelIndexes[index]].write<int4>(offset + idx, tmp);
+    if (SendToRemote) {
+      for (int index = 0; index < nOutChannels; ++index) {
+        size_t offset = outputOffsets[index] / sizeof(int4);
+        memoryChannels[outputChannelIndexes[index]].write<int4>(offset + idx, tmp);
+      }
     }
   }
   // handle rest of data
@@ -389,14 +433,16 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
   const size_t endIdx = (srcOffsetByBytes + size) / sizeof(T);
   for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
     T tmp = src[idx];
-    for (int index = 0; index < nOutChannels; ++index) {
+    for (int index = 0; index < nSrcs; ++index) {
       size_t offset = inputOffsets[index] / sizeof(T);
       tmp = add_elements(tmp, input[offset + idx]);
     }
     dst[idx] = tmp;
-    for (int index = 0; index < nOutChannels; ++index) {
-      size_t offset = outputOffsets[index] / sizeof(T);
-      memoryChannels[outputChannelIndexes[index]].write<T>(offset + idx, tmp);
+    if (SendToRemote) {
+      for (int index = 0; index < nOutChannels; ++index) {
+        size_t offset = outputOffsets[index] / sizeof(T);
+        memoryChannels[outputChannelIndexes[index]].write<T>(offset + idx, tmp);
+      }
     }
   }
 }
@@ -404,7 +450,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T
 MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
   char* srcData = (char*)src + srcOffset;
   char* dstData = (char*)dst + dstOffset;
-  Element::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
+  mscclpp::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
 }
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
@@ -558,6 +604,9 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, memoryChannels, op.outputChannelIndexes,
                                op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
                                op.size, false);
+    } else if (op.type == OperationType::READ_PUT_PACKET) {
+      handleReadPutPacket<PacketType>(rank, scratch, scratchSize, memoryChannels, portChannels, op.outputChannelIndexes,
+                                      op.outputOffsets, op.inputOffsets, op.nOutputs, op.size, op.channelType, flag);
     } else if (op.type == OperationType::PUT_PACKET) {
       handlePutPacket<PacketType>(scratchSize, memoryChannels, portChannels, op.outputChannelIndexes, op.outputOffsets,
                                   op.inputOffsets, op.nOutputs, op.size, op.channelType, flag);
@@ -567,6 +616,12 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       handleReduceSendPacket<T, PacketType>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize, op.inputOffsets,
                                             op.nInputs, memoryChannels, op.outputChannelIndexes, op.outputOffsets,
                                             op.nOutputs, op.size, flag);
+    } else if (op.type == OperationType::REDUCE) {
+      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
+      T* src = getBuffer(input, output, scratch, op.srcBufferType);
+      T* tmp = getBuffer(input, output, scratch, op.inputBufferType);
+      handleReduceSend<T, false>(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, op.nInputs, memoryChannels,
+                                 op.outputChannelIndexes, op.outputOffsets, op.nOutputs, op.size);
     } else if (op.type == OperationType::REDUCE_PACKET) {
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
@@ -585,7 +640,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
       T* dst = getBuffer(input, output, scratch, op.dstBufferType);
       T* src = getBuffer(input, output, scratch, op.srcBufferType);
       T* tmp = getBuffer(input, output, scratch, op.inputBufferType);
-      handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, memoryChannels,
+      handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, op.nInputs, memoryChannels,
                        op.outputChannelIndexes, op.outputOffsets, op.nOutputs, op.size);
     }
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900

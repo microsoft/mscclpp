@@ -8,19 +8,23 @@
 
 namespace mscclpp {
 
+MSCCLPP_API_CPP BaseMemoryChannel::BaseMemoryChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore)
+    : semaphore_(semaphore) {}
+
 MSCCLPP_API_CPP MemoryChannel::MemoryChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore,
-                                             RegisteredMemory dst, void* src, void* getPacketBuffer)
-    : semaphore_(semaphore), dst_(dst), src_(src), getPacketBuffer_(getPacketBuffer) {
+                                             RegisteredMemory dst, void* src, void* packetBuffer)
+    : BaseMemoryChannel(semaphore), dst_(dst), src_(src), packetBuffer_(packetBuffer) {
   if (!dst.transports().has(Transport::CudaIpc)) {
     throw Error("MemoryChannel: dst must be registered with CudaIpc", ErrorCode::InvalidUsage);
   }
 }
 
+MSCCLPP_API_CPP BaseMemoryChannel::DeviceHandle BaseMemoryChannel::deviceHandle() const {
+  return BaseMemoryChannel::DeviceHandle(semaphore_->deviceHandle());
+}
+
 MSCCLPP_API_CPP MemoryChannel::DeviceHandle MemoryChannel::deviceHandle() const {
-  return DeviceHandle{.semaphore_ = semaphore_->deviceHandle(),
-                      .src_ = src_,
-                      .dst_ = dst_.data(),
-                      .getPacketBuffer_ = getPacketBuffer_};
+  return MemoryChannel::DeviceHandle(semaphore_->deviceHandle(), dst_.data(), src_, packetBuffer_);
 }
 
 }  // namespace mscclpp

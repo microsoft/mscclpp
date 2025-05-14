@@ -9,14 +9,14 @@
 
 namespace mscclpp {
 
-static NonblockingFuture<RegisteredMemory> setupInboundSemaphoreId(Communicator& communicator, Connection* connection,
-                                                                   void* localInboundSemaphoreId) {
+static std::shared_future<RegisteredMemory> setupInboundSemaphoreId(Communicator& communicator, Connection* connection,
+                                                                    void* localInboundSemaphoreId) {
   auto localInboundSemaphoreIdsRegMem =
       communicator.registerMemory(localInboundSemaphoreId, sizeof(uint64_t), connection->transport());
   int remoteRank = communicator.remoteRankOf(*connection);
   int tag = communicator.tagOf(*connection);
-  communicator.sendMemoryOnSetup(localInboundSemaphoreIdsRegMem, remoteRank, tag);
-  return communicator.recvMemoryOnSetup(remoteRank, tag);
+  communicator.sendMemory(localInboundSemaphoreIdsRegMem, remoteRank, tag);
+  return communicator.recvMemory(remoteRank, tag);
 }
 
 static detail::UniqueGpuPtr<uint64_t> createGpuSemaphoreId() {

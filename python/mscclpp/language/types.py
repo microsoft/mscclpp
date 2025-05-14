@@ -80,12 +80,13 @@ class Instruction(Enum):
     read_reduce_copy_send = "rrcs"
     reduce_send = "rs"
     copy = "copy"
-    reduce = "reduce"
+    reduce = "re"
     copy_packet = "cpkt"
     transform_to_packet = "tpkt"
     reduce_send_packet = "rspkt"
     reduce_packet = "rpkt"
     put = "put"
+    read_put_packet = "rppkt"
     put_packet = "ppkt"
     put_with_signal = "pws"
     put_with_signal_and_flush = "pwsf"
@@ -175,3 +176,11 @@ class Op:
 
     def __repr__(self):
         return f"Op({self.inst}, {self.rank}, {self.src}, {self.dst}, step:{self.step}, tb:{self.tb})"
+
+
+class DataFormat(Enum):
+    raw = "raw"
+    packet = "packet"
+
+    def __str__(self):
+        return self.value

@@ -12,7 +12,7 @@ pip install .
 
 ### Import mscclpp language module
 ```python
-import mscclpp.language *
+from mscclpp.language import *
 from mscclpp.language.types import ChannelType, ReplicationPolicy
 from mscclpp.language.collectives import AllGather
 
@@ -111,4 +111,4 @@ Packet APIs are used when user wants to use LL algorithm. The packet APIs are si
 
 
 ### Examples
-We provide several examples demonstrating how to use the MSCCL++ DSL to write communication collective algorithms. For more details, please refer to the [examples](https://github.com/microsoft/mscclpp/tree/main/mscclpp-lang/python/examples) folder.
+We provide several examples demonstrating how to use the MSCCL++ DSL to write communication collective algorithms. For more details, please refer to the [examples](https://github.com/microsoft/mscclpp/tree/main/python/examples) folder.

@@ -451,7 +451,7 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t peerIdx = wid % nPeer;
     const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * remoteRankLocalIndex + (wid / nPeer) * unitBytesPerWarp;
-    memChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
+    memChans[peerIdx].unpackPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
   }
 
   for (size_t i = 1; i < nLoop; ++i) {
@@ -466,7 +466,7 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t peerIdx = gWid % nPeer;
     const size_t remoteRankLocalIndex = (peerIdx < rank ? peerIdx : peerIdx + 1);
     const size_t offset = bytesPerGPU * remoteRankLocalIndex + (gWid / nPeer) * unitBytesPerWarp;
-    memChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
+    memChans[peerIdx].unpackPackets(scratchOffset + offset * 2, offset, unitBytesPerWarp, lid, WARP_SIZE, flag);
   }
 
   if (bytes % unitBytes > 0) {
@@ -491,7 +491,7 @@ __global__ void __launch_bounds__(1024, 1)
                                    ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
                                    : unitBytesPerWarp;
     if (remainBytes > 0) {
-      memChans[peerIdx].getPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
+      memChans[peerIdx].unpackPackets(scratchOffset + offset * 2, offset, remainBytes, lid, WARP_SIZE, flag);
     }
   }
 
@@ -764,7 +764,7 @@ void AllGatherTestEngine::setupConnections() {
     auto service = std::dynamic_pointer_cast<AllGatherProxyService>(chanService_);
     setupMeshConnections(devPortChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,
                          [&](std::vector<std::shared_ptr<mscclpp::Connection>> conns,
-                             std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteMemories,
+                             std::vector<std::shared_future<mscclpp::RegisteredMemory>>& remoteMemories,
                              const mscclpp::RegisteredMemory& localMemory) {
                            std::vector<mscclpp::SemaphoreId> semaphoreIds;
                            for (size_t i = 0; i < conns.size(); ++i) {
@@ -772,7 +772,6 @@ void AllGatherTestEngine::setupConnections() {
                              service->addRemoteMemory(remoteMemories[i].get());
                            }
                            service->setLocalMemory(localMemory);
-                           comm_->setup();
                          });
     auto portChannels = service->portChannels();
     if (portChannels.size() > sizeof(constRawPortChan) / sizeof(DeviceHandle<mscclpp::BasePortChannel>)) {

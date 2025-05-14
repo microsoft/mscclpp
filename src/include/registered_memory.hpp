@@ -28,7 +28,14 @@ struct TransportInfo {
       IbMrInfo ibMrInfo;
     };
     struct {
-      char shareableHandle[64];
+      union {
+        char shareableHandle[64];
+        struct {
+          // These are only defined for multicast (NVLS) capability
+          pid_t rootPid;
+          int fileDesc;
+        };
+      };
       size_t offsetFromBase;
     };
   };
@@ -41,11 +48,16 @@ struct RegisteredMemory::Impl {
   // This is the original data pointer the RegisteredMemory was created with.
   void* originalDataPtr;
   size_t size;
+  // This is the size returned by cuMemGetAddressRange of data
+  size_t baseDataSize;
   uint64_t hostHash;
   uint64_t pidHash;
   bool isCuMemMapAlloc;
   TransportFlags transports;
   std::vector<TransportInfo> transportInfos;
+
+  // For sharing memory handle via file descriptor
+  int fileDesc = -1;
 
   Impl(void* data, size_t size, TransportFlags transports, Context::Impl& contextImpl);
   /// Constructs a RegisteredMemory::Impl from a vector of data. The constructor should only be used for the remote

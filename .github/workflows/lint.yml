@@ -7,7 +7,7 @@ on:
 
 jobs:
   cpplint:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Check out Git repository
@@ -24,7 +24,7 @@ jobs:
         clang-format -style=file --verbose --Werror --dry-run ${CPPSOURCES}
 
   pylint:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Check out Git repository
@@ -42,7 +42,7 @@ jobs:
         run: python3 -m black --check --config pyproject.toml .
 
   spelling:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Check out Git repository

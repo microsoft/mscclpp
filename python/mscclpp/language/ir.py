@@ -12,6 +12,7 @@ from mscclpp.language.types import Buffer, ChannelType, Op, Program, Instruction
 _local_src_insts_mscclpp: set = {
     Instruction.put,
     Instruction.put_packet,
+    Instruction.read_put_packet,
     Instruction.signal,
     Instruction.flush,
     Instruction.put_with_signal,
@@ -131,8 +132,8 @@ def ir_to_json(program: Program):
                 # Expand extra dependencies into nop operations
                 nop = Op(Instruction.nop, -1, None, None, [])
                 for i, dep in enumerate(op.depends):
-                    # barrier already syncs all threads
-                    if dep.inst != Instruction.barrier:
+                    # barrier already syncs all threads, only sync within the same threadblock
+                    if dep.inst != Instruction.barrier and dep.tb == op.tb:
                         nop.depends.append(dep)
                 if len(new_ops) > 0 and (
                     new_ops[-1].inst == Instruction.barrier or new_ops[-1].inst == Instruction.nop
@@ -237,8 +238,8 @@ class _WaitConverter(_OpConverter):
 
 class _ReadReduceCopyConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
-        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
-        i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
+        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.dst.buffer, op.src.buffer, op.channel_type)
+        i_buff = {"src": op.dst.buffer.value, "dst": op.src.buffer.value}
         dst = op.dst
         src = op.dst  # TODO(binyli): fix this
         return _JsonInstruction(
@@ -331,7 +332,9 @@ class _NopConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
         return _JsonInstruction(
             name=op.inst.value,
-            deps=list(map(lambda dep: {"tb": dep.tb, "step": dep.step}, op.depends)),
+            deps=sorted(
+                list(map(lambda dep: {"tb": dep.tb, "step": dep.step}, op.depends)), key=lambda x: (x["tb"], x["step"])
+            ),
         )
 
 
@@ -361,8 +364,8 @@ class _PutConverter(_OpConverter):
 
 class _GetConverter(_OpConverter):
     def to_json(self, op: Op, tb_channel_dict: dict) -> _JsonInstruction:
-        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.src.buffer, op.dst.buffer, op.channel_type)
-        i_buff = {"src": op.src.buffer.value, "dst": op.dst.buffer.value}
+        src_channel_ids = self.get_channel_ids(op.srcs, tb_channel_dict, op.dst.buffer, op.src.buffer, op.channel_type)
+        i_buff = {"src": op.dst.buffer.value, "dst": op.src.buffer.value}
         dsts = list(map(lambda x: {"buff": x.buffer.value, "off": x.index}, op.dsts))
         return _JsonInstruction(
             name=op.inst.value,
@@ -426,6 +429,7 @@ _json_converter_map: Dict[Instruction, _OpConverter] = {
     Instruction.barrier: _BarrierConverter(),
     Instruction.put: _PutConverter(),
     Instruction.put_packet: _PutConverter(),
+    Instruction.read_put_packet: _PutConverter(),
     Instruction.put_with_signal: _PutConverter(),
     Instruction.put_with_signal_and_flush: _PutConverter(),
     Instruction.get: _GetConverter(),
@@ -467,7 +471,9 @@ def _dump_to_json(program: Program):
                 obj["connectedTo"] = [sorted(list(peers)) for peers in obj["connectedTo"]]
             gpu_instance["channels"].append(obj)
         gpu_instance["channels"] = list(filter(lambda x: x["type"] != "none", gpu_instance["channels"]))
-        gpu_instance["channels"] = sorted(gpu_instance["channels"], key=lambda x: (x["srcbuff"], x["dstbuff"]))
+        gpu_instance["channels"] = sorted(
+            gpu_instance["channels"], key=lambda x: (x["srcbuff"], x["dstbuff"], x["type"])
+        )
 
         # render for GPU NVLS channels
         for i, chan in enumerate(gpu_instance["channels"]):
@@ -502,7 +508,7 @@ def _dump_to_json(program: Program):
                     tb_channel_dict[(srcBuffer, dstBuffer, type)] = obj
                     tb_channels.append(obj)
             tb_channels = filter(lambda x: x["type"] != "none", tb_channels)
-            tb_channels = sorted(tb_channels, key=lambda x: (x["srcbuff"], x["dstbuff"]))
+            tb_channels = sorted(tb_channels, key=lambda x: (x["srcbuff"], x["dstbuff"], x["type"]))
             for op in tb.ops:
                 if op.tb == -1:
                     continue

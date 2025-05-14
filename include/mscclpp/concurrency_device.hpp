@@ -7,6 +7,8 @@
 #include "atomic_device.hpp"
 #include "poll_device.hpp"
 
+#define NUM_DEVICE_SYNCER_COUNTER 3
+
 namespace mscclpp {
 
 /// A device-wide barrier.
@@ -24,18 +26,17 @@ struct DeviceSyncer {
   /// @param blockNum The number of blocks that will synchronize.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void sync(int blockNum, int64_t maxSpinCount = 100000000) {
-    unsigned int maxOldCnt = blockNum - 1;
+    unsigned int targetCnt = blockNum;
     __syncthreads();
     if (blockNum == 1) return;
     if (threadIdx.x == 0) {
-      // Need a `__threadfence()` before to flip `flag`.
-      __threadfence();
-      unsigned int tmp = preFlag_ ^ 1;
-      if (atomicInc(&count_, maxOldCnt) == maxOldCnt) {
-        atomicStore(&flag_, tmp, memoryOrderRelaxed);
-      } else {
-        POLL_MAYBE_JAILBREAK((atomicLoad(&flag_, memoryOrderRelaxed) != tmp), maxSpinCount);
-      }
+      unsigned int tmp = (preFlag_ + 1) % NUM_DEVICE_SYNCER_COUNTER;
+      unsigned int next = (tmp + 1) % NUM_DEVICE_SYNCER_COUNTER;
+      unsigned int* count = &count_[tmp];
+      count_[next] = 0;
+      atomicFetchAdd<unsigned int, scopeDevice>(count, 1U, memoryOrderRelease);
+      POLL_MAYBE_JAILBREAK((atomicLoad<unsigned int, scopeDevice>(count, memoryOrderAcquire) != targetCnt),
+                           maxSpinCount);
       preFlag_ = tmp;
     }
     // We need sync here because only a single thread is checking whether
@@ -45,10 +46,8 @@ struct DeviceSyncer {
 #endif  // !defined(MSCCLPP_DEVICE_COMPILE)
 
  private:
-  /// The flag to indicate whether the barrier is reached by the latest thread.
-  unsigned int flag_;
   /// The counter of synchronized blocks.
-  unsigned int count_;
+  unsigned int count_[NUM_DEVICE_SYNCER_COUNTER];
   /// The flag to indicate whether to increase or decrease @ref flag_.
   unsigned int preFlag_;
 };

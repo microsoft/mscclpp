@@ -65,14 +65,19 @@ struct FifoDeviceHandle {
 
     ProxyTrigger* triggerPtr = &(this->triggers[curFifoHead % size]);
 
-    // There is a Write-After-Read hazard for the triggerPtr->fst. So the st instruction will not be executed
-    // before the loop.
+    // Make sure the data is visible to the host before we update the tail.
 #if defined(MSCCLPP_DEVICE_CUDA)
+#if __CUDA_ARCH__ == 800
+    // For A100, threadfence_system is more efficient than release
+    __threadfence_system();
     asm volatile("st.global.relaxed.sys.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
+#else
+    asm volatile("st.global.release.sys.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
+#endif
 #else   // !defined(MSCCLPP_DEVICE_CUDA)
     // store snd no later than fst.
     atomicStore(&(triggerPtr->snd), trigger.snd, memoryOrderRelaxed);
-    atomicStore(&(triggerPtr->fst), trigger.fst, memoryOrderRelaxed);
+    atomicStore(&(triggerPtr->fst), trigger.fst, memoryOrderRelease);
 #endif  // !defined(MSCCLPP_DEVICE_CUDA)
 
     return curFifoHead;

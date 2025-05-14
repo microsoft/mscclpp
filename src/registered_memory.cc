@@ -3,6 +3,9 @@
 
 #include "registered_memory.hpp"
 
+#include <sys/syscall.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <mscclpp/gpu_utils.hpp>
 
@@ -24,29 +27,15 @@
   } while (false)
 
 namespace {
-CUmemAllocationHandleType getNvlsCompatibleMemHandleType() {
-#if (CUDA_NVLS_SUPPORTED)
-  return CU_MEM_HANDLE_TYPE_FABRIC;
+CUmemAllocationHandleType getNvlsMemHandleType() {
+#if (CUDA_NVLS_API_AVAILABLE)
+  if (mscclpp::detail::nvlsCompatibleMemHandleType & CU_MEM_HANDLE_TYPE_FABRIC) {
+    return CU_MEM_HANDLE_TYPE_FABRIC;
+  } else {
+    return CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+  }
 #else
   throw mscclpp::Error("Only support GPU with NVLS support", mscclpp::ErrorCode::InvalidUsage);
-#endif
-}
-
-// Check if ptr is allocaed by cuMemMap
-bool isCuMemMapAllocated([[maybe_unused]] void* ptr) {
-#if defined(__HIP_PLATFORM_AMD__)
-  return false;
-#else
-  CUmemGenericAllocationHandle handle;
-  CUresult result = cuMemRetainAllocationHandle(&handle, ptr);
-  if (result != CUDA_SUCCESS) {
-    return false;
-  }
-  MSCCLPP_CUTHROW(cuMemRelease(handle));
-  if (!mscclpp::isNvlsSupported()) {
-    throw mscclpp::Error("cuMemMap is used in env without NVLS support", mscclpp::ErrorCode::InvalidUsage);
-  }
-  return true;
 #endif
 }
 
@@ -66,15 +55,25 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     transportInfo.transport = Transport::CudaIpc;
 
     void* baseDataPtr;
-    size_t baseDataSize;  // dummy
+    size_t baseDataSize;
     MSCCLPP_CUTHROW(cuMemGetAddressRange((CUdeviceptr*)&baseDataPtr, &baseDataSize, (CUdeviceptr)data));
+    this->baseDataSize = baseDataSize;
     this->isCuMemMapAlloc = isCuMemMapAllocated(baseDataPtr);
     if (this->isCuMemMapAlloc) {
       CUmemGenericAllocationHandle handle;
       MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, baseDataPtr));
-      MSCCLPP_CUTHROW(
-          cuMemExportToShareableHandle(transportInfo.shareableHandle, handle, getNvlsCompatibleMemHandleType(), 0));
+      if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
+        MSCCLPP_CUTHROW(cuMemExportToShareableHandle(transportInfo.shareableHandle, handle, getNvlsMemHandleType(), 0));
+      } else {
+        transportInfo.rootPid = getpid();
+        if (transportInfo.rootPid < 0) {
+          throw mscclpp::SysError("getpid() failed", errno);
+        }
+        MSCCLPP_CUTHROW(cuMemExportToShareableHandle(&transportInfo.fileDesc, handle, getNvlsMemHandleType(), 0));
+        this->fileDesc = transportInfo.fileDesc;
+      }
       transportInfo.offsetFromBase = (char*)data - (char*)baseDataPtr;
+      MSCCLPP_CUTHROW(cuMemRelease(handle));
     } else {
       cudaIpcMemHandle_t handle;
       MSCCLPP_CUDATHROW(cudaIpcGetMemHandle(&handle, baseDataPtr));
@@ -123,6 +122,7 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
   std::copy_n(reinterpret_cast<char*>(&pimpl_->originalDataPtr), sizeof(pimpl_->originalDataPtr),
               std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->size), sizeof(pimpl_->size), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&pimpl_->baseDataSize), sizeof(pimpl_->baseDataSize), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->hostHash), sizeof(pimpl_->hostHash), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->pidHash), sizeof(pimpl_->pidHash), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&pimpl_->isCuMemMapAlloc), sizeof(pimpl_->isCuMemMapAlloc),
@@ -137,8 +137,13 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
     std::copy_n(reinterpret_cast<char*>(&entry.transport), sizeof(entry.transport), std::back_inserter(result));
     if (entry.transport == Transport::CudaIpc) {
       if (pimpl_->isCuMemMapAlloc) {
-        std::copy_n(reinterpret_cast<char*>(&entry.shareableHandle), sizeof(entry.shareableHandle),
-                    std::back_inserter(result));
+        if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
+          std::copy_n(reinterpret_cast<char*>(&entry.shareableHandle), sizeof(entry.shareableHandle),
+                      std::back_inserter(result));
+        } else {
+          std::copy_n(reinterpret_cast<char*>(&entry.rootPid), sizeof(entry.rootPid), std::back_inserter(result));
+          std::copy_n(reinterpret_cast<char*>(&entry.fileDesc), sizeof(entry.fileDesc), std::back_inserter(result));
+        }
         std::copy_n(reinterpret_cast<char*>(&entry.offsetFromBase), sizeof(entry.offsetFromBase),
                     std::back_inserter(result));
       } else {
@@ -166,6 +171,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
   it += sizeof(this->originalDataPtr);
   std::copy_n(it, sizeof(this->size), reinterpret_cast<char*>(&this->size));
   it += sizeof(this->size);
+  std::copy_n(it, sizeof(this->baseDataSize), reinterpret_cast<char*>(&this->baseDataSize));
+  it += sizeof(this->baseDataSize);
   std::copy_n(it, sizeof(this->hostHash), reinterpret_cast<char*>(&this->hostHash));
   it += sizeof(this->hostHash);
   std::copy_n(it, sizeof(this->pidHash), reinterpret_cast<char*>(&this->pidHash));
@@ -183,8 +190,16 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     it += sizeof(transportInfo.transport);
     if (transportInfo.transport == Transport::CudaIpc) {
       if (this->isCuMemMapAlloc) {
-        std::copy_n(it, sizeof(transportInfo.shareableHandle), reinterpret_cast<char*>(&transportInfo.shareableHandle));
-        it += sizeof(transportInfo.shareableHandle);
+        if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
+          std::copy_n(it, sizeof(transportInfo.shareableHandle),
+                      reinterpret_cast<char*>(&transportInfo.shareableHandle));
+          it += sizeof(transportInfo.shareableHandle);
+        } else {
+          std::copy_n(it, sizeof(transportInfo.rootPid), reinterpret_cast<char*>(&transportInfo.rootPid));
+          it += sizeof(transportInfo.rootPid);
+          std::copy_n(it, sizeof(transportInfo.fileDesc), reinterpret_cast<char*>(&transportInfo.fileDesc));
+          it += sizeof(transportInfo.fileDesc);
+        }
         std::copy_n(it, sizeof(transportInfo.offsetFromBase), reinterpret_cast<char*>(&transportInfo.offsetFromBase));
         it += sizeof(transportInfo.offsetFromBase);
       } else {
@@ -217,12 +232,29 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
     if (this->isCuMemMapAlloc) {
-#if (CUDA_NVLS_SUPPORTED)
+#if (CUDA_NVLS_API_AVAILABLE)
       CUmemGenericAllocationHandle handle;
-      MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsCompatibleMemHandleType()));
-      size_t minGran = detail::getMulticastGranularity(size, CU_MULTICAST_GRANULARITY_MINIMUM);
-      size_t recommendedGran = detail::getMulticastGranularity(size, CU_MULTICAST_GRANULARITY_RECOMMENDED);
-      size_t size = (this->size + recommendedGran - 1) / recommendedGran * recommendedGran;
+      if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
+        MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsMemHandleType()));
+      } else {
+        int rootPidFd = syscall(SYS_pidfd_open, entry.rootPid, 0);
+        if (rootPidFd < 0) {
+          throw mscclpp::SysError("pidfd_open() failed", errno);
+        }
+        int fd = syscall(SYS_pidfd_getfd, rootPidFd, entry.fileDesc, 0);
+        if (fd < 0) {
+          throw mscclpp::SysError("pidfd_getfd() failed", errno);
+        }
+        INFO(MSCCLPP_P2P, "Get file descriptor %d from pidfd %d on peer 0x%lx", fd, rootPidFd, hostHash);
+        MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, reinterpret_cast<void*>(fd),
+                                                       CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
+        close(rootPidFd);
+        close(fd);
+      }
+      size_t minGran = detail::getMulticastGranularity(this->baseDataSize, CU_MULTICAST_GRANULARITY_MINIMUM);
+      size_t recommendedGran =
+          detail::getMulticastGranularity(this->baseDataSize, CU_MULTICAST_GRANULARITY_RECOMMENDED);
+      size_t size = (this->baseDataSize + recommendedGran - 1) / recommendedGran * recommendedGran;
       MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&base, size, minGran, 0, 0));
       MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, size, 0, handle, 0));
       detail::setReadWriteMemoryAccess(base, size);
@@ -256,6 +288,9 @@ RegisteredMemory::Impl::~Impl() {
       MSCCLPP_CULOG_WARN(cuMemUnmap((CUdeviceptr)base, size));
       MSCCLPP_CULOG_WARN(cuMemRelease(handle));
       MSCCLPP_CULOG_WARN(cuMemAddressFree((CUdeviceptr)base, size));
+      if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR && fileDesc >= 0) {
+        close(fileDesc);
+      }
     } else {
       cudaError_t err = cudaIpcCloseMemHandle(base);
       if (err != cudaSuccess) {
@@ -265,6 +300,7 @@ RegisteredMemory::Impl::~Impl() {
       }
     }
     data = nullptr;
+    fileDesc = -1;
   }
 }
 

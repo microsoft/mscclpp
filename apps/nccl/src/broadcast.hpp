@@ -56,13 +56,13 @@ __global__ void __launch_bounds__(1024, 1)
       char* send_ = reinterpret_cast<char*>(sendbuff);
       for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);  // Peer's scratchbuff.
-        memChans[peerIdx].copy<16, false>(dst + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
+        mscclpp::copy<16, false>(dst + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
         __syncthreads();
         if (threadIdx.x == peerIdx) memChans[peerIdx].signal();
       }
       if constexpr (IsOutOfPlace) {
         char* recv_ = reinterpret_cast<char*>(recvbuff);
-        memChans[0].copy<16, false>(recv_ + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
+        mscclpp::copy<16, false>(recv_ + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
       }
 
     } else {  // rank != root.
@@ -70,8 +70,7 @@ __global__ void __launch_bounds__(1024, 1)
       __syncthreads();
       char* recv_ = reinterpret_cast<char*>(recvbuff);
       char* scratch_ = reinterpret_cast<char*>(scratchbuff);  // My scratchbuff.
-      memChans[peerRootIdx].copy<16, false>(recv_ + offset, scratch_ + offset, unitBytesPerBlock, threadIdx.x,
-                                            blockDim.x);
+      mscclpp::copy<16, false>(recv_ + offset, scratch_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
     }
   }
 
@@ -89,22 +88,21 @@ __global__ void __launch_bounds__(1024, 1)
       char* send_ = reinterpret_cast<char*>(sendbuff);
       for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);  // Peer's scratchbuff.
-        memChans[peerIdx].copy<16, false>(dst + offset + scratchSub, send_ + offset, unitBytesPerBlock, threadIdx.x,
-                                          blockDim.x);
+        mscclpp::copy<16, false>(dst + offset + scratchSub, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
         __syncthreads();
         if (threadIdx.x == peerIdx) memChans[peerIdx].signal();
       }
       if constexpr (IsOutOfPlace) {
         char* recv_ = reinterpret_cast<char*>(recvbuff);
-        memChans[0].copy<16, false>(recv_ + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
+        mscclpp::copy<16, false>(recv_ + offset, send_ + offset, unitBytesPerBlock, threadIdx.x, blockDim.x);
       }
     } else {  // rank != root.
       if (threadIdx.x == peerRootIdx) memChans[peerRootIdx].wait();
       __syncthreads();
       char* recv_ = reinterpret_cast<char*>(recvbuff);
       char* scratch_ = reinterpret_cast<char*>(scratchbuff);  // My scratchbuff.
-      memChans[peerRootIdx].copy<16, false>(recv_ + offset, scratch_ + offset + scratchSub, unitBytesPerBlock,
-                                            threadIdx.x, blockDim.x);
+      mscclpp::copy<16, false>(recv_ + offset, scratch_ + offset + scratchSub, unitBytesPerBlock, threadIdx.x,
+                               blockDim.x);
     }
   }
 
@@ -117,22 +115,20 @@ __global__ void __launch_bounds__(1024, 1)
         char* send_ = reinterpret_cast<char*>(sendbuff);
         for (size_t peerIdx = 0; peerIdx < nPeer; peerIdx++) {
           char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);  // Peer's scratchbuff.
-          memChans[peerIdx].copy<16, true>(dst + offset + scratchSub, send_ + offset, remainBytes, threadIdx.x,
-                                           blockDim.x);
+          mscclpp::copy<16, true>(dst + offset + scratchSub, send_ + offset, remainBytes, threadIdx.x, blockDim.x);
           __syncthreads();
           if (threadIdx.x == peerIdx) memChans[peerIdx].signal();
         }
         if constexpr (IsOutOfPlace) {
           char* recv_ = reinterpret_cast<char*>(recvbuff);
-          memChans[0].copy<16, true>(recv_ + offset, send_ + offset, remainBytes, threadIdx.x, blockDim.x);
+          mscclpp::copy<16, true>(recv_ + offset, send_ + offset, remainBytes, threadIdx.x, blockDim.x);
         }
       } else {  // rank != root.
         if (threadIdx.x == peerRootIdx) memChans[peerRootIdx].wait();
         __syncthreads();
         char* recv_ = reinterpret_cast<char*>(recvbuff);
         char* scratch_ = reinterpret_cast<char*>(scratchbuff);  // My scratchbuff.
-        memChans[peerRootIdx].copy<16, true>(recv_ + offset, scratch_ + offset + scratchSub, remainBytes, threadIdx.x,
-                                             blockDim.x);
+        mscclpp::copy<16, true>(recv_ + offset, scratch_ + offset + scratchSub, remainBytes, threadIdx.x, blockDim.x);
       }
     }  // remainBytes > 0.
   }
