@@ -104,8 +104,8 @@ class MyProxyService {
     int cudaNum = rankToLocalRank(rank);
     std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
     mscclpp::Transport ibTransport = mscclpp::getIBTransportByDeviceName(ibDevStr);
-    std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionsFuture(world_size);
-    std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemoriesFuture(world_size);
+    std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionsFuture(world_size);
+    std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemoriesFuture(world_size);
 
     localMemory_ = comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport);
     for (int r = 0; r < world_size; ++r) {
@@ -122,13 +122,11 @@ class MyProxyService {
         transport = ibTransport;
       }
       // Connect with all other ranks
-      connectionsFuture[r] = comm.connectOnSetup(r, 0, transport);
-      comm.sendMemoryOnSetup(localMemory_, r, 0);
+      connectionsFuture[r] = comm.connect(r, 0, transport);
+      comm.sendMemory(localMemory_, r, 0);
 
-      remoteMemoriesFuture[r] = comm.recvMemoryOnSetup(r, 0);
+      remoteMemoriesFuture[r] = comm.recvMemory(r, 0);
     }
-
-    comm.setup();
 
     for (int r = 0; r < world_size; ++r) {
       if (r == rank) {
@@ -144,8 +142,6 @@ class MyProxyService {
       deviceSemaphores2_.emplace_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(comm, connections_[r]));
       remoteMemories_[r] = remoteMemoriesFuture[r].get();
     }
-
-    comm.setup();
   }
 
   void bindThread() {
