@@ -41,6 +41,7 @@ The gpus field is the core of the JSON file, containing the detailed configurati
 - ```chunkGroups```: The number of chunk groups used in the algorithm.
 - ```threadblocks```: A list describing all operations assigned to each thread block. Each entry defines how a thread block participates in the collective operation.
 - ```channels```: A list of communication channels, where each element describes a channel.
+- ```bufferCollection```: A list with all the remote buffers used on the algorithm.
 
 ### Channels
 The channel field describes the characteristics of the channels. Basically, we have three types of channels:
@@ -119,12 +120,55 @@ Example:
 ]
 ```
 
+### Buffer Collection
+The buffer collection field will contain the description of all the remote buffers that his GPU need to access, it will contain the following fields:
+
+-
+-
+-
+
+Example
+
+```json
+"bufferCollection": [
+  {
+    "rank": 1,
+    "buff": "i"
+  }
+]
+```
+
 ### Thread Block
 The thread block field describe the operation inside each thread block, we have the following fields:
 
 - ```id```: The thread block id.
 - ```ops```: The list with all the operation in order they will be executed by this tread block.
 - ```channels```: The channels the thread block will use, referenced by the channel id. The channel id is based on the global channel description in the gpu, for example if the channel type is memory and the channel id is 0, it refers to the first channel of memory id type descriptioned in the gpu channels field.
+- ```bufferCollection```: A list with all the remote buffers used by the thread block.
+
+For Example:
+
+```json
+"threadblocks": [
+  {
+    "id": 0,
+    "ops": [...],
+    "channels":[
+      {
+        "ctype": "memory",
+        "cids": [
+          0
+        ]
+      }
+    ],
+    "bufferCollection": [
+      {
+        "buffid": 0
+      }
+    ]
+  }
+]
+```
 
 The most important field here is the ops fields, where there is the description for all the operations, each operation has specific fields, let's given an overview in all the possible fields and after this go throught each of them:
 
@@ -204,4 +248,231 @@ The put operation is composed by the field ```name```, ```o_buff```, ```o_cids``
     "ctype": "memory"
   }
 ]
+```
+
+## Examples
+
+in place AllGather two Nodes:
+
+```python
+size = 2
+
+for src_rank in range(size):
+  rank = Rank(src_rank)
+  src_input_buffer = rank.get_input_buffer()
+  src_chunk = input_buffer[src_rank:src_rank + 1] 
+  for dst_rank in range(size):
+    rank = Rank(dst_rank)
+    dst_input_buffer = rank.get_input_buffer()
+    dst_chunk = input_buffer[src_rank:src_rank + 1] 
+    if src_rank != dst_rank:
+      channel = Channel(dst_rank, src_rank, channel_type)
+      channel.relaxedSignal(tb=0, sync=None)
+      channel.relaxedWait(tb=0, sync="after")
+      channel.put(dst_chunk, src_chunk, tb=0)
+      channel.signal(tb=0, sync="before")
+      channel.wait(tb=0, sync="after")
+```
+
+For this example we will have the following JSON file:
+
+```json
+{
+  "name": "allgather",
+  "collective": "allgather",
+  "protocol": "Simple",
+  "inplace": true,
+  "gpus": [
+    {
+      "id": 0,
+      "inputChunks": 1,
+      "outputChunks": 2,
+      "scratchChunks": 0,
+      "chunkGroups": 1,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rsignal",
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "ctype": "memory",
+            },
+            {
+              "name": "rwait",
+              "i_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "ctype": "memory",
+            },
+            {
+              "name": "put",
+              "o_buff": [
+                {
+                "srcbuff": "o",
+                "srcoff": 0,
+                "dstbuff": "o",
+                "dstoff": 0,
+                "cnt": 1
+                }
+              ],
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "signal",
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "ctype": "memory",
+            },
+            {
+              "name": "wait",
+              "i_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "ctype": "memory",
+            }
+          ],
+          "channels":[
+            {
+              "ctype": "memory",
+              "cids": [
+                0
+              ]
+            }
+          ],
+          "bufferCollection": [
+            {
+              "buffid": 0
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "type": "memory",
+          "connectedTo": [
+            1
+          ]
+        }
+      ],
+      "bufferCollection": [
+        {
+          "rank": 1,
+          "buff": "i"
+        }
+      ]
+    },
+    {
+      "id": 0,
+      "inputChunks": 1,
+      "outputChunks": 2,
+      "scratchChunks": 0,
+      "chunkGroups": 1,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rsignal",
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "ctype": "memory",
+            },
+            {
+              "name": "rwait",
+              "i_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "ctype": "memory",
+            },
+            {
+              "name": "put",
+              "o_buff": [
+                {
+                "srcbuff": "o",
+                "srcoff": 1,
+                "dstbuff": "o",
+                "dstoff": 1,
+                "cnt": 1
+                }
+              ],
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "signal",
+              "o_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "ctype": "memory",
+            },
+            {
+              "name": "wait",
+              "i_cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "ctype": "memory",
+            }
+          ],
+          "channels":[
+            {
+              "ctype": "memory",
+              "cids": [
+                0
+              ]
+            }
+          ],
+          "bufferCollection": [
+            {
+              "buffid": 0
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "type": "memory",
+          "connectedTo": [
+            0
+          ]
+        }
+      ],
+      "bufferCollection": [
+        {
+          "rank": 0,
+          "buff": "i"
+        }
+      ]
+    }
+  ]
+}
 ```
