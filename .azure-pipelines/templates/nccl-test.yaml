@@ -1,0 +1,141 @@
+# .azure-pipelines/templates/nccl-test.yml
+# ----------------------------------------
+# A step‐template that runs the entire MSCCLPP→NCCL test suite on one pool/container.
+#
+# Parameters:
+#   subscription     – Azure subscription to use for VMSS start/stop
+#   sshKeySecureFile – the secureFile name for your SSH key
+#   containerName    – the Docker container inside each VM ("mscclpp-test")
+#   hostfilePath     – path to the hostfile on the agent
+
+parameters:
+  - name: subscription
+    type: string
+  - name: sshKeySecureFile
+    type: string
+  - name: containerName
+    type: string
+  - name: hostfilePath
+    type: string
+
+steps:
+  # 1) check out code
+  - checkout: self
+  - checkout: git://One/msccl-users
+
+  # 2) grab our SSH key
+  - task: DownloadSecureFile@1
+    name: SSHKey
+    inputs:
+      secureFile: ${{ parameters.sshKeySecureFile }}
+
+  # 3) start the VM scale set
+  - task: AzureCLI@2
+    displayName: Start VMSS
+    inputs:
+      azureSubscription: ${{ parameters.subscription }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss start --name mscclpp-ci --resource-group mscclpp
+
+  # 4) build MSCCLPP
+  - task: Bash@3
+    displayName: Build MSCCLPP
+    inputs:
+      targetType: inline
+      script: |
+        mkdir build && cd build
+        cmake \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DMSCCLPP_BYPASS_GPU_CHECK=ON \
+          -DMSCCLPP_USE_CUDA=ON ..
+        make -j
+    workingDirectory: $(System.DefaultWorkingDirectory)/mscclpp
+
+  # 5) deploy the test env
+  - task: Bash@3
+    displayName: Deploy Test Env
+    inputs:
+      targetType: filePath
+      filePath: mscclpp/test/deploy/deploy.sh
+      arguments: nccltest-single-node
+    workingDirectory: $(System.DefaultWorkingDirectory)/mscclpp
+
+  # 6) copy msccl-users into each node
+  - task: Bash@3
+    displayName: Copy msccl-users
+    inputs:
+      targetType: inline
+      script: |
+        HOSTFILE=${{ parameters.hostfilePath }}
+        parallel-scp -t 0 -r \
+          -h $HOSTFILE \
+          -x "-i $(SSHKey) -o StrictHostKeyChecking=no" \
+          $(System.DefaultWorkingDirectory)/msccl-users \
+          /tmp/mscclpp/msccl-users
+
+  # 7) generate the execution plan
+  - task: Bash@3
+    displayName: Generate execution file
+    inputs:
+      targetType: inline
+      script: |
+        HOSTFILE=${{ parameters.hostfilePath }}
+        parallel-ssh -i -t 0 \
+          -h $HOSTFILE \
+          -x "-i $(SSHKey) -o StrictHostKeyChecking=no" \
+          "sudo docker exec -t ${{ parameters.containerName }} bash -c '\
+            cd /root/mscclpp/msccl-users && \
+            bash algos/mscclpp_a100/generate_execution_plan.sh
+          '"
+
+  # 8) clone & build NVIDIA's nccl-tests inside container
+  - task: Bash@3
+    displayName: Install NCCL Tests
+    inputs:
+      targetType: inline
+      script: |
+        HOSTFILE=${{ parameters.hostfilePath }}
+        parallel-ssh -i -t 0 \
+          -h $HOSTFILE \
+          -x "-i $(SSHKey) -o StrictHostKeyChecking=no" \
+          "sudo docker exec -t ${{ parameters.containerName }} bash -c '\
+            cd && \
+            git clone https://github.com/NVIDIA/nccl-tests.git && \
+            cd nccl-tests && \
+            MPI=1 MPI_HOME=/usr/local/mpi make -j
+          '"
+
+  # 9) run the three perf tests
+  - task: Bash@3
+    displayName: Run NCCL performance tests
+    inputs:
+      targetType: inline
+      script: |
+        HOSTFILE=${{ parameters.hostfilePath }}
+        for BIN in all_reduce_perf all_gather_perf reduce_scatter_perf; do
+          parallel-ssh -i -t 0 \
+            -h $HOSTFILE \
+            -x "-i $(SSHKey) -o StrictHostKeyChecking=no" \
+            "sudo docker exec -t ${{ parameters.containerName }} bash -c '\
+              mpirun -np 8 \
+                --bind-to numa \
+                --allow-run-as-root \
+                -x LD_PRELOAD=/root/mscclpp/build/apps/nccl/libmscclpp_nccl.so \
+                -x NCCL_DEBUG=WARN \
+                /root/nccl-tests/build/$BIN \
+                  -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+            '"
+        done
+
+  # 10) always deallocate the VMSS at the end
+  - task: AzureCLI@2
+    displayName: Stop VMSS
+    condition: always()
+    inputs:
+      azureSubscription: ${{ parameters.subscription }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss deallocate --name mscclpp-ci --resource-group mscclpp
