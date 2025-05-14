@@ -51,7 +51,7 @@ steps:
           -DMSCCLPP_BYPASS_GPU_CHECK=ON \
           -DMSCCLPP_USE_CUDA=ON ..
         make -j
-    workingDirectory: $(System.DefaultWorkingDirectory)/mscclpp
+      workingDirectory: $(System.DefaultWorkingDirectory)/mscclpp
 
   # 5) deploy the test env
   - task: Bash@3
@@ -60,7 +60,7 @@ steps:
       targetType: filePath
       filePath: mscclpp/test/deploy/deploy.sh
       arguments: nccltest-single-node
-    workingDirectory: $(System.DefaultWorkingDirectory)/mscclpp
+      workingDirectory: $(System.DefaultWorkingDirectory)/mscclpp
 
   # 6) copy msccl-users into each node
   - task: Bash@3
