@@ -32,26 +32,27 @@ Example:
 ```
 
 ## GPU
-The gpu field is the core of the JSON file, where we have the detailed description of the collective algorithm fior each gpu, the gpu consist in a list describing each gpu, for each element in the list we have the following fields:
+The gpus field is the core of the JSON file, containing the detailed configuration of the collective algorithm for each GPU. It is defined as a list, where each element describes the setup for a specific GPU. Each GPU entry includes the following fields:
 
-- ```id```: The GPU id
-- ```inputChunks```: The amount of chunks in the input buffer.
-- ```outputChunks```: The amount of chunks in the output buffer.
-- ```scratchChunks```: The amount of chunks in the scratch buffer.
-- ```chunkGroups```: The amount of chunk groups.
-- ```threadblocks```: Consist in a list with the description of all the operation that will happen in each thread block.
-- ```channels```: Consist in the list of all channel, which describe each each channel.
+- ```id```: The identifier of the GPU.
+- ```inputChunks```: The number of chunks in the input buffer.
+- ```outputChunks```: The number of chunks in the output buffer.
+- ```scratchChunks```: The number of chunks in the scratch buffer.
+- ```chunkGroups```: The number of chunk groups used in the algorithm.
+- ```threadblocks```: A list describing all operations assigned to each thread block. Each entry defines how a thread block participates in the collective operation.
+- ```channels```: A list of communication channels, where each element describes a channel.
 
 ### Channels
-The channel field describe the caratcterist of the channels, basically we have 3 type of channels:
+The channel field describes the characteristics of the channels. Basically, we have three types of channels:
 
-- Memory Channel: 
-- Port Channel:
-- Switch Channel:
+- Memory Channel: A MemoryChannel wraps data transfer methods that use thread-copy mechanism, ie., directly use GPU threads for writing to peer GPUs memory.
+- Port Channel: A PortChannel implements primitives when data transfer is done over ports connected to GPU memory, such as cudaMemcpy for intra-node DMA or ibv_post_send for RDMA. 
+- Switch Channel: A SwitchChannel provides primitives for performing collective operations among GPUs. These operations usually require specialized hardware sup-
+port.
 
 The Memory Channel has the following fields:
-- ```type```: Specify the type of the channel, in the Memory Channel case it values will be ```memory```.
-- ```connectedTo```: Specify which channel is connected to how. So if we have a list like: [1, 1, 3], we know here that we have 3 channels the first one is connected with the rank 1, the second with the rank 2 and the third one with the rank 3.
+- ```type```: Specifies the type of the channel, which in the case of the Memory Channel, will be ```memory```.
+- ```connectedTo```: Specifies the connections between channels. For example, if we have a list like: [1, 2, 3], it indicates that there are three channels: the first is connected to rank 1, the second to rank 2, and the third to rank 3.
 
 Example:
 
@@ -69,8 +70,8 @@ Example:
 ```
 
 The Port Channel has the following fields:
-- ```type```: Specify the type of the channel, in the Port Channel case it values will be ```port```.
-- ```connectedTo```: Specify which channel is connected to how. So if we have a list like: [1, 1, 3], we know here that we have 3 channels the first one is connected with the rank 1, the second with the rank 2 and the third one with the rank 3.
+- ```type```: Specifies the type of the channel, which in the case of the Memory Channel, will be ```port```.
+- ```connectedTo```: Specifies the connections between channels. For example, if we have a list like: [1, 2, 3], it indicates that there are three channels: the first is connected to rank 1, the second to rank 2, and the third to rank 3.
 
 Example:
 
@@ -88,7 +89,7 @@ Example:
 ```
 
 The Switch Channel has the following fields:
-- ```type```: Specify the type of the channel, in the Switch Channel case it values will be ```switch```.
+- ```type```: Specifies the type of the channel, which in the case of the Memory Channel, will be ```switch```.
 - ```buff```: Consist of the buffer type which the Switch Channel will be binded, this could have the following values: "i" for the input buffer, "o" for the output buffer, "s" for the scratch buffer.
 - ```rankGroups```: Consist of the group of the ranks connected by the Switch Channel, this field contains the size and the list of the ranks connected.
 
