@@ -5,7 +5,7 @@
 #define MSCCLPP_NVLS_HPP_
 
 #include <mscclpp/gpu_utils.hpp>
-#include <mscclpp/nvls_device.hpp>
+#include <mscclpp/switch_channel_device.hpp>
 
 namespace mscclpp {
 

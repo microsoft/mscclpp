@@ -2,9 +2,9 @@
 // Licensed under the MIT license.
 
 #include <mscclpp/concurrency_device.hpp>
-#include <mscclpp/nvls_device.hpp>
 #include <mscclpp/poll_device.hpp>
 #include <mscclpp/semaphore_device.hpp>
+#include <mscclpp/switch_channel_device.hpp>
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 

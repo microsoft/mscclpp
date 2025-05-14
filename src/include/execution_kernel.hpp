@@ -17,7 +17,7 @@
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
 #include <mscclpp/gpu_data_types.hpp>
-#include <mscclpp/nvls_device.hpp>
+#include <mscclpp/switch_channel_device.hpp>
 
 namespace {
 template <typename To, typename From>

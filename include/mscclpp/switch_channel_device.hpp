@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_NVLS_DEVICE_HPP_
-#define MSCCLPP_NVLS_DEVICE_HPP_
+#ifndef MSCCLPP_SWITCH_CHANNEL_DEVICE_HPP_
+#define MSCCLPP_SWITCH_CHANNEL_DEVICE_HPP_
 
 #include <mscclpp/gpu.hpp>
 #include <type_traits>
@@ -148,4 +148,4 @@ struct SwitchChannelDeviceHandle {
 
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_NVLS_DEVICE_HPP_
+#endif  // MSCCLPP_SWITCH_CHANNEL_DEVICE_HPP_

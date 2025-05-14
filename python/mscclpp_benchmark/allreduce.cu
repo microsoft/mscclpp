@@ -9,8 +9,8 @@
 
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/memory_channel_device.hpp>
-#include <mscclpp/nvls_device.hpp>
 #include <mscclpp/port_channel_device.hpp>
+#include <mscclpp/switch_channel_device.hpp>
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 __device__ mscclpp::DeviceSyncer allGatherDeviceSyncer;
