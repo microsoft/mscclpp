@@ -5,15 +5,12 @@
 # Parameters:
 #   subscription     – Azure subscription to use for VMSS start/stop
 #   sshKeySecureFile – the secureFile name for your SSH key
-#   containerName    – the Docker container inside each VM ("mscclpp-test")
 #   hostfilePath     – path to the hostfile on the agent
 
 parameters:
 - name: subscription
   type: string
 - name: sshKeySecureFile
-  type: string
-- name: containerName
   type: string
 - name: hostfilePath
   type: string

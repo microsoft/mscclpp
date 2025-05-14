@@ -30,5 +30,26 @@ jobs:
     parameters:
       subscription:     mscclpp-ci
       sshKeySecureFile: mscclpp.pem
-      containerName:    mscclpp-test
       hostfilePath:     $(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+      nvccGencode:      "-gencode=arch=compute_80,code=sm_80"
+
+- job: NcclTestH100
+  displayName: Run MSCCLPP over NCCL Test (H100)
+  pool:
+    name: msccl-ci-h100
+
+  strategy:
+    matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  - template: templates/nccl-test.yaml
+    parameters:
+      subscription:     mscclpp-ci-h100
+      sshKeySecureFile: mscclpp.pem
+      hostfilePath:     $(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+      nvccGencode:      "-gencode=arch=compute_90,code=sm_90"
