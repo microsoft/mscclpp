@@ -26,7 +26,7 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: .azure-pipelines/templates/nccl-test.yaml
+  - template: templates/nccl-test.yaml
     parameters:
       subscription:     mscclpp-ci
       sshKeySecureFile: mscclpp.pem
