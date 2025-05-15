@@ -277,4 +277,4 @@ steps:
     scriptType: bash
     scriptLocation: inlineScript
     inlineScript: |
-      az vmss deallocate --name mscclpp-ci --resource-group mscclpp
+      az vmss deallocate --name ${{ parameters.vmssName }} --resource-group mscclpp
