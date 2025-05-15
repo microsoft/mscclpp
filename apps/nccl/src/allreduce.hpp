@@ -693,6 +693,7 @@ __global__ void __launch_bounds__(1024, 1)
       ((sizePerRank + (nBlocksForCopy - 1)) / nBlocksForCopy + alignment - 1) / alignment * alignment;
   uint32_t lastBlockSize = sizePerRank - (nBlocksForCopy - 1) * sizePerBlock;
   int bid = blockIdx.x;
+  int tid = threadIdx.x;
   uint32_t unitSize = 1 << 17;
   if (size <= 1024 * 1024 * 128) {
     unitSize = 1 << 16;
@@ -715,14 +716,14 @@ __global__ void __launch_bounds__(1024, 1)
   }
   size_t scratchSizePerBlock = (scratchSizePerRank / nBlocksForCopy) / unitSize * unitSize;
   size_t maxItersForScratch = scratchSizePerBlock / unitSize;
-  if (bid < nBlocksForCopy && threadIdx.x == 0) {
+  if (bid < nBlocksForCopy && tid == 0) {
     deviceSemaphore[bid + 2 * nBlocksForCopy].set(maxItersForScratch);
   }
   for (int it = 0; it < nIter; it++) {
     const uint32_t iterSize = (it == nIter - 1) ? lastIterSize : unitSize;
     const uint32_t scratchIt = it % maxItersForScratch;
     if (bid < nBlocksForCopy) {
-      if (threadIdx.x == 0) {
+      if (tid == 0) {
         deviceSemaphore[bid + 2 * nBlocksForCopy].acquire();
       }
       __syncthreads();
@@ -731,24 +732,23 @@ __global__ void __launch_bounds__(1024, 1)
         uint32_t scratchOffset = scratchIt * unitSize + bid * scratchSizePerBlock + i * scratchSizePerRank;
         char* srcData = (char*)src + blockOffset;
         char* dstData = (char*)scratch + scratchOffset;
-        mscclpp::copy(dstData, srcData, iterSize, threadIdx.x, blockDim.x);
+        mscclpp::copy(dstData, srcData, iterSize, tid, blockDim.x);
       }
       __syncthreads();
-      if (threadIdx.x < NPEERS) {
-        int chanId = bid * NPEERS + threadIdx.x;
+      if (tid < NPEERS) {
+        int chanId = bid * NPEERS + tid;
         mscclpp::DeviceHandle<mscclpp::MemoryChannel>* channels = memoryChannels + chanId;
         channels->signal();
         channels->wait();
       }
       __syncthreads();
-      if (threadIdx.x == 0) {
+      if (tid == 0) {
         deviceSemaphore[bid].release();
       }
     }
     if (bid >= nBlocksForCopy && bid < nBlocksForCopy + nBlocksForReduce) {
       int bidForReduce = bid - nBlocksForCopy;
       mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastPtr = multicast + bidForReduce;
-      int tid = threadIdx.x;
       T* mcBuff = (T*)multicastPtr->mcPtr;
       for (int i = 0; i < copyReduceRatio; i++) {
         int oriBid = bidForReduce * copyReduceRatio + i;
@@ -773,12 +773,12 @@ __global__ void __launch_bounds__(1024, 1)
     }
     if (bid >= nBlocksForCopy + nBlocksForReduce && bid < nBlocksForCopy + nBlocksForReduce + nBlocksForCopy) {
       int bidForCopy = bid - nBlocksForCopy - nBlocksForReduce;
-      if (threadIdx.x == 0) {
+      if (tid == 0) {
         deviceSemaphore[bid - nBlocksForReduce].acquire();
       }
       __syncthreads();
-      if (threadIdx.x < NPEERS) {
-        int chanId = (bid - nBlocksForReduce) * NPEERS + threadIdx.x;
+      if (tid < NPEERS) {
+        int chanId = (bid - nBlocksForReduce) * NPEERS + tid;
         mscclpp::DeviceHandle<mscclpp::MemoryChannel>* channels = memoryChannels + chanId;
         channels->signal();
         channels->wait();
@@ -792,15 +792,15 @@ __global__ void __launch_bounds__(1024, 1)
                                  i * scratchSizePerRank;
         char* srcData = (char*)scratch + scratchOffset;
         char* dstData = (char*)dst + blockOffset;
-        mscclpp::copy(dstData, srcData, iterSize, threadIdx.x, blockDim.x);
+        mscclpp::copy(dstData, srcData, iterSize, tid, blockDim.x);
       }
       __syncthreads();
-      if (threadIdx.x == 0) {
+      if (tid == 0) {
         deviceSemaphore[bidForCopy + 2 * nBlocksForCopy].release();
       }
     }
   }
-  if (bid < nBlocksForCopy && threadIdx.x == 0) {
+  if (bid < nBlocksForCopy && tid == 0) {
     deviceSemaphore[bid + 2 * nBlocksForCopy].set(0);
   }
 #endif
