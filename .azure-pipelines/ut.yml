@@ -57,7 +57,7 @@ jobs:
 - job: UnitTestH100
   timeoutInMinutes: 40
   pool:
-    name: msccl-ci
+    name: msccl-ci-h100
   strategy:
     matrix:
       cuda12:
@@ -77,7 +77,7 @@ jobs:
 - job: UnitTestWithNpKitH100
   timeoutInMinutes: 30
   pool:
-    name: msccl-ci
+    name: msccl-ci-h100
   strategy:
     matrix:
       cuda12:
