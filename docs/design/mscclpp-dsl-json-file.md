@@ -250,6 +250,15 @@ The put operation is composed by the field ```name```, ```o_buff```, ```o_cids``
 ]
 ```
 
+### The json field for device semaphore
+```json
+{
+    "name": "sem_acquire",
+    "sync": "after",
+    "id": 0,
+}
+```
+
 ## Examples
 
 in place AllGather two Nodes:
@@ -475,4 +484,84 @@ For this example we will have the following JSON file:
     }
   ]
 }
+```
+
+### The json field for pipeline loop
+The pipeline loop is used to overlap the operations. The pipeline loop will be used to construct the execution plan for the MSCCL++ runtime. 
+```json
+"threadblocks": [
+{
+    "id": 0,
+    "ops": [
+        {
+            "name": "pipeline_loop",
+            "iter_context": {
+                "unit": 2**20,
+                "num_chunks": 1,
+            },
+            "ops": [
+                {
+                    "name": "copy",
+                    "src_buffer": {
+                        "buffer_ref": -1,
+                        "offset": 0,
+                        "buffer": "i",
+                    },
+                    "dst_buffer": {
+                        "buffer_ref": -1,
+                        "buffer": "s",
+                        "offset": 0,
+                    },
+                    "count": 1,
+                    "tb_groups": [...], // User multi-thread to handle same buffer, maybe no needed at this time
+                },
+                {
+                    "name": "sem_release",
+                    "sync": "before",
+                    "id": 0,
+                }
+            ]
+        }
+    ]
+},
+{
+    "id": 1,
+    "ops": [
+        {
+            "name": "pipeline_loop",
+            "iter_context": {
+                "unit": 2**20,
+                "num_chunks": 1,
+            },
+            "ops": [
+                {
+                    "name": "sem_acquire",
+                    "sync": "after",
+                    "id": 0,
+                },
+                {
+                    "name": "put",
+                    "src_chunk": {
+                        "buffer_ref": -1,
+                        "buffer": "s",
+                        "offset": 0,
+                    },
+                    "dst_chunk": {
+                        "buffer_ref": 0,
+                        "buffer": "s",
+                        "offset": 0,
+                    },
+                    "count": 1,
+                    "channel_id": 0,
+                }
+            ]
+        }
+    ],
+    "channels": [
+        {
+            "id": 0,
+            "type": "memory",
+        }
+    ]
+}]
 ```
