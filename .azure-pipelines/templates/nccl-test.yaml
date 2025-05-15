@@ -13,8 +13,6 @@ parameters:
   type: string
 - name: sshKeySecureFile
   type: string
-- name: hostfilePath
-  type: string
 - name: nvccGencode
   type: string
   default: "-gencode=arch=compute_80,code=sm_80"
