@@ -5,7 +5,6 @@
 # Parameters:
 #   subscription     – Azure subscription to use for VMSS start/stop
 #   sshKeySecureFile – the secureFile name for your SSH key
-#   hostfilePath     – path to the hostfile on the agent
 
 parameters:
 - name: subscription
@@ -74,7 +73,7 @@ steps:
     targetType: inline
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       ROOT_DIR=$(System.DefaultWorkingDirectory)/msccl-users
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
@@ -126,7 +125,7 @@ steps:
     targetType: inline
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
@@ -143,7 +142,7 @@ steps:
     targetType: inline
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
@@ -160,7 +159,7 @@ steps:
     targetType: inline
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
@@ -177,7 +176,7 @@ steps:
     targetType: inline
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
@@ -195,7 +194,7 @@ steps:
     targetType: inline
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
@@ -215,7 +214,7 @@ steps:
     targetType: 'inline'
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
@@ -235,7 +234,7 @@ steps:
     targetType: 'inline'
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
@@ -255,7 +254,7 @@ steps:
     targetType: 'inline'
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       ROOT_DIR=$(System.DefaultWorkingDirectory)/mscclpp
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}

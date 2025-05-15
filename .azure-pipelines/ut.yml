@@ -30,7 +30,6 @@ jobs:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
       sshKeySecureFile: mscclpp.pem
-      hostfilePath:     $(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
 
 - job: UnitTestWithNpKitA100
   timeoutInMinutes: 30
@@ -52,7 +51,6 @@ jobs:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
       sshKeySecureFile: mscclpp.pem
-      hostfilePath:     $(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
 
 - job: UnitTestH100
   timeoutInMinutes: 40
@@ -72,7 +70,6 @@ jobs:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
-      hostfilePath:     $(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
 
 - job: UnitTestWithNpKitH100
   timeoutInMinutes: 30
@@ -92,4 +89,3 @@ jobs:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
-      hostfilePath:     $(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci

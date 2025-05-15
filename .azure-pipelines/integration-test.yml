@@ -30,7 +30,6 @@ jobs:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
       sshKeySecureFile: mscclpp.pem
-      hostfilePath:     $(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
 
 - job: IntegrationTestH100
   displayName: Integration test H100
@@ -50,4 +49,3 @@ jobs:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
-      hostfilePath:     $(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci

@@ -5,8 +5,6 @@ parameters:
   type: string
 - name: sshKeySecureFile
   type: string
-- name: hostfilePath
-  type: string
 
 
 steps:
@@ -63,7 +61,7 @@ steps:
     targetType: inline
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       : > azureuser@10.0.0.4
@@ -89,7 +87,7 @@ steps:
     targetType: inline
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       : > azureuser@10.0.0.4
@@ -112,7 +110,7 @@ steps:
     targetType: 'inline'
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       : > azureuser@10.0.0.4
@@ -140,7 +138,7 @@ steps:
   inputs:
     targetType: 'inline'
     script: |
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       : > azureuser@10.0.0.4
@@ -164,7 +162,7 @@ steps:
     targetType: 'inline'
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       : > azureuser@10.0.0.4
@@ -187,7 +185,7 @@ steps:
     targetType: 'inline'
     script: |
       set -e
-      HOSTFILE=${{ parameters.hostfilePath }}
+      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       : > azureuser@10.0.0.4

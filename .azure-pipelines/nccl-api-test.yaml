@@ -31,7 +31,6 @@ jobs:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
       sshKeySecureFile: mscclpp.pem
-      hostfilePath:     $(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       nvccGencode:      "-gencode=arch=compute_80,code=sm_80"
 
 - job: NcclTestH100
@@ -53,5 +52,4 @@ jobs:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
-      hostfilePath:     $(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
       nvccGencode:      "-gencode=arch=compute_90,code=sm_90"
