@@ -66,6 +66,8 @@ steps:
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       : > azureuser@10.0.0.4
       tail -f azureuser@10.0.0.4 &
+      echo ${HOSTFILE}
+      ls ${HOSTFILE}
       CHILD_PID=$!
       parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c " \
