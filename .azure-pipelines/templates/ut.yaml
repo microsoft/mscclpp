@@ -61,7 +61,7 @@ steps:
     targetType: inline
     script: |
       set -e
-      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       : > azureuser@10.0.0.4
@@ -82,7 +82,7 @@ steps:
     targetType: 'inline'
     script: |
       set -e
-      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       : > azureuser@10.0.0.4
@@ -106,7 +106,7 @@ steps:
     targetType: inline
     script: |
       set -e
-      HOSTFILE=$(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       : > azureuser@10.0.0.4
