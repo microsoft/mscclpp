@@ -60,7 +60,7 @@ steps:
   name: UnitTests
   displayName: Run mscclpp unit tests
   inputs:
-    targetType: 'inline'
+    targetType: inline
     script: |
       set -e
       HOSTFILE=${{ parameters.hostfilePath }}
@@ -105,7 +105,7 @@ steps:
   name: PyTests
   displayName: Run pytests
   inputs:
-    targetType: 'inline'
+    targetType: inline
     script: |
       set -e
       HOSTFILE=${{ parameters.hostfilePath }}
@@ -128,8 +128,8 @@ steps:
   displayName: Deallocate VMSS
   condition: always()
   inputs:
-    azureSubscription: mscclpp-ci
+    azureSubscription: ${{ parameters.subscription }}
     scriptType: bash
     scriptLocation: inlineScript
     inlineScript: |
-      az vmss deallocate --name mscclpp-ci --resource-group mscclpp
+      az vmss deallocate --name ${{ parameters.vmssName }} --resource-group mscclpp
