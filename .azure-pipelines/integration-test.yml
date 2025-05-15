@@ -49,3 +49,4 @@ jobs:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
+      perfBaselineFile: test/deploy/perf_ndmv5.jsonl

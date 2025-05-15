@@ -5,6 +5,9 @@ parameters:
   type: string
 - name: sshKeySecureFile
   type: string
+- name: perfBaselineFile
+  type: string
+  default: 'test/deploy/perf_ndmv4.jsonl'
 
 
 steps:
@@ -174,7 +177,7 @@ steps:
         cd /root/mscclpp;                                         \
         export PATH=/usr/local/mpi/bin:\$PATH;                    \
         export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
-        python3 test/mscclpp-test/check_perf_result.py --perf-file output.jsonl --baseline-file test/deploy/perf_ndmv4.jsonl"'
+        python3 test/mscclpp-test/check_perf_result.py --perf-file output.jsonl --baseline-file ${{ parameters.perfBaselineFile }}"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
