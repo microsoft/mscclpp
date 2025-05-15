@@ -233,11 +233,11 @@ The put operation is composed by the field ```name```, ```o_buff```, ```o_cids``
     "name": "put",
     "o_buff": [
       {
-      "srcbuff": "o",
-      "srcoff": 0,
-      "dstbuff": "o",
-      "dstoff": 0,
-      "cnt": 1
+        "srcbuff": "o",
+        "srcoff": 0,
+        "dstbuff": "o",
+        "dstoff": 0,
+        "cnt": 1
       }
     ],
     "o_cids": [
@@ -317,7 +317,7 @@ For this example we will have the following JSON file:
                 {
                 "srcbuff": "o",
                 "srcoff": 0,
-                "dstbuff": "o",
+                "dstbuffid": 0,
                 "dstoff": 0,
                 "cnt": 1
                 }
@@ -379,7 +379,7 @@ For this example we will have the following JSON file:
       ]
     },
     {
-      "id": 0,
+      "id": 1,
       "inputChunks": 1,
       "outputChunks": 2,
       "scratchChunks": 0,
@@ -412,7 +412,7 @@ For this example we will have the following JSON file:
                 {
                 "srcbuff": "o",
                 "srcoff": 1,
-                "dstbuff": "o",
+                "dstbuffid": 0,
                 "dstoff": 1,
                 "cnt": 1
                 }
