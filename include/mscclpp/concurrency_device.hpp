@@ -52,6 +52,36 @@ struct DeviceSyncer {
   unsigned int preFlag_;
 };
 
+struct DeviceSemaphore {
+ public:
+  /// Construct a new DeviceSemaphore object.
+  DeviceSemaphore() = default;
+
+  /// Destroy the DeviceSemaphore object.
+  ~DeviceSemaphore() = default;
+
+#if defined(MSCCLPP_DEVICE_COMPILE)
+  /// set the semaphore value.
+  /// @param value The value to set.
+  MSCCLPP_DEVICE_INLINE void set(int value) { atomicStore<int, scopeDevice>(&semaphore_, value, memoryOrderRelease); }
+
+  /// Acquire the semaphore.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void acquire(int maxSpinCount = -1) {
+    if (atomicFetchAdd<int, scopeDevice>(&semaphore_, -1, memoryOrderAcquire) <= 0) {
+      POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&semaphore_, memoryOrderAcquire) < 0), maxSpinCount);
+    }
+  }
+
+  /// Release the semaphore.
+  MSCCLPP_DEVICE_INLINE void release() { atomicFetchAdd<int, scopeDevice>(&semaphore_, 1, memoryOrderRelease); }
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
+
+ private:
+  /// The semaphore value.
+  int semaphore_;
+};
+
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_CONCURRENCY_DEVICE_HPP_
