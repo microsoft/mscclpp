@@ -54,8 +54,6 @@ jobs:
       sshKeySecureFile: mscclpp.pem
       hostfilePath:     $(System.DefaultWorkingDirectory)/mscclpp/test/deploy/hostfile_ci
 
-
-jobs:
 - job: UnitTestH100
   timeoutInMinutes: 40
   pool:
