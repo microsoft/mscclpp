@@ -63,7 +63,7 @@ struct DeviceSemaphore {
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// set the semaphore value.
   /// @param value The value to set.
-  MSCCLPP_DEVICE_INLINE void set(int value) { atomicStore<int, scopeDevice>(&semaphore_, value, memoryOrderRelaxed); }
+  MSCCLPP_DEVICE_INLINE void set(int value) { atomicStore<int, scopeDevice>(&semaphore_, value, memoryOrderRelease); }
 
   /// Acquire the semaphore.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
