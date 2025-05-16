@@ -38,10 +38,10 @@ The gpus field is the core of the JSON file, containing the detailed configurati
 - ```inputChunks```: The number of chunks in the input buffer.
 - ```outputChunks```: The number of chunks in the output buffer.
 - ```scratchChunks```: The number of chunks in the scratch buffer.
-- ```chunkGroups```: The number of chunk groups used in the algorithm.
 - ```threadblocks```: A list describing all operations assigned to each thread block. Each entry defines how a thread block participates in the collective operation.
 - ```channels```: A list of communication channels, where each element describes a channel.
-- ```bufferCollection```: A list with all the remote buffers used on the algorithm.
+- ```remoteBuffers```: A list with all the remote buffers used on the algorithm.
+- ```bufferAlignment```: The requirement that a buffer's memory address must be a multiple of a specific number of bytes.
 
 ### Channels
 The channel field describes the characteristics of the channels. Basically, we have three types of channels:
@@ -120,20 +120,21 @@ Example:
 ]
 ```
 
-### Buffer Collection
-The buffer collection field will contain the description of all the remote buffers that his GPU need to access, it will contain the following fields:
+### Remote Buffers
+The ```remoteBuffers``` field describes all the remote buffers that a given GPU needs to access. Each entry in this list contains the following fields:
 
--
--
--
+- ```rank``:  Indicates the rank that owns the remote buffer.
+- ```type```: Consist of the buffer type, this could have the following values: "i" for the input buffer, "o" for the output buffer, "s" for the scratch buffer.
+- ```infoLocation```: Depending on where the information is stored and where it needs to be accessed, the data may be transferred accordingly.
 
 Example
 
 ```json
-"bufferCollection": [
+"remoteBuffers": [
   {
     "rank": 1,
-    "buff": "i"
+    "type": "i",
+    "infoLocation": "gpu"
   }
 ]
 ```
@@ -144,7 +145,7 @@ The thread block field describe the operation inside each thread block, we have 
 - ```id```: The thread block id.
 - ```ops```: The list with all the operation in order they will be executed by this tread block.
 - ```channels```: The channels the thread block will use, referenced by the channel id. The channel id is based on the global channel description in the gpu, for example if the channel type is memory and the channel id is 0, it refers to the first channel of memory id type descriptioned in the gpu channels field.
-- ```bufferCollection```: A list with all the remote buffers used by the thread block.
+- ```remoteBuffers```: A list with all the remote buffers used by the thread block.
 
 For Example:
 
@@ -161,7 +162,7 @@ For Example:
         ]
       }
     ],
-    "bufferCollection": [
+    "remoteBuffers": [
       {
         "buffid": 0
       }
@@ -172,24 +173,10 @@ For Example:
 
 The most important field here is the ops fields, where there is the description for all the operations, each operation has specific fields, let's given an overview in all the possible fields and after this go through each of them:
 
-- ```name```: Operation name, it include: signal, wait, put, get.
-- ```ctype```: Channel type, it include: memory, port, switch.
-- ```i_cids```: The channel id of the channels used in the receive operations.
-- ```i_buff```: Buffer information in the receive operations.
-- ```srcs```: Thinking in remove this field.
-- ```o_cids```: The channel id of the channels used in inter machine the send operations.
-- ```o_buff```: Buffer information in the send operations.
-- ```dsts```: Thinking in remove this field.
-- ```srcbuff```: Buffer type in the source in intra machine operations.
-- ```srcoff```: Source offset in the source buffer in intra machine operations.
-- ```dstbuff```: Buffer type in the destine in intra machine operations.
-- ```dstoff```: Destine offset in the destine buffer in intra machine operations.
-- ```cnt```: Data size in intra machine operations.
-- ```barrier_id```:
-- ```nthread_blocks```:
+TO BE DEFINED
 
 #### Signal Operation
-The signal operation is composed by the field ```name```, ```o_cids```, ```ctype```.
+The signal operation is composed by the field ```name```, ```cids```, ```ctype```.
 
 Example
 
@@ -197,7 +184,7 @@ Example
 "ops": [
   {
     "name": "signal",
-    "o_cids": [
+    "cids": [
       {
         "id": 0
       }
@@ -208,13 +195,13 @@ Example
 ```
 
 ### Wait Operation
-The signal operation is composed by the field ```name```, ```i_cids```, ```ctype```.
+The signal operation is composed by the field ```name```, ```cids```, ```ctype```.
 
 ```json
 "ops": [
   {
     "name": "wait",
-    "i_cids": [
+    "cids": [
       {
         "id": 0
       }
@@ -225,22 +212,28 @@ The signal operation is composed by the field ```name```, ```i_cids```, ```ctype
 ```
 
 ### Put Operation
-The put operation is composed by the field ```name```, ```o_buff```, ```o_cids```, ```ctype```.
+The put operation is composed by the field ```name```, ```src_buff```, ```dst_buff```, ```cids```, ```ctype```.
 
 ```json
 "ops": [
   {
     "name": "put",
-    "o_buff": [
+    "src_buff": [
       {
-        "srcbuff": "o",
-        "srcoff": 0,
-        "dstbuff": "o",
-        "dstoff": 0,
-        "cnt": 1
+        "offset": 0,
+        "type": "i",
+        "size": 1
+      
       }
     ],
-    "o_cids": [
+    "dst_buff": [
+      {
+        "buff_id": 1,
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "cids": [
       {
         "id": 0
       }
@@ -365,7 +358,7 @@ For this example we will have the following JSON file:
               ]
             }
           ],
-          "bufferCollection": [
+          "remoteBuffers": [
             {
               "buffid": 0
             }
@@ -380,7 +373,7 @@ For this example we will have the following JSON file:
           ]
         }
       ],
-      "bufferCollection": [
+      "remoteBuffers": [
         {
           "rank": 1,
           "buff": "i"
@@ -460,7 +453,7 @@ For this example we will have the following JSON file:
               ]
             }
           ],
-          "bufferCollection": [
+          "remoteBuffers": [
             {
               "buffid": 0
             }
@@ -475,7 +468,7 @@ For this example we will have the following JSON file:
           ]
         }
       ],
-      "bufferCollection": [
+      "remoteBuffers": [
         {
           "rank": 0,
           "buff": "i"
