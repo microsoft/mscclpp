@@ -170,7 +170,7 @@ For Example:
 ]
 ```
 
-The most important field here is the ops fields, where there is the description for all the operations, each operation has specific fields, let's given an overview in all the possible fields and after this go throught each of them:
+The most important field here is the ops fields, where there is the description for all the operations, each operation has specific fields, let's given an overview in all the possible fields and after this go through each of them:
 
 - ```name```: Operation name, it include: signal, wait, put, get.
 - ```ctype```: Channel type, it include: memory, port, switch.
