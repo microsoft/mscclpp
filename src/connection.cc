@@ -273,7 +273,12 @@ EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEn
   t.join();
 
   // Starting Thread to Receive Messages
-  threadRecvMessages_ = std::thread(&EthernetConnection::recvMessages, this);
+  int deviceId = -1;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+  threadRecvMessages_ = std::thread([deviceId, this]() {
+    MSCCLPP_CUDATHROW(cudaSetDevice(deviceId));
+    this->recvMessages();
+  });
 
   INFO(MSCCLPP_NET, "Ethernet connection created");
 }
@@ -292,7 +297,7 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
                                uint64_t size) {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_WRITE_ENTRY)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_WRITE_ENTRY, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 0);
-#endif
+#endif                           
 
   // Validating Transport Protocol
   validateTransport(dst, remoteTransport(), dstOffset, size);
