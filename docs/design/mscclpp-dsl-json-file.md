@@ -162,7 +162,7 @@ The thread block field describe the operation inside each thread block, we have 
 - ```id```: The thread block id.
 - ```ops```: The list with all the operation in order they will be executed by this tread block.
 - ```channels```: The channels the thread block will use, referenced by the channel id. The channel id is based on the global channel description in the gpu, for example if the channel type is memory and the channel id is 0, it refers to the first channel of memory id type descriptioned in the gpu channels field.
-- ```remoteBuffers```: A list with all the remote buffers used by the thread block.
+- ```remoteBuffersIds```: A list with all the remote buffer ids(related to the remove buffer field on the GPU) used by the thread block.
 
 For Example:
 
@@ -179,13 +179,8 @@ For Example:
         ]
       }
     ],
-    "remoteBuffers": [
-      {
-        "infoLocation": "gpu",
-        "buffid": [
-          0
-        ]
-      }
+    "remoteBuffersIds": [
+      0
     ]
   }
 ]
@@ -369,13 +364,8 @@ For this example we will have the following JSON file:
               ]
             }
           ],
-          "remoteBuffers": [
-            {
-              "infoLocation": "gpu",
-              "buffid": [
-                0
-              ]
-            }
+          "remoteBuffersIds": [
+            0
           ]
         }
       ],
@@ -465,13 +455,8 @@ For this example we will have the following JSON file:
               ]
             }
           ],
-          "remoteBuffers": [
-            {
-              "infoLocation": "gpu",
-              "buffid": [
-                0
-              ]
-            }
+          "remoteBuffersIds": [
+            0
           ]
         }
       ],
