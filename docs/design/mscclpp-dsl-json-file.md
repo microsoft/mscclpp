@@ -43,6 +43,23 @@ The gpus field is the core of the JSON file, containing the detailed configurati
 - ```remoteBuffers```: A list with all the remote buffers used for that GPU on the algorithm.
 - ```bufferAlignment```: The requirement that a buffer's memory address must be a multiple of a specific number of bytes.
 
+Example:
+
+```json
+"gpus": [
+    {
+      "id": 0,
+      "inputChunks": 1,
+      "outputChunks": 2,
+      "scratchChunks": 0,
+      "threadblocks": [...],
+      "channels": [...],
+      "remoteBuffers": [...],
+      "bufferAlignment": 4
+    }
+]
+```
+
 ### Channels
 The channel field describes the characteristics of the channels. Basically, we have three types of channels:
 
