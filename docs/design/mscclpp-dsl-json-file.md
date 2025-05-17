@@ -40,7 +40,7 @@ The gpus field is the core of the JSON file, containing the detailed configurati
 - ```scratchChunks```: The number of chunks in the scratch buffer.
 - ```threadblocks```: A list describing all operations assigned to each thread block. Each entry defines how a thread block participates in the collective operation.
 - ```channels```: A list of communication channels, where each element describes a channel.
-- ```remoteBuffers```: A list with all the remote buffers used on the algorithm.
+- ```remoteBuffers```: A list with all the remote buffers used for that GPU on the algorithm.
 - ```bufferAlignment```: The requirement that a buffer's memory address must be a multiple of a specific number of bytes.
 
 ### Channels
@@ -139,7 +139,7 @@ Example
 ]
 ```
 
-### Thread Block
+### Thread Blocks
 The thread block field describe the operation inside each thread block, we have the following fields:
 
 - ```id```: The thread block id.
@@ -164,7 +164,10 @@ For Example:
     ],
     "remoteBuffers": [
       {
-        "buffid": 0
+        "infoLocation": "gpu",
+        "buffid": [
+          0
+        ]
       }
     ]
   }
@@ -185,9 +188,7 @@ Example
   {
     "name": "signal",
     "cids": [
-      {
-        "id": 0
-      }
+      0
     ],
     "ctype": "memory",
   }
@@ -202,9 +203,7 @@ The signal operation is composed by the field ```name```, ```cids```, ```ctype``
   {
     "name": "wait",
     "cids": [
-      {
-        "id": 0
-      }
+      0
     ],
     "ctype": "memory",
   }
@@ -220,23 +219,21 @@ The put operation is composed by the field ```name```, ```src_buff```, ```dst_bu
     "name": "put",
     "src_buff": [
       {
-        "offset": 0,
         "type": "i",
+        "offset": 0,
         "size": 1
       
       }
     ],
     "dst_buff": [
       {
-        "buff_id": 1,
+        "buff_id": 0,
         "offset": 0,
         "size": 1
       }
     ],
     "cids": [
-      {
-        "id": 0
-      }
+      0
     ],
     "ctype": "memory"
   }
@@ -290,23 +287,20 @@ For this example we will have the following JSON file:
       "inputChunks": 1,
       "outputChunks": 2,
       "scratchChunks": 0,
-      "chunkGroups": 1,
       "threadblocks": [
         {
           "id": 0,
           "ops": [
             {
               "name": "rsignal",
-              "o_cids": [
-                {
-                  "id": 0
-                }
+              "cids": [
+                0
               ],
               "ctype": "memory",
             },
             {
               "name": "rwait",
-              "i_cids": [
+              "cids": [
                 {
                   "id": 0
                 }
@@ -315,37 +309,37 @@ For this example we will have the following JSON file:
             },
             {
               "name": "put",
-              "o_buff": [
+              "src_buff": [
                 {
-                "srcbuff": "o",
-                "srcoff": 0,
-                "dstbuffid": 0,
-                "dstoff": 0,
-                "cnt": 1
+                  "offset": 0,
+                  "type": "i",
+                  "size": 1
+                
                 }
               ],
-              "o_cids": [
+              "dst_buff": [
                 {
-                  "id": 0
+                  "buff_id": 0,
+                  "offset": 0,
+                  "size": 1
                 }
+              ],
+              "cids": [
+                0
               ],
               "ctype": "memory"
             },
             {
               "name": "signal",
-              "o_cids": [
-                {
-                  "id": 0
-                }
+              "cids": [
+                0
               ],
               "ctype": "memory",
             },
             {
               "name": "wait",
-              "i_cids": [
-                {
-                  "id": 0
-                }
+              "cids": [
+                0
               ],
               "ctype": "memory",
             }
@@ -360,7 +354,10 @@ For this example we will have the following JSON file:
           ],
           "remoteBuffers": [
             {
-              "buffid": 0
+              "infoLocation": "gpu",
+              "buffid": [
+                0
+              ]
             }
           ]
         }
@@ -376,7 +373,8 @@ For this example we will have the following JSON file:
       "remoteBuffers": [
         {
           "rank": 1,
-          "buff": "i"
+          "type": "i",
+          "infoLocation": "gpu"
         }
       ]
     },
@@ -385,23 +383,20 @@ For this example we will have the following JSON file:
       "inputChunks": 1,
       "outputChunks": 2,
       "scratchChunks": 0,
-      "chunkGroups": 1,
       "threadblocks": [
         {
           "id": 0,
           "ops": [
             {
               "name": "rsignal",
-              "o_cids": [
-                {
-                  "id": 0
-                }
+              "cids": [
+                0
               ],
               "ctype": "memory",
             },
             {
               "name": "rwait",
-              "i_cids": [
+              "cids": [
                 {
                   "id": 0
                 }
@@ -410,37 +405,37 @@ For this example we will have the following JSON file:
             },
             {
               "name": "put",
-              "o_buff": [
+              "src_buff": [
                 {
-                "srcbuff": "o",
-                "srcoff": 1,
-                "dstbuffid": 0,
-                "dstoff": 1,
-                "cnt": 1
+                  "type": "i",
+                  "offset": 1,
+                  "size": 1
+                
                 }
               ],
-              "o_cids": [
+              "dst_buff": [
                 {
-                  "id": 0
+                  "buff_id": 0,
+                  "offset": 1,
+                  "size": 1
                 }
+              ],
+              "cids": [
+                0
               ],
               "ctype": "memory"
             },
             {
               "name": "signal",
-              "o_cids": [
-                {
-                  "id": 0
-                }
+              "cids": [
+                0
               ],
               "ctype": "memory",
             },
             {
               "name": "wait",
-              "i_cids": [
-                {
-                  "id": 0
-                }
+              "cids": [
+                0
               ],
               "ctype": "memory",
             }
@@ -455,7 +450,10 @@ For this example we will have the following JSON file:
           ],
           "remoteBuffers": [
             {
-              "buffid": 0
+              "infoLocation": "gpu",
+              "buffid": [
+                0
+              ]
             }
           ]
         }
@@ -471,7 +469,8 @@ For this example we will have the following JSON file:
       "remoteBuffers": [
         {
           "rank": 0,
-          "buff": "i"
+          "type": "i",
+          "infoLocation": "gpu"
         }
       ]
     }
