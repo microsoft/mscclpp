@@ -174,9 +174,13 @@ struct VectorType<float> {
 namespace mscclpp {
 
 #define MAX_DEVICE_SYNCERS 16
+#define MAX_DEVICE_FUNCTIONS_IN_PIPELINE 16
 __device__ DeviceSyncer deviceSyncers[MAX_DEVICE_SYNCERS];
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
+
+typedef void (*DeviceFunction) (Operation2 * op);
+__shared__ DeviceFunction deviceFunctions[MAX_DEVICE_FUNCTIONS_IN_PIPELINE];
 
 template <typename T>
 MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType bufferType) {
@@ -189,6 +193,11 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
   if (bufferType == BufferType::SCRATCH) {
     return scratch;
   }
+  return nullptr;
+}
+
+
+MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(OperationType opType) {
   return nullptr;
 }
 
@@ -511,6 +520,26 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* dst, T* src, uint32_t d
   }
 }
 #endif
+
+MSCCLPP_DEVICE_INLINE void handlePipeline(Operation2* operations, uint16_t numOperations, int maxNumIterations,
+                                          uint32_t unitSize) {
+  for (uint16_t i = 0; i < maxNumIterations; i++) {
+    for (uint16_t opId = 0; opId < numOperations; opId++) {
+      uint32_t size =
+          (operations[opId].size - i * unitSize) > unitSize ? unitSize : max(operations[opId].size - i * unitSize, 0);
+      operations[opId].size = size;
+      if (size == 0) {
+        continue;
+      }
+      if (i == 0) {
+        DeviceFunction function = getDeviceFunction(operations[opId].type);
+        function(operations + opId);
+        deviceFunctions[opId] = function;
+      } else
+        (deviceFunctions[opId] != nullptr) { deviceFunctions[opId](operations + opId); }
+    }
+  }
+}
 
 template <typename T, typename PacketType = LL16Packet>
 __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,

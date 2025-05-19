@@ -1,0 +1,32 @@
+{
+    "ops": [
+        {
+            "name": "pipeline_loop",
+            "iter_context": {
+                "unit": 1048576,
+                "num_chunks": 1
+            },
+            "ops": [
+                {
+                    "name": "copy",
+                    "src_buffer": {
+                        "buffer_ref": -1,
+                        "offset": 0,
+                        "buffer": "i"
+                    },
+                    "dst_buffer": {
+                        "buffer_ref": -1,
+                        "buffer": "s",
+                        "offset": 0
+                    },
+                    "count": 1
+                },
+                {
+                    "name": "sem_release",
+                    "sync": "before",
+                    "id": 0
+                }
+            ]
+        }
+    ]
+}

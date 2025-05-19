@@ -59,6 +59,42 @@ struct Channels {
   mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels[MAX_CHANNEL];
 };
 
+struct Operation2 {
+  OperationType type;
+  ChannelType channelType;
+  union {
+    struct {
+      uint8_t inputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
+      uint8_t inputBufferIndexes[MAX_CHANNEL_PER_OPERATION];
+    };
+    BufferType inputBufferType[MAX_CHANNEL_PER_OPERATION];
+  };
+  union {
+    struct {
+      uint8_t outputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
+      uint8_t outputBufferIndexes[MAX_CHANNEL_PER_OPERATION];
+    };
+    BufferType outputBufferType[MAX_CHANNEL_PER_OPERATION];
+  };
+
+  union {
+    struct {
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+
+      uint32_t offset;
+      uint32_t size;
+      BufferType localBufferType;
+    };
+    struct {
+      uint32_t unitSize;
+      uint32_t maxBufferSize;
+      uint8_t nIternations;
+      uint8_t nOperations;
+    };
+  };
+};
+
 struct Operation {
   OperationType type;
   ChannelType channelType;
