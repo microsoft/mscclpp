@@ -42,6 +42,7 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
   return nullptr;
 }
 
+template <typename T>
 MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(OperationType opType, uint8_t* nSteps) {
   *nSteps = 1;
   return nullptr;
@@ -112,7 +113,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                               event_buffer, &event_buffer_head);
 #endif
     uint8_t nSteps = 0;
-    DeviceFunction function = getDeviceFunction(op.type, &nSteps);
+    DeviceFunction function = getDeviceFunction<T>(op.type, &nSteps);
     function(operations + i, input, output, scratch);
     i += nSteps;
 

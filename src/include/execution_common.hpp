@@ -82,9 +82,11 @@ struct Operation2 {
       uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
       uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
 
-      uint32_t offset;
+      uint32_t inputOffset;
+      uint32_t outputOffset;
       uint32_t size;
-      BufferType localBufferType;
+      BufferType localInputBufferType;
+      BufferType localOutputBufferType;
       uint8_t nInputs;
       uint8_t nOutputs;
     };
