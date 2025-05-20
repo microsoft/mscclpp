@@ -85,12 +85,18 @@ struct Operation2 {
       uint32_t offset;
       uint32_t size;
       BufferType localBufferType;
+      uint8_t nInputs;
+      uint8_t nOutputs;
     };
     struct {
       uint32_t unitSize;
       uint32_t maxBufferSize;
       uint8_t nIternations;
       uint8_t nOperations;
+    };
+    struct {
+      uint32_t deviceSyncerIndex;
+      uint32_t nThreadBlocks;
     };
   };
 };
