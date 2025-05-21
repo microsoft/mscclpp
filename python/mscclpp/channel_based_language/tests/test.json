@@ -1,0 +1,154 @@
+{
+  "name": "test",
+  "collective": "allgather",
+  "protocol": "Simple",
+  "inplace": true,
+  "gpus": [
+    {
+      "id": 0,
+      "input_buffer_size": 1,
+      "output_buffers_size": 2,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "cids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "cids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "o",
+                  "offset": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buff_id": 0,
+                  "offset": 0,
+                  "size": 1
+                }
+              ],
+              "cids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "signal",
+              "cids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "cids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "remoteBuffersIds": [
+            0
+          ]
+        }
+      ],
+      "remoteBuffers": [
+        {
+          "rank": 1,
+          "type": "o",
+          "info_location": "InfoLocation.gpu"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_buffer_size": 1,
+      "output_buffers_size": 2,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "cids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "cids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "o",
+                  "offset": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buff_id": 0,
+                  "offset": 1,
+                  "size": 1
+                }
+              ],
+              "cids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "signal",
+              "cids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "cids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "remoteBuffersIds": [
+            0
+          ]
+        }
+      ],
+      "remoteBuffers": [
+        {
+          "rank": 0,
+          "type": "o",
+          "info_location": "InfoLocation.gpu"
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
