@@ -12,7 +12,7 @@
 
 #if !defined(DEBUG_BUILD)
 
-#define mscclpp_assert_device(__cond, __msg)
+#define MSCCLPP_ASSERT_DEVICE(__cond, __msg)
 
 #else  // defined(DEBUG_BUILD)
 
@@ -24,7 +24,7 @@ extern "C" __host__ __device__ void __assert_fail(const char *__assertion, const
                                                   const char *__function) __THROW;
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
 
-#define mscclpp_assert_device(__cond, __msg)                         \
+#define MSCCLPP_ASSERT_DEVICE(__cond, __msg)                         \
   do {                                                               \
     if (!(__cond)) {                                                 \
       __assert_fail(__msg, __FILE__, __LINE__, __PRETTY_FUNCTION__); \

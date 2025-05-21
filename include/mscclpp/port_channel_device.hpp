@@ -22,9 +22,9 @@ const TriggerType TriggerSync = 0x4;  // Trigger a flush.
 
 #define MSCCLPP_BITS_SIZE 32
 #define MSCCLPP_BITS_OFFSET 32
-#define MSCCLPP_BITS_REGMEM_HANDLE 9
+#define MSCCLPP_BITS_MEMORY_ID 9
 #define MSCCLPP_BITS_TYPE 3
-#define MSCCLPP_BITS_CONNID 10
+#define MSCCLPP_BITS_SEMAPHORE_ID 10
 #define MSCCLPP_BITS_FIFO_RESERVED 1
 
 /// Basic structure of each work element in the FIFO.
@@ -38,12 +38,12 @@ union ChannelTrigger {
     uint64_t : (64 - MSCCLPP_BITS_SIZE - MSCCLPP_BITS_OFFSET);  // ensure 64-bit alignment
     // Second 64 bits: value[1]
     uint64_t dstOffset : MSCCLPP_BITS_OFFSET;
-    uint64_t srcMemoryId : MSCCLPP_BITS_REGMEM_HANDLE;
-    uint64_t dstMemoryId : MSCCLPP_BITS_REGMEM_HANDLE;
+    uint64_t srcMemoryId : MSCCLPP_BITS_MEMORY_ID;
+    uint64_t dstMemoryId : MSCCLPP_BITS_MEMORY_ID;
     uint64_t type : MSCCLPP_BITS_TYPE;
-    uint64_t chanId : MSCCLPP_BITS_CONNID;
-    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_REGMEM_HANDLE - MSCCLPP_BITS_REGMEM_HANDLE - MSCCLPP_BITS_TYPE -
-                MSCCLPP_BITS_CONNID - MSCCLPP_BITS_FIFO_RESERVED);  // ensure 64-bit alignment
+    uint64_t semaphoreId : MSCCLPP_BITS_SEMAPHORE_ID;
+    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_MEMORY_ID - MSCCLPP_BITS_MEMORY_ID - MSCCLPP_BITS_TYPE -
+                MSCCLPP_BITS_SEMAPHORE_ID - MSCCLPP_BITS_FIFO_RESERVED);  // ensure 64-bit alignment
     uint64_t reserved : MSCCLPP_BITS_FIFO_RESERVED;
   } fields;
 
@@ -64,18 +64,26 @@ union ChannelTrigger {
   /// @param semaphoreId The ID of the semaphore.
   MSCCLPP_DEVICE_INLINE ChannelTrigger(TriggerType type, MemoryId dst, uint64_t dstOffset, MemoryId src,
                                        uint64_t srcOffset, uint64_t bytes, int semaphoreId) {
+    MSCCLPP_ASSERT_DEVICE(type < (1ULL << MSCCLPP_BITS_TYPE), "type is too large");
+    MSCCLPP_ASSERT_DEVICE(dst < (1ULL << MSCCLPP_BITS_MEMORY_ID), "dst is too large");
+    MSCCLPP_ASSERT_DEVICE(dstOffset < (1ULL << MSCCLPP_BITS_OFFSET), "dstOffset is too large");
+    MSCCLPP_ASSERT_DEVICE(src < (1ULL << MSCCLPP_BITS_MEMORY_ID), "src is too large");
+    MSCCLPP_ASSERT_DEVICE(srcOffset < (1ULL << MSCCLPP_BITS_OFFSET), "srcOffset is too large");
+    MSCCLPP_ASSERT_DEVICE(bytes != 0, "bytes must not be zero");
+    MSCCLPP_ASSERT_DEVICE(bytes < (1ULL << MSCCLPP_BITS_SIZE), "bytes is too large");
+    MSCCLPP_ASSERT_DEVICE(semaphoreId < (1ULL << MSCCLPP_BITS_SEMAPHORE_ID), "semaphoreId is too large");
     constexpr uint64_t maskSize = (1ULL << MSCCLPP_BITS_SIZE) - 1;
     constexpr uint64_t maskSrcOffset = (1ULL << MSCCLPP_BITS_OFFSET) - 1;
     constexpr uint64_t maskDstOffset = (1ULL << MSCCLPP_BITS_OFFSET) - 1;
-    constexpr uint64_t maskSrcMemoryId = (1ULL << MSCCLPP_BITS_REGMEM_HANDLE) - 1;
-    constexpr uint64_t maskDstMemoryId = (1ULL << MSCCLPP_BITS_REGMEM_HANDLE) - 1;
+    constexpr uint64_t maskSrcMemoryId = (1ULL << MSCCLPP_BITS_MEMORY_ID) - 1;
+    constexpr uint64_t maskDstMemoryId = (1ULL << MSCCLPP_BITS_MEMORY_ID) - 1;
     constexpr uint64_t maskType = (1ULL << MSCCLPP_BITS_TYPE) - 1;
-    constexpr uint64_t maskChanId = (1ULL << MSCCLPP_BITS_CONNID) - 1;
+    constexpr uint64_t maskSemaphoreId = (1ULL << MSCCLPP_BITS_SEMAPHORE_ID) - 1;
     value.fst = (((srcOffset & maskSrcOffset) << MSCCLPP_BITS_SIZE) + (bytes & maskSize));
-    value.snd = (((((((((semaphoreId & maskChanId) << MSCCLPP_BITS_TYPE) + ((uint64_t)type & maskType))
-                      << MSCCLPP_BITS_REGMEM_HANDLE) +
+    value.snd = (((((((((semaphoreId & maskSemaphoreId) << MSCCLPP_BITS_TYPE) + ((uint64_t)type & maskType))
+                      << MSCCLPP_BITS_MEMORY_ID) +
                      (dst & maskDstMemoryId))
-                    << MSCCLPP_BITS_REGMEM_HANDLE) +
+                    << MSCCLPP_BITS_MEMORY_ID) +
                    (src & maskSrcMemoryId))
                   << MSCCLPP_BITS_OFFSET) +
                  (dstOffset & maskDstOffset));

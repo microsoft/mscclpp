@@ -67,7 +67,7 @@ MSCCLPP_API_CPP void ProxyService::bindThread() {
 
 ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
   ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
-  std::shared_ptr<Host2DeviceSemaphore> semaphore = semaphores_[trigger->fields.chanId];
+  std::shared_ptr<Host2DeviceSemaphore> semaphore = semaphores_[trigger->fields.semaphoreId];
 
   auto result = ProxyHandlerResult::Continue;
   int maxWriteQueueSize = semaphore->connection()->getMaxWriteQueueSize();

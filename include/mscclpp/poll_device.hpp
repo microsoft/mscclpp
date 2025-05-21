@@ -13,7 +13,7 @@
   do {                                                                                        \
     [[maybe_unused]] int64_t __spin_cnt = 0;                                                  \
     while (__cond) {                                                                          \
-      mscclpp_assert_device((__max_spin_cnt < 0 || __spin_cnt++ != __max_spin_cnt), #__cond); \
+      MSCCLPP_ASSERT_DEVICE((__max_spin_cnt < 0 || __spin_cnt++ != __max_spin_cnt), #__cond); \
     }                                                                                         \
   } while (0);
 
@@ -28,7 +28,7 @@
       } else if (!(__cond2)) {                                                                          \
         break;                                                                                          \
       }                                                                                                 \
-      mscclpp_assert_device((__max_spin_cnt < 0 || __spin_cnt++ != __max_spin_cnt), #__cond1 #__cond2); \
+      MSCCLPP_ASSERT_DEVICE((__max_spin_cnt < 0 || __spin_cnt++ != __max_spin_cnt), #__cond1 #__cond2); \
     }                                                                                                   \
   } while (0);
 
