@@ -317,7 +317,7 @@ MSCCLPP_DEVICE_INLINE void handleWait(Operation2* operation, void* src, void* ds
 // }
 
 template <typename T, bool SendToRemote = true>
-MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(Operation2* operation, T* input, T* output, T* scratch) {
+MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(Operation2* operation, void* input, void* output, void* scratch) {
   const uint32_t size = operation->size;
   const uint32_t nInt4 = operation->size / sizeof(int4);
   const uint32_t inputOffset4 = operation->inputOffset / sizeof(int4);
@@ -351,12 +351,12 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(Operation2* operation, T* in
   const size_t startIdx = (operation->inputOffset + processed) / sizeof(T);
   const size_t endIdx = (operation->inputOffset + size) / sizeof(T);
   for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
-    T tmp = input[idx];
+    T tmp = static_cast<T*>(input)[idx];
     for (int index = 0; index < nSrcChannels; ++index) {
       size_t srcOffset = srcOffsets[index] / sizeof(T);
       tmp = add_elements(tmp, memoryChannels[srcChannelIndexes[index]].read<T>(srcOffset + idx));
     }
-    output[idx] = tmp;
+    static_cast<T*>(output)[idx] = tmp;
     if constexpr (SendToRemote) {
       for (int index = 0; index < nDstChannels; ++index) {
         size_t dstOffset = dstOffsets[index] / sizeof(T);

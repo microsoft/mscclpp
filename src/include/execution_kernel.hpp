@@ -45,6 +45,24 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
 template <typename T>
 MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(OperationType opType, uint8_t* nSteps) {
   *nSteps = 1;
+  if (opType == OperationType::NOP) {
+    return handleNop;
+  }
+  if (opType == OperationType::BARRIER) {
+    return handleBarrier;
+  }
+  if (opType == OperationType::SIGNAL) {
+    return handleSignal;
+  }
+  if (opType == OperationType::WAIT) {
+    return handleWait;
+  }
+  if (opType == OperationType::READ_REDUCE_COPY_SEND) {
+    return &handleReadReduceCopySend<T, true>;
+  }
+  // if (opType == OperationType::READ_REDUCE_COPY) {
+  //   return handleReadReduceCopySend<T, false>;
+  // }
   return nullptr;
 }
 
