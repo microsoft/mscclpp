@@ -94,7 +94,7 @@ struct Operation2 {
     struct {
       uint32_t unitSize;
       uint32_t maxBufferSize;
-      uint8_t nIternations;
+      uint8_t nIterations;
       uint8_t nOperations;
     };
     struct {
