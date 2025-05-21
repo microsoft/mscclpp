@@ -272,49 +272,57 @@ MSCCLPP_DEVICE_INLINE void handleWait(Operation2* operation, void* src, void* ds
 //   }
 // }
 
-// MSCCLPP_DEVICE_INLINE void handleFlush(DeviceHandle<PortChannel>* portChannels, uint8_t* channelIndexes,
-//                                        int nChannels) {
-//   int tid = threadIdx.x;
-//   if (tid < nChannels) {
-//     portChannels[channelIndexes[tid]].flush();
-//   }
-// }
+MSCCLPP_DEVICE_INLINE void handleFlush(Operation2* operation, void* src, void* dst, void* scratch) {
+  int nChannels = operation->nOutputs;
+  uint8_t* channelIndexes = operation->outputChannelIndexes;
+  int tid = threadIdx.x;
+  if (tid < nChannels) {
+    portChannels[channelIndexes[tid]].flush();
+  }
+}
 
-// MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<MemoryChannel>* memoryChannel, uint8_t* srcChannelIndexes,
-//                                      uint32_t* dstOffsets, uint32_t* srcOffsets, int count, uint32_t size) {
-//   for (int i = 0; i < count; i++) {
-//     uint32_t dstOffset = dstOffsets[i];
-//     uint32_t srcOffset = srcOffsets[i];
-//     memoryChannel[srcChannelIndexes[i]].get(srcOffset, dstOffset, size, threadIdx.x, blockDim.x);
-//   }
-// }
+MSCCLPP_DEVICE_INLINE void handleGet(Operation2* operation, void* src, void* dst, void* scratch) {
+  uint32_t count = operation->nInputs;
+  uint32_t size = operation->size;
+  uint8_t* srcChannelIndexes = operation->inputChannelIndexes;
+  uint32_t* srcOffsets = operation->inputOffsets;
+  uint32_t* dstOffsets = operation->outputOffsets;
+  for (int i = 0; i < count; i++) {
+    uint32_t dstOffset = dstOffsets[i];
+    uint32_t srcOffset = srcOffsets[i];
+    memoryChannels[srcChannelIndexes[i]].get(srcOffset, dstOffset, size, threadIdx.x, blockDim.x);
+  }
+}
 
-// template <bool PutWithSignal = false, bool PutWithSignalAndFlush = false>
-// MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<MemoryChannel>* memoryChannel,
-//                                      DeviceHandle<PortChannel>* portChannels, uint8_t* dstChannelIndexes,
-//                                      uint32_t* dstOffsets, uint32_t* srcOffsets, int count, uint32_t size,
-//                                      ChannelType chType) {
-//   if (chType == ChannelType::MEMORY) {
-//     for (int i = 0; i < count; i++) {
-//       uint32_t dstOffset = dstOffsets[i];
-//       uint32_t srcOffset = srcOffsets[i];
-//       memoryChannel[dstChannelIndexes[i]].put(dstOffset, srcOffset, size, threadIdx.x, blockDim.x);
-//     }
-//     return;
-//   }
-//   if (chType == ChannelType::PORT) {
-//     int tid = threadIdx.x;
-//     if (tid < count) {
-//       if constexpr (PutWithSignal) {
-//         portChannels[dstChannelIndexes[tid]].putWithSignal(dstOffsets[tid], srcOffsets[tid], size);
-//       } else if constexpr (PutWithSignalAndFlush) {
-//         portChannels[dstChannelIndexes[tid]].putWithSignalAndFlush(dstOffsets[tid], srcOffsets[tid], size);
-//       } else {
-//         portChannels[dstChannelIndexes[tid]].put(dstOffsets[tid], srcOffsets[tid], size);
-//       }
-//     }
-//   }
-// }
+template <bool PutWithSignal = false, bool PutWithSignalAndFlush = false>
+MSCCLPP_DEVICE_INLINE void handlePut(Operation2* operation, void* src, void* dst, void* scratch) {
+  ChannelType chType = operation->channelType;
+  uint32_t count = operation->nOutputs;
+  uint32_t size = operation->size;
+  uint8_t* dstChannelIndexes = operation->outputChannelIndexes;
+  uint32_t* dstOffsets = operation->outputOffsets;
+  uint32_t* srcOffsets = operation->inputOffsets;
+  if (chType == ChannelType::MEMORY) {
+    for (int i = 0; i < count; i++) {
+      uint32_t dstOffset = dstOffsets[i];
+      uint32_t srcOffset = srcOffsets[i];
+      memoryChannels[dstChannelIndexes[i]].put(dstOffset, srcOffset, size, threadIdx.x, blockDim.x);
+    }
+    return;
+  }
+  if (chType == ChannelType::PORT) {
+    int tid = threadIdx.x;
+    if (tid < count) {
+      if constexpr (PutWithSignal) {
+        portChannels[dstChannelIndexes[tid]].putWithSignal(dstOffsets[tid], srcOffsets[tid], size);
+      } else if constexpr (PutWithSignalAndFlush) {
+        portChannels[dstChannelIndexes[tid]].putWithSignalAndFlush(dstOffsets[tid], srcOffsets[tid], size);
+      } else {
+        portChannels[dstChannelIndexes[tid]].put(dstOffsets[tid], srcOffsets[tid], size);
+      }
+    }
+  }
+}
 
 template <typename T, bool SendToRemote = true>
 MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(Operation2* operation, void* input, void* output, void* scratch) {

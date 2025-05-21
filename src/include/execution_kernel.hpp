@@ -16,6 +16,7 @@
 #include "execution_common.hpp"
 #include "execution_operation.hpp"
 
+#include <cstdint>
 #if defined(MSCCLPP_DEVICE_COMPILE)
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/nvls_device.hpp>
@@ -43,8 +44,9 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
 }
 
 template <typename T>
-MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(OperationType opType, uint8_t* nSteps) {
+MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(const Operation2& op, uint8_t* nSteps) {
   *nSteps = 1;
+  OperationType opType = op.type;
   if (opType == OperationType::NOP) {
     return handleNop;
   }
@@ -57,12 +59,31 @@ MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(OperationType opType, uin
   if (opType == OperationType::WAIT) {
     return handleWait;
   }
-  if (opType == OperationType::READ_REDUCE_COPY_SEND) {
-    return &handleReadReduceCopySend<T, true>;
+  if (opType == OperationType::FLUSH) {
+    return handleFlush;
   }
-  // if (opType == OperationType::READ_REDUCE_COPY) {
-  //   return handleReadReduceCopySend<T, false>;
-  // }
+  if (opType == OperationType::PUT) {
+    return handlePut;
+  }
+  if (opType == OperationType::PUT_WITH_SIGNAL) {
+    return handlePut<true>;
+  }
+  if (opType == OperationType::PUT_WITH_SIGNAL_AND_FLUSH) {
+    return handlePut<true, true>;
+  }
+  if (opType == OperationType::GET) {
+    return handleGet;
+  }
+  if (opType == OperationType::READ_REDUCE_COPY_SEND) {
+    return handleReadReduceCopySend<T, true>;
+  }
+  if (opType == OperationType::READ_REDUCE_COPY) {
+    return handleReadReduceCopySend<T, false>;
+  }
+  if (opType == OperationType::PIPELINE) {
+    *nSteps = op.nIternations;
+    return nullptr;
+  }
   return nullptr;
 }
 
@@ -96,8 +117,8 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   localPlan = (DeviceExecutionPlan*)sharedMem;
   int nOperations = localPlan->nOperations;
   Operation2* operations = (Operation2*)localPlan->operations;
-  DeviceHandle<MemoryChannel>* memoryChannels = localPlan->channels.memoryChannels;
-  DeviceHandle<PortChannel>* portChannels = localPlan->channels.portChannels;
+  memoryChannels = localPlan->channels.memoryChannels;
+  portChannels = localPlan->channels.portChannels;
   [[maybe_unused]] DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels =
       localPlan->channels.nvlsChannels;
 
@@ -131,7 +152,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                               event_buffer, &event_buffer_head);
 #endif
     uint8_t nSteps = 0;
-    DeviceFunction function = getDeviceFunction<T>(op.type, &nSteps);
+    DeviceFunction function = getDeviceFunction<T>(op, &nSteps);
     function(operations + i, input, output, scratch);
     i += nSteps;
 

@@ -51,6 +51,7 @@ enum class OperationType : uint8_t {
   READ_REDUCE_COPY,
   READ_REDUCE_COPY_SEND,
   MULTI_LOAD_REDUCE_STORE,
+  PIPELINE,
 };
 
 struct Channels {
