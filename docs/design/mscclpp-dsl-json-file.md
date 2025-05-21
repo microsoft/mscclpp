@@ -11,7 +11,7 @@ The generic structure of the JSON file consist of the following fields:
 - ```inplace```: A boolean flag indicating whether the algorithm operates in-place or out-of-place.
 - ```gpus```: Describes the GPU-specific configuration and the operations executed on each GPU. This will be detailed in the following sections.
 - ```num_threads_per_block```: Specifies the number of threads per thread block. Typical values include 256, 512, 768, or 1024, depending on performance requirements.
-- ```use_double_scratch_buffer```: A boolean flag that enables to double the scratch buffer. When set to true, the scratch buffer double the size and is logically divided into two halves. This allows alternating executions of the same algorithm to use different halves of the buffer, for instance, odd-numbered executions use the first half, and even-numbered executions use the second. This strategy helps avoid memory conflicts when the same algorithm is invoked multiple times.
+- ```use_double_scratch_buffer```: A boolean flag that enables to double the scratch buffer. When set to true, the size of the scratch buffer is doubled and it is logically divided into two halves. This allows alternating executions of the same algorithm to use different halves of the buffer, for instance, odd-numbered executions use the first half, and even-numbered executions use the second. This strategy helps avoid memory conflicts when the same algorithm is invoked multiple times.
 - ```min_message_size```: The minimum message size supported by this algorithm. If the message is smaller than this value, the algorithm will not be selected for execution.
 - ```max_message_size```: The maximum message size supported by this algorithm. If the message exceeds this value, the algorithm will not be selected for execution.
 
@@ -19,7 +19,7 @@ Example:
 
 ```json
 {
-  "name": "reducescatter",
+  "name": "hierarchical_ring_reducescatter",
   "collective": "reducescatter",
   "protocol": "Simple",
   "inplace": true,
@@ -109,7 +109,7 @@ Example:
 The Switch Channel has the following fields:
 - ```type```: Specifies the type of the channel, which in the case of the Memory Channel, will be ```switch```.
 - ```buff```: Consist of the buffer type which the Switch Channel will be binded, this could have the following values: "i" for the input buffer, "o" for the output buffer, "s" for the scratch buffer.
-- ```rankGroups```: Consist of the group of the ranks connected by the Switch Channel, this field contains the size and the list of the ranks connected.
+- ```rankGroups```: Consist of a group of ranks connected via the Switch Channel, including the number of ranks (size) and the list of connected ranks.
 
 Example:
 
@@ -140,9 +140,9 @@ Example:
 ### Remote Buffers
 The ```remoteBuffers``` field describes all the remote buffers that a given GPU needs to access. Each entry in this list contains the following fields:
 
-- ```rank``:  Indicates the rank that owns the remote buffer.
+- ```rank```:  Indicates the rank that owns the remote buffer.
 - ```type```: Consist of the buffer type, this could have the following values: "i" for the input buffer, "o" for the output buffer, "s" for the scratch buffer.
-- ```infoLocation```: Depending on where the information is stored and where it needs to be accessed, the data may be transferred accordingly.
+- ```accessChannel```: A list specifying what types of channels we should use to manage this buffer.
 
 Example
 
@@ -151,18 +151,18 @@ Example
   {
     "rank": 1,
     "type": "i",
-    "infoLocation": "gpu"
+    "accessChannel": ["memory"]
   }
 ]
 ```
 
 ### Thread Blocks
-The thread block field describe the operation inside each thread block, we have the following fields:
+The thread block field describes the operation inside each thread block, we have the following fields:
 
 - ```id```: The thread block id.
-- ```ops```: The list with all the operation in order they will be executed by this tread block.
+- ```ops```: The list of all operations in the order they will be executed by this thread block.
 - ```channels```: The channels the thread block will use, referenced by the channel id. The channel id is based on the global channel description in the gpu, for example if the channel type is memory and the channel id is 0, it refers to the first channel of memory id type descriptioned in the gpu channels field.
-- ```remoteBuffersIds```: A list with all the remote buffer ids(related to the remove buffer field on the GPU) used by the thread block.
+- ```remoteBuffersIds```: A list with all the remote buffer ids(related to the remote buffer field on the GPU) used by the thread block.
 
 For Example:
 
@@ -186,12 +186,12 @@ For Example:
 ]
 ```
 
-The most important field here is the ops fields, where there is the description for all the operations, each operation has specific fields, let's given an overview in all the possible fields and after this go through each of them:
+The most important field here is the ops field, which contains the descriptions of all operations. Each operation has its own specific fields. Let’s first provide an overview of all the possible fields, and then examine each one in detail.
 
 TO BE DEFINED
 
 #### Signal Operation
-The signal operation is composed by the field ```name```, ```cids```, ```ctype```.
+The signal operation is composed of the fields ```name```, ```cids```, ```ctype```.
 
 Example
 
@@ -208,7 +208,7 @@ Example
 ```
 
 ### Wait Operation
-The signal operation is composed by the field ```name```, ```cids```, ```ctype```.
+The wait operation is composed of the fields ```name```, ```cids```, ```ctype```.
 
 ```json
 "ops": [
@@ -223,7 +223,7 @@ The signal operation is composed by the field ```name```, ```cids```, ```ctype``
 ```
 
 ### Put Operation
-The put operation is composed by the field ```name```, ```src_buff```, ```dst_buff```, ```cids```, ```ctype```.
+The put operation is composed of the fields ```name```, ```src_buff```, ```dst_buff```, ```cids```, ```ctype```.
 
 ```json
 "ops": [
