@@ -60,7 +60,7 @@ struct Channels {
   mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels[MAX_CHANNEL];
 };
 
-struct Operation2 {
+struct Operation {
   OperationType type;
   ChannelType channelType;
   union {
@@ -69,6 +69,7 @@ struct Operation2 {
       uint8_t inputBufferIndexes[MAX_CHANNEL_PER_OPERATION];
     };
     BufferType inputBufferType[MAX_CHANNEL_PER_OPERATION];
+    uint8_t nvlsInputIndex;
   };
   union {
     struct {
@@ -76,6 +77,7 @@ struct Operation2 {
       uint8_t outputBufferIndexes[MAX_CHANNEL_PER_OPERATION];
     };
     BufferType outputBufferType[MAX_CHANNEL_PER_OPERATION];
+    uint8_t nvlsOutputIndex;
   };
 
   union {
@@ -100,43 +102,6 @@ struct Operation2 {
     struct {
       uint32_t deviceSyncerIndex;
       uint32_t nThreadBlocks;
-    };
-  };
-};
-
-struct Operation {
-  OperationType type;
-  ChannelType channelType;
-  BufferType srcBufferType;
-  BufferType dstBufferType;
-  uint8_t nInputs;
-  uint8_t nOutputs;
-  union {
-    // For ops which require reading from multiple remote sources
-    uint8_t inputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
-    // For ops which require reading from multiple local sources
-    BufferType inputBufferType;
-    uint8_t nvlsInputIndex;
-  };
-  union {
-    // For ops which require writing to multiple remote destinations
-    uint8_t outputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
-    // For ops which require writing to multiple local destinations
-    BufferType outputBufferType;
-    uint8_t nvlsOutputIndex;
-  };
-  union {
-    // For Barrier operation
-    struct {
-      uint32_t deviceSyncerIndex;
-      uint32_t nThreadBlocks;
-    };
-    struct {
-      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
-      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
-      uint32_t srcOffset;
-      uint32_t dstOffset;
-      uint32_t size;
     };
   };
 };

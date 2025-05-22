@@ -1,32 +1,165 @@
 {
-    "ops": [
+  "name": "allgather",
+  "collective": "allgather",
+  "protocol": "Simple",
+  "inplace": true,
+  "gpus": [
+    {
+      "id": 0,
+      "inputChunks": 1,
+      "outputChunks": 2,
+      "scratchChunks": 0,
+      "threadblocks": [
         {
-            "name": "pipeline_loop",
-            "iter_context": {
-                "unit": 1048576,
-                "num_chunks": 1
+          "id": 0,
+          "ops": [
+            {
+              "name": "rsignal",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
             },
-            "ops": [
+            {
+              "name": "rwait",
+              "cids": [
                 {
-                    "name": "copy",
-                    "src_buffer": {
-                        "buffer_ref": -1,
-                        "offset": 0,
-                        "buffer": "i"
-                    },
-                    "dst_buffer": {
-                        "buffer_ref": -1,
-                        "buffer": "s",
-                        "offset": 0
-                    },
-                    "count": 1
-                },
-                {
-                    "name": "sem_release",
-                    "sync": "before",
-                    "id": 0
+                  "id": 0
                 }
-            ]
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "signal",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "wait",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "ctype": "memory",
+              "cids": [
+                0
+              ]
+            }
+          ],
+          "remoteBuffersIds": []
         }
-    ]
+      ],
+      "channels": [
+        {
+          "type": "memory",
+          "connectedTo": [
+            1
+          ]
+        }
+      ],
+      "remoteBuffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "infoLocation": "gpu"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "inputChunks": 1,
+      "outputChunks": 2,
+      "scratchChunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rsignal",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "rwait",
+              "cids": [
+                {
+                  "id": 0
+                }
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "offset": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buff_id": 0,
+                  "offset": 1,
+                  "size": 1
+                }
+              ],
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "signal",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "wait",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "ctype": "memory",
+              "cids": [
+                0
+              ]
+            }
+          ],
+          "remoteBuffersIds": [
+            0
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "type": "memory",
+          "connectedTo": [
+            0
+          ]
+        }
+      ],
+      "remoteBuffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "infoLocation": "gpu"
+        }
+      ]
+    }
+  ]
 }

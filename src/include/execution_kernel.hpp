@@ -189,7 +189,7 @@ __shared__ uint16_t* remoteMemoriesViaPortChan;
 __shared__ int flag;
 __shared__ uint32_t scratchSize;
 
-typedef void (*DeviceFunction)(Operation2* op, void* src, void* dst, void* scratch);
+typedef void (*DeviceFunction)(Operation* op, void* src, void* dst, void* scratch);
 
 template <typename T>
 MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType bufferType) {
@@ -206,18 +206,18 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
 }
 
 template <typename T, typename PacketType>
-MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(const Operation2& op, uint8_t* nSteps);
+MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(const Operation& op, uint8_t* nSteps);
 
-MSCCLPP_DEVICE_INLINE void handleNop(Operation2* operation, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleNop(Operation* operation, void* input, void* output, void* scratch) {
   __syncthreads();
 }
 
-MSCCLPP_DEVICE_INLINE void handleBarrier(Operation2* operation, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleBarrier(Operation* operation, void* input, void* output, void* scratch) {
   DeviceSyncer* syncer = &deviceSyncers[operation->deviceSyncerIndex];
   syncer->sync(operation->nThreadBlocks);
 }
 
-MSCCLPP_DEVICE_INLINE void handleSignal(Operation2* operation, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleSignal(Operation* operation, void* input, void* output, void* scratch) {
   int nChannels = operation->nOutputs;
   ChannelType chType = operation->channelType;
   uint8_t* channelIndex = operation->outputChannelIndexes;
@@ -231,7 +231,7 @@ MSCCLPP_DEVICE_INLINE void handleSignal(Operation2* operation, void* input, void
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleWait(Operation2* operation, void* src, void* dst, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleWait(Operation* operation, void* src, void* dst, void* scratch) {
   int nChannels = operation->nInputs;
   ChannelType chType = operation->channelType;
   uint8_t* channelIndex = operation->inputChannelIndexes;
@@ -245,7 +245,7 @@ MSCCLPP_DEVICE_INLINE void handleWait(Operation2* operation, void* src, void* ds
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleFlush(Operation2* operation, void* src, void* dst, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleFlush(Operation* operation, void* src, void* dst, void* scratch) {
   int nChannels = operation->nOutputs;
   uint8_t* channelIndexes = operation->outputChannelIndexes;
   int tid = threadIdx.x;
@@ -254,7 +254,7 @@ MSCCLPP_DEVICE_INLINE void handleFlush(Operation2* operation, void* src, void* d
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleGet(Operation2* operation, void* src, void* dst, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleGet(Operation* operation, void* src, void* dst, void* scratch) {
   uint32_t count = operation->nInputs;
   uint32_t size = operation->size;
   uint32_t* srcOffsets = operation->inputOffsets;
@@ -268,7 +268,7 @@ MSCCLPP_DEVICE_INLINE void handleGet(Operation2* operation, void* src, void* dst
 }
 
 template <bool PutWithSignal = false, bool PutWithSignalAndFlush = false>
-MSCCLPP_DEVICE_INLINE void handlePut(Operation2* operation, void* src, void* dst, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handlePut(Operation* operation, void* src, void* dst, void* scratch) {
   ChannelType chType = operation->channelType;
   uint32_t count = operation->nOutputs;
   uint32_t size = operation->size;
@@ -303,7 +303,7 @@ MSCCLPP_DEVICE_INLINE void handlePut(Operation2* operation, void* src, void* dst
 }
 
 template <typename T, bool SendToRemote = true>
-MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(Operation2* operation, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(Operation* operation, void* input, void* output, void* scratch) {
   const uint32_t size = operation->size;
   const uint32_t nInt4 = operation->size / sizeof(int4);
   const uint32_t inputOffset4 = operation->inputOffset / sizeof(int4);
@@ -355,7 +355,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(Operation2* operation, void*
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handlePutPacket(Operation2* operation, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handlePutPacket(Operation* operation, void* input, void* output, void* scratch) {
   ChannelType chType = operation->channelType;
   uint16_t nDstChannels = operation->nOutputs;
   uint32_t* dstOffsets = operation->outputOffsets;
@@ -384,7 +384,7 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(Operation2* operation, void* input, v
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleReadPutPacket(Operation2* operation, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleReadPutPacket(Operation* operation, void* input, void* output, void* scratch) {
   uint32_t nDstChannels = operation->nOutputs;
   uint32_t* dstOffsets = operation->outputOffsets;
   uint32_t* srcOffsets = operation->inputOffsets;
@@ -428,7 +428,7 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPacket(Operation2* operation, void* inpu
 }
 
 template <typename T, typename PacketType, bool SendToRemote = true>
-MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(Operation2* operation, void* dst, void* src, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(Operation* operation, void* dst, void* src, void* scratch) {
   const uint32_t size = operation->size;
   const uint32_t nSrcs = operation->nInputs;
   const uint32_t nDstChannels = operation->nOutputs;
@@ -465,7 +465,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(Operation2* operation, void* d
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleCopyPacket(Operation2* operation, void* dst, void* src, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleCopyPacket(Operation* operation, void* dst, void* src, void* scratch) {
   const uint32_t size = operation->size;
   const uint32_t dstOffset = operation->outputOffset;
   const uint32_t srcOffset = operation->inputOffset;
@@ -480,7 +480,7 @@ MSCCLPP_DEVICE_INLINE void handleCopyPacket(Operation2* operation, void* dst, vo
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleTransformToPacket(Operation2* op, void* dst, void* src, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleTransformToPacket(Operation* op, void* dst, void* src, void* scratch) {
   uint32_t size = op->size;
   uint32_t dstOffset = op->outputOffset;
   uint32_t srcOffset = op->inputOffset;
@@ -491,7 +491,7 @@ MSCCLPP_DEVICE_INLINE void handleTransformToPacket(Operation2* op, void* dst, vo
 }
 
 template <typename T, bool SendToRemote = true>
-MSCCLPP_DEVICE_INLINE void handleReduceSend(Operation2* op, void* dst, void* src, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleReduceSend(Operation* op, void* dst, void* src, void* scratch) {
   const uint32_t size = op->size;
   const uint32_t nInt4 = size / sizeof(int4);
   int nSrcs = op->nInputs;
@@ -544,7 +544,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(Operation2* op, void* dst, void* src
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleCopy(Operation2* op, void* dst, void* src, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleCopy(Operation* op, void* dst, void* src, void* scratch) {
   uint32_t size = op->size;
   uint32_t dstOffset = op->outputOffset;
   uint32_t srcOffset = op->inputOffset;
@@ -585,7 +585,7 @@ MSCCLPP_DEVICE_INLINE void handleCopy(Operation2* op, void* dst, void* src, void
 // #endif
 
 template <typename T, typename PacketType>
-MSCCLPP_DEVICE_INLINE void handlePipeline(Operation2* operations, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handlePipeline(Operation* operations, void* input, void* output, void* scratch) {
   uint16_t nIterations = operations->nIterations;
   uint16_t nOperations = operations->nOperations;
   uint32_t unitSize = operations->unitSize;
@@ -604,7 +604,7 @@ MSCCLPP_DEVICE_INLINE void handlePipeline(Operation2* operations, void* input, v
 }
 
 template <typename T, typename PacketType>
-MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(const Operation2& op, uint8_t* nSteps) {
+MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(const Operation& op, uint8_t* nSteps) {
   *nSteps = 1;
   OperationType opType = op.type;
   if (opType == OperationType::NOP) {
@@ -694,7 +694,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   __syncshm();
   localPlan = (DeviceExecutionPlan*)sharedMem;
   int nOperations = localPlan->nOperations;
-  Operation2* operations = (Operation2*)localPlan->operations;
+  Operation* operations = (Operation*)localPlan->operations;
   memoryChannels = localPlan->channels.memoryChannels;
   portChannels = localPlan->channels.portChannels;
   [[maybe_unused]] DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels =
@@ -723,7 +723,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
 #endif
 
   for (int i = 0; i < nOperations;) {
-    Operation2& op = operations[i];
+    Operation& op = operations[i];
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY)
     NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),
