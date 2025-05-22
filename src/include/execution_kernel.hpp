@@ -20,7 +20,6 @@
 #include <mscclpp/nvls_device.hpp>
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
-
 namespace {
 #if defined(MSCCLPP_DEVICE_COMPILE)
 template <typename To, typename From>
@@ -185,6 +184,8 @@ __device__ DeviceSyncer deviceSyncers[MAX_DEVICE_SYNCERS];
 __shared__ DeviceHandle<MemoryChannel>* memoryChannels;
 __shared__ DeviceHandle<PortChannel>* portChannels;
 __shared__ DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels;
+__shared__ int flag;
+__shared__ uint32_t scratchSize;
 
 typedef void (*DeviceFunction)(Operation2* op, void* src, void* dst, void* scratch);
 
@@ -202,7 +203,7 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
   return nullptr;
 }
 
-template <typename T>
+template <typename T, typename PacketType>
 MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(const Operation2& op, uint8_t* nSteps);
 
 MSCCLPP_DEVICE_INLINE void handleNop(Operation2* operation, void* input, void* output, void* scratch) {
@@ -344,30 +345,33 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(Operation2* operation, void*
   }
 }
 
-// template <typename PacketType>
-// MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<MemoryChannel>* memoryChannels,
-//                                            DeviceHandle<PortChannel>* portChannels, uint8_t* dstChannelIndexes,
-//                                            uint32_t* dstOffsets, uint32_t* srcOffsets, int nDstChannels, uint32_t
-//                                            size, ChannelType chType, uint32_t flag) {
-//   const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
-//   if (chType == ChannelType::MEMORY) {
-//     for (int index = 0; index < nDstChannels; ++index) {
-//       memoryChannels[dstChannelIndexes[index]].putPackets<PacketType>(
-//           scratchBaseOffset + dstOffsets[index] * 2, srcOffsets[index], size, threadIdx.x, blockDim.x, flag);
-//     }
-//   }
-//   if (chType == ChannelType::PORT) {
-//     int tid = threadIdx.x;
-//     if (tid >= nDstChannels) {
-//       return;
-//     }
-//     // For port channel, we assume src and dst are in packet format
-//     // TODO: support non-packet format and remove packet format(packet format should be handle in
-//     handleReadPutPacket) uint32_t dstOffset = (dstOffsets[tid] << 1) + scratchBaseOffset; uint32_t srcOffset =
-//     (srcOffsets[tid] << 1) + scratchBaseOffset; portChannels[dstChannelIndexes[tid]].put(dstOffset, srcOffset, size
-//     << 1);
-//   }
-// }
+template <typename PacketType>
+MSCCLPP_DEVICE_INLINE void handlePutPacket(Operation2* operation, void* input, void* output, void* scratch) {
+  ChannelType chType = operation->channelType;
+  uint16_t nDstChannels = operation->nOutputs;
+  uint32_t* dstOffsets = operation->outputOffsets;
+  uint32_t* srcOffsets = operation->inputOffsets;
+  uint32_t size = operation->size;
+  uint8_t* dstChannelIndexes = operation->outputChannelIndexes;
+  const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
+  if (chType == ChannelType::MEMORY) {
+    for (int index = 0; index < nDstChannels; ++index) {
+      memoryChannels[dstChannelIndexes[index]].putPackets<PacketType>(
+          scratchBaseOffset + dstOffsets[index] * 2, srcOffsets[index], size, threadIdx.x, blockDim.x, flag);
+    }
+  }
+  if (chType == ChannelType::PORT) {
+    int tid = threadIdx.x;
+    if (tid >= nDstChannels) {
+      return;
+    }
+    // For port channel, we assume src and dst are in packet format
+    // TODO: support non-packet format and remove packet format(packet format should be handle in handleReadPutPacket)
+    uint32_t dstOffset = (dstOffsets[tid] << 1) + scratchBaseOffset;
+    uint32_t srcOffset = (srcOffsets[tid] << 1) + scratchBaseOffset;
+    portChannels[dstChannelIndexes[tid]].put(dstOffset, srcOffset, size << 1);
+  }
+}
 
 // template <typename PacketType>
 // MSCCLPP_DEVICE_INLINE void handleReadPutPacket(int rank, void* scratch, size_t scratchSize,
@@ -511,11 +515,14 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(Operation2* operation, void*
 //   }
 // }
 
-// MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
-//   char* srcData = (char*)src + srcOffset;
-//   char* dstData = (char*)dst + dstOffset;
-//   mscclpp::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
-// }
+MSCCLPP_DEVICE_INLINE void handleCopy(Operation2* op, void* dst, void* src, void* scratch) {
+  uint32_t size = op->size;
+  uint32_t dstOffset = op->outputOffset;
+  uint32_t srcOffset = op->inputOffset;
+  char* srcData = (char*)src + srcOffset;
+  char* dstData = (char*)dst + dstOffset;
+  mscclpp::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
+}
 
 // #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 // template <typename T>
@@ -548,7 +555,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(Operation2* operation, void*
 // }
 // #endif
 
-template <typename T>
+template <typename T, typename PacketType>
 MSCCLPP_DEVICE_INLINE void handlePipeline(Operation2* operations, void* input, void* output, void* scratch) {
   uint16_t nIterations = operations->nIterations;
   uint16_t nOperations = operations->nOperations;
@@ -561,13 +568,13 @@ MSCCLPP_DEVICE_INLINE void handlePipeline(Operation2* operations, void* input, v
       if (size == 0) {
         continue;
       }
-      DeviceFunction func = getDeviceFunction<T>(operations[opId], nullptr);
+      DeviceFunction func = getDeviceFunction<T, PacketType>(operations[opId], nullptr);
       func(operations + opId, input, output, scratch);
     }
   }
 }
 
-template <typename T>
+template <typename T, typename PacketType>
 MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(const Operation2& op, uint8_t* nSteps) {
   *nSteps = 1;
   OperationType opType = op.type;
@@ -595,6 +602,9 @@ MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(const Operation2& op, uin
   if (opType == OperationType::PUT_WITH_SIGNAL_AND_FLUSH) {
     return handlePut<true, true>;
   }
+  if (opType == OperationType::PUT_PACKET) {
+    return handlePutPacket<PacketType>;
+  }
   if (opType == OperationType::GET) {
     return handleGet;
   }
@@ -604,9 +614,12 @@ MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(const Operation2& op, uin
   if (opType == OperationType::READ_REDUCE_COPY) {
     return handleReadReduceCopySend<T, false>;
   }
+  if (opType == OperationType::COPY) {
+    return handleCopy;
+  }
   if (opType == OperationType::PIPELINE) {
     *nSteps = op.nIterations;
-    return handlePipeline<T>;
+    return handlePipeline<T, PacketType>;
   }
   return nullptr;
 }
@@ -676,7 +689,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                               event_buffer, &event_buffer_head);
 #endif
     uint8_t nSteps = 0;
-    DeviceFunction function = getDeviceFunction<T>(op, &nSteps);
+    DeviceFunction function = getDeviceFunction<T, PacketType>(op, &nSteps);
     function(operations + i, input, output, scratch);
     i += nSteps;
 
