@@ -96,6 +96,16 @@ MSCCLPP_DEVICE_INLINE void copy(void* dst, void* src, uint64_t bytes, uint32_t t
   }
 }
 
+template <typename T>
+MSCCLPP_DEVICE_INLINE void write(void* dst, uint64_t index, const T& v) {
+  *(reinterpret_cast<T*>(dst) + index) = v;
+}
+
+template <typename T>
+MSCCLPP_DEVICE_INLINE T read(void* src, uint64_t index) {
+  return *(reinterpret_cast<T*>(src) + index);
+}
+
 /// Read data from the origin and write packets to the target buffer.
 ///
 /// @param targetPtr The target buffer.
