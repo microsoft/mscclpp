@@ -165,7 +165,7 @@ struct Executor::Impl {
     }
 
     plan.impl_->reset();
-    plan.impl_->loadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
+    plan.impl_->loadExecutionPlan(rank, inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
 
     ExecutionContext context;
     size_t maxScratchBufferSize = plan.impl_->getMaxScratchBufferSize(rank);

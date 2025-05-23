@@ -60,6 +60,13 @@ struct ChannelInfo {
   std::vector<int> connectedPeers;
 };
 
+struct BufferInfo {
+  int rank;
+  int dstRank;
+  BufferType bufferType;
+  std::vector<ChannelType> accessChannels;
+};
+
 struct ExecutionPlan::Impl {
  public:
   Impl(const std::string planPath);
@@ -78,7 +85,7 @@ struct ExecutionPlan::Impl {
   int getThreadblockCount(int rank) const;
   int getNThreadsPerBlock() const;
 
-  void loadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
+  void loadExecutionPlan(int rank, size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
   void lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
   void setupChannels(const nlohmann::json& gpus);
   void setupOperations(const nlohmann::json& gpus, size_t contsSrcOffset, size_t constDstOffset);
@@ -94,6 +101,8 @@ struct ExecutionPlan::Impl {
   std::unordered_map<int, std::vector<std::vector<Operation>>> operations;
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfosByDstRank;
+  std::unordered_map<int, std::vector<BufferInfo>> remoteBufferInfos;
+  std::unordered_map<int, std::vector<BufferInfo>> localBufferToSend;
   std::unordered_map<std::pair<int, ChannelType>, std::unordered_map<int, int>> channelCountMap;
   // for nvls channels
   std::unordered_map<int, std::vector<NvlsInfo>> nvlsInfos;
@@ -120,10 +129,11 @@ struct ExecutionPlan::Impl {
   size_t getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const;
 
   // helper functions to setup the channels
-  void parseChannels(
-      const nlohmann::json& gpu, std::vector<ChannelInfo>& channelInfos, std::vector<NvlsInfo>& nvlsInfos,
-      std::map<std::tuple<int, BufferType, BufferType, ChannelType>, std::vector<int>>& chanConnectedPeersMap,
-      int rank);
+  void parseChannels(const nlohmann::json& gpu, std::vector<ChannelInfo>& channelInfos,
+                     std::vector<NvlsInfo>& nvlsInfos,
+                     std::map<std::pair<int, ChannelType>, std::vector<int>>& chanConnectedPeersMap, int rank);
+  void parseRemoteBuffer(const nlohmann::json& gpu, std::vector<BufferInfo>& remoteBufferInfos,
+                         std::unordered_map<int, std::vector<BufferInfo>>& localBufferToSend, int rank);
 };
 
 }  // namespace mscclpp
