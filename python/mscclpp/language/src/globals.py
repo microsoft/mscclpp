@@ -1,8 +1,10 @@
 _current_program = None
 
+
 def set_program(program):
     global _current_program
     _current_program = program
+
 
 def get_program():
     global _current_program

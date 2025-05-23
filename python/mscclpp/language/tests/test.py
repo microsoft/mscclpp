@@ -8,6 +8,7 @@ from mscclpp.language.language_interface.rank import Rank
 from mscclpp.language.language_interface.general import *
 from mscclpp.language.src.collectives import AllGather
 
+
 def allgather_example(name, gpus, num_threads_per_block, min_message_size, max_message_size):
     # Validating parameters
     if gpus <= 0:
@@ -32,11 +33,11 @@ def allgather_example(name, gpus, num_threads_per_block, min_message_size, max_m
         for src_rank in range(size):
             r = Rank(src_rank)
             src_input_buffer = r.get_output_buffer()
-            src_chunk = src_input_buffer[src_rank:src_rank + 1]
+            src_chunk = src_input_buffer[src_rank : src_rank + 1]
             for dst_rank in range(size):
                 r = Rank(dst_rank)
                 dst_input_buffer = r.get_output_buffer()
-                dst_chunk = dst_input_buffer[src_rank:src_rank + 1] 
+                dst_chunk = dst_input_buffer[src_rank : src_rank + 1]
                 if src_rank != dst_rank:
                     ch = Channel(dst_rank, src_rank, ChannelType.memory)
                     ch.signal(tb=0, sync=None)
@@ -46,6 +47,7 @@ def allgather_example(name, gpus, num_threads_per_block, min_message_size, max_m
                     ch.wait(tb=0, sync="after")
 
         print(JSON())
+
 
 """ parser = argparse.ArgumentParser()
 
@@ -60,6 +62,4 @@ args = parser.parse_args()
 allgather_example(
     args.name, args.num_gpus, args.num_threads_per_block, args.min_message_size, args.max_message_size
 ) """
-allgather_example(
-    "test", 2, 1024, 0, 2**64 - 1
-)
+allgather_example("test", 2, 1024, 0, 2**64 - 1)

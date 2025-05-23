@@ -32,21 +32,20 @@
               "src_buff": [
                 {
                   "type": "o",
-                  "offset": 0,
+                  "index": 0,
                   "size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "offset": 0,
+                  "index": 0,
                   "size": 1
                 }
               ],
               "cids": [
                 0
-              ],
-              "ctype": "memory"
+              ]
             },
             {
               "name": "signal",
@@ -123,21 +122,20 @@
               "src_buff": [
                 {
                   "type": "o",
-                  "offset": 1,
+                  "index": 1,
                   "size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "offset": 1,
+                  "index": 1,
                   "size": 1
                 }
               ],
               "cids": [
                 0
-              ],
-              "ctype": "memory"
+              ]
             },
             {
               "name": "signal",

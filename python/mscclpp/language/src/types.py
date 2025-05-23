@@ -85,3 +85,16 @@ class Operation:
     remote_chunks: List[Chunk] = field(default_factory=list)
     channel_ids: List[int] = field(default_factory=list)
     channel_type: ChannelType = ChannelType.none
+
+
+@dataclass
+class RemoteBuffer:
+    rank: int
+    type: BufferType
+    channel_access: ChannelType
+
+    def json_to_dict(self):
+        return {"rank": self.rank, "type": self.type.value, "channel_access": self.channel_access.value}
+
+    def __hash__(self):
+        return hash((self.rank, self.type, self.channel_access))

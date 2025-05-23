@@ -3,6 +3,7 @@
 
 from mscclpp.language.src.types import BufferType
 
+
 class Collective:
     def __init__(self, num_ranks, chunk_factor, inplace, num_ranks_per_node=-1):
         self.num_ranks = num_ranks
@@ -29,6 +30,7 @@ class Collective:
         else:
             return buffer_length * instances
 
+
 class AllGather(Collective):
     def __init__(self, num_ranks, chunk_factor, inplace):
         Collective.__init__(self, num_ranks, chunk_factor, inplace)
@@ -40,6 +42,10 @@ class AllGather(Collective):
         for _ in range(self.num_ranks):
             input_buffer_size = self.chunk_factor
             output_buffer_size = self.num_ranks * self.chunk_factor
-            buffers = {BufferType.input: input_buffer_size, BufferType.output: output_buffer_size, BufferType.scratch: 0}
+            buffers = {
+                BufferType.input: input_buffer_size,
+                BufferType.output: output_buffer_size,
+                BufferType.scratch: 0,
+            }
             rank_buffers.append(buffers)
         return rank_buffers

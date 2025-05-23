@@ -1,6 +1,7 @@
 from mscclpp.language.src.types import Operation, ChannelType
-from mscclpp.language.json_generation.types import RemoteBuffer
+from mscclpp.language.json_generation.json_types import RemoteBuffer
 from typing import List
+
 
 class InstructionDAG:
     def __init__(self, num_ranks):

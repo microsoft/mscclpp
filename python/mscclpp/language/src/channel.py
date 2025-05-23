@@ -4,6 +4,7 @@
 from mscclpp.language.src.types import ChannelType
 from dataclasses import dataclass
 
+
 @dataclass
 class BaseChannel:
     channel_id: int

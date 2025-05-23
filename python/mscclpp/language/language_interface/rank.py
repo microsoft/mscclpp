@@ -3,6 +3,7 @@ from mscclpp.language.src.types import BufferType, Chunk
 from mscclpp.language.src.globals import get_program
 from dataclasses import dataclass
 
+
 @dataclass
 class Rank:
     rank: int
@@ -20,21 +21,21 @@ class Rank:
     def barrier(self, tb_list):
         barrier_id = self._get_barrier_id(tb_list)
         return self.prog.instr_dag.add_barrier(self.rank, tb_list, barrier_id)
-    
+
     def get_input_buffer(self):
         buffer_size = self.prog.buffers_size[self.rank][BufferType.input]
         return Rank.Buffer(self.rank, BufferType.input, 0, buffer_size)
-    
+
     def get_output_buffer(self):
         buffer_size = self.prog.buffers_size[self.rank][BufferType.output]
         return Rank.Buffer(self.rank, BufferType.output, 0, buffer_size)
-    
+
     def generate_buffer(self, size):
         offset = self.prog.buffers_size[self.rank][BufferType.scratch]
         self.prog.buffers_size[self.rank][BufferType.scratch] += size
         return Rank.Buffer(self.rank, BufferType.scratch, offset, offset + size)
-    
-    class Buffer():
+
+    class Buffer:
         def __init__(self, rank, buffer_type, offset, size):
             self.rank = rank
             self.buffer_type = buffer_type
@@ -43,5 +44,7 @@ class Rank:
 
         def __getitem__(self, key):
             if self.offset + key.stop > self.size:
-                raise RuntimeError(f"Index range from {self.offset + key.start} - {self.offset + key.stop} is out of bounds for buffer {self.buffer_type}. Buffer size: {self.size}")
+                raise RuntimeError(
+                    f"Index range from {self.offset + key.start} - {self.offset + key.stop} is out of bounds for buffer {self.buffer_type}. Buffer size: {self.size}"
+                )
             return Chunk(self.rank, self.buffer_type, self.offset + key.start, key.stop - key.start)
