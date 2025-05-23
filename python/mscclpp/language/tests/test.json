@@ -1,13 +1,14 @@
 {
   "name": "test",
   "collective": "allgather",
-  "protocol": "Simple",
   "inplace": true,
+  "protocol": "Simple",
   "gpus": [
     {
       "id": 0,
-      "input_buffer_size": 1,
-      "output_buffers_size": 2,
+      "input_chunks": 1,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
       "threadblocks": [
         {
           "id": 0,
@@ -17,14 +18,14 @@
               "cids": [
                 0
               ],
-              "channel_type": "memory"
+              "ctype": "memory"
             },
             {
               "name": "wait",
               "cids": [
                 0
               ],
-              "channel_type": "memory"
+              "ctype": "memory"
             },
             {
               "name": "put",
@@ -37,7 +38,7 @@
               ],
               "dst_buff": [
                 {
-                  "buff_id": 0,
+                  "buffer_id": 0,
                   "offset": 0,
                   "size": 1
                 }
@@ -45,40 +46,60 @@
               "cids": [
                 0
               ],
-              "channel_type": "memory"
+              "ctype": "memory"
             },
             {
               "name": "signal",
               "cids": [
                 0
               ],
-              "channel_type": "memory"
+              "ctype": "memory"
             },
             {
               "name": "wait",
               "cids": [
                 0
               ],
-              "channel_type": "memory"
+              "ctype": "memory"
             }
           ],
-          "remoteBuffersIds": [
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                [
+                  0
+                ]
+              ]
+            }
+          ],
+          "remoteBufferIds": [
             0
           ]
         }
       ],
-      "remoteBuffers": [
+      "channels": [
+        {
+          "type": "memory",
+          "connectedTo": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
         {
           "rank": 1,
           "type": "o",
-          "info_location": "InfoLocation.gpu"
+          "channel_access": "memory"
         }
-      ]
+      ],
+      "buffer_alignment": 0
     },
     {
       "id": 1,
-      "input_buffer_size": 1,
-      "output_buffers_size": 2,
+      "input_chunks": 1,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
       "threadblocks": [
         {
           "id": 0,
@@ -88,14 +109,14 @@
               "cids": [
                 0
               ],
-              "channel_type": "memory"
+              "ctype": "memory"
             },
             {
               "name": "wait",
               "cids": [
                 0
               ],
-              "channel_type": "memory"
+              "ctype": "memory"
             },
             {
               "name": "put",
@@ -108,7 +129,7 @@
               ],
               "dst_buff": [
                 {
-                  "buff_id": 0,
+                  "buffer_id": 0,
                   "offset": 1,
                   "size": 1
                 }
@@ -116,35 +137,54 @@
               "cids": [
                 0
               ],
-              "channel_type": "memory"
+              "ctype": "memory"
             },
             {
               "name": "signal",
               "cids": [
                 0
               ],
-              "channel_type": "memory"
+              "ctype": "memory"
             },
             {
               "name": "wait",
               "cids": [
                 0
               ],
-              "channel_type": "memory"
+              "ctype": "memory"
             }
           ],
-          "remoteBuffersIds": [
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                [
+                  0
+                ]
+              ]
+            }
+          ],
+          "remoteBufferIds": [
             0
           ]
         }
       ],
-      "remoteBuffers": [
+      "channels": [
+        {
+          "type": "memory",
+          "connectedTo": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
         {
           "rank": 0,
           "type": "o",
-          "info_location": "InfoLocation.gpu"
+          "channel_access": "memory"
         }
-      ]
+      ],
+      "buffer_alignment": 0
     }
   ],
   "num_threads_per_block": 1024,

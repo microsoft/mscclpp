@@ -1,5 +1,5 @@
-from mscclpp.channel_based_language.types import Operation, ChannelType
-from mscclpp.channel_based_language.json_generation.types import InfoLocation, RemoteBuffer
+from mscclpp.language.src.types import Operation, ChannelType
+from mscclpp.language.json_generation.types import RemoteBuffer
 from typing import List
 
 class InstructionDAG:
@@ -7,7 +7,7 @@ class InstructionDAG:
         self.operations: List[List[Operation]] = []
         self.tb_per_rank = []
 
-        for rank in range(num_ranks):
+        for _ in range(num_ranks):
             self.operations.append([])
             self.tb_per_rank.append(0)
 

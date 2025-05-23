@@ -2,9 +2,11 @@
 # Licensed under the MIT License.
 
 import argparse
-from mscclpp.channel_based_language.program import *
-from mscclpp.channel_based_language.language_interface import *
-from mscclpp.channel_based_language.collectives import AllGather
+from mscclpp.language.src.program import *
+from mscclpp.language.language_interface.channel import Channel
+from mscclpp.language.language_interface.rank import Rank
+from mscclpp.language.language_interface.general import *
+from mscclpp.language.src.collectives import AllGather
 
 def allgather_example(name, gpus, num_threads_per_block, min_message_size, max_message_size):
     # Validating parameters
@@ -28,25 +30,24 @@ def allgather_example(name, gpus, num_threads_per_block, min_message_size, max_m
         size = 2
 
         for src_rank in range(size):
-            r = rank(src_rank)
+            r = Rank(src_rank)
             src_input_buffer = r.get_output_buffer()
-            src_chunk = src_input_buffer[src_rank:src_rank + 1] 
+            src_chunk = src_input_buffer[src_rank:src_rank + 1]
             for dst_rank in range(size):
-                r = rank(dst_rank)
+                r = Rank(dst_rank)
                 dst_input_buffer = r.get_output_buffer()
                 dst_chunk = dst_input_buffer[src_rank:src_rank + 1] 
                 if src_rank != dst_rank:
-                    ch = channel(dst_rank, src_rank, ChannelType.memory)
+                    ch = Channel(dst_rank, src_rank, ChannelType.memory)
                     ch.signal(tb=0, sync=None)
                     ch.wait(tb=0, sync="after")
                     ch.put(dst_chunk, src_chunk, tb=0)
                     ch.signal(tb=0, sync="before")
                     ch.wait(tb=0, sync="after")
 
-        # Generate JSON
         print(JSON())
 
-parser = argparse.ArgumentParser()
+""" parser = argparse.ArgumentParser()
 
 parser.add_argument("--name", type=str, help="name of the program")
 parser.add_argument("--num_gpus", type=int, help="number of gpus")
@@ -58,5 +59,7 @@ args = parser.parse_args()
 
 allgather_example(
     args.name, args.num_gpus, args.num_threads_per_block, args.min_message_size, args.max_message_size
+) """
+allgather_example(
+    "test", 2, 1024, 0, 2**64 - 1
 )
-

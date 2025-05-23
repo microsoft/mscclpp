@@ -1,6 +1,5 @@
 from mscclpp.channel_based_language.program import MSCCLPPProgram
 from mscclpp.channel_based_language.types import BufferType, ChannelType, Instruction
-from mscclpp.channel_based_language.channel import Channel
 from mscclpp.channel_based_language.json_generation.types import InfoLocation, RemoteBuffer
 import json
 

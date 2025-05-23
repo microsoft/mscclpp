@@ -1,10 +1,10 @@
 _current_program = None
 
-def set_curr(program):
+def set_program(program):
     global _current_program
     _current_program = program
 
-def _curr():
+def get_program():
     global _current_program
     if _current_program == None:
         raise RuntimeError("No Program in context")
