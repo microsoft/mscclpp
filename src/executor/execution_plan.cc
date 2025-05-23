@@ -242,7 +242,6 @@ void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize, size_t o
     this->inputChunks[rank] = gpu["inputChunks"];
     this->outputChunks[rank] = gpu["outputChunks"];
     this->scratchChunks[rank] = gpu["scratchChunks"];
-    this->chunkGroups[rank] = gpu["chunkGroups"];
   }
   this->setupChannels(gpus);
   this->setupOperations(gpus, contsSrcOffset, constDstOffset);
@@ -266,7 +265,6 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t output
     this->inputChunks[rank] = gpu["inputChunks"];
     this->outputChunks[rank] = gpu["outputChunks"];
     this->scratchChunks[rank] = gpu["scratchChunks"];
-    this->chunkGroups[rank] = gpu["chunkGroups"];
   }
 
   this->inputSize = inputSize;
@@ -553,22 +551,13 @@ size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, size_t outputS
     throw Error("inputSize must be a multiple of alignment", ErrorCode::ExecutorError);
   }
 
-  const int nGroups = this->chunkGroups.at(rank);
   auto rankSizeAndChunks = getSizeAndChunksForRank(rank, inputSize, outputSize);
   uint32_t nChunks = rankSizeAndChunks.second;
   uint32_t nelems = rankSizeAndChunks.first / (alignment * sizeof(uint8_t));
-  if (nelems % nGroups != 0) {
-    throw Error("Input size must be a multiple of nGroups", ErrorCode::ExecutorError);
-  }
 
-  int nelemsPerGroup = nelems / nGroups;
-  int nChunksPerGroup = nChunks / nGroups;
-  uint32_t minNelems = nelemsPerGroup / nChunksPerGroup;
-  uint32_t remainder = nelemsPerGroup % nChunksPerGroup;
-  uint32_t groupIdx = chunkIndex / nChunksPerGroup;
-  uint32_t chunkIndexInGroup = chunkIndex % nChunksPerGroup;
-  uint32_t offset = groupIdx * nelemsPerGroup + chunkIndexInGroup * minNelems +
-                    (chunkIndexInGroup % nelemsPerGroup < remainder ? chunkIndexInGroup % nelemsPerGroup : remainder);
+  uint32_t minNelems = nelems / nChunks;
+  uint32_t remainder = nelems % nChunks;
+  uint32_t offset = chunkIndex * minNelems + (chunkIndex % nelems < remainder ? chunkIndex % nelems : remainder);
   return static_cast<size_t>(offset) * alignment;
 }
 
@@ -611,7 +600,6 @@ void ExecutionPlan::Impl::reset() {
   this->inputChunks.clear();
   this->outputChunks.clear();
   this->scratchChunks.clear();
-  this->chunkGroups.clear();
 }
 
 void ExecutionPlan::Impl::operationsReset() { this->operations.clear(); }
