@@ -1,0 +1,192 @@
+{
+  "name": "test",
+  "collective": "allgather",
+  "inplace": true,
+  "protocol": "Simple",
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 1,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "wait",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "cids": [
+                0
+              ]
+            },
+            {
+              "name": "signal",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "wait",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                [
+                  0
+                ]
+              ]
+            }
+          ],
+          "remoteBufferIds": [
+            0
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "type": "memory",
+          "connectedTo": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "o",
+          "channel_access": "memory"
+        }
+      ],
+      "buffer_alignment": 0
+    },
+    {
+      "id": 1,
+      "input_chunks": 1,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "wait",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "o",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "cids": [
+                0
+              ]
+            },
+            {
+              "name": "signal",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "wait",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                [
+                  0
+                ]
+              ]
+            }
+          ],
+          "remoteBufferIds": [
+            0
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "type": "memory",
+          "connectedTo": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "o",
+          "channel_access": "memory"
+        }
+      ],
+      "buffer_alignment": 0
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
