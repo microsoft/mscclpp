@@ -601,8 +601,13 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
 
 static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_ptr<mscclpp::Communicator> mscclppComm,
                                                int rank) {
-  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+  // workaround for current nvls connection setup failure
+  if (mscclpp::isNvlsSupported()) {
+    commPtr->nvlsConnections = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
+    commPtr->nvlsConnectionsOut = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
+  }
 
+  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
   for (int i = 0; i < mscclppComm->bootstrap()->getNranks(); i++) {
     if (i == rank) continue;
     mscclpp::Transport transport = getTransport(rank, i);
@@ -623,10 +628,6 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   }
 
   commPtr->connections = std::move(connections);
-  if (mscclpp::isNvlsSupported()) {
-    commPtr->nvlsConnections = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
-    commPtr->nvlsConnectionsOut = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
-  }
   commPtr->memorySemaphores = std::move(memorySemaphores);
   commPtr->buffFlag = 0;
   commPtr->numScratchBuff = 2;
