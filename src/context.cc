@@ -20,9 +20,8 @@ IbCtx* Context::Impl::getIbContext(Transport ibTransport) {
     auto ibDev = getIBDeviceName(ibTransport);
     ibContexts_[ibTransport] = std::make_unique<IbCtx>(ibDev);
     return ibContexts_[ibTransport].get();
-  } else {
-    return it->second.get();
   }
+  return it->second.get();
 }
 
 MSCCLPP_API_CPP Context::Context() : pimpl_(std::make_unique<Impl>()) {}
