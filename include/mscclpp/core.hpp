@@ -500,19 +500,19 @@ struct EndpointConfig {
 };
 
 /// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
-/// where the process group abstraction offered by @ref Communicator is not suitable, e.g., ephemeral client-server
+/// where the process group abstraction offered by Communicator is not suitable, e.g., ephemeral client-server
 /// connections. Correct use of this class requires external synchronization when finalizing connections with the
-/// @ref connect() method.
+/// connect() method.
 ///
 /// As an example, a client-server scenario where the server will write to the client might proceed as follows:
-///   1. The client creates an endpoint with @ref createEndpoint() and sends it to the server.
-///   2. The server receives the client endpoint, creates its own endpoint with @ref createEndpoint(), sends it to the
-///      client, and creates a connection with @ref connect().
-///   4. The client receives the server endpoint, creates a connection with @ref connect() and sends a
-///      @ref RegisteredMemory to the server.
-///   5. The server receives the @ref RegisteredMemory and writes to it using the previously created connection.
-/// The client waiting to create a connection before sending the @ref RegisteredMemory ensures that the server can not
-/// write to the @ref RegisteredMemory before the connection is established.
+///   1. The client creates an endpoint with createEndpoint() and sends it to the server.
+///   2. The server receives the client endpoint, creates its own endpoint with createEndpoint(), sends it to the
+///      client, and creates a connection with connect().
+///   3. The client receives the server endpoint, creates a connection with connect() and sends a
+///      RegisteredMemory to the server.
+///   4. The server receives the RegisteredMemory and writes to it using the previously created connection.
+/// The client waiting to create a connection before sending the RegisteredMemory ensures that the server can not
+/// write to the RegisteredMemory before the connection is established.
 ///
 /// While some transports may have more relaxed implementation behavior, this should not be relied upon.
 class Context {

@@ -16,7 +16,7 @@
 #define MSCCLPP_HOST_DEVICE_INLINE __forceinline__ __host__ __device__
 #if defined(__HIP_PLATFORM_AMD__)
 #define MSCCLPP_DEVICE_HIP
-#else  // !(defined(__HIP_PLATFORM_AMD__)
+#else  // !(defined(__HIP_PLATFORM_AMD__))
 #define MSCCLPP_DEVICE_CUDA
 #endif  // !(defined(__HIP_PLATFORM_AMD__))
 
