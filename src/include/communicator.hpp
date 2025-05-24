@@ -4,11 +4,11 @@
 #ifndef MSCCLPP_COMMUNICATOR_HPP_
 #define MSCCLPP_COMMUNICATOR_HPP_
 
+#include <list>
 #include <memory>
 #include <mscclpp/core.hpp>
 #include <unordered_map>
 #include <vector>
-#include <list>
 
 #include "utils_internal.hpp"
 
@@ -38,13 +38,13 @@ class LocalRecvMemory {
  public:
   LocalRecvMemory() : future_(std::move(promise_.get_future())) {}
 
-  void set(RegisteredMemory memory) {
-    promise_.set_value(std::move(memory));
-  }
+  void set(RegisteredMemory memory) { promise_.set_value(std::move(memory)); }
 
   std::shared_future<RegisteredMemory> reference() const { return future_; }
 
-  bool isReady() const { return future_.valid() && (future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready); }
+  bool isReady() const {
+    return future_.valid() && (future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready);
+  }
 
  private:
   std::promise<RegisteredMemory> promise_;

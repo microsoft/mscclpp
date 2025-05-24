@@ -12,7 +12,7 @@
 
 __constant__ mscclpp::PortChannelDeviceHandle gPortChannel;
 
-__global__ void kernelLocalPortChannelTest(void *dst, void *src, size_t bytes, int* ret) {
+__global__ void kernelLocalPortChannelTest(void *dst, void *src, size_t bytes, int *ret) {
   if (blockIdx.x == 0) {
     // sender
     int *ptr = reinterpret_cast<int *>(src);
@@ -42,11 +42,11 @@ __global__ void kernelLocalPortChannelTest(void *dst, void *src, size_t bytes, i
 static void localPortChannelTest(mscclpp::Transport transport) {
   MSCCLPP_CUDATHROW(cudaSetDevice(0));
 
-  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(/*rank*/0, /*nRanks*/1);
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(/*rank*/ 0, /*nRanks*/ 1);
   bootstrap->initialize(mscclpp::TcpBootstrap::createUniqueId());
   auto communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
 
-  auto connectionFuture = communicator->connect(/*remoteRank*/0, /*tag*/0, transport);
+  auto connectionFuture = communicator->connect(/*remoteRank*/ 0, /*tag*/ 0, transport);
 
   const size_t bytes = 4 * 1024 * 1024;
   auto srcBuff = mscclpp::GpuBuffer(bytes).memory();
