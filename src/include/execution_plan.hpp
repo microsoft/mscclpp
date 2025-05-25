@@ -71,7 +71,8 @@ struct ExecutionPlan::Impl {
   std::vector<ChannelInfo> getUnpairedChannelInfos(int rank, int worldSize, ChannelType channelType);
   std::vector<NvlsInfo> getNvlsInfos(int rank, size_t sendBuffserSize = 0, size_t recvBufferSize = 0) const;
   std::vector<int> getConnectedPeers(int rank) const;
-  std::vector<BufferType> getConnectedBufferTypes(int rank) const;
+  std::vector<BufferInfo> getRemoteBufferInfos(int rank) const;
+  std::vector<BufferInfo> getLocalBufferToSend(int rank) const;
   size_t getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const;
   size_t getMaxScratchBufferSize(int rank) const;
   std::vector<Operation> getOperations(int rank, int threadblock) const;

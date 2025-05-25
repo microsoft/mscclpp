@@ -55,8 +55,8 @@ enum class OperationType : uint8_t {
 };
 
 struct Channels {
-  mscclpp::DeviceHandle<mscclpp::MemoryChannel> memoryChannels[MAX_CHANNEL];
-  mscclpp::DeviceHandle<mscclpp::PortChannel> portChannels[MAX_CHANNEL];
+  mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> memoryChannels[MAX_CHANNEL];
+  mscclpp::DeviceHandle<mscclpp::BasePortChannel> portChannels[MAX_CHANNEL];
   mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels[MAX_CHANNEL];
 };
 

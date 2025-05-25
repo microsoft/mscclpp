@@ -116,8 +116,8 @@ struct ExecutionContext {
   std::unordered_map<std::pair<BufferType, int>, mscclpp::RegisteredMemory> registeredMemories;
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::vector<mscclpp::SemaphoreId> proxySemaphores;
-  std::vector<mscclpp::MemoryChannel> memoryChannels;
-  std::vector<mscclpp::PortChannel> portChannels;
+  std::vector<mscclpp::BaseMemoryChannel> memoryChannels;
+  std::vector<mscclpp::BasePortChannel> portChannels;
   std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
@@ -192,18 +192,16 @@ struct Executor::Impl {
     return context;
   }
 
-  TransportFlags getTransportFlags(std::vector<ChannelInfo>& infos, int rank) {
+  TransportFlags getTransportFlags(const BufferInfo& info, int rank) {
     TransportFlags flags;
-    for (ChannelInfo& info : infos) {
-      if (info.channelType == ChannelType::MEMORY) {
+    for (const ChannelType& type : info.accessChannelTypes) {
+      if (type == ChannelType::MEMORY) {
         flags |= Transport::CudaIpc;
-      } else if (info.channelType == ChannelType::PORT) {
-        for (int peer : info.connectedPeers) {
-          if (!inSameNode(rank, peer, this->nranksPerNode)) {
-            flags |= IBs[rank % this->nranksPerNode];
-          } else
-            flags |= Transport::CudaIpc;
-        }
+      } else if (type == ChannelType::PORT) {
+        if (!inSameNode(rank, info.accessRank, this->nranksPerNode)) {
+          flags |= IBs[rank % this->nranksPerNode];
+        } else
+          flags |= Transport::CudaIpc;
       }
     }
     return flags;
@@ -244,35 +242,17 @@ struct Executor::Impl {
           throw Error("Invalid buffer type", ErrorCode::ExecutorError);
       }
     };
-    auto getConnectedPeers = [&](std::vector<ChannelInfo>& infos) {
-      std::set<int> peers;
-      for (ChannelInfo& info : infos) {
-        for (int peer : info.connectedPeers) {
-          peers.insert(peer);
-        }
-      }
-      return std::vector<int>(peers.begin(), peers.end());
-    };
 
-    std::vector<BufferType> bufferTypes = plan.impl_->getConnectedBufferTypes(rank);
-    for (BufferType bufferType : bufferTypes) {
-      std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfosByDstRank(rank, bufferType);
-      TransportFlags transportFlags = getTransportFlags(channelInfos, rank);
-      RegisteredMemory memory =
-          this->comm->registerMemory(getBufferInfo(bufferType).first, getBufferInfo(bufferType).second, transportFlags);
-      std::vector<int> connectedPeers = getConnectedPeers(channelInfos);
-      std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
-      for (int peer : connectedPeers) {
-        comm->sendMemory(memory, peer, 0);
-      }
-      channelInfos = plan.impl_->getChannelInfos(rank, bufferType);
-      connectedPeers = getConnectedPeers(channelInfos);
-      for (int peer : connectedPeers) {
-        remoteRegMemoryFutures.push_back(comm->recvMemory(peer, 0));
-      }
-      for (size_t i = 0; i < remoteRegMemoryFutures.size(); i++) {
-        context.registeredMemories[{bufferType, connectedPeers[i]}] = std::move(remoteRegMemoryFutures[i].get());
-      }
+    for (const auto& bufferInfo : plan.impl_->getLocalBufferToSend(rank)) {
+      RegisteredMemory memory = this->comm->registerMemory(getBufferInfo(bufferInfo.bufferType).first,
+                                                           getBufferInfo(bufferInfo.bufferType).second,
+                                                           getTransportFlags(bufferInfo, rank));
+      comm->sendMemory(memory, bufferInfo.accessRank, 0);
+    }
+    for (const auto& bufferInfo : plan.impl_->getRemoteBufferInfos(rank)) {
+      std::shared_future<RegisteredMemory> remoteRegMemoryFuture = comm->recvMemory(bufferInfo.accessRank, 0);
+      context.registeredMemories[{bufferInfo.bufferType, bufferInfo.accessRank}] =
+          std::move(remoteRegMemoryFuture.get());
     }
   }
 
@@ -300,47 +280,25 @@ struct Executor::Impl {
       // Current semaphore construction requires two-way communication, e.g., to construct a semaphore signaling from
       // rank 0 to rank 1, both rank 0 and rank 1 need to send a message to each other. This PR fixes an executor bug
       // that fails to conduct two-way communication for constructing such one-way semaphores, and instead hangs
-      // during the semaphore construction. In the future, we may need to change the implementation to construct
-      // semaphore via one-way communication.
+      // during the semaphore construction.
       channelInfos = plan.impl_->getUnpairedChannelInfos(rank, nranks, channelType);
       processChannelInfos(channelInfos);
     }
     context.memorySemaphores = std::move(memorySemaphores);
     context.proxySemaphores = std::move(proxySemaphores);
 
-    auto getBufferSize = [&](BufferType type) {
-      switch (type) {
-        case BufferType::INPUT:
-          return sendBufferSize;
-        case BufferType::OUTPUT:
-          return recvBufferSize;
-        case BufferType::SCRATCH:
-          return context.scratchBufferSize;
-        default:
-          throw Error("Invalid buffer type", ErrorCode::ExecutorError);
-      }
-    };
-
     for (ChannelType channelType : channelTypes) {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(rank, channelType);
       int index = 0;
-      // for (ChannelInfo& info : channelInfos) {
-      //   void* src = getBuffer(info.srcBufferType, sendbuff, recvbuff, context.scratchBuffer.get());
-      //   size_t bufferSize = getBufferSize(info.srcBufferType);
-      //   TransportFlags transport = getTransportFlags(channelInfos, rank);
-      //   RegisteredMemory localMemory = this->comm->registerMemory(src, bufferSize, transport);
-      //   for (int peer : info.connectedPeers) {
-      //     if (channelType == ChannelType::MEMORY) {
-      //       context.memoryChannels.emplace_back(context.memorySemaphores[index++],
-      //                                           context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
-      //     } else if (channelType == ChannelType::PORT) {
-      //       context.portChannels.emplace_back(context.proxyService->portChannel(
-      //           context.proxySemaphores[index++],
-      //           context.proxyService->addMemory(context.registeredMemories[{info.dstBufferType, peer}]),
-      //           context.proxyService->addMemory(localMemory)));
-      //     }
-      //   }
-      // }
+      for (ChannelInfo& info : channelInfos) {
+        for (int peer : info.connectedPeers) {
+          if (channelType == ChannelType::MEMORY) {
+            context.memoryChannels.emplace_back(context.memorySemaphores[index++]);
+          } else if (channelType == ChannelType::PORT) {
+            context.portChannels.emplace_back(context.proxyService->basePortChannel(context.proxySemaphores[index++]));
+          }
+        }
+      }
     }
   }
 
