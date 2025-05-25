@@ -324,23 +324,23 @@ struct Executor::Impl {
     for (ChannelType channelType : channelTypes) {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(rank, channelType);
       int index = 0;
-      for (ChannelInfo& info : channelInfos) {
-        void* src = getBuffer(info.srcBufferType, sendbuff, recvbuff, context.scratchBuffer.get());
-        size_t bufferSize = getBufferSize(info.srcBufferType);
-        TransportFlags transport = getTransportFlags(channelInfos, rank);
-        RegisteredMemory localMemory = this->comm->registerMemory(src, bufferSize, transport);
-        for (int peer : info.connectedPeers) {
-          if (channelType == ChannelType::MEMORY) {
-            context.memoryChannels.emplace_back(context.memorySemaphores[index++],
-                                                context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
-          } else if (channelType == ChannelType::PORT) {
-            context.portChannels.emplace_back(context.proxyService->portChannel(
-                context.proxySemaphores[index++],
-                context.proxyService->addMemory(context.registeredMemories[{info.dstBufferType, peer}]),
-                context.proxyService->addMemory(localMemory)));
-          }
-        }
-      }
+      // for (ChannelInfo& info : channelInfos) {
+      //   void* src = getBuffer(info.srcBufferType, sendbuff, recvbuff, context.scratchBuffer.get());
+      //   size_t bufferSize = getBufferSize(info.srcBufferType);
+      //   TransportFlags transport = getTransportFlags(channelInfos, rank);
+      //   RegisteredMemory localMemory = this->comm->registerMemory(src, bufferSize, transport);
+      //   for (int peer : info.connectedPeers) {
+      //     if (channelType == ChannelType::MEMORY) {
+      //       context.memoryChannels.emplace_back(context.memorySemaphores[index++],
+      //                                           context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
+      //     } else if (channelType == ChannelType::PORT) {
+      //       context.portChannels.emplace_back(context.proxyService->portChannel(
+      //           context.proxySemaphores[index++],
+      //           context.proxyService->addMemory(context.registeredMemories[{info.dstBufferType, peer}]),
+      //           context.proxyService->addMemory(localMemory)));
+      //     }
+      //   }
+      // }
     }
   }
 

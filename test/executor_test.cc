@@ -129,6 +129,7 @@ int main(int argc, char* argv[]) {
     NpKit::Init(rank);
   }
 
+  sleep(30);
   mscclpp::ExecutionPlan plan(executionPlanPath);
   std::shared_ptr<char> sendbuff = mscclpp::GpuBuffer(bufferSize).memory();
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);

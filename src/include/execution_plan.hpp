@@ -15,12 +15,10 @@
 namespace mscclpp {
 
 struct ChannelKey {
-  BufferType srcBufferType;
-  BufferType dstBufferType;
+  BufferType bufferType;
   ChannelType channelType;
   bool operator==(const ChannelKey& other) const {
-    return srcBufferType == other.srcBufferType && dstBufferType == other.dstBufferType &&
-           channelType == other.channelType;
+    return bufferType == other.bufferType && channelType == other.channelType;
   }
 };
 
@@ -35,8 +33,7 @@ namespace std {
 template <>
 struct hash<mscclpp::ChannelKey> {
   std::size_t operator()(const mscclpp::ChannelKey& key) const {
-    return std::hash<int>()(static_cast<int>(key.srcBufferType)) ^
-           std::hash<int>()(static_cast<int>(key.dstBufferType)) ^ std::hash<int>()(static_cast<int>(key.channelType));
+    return std::hash<int>()(static_cast<int>(key.bufferType)) ^ std::hash<int>()(static_cast<int>(key.channelType));
   }
 };
 
@@ -54,17 +51,15 @@ struct hash<std::pair<int, mscclpp::ChannelType>> {
 namespace mscclpp {
 
 struct ChannelInfo {
-  BufferType srcBufferType;
-  BufferType dstBufferType;
   ChannelType channelType;
   std::vector<int> connectedPeers;
 };
 
 struct BufferInfo {
   int rank;
-  int dstRank;
+  int accessRank;
   BufferType bufferType;
-  std::vector<ChannelType> accessChannels;
+  std::vector<ChannelType> accessChannelTypes;
 };
 
 struct ExecutionPlan::Impl {
@@ -73,8 +68,6 @@ struct ExecutionPlan::Impl {
   ~Impl() = default;
 
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
-  std::vector<ChannelInfo> getChannelInfos(int rank, BufferType bufferType) const;
-  std::vector<ChannelInfo> getChannelInfosByDstRank(int rank, BufferType bufferType) const;
   std::vector<ChannelInfo> getUnpairedChannelInfos(int rank, int worldSize, ChannelType channelType);
   std::vector<NvlsInfo> getNvlsInfos(int rank, size_t sendBuffserSize = 0, size_t recvBufferSize = 0) const;
   std::vector<int> getConnectedPeers(int rank) const;

@@ -64,32 +64,24 @@ struct Operation {
   OperationType type;
   ChannelType channelType;
   union {
-    struct {
-      uint8_t inputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
-      uint8_t inputBufferIndexes[MAX_CHANNEL_PER_OPERATION];
-    };
+    uint8_t inputBufferIndexes[MAX_CHANNEL_PER_OPERATION];
     BufferType inputBufferType[MAX_CHANNEL_PER_OPERATION];
     uint8_t nvlsInputIndex;
   };
   union {
-    struct {
-      uint8_t outputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
-      uint8_t outputBufferIndexes[MAX_CHANNEL_PER_OPERATION];
-    };
+    uint8_t outputBufferIndexes[MAX_CHANNEL_PER_OPERATION];
     BufferType outputBufferType[MAX_CHANNEL_PER_OPERATION];
     uint8_t nvlsOutputIndex;
   };
 
   union {
     struct {
+      uint8_t channelIndexes[MAX_CHANNEL_PER_OPERATION];
       uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
       uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t inputBufferSizes[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputBufferSizes[MAX_CHANNEL_PER_OPERATION];
 
-      uint32_t inputOffset;
-      uint32_t outputOffset;
-      uint32_t size;
-      BufferType localInputBufferType;
-      BufferType localOutputBufferType;
       uint8_t nInputs;
       uint8_t nOutputs;
     };
