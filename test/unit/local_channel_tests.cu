@@ -46,7 +46,7 @@ static void localPortChannelTest(mscclpp::Transport transport) {
   bootstrap->initialize(mscclpp::TcpBootstrap::createUniqueId());
   auto communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
 
-  auto connectionFuture = communicator->connect(/*remoteRank*/ 0, /*tag*/ 0, transport);
+  auto connection = communicator->connect(/*remoteRank*/ 0, /*tag*/ 0, transport).get();
 
   const size_t bytes = 4 * 1024 * 1024;
   auto srcBuff = mscclpp::GpuBuffer(bytes).memory();
@@ -59,7 +59,7 @@ static void localPortChannelTest(mscclpp::Transport transport) {
   auto srcMemId = proxyService->addMemory(srcMem);
   auto dstMemId = proxyService->addMemory(dstMem);
 
-  auto sid = proxyService->buildAndAddSemaphore(*communicator, connectionFuture.get());
+  auto sid = proxyService->buildAndAddSemaphore(*communicator, connection);
   auto portChannel = proxyService->portChannel(sid, dstMemId, srcMemId);
   auto portChannelHandle = portChannel.deviceHandle();
 
