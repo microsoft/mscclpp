@@ -75,6 +75,8 @@ auto convertToBufferType = [](const std::string& str) {
   }
 };
 
+auto convertToBufferSize = [](const int index, const uint32_t unitSize, const size_t bufferSize) { return -1; };
+
 auto convertToChannelType = [](const std::string& str) {
   if (str == "memory" || str == "sm") {
     return mscclpp::ChannelType::MEMORY;
@@ -158,12 +160,12 @@ std::vector<int> ExecutionPlan::Impl::getConnectedPeers(int rank) const {
   return std::vector<int>(peers.begin(), peers.end());
 }
 
-std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) const {
-  std::set<BufferType> bufferTypes;
-  for (const auto& info : this->remoteBufferInfos.at(rank)) {
-    bufferTypes.insert(info.bufferType);
-  }
-  return std::vector<BufferType>(bufferTypes.begin(), bufferTypes.end());
+std::vector<BufferInfo> ExecutionPlan::Impl::getRemoteBufferInfos(int rank) const {
+  return this->remoteBufferInfos.at(rank);
+}
+
+std::vector<BufferInfo> ExecutionPlan::Impl::getLocalBufferToSend(int rank) const {
+  return this->localBufferToSend.at(rank);
 }
 
 size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const {
@@ -260,9 +262,10 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t output
   this->setupOperations(gpus, contsSrcOffset, constDstOffset);
 }
 
-void ExecutionPlan::Impl::parseChannels(
-    const json& gpu, std::vector<ChannelInfo>& channelInfos, std::vector<NvlsInfo>& nvlsInfos,
-    std::map<std::pair<int, ChannelType>, std::vector<int>>& chanConnectedPeersMap, int rank) {
+void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo>& channelInfos,
+                                        std::vector<NvlsInfo>& nvlsInfos,
+                                        std::map<std::pair<int, ChannelType>, std::vector<int>>& chanConnectedPeersMap,
+                                        int rank) {
   for (const auto& channel : gpu["channels"]) {
     ChannelType chanType = convertToChannelType(channel["type"]);
 
@@ -290,19 +293,23 @@ void ExecutionPlan::Impl::parseChannels(
   }
 }
 
-void ExecutionPlan::Impl::parseRemoteBuffer(const nlohmann::json& gpu, std::vector<BufferInfo>& remoteBufferInfos,
-                                            std::unordered_map<int, std::vector<BufferInfo>>& localBufferToSend,
-                                            int rank) {
+void ExecutionPlan::Impl::parseRemoteBuffer(const nlohmann::json& gpu, int rank) {
+  auto& bufferInfos = this->remoteBufferInfos[rank];
+  auto& bufferIndexMap = this->bufferIndexMap[rank];
+  std::unordered_map<ChannelType, int> channelCountMap;
   for (auto& remoteBuffer : gpu["remoteBuffers"]) {
+    int bufferId = bufferInfos.size();
     int oriRank = remoteBuffer["rank"];
     BufferType bufferType = convertToBufferType(remoteBuffer["type"]);
     std::vector<ChannelType> accessChannels;
     for (const auto& channel : remoteBuffer["accessChannelTypes"]) {
-      accessChannels.push_back(convertToChannelType(channel));
+      ChannelType chanType = convertToChannelType(channel);
+      accessChannels.push_back(chanType);
+      bufferIndexMap[{bufferId, chanType}] = channelCountMap[chanType]++;
     }
     BufferInfo info{oriRank, rank, bufferType, accessChannels};
-    remoteBufferInfos.push_back(info);
-    localBufferToSend[oriRank].push_back(info);
+    bufferInfos.push_back(info);
+    this->localBufferToSend[oriRank].push_back(info);
   }
 }
 
@@ -316,7 +323,7 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
     std::vector<ChannelInfo> channelInfos;
     std::vector<NvlsInfo> nvlsInfos;
     this->parseChannels(gpu, channelInfos, nvlsInfos, chanConnectedPeersMap, rank);
-    this->parseRemoteBuffer(gpu, this->remoteBufferInfos[rank], this->localBufferToSend, rank);
+    this->parseRemoteBuffer(gpu, rank);
     this->channelInfos[rank] = channelInfos;
     this->nvlsInfos[rank] = nvlsInfos;
   }
@@ -374,6 +381,37 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   }
 }
 
+void ExecutionPlan::Impl::setupRemoteBuffers(const json& gpus) {
+  for (const auto& gpu : gpus) {
+    int rank = gpu["id"];
+    this->parseRemoteBuffer(gpu, rank);
+  }
+
+  // setup threadblockBufferMap
+  for (const auto& gpu : gpus) {
+    int rank = gpu["id"];
+    int nthreadblocks = gpu["threadblocks"].size();
+    this->threadblockMemoryChannelBufferMap[rank].resize(nthreadblocks);
+    this->threadblockPortChannelBufferMap[rank].resize(nthreadblocks);
+    for (const auto& threadblock : gpu["threadblocks"]) {
+      for (const auto& remoteBuffRef : threadblock["remoteBuffersRefs"]) {
+        ChannelType accessChanType = convertToChannelType(remoteBuffRef["accessChannelType"]);
+        if (accessChanType == ChannelType::PORT) {
+          for (const auto& bufferId : remoteBuffRef["ids"]) {
+            this->threadblockPortChannelBufferMap[rank][threadblock["id"]].push_back(
+                this->bufferIndexMap[rank][{bufferId, accessChanType}]);
+          }
+        } else if (accessChanType == ChannelType::MEMORY) {
+          for (const auto& bufferId : remoteBuffRef["ids"]) {
+            this->threadblockMemoryChannelBufferMap[rank][threadblock["id"]].push_back(
+                this->bufferIndexMap[rank][{bufferId, accessChanType}]);
+          }
+        }
+      }
+    }
+  }
+}
+
 void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffset, size_t constDstOffset) {
   auto getConstOffset = [&](BufferType type) -> size_t {
     switch (type) {
@@ -394,7 +432,6 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
     for (const auto& threadblock : gpu["threadblocks"]) {
       std::unordered_map<ChannelKey, std::vector<int>> channelIndexes;
       std::vector<Operation> ops;
-      int threadblockId = threadblock["id"];
       for (const auto& op : threadblock["ops"]) {
         Operation operation = {};
         std::vector<uint32_t> chunkIndexes;
@@ -406,7 +443,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
           if (operation.channelType == mscclpp::ChannelType::NVLS) {
             operation.nvlsInputIndex = op["cids"][0];
           } else {
-            for (int i = 0; i < op["cids"].size(); i++) {
+            for (uint32_t i = 0; i < op["cids"].size(); i++) {
               operation.channelIndexes[i] = op["cids"][i];
             }
           }
@@ -414,28 +451,41 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
         if (op.contains("src_buff")) {
           operation.nInputs = op["src_buff"].size();
           for (int i = 0; i < operation.nInputs; i++) {
+            auto& buff = op["src_buff"][i];
+            size_t constOffset = 0;
+            if (buff.contains("type")) {
+              operation.inputBuffRefs[i].bufferType = convertToBufferType(buff["type"]);
+              constOffset = getConstOffset(operation.inputBuffRefs[i].bufferType);
+            }
+            if (buff.contains("buff_id")) {
+              operation.inputBuffRefs[i].bufferId = buff["buff_id"];
+              constOffset =
+                  getConstOffset(this->remoteBufferInfos[rank][operation.inputBuffRefs[i].bufferId].bufferType);
+            }
             operation.inputOffsets[i] =
-                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["src_buff"][i]["offset"]) +
-                getConstOffset(operation.inputBufferType[i]);
-            operation.inputBufferType[i] = convertToBufferType(op["src_buff"][i]["type"]);
-            chunkIndexes.push_back((uint32_t)op["src_buff"][i]["offset"]);
+                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)buff["offset"]) + constOffset;
+            operation.inputBufferSizes[i] = (uint32_t)buff["size"];  // TODO: Fix
           }
         }
-        // will have either dsts or o_cids
         if (op.contains("dst_buff")) {
           operation.nOutputs = op["dst_buff"].size();
           for (int i = 0; i < operation.nOutputs; i++) {
+            auto& buff = op["dst_buff"][i];
+            size_t constOffset = 0;
+            if (buff.contains("type")) {
+              operation.outputBufferRefs[i].bufferType = convertToBufferType(buff["type"]);
+              constOffset = getConstOffset(operation.outputBufferRefs[i].bufferType);
+            }
+            if (buff.contains("buff_id")) {
+              operation.outputBufferRefs[i].bufferId = buff["buff_id"];
+              constOffset =
+                  getConstOffset(this->remoteBufferInfos[rank][operation.outputBufferRefs[i].bufferId].bufferType);
+            }
             operation.outputOffsets[i] =
-                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["dst_buff"][i]["offset"]) +
-                getConstOffset(operation.outputBufferType[i]);
-            operation.outputBufferType[i] = convertToBufferType(op["dst_buff"][i]["type"]);
-            chunkIndexes.push_back((uint32_t)op["dst_buff"][i]["offset"]);
+                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)buff["offset"]) + constOffset;
+            operation.outputBufferSizes[i] = (uint32_t)buff["size"];  // TODO: Fix
           }
         }
-        // if (op.contains("cnt")) {
-        //   operation.size =
-        //       this->getNChunkSize(rank, this->inputSize, this->outputSize, (uint32_t)op["cnt"], chunkIndexes);
-        // }
         if (op.contains("barrier_id")) {
           operation.deviceSyncerIndex = op["barrier_id"];
         }

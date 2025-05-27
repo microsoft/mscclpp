@@ -113,7 +113,13 @@ struct ExecutionContext {
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<int, std::shared_ptr<Connection>> connections;
   std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
-  std::unordered_map<std::pair<BufferType, int>, mscclpp::RegisteredMemory> registeredMemories;
+
+  // For registered memories, registeredMemoryAddresses is used for memoryChannel and registeredMemoryIds is used for
+  // proxy channel
+  std::vector<mscclpp::RegisteredMemory> registeredMemories;
+  std::vector<uintptr_t> registeredMemoryAddresses;
+  std::vector<mscclpp::MemoryId> registeredMemoryIds;
+
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::vector<mscclpp::SemaphoreId> proxySemaphores;
   std::vector<mscclpp::BaseMemoryChannel> memoryChannels;
@@ -177,8 +183,8 @@ struct Executor::Impl {
     context.proxyService = std::make_shared<ProxyService>();
     context.nthreadsPerBlock = plan.impl_->getNThreadsPerBlock();
     this->setupConnections(context, rank, plan, sendMemRange, recvMemRange);
-    this->setupRegisteredMemories(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
+    this->setupRegisteredMemories(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
@@ -243,16 +249,38 @@ struct Executor::Impl {
       }
     };
 
+    std::vector<BufferInfo> localBufferWithProxyChannel;
     for (const auto& bufferInfo : plan.impl_->getLocalBufferToSend(rank)) {
       RegisteredMemory memory = this->comm->registerMemory(getBufferInfo(bufferInfo.bufferType).first,
                                                            getBufferInfo(bufferInfo.bufferType).second,
                                                            getTransportFlags(bufferInfo, rank));
       comm->sendMemory(memory, bufferInfo.accessRank, 0);
+      for (ChannelType chanType : bufferInfo.accessChannelTypes) {
+        if (chanType == ChannelType::PORT) {
+          localBufferWithProxyChannel.push_back(bufferInfo);
+        }
+      }
+    }
+    // Add local src,dst and scratch to registeredMemoryIds
+    for (auto& bufferType : {BufferType::INPUT, BufferType::OUTPUT, BufferType::SCRATCH}) {
+      TransportFlags flags = Transport::CudaIpc;
+#if defined(USE_IBVERBS)
+      flags |= IBs[rank % this->nranksPerNode];
+#endif
+      RegisteredMemory localMemory =
+          this->comm->registerMemory(getBufferInfo(bufferType).first, getBufferInfo(bufferType).second, flags);
+      context.proxyService->addMemory(localMemory);
     }
     for (const auto& bufferInfo : plan.impl_->getRemoteBufferInfos(rank)) {
       std::shared_future<RegisteredMemory> remoteRegMemoryFuture = comm->recvMemory(bufferInfo.accessRank, 0);
-      context.registeredMemories[{bufferInfo.bufferType, bufferInfo.accessRank}] =
-          std::move(remoteRegMemoryFuture.get());
+      context.registeredMemories.emplace_back(std::move(remoteRegMemoryFuture.get()));
+      for (ChannelType chanType : bufferInfo.accessChannelTypes) {
+        if (chanType == ChannelType::MEMORY) {
+          context.registeredMemoryAddresses.push_back((uintptr_t)context.registeredMemories.back().data());
+        } else if (chanType == ChannelType::PORT) {
+          context.registeredMemoryIds.push_back(context.proxyService->addMemory(context.registeredMemories.back()));
+        }
+      }
     }
   }
 
@@ -336,6 +364,16 @@ struct Executor::Impl {
       for (const auto& [index, _] : plan.impl_->threadblockNvlsChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.nvlsChannels[chanIndex++] = mscclpp::deviceHandle(context.nvlsChannels[index]);
       }
+      int memIndex = 0;
+      for (const int index : plan.impl_->threadblockMemoryChannelBufferMap.at(rank).at(threadblock)) {
+        deviceExecutionPlan.remoteBuffers.remoteBuffersViaMemoryChannel[memIndex++] =
+            context.registeredMemoryAddresses[index];
+      }
+      memIndex = 0;
+      for (const int index : plan.impl_->threadblockPortChannelBufferMap.at(rank).at(threadblock)) {
+        deviceExecutionPlan.remoteBuffers.remoteBuffersViaPortChannel[memIndex++] = context.registeredMemoryIds[index];
+      }
+
       if (ops.size() > MAX_OPERATION) {
         throw Error("Executor plan launching " + std::to_string(ops.size()) +
                         " operations, exceeding device execution plan support (" + std::to_string(MAX_OPERATION) + ")",

@@ -25,7 +25,7 @@
           "channels": [
             { "ctype": "memory", "cids": [0] }
           ],
-          "remoteBuffersIds": []
+          "remoteBuffersRefs": []
         }
       ],
       "channels": [
@@ -59,7 +59,7 @@
           "channels": [
             { "ctype": "memory", "cids": [0] }
           ],
-          "remoteBuffersIds": [0]
+          "remoteBuffersRefs": [{"accessChannelType": "memory", "ids": [0]}]
         }
       ],
       "channels": [

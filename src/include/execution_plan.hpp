@@ -82,6 +82,7 @@ struct ExecutionPlan::Impl {
   void loadExecutionPlan(int rank, size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
   void lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
   void setupChannels(const nlohmann::json& gpus);
+  void setupRemoteBuffers(const nlohmann::json& gpus);
   void setupOperations(const nlohmann::json& gpus, size_t contsSrcOffset, size_t constDstOffset);
 
   void reset();
@@ -104,6 +105,11 @@ struct ExecutionPlan::Impl {
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockMemoryChannelMap;
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockPortChannelMap;
   std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockNvlsChannelMap;
+  // threadblockBuffersMap[rank][threadblock] = bufferIndex
+  std::unordered_map<int, std::vector<std::vector<int>>> threadblockMemoryChannelBufferMap;
+  std::unordered_map<int, std::vector<std::vector<int>>> threadblockPortChannelBufferMap;
+
+  std::unordered_map<int, std::unordered_map<std::pair<int, ChannelType>, int>> bufferIndexMap;
   std::unordered_map<int, uint32_t> inputChunks;
   std::unordered_map<int, uint32_t> outputChunks;
   std::unordered_map<int, uint32_t> scratchChunks;
@@ -125,8 +131,7 @@ struct ExecutionPlan::Impl {
   void parseChannels(const nlohmann::json& gpu, std::vector<ChannelInfo>& channelInfos,
                      std::vector<NvlsInfo>& nvlsInfos,
                      std::map<std::pair<int, ChannelType>, std::vector<int>>& chanConnectedPeersMap, int rank);
-  void parseRemoteBuffer(const nlohmann::json& gpu, std::vector<BufferInfo>& remoteBufferInfos,
-                         std::unordered_map<int, std::vector<BufferInfo>>& localBufferToSend, int rank);
+  void parseRemoteBuffer(const nlohmann::json& gpu, int rank);
 };
 
 }  // namespace mscclpp

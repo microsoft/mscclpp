@@ -13,6 +13,10 @@ namespace mscclpp {
 constexpr int MAX_CHANNEL = 16;
 constexpr int MAX_CHANNEL_PER_OPERATION = 8;
 constexpr int MAX_OPERATION = 64;
+constexpr int INPUT_BUFFER_MEMORY_ID = 0;
+constexpr int OUTPUT_BUFFER_MEMORY_ID = 1;
+constexpr int SCRATCH_BUFFER_MEMORY_ID = 2;
+constexpr int MAX_RESERVED_MEMORY_IDS = 3;
 
 enum class BufferType : uint8_t {
   NONE,
@@ -60,17 +64,25 @@ struct Channels {
   mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels[MAX_CHANNEL];
 };
 
+struct RemoteBuffers {
+  uintptr_t remoteBuffersViaMemoryChannel[MAX_CHANNEL];
+  MemoryId remoteBuffersViaPortChannel[MAX_CHANNEL];
+};
+
+union BufferRef {
+  uint8_t bufferId;
+  BufferType bufferType;
+};
+
 struct Operation {
   OperationType type;
   ChannelType channelType;
   union {
-    uint8_t inputBufferIndexes[MAX_CHANNEL_PER_OPERATION];
-    BufferType inputBufferType[MAX_CHANNEL_PER_OPERATION];
+    BufferRef inputBuffRefs[MAX_CHANNEL_PER_OPERATION];
     uint8_t nvlsInputIndex;
   };
   union {
-    uint8_t outputBufferIndexes[MAX_CHANNEL_PER_OPERATION];
-    BufferType outputBufferType[MAX_CHANNEL_PER_OPERATION];
+    BufferRef outputBufferRefs[MAX_CHANNEL_PER_OPERATION];
     uint8_t nvlsOutputIndex;
   };
 
@@ -104,6 +116,7 @@ struct __attribute__((aligned(16))) DeviceExecutionPlan {
   uint8_t nPortChannels;                // 1 bytes
   uint16_t nOperations;                 // 2 bytes
   Channels channels;                    // 2304 bytes
+  RemoteBuffers remoteBuffers;          // 192 bytes
   Operation operations[MAX_OPERATION];  // 64 * 100 = 6400 bytes
 };
 
