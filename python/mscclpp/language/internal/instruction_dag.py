@@ -1,5 +1,5 @@
-from mscclpp.language.src.types import Operation, ChannelType
-from mscclpp.language.json_generation.json_types import RemoteBuffer
+from mscclpp.language.internal.types import Operation, ChannelType
+from mscclpp.language.internal.types import RemoteBuffer
 from typing import List
 
 

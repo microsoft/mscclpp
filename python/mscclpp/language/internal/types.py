@@ -3,7 +3,8 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Union, List
+from typing import List
+from collections import defaultdict
 
 
 class BufferType(Enum):
@@ -77,23 +78,30 @@ class Chunk:
 
 
 @dataclass
-class Operation:
-    inst: Instruction
-    rank: int
-    tb: int
-    local_chunks: List[Chunk] = field(default_factory=list)
-    remote_chunks: List[Chunk] = field(default_factory=list)
-    channel_ids: List[int] = field(default_factory=list)
-    channel_type: ChannelType = ChannelType.none
-
-
-@dataclass
 class RemoteBuffer:
+    __remote_buffer_count = defaultdict(int)
+    id: int
     rank: int
     type: BufferType
     channel_access: ChannelType
 
-    def json_to_dict(self):
+    def __init__(self, rank: int, type: BufferType, channel_access: ChannelType, set_id: bool = False):
+        if set_id:
+            self.id = RemoteBuffer.__remote_buffer_count[rank]
+            RemoteBuffer.__remote_buffer_count[rank] += 1
+        else:
+            self.id = -1
+
+        self.rank = rank
+        self.type = type
+        self.channel_access = channel_access
+
+    def set_id(self):
+        if self.id == -1:
+            self.id = RemoteBuffer.__remote_buffer_count[self.rank]
+            RemoteBuffer.__remote_buffer_count[self.rank] += 1
+
+    def to_json(self):
         return {"rank": self.rank, "type": self.type.value, "channel_access": self.channel_access.value}
 
     def __hash__(self):

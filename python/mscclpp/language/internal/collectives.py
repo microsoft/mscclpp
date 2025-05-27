@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from mscclpp.language.src.types import BufferType
+from mscclpp.language.internal.types import BufferType
 
 
 class Collective:

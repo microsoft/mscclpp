@@ -2,11 +2,11 @@
 # Licensed under the MIT License.
 
 import argparse
-from mscclpp.language.src.program import *
-from mscclpp.language.language_interface.channel import Channel
-from mscclpp.language.language_interface.rank import Rank
-from mscclpp.language.language_interface.general import *
-from mscclpp.language.src.collectives import AllGather
+from mscclpp.language.channel import *
+from mscclpp.language.rank import Rank
+from mscclpp.language.general import *
+from mscclpp.language.internal.program import MSCCLPPProgram
+from mscclpp.language.internal.collectives import AllGather
 
 
 def allgather_example(name, gpus, num_threads_per_block, min_message_size, max_message_size):

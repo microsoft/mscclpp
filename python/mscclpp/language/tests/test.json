@@ -66,14 +66,17 @@
             {
               "channel_type": "memory",
               "channel_ids": [
-                [
-                  0
-                ]
+                0
               ]
             }
           ],
           "remoteBufferIds": [
-            0
+            {
+              "accessChannelType": "memory",
+              "remoteBufferIds": [
+                0
+              ]
+            }
           ]
         }
       ],
@@ -81,18 +84,18 @@
         {
           "type": "memory",
           "connectedTo": [
-            0
+            1
           ]
         }
       ],
       "remote_buffers": [
         {
-          "rank": 1,
+          "rank": 0,
           "type": "o",
           "channel_access": "memory"
         }
       ],
-      "buffer_alignment": 0
+      "buffer_alignment": 64
     },
     {
       "id": 1,
@@ -156,14 +159,17 @@
             {
               "channel_type": "memory",
               "channel_ids": [
-                [
-                  0
-                ]
+                0
               ]
             }
           ],
           "remoteBufferIds": [
-            0
+            {
+              "accessChannelType": "memory",
+              "remoteBufferIds": [
+                0
+              ]
+            }
           ]
         }
       ],
@@ -171,18 +177,18 @@
         {
           "type": "memory",
           "connectedTo": [
-            1
+            0
           ]
         }
       ],
       "remote_buffers": [
         {
-          "rank": 0,
+          "rank": 1,
           "type": "o",
           "channel_access": "memory"
         }
       ],
-      "buffer_alignment": 0
+      "buffer_alignment": 64
     }
   ],
   "num_threads_per_block": 1024,
