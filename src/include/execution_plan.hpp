@@ -101,10 +101,10 @@ struct ExecutionPlan::Impl {
   std::unordered_map<std::pair<int, ChannelType>, std::unordered_map<int, int>> channelCountMap;
   // for nvls channels
   std::unordered_map<int, std::vector<NvlsInfo>> nvlsInfos;
-  // threadblockChannelMap[rank][threadblock] = [channelIndex, channelKey]
-  std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockMemoryChannelMap;
-  std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockPortChannelMap;
-  std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockNvlsChannelMap;
+  // threadblockChannelMap[rank][threadblock] = channelIndex
+  std::unordered_map<int, std::vector<std::vector<int>>> threadblockMemoryChannelMap;
+  std::unordered_map<int, std::vector<std::vector<int>>> threadblockPortChannelMap;
+  std::unordered_map<int, std::vector<std::vector<int>>> threadblockNvlsChannelMap;
   // threadblockBuffersMap[rank][threadblock] = bufferIndex
   std::unordered_map<int, std::vector<std::vector<int>>> threadblockMemoryChannelBufferMap;
   std::unordered_map<int, std::vector<std::vector<int>>> threadblockPortChannelBufferMap;

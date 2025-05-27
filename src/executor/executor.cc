@@ -353,15 +353,15 @@ struct Executor::Impl {
       deviceExecutionPlan.nMemoryChannels = plan.impl_->threadblockMemoryChannelMap.at(rank).at(threadblock).size();
       deviceExecutionPlan.nPortChannels = plan.impl_->threadblockPortChannelMap.at(rank).at(threadblock).size();
       int chanIndex = 0;
-      for (const auto& [index, _] : plan.impl_->threadblockMemoryChannelMap.at(rank).at(threadblock)) {
+      for (const int index : plan.impl_->threadblockMemoryChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.memoryChannels[chanIndex++] = mscclpp::deviceHandle(context.memoryChannels[index]);
       }
       chanIndex = 0;
-      for (const auto& [index, _] : plan.impl_->threadblockPortChannelMap.at(rank).at(threadblock)) {
+      for (const int index : plan.impl_->threadblockPortChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.portChannels[chanIndex++] = mscclpp::deviceHandle(context.portChannels[index]);
       }
       chanIndex = 0;
-      for (const auto& [index, _] : plan.impl_->threadblockNvlsChannelMap.at(rank).at(threadblock)) {
+      for (const int index : plan.impl_->threadblockNvlsChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.nvlsChannels[chanIndex++] = mscclpp::deviceHandle(context.nvlsChannels[index]);
       }
       int memIndex = 0;

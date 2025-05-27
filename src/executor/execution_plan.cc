@@ -234,6 +234,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize, size_t o
     this->scratchChunks[rank] = gpu["scratchChunks"];
   }
   this->setupChannels(gpus);
+  this->setupRemoteBuffers(gpus);
   this->setupOperations(gpus, contsSrcOffset, constDstOffset);
 }
 
@@ -366,14 +367,17 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
     for (const auto& threadblock : gpu["threadblocks"]) {
       for (const auto& channel : threadblock["channels"]) {
         ChannelType channelType = convertToChannelType(channel["ctype"]);
-        ChannelKey key = {convertToBufferType(channel["src"]), channelType};
+        ChannelKey key = {BufferType::NONE, channelType};
+        if (channel.contains("buff")) {
+          key = {convertToBufferType(channel["buff"]), channelType};
+        }
         for (int id : channel["cids"]) {
           if (channelType == ChannelType::MEMORY) {
-            this->threadblockMemoryChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
+            this->threadblockMemoryChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id]);
           } else if (channelType == ChannelType::PORT) {
-            this->threadblockPortChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
+            this->threadblockPortChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id]);
           } else if (channelType == ChannelType::NVLS) {
-            this->threadblockNvlsChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
+            this->threadblockNvlsChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id]);
           }
         }
       }
