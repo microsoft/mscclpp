@@ -191,9 +191,11 @@ bool isNvlsSupported() {
   [[maybe_unused]] static bool isChecked = false;
 #if (CUDA_NVLS_API_AVAILABLE)
   if (!isChecked) {
+    int deviceId;
     int isMulticastSupported;
     CUdevice dev;
-    MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
+    MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+    MSCCLPP_CUTHROW(cuDeviceGet(&dev, deviceId));
     MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isMulticastSupported, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
     return isMulticastSupported == 1;
   }
