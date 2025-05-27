@@ -16,7 +16,7 @@
             { "name": "rsignal", "cids": [0], "ctype": "memory" },
             {
               "name": "rwait",
-              "cids": [ {"id": 0} ],
+              "cids": [0],
               "ctype": "memory"
             },
             { "name": "signal", "cids": [0], "ctype": "memory" },

@@ -58,6 +58,12 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::REDUCE_PACKET;
   } else if (str == "glres") {
     return mscclpp::OperationType::MULTI_LOAD_REDUCE_STORE;
+  } else if (str == "rsignal") {
+    return mscclpp::OperationType::RELAXED_SIGNAL;
+  } else if (str == "rwait") {
+    return mscclpp::OperationType::RELAXED_WAIT;
+  } else if (str == "pipeline") {
+    return mscclpp::OperationType::PIPELINE;
   } else {
     throw mscclpp::Error("Invalid operation type", mscclpp::ErrorCode::ExecutorError);
   }
@@ -324,7 +330,6 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
     std::vector<ChannelInfo> channelInfos;
     std::vector<NvlsInfo> nvlsInfos;
     this->parseChannels(gpu, channelInfos, nvlsInfos, chanConnectedPeersMap, rank);
-    this->parseRemoteBuffer(gpu, rank);
     this->channelInfos[rank] = channelInfos;
     this->nvlsInfos[rank] = nvlsInfos;
   }
@@ -467,8 +472,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
                   getConstOffset(this->remoteBufferInfos[rank][operation.inputBuffRefs[i].bufferId].bufferType);
             }
             operation.inputOffsets[i] =
-                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)buff["offset"]) + constOffset;
-            operation.inputBufferSizes[i] = (uint32_t)buff["size"];  // TODO: Fix
+                this->getOffset(rank, this->inputSize, this->outputSize, buff["offset"]) + constOffset;
+            operation.inputBufferSizes[i] =
+                this->getBufferSize(rank, this->inputSize, this->outputSize, buff["offset"], buff["size"]);
           }
         }
         if (op.contains("dst_buff")) {
@@ -486,8 +492,9 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
                   getConstOffset(this->remoteBufferInfos[rank][operation.outputBufferRefs[i].bufferId].bufferType);
             }
             operation.outputOffsets[i] =
-                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)buff["offset"]) + constOffset;
-            operation.outputBufferSizes[i] = (uint32_t)buff["size"];  // TODO: Fix
+                this->getOffset(rank, this->inputSize, this->outputSize, buff["offset"]) + constOffset;
+            operation.outputBufferSizes[i] =
+                this->getBufferSize(rank, this->inputSize, this->outputSize, buff["offset"], buff["size"]);
           }
         }
         if (op.contains("barrier_id")) {
@@ -541,19 +548,11 @@ size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, size_t outputS
   return static_cast<size_t>(offset) * alignment;
 }
 
-size_t ExecutionPlan::Impl::getNChunkSize(int rank, size_t inputSize, size_t outputSize, uint32_t nChunks,
-                                          const std::vector<uint32_t> chunkIndexes) const {
-  size_t nChunkSize = 0;
-  for (uint32_t index : chunkIndexes) {
-    uint32_t beginOff = getOffset(rank, inputSize, outputSize, index);
-    uint32_t endOff = getOffset(rank, inputSize, outputSize, index + nChunks);
-    if (nChunkSize == 0) {
-      nChunkSize = endOff - beginOff;
-    } else if (nChunkSize != endOff - beginOff) {
-      throw Error("Inconsistent chunk size", ErrorCode::ExecutorError);
-    }
-  }
-  return nChunkSize;
+size_t ExecutionPlan::Impl::getBufferSize(int rank, size_t inputSize, size_t outputSize, uint32_t index,
+                                          uint32_t nChunks) const {
+  uint32_t beginOff = getOffset(rank, inputSize, outputSize, index);
+  uint32_t endOff = getOffset(rank, inputSize, outputSize, index + nChunks);
+  return endOff - beginOff;
 }
 
 size_t ExecutionPlan::Impl::getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const {

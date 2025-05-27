@@ -123,8 +123,7 @@ struct ExecutionPlan::Impl {
  private:
   std::pair<size_t, uint32_t> getSizeAndChunksForRank(int rank, size_t inputSize, size_t outputSize) const;
   size_t getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex, uint32_t alignment = 16) const;
-  size_t getNChunkSize(int rank, size_t inputSize, size_t outputSize, uint32_t nChunks,
-                       const std::vector<uint32_t> offsets) const;
+  size_t getBufferSize(int rank, size_t inputSize, size_t outputSize, uint32_t index, uint32_t nChunks) const;
   size_t getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const;
 
   // helper functions to setup the channels
