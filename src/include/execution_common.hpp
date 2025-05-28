@@ -72,15 +72,15 @@ struct RemoteBuffers {
 };
 
 union BufferRef {
-  uint8_t bufferId;
-  BufferType bufferType;
+  uint8_t id;
+  BufferType type;
 };
 
 struct Operation {
   OperationType type;
   ChannelType channelType;
   union {
-    BufferRef inputBuffRefs[MAX_CHANNEL_PER_OPERATION];
+    BufferRef inputBufferRefs[MAX_CHANNEL_PER_OPERATION];
     uint8_t nvlsInputIndex;
   };
   union {

@@ -81,8 +81,6 @@ auto convertToBufferType = [](const std::string& str) {
   }
 };
 
-auto convertToBufferSize = [](const int index, const uint32_t unitSize, const size_t bufferSize) { return -1; };
-
 auto convertToChannelType = [](const std::string& str) {
   if (str == "memory" || str == "sm") {
     return mscclpp::ChannelType::MEMORY;
@@ -463,13 +461,12 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
             auto& buff = op["src_buff"][i];
             size_t constOffset = 0;
             if (buff.contains("type")) {
-              operation.inputBuffRefs[i].bufferType = convertToBufferType(buff["type"]);
-              constOffset = getConstOffset(operation.inputBuffRefs[i].bufferType);
+              operation.inputBufferRefs[i].type = convertToBufferType(buff["type"]);
+              constOffset = getConstOffset(operation.inputBufferRefs[i].type);
             }
             if (buff.contains("buff_id")) {
-              operation.inputBuffRefs[i].bufferId = buff["buff_id"];
-              constOffset =
-                  getConstOffset(this->remoteBufferInfos[rank][operation.inputBuffRefs[i].bufferId].bufferType);
+              operation.inputBufferRefs[i].id = buff["buff_id"];
+              constOffset = getConstOffset(this->remoteBufferInfos[rank][operation.inputBufferRefs[i].id].bufferType);
             }
             operation.inputOffsets[i] =
                 this->getOffset(rank, this->inputSize, this->outputSize, buff["offset"]) + constOffset;
@@ -483,13 +480,12 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
             auto& buff = op["dst_buff"][i];
             size_t constOffset = 0;
             if (buff.contains("type")) {
-              operation.outputBufferRefs[i].bufferType = convertToBufferType(buff["type"]);
-              constOffset = getConstOffset(operation.outputBufferRefs[i].bufferType);
+              operation.outputBufferRefs[i].type = convertToBufferType(buff["type"]);
+              constOffset = getConstOffset(operation.outputBufferRefs[i].type);
             }
             if (buff.contains("buff_id")) {
-              operation.outputBufferRefs[i].bufferId = buff["buff_id"];
-              constOffset =
-                  getConstOffset(this->remoteBufferInfos[rank][operation.outputBufferRefs[i].bufferId].bufferType);
+              operation.outputBufferRefs[i].id = buff["buff_id"];
+              constOffset = getConstOffset(this->remoteBufferInfos[rank][operation.outputBufferRefs[i].id].bufferType);
             }
             operation.outputOffsets[i] =
                 this->getOffset(rank, this->inputSize, this->outputSize, buff["offset"]) + constOffset;
