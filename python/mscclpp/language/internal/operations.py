@@ -52,6 +52,7 @@ class PutOperation(BaseOperation):
         for chunk in self.dst_buff:
             result["dst_buff"].append(chunk.to_json())
         result["cids"] = self.channel_ids
+        result["ctype"] = self.channel_type.value
         return result
 
 

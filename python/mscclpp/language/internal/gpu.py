@@ -52,7 +52,7 @@ class Gpu:
             channels[ch.channel_type].append(ch.dst_rank)
         json_channels = []
         for ch_type, dst_ranks in channels.items():
-            json_channels.append({"type": ch_type.value, "connectedTo": dst_ranks})
+            json_channels.append({"type": ch_type.value, "connected_to": dst_ranks})
         return {
             "id": self.id,
             "input_chunks": self.input_chunks,

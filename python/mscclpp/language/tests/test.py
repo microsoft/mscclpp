@@ -52,9 +52,9 @@ def allgather_example(name, num_threads_per_block, min_message_size, max_message
                     # Step 3: source rank sends data to destination rank
                     ch.put(dst_chunk, src_chunk, tb=0)
                     # Step 4: source signals to indicate put is done
-                    ch.signal(tb=1, sync="before")
+                    ch.signal(tb=0, sync="before")
                     # Step 5: wait for receive data from destination rank
-                    ch.wait(tb=1, sync="after")
+                    ch.wait(tb=0, sync="after")
 
         print(JSON())
 

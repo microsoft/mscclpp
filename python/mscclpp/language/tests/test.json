@@ -45,29 +45,9 @@
               ],
               "cids": [
                 0
-              ]
-            }
-          ],
-          "channels": [
-            {
-              "channel_type": "memory",
-              "channel_ids": [
-                0
-              ]
-            }
-          ],
-          "remote_buffer_ids": [
-            {
-              "access_channel_types": "memory",
-              "remote_buffer_ids": [
-                0
-              ]
-            }
-          ]
-        },
-        {
-          "id": 1,
-          "ops": [
+              ],
+              "ctype": "memory"
+            },
             {
               "name": "signal",
               "cids": [
@@ -91,13 +71,20 @@
               ]
             }
           ],
-          "remote_buffer_ids": []
+          "remote_buffer_ids": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
         }
       ],
       "channels": [
         {
           "type": "memory",
-          "connectedTo": [
+          "connected_to": [
             1
           ]
         }
@@ -153,29 +140,9 @@
               ],
               "cids": [
                 0
-              ]
-            }
-          ],
-          "channels": [
-            {
-              "channel_type": "memory",
-              "channel_ids": [
-                0
-              ]
-            }
-          ],
-          "remote_buffer_ids": [
-            {
-              "access_channel_types": "memory",
-              "remote_buffer_ids": [
-                0
-              ]
-            }
-          ]
-        },
-        {
-          "id": 1,
-          "ops": [
+              ],
+              "ctype": "memory"
+            },
             {
               "name": "signal",
               "cids": [
@@ -199,13 +166,20 @@
               ]
             }
           ],
-          "remote_buffer_ids": []
+          "remote_buffer_ids": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
         }
       ],
       "channels": [
         {
           "type": "memory",
-          "connectedTo": [
+          "connected_to": [
             0
           ]
         }

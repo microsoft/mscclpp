@@ -18,7 +18,7 @@ class ThreadBlockRemoteBuffer:
     remote_buffer_ids: list[int] = field(default_factory=list)
 
     def to_json(self) -> dict:
-        return {"access_channel_types": self.access_channel_type.value, "remote_buffer_ids": self.remote_buffer_ids}
+        return {"access_channel_type": self.access_channel_type.value, "remote_buffer_ids": self.remote_buffer_ids}
 
 
 @dataclass

@@ -50,6 +50,9 @@ class BaseBuffer:
 
 class Buffer(BaseBuffer):
     def __init__(self, rank, size):
+        if rank >= get_program().num_ranks:
+            raise RuntimeError(f"Rank {rank} is out of bounds. Number of ranks: {self.prog.num_ranks}")
+        
         self.rank = rank
         self.buffer_type = BufferType.scratch
         self.offset = get_program().buffers_size[self.rank][BufferType.scratch]
