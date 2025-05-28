@@ -66,7 +66,7 @@ MSCCLPP_API_CPP void Fifo::flushTail(bool sync) {
 
 MSCCLPP_API_CPP int Fifo::size() const { return pimpl->size; }
 
-MSCCLPP_API_CPP FifoDeviceHandle Fifo::deviceHandle() {
+MSCCLPP_API_CPP FifoDeviceHandle Fifo::deviceHandle() const {
   FifoDeviceHandle deviceHandle;
   deviceHandle.triggers = pimpl->triggers.get();
   deviceHandle.head = pimpl->head.get();

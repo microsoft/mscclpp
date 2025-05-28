@@ -17,16 +17,16 @@ constexpr size_t DEFAULT_FIFO_SIZE = 128;
 /// A class representing a host proxy FIFO that can consume work elements pushed by device threads.
 class Fifo {
  public:
-  /// Constructs a new @ref Fifo object.
+  /// Constructs a new Fifo object.
   /// @param size The number of entires in the FIFO.
   Fifo(int size = DEFAULT_FIFO_SIZE);
 
-  /// Destroys the @ref Fifo object.
+  /// Destroys the Fifo object.
   ~Fifo();
 
   /// Polls the FIFO for a trigger.
   ///
-  /// Returns @ref ProxyTrigger which is the trigger at the head of fifo.
+  /// @return A ProxyTrigger which is the trigger at the head of fifo.
   ProxyTrigger poll();
 
   /// Pops a trigger from the FIFO.
@@ -41,10 +41,10 @@ class Fifo {
   /// @return The FIFO size.
   int size() const;
 
-  /// Returns a @ref FifoDeviceHandle object representing the device FIFO.
+  /// Returns a FifoDeviceHandle object representing the device FIFO.
   ///
-  /// @return A @ref FifoDeviceHandle object representing the device FIFO.
-  FifoDeviceHandle deviceHandle();
+  /// @return A FifoDeviceHandle object representing the device FIFO.
+  FifoDeviceHandle deviceHandle() const;
 
  private:
   struct Impl;
