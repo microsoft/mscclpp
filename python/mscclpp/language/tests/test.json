@@ -104,10 +104,10 @@
               ]
             }
           ],
-          "remoteBufferIds": [
+          "remote_buffer_ids": [
             {
-              "accessChannelType": "memory",
-              "remoteBufferIds": [
+              "access_channel_types": "memory",
+              "remote_buffer_ids": [
                 0
               ]
             }
@@ -126,12 +126,11 @@
         {
           "rank": 0,
           "type": "s",
-          "channel_access": [
+          "access_channel_types": [
             "memory"
           ]
         }
-      ],
-      "buffer_alignment": 64
+      ]
     },
     {
       "id": 1,
@@ -233,10 +232,10 @@
               ]
             }
           ],
-          "remoteBufferIds": [
+          "remote_buffer_ids": [
             {
-              "accessChannelType": "memory",
-              "remoteBufferIds": [
+              "access_channel_types": "memory",
+              "remote_buffer_ids": [
                 0
               ]
             }
@@ -255,16 +254,16 @@
         {
           "rank": 1,
           "type": "s",
-          "channel_access": [
+          "access_channel_types": [
             "memory"
           ]
         }
-      ],
-      "buffer_alignment": 64
+      ]
     }
   ],
   "num_threads_per_block": 1024,
   "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
   "min_message_size": 0,
   "max_message_size": 18446744073709551615
 }

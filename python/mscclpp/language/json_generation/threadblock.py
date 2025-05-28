@@ -2,7 +2,6 @@ from mscclpp.language.channel import Channel
 from mscclpp.language.internal.types import ChannelType, RemoteBuffer
 from dataclasses import dataclass, field
 
-
 @dataclass
 class ThreadBlockChannel:
     channel_type: ChannelType
@@ -18,7 +17,7 @@ class ThreadBlockRemoteBuffer:
     remote_buffer_ids: list[int] = field(default_factory=list)
 
     def to_json(self) -> dict:
-        return {"accessChannelType": self.access_channel_type.value, "remoteBufferIds": self.remote_buffer_ids}
+        return {"access_channel_types": self.access_channel_type.value, "remote_buffer_ids": self.remote_buffer_ids}
 
 
 @dataclass
@@ -56,7 +55,7 @@ class Threadblock:
             "id": self.id,
             "ops": [op.to_json() for op in self.ops],
             "channels": channels,
-            "remoteBufferIds": remote_buffers,
+            "remote_buffer_ids": remote_buffers,
         }
 
     def add_channel(self, channel: Channel):

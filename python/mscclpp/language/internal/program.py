@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from mscclpp.language.internal.collectives import Collective
+from mscclpp.language.collectives import Collective
 from mscclpp.language.channel import Channel
 from mscclpp.language.internal.globals import set_program
 from mscclpp.language.internal.types import BufferType, RemoteBuffer
@@ -19,9 +19,9 @@ class MSCCLPPProgram:
         protocol: str = "Simple",
         num_threads_per_block: int = 1024,
         use_double_scratch_buffer: bool = False,
+        buffer_alignment: int = 16,
         min_message_size: int = 0,
         max_message_size: int = 2**64 - 1,
-        buffer_alignment: int = 64,
     ):
         self.name = name
         self.collective = collective
@@ -29,6 +29,7 @@ class MSCCLPPProgram:
         self.protocol = protocol
         self.num_threads_per_block = num_threads_per_block
         self.use_double_scratch_buffer = use_double_scratch_buffer
+        self.buffer_alignment = buffer_alignment
         self.min_message_size = min_message_size
         self.max_message_size = max_message_size
         assert protocol == "Simple" or protocol == "LL", f"Given protocol: {protocol}. Must be either Simple, LL"
@@ -41,7 +42,6 @@ class MSCCLPPProgram:
                     self.buffers_size[rank][BufferType.input],
                     self.buffers_size[rank][BufferType.output],
                     self.buffers_size[rank][BufferType.scratch],
-                    buffer_alignment=buffer_alignment,
                 )
             )
 
@@ -72,6 +72,7 @@ class MSCCLPPProgram:
             "gpus": [gpu.to_json() for gpu in self.gpus],
             "num_threads_per_block": self.num_threads_per_block,
             "use_double_scratch_buffer": self.use_double_scratch_buffer,
+            "buffer_alignment": self.buffer_alignment,
             "min_message_size": self.min_message_size,
             "max_message_size": self.max_message_size,
         }

@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from typing import List
 from mscclpp.language.internal.types import ChannelType, Instruction, BufferType
 
-
 @dataclass
 class BaseOperation:
     name: str

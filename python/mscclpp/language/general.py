@@ -1,5 +1,4 @@
 from mscclpp.language.internal.globals import get_program
-import json
 
 
 def JSON():

@@ -13,7 +13,6 @@ class Gpu:
     threadblocks: list = field(default_factory=list)
     channels: list = field(default_factory=list)
     remote_buffers: set = field(default_factory=set)
-    buffer_alignment: int = 0
 
     def add_channel(self, channel: Channel):
         self.channels.append(channel)
@@ -61,5 +60,4 @@ class Gpu:
             "threadblocks": [tb.to_json() for tb in self.threadblocks],
             "channels": json_channels,
             "remote_buffers": [rb.to_json() for rb in self.remote_buffers],
-            "buffer_alignment": self.buffer_alignment,
         }

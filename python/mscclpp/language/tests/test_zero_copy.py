@@ -6,7 +6,7 @@ from mscclpp.language.channel import *
 from mscclpp.language.rank import *
 from mscclpp.language.general import *
 from mscclpp.language.internal.program import MSCCLPPProgram
-from mscclpp.language.internal.collectives import AllGather
+from mscclpp.language.collectives import AllGather
 
 
 def allgather_example(name, num_threads_per_block, min_message_size, max_message_size):
