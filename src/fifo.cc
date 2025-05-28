@@ -12,7 +12,7 @@ namespace mscclpp {
 struct Fifo::Impl {
   detail::UniqueGpuHostPtr<ProxyTrigger> triggers;
   detail::UniqueGpuPtr<uint64_t> head;
-  detail::UniqueGpuPtr<uint64_t> tailReplica;
+  std::shared_ptr<uint64_t> tailReplica;
   const int size;
 
   // allocated on the host. Only accessed by the host. This is a copy of the
@@ -30,7 +30,7 @@ struct Fifo::Impl {
   Impl(int size)
       : triggers(detail::gpuCallocHostUnique<ProxyTrigger>(size)),
         head(detail::gpuCallocUnique<uint64_t>()),
-        tailReplica(detail::gpuCallocUnique<uint64_t>()),
+        tailReplica(detail::gpuCallocHostShared<uint64_t>()),
         size(size),
         hostTail(0),
         stream(cudaStreamNonBlocking) {}
@@ -56,12 +56,13 @@ MSCCLPP_API_CPP void Fifo::pop() {
 MSCCLPP_API_CPP void Fifo::flushTail(bool sync) {
   // Flush the tail to device memory. This is either triggered every ProxyFlushPeriod to make sure that the fifo can
   // make progress even if there is no TriggerSync request.
-  AvoidCudaGraphCaptureGuard cgcGuard;
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(pimpl->tailReplica.get(), &pimpl->hostTail, sizeof(uint64_t),
-                                    cudaMemcpyHostToDevice, pimpl->stream));
-  if (sync) {
-    MSCCLPP_CUDATHROW(cudaStreamSynchronize(pimpl->stream));
-  }
+  // AvoidCudaGraphCaptureGuard cgcGuard;
+  // MSCCLPP_CUDATHROW(cudaMemcpyAsync(pimpl->tailReplica.get(), &pimpl->hostTail, sizeof(uint64_t),
+  //                                   cudaMemcpyHostToDevice, pimpl->stream));
+  // if (sync) {
+  //   MSCCLPP_CUDATHROW(cudaStreamSynchronize(pimpl->stream));
+  // }
+  *(pimpl->tailReplica.get()) = pimpl->hostTail;
 }
 
 MSCCLPP_API_CPP int Fifo::size() const { return pimpl->size; }
