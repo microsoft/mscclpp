@@ -14,23 +14,6 @@
           "id": 0,
           "ops": [
             {
-              "name": "copy",
-              "src_buff": [
-                {
-                  "type": "o",
-                  "index": 0,
-                  "size": 1
-                }
-              ],
-              "dst_buff": [
-                {
-                  "type": "s",
-                  "index": 0,
-                  "size": 1
-                }
-              ]
-            },
-            {
               "name": "signal",
               "cids": [
                 0
@@ -48,7 +31,7 @@
               "name": "put",
               "src_buff": [
                 {
-                  "type": "s",
+                  "type": "o",
                   "index": 0,
                   "size": 1
                 }
@@ -56,43 +39,12 @@
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 1,
+                  "index": 0,
                   "size": 1
                 }
               ],
               "cids": [
                 0
-              ]
-            },
-            {
-              "name": "signal",
-              "cids": [
-                0
-              ],
-              "ctype": "memory"
-            },
-            {
-              "name": "wait",
-              "cids": [
-                0
-              ],
-              "ctype": "memory"
-            },
-            {
-              "name": "copy",
-              "src_buff": [
-                {
-                  "type": "s",
-                  "index": 1,
-                  "size": 1
-                }
-              ],
-              "dst_buff": [
-                {
-                  "type": "o",
-                  "index": 1,
-                  "size": 1
-                }
               ]
             }
           ],
@@ -112,6 +64,34 @@
               ]
             }
           ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "wait",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_ids": []
         }
       ],
       "channels": [
@@ -125,7 +105,7 @@
       "remote_buffers": [
         {
           "rank": 0,
-          "type": "s",
+          "type": "o",
           "access_channel_types": [
             "memory"
           ]
@@ -142,23 +122,6 @@
           "id": 0,
           "ops": [
             {
-              "name": "copy",
-              "src_buff": [
-                {
-                  "type": "o",
-                  "index": 1,
-                  "size": 1
-                }
-              ],
-              "dst_buff": [
-                {
-                  "type": "s",
-                  "index": 0,
-                  "size": 1
-                }
-              ]
-            },
-            {
               "name": "signal",
               "cids": [
                 0
@@ -176,8 +139,8 @@
               "name": "put",
               "src_buff": [
                 {
-                  "type": "s",
-                  "index": 0,
+                  "type": "o",
+                  "index": 1,
                   "size": 1
                 }
               ],
@@ -190,37 +153,6 @@
               ],
               "cids": [
                 0
-              ]
-            },
-            {
-              "name": "signal",
-              "cids": [
-                0
-              ],
-              "ctype": "memory"
-            },
-            {
-              "name": "wait",
-              "cids": [
-                0
-              ],
-              "ctype": "memory"
-            },
-            {
-              "name": "copy",
-              "src_buff": [
-                {
-                  "type": "s",
-                  "index": 1,
-                  "size": 1
-                }
-              ],
-              "dst_buff": [
-                {
-                  "type": "o",
-                  "index": 0,
-                  "size": 1
-                }
               ]
             }
           ],
@@ -240,6 +172,34 @@
               ]
             }
           ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            },
+            {
+              "name": "wait",
+              "cids": [
+                0
+              ],
+              "ctype": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_ids": []
         }
       ],
       "channels": [
@@ -253,7 +213,7 @@
       "remote_buffers": [
         {
           "rank": 1,
-          "type": "s",
+          "type": "o",
           "access_channel_types": [
             "memory"
           ]

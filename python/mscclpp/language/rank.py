@@ -1,6 +1,5 @@
-from mscclpp.language.internal.program import MSCCLPPProgram
 from mscclpp.language.internal.types import BufferType, Chunk
-from mscclpp.language.json_generation.operations import CopyOperation, LocalChunk, RemoteChunk
+from mscclpp.language.internal.operations import CopyOperation, LocalChunk
 from mscclpp.language.internal.globals import get_program
 from dataclasses import dataclass
 

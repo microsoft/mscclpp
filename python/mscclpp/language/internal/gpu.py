@@ -1,7 +1,7 @@
 from mscclpp.language.channel import Channel
 from dataclasses import dataclass, field
-from mscclpp.language.json_generation.threadblock import Threadblock
-from mscclpp.language.json_generation.operations import BaseOperation
+from mscclpp.language.internal.threadblock import Threadblock
+from mscclpp.language.internal.operations import BaseOperation
 from mscclpp.language.internal.types import RemoteBuffer
 
 

@@ -3,46 +3,57 @@
 
 import argparse
 from mscclpp.language.channel import *
-from mscclpp.language.rank import Rank
+from mscclpp.language.rank import *
 from mscclpp.language.general import *
-from mscclpp.language.internal.program import MSCCLPPProgram
-from mscclpp.language.internal.collectives import AllGather
+from mscclpp.language.program import *
+from mscclpp.language.collectives import *
 
 
 def allgather_example(name, num_threads_per_block, min_message_size, max_message_size):
-    # Validating parameters
-    gpus = 2
-
-    size = gpus
+    gpu_size = 2
     chunksperloop = 1
-    collective = AllGather(size, chunksperloop, True)
+    collective = AllGather(gpu_size, chunksperloop, True)
     with MSCCLPPProgram(
         name,
         collective,
-        size,
+        gpu_size,
         protocol="Simple",
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
+        # Loop over each source GPU rank
+        for src_rank in range(gpu_size):
+            # Create a Rank object for the source GPU
+            rank = Rank(src_rank)
+            # Get the the src buffer where the data is stored
+            src_buffer = rank.get_output_buffer()
+            # Take a slice corresponding to data
+            src_chunk = src_buffer[src_rank : src_rank + 1]
 
-        size = gpus
-
-        for src_rank in range(size):
-            r = Rank(src_rank)
-            src_input_buffer = r.get_output_buffer()
-            src_chunk = src_input_buffer[src_rank : src_rank + 1]
-            for dst_rank in range(size):
-                r = Rank(dst_rank)
-                dst_input_buffer = r.get_output_buffer()
+            # Loop over each destination GPU rank
+            for dst_rank in range(gpu_size):
+                # Create a Rank object for the destination GPU
+                rank = Rank(dst_rank)
+                # Get the the dst buffer where the data will be send
+                dst_input_buffer = rank.get_output_buffer()
+                # Take a slice corresponding where the data will be send
                 dst_chunk = dst_input_buffer[src_rank : src_rank + 1]
+
+                # Skip sending from a rank to itself
                 if src_rank != dst_rank:
+                    # Define a channel from src_rank → dst_rank using memory channel
                     ch = Channel(dst_rank, src_rank, ChannelType.memory)
+                    # Step 1: source signals to indicate it is ready to receive data
                     ch.signal(tb=0, sync=None)
+                    # Step 2: wait for the destination rank to be ready
                     ch.wait(tb=0, sync="after")
+                    # Step 3: source rank sends data to destination rank
                     ch.put(dst_chunk, src_chunk, tb=0)
+                    # Step 4: source signals to indicate put is done
                     ch.signal(tb=1, sync="before")
+                    # Step 5: wait for receive data from destination rank
                     ch.wait(tb=1, sync="after")
 
         print(JSON())

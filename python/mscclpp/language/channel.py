@@ -3,7 +3,7 @@ from mscclpp.language.internal.types import RemoteBuffer
 from mscclpp.language.internal.globals import get_program
 from dataclasses import dataclass
 from collections import defaultdict
-from mscclpp.language.json_generation.operations import *
+from mscclpp.language.internal.operations import *
 
 
 @dataclass

@@ -5,8 +5,8 @@ from mscclpp.language.collectives import Collective
 from mscclpp.language.channel import Channel
 from mscclpp.language.internal.globals import set_program
 from mscclpp.language.internal.types import BufferType, RemoteBuffer
-from mscclpp.language.json_generation.gpu import Gpu
-from typing import List, Dict
+from mscclpp.language.internal.gpu import Gpu
+from typing import List
 import json
 
 

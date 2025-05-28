@@ -5,7 +5,7 @@ import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
 from mscclpp.language.general import *
-from mscclpp.language.internal.program import MSCCLPPProgram
+from mscclpp.language.program import MSCCLPPProgram
 from mscclpp.language.collectives import AllGather
 
 
