@@ -29,7 +29,9 @@ class Gpu:
             remote_buffer.set_id()
             self.remote_buffers.add(remote_buffer)
         else:
-            remote_buffer = self.remote_buffer.find(remote_buffer)
+            gpu_remote_buffer = self.remote_buffer.find(remote_buffer)
+            gpu_remote_buffer.channel_access.update(remote_buffer.channel_access)
+            remote_buffer = gpu_remote_buffer
 
         for i in range(len(self.threadblocks), tb + 1):
             self.threadblocks.append(Threadblock(i))

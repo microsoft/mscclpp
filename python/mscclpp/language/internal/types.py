@@ -80,10 +80,6 @@ class Chunk:
 @dataclass
 class RemoteBuffer:
     __remote_buffer_count = defaultdict(int)
-    id: int
-    rank: int
-    type: BufferType
-    channel_access: ChannelType
 
     def __init__(self, rank: int, type: BufferType, channel_access: ChannelType, set_id: bool = False):
         if set_id:
@@ -92,9 +88,9 @@ class RemoteBuffer:
         else:
             self.id = -1
 
-        self.rank = rank
-        self.type = type
-        self.channel_access = channel_access
+        self.rank: int = rank
+        self.type: int = type
+        self.channel_access: List[ChannelType] = [channel_access]
 
     def set_id(self):
         if self.id == -1:
@@ -102,7 +98,7 @@ class RemoteBuffer:
             RemoteBuffer.__remote_buffer_count[self.rank] += 1
 
     def to_json(self):
-        return {"rank": self.rank, "type": self.type.value, "channel_access": self.channel_access.value}
+        return {"rank": self.rank, "type": self.type.value, "channel_access": [ch.value for ch in self.channel_access]}
 
     def __hash__(self):
-        return hash((self.rank, self.type, self.channel_access))
+        return hash((self.rank, self.type))

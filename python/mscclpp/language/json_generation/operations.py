@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Dict, Set
+from typing import List
 from mscclpp.language.internal.types import ChannelType, Instruction, BufferType
 
 
@@ -30,7 +30,6 @@ class RemoteChunk:
 
 @dataclass
 class PutOperation(BaseOperation):
-
     def __init__(
         self,
         src_buff: List[LocalChunk],
@@ -58,9 +57,6 @@ class PutOperation(BaseOperation):
 
 @dataclass
 class SignalOperation(BaseOperation):
-    channel_ids: List[int] = field(default_factory=list)
-    channel_type: ChannelType = ChannelType.none
-
     def __init__(self, channels_ids: List[int], channel_type: ChannelType):
         self.name = Instruction.signal.value
         self.channel_ids = channels_ids
@@ -75,9 +71,6 @@ class SignalOperation(BaseOperation):
 
 @dataclass
 class WaitOperation(BaseOperation):
-    channel_ids: List[int] = field(default_factory=list)
-    channel_type: ChannelType = ChannelType.none
-
     def __init__(self, channels_ids: List[int], channel_type: ChannelType):
         self.name = Instruction.wait.value
         self.channel_ids = channels_ids
@@ -87,4 +80,22 @@ class WaitOperation(BaseOperation):
         result = {"name": self.name}
         result["cids"] = self.channel_ids
         result["ctype"] = self.channel_type.value
+        return result
+
+
+@dataclass
+class CopyOperation(BaseOperation):
+    def __init__(self, src_buff: List[LocalChunk], dst_buff: List[LocalChunk]):
+        self.name = Instruction.copy.value
+        self.src_buff = src_buff
+        self.dst_buff = dst_buff
+
+    def to_json(self):
+        result = {"name": self.name}
+        result["src_buff"] = []
+        for chunk in self.src_buff:
+            result["src_buff"].append(chunk.to_json())
+        result["dst_buff"] = []
+        for chunk in self.dst_buff:
+            result["dst_buff"].append(chunk.to_json())
         return result

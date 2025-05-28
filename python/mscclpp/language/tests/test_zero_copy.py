@@ -3,7 +3,7 @@
 
 import argparse
 from mscclpp.language.channel import *
-from mscclpp.language.rank import Rank
+from mscclpp.language.rank import *
 from mscclpp.language.general import *
 from mscclpp.language.internal.program import MSCCLPPProgram
 from mscclpp.language.internal.collectives import AllGather
@@ -29,21 +29,26 @@ def allgather_example(name, num_threads_per_block, min_message_size, max_message
 
         size = gpus
 
+        scratch_buffers = []
+        for rank in range(size):
+            scratch_buffers.append(Buffer(rank, 2))
+
         for src_rank in range(size):
-            r = Rank(src_rank)
-            src_input_buffer = r.get_output_buffer()
-            src_chunk = src_input_buffer[src_rank : src_rank + 1]
+            rank = Rank(src_rank)
+            input_buffer = rank.get_output_buffer()
+            rank.copy(scratch_buffers[src_rank][0:1], input_buffer[src_rank : src_rank + 1], tb=0)
+
             for dst_rank in range(size):
-                r = Rank(dst_rank)
-                dst_input_buffer = r.get_output_buffer()
-                dst_chunk = dst_input_buffer[src_rank : src_rank + 1]
                 if src_rank != dst_rank:
+                    dst_scratch_buffer = Buffer(dst_rank, 1)
                     ch = Channel(dst_rank, src_rank, ChannelType.memory)
                     ch.signal(tb=0, sync=None)
                     ch.wait(tb=0, sync="after")
-                    ch.put(dst_chunk, src_chunk, tb=0)
-                    ch.signal(tb=1, sync="before")
-                    ch.wait(tb=1, sync="after")
+                    ch.put(scratch_buffers[dst_rank][1:2], scratch_buffers[src_rank][0:1], tb=0)
+                    ch.signal(tb=0, sync="before")
+                    ch.wait(tb=0, sync="after")
+                    rank.copy( input_buffer[dst_rank : dst_rank + 1], scratch_buffers[src_rank][1:2], tb=0)
+
 
         print(JSON())
 

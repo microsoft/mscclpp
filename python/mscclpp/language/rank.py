@@ -1,5 +1,6 @@
 from mscclpp.language.internal.program import MSCCLPPProgram
 from mscclpp.language.internal.types import BufferType, Chunk
+from mscclpp.language.json_generation.operations import CopyOperation, LocalChunk, RemoteChunk
 from mscclpp.language.internal.globals import get_program
 from dataclasses import dataclass
 
@@ -29,6 +30,17 @@ class Rank:
     def get_output_buffer(self):
         buffer_size = self.prog.buffers_size[self.rank][BufferType.output]
         return BaseBuffer(self.rank, BufferType.output, 0, buffer_size)
+    
+    def copy(self, dst_chunk, src_chunk, tb):
+        if dst_chunk.rank != self.rank:
+            raise RuntimeError(f"Cannot copy to chunk from different rank: {dst_chunk.rank} != {self.rank}")
+        
+        op = CopyOperation(
+            [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
+            [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+        )
+
+        get_program().add_operation(self.rank, tb, op)
 
 
 class BaseBuffer:

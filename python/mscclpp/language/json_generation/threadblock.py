@@ -23,25 +23,24 @@ class ThreadBlockRemoteBuffer:
 
 @dataclass
 class Threadblock:
-    id: int
-    ops: list = field(default_factory=list)
-
-    __remote_buffers = {
-        ChannelType.memory: ThreadBlockRemoteBuffer(ChannelType.memory),
-        ChannelType.port: ThreadBlockRemoteBuffer(ChannelType.port),
-    }
-    __intra_remote_buffer_ids = {}
-
-    __channels = {
-        ChannelType.memory: ThreadBlockChannel(ChannelType.memory),
-        ChannelType.port: ThreadBlockChannel(ChannelType.port),
-        ChannelType.switch: ThreadBlockChannel(ChannelType.switch),
-    }
-    __intra_channel_ids = {
-        ChannelType.memory: {},
-        ChannelType.port: {},
-        ChannelType.switch: {},
-    }
+    def __init__(self, id: int):
+        self.id = id
+        self.ops = []
+        self.__remote_buffers = {
+            ChannelType.memory: ThreadBlockRemoteBuffer(ChannelType.memory),
+            ChannelType.port: ThreadBlockRemoteBuffer(ChannelType.port),
+        }
+        self.__intra_remote_buffer_ids = {}
+        self.__channels = {
+            ChannelType.memory: ThreadBlockChannel(ChannelType.memory),
+            ChannelType.port: ThreadBlockChannel(ChannelType.port),
+            ChannelType.switch: ThreadBlockChannel(ChannelType.switch),
+        }
+        self.__intra_channel_ids = {
+            ChannelType.memory: {},
+            ChannelType.port: {},
+            ChannelType.switch: {},
+        }
 
     def to_json(self) -> dict:
         channels = []
@@ -71,7 +70,8 @@ class Threadblock:
     def add_remote_buffer(self, remote_buffer: RemoteBuffer):
         if remote_buffer.id not in self.__intra_remote_buffer_ids:
             self.__intra_remote_buffer_ids[remote_buffer.id] = len(self.__intra_remote_buffer_ids)
-            self.__remote_buffers[remote_buffer.channel_access].remote_buffer_ids.append(remote_buffer.id)
+            for channel_access in remote_buffer.channel_access:
+                self.__remote_buffers[channel_access].remote_buffer_ids.append(remote_buffer.id)
         return self.__intra_remote_buffer_ids[remote_buffer.id]
 
     def add_operation(self, op):
