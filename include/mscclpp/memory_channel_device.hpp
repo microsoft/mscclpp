@@ -15,7 +15,7 @@ namespace mscclpp {
 struct BaseMemoryChannelDeviceHandle {
   MemoryDevice2DeviceSemaphoreDeviceHandle semaphore_;
 
-  MSCCLPP_HOST_DEVICE_INLINE BaseMemoryChannelDeviceHandle() = default;
+  MSCCLPP_INLINE BaseMemoryChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BaseMemoryChannelDeviceHandle(MemoryDevice2DeviceSemaphoreDeviceHandle semaphore)
       : semaphore_(semaphore) {}
@@ -65,7 +65,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
   void* src_;
   void* packetBuffer_;
 
-  MSCCLPP_HOST_DEVICE_INLINE MemoryChannelDeviceHandle() = default;
+  MSCCLPP_INLINE MemoryChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE MemoryChannelDeviceHandle(MemoryDevice2DeviceSemaphoreDeviceHandle semaphore, void* dst,
                                                        void* src, void* packetBuffer)
@@ -183,7 +183,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
   ///
   template <typename PacketType = LL16Packet>
   MSCCLPP_DEVICE_INLINE auto unpackPacket(uint64_t index, uint32_t flag, int64_t maxSpinCount = -1) {
-    mscclpp_assert_device(packetBuffer_ != nullptr, "Packet buffer is null");
+    MSCCLPP_ASSERT_DEVICE(packetBuffer_ != nullptr, "Packet buffer is null");
     return reinterpret_cast<PacketType*>(packetBuffer_)[index].read(flag, maxSpinCount);
   }
 
@@ -207,7 +207,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
                                            int64_t maxSpinCount = -1) {
     static_assert(std::is_same<PacketType, LL16Packet>::value || std::is_same<PacketType, LL8Packet>::value,
                   "Unsupported packet type");
-    mscclpp_assert_device(packetBuffer_ != nullptr, "Packet buffer is null");
+    MSCCLPP_ASSERT_DEVICE(packetBuffer_ != nullptr, "Packet buffer is null");
     copyFromPackets<PacketType>(reinterpret_cast<char*>(src_) + originOffset,
                                 reinterpret_cast<char*>(packetBuffer_) + targetOffset, originBytes, threadId,
                                 numThreads, flag, maxSpinCount);

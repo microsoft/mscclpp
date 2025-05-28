@@ -24,9 +24,9 @@ static DLDeviceType getDeviceType() {
 }
 
 static DLDataType getDlType(std::string type) {
-  if (type == "torch.float") {
+  if (type == "torch.float32") {
     return DLDataType{kDLFloat, 32, 1};
-  } else if (type == "torch.int") {
+  } else if (type == "torch.int32") {
     return DLDataType{kDLInt, 32, 1};
   } else if (type == "torch.uint32") {
     return DLDataType{kDLUInt, 32, 1};
