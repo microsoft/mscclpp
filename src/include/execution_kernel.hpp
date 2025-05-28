@@ -212,47 +212,47 @@ MSCCLPP_DEVICE_INLINE void handleNop(Operation* operation, void* input, void* ou
   __syncthreads();
 }
 
-// MSCCLPP_DEVICE_INLINE void handleBarrier(Operation* operation, void* input, void* output, void* scratch) {
-//   DeviceSyncer* syncer = &deviceSyncers[operation->deviceSyncerIndex];
-//   syncer->sync(operation->nThreadBlocks);
-// }
+MSCCLPP_DEVICE_INLINE void handleBarrier(Operation* operation, void* input, void* output, void* scratch) {
+  DeviceSyncer* syncer = &deviceSyncers[operation->deviceSyncerIndex];
+  syncer->sync(operation->nThreadBlocks);
+}
 
-// MSCCLPP_DEVICE_INLINE void handleSignal(Operation* operation, void* input, void* output, void* scratch) {
-//   int nChannels = operation->nOutputs;
-//   ChannelType chType = operation->channelType;
-//   uint8_t* channelIndex = operation->outputChannelIndexes;
-//   int tid = threadIdx.x;
-//   if (tid < nChannels && chType == ChannelType::MEMORY) {
-//     memoryChannels[channelIndex[tid]].signal();
-//     return;
-//   }
-//   if (tid < nChannels && chType == ChannelType::PORT) {
-//     portChannels[channelIndex[threadIdx.x]].signal();
-//   }
-// }
+MSCCLPP_DEVICE_INLINE void handleSignal(Operation* operation, void* input, void* output, void* scratch) {
+  int nChannels = operation->nOutputs;
+  ChannelType chType = operation->channelType;
+  uint8_t* channelIndex = operation->channelIndexes;
+  int tid = threadIdx.x;
+  if (tid < nChannels && chType == ChannelType::MEMORY) {
+    memoryChannels[channelIndex[tid]].signal();
+    return;
+  }
+  if (tid < nChannels && chType == ChannelType::PORT) {
+    portChannels[channelIndex[threadIdx.x]].signal();
+  }
+}
 
-// MSCCLPP_DEVICE_INLINE void handleWait(Operation* operation, void* src, void* dst, void* scratch) {
-//   int nChannels = operation->nInputs;
-//   ChannelType chType = operation->channelType;
-//   uint8_t* channelIndex = operation->inputChannelIndexes;
-//   int tid = threadIdx.x;
-//   if (tid < nChannels && chType == ChannelType::MEMORY) {
-//     memoryChannels[channelIndex[tid]].wait();
-//     return;
-//   }
-//   if (tid < nChannels && chType == ChannelType::PORT) {
-//     portChannels[channelIndex[tid]].wait();
-//   }
-// }
+MSCCLPP_DEVICE_INLINE void handleWait(Operation* operation, void* src, void* dst, void* scratch) {
+  int nChannels = operation->nInputs;
+  ChannelType chType = operation->channelType;
+  uint8_t* channelIndex = operation->channelIndexes;
+  int tid = threadIdx.x;
+  if (tid < nChannels && chType == ChannelType::MEMORY) {
+    memoryChannels[channelIndex[tid]].wait();
+    return;
+  }
+  if (tid < nChannels && chType == ChannelType::PORT) {
+    portChannels[channelIndex[tid]].wait();
+  }
+}
 
-// MSCCLPP_DEVICE_INLINE void handleFlush(Operation* operation, void* src, void* dst, void* scratch) {
-//   int nChannels = operation->nOutputs;
-//   uint8_t* channelIndexes = operation->outputChannelIndexes;
-//   int tid = threadIdx.x;
-//   if (tid < nChannels) {
-//     portChannels[channelIndexes[tid]].flush();
-//   }
-// }
+MSCCLPP_DEVICE_INLINE void handleFlush(Operation* operation, void* src, void* dst, void* scratch) {
+  int nChannels = operation->nOutputs;
+  uint8_t* channelIndexes = operation->channelIndexes;
+  int tid = threadIdx.x;
+  if (tid < nChannels) {
+    portChannels[channelIndexes[tid]].flush();
+  }
+}
 
 // MSCCLPP_DEVICE_INLINE void handleGet(Operation* operation, void* src, void* dst, void* scratch) {
 //   uint32_t count = operation->nInputs;
@@ -607,21 +607,21 @@ template <typename T, typename PacketType>
 MSCCLPP_DEVICE_INLINE DeviceFunction getDeviceFunction(const Operation& op, uint8_t* nSteps) {
   *nSteps = 1;
   OperationType opType = op.type;
-  // if (opType == OperationType::NOP) {
-  //   return handleNop;
-  // }
-  // if (opType == OperationType::BARRIER) {
-  //   return handleBarrier;
-  // }
-  // if (opType == OperationType::SIGNAL) {
-  //   return handleSignal;
-  // }
-  // if (opType == OperationType::WAIT) {
-  //   return handleWait;
-  // }
-  // if (opType == OperationType::FLUSH) {
-  //   return handleFlush;
-  // }
+  if (opType == OperationType::NOP) {
+    return handleNop;
+  }
+  if (opType == OperationType::BARRIER) {
+    return handleBarrier;
+  }
+  if (opType == OperationType::SIGNAL) {
+    return handleSignal;
+  }
+  if (opType == OperationType::WAIT) {
+    return handleWait;
+  }
+  if (opType == OperationType::FLUSH) {
+    return handleFlush;
+  }
   // if (opType == OperationType::PUT) {
   //   return handlePut;
   // }

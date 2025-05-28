@@ -183,7 +183,7 @@ struct Executor::Impl {
     context.proxyService = std::make_shared<ProxyService>();
     context.nthreadsPerBlock = plan.impl_->getNThreadsPerBlock();
     this->setupConnections(context, rank, plan, sendMemRange, recvMemRange);
-    this->setupChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
+    this->setupChannels(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
@@ -283,8 +283,7 @@ struct Executor::Impl {
     }
   }
 
-  void setupChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
-                     size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
+  void setupChannels(ExecutionContext& context, int rank, const ExecutionPlan& plan) {
     const auto channelTypes = {ChannelType::MEMORY, ChannelType::PORT};
     std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
     std::vector<mscclpp::SemaphoreId> proxySemaphores;
@@ -318,7 +317,7 @@ struct Executor::Impl {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(rank, channelType);
       int index = 0;
       for (ChannelInfo& info : channelInfos) {
-        for (int peer : info.connectedPeers) {
+        for (size_t i = 0; i < info.connectedPeers.size(); i++) {
           if (channelType == ChannelType::MEMORY) {
             context.memoryChannels.emplace_back(context.memorySemaphores[index++]);
           } else if (channelType == ChannelType::PORT) {
