@@ -249,30 +249,29 @@ struct Executor::Impl {
       }
     };
 
-    std::vector<BufferInfo> localBufferWithProxyChannel;
-    for (const auto& bufferInfo : plan.impl_->getLocalBufferToSend(rank)) {
-      RegisteredMemory memory = this->comm->registerMemory(getBufferInfo(bufferInfo.bufferType).first,
-                                                           getBufferInfo(bufferInfo.bufferType).second,
-                                                           getTransportFlags(bufferInfo, rank));
-      comm->sendMemory(memory, bufferInfo.accessRank, 0);
-      for (ChannelType chanType : bufferInfo.accessChannelTypes) {
-        if (chanType == ChannelType::PORT) {
-          localBufferWithProxyChannel.push_back(bufferInfo);
-        }
-      }
-    }
     // Add local src,dst and scratch to registeredMemoryIds
     for (auto& bufferType : {BufferType::INPUT, BufferType::OUTPUT, BufferType::SCRATCH}) {
       TransportFlags flags = Transport::CudaIpc;
 #if defined(USE_IBVERBS)
       flags |= IBs[rank % this->nranksPerNode];
 #endif
-      RegisteredMemory localMemory =
-          this->comm->registerMemory(getBufferInfo(bufferType).first, getBufferInfo(bufferType).second, flags);
+      RegisteredMemory localMemory;
+      auto bufferInfo = getBufferInfo(bufferType);
+      if (bufferInfo.second > 0) {
+        localMemory =
+            this->comm->registerMemory(getBufferInfo(bufferType).first, getBufferInfo(bufferType).second, flags);
+      }
       context.proxyService->addMemory(localMemory);
     }
+
+    for (const auto& bufferInfo : plan.impl_->getLocalBufferToSend(rank)) {
+      RegisteredMemory memory =
+          this->comm->registerMemory(getBufferInfo(bufferInfo.bufferType).first,
+                                     getBufferInfo(bufferInfo.bufferType).second, getTransportFlags(bufferInfo, rank));
+      comm->sendMemory(memory, bufferInfo.accessRank, 0);
+    }
     for (const auto& bufferInfo : plan.impl_->getRemoteBufferInfos(rank)) {
-      std::shared_future<RegisteredMemory> remoteRegMemoryFuture = comm->recvMemory(bufferInfo.accessRank, 0);
+      std::shared_future<RegisteredMemory> remoteRegMemoryFuture = comm->recvMemory(bufferInfo.rank, 0);
       context.registeredMemories.emplace_back(std::move(remoteRegMemoryFuture.get()));
       for (ChannelType chanType : bufferInfo.accessChannelTypes) {
         if (chanType == ChannelType::MEMORY) {
