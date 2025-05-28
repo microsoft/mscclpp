@@ -109,7 +109,6 @@ struct ExecutionPlan::Impl {
   std::unordered_map<int, std::vector<std::vector<int>>> threadblockMemoryChannelBufferMap;
   std::unordered_map<int, std::vector<std::vector<int>>> threadblockPortChannelBufferMap;
 
-  std::unordered_map<int, std::unordered_map<std::pair<int, ChannelType>, int>> bufferIndexMap;
   std::unordered_map<int, uint32_t> inputChunks;
   std::unordered_map<int, uint32_t> outputChunks;
   std::unordered_map<int, uint32_t> scratchChunks;
@@ -131,6 +130,8 @@ struct ExecutionPlan::Impl {
                      std::vector<NvlsInfo>& nvlsInfos,
                      std::map<std::pair<int, ChannelType>, std::vector<int>>& chanConnectedPeersMap, int rank);
   void parseRemoteBuffer(const nlohmann::json& gpu, int rank);
+
+  std::unordered_map<int, std::unordered_map<std::pair<int, ChannelType>, int>> bufferIndexMap_;
 };
 
 }  // namespace mscclpp

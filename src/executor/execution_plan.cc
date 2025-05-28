@@ -302,7 +302,7 @@ void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo
 
 void ExecutionPlan::Impl::parseRemoteBuffer(const nlohmann::json& gpu, int rank) {
   auto& bufferInfos = this->remoteBufferInfos[rank];
-  auto& bufferIndexMap = this->bufferIndexMap[rank];
+  auto& bufferIndexMap = this->bufferIndexMap_[rank];
   std::unordered_map<ChannelType, int> channelCountMap;
   for (auto& remoteBuffer : gpu["remoteBuffers"]) {
     int bufferId = bufferInfos.size();
@@ -408,12 +408,12 @@ void ExecutionPlan::Impl::setupRemoteBuffers(const json& gpus) {
         if (accessChanType == ChannelType::PORT) {
           for (const auto& bufferId : remoteBuffRef["ids"]) {
             this->threadblockPortChannelBufferMap[rank][threadblock["id"]].push_back(
-                this->bufferIndexMap[rank][{bufferId, accessChanType}]);
+                this->bufferIndexMap_[rank][{bufferId, accessChanType}]);
           }
         } else if (accessChanType == ChannelType::MEMORY) {
           for (const auto& bufferId : remoteBuffRef["ids"]) {
             this->threadblockMemoryChannelBufferMap[rank][threadblock["id"]].push_back(
-                this->bufferIndexMap[rank][{bufferId, accessChanType}]);
+                this->bufferIndexMap_[rank][{bufferId, accessChanType}]);
           }
         }
       }
