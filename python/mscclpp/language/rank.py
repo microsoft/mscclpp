@@ -21,11 +21,11 @@ class Rank:
     def get_output_buffer(self):
         buffer_size = get_program().buffers_size[self.rank][BufferType.output]
         return BaseBuffer(self.rank, BufferType.output, 0, buffer_size)
-    
+
     def copy(self, dst_chunk, src_chunk, tb):
         if dst_chunk.rank != self.rank:
             raise RuntimeError(f"Cannot copy to chunk from different rank: {dst_chunk.rank} != {self.rank}")
-        
+
         op = CopyOperation(
             [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
             [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],

@@ -6,6 +6,7 @@ from enum import Enum
 from typing import List
 from collections import defaultdict
 
+
 class BufferType(Enum):
     input = "i"
     output = "o"
@@ -97,10 +98,11 @@ class RemoteBuffer:
             RemoteBuffer.__remote_buffer_count[self.rank] += 1
 
     def to_json(self):
-        return {"rank": self.rank, "type": self.type.value, "access_channel_types": [ch.value for ch in self.channel_access]}
+        return {
+            "rank": self.rank,
+            "type": self.type.value,
+            "access_channel_types": [ch.value for ch in self.channel_access],
+        }
 
     def __hash__(self):
         return hash((self.rank, self.type))
-
-    
-

@@ -47,6 +47,7 @@ def allgather_example(name, num_threads_per_block, min_message_size, max_message
 
         print(JSON())
 
+
 parser = argparse.ArgumentParser()
 
 parser.add_argument("--name", type=str, help="name of the program")
@@ -56,6 +57,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-allgather_example(
-    args.name, args.num_threads_per_block, args.min_message_size, args.max_message_size
-)
+allgather_example(args.name, args.num_threads_per_block, args.min_message_size, args.max_message_size)

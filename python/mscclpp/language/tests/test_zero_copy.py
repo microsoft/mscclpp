@@ -47,10 +47,10 @@ def allgather_example(name, num_threads_per_block, min_message_size, max_message
                     ch.put(scratch_buffers[dst_rank][1:2], scratch_buffers[src_rank][0:1], tb=0)
                     ch.signal(tb=0, sync="before")
                     ch.wait(tb=0, sync="after")
-                    rank.copy( input_buffer[dst_rank : dst_rank + 1], scratch_buffers[src_rank][1:2], tb=0)
-
+                    rank.copy(input_buffer[dst_rank : dst_rank + 1], scratch_buffers[src_rank][1:2], tb=0)
 
         print(JSON())
+
 
 parser = argparse.ArgumentParser()
 
@@ -61,6 +61,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-allgather_example(
-    args.name, args.num_threads_per_block, args.min_message_size, args.max_message_size
-)
+allgather_example(args.name, args.num_threads_per_block, args.min_message_size, args.max_message_size)

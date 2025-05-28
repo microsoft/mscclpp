@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from collections import defaultdict
 from mscclpp.language.json_generation.operations import *
 
+
 @dataclass
 class Channel(BaseChannel):
     __channel_counts = defaultdict(lambda: defaultdict(int))

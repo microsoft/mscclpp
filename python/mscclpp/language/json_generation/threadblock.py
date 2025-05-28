@@ -2,6 +2,7 @@ from mscclpp.language.channel import Channel
 from mscclpp.language.internal.types import ChannelType, RemoteBuffer
 from dataclasses import dataclass, field
 
+
 @dataclass
 class ThreadBlockChannel:
     channel_type: ChannelType

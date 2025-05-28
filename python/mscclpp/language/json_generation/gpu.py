@@ -4,6 +4,7 @@ from mscclpp.language.json_generation.threadblock import Threadblock
 from mscclpp.language.json_generation.operations import BaseOperation
 from mscclpp.language.internal.types import RemoteBuffer
 
+
 @dataclass
 class Gpu:
     id: int
