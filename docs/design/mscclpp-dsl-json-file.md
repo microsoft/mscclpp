@@ -12,6 +12,7 @@ The generic structure of the JSON file consist of the following fields:
 - ```gpus```: Describes the GPU-specific configuration and the operations executed on each GPU. This will be detailed in the following sections.
 - ```num_threads_per_block```: Specifies the number of threads per thread block. Typical values include 256, 512, 768, or 1024, depending on performance requirements.
 - ```use_double_scratch_buffer```: A boolean flag that enables to double the scratch buffer. When set to true, the size of the scratch buffer is doubled and it is logically divided into two halves. This allows alternating executions of the same algorithm to use different halves of the buffer, for instance, odd-numbered executions use the first half, and even-numbered executions use the second. This strategy helps avoid memory conflicts when the same algorithm is invoked multiple times.
+- ```buffer_alignment```: The requirement that a buffer's memory address must be a multiple of a specific number of bytes.
 - ```min_message_size```: The minimum message size supported by this algorithm. If the message is smaller than this value, the algorithm will not be selected for execution.
 - ```max_message_size```: The maximum message size supported by this algorithm. If the message exceeds this value, the algorithm will not be selected for execution.
 
@@ -26,6 +27,7 @@ Example:
   "gpus": [...],
   "num_threads_per_block": 1024,
   "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
   "min_message_size": 0,
   "max_message_size": 18446744073709551615
 }
@@ -35,13 +37,12 @@ Example:
 The gpus field is the core of the JSON file, containing the detailed configuration of the collective algorithm for each GPU. It is defined as a list, where each element describes the setup for a specific GPU. Each GPU entry includes the following fields:
 
 - ```id```: The identifier of the GPU.
-- ```inputChunks```: The number of chunks in the input buffer.
-- ```outputChunks```: The number of chunks in the output buffer.
-- ```scratchChunks```: The number of chunks in the scratch buffer.
+- ```input_chunks```: The number of chunks in the input buffer.
+- ```output_chunks```: The number of chunks in the output buffer.
+- ```scratch_chunks```: The number of chunks in the scratch buffer.
 - ```threadblocks```: A list describing all operations assigned to each thread block. Each entry defines how a thread block participates in the collective operation.
 - ```channels```: A list of communication channels, where each element describes a channel.
-- ```remoteBuffers```: A list with all the remote buffers used for that GPU on the algorithm.
-- ```bufferAlignment```: The requirement that a buffer's memory address must be a multiple of a specific number of bytes.
+- ```remote_buffers```: A list with all the remote buffers used for that GPU on the algorithm.
 
 Example:
 
@@ -49,13 +50,12 @@ Example:
 "gpus": [
     {
       "id": 0,
-      "inputChunks": 1,
-      "outputChunks": 2,
-      "scratchChunks": 0,
+      "input_chunks": 1,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
       "threadblocks": [...],
       "channels": [...],
-      "remoteBuffers": [...],
-      "bufferAlignment": 4
+      "remote_buffers": [...],
     }
 ]
 ```
@@ -70,7 +70,7 @@ port.
 
 The Memory Channel has the following fields:
 - ```type```: Specifies the type of the channel, which in the case of the Memory Channel, will be ```memory```.
-- ```connectedTo```: Specifies the connections between channels. For example, if we have a list like: [1, 2, 3], it indicates that there are three channels: the first is connected to rank 1, the second to rank 2, and the third to rank 3.
+- ```connected_to```: Specifies the connections between channels. For example, if we have a list like: [1, 2, 3], it indicates that there are three channels: the first is connected to rank 1, the second to rank 2, and the third to rank 3.
 
 Example:
 
@@ -78,7 +78,7 @@ Example:
 "channels": [
   {
     "type": "memory",
-    "connectedTo": [
+    "connected_to": [
       1,
       2,
       3
@@ -89,7 +89,7 @@ Example:
 
 The Port Channel has the following fields:
 - ```type```: Specifies the type of the channel, which in the case of the Memory Channel, will be ```port```.
-- ```connectedTo```: Specifies the connections between channels. For example, if we have a list like: [1, 2, 3], it indicates that there are three channels: the first is connected to rank 1, the second to rank 2, and the third to rank 3.
+- ```connected_to```: Specifies the connections between channels. For example, if we have a list like: [1, 2, 3], it indicates that there are three channels: the first is connected to rank 1, the second to rank 2, and the third to rank 3.
 
 Example:
 
@@ -97,7 +97,7 @@ Example:
 "channels": [
   {
     "type": "port",
-    "connectedTo": [
+    "connected_to": [
       1,
       2,
       3
@@ -109,7 +109,7 @@ Example:
 The Switch Channel has the following fields:
 - ```type```: Specifies the type of the channel, which in the case of the Memory Channel, will be ```switch```.
 - ```buff```: Consist of the buffer type which the Switch Channel will be binded, this could have the following values: "i" for the input buffer, "o" for the output buffer, "s" for the scratch buffer.
-- ```rankGroups```: Consist of a group of ranks connected via the Switch Channel, including the number of ranks (size) and the list of connected ranks.
+- ```rank_groups```: Consist of a group of ranks connected via the Switch Channel, including the number of ranks (size) and the list of connected ranks.
 
 Example:
 
@@ -118,7 +118,7 @@ Example:
   {
     "type": "switch",
     "buff": "i",
-    "rankGroups": [
+    "rank_groups": [
       {
         "size": 8,
         "ranks": [
@@ -142,7 +142,7 @@ The ```remoteBuffers``` field describes all the remote buffers that a given GPU 
 
 - ```rank```:  Indicates the rank that owns the remote buffer.
 - ```type```: Consist of the buffer type, this could have the following values: "i" for the input buffer, "o" for the output buffer, "s" for the scratch buffer.
-- ```accessChannel```: A list specifying what types of channels we should use to manage this buffer.
+- ```access_channel_types```: A list specifying what types of channels we should use to manage this buffer.
 
 Example
 
@@ -151,7 +151,7 @@ Example
   {
     "rank": 1,
     "type": "i",
-    "accessChannel": ["memory"]
+    "access_channel_types": ["memory"]
   }
 ]
 ```
@@ -162,7 +162,7 @@ The thread block field describes the operation inside each thread block, we have
 - ```id```: The thread block id.
 - ```ops```: The list of all operations in the order they will be executed by this thread block.
 - ```channels```: The channels the thread block will use, referenced by the channel id. The channel id is based on the global channel description in the gpu, for example if the channel type is memory and the channel id is 0, it refers to the first channel of memory id type descriptioned in the gpu channels field.
-- ```remoteBuffersIds```: A list with all the remote buffer ids(related to the remote buffer field on the GPU) used by the thread block.
+- ```remote_buffer_ids```: A list with all the remote buffer ids(related to the remote buffer field on the GPU) used by the thread block.
 
 For Example:
 
@@ -179,10 +179,10 @@ For Example:
         ]
       }
     ],
-    "remoteBufferIds": [
+    "remote_buffer_ids": [
       {
-        "accessChannelType": "memory",
-        "remoteBufferIds": [
+        "access_channel_type": "memory",
+        "remote_buffer_ids": [
           0
         ]
       }
@@ -244,7 +244,7 @@ The put operation is composed of the fields ```name```, ```src_buff```, ```dst_b
     ],
     "dst_buff": [
       {
-        "buff_id": 0,
+        "buffer_id": 0,
         "offset": 0,
         "size": 1
       }
@@ -271,23 +271,38 @@ The put operation is composed of the fields ```name```, ```src_buff```, ```dst_b
 in place AllGather two Nodes:
 
 ```python
-size = 2
-
-for src_rank in range(size):
-  rank = Rank(src_rank)
-  src_input_buffer = rank.get_input_buffer()
-  src_chunk = input_buffer[src_rank:src_rank + 1] 
-  for dst_rank in range(size):
-    rank = Rank(dst_rank)
-    dst_input_buffer = rank.get_input_buffer()
-    dst_chunk = input_buffer[src_rank:src_rank + 1] 
-    if src_rank != dst_rank:
-      channel = Channel(dst_rank, src_rank, channel_type)
-      channel.relaxedSignal(tb=0, sync=None)
-      channel.relaxedWait(tb=0, sync="after")
-      channel.put(dst_chunk, src_chunk, tb=0)
-      channel.signal(tb=0, sync="before")
-      channel.wait(tb=0, sync="after")
+ # Loop over each source GPU rank
+for src_rank in range(gpu_size):
+    # Create a Rank object for the source GPU
+    rank = Rank(src_rank)
+    # Get the the src buffer where the data is stored
+    src_buffer = rank.get_output_buffer()
+    # Take a slice corresponding to data
+    src_chunk = src_buffer[src_rank : src_rank + 1]
+    
+    # Loop over each destination GPU rank
+    for dst_rank in range(gpu_size):
+        # Create a Rank object for the destination GPU
+        rank = Rank(dst_rank)
+        # Get the the dst buffer where the data will be send
+        dst_input_buffer = rank.get_output_buffer()
+          # Take a slice corresponding where the data will be send
+        dst_chunk = dst_input_buffer[src_rank : src_rank + 1]
+        
+        # Skip sending from a rank to itself
+        if src_rank != dst_rank:
+            # Define a channel from src_rank → dst_rank using memory channel
+            ch = Channel(dst_rank, src_rank, ChannelType.memory)
+            # Step 1: source signals to indicate it is ready to receive data
+            ch.relaxedSignal(tb=0, sync=None)
+            # Step 2: wait for the destination rank to be ready
+            ch.relaxedWait(tb=0, sync="after")
+            # Step 3: source rank sends data to destination rank
+            ch.put(dst_chunk, src_chunk, tb=0)
+            # Step 4: source signals to indicate put is done
+            ch.signal(tb=0, sync="before")
+            # Step 5: wait for receive data from destination rank
+            ch.wait(tb=0, sync="after")
 ```
 
 For this example we will have the following JSON file:
@@ -296,14 +311,14 @@ For this example we will have the following JSON file:
 {
   "name": "allgather",
   "collective": "allgather",
-  "protocol": "Simple",
   "inplace": true,
+  "protocol": "Simple",
   "gpus": [
     {
       "id": 0,
-      "inputChunks": 1,
-      "outputChunks": 2,
-      "scratchChunks": 0,
+      "input_chunks": 1,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
       "threadblocks": [
         {
           "id": 0,
@@ -313,64 +328,65 @@ For this example we will have the following JSON file:
               "cids": [
                 0
               ],
-              "ctype": "memory",
+              "ctype": "memory"
             },
             {
               "name": "rwait",
-              "cids": [
-                {
-                  "id": 0
-                }
-              ],
-              "ctype": "memory",
-            },
-            {
-              "name": "put",
-              "src_buff": [
-                {
-                  "offset": 0,
-                  "type": "i",
-                  "size": 1
-                
-                }
-              ],
-              "dst_buff": [
-                {
-                  "buff_id": 0,
-                  "offset": 0,
-                  "size": 1
-                }
-              ],
               "cids": [
                 0
               ],
               "ctype": "memory"
             },
             {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "cids": [
+                0
+              ]
+            },
+            {
               "name": "signal",
               "cids": [
                 0
               ],
-              "ctype": "memory",
+              "ctype": "memory"
             },
             {
               "name": "wait",
               "cids": [
                 0
               ],
-              "ctype": "memory",
+              "ctype": "memory"
             }
           ],
-          "channels":[
+          "channels": [
             {
-              "ctype": "memory",
-              "cids": [
+              "channel_type": "memory",
+              "channel_ids": [
                 0
               ]
             }
           ],
-          "remoteBuffersIds": [
-            0
+          "remote_buffer_ids": [
+            {
+              "access_channel_types": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
           ]
         }
       ],
@@ -382,19 +398,21 @@ For this example we will have the following JSON file:
           ]
         }
       ],
-      "remoteBuffers": [
+      "remote_buffers": [
         {
-          "rank": 1,
-          "type": "i",
-          "infoLocation": "gpu"
+          "rank": 0,
+          "type": "o",
+          "access_channel_types": [
+            "memory"
+          ]
         }
       ]
     },
     {
       "id": 1,
-      "inputChunks": 1,
-      "outputChunks": 2,
-      "scratchChunks": 0,
+      "input_chunks": 1,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
       "threadblocks": [
         {
           "id": 0,
@@ -404,64 +422,65 @@ For this example we will have the following JSON file:
               "cids": [
                 0
               ],
-              "ctype": "memory",
+              "ctype": "memory"
             },
             {
               "name": "rwait",
-              "cids": [
-                {
-                  "id": 0
-                }
-              ],
-              "ctype": "memory",
-            },
-            {
-              "name": "put",
-              "src_buff": [
-                {
-                  "type": "i",
-                  "offset": 1,
-                  "size": 1
-                
-                }
-              ],
-              "dst_buff": [
-                {
-                  "buff_id": 0,
-                  "offset": 1,
-                  "size": 1
-                }
-              ],
               "cids": [
                 0
               ],
               "ctype": "memory"
             },
             {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "o",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "cids": [
+                0
+              ]
+            },
+            {
               "name": "signal",
               "cids": [
                 0
               ],
-              "ctype": "memory",
+              "ctype": "memory"
             },
             {
               "name": "wait",
               "cids": [
                 0
               ],
-              "ctype": "memory",
+              "ctype": "memory"
             }
           ],
-          "channels":[
+          "channels": [
             {
-              "ctype": "memory",
-              "cids": [
+              "channel_type": "memory",
+              "channel_ids": [
                 0
               ]
             }
           ],
-          "remoteBuffersIds": [
-            0
+          "remote_buffer_ids": [
+            {
+              "access_channel_types": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
           ]
         }
       ],
@@ -473,15 +492,22 @@ For this example we will have the following JSON file:
           ]
         }
       ],
-      "remoteBuffers": [
+      "remote_buffers": [
         {
-          "rank": 0,
-          "type": "i",
-          "infoLocation": "gpu"
+          "rank": 1,
+          "type": "o",
+          "access_channel_types": [
+            "memory"
+          ]
         }
       ]
     }
-  ]
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
 }
 ```
 
