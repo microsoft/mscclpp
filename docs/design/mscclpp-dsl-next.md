@@ -144,7 +144,7 @@ for i in range(nranks):
     sem1 = Rank.Semaphore(rank=i, size=1)
     input_buffer = rank.get_input_buffer()
     output_buffer = rank.get_output_buffer()
-    scratch_buffer = rank.Buffer(scratch_buffer_size)
+    scratch_buffer = Buffer(i, scratch_buffer_size)
     with Loop.iteration(unit=2**20, num_chunks=1) as iter:
         # copy data to scratch buffer
         for offset in range(nranks):

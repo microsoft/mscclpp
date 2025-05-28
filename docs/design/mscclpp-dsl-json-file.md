@@ -179,8 +179,13 @@ For Example:
         ]
       }
     ],
-    "remoteBuffersIds": [
-      0
+    "remoteBufferIds": [
+      {
+        "accessChannelType": "memory",
+        "remoteBufferIds": [
+          0
+        ]
+      }
     ]
   }
 ]
