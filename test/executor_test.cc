@@ -68,8 +68,8 @@ double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::s
   mscclpp::Timer timer;
   MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
   for (int i = 0; i < niters; i++) {
-    executor->execute(rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16, plan,
-                      stream, packetType);
+    executor->execute(rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, mscclpp::DataType::FLOAT16,
+                      plan, stream, packetType);
   }
   MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
   MSCCLPP_CUDATHROW(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
@@ -129,7 +129,6 @@ int main(int argc, char* argv[]) {
     NpKit::Init(rank);
   }
 
-  sleep(30);
   mscclpp::ExecutionPlan plan(executionPlanPath);
   std::shared_ptr<char> sendbuff = mscclpp::GpuBuffer(bufferSize).memory();
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
