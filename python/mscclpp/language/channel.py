@@ -35,6 +35,16 @@ class Channel(BaseChannel):
         op = WaitOperation([tb_channel_id], self.channel_type)
         get_program().add_operation(self.src_rank, tb, op)
 
+    def relaxed_signal(self, tb, sync):
+        tb_channel_id = get_program().setup_channel(tb, self)
+        op = SignalOperation([tb_channel_id], self.channel_type, True)
+        get_program().add_operation(self.src_rank, tb, op)
+
+    def relaxed_wait(self, tb, sync):
+        tb_channel_id = get_program().setup_channel(tb, self)
+        op = SignalOperation([tb_channel_id], self.channel_type, True)
+        get_program().add_operation(self.src_rank, tb, op)
+
     def put(self, dst_chunk, src_chunk, tb):
         remote_chunk = RemoteBuffer(dst_chunk.rank, dst_chunk.buffer, self.channel_type)
         tb_chunk_id = get_program().setup_remote_chunk(tb, remote_chunk)

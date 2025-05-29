@@ -40,7 +40,6 @@ def allgather_example(name, num_threads_per_block, min_message_size, max_message
 
             for dst_rank in range(size):
                 if src_rank != dst_rank:
-                    dst_scratch_buffer = Buffer(dst_rank, 1)
                     ch = Channel(dst_rank, src_rank, ChannelType.memory)
                     ch.signal(tb=0, sync=None)
                     ch.wait(tb=0, sync="after")

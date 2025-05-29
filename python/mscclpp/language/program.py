@@ -33,15 +33,15 @@ class MSCCLPPProgram:
         self.min_message_size = min_message_size
         self.max_message_size = max_message_size
         assert protocol == "Simple" or protocol == "LL", f"Given protocol: {protocol}. Must be either Simple, LL"
-        self.buffers_size = collective.init_buffers()
+        self.buffers = collective.init_buffers()
         self.gpus: List[Gpu] = []
         for rank in range(self.num_ranks):
             self.gpus.append(
                 Gpu(
                     rank,
-                    self.buffers_size[rank][BufferType.input],
-                    self.buffers_size[rank][BufferType.output],
-                    self.buffers_size[rank][BufferType.scratch],
+                    self.buffers[rank][BufferType.input].size,
+                    self.buffers[rank][BufferType.output].size,
+                    0
                 )
             )
 

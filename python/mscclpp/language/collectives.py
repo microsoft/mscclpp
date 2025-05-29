@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 from mscclpp.language.internal.types import BufferType
+from mscclpp.language.rank import BaseBuffer
 
 
 class Collective:
@@ -39,13 +40,12 @@ class AllGather(Collective):
     # Initializes input buffer for an allgather
     def init_buffers(self):
         rank_buffers = []
-        for _ in range(self.num_ranks):
+        for rank in range(self.num_ranks):
             input_buffer_size = self.chunk_factor
             output_buffer_size = self.num_ranks * self.chunk_factor
             buffers = {
-                BufferType.input: input_buffer_size,
-                BufferType.output: output_buffer_size,
-                BufferType.scratch: 0,
+                BufferType.input: BaseBuffer(rank, BufferType.input, 0, input_buffer_size),
+                BufferType.output: BaseBuffer(rank, BufferType.output, 0, output_buffer_size),
             }
             rank_buffers.append(buffers)
         return rank_buffers

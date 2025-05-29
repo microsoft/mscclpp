@@ -14,12 +14,10 @@ class Rank:
             raise RuntimeError(f"Rank {rank} is out of bounds. Number of ranks: {self.prog.num_ranks}")
 
     def get_input_buffer(self):
-        buffer_size = get_program().buffers_size[self.rank][BufferType.input]
-        return BaseBuffer(self.rank, BufferType.input, 0, buffer_size)
+        return get_program().buffers[self.rank][BufferType.input]
 
     def get_output_buffer(self):
-        buffer_size = get_program().buffers_size[self.rank][BufferType.output]
-        return BaseBuffer(self.rank, BufferType.output, 0, buffer_size)
+        return get_program().buffers[self.rank][BufferType.output]
 
     def copy(self, dst_chunk, src_chunk, tb):
         if dst_chunk.rank != self.rank:
@@ -55,6 +53,6 @@ class Buffer(BaseBuffer):
 
         self.rank = rank
         self.buffer_type = BufferType.scratch
-        self.offset = get_program().buffers_size[self.rank][BufferType.scratch]
+        self.offset = get_program().gpus[rank].scratch_chunks
         self.size = self.offset + size
-        get_program().buffers_size[self.rank][BufferType.scratch] += size
+        get_program().gpus[rank].scratch_chunks += size

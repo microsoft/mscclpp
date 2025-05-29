@@ -56,7 +56,7 @@ class Threadblock:
             "id": self.id,
             "ops": [op.to_json() for op in self.ops],
             "channels": channels,
-            "remote_buffer_ids": remote_buffers,
+            "remote_buffer_refs": remote_buffers,
         }
 
     def add_channel(self, channel: Channel):

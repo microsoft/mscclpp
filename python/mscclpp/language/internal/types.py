@@ -6,6 +6,13 @@ from enum import Enum
 from typing import List
 from collections import defaultdict
 
+class ReduceOperation(Enum):
+    sum = "sum"
+    min = "min"
+    max = "max"
+
+    def __str__(self):
+        return self.value
 
 class BufferType(Enum):
     input = "i"
@@ -24,24 +31,26 @@ class BufferType(Enum):
 
 class Instruction(Enum):
     start = "start"
-    nop = "nop"
+    nop = "nop" # V Doc
+    copy = "copy" # V Doc
+    copy_packet = "cpkt" # V Doc
+    transform_to_packet = "tpkt" # V Doc
+    reduce = "re" # V Doc
+    reduce_packet = "rpkt" # V Doc
+    signal = "signal" # V Doc
+    wait = "wait" # V Doc
+    relaxed_signal = "rlxsignal" # V Doc
+    relaxed_wait = "rlxwait" # V Doc
+    put = "put" # V Doc
+    put_packet = "ppkt" # V Doc
     read_reduce_copy = "rrc"
     read_reduce_copy_send = "rrcs"
     reduce_send = "rs"
-    copy = "copy"
-    reduce = "re"
-    copy_packet = "cpkt"
-    transform_to_packet = "tpkt"
     reduce_send_packet = "rspkt"
-    reduce_packet = "rpkt"
-    put = "put"
     read_put_packet = "rppkt"
-    put_packet = "ppkt"
     put_with_signal = "pws"
     put_with_signal_and_flush = "pwsf"
     get = "get"
-    wait = "wait"
-    signal = "signal"
     flush = "flush"
     barrier = "barrier"
     group_store = "gstore"
@@ -57,10 +66,6 @@ class ChannelType(Enum):
     memory = "memory"
     switch = "switch"
     none = "none"
-
-    # Deprecated
-    proxy = "port"
-    sm = "memory"
 
     def __str__(self):
         return self.value
