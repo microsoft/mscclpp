@@ -37,12 +37,7 @@ class MSCCLPPProgram:
         self.gpus: List[Gpu] = []
         for rank in range(self.num_ranks):
             self.gpus.append(
-                Gpu(
-                    rank,
-                    self.buffers[rank][BufferType.input].size,
-                    self.buffers[rank][BufferType.output].size,
-                    0
-                )
+                Gpu(rank, self.buffers[rank][BufferType.input].size, self.buffers[rank][BufferType.output].size, 0)
             )
 
     def __enter__(self):

@@ -6,6 +6,7 @@ from enum import Enum
 from typing import List
 from collections import defaultdict
 
+
 class ReduceOperation(Enum):
     sum = "sum"
     min = "min"
@@ -13,6 +14,7 @@ class ReduceOperation(Enum):
 
     def __str__(self):
         return self.value
+
 
 class BufferType(Enum):
     input = "i"
@@ -31,18 +33,18 @@ class BufferType(Enum):
 
 class Instruction(Enum):
     start = "start"
-    nop = "nop" # V Doc
-    copy = "copy" # V Doc
-    copy_packet = "cpkt" # V Doc
-    transform_to_packet = "tpkt" # V Doc
-    reduce = "re" # V Doc
-    reduce_packet = "rpkt" # V Doc
-    signal = "signal" # V Doc
-    wait = "wait" # V Doc
-    relaxed_signal = "rlxsignal" # V Doc
-    relaxed_wait = "rlxwait" # V Doc
-    put = "put" # V Doc
-    put_packet = "ppkt" # V Doc
+    nop = "nop"
+    copy = "copy"
+    copy_packet = "cpkt"
+    transform_to_packet = "tpkt"
+    reduce = "re"
+    reduce_packet = "rpkt"
+    signal = "signal"
+    wait = "wait"
+    relaxed_signal = "rlxsignal"
+    relaxed_wait = "rlxwait"
+    put = "put"
+    put_packet = "ppkt"
     read_reduce_copy = "rrc"
     read_reduce_copy_send = "rrcs"
     reduce_send = "rs"

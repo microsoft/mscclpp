@@ -98,7 +98,7 @@ class SyncOperation(BaseOperation):
     def to_json(self):
         result = {"name": self.name}
         return result
-    
+
 
 @dataclass
 class ReduceOperation(BaseOperation):
@@ -122,7 +122,11 @@ class ReduceOperation(BaseOperation):
 
 @dataclass
 class CopyOperation(BaseOperation):
-    def __init__(self, src_buff: List[LocalChunk], dst_buff: List[LocalChunk], ):
+    def __init__(
+        self,
+        src_buff: List[LocalChunk],
+        dst_buff: List[LocalChunk],
+    ):
         self.name = Instruction.copy.value
         self.src_buff = src_buff
         self.dst_buff = dst_buff
