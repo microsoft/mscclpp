@@ -195,6 +195,162 @@ The most important field here is the ops field, which contains the descriptions 
 
 TO BE DEFINED
 
+#### Nop Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "nop"
+  }
+]
+```
+
+#### Copy Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "copy",
+    "src_buff": [
+      {
+        "type": "i",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "dst_buff": [
+      {
+        "type": "s",
+        "offset": 0,
+        "size": 1
+      }
+    ]
+  }
+]
+```
+
+#### Copy Packet Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "cpkt",
+    "src_buff": [
+      {
+        "type": "s",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "dst_buff": [
+      {
+        "type": "o",
+        "offset": 0,
+        "size": 1
+      }
+    ]
+  }
+]
+```
+
+#### Transform to Packet Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "tpkt",
+    "src_buff": [
+      {
+        "type": "i",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "dst_buff": [
+      {
+        "type": "s",
+        "offset": 0,
+        "size": 1
+      }
+    ]
+  }
+]
+```
+
+#### Reduce Copy Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "rc",
+    "src_buff": [
+      {
+        "type": "i",
+        "offset": 0,
+        "size": 1
+      
+      },
+      {
+        "type": "s",
+        "offset": 0,
+        "size": 1
+      },
+    ],
+    "dst_buff": [
+      {
+        "type": "o",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "reduce_op": "sum"
+  }
+]
+```
+
+#### Reduce Copy Packet Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "rcpkt",
+    "src_buff": [
+      {
+        "type": "s",
+        "offset": 0,
+        "size": 1
+      },
+      {
+        "type": "s",
+        "offset": 1,
+        "size": 1
+      
+      }
+    ],
+    "dst_buff": [
+      {
+        "type": "s",
+        "offset": 2,
+        "size": 1
+      }
+    ],
+    "reduce_op": "sum"
+  }
+]
+```
+
 #### Signal Operation
 The signal operation is composed of the fields ```name```, ```cids```, ```ctype```.
 
@@ -212,8 +368,10 @@ Example
 ]
 ```
 
-### Wait Operation
+#### Wait Operation
 The wait operation is composed of the fields ```name```, ```cids```, ```ctype```.
+
+Example
 
 ```json
 "ops": [
@@ -227,13 +385,107 @@ The wait operation is composed of the fields ```name```, ```cids```, ```ctype```
 ]
 ```
 
-### Put Operation
+#### Relaxed Signal Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "rlxsignal",
+    "cids": [
+      0
+    ],
+    "ctype": "memory",
+  }
+]
+```
+
+#### Relaxed Wait Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "rlxwait",
+    "cids": [
+      0
+    ],
+    "ctype": "memory",
+  }
+]
+```
+
+#### Get Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "get",
+    "src_buff": [
+      {
+        "buffer_id": 0,
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "dst_buff": [
+      {
+        "type": "i",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "cids": [
+      0
+    ],
+    "ctype": "memory"
+  }
+]
+```
+
+#### Put Operation
 The put operation is composed of the fields ```name```, ```src_buff```, ```dst_buff```, ```cids```, ```ctype```.
+
+Example
 
 ```json
 "ops": [
   {
     "name": "put",
+    "src_buff": [
+      {
+        "type": "i",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "dst_buff": [
+      {
+        "buffer_id": 0,
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "cids": [
+      0
+    ],
+    "ctype": "memory"
+  }
+]
+```
+
+#### Put Packet Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "ppkt",
     "src_buff": [
       {
         "type": "i",
@@ -257,7 +509,269 @@ The put operation is composed of the fields ```name```, ```src_buff```, ```dst_b
 ]
 ```
 
-### The json field for device semaphore
+#### Read Put Packet Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "rppkt",
+    "src_buff": [
+      {
+        "type": "s",
+        "offset": 0,
+        "size": 1
+      
+      }
+    ],
+    "dst_buff": [
+      {
+        "buffer_id": 0,
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "cids": [
+      0
+    ],
+    "ctype": "memory"
+  }
+]
+```
+
+#### Put With Signal Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "pws",
+    "src_buff": [
+      {
+        "type": "i",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "dst_buff": [
+      {
+        "buffer_id": 0,
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "cids": [
+      0
+    ],
+    "ctype": "memory"
+  }
+]
+```
+
+#### Put With Signal and Flush Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "pwsf",
+    "src_buff": [
+      {
+        "type": "i",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "dst_buff": [
+      {
+        "buffer_id": 0,
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "cids": [
+      0
+    ],
+    "ctype": "memory"
+  }
+]
+```
+
+#### Reduce Copy Send Operations
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "rcs",
+    "local_src_buff": [
+      {
+        "type": "i",
+        "offset": 0,
+        "size": 1
+      
+      },
+      {
+        "type": "i",
+        "offset": 1,
+        "size": 1
+      }
+    ],
+    "local_dst_buff": [
+      {
+        "type": "o",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "remote_dst_buff": [
+      {
+        "buffer_id": 1,
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "cids": [
+      0
+    ],
+    "ctype": "memory",
+    "reduce_op": "sum"
+  }
+]
+```
+
+#### Reduce Copy Send Packet Operations
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "rcspkt",
+    "local_src_buff": [
+      {
+        "type": "s",
+        "offset": 0,
+        "size": 1
+      
+      },
+      {
+        "type": "s",
+        "offset": 1,
+        "size": 1
+      }
+    ],
+    "local_dst_buff": [
+      {
+        "type": "s",
+        "offset": 2,
+        "size": 1
+      }
+    ],
+    "remote_dst_buff": [
+      {
+        "buffer_id": 0,
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "cids": [
+      0
+    ],
+    "ctype": "memory",
+    "reduce_op": "sum"
+  }
+]
+```
+
+#### Read Reduce Copy Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "rrc",
+    "local_src_buff": [
+      {
+        "type": "i",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "remote_src_buff": [
+      {
+        "buffer_id": 0,
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "local_dst_buff": [
+      {
+        "type": "o",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "cids": [
+      0
+    ],
+    "ctype": "memory",
+    "reduce_op": "sum"
+  }
+]
+```
+
+#### Read Reduce Copy Send Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "rrcs",
+    "local_src_buff": [
+      {
+        "type": "i",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "remote_src_buff": [
+      {
+        "buffer_id": 0,
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "local_dst_buff": [
+      {
+        "type": "o",
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "remote_dst_buff": [
+      {
+        "buffer_id": 1,
+        "offset": 0,
+        "size": 1
+      }
+    ],
+    "cids": [
+      0
+    ],
+    "ctype": "memory",
+    "reduce_op": "sum"
+  }
+]
+```
+
+#### The json field for device semaphore
 ```json
 {
     "name": "sem_acquire",
