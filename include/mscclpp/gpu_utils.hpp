@@ -24,13 +24,13 @@
 
 /// Throw @ref mscclpp::CuError if @p cmd does not return CUDA_SUCCESS.
 /// @param cmd The command to execute.
-#define MSCCLPP_CUTHROW(cmd)                                                                                      \
-  do {                                                                                                            \
-    CUresult err = cmd;                                                                                           \
-    if (err != CUDA_SUCCESS) {                                                                                    \
-      throw mscclpp::CuError(std::string("Call to " #cmd " failed.") + __FILE__ + ":" + std::to_string(__LINE__), \
-                             err);                                                                                \
-    }                                                                                                             \
+#define MSCCLPP_CUTHROW(cmd)                                                                                       \
+  do {                                                                                                             \
+    CUresult err = cmd;                                                                                            \
+    if (err != CUDA_SUCCESS) {                                                                                     \
+      throw mscclpp::CuError(std::string("Call to " #cmd " failed. ") + __FILE__ + ":" + std::to_string(__LINE__), \
+                             err);                                                                                 \
+    }                                                                                                              \
   } while (false)
 
 namespace mscclpp {
