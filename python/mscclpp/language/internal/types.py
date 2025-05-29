@@ -32,32 +32,32 @@ class BufferType(Enum):
 
 
 class Instruction(Enum):
-    start = "start"
+    start = "start"  # ?
     nop = "nop"
     copy = "copy"
-    copy_packet = "cpkt"
-    transform_to_packet = "tpkt"
-    reduce = "re"
-    reduce_packet = "rpkt"
+    copy_packet = "cpkt"  # packet -> regular
+    transform_to_packet = "tpkt"  # regular -> packet
+    reduce_copy = "rc"
+    reduce_copy_packet = "rcpkt"  # packet + packet -> packet
     signal = "signal"
     wait = "wait"
     relaxed_signal = "rlxsignal"
     relaxed_wait = "rlxwait"
+    barrier = "barrier"  # To Doc
+    flush = "flush"  # To Doc
+    get = "get"
     put = "put"
-    put_packet = "ppkt"
+    put_packet = "ppkt"  # regular => packet
+    read_put_packet = "rppkt"  # packet => packet
+    put_with_signal = "pws"
+    put_with_signal_and_flush = "pwsf" 
+    reduce_copy_send = "rcs"
+    reduce_copy_send_packet = "rcspkt" # packet + packet -> packet => packet
     read_reduce_copy = "rrc"
     read_reduce_copy_send = "rrcs"
-    reduce_send = "rs"
-    reduce_send_packet = "rspkt"
-    read_put_packet = "rppkt"
-    put_with_signal = "pws"
-    put_with_signal_and_flush = "pwsf"
-    get = "get"
-    flush = "flush"
-    barrier = "barrier"
-    group_store = "gstore"
-    group_load_reduce = "glre"
-    group_load_reduce_store = "glres"
+    group_store = "gstore"  # To Doc
+    group_load_reduce = "glre"  # To Doc
+    group_load_reduce_store = "glres"  # To Doc
 
     def __str__(self):
         return self.value
