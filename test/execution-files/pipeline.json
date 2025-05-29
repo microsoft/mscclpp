@@ -14,8 +14,11 @@
           "id": 0,
           "ops": [
             { "name": "rsignal", "cids": [0], "ctype": "memory" },
+            { "name": "rwait", "cids": [0], "ctype": "memory" },
             {
-              "name": "rwait",
+              "name": "put",
+              "src_buff": [ {"type": "i", "offset": 0, "size": 1} ],
+              "dst_buff": [ {"buff_id": 0, "offset": 0, "size": 1} ],
               "cids": [0],
               "ctype": "memory"
             },
@@ -25,7 +28,9 @@
           "channels": [
             { "ctype": "memory", "cids": [0] }
           ],
-          "remoteBuffersRefs": []
+          "remoteBuffersRefs": [
+            { "accessChannelType": "memory", "ids": [0] }
+          ]
         }
       ],
       "channels": [
@@ -59,7 +64,9 @@
           "channels": [
             { "ctype": "memory", "cids": [0] }
           ],
-          "remoteBuffersRefs": [{"accessChannelType": "memory", "ids": [0]}]
+          "remoteBuffersRefs": [
+            { "accessChannelType": "memory", "ids": [0] }
+          ]
         }
       ],
       "channels": [

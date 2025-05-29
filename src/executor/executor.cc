@@ -117,7 +117,7 @@ struct ExecutionContext {
   // For registered memories, registeredMemoryAddresses is used for memoryChannel and registeredMemoryIds is used for
   // proxy channel
   std::vector<mscclpp::RegisteredMemory> registeredMemories;
-  std::vector<uintptr_t> registeredMemoryAddresses;
+  std::vector<void*> registeredMemoryAddresses;
   std::vector<mscclpp::MemoryId> registeredMemoryIds;
 
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
@@ -275,7 +275,7 @@ struct Executor::Impl {
       context.registeredMemories.emplace_back(std::move(remoteRegMemoryFuture.get()));
       for (ChannelType chanType : bufferInfo.accessChannelTypes) {
         if (chanType == ChannelType::MEMORY) {
-          context.registeredMemoryAddresses.push_back((uintptr_t)context.registeredMemories.back().data());
+          context.registeredMemoryAddresses.push_back(context.registeredMemories.back().data());
         } else if (chanType == ChannelType::PORT) {
           context.registeredMemoryIds.push_back(context.proxyService->addMemory(context.registeredMemories.back()));
         }

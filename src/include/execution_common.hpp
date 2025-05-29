@@ -67,7 +67,7 @@ struct Channels {
 };
 
 struct RemoteBuffers {
-  uintptr_t remoteBuffersViaMemoryChannel[MAX_CHANNEL];
+  void* remoteBuffersViaMemoryChannel[MAX_CHANNEL];
   MemoryId remoteBuffersViaPortChannel[MAX_CHANNEL];
 };
 
