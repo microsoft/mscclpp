@@ -13,6 +13,10 @@ namespace mscclpp {
 constexpr int MAX_CHANNEL = 16;
 constexpr int MAX_CHANNEL_PER_OPERATION = 8;
 constexpr int MAX_OPERATION = 64;
+constexpr int INPUT_BUFFER_MEMORY_ID = 0;
+constexpr int OUTPUT_BUFFER_MEMORY_ID = 1;
+constexpr int SCRATCH_BUFFER_MEMORY_ID = 2;
+constexpr int MAX_RESERVED_MEMORY_IDS = 3;
 
 enum class BufferType : uint8_t {
   NONE,
@@ -25,7 +29,7 @@ enum class ChannelType : uint8_t {
   NONE,
   MEMORY,
   PORT,
-  NVLS,
+  SWITCH,
 };
 
 // NOTE(chhwang): any modification here requires corresponding updates in `tools/npkit/npkit_trace_generator.py`.
@@ -51,47 +55,60 @@ enum class OperationType : uint8_t {
   READ_REDUCE_COPY,
   READ_REDUCE_COPY_SEND,
   MULTI_LOAD_REDUCE_STORE,
+  RELAXED_SIGNAL,
+  RELAXED_WAIT,
+  PIPELINE,
 };
 
 struct Channels {
-  mscclpp::DeviceHandle<mscclpp::MemoryChannel> memoryChannels[MAX_CHANNEL];
-  mscclpp::DeviceHandle<mscclpp::PortChannel> portChannels[MAX_CHANNEL];
+  mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> memoryChannels[MAX_CHANNEL];
+  mscclpp::DeviceHandle<mscclpp::BasePortChannel> portChannels[MAX_CHANNEL];
   mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels[MAX_CHANNEL];
+};
+
+struct RemoteBuffers {
+  void* remoteBuffersViaMemoryChannel[MAX_CHANNEL];
+  MemoryId remoteBuffersViaPortChannel[MAX_CHANNEL];
+};
+
+union BufferRef {
+  uint8_t id;
+  BufferType type;
 };
 
 struct Operation {
   OperationType type;
   ChannelType channelType;
-  BufferType srcBufferType;
-  BufferType dstBufferType;
-  uint8_t nInputs;
-  uint8_t nOutputs;
   union {
-    // For ops which require reading from multiple remote sources
-    uint8_t inputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
-    // For ops which require reading from multiple local sources
-    BufferType inputBufferType;
+    BufferRef inputBufferRefs[MAX_CHANNEL_PER_OPERATION];
     uint8_t nvlsInputIndex;
   };
   union {
-    // For ops which require writing to multiple remote destinations
-    uint8_t outputChannelIndexes[MAX_CHANNEL_PER_OPERATION];
-    // For ops which require writing to multiple local destinations
-    BufferType outputBufferType;
+    BufferRef outputBufferRefs[MAX_CHANNEL_PER_OPERATION];
     uint8_t nvlsOutputIndex;
   };
+
   union {
-    // For Barrier operation
+    struct {
+      uint8_t channelIndexes[MAX_CHANNEL_PER_OPERATION];
+      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
+      uint32_t inputBufferSizes[MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputBufferSizes[MAX_CHANNEL_PER_OPERATION];
+
+      uint8_t nChannels;
+      uint8_t nInputs;
+      uint8_t nOutputs;
+    };
+    struct {
+      uint32_t unitSize;
+      uint32_t maxBufferSize;
+      uint8_t nIterations;
+      uint8_t nOperations;
+    };
     struct {
       uint32_t deviceSyncerIndex;
       uint32_t nThreadBlocks;
-    };
-    struct {
-      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
-      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
-      uint32_t srcOffset;
-      uint32_t dstOffset;
-      uint32_t size;
     };
   };
 };
@@ -102,6 +119,7 @@ struct __attribute__((aligned(16))) DeviceExecutionPlan {
   uint8_t nPortChannels;                // 1 bytes
   uint16_t nOperations;                 // 2 bytes
   Channels channels;                    // 2304 bytes
+  RemoteBuffers remoteBuffers;          // 192 bytes
   Operation operations[MAX_OPERATION];  // 64 * 100 = 6400 bytes
 };
 
