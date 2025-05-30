@@ -558,45 +558,48 @@ MSCCLPP_DEVICE_INLINE void handleTransformToPacket(Operation* op, void* input, v
 //   }
 // }
 
-MSCCLPP_DEVICE_INLINE void handleCopy(Operation* op, void* input, void* output, void* scratch) {
-  uint32_t size = op->inputBufferSizes[0];
-  uint32_t dstOffset = op->outputOffsets[0];
-  uint32_t srcOffset = op->inputOffsets[0];
-  char* srcData = static_cast<char*>(getBuffer(input, output, scratch, op->inputBufferRefs[0].type)) + srcOffset;
-  char* dstData = static_cast<char*>(getBuffer(input, output, scratch, op->outputBufferRefs[0].type)) + dstOffset;
+MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* output, void* scratch) {
+  uint32_t size = op.inputBufferSizes[0];
+  uint32_t dstOffset = op.outputOffsets[0];
+  uint32_t srcOffset = op.inputOffsets[0];
+  char* srcData = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
+  char* dstData = static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[0].type)) + dstOffset;
   mscclpp::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
 }
 
-// #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
-// template <typename T>
-// MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* dst, T* src, uint32_t dstOffset, uint32_t srcOffset,
-//                                                       size_t size) {
-//   using vectorType = typename VectorType<T>::type;
-//   using nvlsType = typename VectorType<T>::nvls_type;
-//   // nvls can only handle 4 bytes alignment
-//   assert(size % sizeof(vectorType) == 0);
-//   const size_t nInt4 = size / sizeof(nvlsType);
-//   const size_t srcOffset4 = srcOffset / sizeof(nvlsType);
-//   const size_t dstOffset4 = dstOffset / sizeof(nvlsType);
-//   nvlsType* src4 = (nvlsType*)src;
-//   nvlsType* dst4 = (nvlsType*)dst;
-//   for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
-//     nvlsType val;
-//     DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)(src4 + srcOffset4 + idx));
-//     DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)(dst4 + dstOffset4 + idx));
-//   }
-//   // handle rest of data
-//   size_t processed = nInt4 * sizeof(nvlsType);
-//   using nvlsType2 = typename VectorType<T>::nvls_type2;
-//   const size_t startIdx = (srcOffset + processed) / sizeof(nvlsType2);
-//   const size_t endIdx = (dstOffset + size) / sizeof(nvlsType2);
-//   for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
-//     nvlsType2 val;
-//     DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)src + idx);
-//     DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)dst + idx);
-//   }
-// }
-// #endif
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+template <typename T>
+MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op) {
+  using vectorType = typename VectorType<T>::type;
+  using nvlsType = typename VectorType<T>::nvls_type;
+  // nvls can only handle 4 bytes alignment
+  const uint32_t size = op.inputBufferSizes[0];
+  assert(size % sizeof(vectorType) == 0);
+  const uint32_t nInt4 = size / sizeof(nvlsType);
+  const uint32_t srcOffset = op.inputOffsets[0];
+  const uint32_t dstOffset = op.outputOffsets[0];
+  const uint32_t srcOffset4 = srcOffset / sizeof(nvlsType);
+  const uint32_t dstOffset4 = dstOffset / sizeof(nvlsType);
+  nvlsType* src4 = (nvlsType*)nvlsChannels_[op.nvlsInputIndex].mcPtr;
+  nvlsType* dst4 = (nvlsType*)nvlsChannels_[op.nvlsOutputIndex].mcPtr;
+  for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
+    nvlsType val;
+    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)(src4 + srcOffset4 + idx));
+    DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)(dst4 + dstOffset4 + idx));
+  }
+  // handle rest of data
+  size_t processed = nInt4 * sizeof(nvlsType);
+  using nvlsType2 = typename VectorType<T>::nvls_type2;
+  const size_t startIdx = (srcOffset + processed) / sizeof(nvlsType2);
+  const size_t endIdx = (dstOffset + size) / sizeof(nvlsType2);
+  for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
+    nvlsType2 val;
+    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val,
+                                                           (vectorType*)nvlsChannels_[op.nvlsInputIndex].mcPtr + idx);
+    DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)nvlsChannels_[op.nvlsOutputIndex].mcPtr + idx);
+  }
+}
+#endif
 
 // template <typename T, typename PacketType>
 // MSCCLPP_DEVICE_INLINE void handlePipeline(Operation* operations, void* input, void* output, void* scratch) {
@@ -659,9 +662,9 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   // if (opType == OperationType::READ_REDUCE_COPY) {
   //   return handleReadReduceCopySend<T, false>;
   // }
-  // if (opType == OperationType::COPY) {
-  //   return handleCopy;
-  // }
+  if (opType == OperationType::COPY) {
+    return handleCopy(op, input, output, scratch);
+  }
   // // if (opType == OperationType::REDUCE_SEND) {
   // //   return handleReduceSend<T>;
   // // }
@@ -674,6 +677,11 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   // if (opType == OperationType::TRANSFORM_TO_PACKET) {
   //   return handleTransformToPacket<PacketType>;
   // }
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  if (opType == OperationType::MULTI_LOAD_REDUCE_STORE) {
+    return handleMultiLoadReduceStore<T>(op);
+  }
+#endif
   // if (opType == OperationType::PIPELINE) {
   //   *nSteps = op.nIterations;
   //   return handlePipeline<T, PacketType>;
@@ -713,8 +721,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   Operation* operations = (Operation*)localPlan->operations;
   memoryChannels_ = localPlan->channels.memoryChannels;
   portChannels_ = localPlan->channels.portChannels;
-  [[maybe_unused]] DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels_ =
-      localPlan->channels.nvlsChannels;
+  nvlsChannels_ = localPlan->channels.nvlsChannels;
   remoteMemoriesViaMemoryChan_ = localPlan->remoteBuffers.remoteBuffersViaMemoryChannel;
   remoteMemoriesViaPortChan_ = localPlan->remoteBuffers.remoteBuffersViaPortChannel;
   scratchSize_ = scratchSize;

@@ -108,7 +108,7 @@ ExecutionPlan::Impl::Impl(const std::string planPath) : planPath(planPath), isUs
   this->name = obj["name"];
   this->collective = obj["collective"];
   this->isInPlace = obj["inplace"];
-  this->bufferAlignment = obj["buffer_alignment"];
+  this->bufferAlignment = obj.value("buffer_alignment", 16);
   this->minMessageSize = obj.value("min_message_size", 0);
   this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
 }
@@ -166,10 +166,16 @@ std::vector<int> ExecutionPlan::Impl::getConnectedPeers(int rank) const {
 }
 
 std::vector<BufferInfo> ExecutionPlan::Impl::getRemoteBufferInfos(int rank) const {
+  if (this->remoteBufferInfos.find(rank) == this->remoteBufferInfos.end()) {
+    return std::vector<BufferInfo>();
+  }
   return this->remoteBufferInfos.at(rank);
 }
 
 std::vector<BufferInfo> ExecutionPlan::Impl::getLocalBufferToSend(int rank) const {
+  if (this->localBufferToSend.find(rank) == this->localBufferToSend.end()) {
+    return std::vector<BufferInfo>();
+  }
   return this->localBufferToSend.at(rank);
 }
 
@@ -403,6 +409,9 @@ void ExecutionPlan::Impl::setupRemoteBuffers(const json& gpus) {
     this->threadblockMemoryChannelBufferMap[rank].resize(nthreadblocks);
     this->threadblockPortChannelBufferMap[rank].resize(nthreadblocks);
     for (const auto& threadblock : gpu["threadblocks"]) {
+      if (!threadblock.contains("remote_buffer_refs")) {
+        continue;
+      }
       for (const auto& remoteBuffRef : threadblock["remote_buffer_refs"]) {
         ChannelType accessChanType = convertToChannelType(remoteBuffRef["access_channel_type"]);
         if (accessChanType == ChannelType::PORT) {
@@ -435,10 +444,24 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
     }
   };
 
+  auto getRemoteBufferTypeWithId = [&](int bufferId, int rank, int threadBlockId,
+                                       ChannelType channelType) -> BufferType {
+    int id = -1;
+    if (channelType == ChannelType::MEMORY) {
+      id = this->threadblockMemoryChannelBufferMap[rank][threadBlockId][bufferId];
+    } else if (channelType == ChannelType::PORT) {
+      id = this->threadblockPortChannelBufferMap[rank][threadBlockId][bufferId];
+    } else {
+      throw Error("Invalid channel type", ErrorCode::ExecutorError);
+    }
+    return this->remoteBufferInfos[rank][id].bufferType;
+  };
+
   // setup threadblocks and operations
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];
     for (const auto& threadblock : gpu["threadblocks"]) {
+      int threadBlockId = threadblock["id"];
       std::unordered_map<ChannelKey, std::vector<int>> channelIndexes;
       std::vector<Operation> ops;
       for (const auto& op : threadblock["ops"]) {
@@ -469,7 +492,13 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
             }
             if (buff.contains("buff_id")) {
               operation.inputBufferRefs[i].id = buff["buff_id"];
-              constOffset = getConstOffset(this->remoteBufferInfos[rank][operation.inputBufferRefs[i].id].bufferType);
+              BufferType bufferType =
+                  getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
+              constOffset = getConstOffset(bufferType);
+            }
+            if (buff.contains("switch_channel_id")) {
+              int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
+              constOffset = getConstOffset(this->nvlsInfos[rank][switchChannelIdx].bufferType);
             }
             operation.inputOffsets[i] =
                 this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
@@ -488,7 +517,13 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
             }
             if (buff.contains("buff_id")) {
               operation.outputBufferRefs[i].id = buff["buff_id"];
-              constOffset = getConstOffset(this->remoteBufferInfos[rank][operation.outputBufferRefs[i].id].bufferType);
+              BufferType bufferType =
+                  getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
+              constOffset = getConstOffset(bufferType);
+            }
+            if (buff.contains("switch_channel_id")) {
+              int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
+              constOffset = getConstOffset(this->nvlsInfos[rank][switchChannelIdx].bufferType);
             }
             operation.outputOffsets[i] =
                 this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
