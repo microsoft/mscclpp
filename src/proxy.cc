@@ -80,10 +80,7 @@ MSCCLPP_API_CPP void Proxy::start() {
 
       // Send completion: reset only the high 64 bits
       fifo.pop();
-      // Flush the tail to device memory. This is either triggered every flushPeriod to make sure that the fifo can make
-      // progress even if there is no request mscclppSync. However, mscclppSync type is for flush request.
       if ((++flushCnt % flushPeriod) == 0 || result == ProxyHandlerResult::FlushFifoTailAndContinue) {
-        // TODO: relocate this check: || (trigger.fields.type & mscclppSync)
         fifo.flushTail();
       }
 
@@ -94,12 +91,6 @@ MSCCLPP_API_CPP void Proxy::start() {
 
     // make sure the tail is flushed before we shut the proxy
     fifo.flushTail(/*sync=*/true);
-    // TODO: do these need to run?
-    // bool isP2pProxy = (proxyState->ibContext == nullptr);
-    // if (isP2pProxy) {
-    //   cudaStream_t p2pStream = proxyState->p2pStream;
-    //   PROXYCUDACHECK(cudaStreamSynchronize(p2pStream));
-    // }
   });
 }
 
