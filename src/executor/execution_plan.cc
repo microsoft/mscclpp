@@ -82,20 +82,20 @@ auto convertToBufferType = [](const std::string& str) {
 };
 
 auto convertToChannelType = [](const std::string& str) {
-  if (str == "memory" || str == "sm") {
+  if (str == "memory") {
     return mscclpp::ChannelType::MEMORY;
-  } else if (str == "port" || str == "proxy") {
+  } else if (str == "port") {
     return mscclpp::ChannelType::PORT;
   } else if (str == "none") {
     return mscclpp::ChannelType::NONE;
-  } else if (str == "nvls") {
-    return mscclpp::ChannelType::NVLS;
+  } else if (str == "switch") {
+    return mscclpp::ChannelType::SWITCH;
   } else {
     throw mscclpp::Error("Invalid channel type", mscclpp::ErrorCode::ExecutorError);
   }
 };
 
-std::set groupChannelType{mscclpp::ChannelType::NVLS};
+std::set groupChannelType{mscclpp::ChannelType::SWITCH};
 
 }  // namespace
 
@@ -276,7 +276,7 @@ void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo
   for (const auto& channel : gpu["channels"]) {
     ChannelType chanType = convertToChannelType(channel["type"]);
 
-    if (chanType == ChannelType::NVLS) {
+    if (chanType == ChannelType::SWITCH) {
       NvlsInfo info;
       info.bufferType = convertToBufferType(channel["buff"]);
       for (const auto& group : channel["rank_groups"]) {
@@ -345,15 +345,15 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
   // setup threadblockChannelMap
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];
-    auto channelTypes = {ChannelType::MEMORY, ChannelType::PORT, ChannelType::NVLS};
+    auto channelTypes = {ChannelType::MEMORY, ChannelType::PORT, ChannelType::SWITCH};
     std::unordered_map<ChannelKey, std::vector<int>> channelMap;
     for (auto channelType : channelTypes) {
       const std::vector<ChannelInfo> channelInfos = this->getChannelInfos(rank, channelType);
       int index = 0;
-      if (channelType == ChannelType::NVLS) {
+      if (channelType == ChannelType::SWITCH) {
         const std::vector<NvlsInfo> nvlsInfos = this->getNvlsInfos(rank);
         for (const auto& info : nvlsInfos) {
-          ChannelKey key = {info.bufferType, ChannelType::NVLS};
+          ChannelKey key = {info.bufferType, ChannelType::SWITCH};
           channelMap[key].push_back(index++);
         }
       } else {
@@ -381,7 +381,7 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
             this->threadblockMemoryChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id]);
           } else if (channelType == ChannelType::PORT) {
             this->threadblockPortChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id]);
-          } else if (channelType == ChannelType::NVLS) {
+          } else if (channelType == ChannelType::SWITCH) {
             this->threadblockNvlsChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id]);
           }
         }
@@ -450,7 +450,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
         }
         if (op.contains("channel_ids")) {
           operation.nChannels = op["channel_ids"].size();
-          if (operation.channelType == mscclpp::ChannelType::NVLS) {
+          if (operation.channelType == mscclpp::ChannelType::SWITCH) {
             operation.nvlsInputIndex = op["channel_ids"][0];
           } else {
             for (uint32_t i = 0; i < op["channel_ids"].size(); i++) {

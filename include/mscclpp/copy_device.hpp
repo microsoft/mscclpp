@@ -96,11 +96,13 @@ MSCCLPP_DEVICE_INLINE void copy(void* dst, void* src, uint64_t bytes, uint32_t t
   }
 }
 
+/// Write a value to the destination memory at the specified index.
 template <typename T>
 MSCCLPP_DEVICE_INLINE void write(void* dst, uint64_t index, const T& v) {
   *(reinterpret_cast<T*>(dst) + index) = v;
 }
 
+/// Read a value from the source memory at the specified index.
 template <typename T>
 MSCCLPP_DEVICE_INLINE T read(void* src, uint64_t index) {
   return *(reinterpret_cast<T*>(src) + index);
