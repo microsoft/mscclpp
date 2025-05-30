@@ -22,6 +22,7 @@
               "channel_ids": [0],
               "channel_type": "memory"
             },
+            {"name": "nop"},
             { "name": "signal", "channel_ids": [0], "channel_type": "memory" },
             { "name": "wait", "channel_ids": [0], "channel_type": "memory" }
           ],
@@ -37,7 +38,7 @@
         { "type": "memory", "connected_to": [1] }
       ],
       "remote_buffers": [
-        { "rank": 0, "type": "o", "access_channel_types": ["memory"] }
+        { "rank": 1, "type": "o", "access_channel_types": ["memory"] }
       ]
     },
     {
@@ -58,6 +59,7 @@
               "channel_ids": [0],
               "channel_type": "memory"
             },
+            {"name": "nop"},
             { "name": "signal", "channel_ids": [0], "channel_type": "memory" },
             { "name": "wait", "channel_ids": [0], "channel_type": "memory" }
           ],
@@ -73,7 +75,7 @@
         { "type": "memory", "connected_to": [0] }
       ],
       "remote_buffers": [
-        { "rank": 1, "type": "o", "access_channel_types": ["memory"] }
+        { "rank": 0, "type": "o", "access_channel_types": ["memory"] }
       ]
     }
   ],

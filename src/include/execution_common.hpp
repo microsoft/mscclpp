@@ -96,6 +96,7 @@ struct Operation {
       uint32_t inputBufferSizes[MAX_CHANNEL_PER_OPERATION];
       uint32_t outputBufferSizes[MAX_CHANNEL_PER_OPERATION];
 
+      uint8_t nChannels;
       uint8_t nInputs;
       uint8_t nOutputs;
     };

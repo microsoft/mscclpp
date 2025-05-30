@@ -214,7 +214,7 @@ MSCCLPP_DEVICE_INLINE void handleBarrier(const Operation& op) {
 }
 
 MSCCLPP_DEVICE_INLINE void handleSignal(const Operation& op) {
-  int nChannels = op.nOutputs;
+  int nChannels = op.nChannels;
   ChannelType chType = op.channelType;
   const uint8_t* channelIndex = op.channelIndexes;
   int tid = threadIdx.x;
@@ -228,7 +228,7 @@ MSCCLPP_DEVICE_INLINE void handleSignal(const Operation& op) {
 }
 
 MSCCLPP_DEVICE_INLINE void handleWait(const Operation& op) {
-  int nChannels = op.nInputs;
+  int nChannels = op.nChannels;
   ChannelType chType = op.channelType;
   const uint8_t* channelIndex = op.channelIndexes;
   int tid = threadIdx.x;
@@ -267,7 +267,7 @@ MSCCLPP_DEVICE_INLINE void handleGet(Operation* operation, void* input, void* ou
 }
 
 template <bool PutWithSignal = false, bool PutWithSignalAndFlush = false>
-MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* output, void* scratch, int rank) {
   ChannelType chType = op.channelType;
   uint32_t count = op.nOutputs;
   const uint8_t* channelIndexes = op.channelIndexes;
@@ -620,7 +620,7 @@ MSCCLPP_DEVICE_INLINE void handleCopy(Operation* op, void* input, void* output, 
 
 template <typename T, typename PacketType>
 MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch,
-                                                 uint8_t* nSteps) {
+                                                 uint8_t* nSteps, int rank) {
   *nSteps = 1;
   OperationType opType = op.type;
   if (opType == OperationType::NOP) {
@@ -639,7 +639,7 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
     return handleFlush(op);
   }
   if (opType == OperationType::PUT) {
-    return handlePut(op, input, output, scratch);
+    return handlePut(op, input, output, scratch, rank);
   }
   // if (opType == OperationType::PUT_WITH_SIGNAL) {
   //   return handlePut<true>;
@@ -750,7 +750,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                               event_buffer, &event_buffer_head);
 #endif
     uint8_t nSteps = 0;
-    executeDeviceFunction<T, PacketType>(op, input, output, scratch, &nSteps);
+    executeDeviceFunction<T, PacketType>(op, input, output, scratch, &nSteps, rank);
     i += nSteps;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT)

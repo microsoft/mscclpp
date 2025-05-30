@@ -447,6 +447,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
           operation.channelType = convertToChannelType(op["channel_type"]);
         }
         if (op.contains("channel_ids")) {
+          operation.nChannels = op["channel_ids"].size();
           if (operation.channelType == mscclpp::ChannelType::NVLS) {
             operation.nvlsInputIndex = op["channel_ids"][0];
           } else {
