@@ -1,33 +1,58 @@
-# Copyright (c) Microsoft Corporation.
-# Licensed under the MIT License.
-
-from dataclasses import dataclass, field
-from typing import Dict
-
-
-class BarrierInfo:
-    def __init__(self, tb_list):
-        self.tb_list = tb_list
-
-    def __eq__(self, other):
-        return self.tb_list == other.tb_list
-
-    def __hash__(self):
-        return hash(tuple(self.tb_list))
+from mscclpp.language.internal.types import BufferType, Chunk
+from mscclpp.language.internal.operations import CopyOperation, LocalChunk
+from mscclpp.language.internal.globals import get_program
+from dataclasses import dataclass
 
 
 @dataclass
 class Rank:
-    rank_id: int
-    current_max_barrier_id: int = 0
-    current_barriers: Dict[BarrierInfo, int] = field(default_factory=dict)
+    rank: int
 
-    def get_barrier_id(self, tb_list):
-        barrier_info = BarrierInfo(tb_list)
-        if barrier_info in self.current_barriers:
-            return self.current_barriers[barrier_info]
-        else:
-            self.current_barriers[barrier_info] = self.current_max_barrier_id
-            barrier_id = self.current_max_barrier_id
-            self.current_max_barrier_id += 1
-            return barrier_id
+    def __init__(self, rank: int):
+        self.rank = rank
+        if rank >= get_program().num_ranks:
+            raise RuntimeError(f"Rank {rank} is out of bounds. Number of ranks: {self.prog.num_ranks}")
+
+    def get_input_buffer(self):
+        return get_program().buffers[self.rank][BufferType.input]
+
+    def get_output_buffer(self):
+        return get_program().buffers[self.rank][BufferType.output]
+
+    def copy(self, dst_chunk, src_chunk, tb):
+        if dst_chunk.rank != self.rank:
+            raise RuntimeError(f"Cannot copy to chunk from different rank: {dst_chunk.rank} != {self.rank}")
+
+        op = CopyOperation(
+            [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
+            [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+        )
+
+        get_program().add_operation(self.rank, tb, op)
+
+
+class BaseBuffer:
+    def __init__(self, rank, buffer_type, offset, size):
+        self.rank = rank
+        self.buffer_type = buffer_type
+        self.offset = offset
+        self.size = offset + size
+
+    def __getitem__(self, key):
+        if self.offset + key.stop > self.size:
+            raise RuntimeError(
+                f"Index range from {self.offset + key.start} - {self.offset + key.stop} is out of bounds for buffer {self.buffer_type}. Buffer size: {self.size}"
+            )
+        return Chunk(self.rank, self.buffer_type, self.offset + key.start, key.stop - key.start)
+
+
+class Buffer(BaseBuffer):
+    def __init__(self, rank, size):
+        if rank >= get_program().num_ranks:
+            raise RuntimeError(f"Rank {rank} is out of bounds. Number of ranks: {self.prog.num_ranks}")
+
+        self.rank = rank
+        self.buffer_type = BufferType.scratch
+        self.offset = get_program().gpus[rank].scratch_chunks
+        self.size = self.offset + size
+        get_program().gpus[rank].scratch_chunks += size
