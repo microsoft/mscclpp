@@ -117,11 +117,12 @@ struct ExecutionPlan::Impl {
   int nThreadsPerBlock;
   size_t minMessageSize;
   size_t maxMessageSize;
+  uint32_t bufferAlignment;
   bool isInPlace;
 
  private:
   std::pair<size_t, uint32_t> getSizeAndChunksForRank(int rank, size_t inputSize, size_t outputSize) const;
-  size_t getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex, uint32_t alignment = 16) const;
+  size_t getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex) const;
   size_t getBufferSize(int rank, size_t inputSize, size_t outputSize, uint32_t index, uint32_t nChunks) const;
   size_t getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const;
 

@@ -108,6 +108,7 @@ ExecutionPlan::Impl::Impl(const std::string planPath) : planPath(planPath), isUs
   this->name = obj["name"];
   this->collective = obj["collective"];
   this->isInPlace = obj["inplace"];
+  this->bufferAlignment = obj["buffer_alignment"];
   this->minMessageSize = obj.value("min_message_size", 0);
   this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
 }
@@ -211,6 +212,7 @@ int ExecutionPlan::Impl::getThreadblockCount(int rank) const { return this->oper
 
 int ExecutionPlan::Impl::getNThreadsPerBlock() const { return this->nThreadsPerBlock; }
 
+// TODO: setup OPs only for current rank
 void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize, size_t outputSize, size_t contsSrcOffset,
                                             size_t constDstOffset) {
   std::ifstream file(this->planPath);
@@ -529,20 +531,19 @@ std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunksForRank(int ran
   return sizePerRank;
 }
 
-size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex,
-                                      uint32_t alignment) const {
-  if (inputSize % alignment != 0) {
+size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex) const {
+  if (inputSize % this->bufferAlignment != 0) {
     throw Error("inputSize must be a multiple of alignment", ErrorCode::ExecutorError);
   }
 
   auto rankSizeAndChunks = getSizeAndChunksForRank(rank, inputSize, outputSize);
   uint32_t nChunks = rankSizeAndChunks.second;
-  uint32_t nelems = rankSizeAndChunks.first / (alignment * sizeof(uint8_t));
+  uint32_t nelems = rankSizeAndChunks.first / (this->bufferAlignment * sizeof(uint8_t));
 
   uint32_t minNelems = nelems / nChunks;
   uint32_t remainder = nelems % nChunks;
   uint32_t offset = chunkIndex * minNelems + (chunkIndex % nelems < remainder ? chunkIndex % nelems : remainder);
-  return static_cast<size_t>(offset) * alignment;
+  return static_cast<size_t>(offset) * this->bufferAlignment;
 }
 
 size_t ExecutionPlan::Impl::getBufferSize(int rank, size_t inputSize, size_t outputSize, uint32_t index,
