@@ -5,14 +5,13 @@ import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
 from mscclpp.language.general import *
-from mscclpp.language.program import MSCCLPPProgram
-from mscclpp.language.collectives import AllGather
+from mscclpp.language.program import *
+from mscclpp.language.collectives import *
 
 
 def allgather_example(name, num_threads_per_block, min_message_size, max_message_size):
     # Validating parameters
     gpus = 2
-
     size = gpus
     chunksperloop = 1
     collective = AllGather(size, chunksperloop, True)
@@ -42,10 +41,10 @@ def allgather_example(name, num_threads_per_block, min_message_size, max_message
                 if src_rank != dst_rank:
                     ch = Channel(dst_rank, src_rank, ChannelType.memory)
                     ch.signal(tb=0, sync=None)
-                    ch.wait(tb=0, sync="after")
+                    ch.wait(tb=0, sync=SyncType.after)
                     ch.put(scratch_buffers[dst_rank][1:2], scratch_buffers[src_rank][0:1], tb=0)
-                    ch.signal(tb=0, sync="before")
-                    ch.wait(tb=0, sync="after")
+                    ch.signal(tb=0, sync=SyncType.before)
+                    ch.wait(tb=0, sync=SyncType.after)
                     rank.copy(input_buffer[dst_rank : dst_rank + 1], scratch_buffers[src_rank][1:2], tb=0)
 
         print(JSON())

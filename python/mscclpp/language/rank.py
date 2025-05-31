@@ -1,5 +1,5 @@
 from mscclpp.language.internal.types import BufferType, Chunk
-from mscclpp.language.internal.operations import CopyOperation, LocalChunk
+from mscclpp.language.internal.operations import *
 from mscclpp.language.internal.globals import get_program
 from dataclasses import dataclass
 
@@ -19,17 +19,43 @@ class Rank:
     def get_output_buffer(self):
         return get_program().buffers[self.rank][BufferType.output]
 
-    def copy(self, dst_chunk, src_chunk, tb):
-        if dst_chunk.rank != self.rank:
-            raise RuntimeError(f"Cannot copy to chunk from different rank: {dst_chunk.rank} != {self.rank}")
+    def copy(self, dst_chunk, src_chunk, tb, from_packet=False, to_packet=False):
+        if dst_chunk.rank != self.rank or src_chunk.rank != self.rank:
+            raise RuntimeError(f"Inconsistent ranks: dst {dst_chunk.rank}, src {src_chunk.rank}, self {self.rank}. They must match.")
 
         op = CopyOperation(
             [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
             [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+            from_packet,
+            to_packet,
         )
 
         get_program().add_operation(self.rank, tb, op)
 
+    def reduce(self, src_chunk, other_chunks, tb, reduce_op=ReduceOperationType.sum, packet=False, dst_chunk=None):
+        if dst_chunk is None:
+            dst_chunk = src_chunk
+        if src_chunk.rank != self.rank:
+            raise RuntimeError(f"Source chunk rank {src_chunk.rank} does not match current rank {self.rank}.")
+        if dst_chunk.rank != self.rank:
+            raise RuntimeError(f"Destination chunk rank {dst_chunk.rank} does not match current rank {self.rank}.")
+        if packet and src_chunk.type != BufferType.scratch:
+            raise RuntimeError(f"Source chunk must be of type scratch, got {src_chunk.type}.")
+        if packet and dst_chunk.type != BufferType.scratch:
+            raise RuntimeError(f"Destination chunk must be of type scratch, got {dst_chunk.type}.")
+        for chunk in other_chunks:
+            if chunk.rank != self.rank:
+                raise RuntimeError(f"Other chunk rank {chunk.rank} does not match current rank {self.rank}.")
+            if packet and chunk.type != BufferType.scratch:
+                raise RuntimeError(f"Other chunk must be of type scratch, got {chunk.type}.")
+
+        op = ReduceOperation(
+            [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)] + [LocalChunk(chunk.buffer, chunk.index, chunk.size) for chunk in other_chunks],
+            [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+            reduce_operation=reduce_op,
+            packet=packet
+        )
+        get_program().add_operation(self.rank, tb, op)
 
 class BaseBuffer:
     def __init__(self, rank, buffer_type, offset, size):

@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List
-from mscclpp.language.internal.types import ChannelType, Instruction, BufferType, ReduceOperation
+from mscclpp.language.internal.types import ChannelType, Instruction, BufferType, ReduceOperationType
 
 
 @dataclass
@@ -69,35 +69,6 @@ class CopyOperation(BaseOperation):
             result["dst_buff"].append(chunk.to_json())
         return result
 
-
-@dataclass
-class LocalReduceOperation(BaseOperation):
-    def __init__(
-        self,
-        src_buff: List[LocalChunk],
-        dst_buff: List[LocalChunk],
-        reduce_operation: ReduceOperation,
-        packet: bool = False,
-    ):
-        if packet:
-            self.name = Instruction.reduce_copy_packet.value
-        else:
-            self.name = Instruction.reduce_copy.value
-
-        self.src_buff = src_buff
-        self.dst_buff = dst_buff
-        self.reduce_operation = reduce_operation
-
-    def to_json(self):
-        result = {"name": self.name}
-        result["src_buff"] = []
-        for chunk in self.src_buff:
-            result["src_buff"].append(chunk.to_json())
-        result["dst_buff"] = []
-        for chunk in self.dst_buff:
-            result["dst_buff"].append(chunk.to_json())
-        result["reduce_op"] = self.reduce_operation.value
-        return result
 
 
 @dataclass
@@ -215,10 +186,17 @@ class ReduceOperation(BaseOperation):
         local_dst_buff: List[LocalChunk],
         remote_src_buff: List[RemoteChunk],
         remote_dst_buff: List[RemoteChunk],
-        reduce_operation: ReduceOperation,
+        channel_ids: List[int],
+        channel_type: ChannelType,
+        reduce_operation: ReduceOperationType,
         packet: bool = False,
     ):
-        if len(remote_src_buff) == 0:
+        if packet and len(remote_src_buff) == 0 and len(remote_dst_buff) == 0:
+            if packet:
+                self.name = Instruction.reduce_copy_packet.value
+            else:
+                self.name = Instruction.reduce_copy.value
+        elif len(remote_src_buff) == 0:
             if packet:
                 self.name = Instruction.reduce_copy_send_packet.value
             else:
@@ -232,23 +210,27 @@ class ReduceOperation(BaseOperation):
         self.local_dst_buff = local_dst_buff
         self.remote_src_buff = remote_src_buff
         self.remote_dst_buff = remote_dst_buff
+        self.channel_ids = channel_ids
+        self.channel_type = channel_type
         self.reduce_operation = reduce_operation
 
     def to_json(self):
         result = {"name": self.name}
-        result["local_src_buff"] = []
+        result["src_buff"] = []
         for chunk in self.src_buff:
-            result["local_src_buff"].append(chunk.to_json())
-        result["local_dst_buff"] = []
+            result["src_buff"].append(chunk.to_json())
+        result["dst_buff"] = []
         for chunk in self.dst_buff:
-            result["local_dst_buff"].append(chunk.to_json())
+            result["dst_buff"].append(chunk.to_json())
 
         if len(self.remote_src_buff) > 0:
             for chunk in self.remote_src_buff:
-                result["remote_src_buff"].append(chunk.to_json())
+                result["src_buff"].append(chunk.to_json())
         if len(self.remote_dst_buff) > 0:
             for chunk in self.remote_dst_buff:
-                result["remote_dst_buff"].append(chunk.to_json())
+                result["dst_buff"].append(chunk.to_json())
 
+        result["channel_ids"] = self.channel_ids
+        result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
         return result

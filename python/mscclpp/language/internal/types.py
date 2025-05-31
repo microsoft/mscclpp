@@ -7,7 +7,16 @@ from typing import List
 from collections import defaultdict
 
 
-class ReduceOperation(Enum):
+class SyncType(Enum):
+    both = "both"
+    before = "before"
+    after = "after"
+    none = "none"
+
+    def __str__(self):
+        return self.value
+
+class ReduceOperationType(Enum):
     sum = "sum"
     min = "min"
     max = "max"
@@ -33,24 +42,24 @@ class BufferType(Enum):
 
 class Instruction(Enum):
     start = "start"  # ?
-    nop = "nop"
-    copy = "copy"
-    copy_packet = "cpkt"  # packet -> regular
-    transform_to_packet = "tpkt"  # regular -> packet
-    reduce_copy = "rc"
-    reduce_copy_packet = "rcpkt"  # packet + packet -> packet
-    signal = "signal"
-    wait = "wait"
-    relaxed_signal = "rlxsignal"
-    relaxed_wait = "rlxwait"
+    nop = "nop" # OK
+    copy = "copy" # OK
+    copy_packet = "cpkt"  # packet -> regular OK
+    transform_to_packet = "tpkt"  # regular -> packet OK
+    reduce_copy = "rc" # OK
+    reduce_copy_packet = "rcpkt"  # packet + packet -> packet OK
+    signal = "signal" # OK
+    wait = "wait" # OK
+    relaxed_signal = "rlxsignal" # OK
+    relaxed_wait = "rlxwait" # OK
     barrier = "barrier"  # To Doc
     flush = "flush"  # To Doc
-    get = "get"
-    put = "put"
-    put_packet = "ppkt"  # regular => packet
-    read_put_packet = "rppkt"  # packet => packet
-    put_with_signal = "pws"
-    put_with_signal_and_flush = "pwsf" 
+    get = "get" # OK
+    put = "put" # OK
+    put_packet = "ppkt"  # regular => packet OK
+    read_put_packet = "rppkt"  # packet => packet OK
+    put_with_signal = "pws" # OK
+    put_with_signal_and_flush = "pwsf" # OK 
     reduce_copy_send = "rcs"
     reduce_copy_send_packet = "rcspkt" # packet + packet -> packet => packet
     read_reduce_copy = "rrc"
