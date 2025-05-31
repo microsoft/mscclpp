@@ -7,7 +7,16 @@ from typing import List
 from collections import defaultdict
 
 
-class ReduceOperation(Enum):
+class SyncType(Enum):
+    both = "both"
+    before = "before"
+    after = "after"
+    none = "none"
+
+    def __str__(self):
+        return self.value
+
+class ReduceOperationType(Enum):
     sum = "sum"
     min = "min"
     max = "max"
@@ -32,32 +41,32 @@ class BufferType(Enum):
 
 
 class Instruction(Enum):
-    start = "start"
-    nop = "nop"
-    copy = "copy"
-    copy_packet = "cpkt"
-    transform_to_packet = "tpkt"
-    reduce = "re"
-    reduce_packet = "rpkt"
-    signal = "signal"
-    wait = "wait"
-    relaxed_signal = "rlxsignal"
-    relaxed_wait = "rlxwait"
-    put = "put"
-    put_packet = "ppkt"
+    start = "start"  # ?
+    nop = "nop" # OK
+    copy = "copy" # OK
+    copy_packet = "cpkt"  # packet -> regular OK
+    transform_to_packet = "tpkt"  # regular -> packet OK
+    reduce_copy = "rc" # OK
+    reduce_copy_packet = "rcpkt"  # packet + packet -> packet OK
+    signal = "signal" # OK
+    wait = "wait" # OK
+    relaxed_signal = "rlxsignal" # OK
+    relaxed_wait = "rlxwait" # OK
+    barrier = "barrier"  # To Doc
+    flush = "flush"  # To Doc
+    get = "get" # OK
+    put = "put" # OK
+    put_packet = "ppkt"  # regular => packet OK
+    read_put_packet = "rppkt"  # packet => packet OK
+    put_with_signal = "pws" # OK
+    put_with_signal_and_flush = "pwsf" # OK 
+    reduce_copy_send = "rcs"
+    reduce_copy_send_packet = "rcspkt" # packet + packet -> packet => packet
     read_reduce_copy = "rrc"
     read_reduce_copy_send = "rrcs"
-    reduce_send = "rs"
-    reduce_send_packet = "rspkt"
-    read_put_packet = "rppkt"
-    put_with_signal = "pws"
-    put_with_signal_and_flush = "pwsf"
-    get = "get"
-    flush = "flush"
-    barrier = "barrier"
-    group_store = "gstore"
-    group_load_reduce = "glre"
-    group_load_reduce_store = "glres"
+    group_store = "gstore"  # To Doc
+    group_load_reduce = "glre"  # To Doc
+    group_load_reduce_store = "glres"  # To Doc
 
     def __str__(self):
         return self.value

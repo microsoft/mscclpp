@@ -13,31 +13,90 @@
         {
           "id": 0,
           "ops": [
-            { "name": "signal", "cids": [0], "ctype": "memory" },
-            { "name": "wait", "cids": [0], "ctype": "memory" },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
             {
               "name": "put",
-              "src_buff": [ {"type": "o", "index": 0, "size": 1} ],
-              "dst_buff": [ {"buffer_id": 0, "index": 0, "size": 1} ],
-              "cids": [0],
-              "ctype": "memory"
+              "src_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
             },
-            { "name": "signal", "cids": [0], "ctype": "memory" },
-            { "name": "wait", "cids": [0], "ctype": "memory" }
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
           ],
           "channels": [
-            { "channel_type": "memory", "channel_ids": [0] }
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
           ],
           "remote_buffer_refs": [
-            { "access_channel_type": "memory", "remote_buffer_ids": [0] }
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
           ]
         }
       ],
       "channels": [
-        { "type": "memory", "connected_to": [1] }
+        {
+          "type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
       ],
       "remote_buffers": [
-        { "rank": 0, "type": "o", "access_channel_types": ["memory"] }
+        {
+          "rank": 1,
+          "type": "o",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
       ]
     },
     {
@@ -49,31 +108,90 @@
         {
           "id": 0,
           "ops": [
-            { "name": "signal", "cids": [0], "ctype": "memory" },
-            { "name": "wait", "cids": [0], "ctype": "memory" },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
             {
               "name": "put",
-              "src_buff": [ {"type": "o", "index": 1, "size": 1} ],
-              "dst_buff": [ {"buffer_id": 0, "index": 1, "size": 1} ],
-              "cids": [0],
-              "ctype": "memory"
+              "src_buff": [
+                {
+                  "type": "o",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
             },
-            { "name": "signal", "cids": [0], "ctype": "memory" },
-            { "name": "wait", "cids": [0], "ctype": "memory" }
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
           ],
           "channels": [
-            { "channel_type": "memory", "channel_ids": [0] }
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
           ],
           "remote_buffer_refs": [
-            { "access_channel_type": "memory", "remote_buffer_ids": [0] }
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
           ]
         }
       ],
       "channels": [
-        { "type": "memory", "connected_to": [0] }
+        {
+          "type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
       ],
       "remote_buffers": [
-        { "rank": 1, "type": "o", "access_channel_types": ["memory"] }
+        {
+          "rank": 0,
+          "type": "o",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
       ]
     }
   ],
