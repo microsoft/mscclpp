@@ -210,11 +210,11 @@ size_t ExecutionPlan::Impl::getMaxScratchBufferSize(int rank) const {
                                     sizePerChunk * this->outputChunks.at(rank));
 }
 
-std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadblock) const {
-  return this->operations.at(rank)[threadblock];
+std::vector<Operation> ExecutionPlan::Impl::getOperations(int threadblock) const {
+  return this->operations[threadblock];
 }
 
-int ExecutionPlan::Impl::getThreadblockCount(int rank) const { return this->operations.at(rank).size(); }
+int ExecutionPlan::Impl::getThreadblockCount() const { return this->operations.size(); }
 
 int ExecutionPlan::Impl::getNThreadsPerBlock() const { return this->nThreadsPerBlock; }
 
@@ -247,10 +247,10 @@ void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize, size_t o
   }
   this->setupChannels(gpus);
   this->setupRemoteBuffers(gpus);
-  this->setupOperations(gpus, contsSrcOffset, constDstOffset);
+  this->setupOperations(gpus, rank, contsSrcOffset, constDstOffset);
 }
 
-void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset,
+void ExecutionPlan::Impl::lightLoadExecutionPlan(int rank, size_t inputSize, size_t outputSize, size_t contsSrcOffset,
                                                  size_t constDstOffset) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
@@ -272,7 +272,7 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t output
 
   this->inputSize = inputSize;
   this->outputSize = outputSize;
-  this->setupOperations(gpus, contsSrcOffset, constDstOffset);
+  this->setupOperations(gpus, rank, contsSrcOffset, constDstOffset);
 }
 
 void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo>& channelInfos,
@@ -430,7 +430,7 @@ void ExecutionPlan::Impl::setupRemoteBuffers(const json& gpus) {
   }
 }
 
-void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffset, size_t constDstOffset) {
+void ExecutionPlan::Impl::setupOperations(const json& gpus, int rank, size_t constSrcOffset, size_t constDstOffset) {
   auto getConstOffset = [&](BufferType type) -> size_t {
     switch (type) {
       case BufferType::INPUT:
@@ -458,89 +458,90 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
   };
 
   // setup threadblocks and operations
-  for (const auto& gpu : gpus) {
-    int rank = gpu["id"];
-    for (const auto& threadblock : gpu["threadblocks"]) {
-      int threadBlockId = threadblock["id"];
-      std::unordered_map<ChannelKey, std::vector<int>> channelIndexes;
-      std::vector<Operation> ops;
-      for (const auto& op : threadblock["ops"]) {
-        Operation operation = {};
-        std::vector<uint32_t> chunkIndexes;
-        operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
-        if (op.contains("channel_type")) {
-          operation.channelType = convertToChannelType(op["channel_type"]);
-        }
-        if (op.contains("channel_ids")) {
-          operation.nChannels = op["channel_ids"].size();
-          if (operation.channelType == mscclpp::ChannelType::SWITCH) {
-            operation.nvlsInputIndex = op["channel_ids"][0];
-          } else {
-            for (uint32_t i = 0; i < op["channel_ids"].size(); i++) {
-              operation.channelIndexes[i] = op["channel_ids"][i];
-            }
-          }
-        }
-        if (op.contains("src_buff")) {
-          operation.nInputs = op["src_buff"].size();
-          for (int i = 0; i < operation.nInputs; i++) {
-            auto& buff = op["src_buff"][i];
-            size_t constOffset = 0;
-            if (buff.contains("type")) {
-              operation.inputBufferRefs[i].type = convertToBufferType(buff["type"]);
-              constOffset = getConstOffset(operation.inputBufferRefs[i].type);
-            }
-            if (buff.contains("buff_id")) {
-              operation.inputBufferRefs[i].id = buff["buff_id"];
-              BufferType bufferType =
-                  getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
-              constOffset = getConstOffset(bufferType);
-            }
-            if (buff.contains("switch_channel_id")) {
-              int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
-              constOffset = getConstOffset(this->nvlsInfos[rank][switchChannelIdx].bufferType);
-            }
-            operation.inputOffsets[i] =
-                this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
-            operation.inputBufferSizes[i] =
-                this->getBufferSize(rank, this->inputSize, this->outputSize, buff["index"], buff["size"]);
-          }
-        }
-        if (op.contains("dst_buff")) {
-          operation.nOutputs = op["dst_buff"].size();
-          for (int i = 0; i < operation.nOutputs; i++) {
-            auto& buff = op["dst_buff"][i];
-            size_t constOffset = 0;
-            if (buff.contains("type")) {
-              operation.outputBufferRefs[i].type = convertToBufferType(buff["type"]);
-              constOffset = getConstOffset(operation.outputBufferRefs[i].type);
-            }
-            if (buff.contains("buff_id")) {
-              operation.outputBufferRefs[i].id = buff["buff_id"];
-              BufferType bufferType =
-                  getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
-              constOffset = getConstOffset(bufferType);
-            }
-            if (buff.contains("switch_channel_id")) {
-              int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
-              constOffset = getConstOffset(this->nvlsInfos[rank][switchChannelIdx].bufferType);
-            }
-            operation.outputOffsets[i] =
-                this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
-            operation.outputBufferSizes[i] =
-                this->getBufferSize(rank, this->inputSize, this->outputSize, buff["index"], buff["size"]);
-          }
-        }
-        if (op.contains("barrier_id")) {
-          operation.deviceSyncerIndex = op["barrier_id"];
-        }
-        if (op.contains("nthread_blocks")) {
-          operation.nThreadBlocks = op["nthread_blocks"];
-        }
-        ops.push_back(operation);
+  auto gpu = gpus[rank];
+  if (gpu["id"] != rank) {
+    throw Error("GPU ID does not match rank", ErrorCode::ExecutorError);
+  }
+  for (const auto& threadblock : gpu["threadblocks"]) {
+    int threadBlockId = threadblock["id"];
+    std::unordered_map<ChannelKey, std::vector<int>> channelIndexes;
+    std::vector<Operation> ops;
+    for (const auto& op : threadblock["ops"]) {
+      Operation operation = {};
+      std::vector<uint32_t> chunkIndexes;
+      operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
+      if (op.contains("channel_type")) {
+        operation.channelType = convertToChannelType(op["channel_type"]);
       }
-      this->operations[rank].push_back(ops);
+      if (op.contains("channel_ids")) {
+        operation.nChannels = op["channel_ids"].size();
+        if (operation.channelType == mscclpp::ChannelType::SWITCH) {
+          operation.nvlsInputIndex = op["channel_ids"][0];
+        } else {
+          for (uint32_t i = 0; i < op["channel_ids"].size(); i++) {
+            operation.channelIndexes[i] = op["channel_ids"][i];
+          }
+        }
+      }
+      if (op.contains("src_buff")) {
+        operation.nInputs = op["src_buff"].size();
+        for (int i = 0; i < operation.nInputs; i++) {
+          auto& buff = op["src_buff"][i];
+          size_t constOffset = 0;
+          if (buff.contains("type")) {
+            operation.inputBufferRefs[i].type = convertToBufferType(buff["type"]);
+            constOffset = getConstOffset(operation.inputBufferRefs[i].type);
+          }
+          if (buff.contains("buff_id")) {
+            operation.inputBufferRefs[i].id = buff["buff_id"];
+            BufferType bufferType =
+                getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
+            constOffset = getConstOffset(bufferType);
+          }
+          if (buff.contains("switch_channel_id")) {
+            int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
+            constOffset = getConstOffset(this->nvlsInfos[rank][switchChannelIdx].bufferType);
+          }
+          operation.inputOffsets[i] =
+              this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
+          operation.inputBufferSizes[i] =
+              this->getBufferSize(rank, this->inputSize, this->outputSize, buff["index"], buff["size"]);
+        }
+      }
+      if (op.contains("dst_buff")) {
+        operation.nOutputs = op["dst_buff"].size();
+        for (int i = 0; i < operation.nOutputs; i++) {
+          auto& buff = op["dst_buff"][i];
+          size_t constOffset = 0;
+          if (buff.contains("type")) {
+            operation.outputBufferRefs[i].type = convertToBufferType(buff["type"]);
+            constOffset = getConstOffset(operation.outputBufferRefs[i].type);
+          }
+          if (buff.contains("buff_id")) {
+            operation.outputBufferRefs[i].id = buff["buff_id"];
+            BufferType bufferType =
+                getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
+            constOffset = getConstOffset(bufferType);
+          }
+          if (buff.contains("switch_channel_id")) {
+            int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
+            constOffset = getConstOffset(this->nvlsInfos[rank][switchChannelIdx].bufferType);
+          }
+          operation.outputOffsets[i] =
+              this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
+          operation.outputBufferSizes[i] =
+              this->getBufferSize(rank, this->inputSize, this->outputSize, buff["index"], buff["size"]);
+        }
+      }
+      if (op.contains("barrier_id")) {
+        operation.deviceSyncerIndex = op["barrier_id"];
+      }
+      if (op.contains("nthread_blocks")) {
+        operation.nThreadBlocks = op["nthread_blocks"];
+      }
+      ops.push_back(operation);
     }
+    this->operations.push_back(ops);
   }
 }
 

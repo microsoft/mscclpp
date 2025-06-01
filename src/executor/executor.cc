@@ -159,7 +159,7 @@ struct Executor::Impl {
         return this->contexts[key];
       }
       plan.impl_->operationsReset();
-      plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
+      plan.impl_->lightLoadExecutionPlan(rank, inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
       this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, rank, plan);
       this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
           GpuBuffer(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
@@ -344,9 +344,9 @@ struct Executor::Impl {
   void setupDeviceExecutionPlan(ExecutionContext& context, const DeviceExecutionPlanKey& key, int rank,
                                 const ExecutionPlan& plan) {
     std::vector<DeviceExecutionPlan> deviceExecutionPlans;
-    for (int threadblock = 0; threadblock < plan.impl_->getThreadblockCount(rank); threadblock++) {
+    for (int threadblock = 0; threadblock < plan.impl_->getThreadblockCount(); threadblock++) {
       DeviceExecutionPlan deviceExecutionPlan = {};
-      std::vector<Operation> ops = plan.impl_->getOperations(rank, threadblock);
+      std::vector<Operation> ops = plan.impl_->getOperations(threadblock);
       deviceExecutionPlan.nOperations = ops.size();
       deviceExecutionPlan.nMemoryChannels = plan.impl_->threadblockMemoryChannelMap.at(rank).at(threadblock).size();
       deviceExecutionPlan.nPortChannels = plan.impl_->threadblockPortChannelMap.at(rank).at(threadblock).size();

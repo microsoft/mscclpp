@@ -75,15 +75,16 @@ struct ExecutionPlan::Impl {
   std::vector<BufferInfo> getLocalBufferToSend(int rank) const;
   size_t getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const;
   size_t getMaxScratchBufferSize(int rank) const;
-  std::vector<Operation> getOperations(int rank, int threadblock) const;
-  int getThreadblockCount(int rank) const;
+  std::vector<Operation> getOperations(int threadblock) const;
+  int getThreadblockCount() const;
   int getNThreadsPerBlock() const;
 
   void loadExecutionPlan(int rank, size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
-  void lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
+  void lightLoadExecutionPlan(int rank, size_t inputSize, size_t outputSize, size_t contsSrcOffset,
+                              size_t constDstOffset);
   void setupChannels(const nlohmann::json& gpus);
   void setupRemoteBuffers(const nlohmann::json& gpus);
-  void setupOperations(const nlohmann::json& gpus, size_t contsSrcOffset, size_t constDstOffset);
+  void setupOperations(const nlohmann::json& gpus, int rank, size_t contsSrcOffset, size_t constDstOffset);
 
   void reset();
   void operationsReset();
@@ -92,8 +93,8 @@ struct ExecutionPlan::Impl {
   std::string collective;
   const std::string planPath;
   bool isUsingPacket;
-  // operations for [rank][threadblock] = [operations]
-  std::unordered_map<int, std::vector<std::vector<Operation>>> operations;
+  // operations for current ranks [threadblock] = list[operations]
+  std::vector<std::vector<Operation>> operations;
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfosByDstRank;
   std::unordered_map<int, std::vector<BufferInfo>> remoteBufferInfos;
