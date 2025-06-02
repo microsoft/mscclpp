@@ -22,9 +22,9 @@ const TriggerType TriggerSync = 0x4;  // Trigger a flush.
 
 #define MSCCLPP_BITS_SIZE 32
 #define MSCCLPP_BITS_OFFSET 32
-#define MSCCLPP_BITS_REGMEM_HANDLE 9
+#define MSCCLPP_BITS_MEMORY_ID 9
 #define MSCCLPP_BITS_TYPE 3
-#define MSCCLPP_BITS_CONNID 10
+#define MSCCLPP_BITS_SEMAPHORE_ID 10
 #define MSCCLPP_BITS_FIFO_RESERVED 1
 
 /// Basic structure of each work element in the FIFO.
@@ -38,18 +38,18 @@ union ChannelTrigger {
     uint64_t : (64 - MSCCLPP_BITS_SIZE - MSCCLPP_BITS_OFFSET);  // ensure 64-bit alignment
     // Second 64 bits: value[1]
     uint64_t dstOffset : MSCCLPP_BITS_OFFSET;
-    uint64_t srcMemoryId : MSCCLPP_BITS_REGMEM_HANDLE;
-    uint64_t dstMemoryId : MSCCLPP_BITS_REGMEM_HANDLE;
+    uint64_t srcMemoryId : MSCCLPP_BITS_MEMORY_ID;
+    uint64_t dstMemoryId : MSCCLPP_BITS_MEMORY_ID;
     uint64_t type : MSCCLPP_BITS_TYPE;
-    uint64_t chanId : MSCCLPP_BITS_CONNID;
-    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_REGMEM_HANDLE - MSCCLPP_BITS_REGMEM_HANDLE - MSCCLPP_BITS_TYPE -
-                MSCCLPP_BITS_CONNID - MSCCLPP_BITS_FIFO_RESERVED);  // ensure 64-bit alignment
+    uint64_t semaphoreId : MSCCLPP_BITS_SEMAPHORE_ID;
+    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_MEMORY_ID - MSCCLPP_BITS_MEMORY_ID - MSCCLPP_BITS_TYPE -
+                MSCCLPP_BITS_SEMAPHORE_ID - MSCCLPP_BITS_FIFO_RESERVED);  // ensure 64-bit alignment
     uint64_t reserved : MSCCLPP_BITS_FIFO_RESERVED;
   } fields;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Default constructor.
-  MSCCLPP_DEVICE_INLINE ChannelTrigger() = default;
+  MSCCLPP_INLINE ChannelTrigger() = default;
 
   /// Copy constructor.
   MSCCLPP_DEVICE_INLINE ChannelTrigger(ProxyTrigger value) : value(value) {}
@@ -64,18 +64,26 @@ union ChannelTrigger {
   /// @param semaphoreId The ID of the semaphore.
   MSCCLPP_DEVICE_INLINE ChannelTrigger(TriggerType type, MemoryId dst, uint64_t dstOffset, MemoryId src,
                                        uint64_t srcOffset, uint64_t bytes, int semaphoreId) {
+    MSCCLPP_ASSERT_DEVICE(type < (1ULL << MSCCLPP_BITS_TYPE), "type is too large");
+    MSCCLPP_ASSERT_DEVICE(dst < (1ULL << MSCCLPP_BITS_MEMORY_ID), "dst is too large");
+    MSCCLPP_ASSERT_DEVICE(dstOffset < (1ULL << MSCCLPP_BITS_OFFSET), "dstOffset is too large");
+    MSCCLPP_ASSERT_DEVICE(src < (1ULL << MSCCLPP_BITS_MEMORY_ID), "src is too large");
+    MSCCLPP_ASSERT_DEVICE(srcOffset < (1ULL << MSCCLPP_BITS_OFFSET), "srcOffset is too large");
+    MSCCLPP_ASSERT_DEVICE(bytes != 0, "bytes must not be zero");
+    MSCCLPP_ASSERT_DEVICE(bytes < (1ULL << MSCCLPP_BITS_SIZE), "bytes is too large");
+    MSCCLPP_ASSERT_DEVICE(semaphoreId < (1ULL << MSCCLPP_BITS_SEMAPHORE_ID), "semaphoreId is too large");
     constexpr uint64_t maskSize = (1ULL << MSCCLPP_BITS_SIZE) - 1;
     constexpr uint64_t maskSrcOffset = (1ULL << MSCCLPP_BITS_OFFSET) - 1;
     constexpr uint64_t maskDstOffset = (1ULL << MSCCLPP_BITS_OFFSET) - 1;
-    constexpr uint64_t maskSrcMemoryId = (1ULL << MSCCLPP_BITS_REGMEM_HANDLE) - 1;
-    constexpr uint64_t maskDstMemoryId = (1ULL << MSCCLPP_BITS_REGMEM_HANDLE) - 1;
+    constexpr uint64_t maskSrcMemoryId = (1ULL << MSCCLPP_BITS_MEMORY_ID) - 1;
+    constexpr uint64_t maskDstMemoryId = (1ULL << MSCCLPP_BITS_MEMORY_ID) - 1;
     constexpr uint64_t maskType = (1ULL << MSCCLPP_BITS_TYPE) - 1;
-    constexpr uint64_t maskChanId = (1ULL << MSCCLPP_BITS_CONNID) - 1;
+    constexpr uint64_t maskSemaphoreId = (1ULL << MSCCLPP_BITS_SEMAPHORE_ID) - 1;
     value.fst = (((srcOffset & maskSrcOffset) << MSCCLPP_BITS_SIZE) + (bytes & maskSize));
-    value.snd = (((((((((semaphoreId & maskChanId) << MSCCLPP_BITS_TYPE) + ((uint64_t)type & maskType))
-                      << MSCCLPP_BITS_REGMEM_HANDLE) +
+    value.snd = (((((((((semaphoreId & maskSemaphoreId) << MSCCLPP_BITS_TYPE) + ((uint64_t)type & maskType))
+                      << MSCCLPP_BITS_MEMORY_ID) +
                      (dst & maskDstMemoryId))
-                    << MSCCLPP_BITS_REGMEM_HANDLE) +
+                    << MSCCLPP_BITS_MEMORY_ID) +
                    (src & maskSrcMemoryId))
                   << MSCCLPP_BITS_OFFSET) +
                  (dstOffset & maskDstOffset));
@@ -92,7 +100,7 @@ struct BasePortChannelDeviceHandle {
   // can produce for and the sole proxy thread consumes it.
   FifoDeviceHandle fifo_;
 
-  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle() = default;
+  MSCCLPP_INLINE BasePortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                          Host2DeviceSemaphoreDeviceHandle semaphore,
@@ -148,12 +156,13 @@ struct BasePortChannelDeviceHandle {
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
-                                                   uint64_t size) {
+                                                   uint64_t size, int64_t maxSpinCount = 1000000) {
     uint64_t curFifoHead = fifo_.push(
         ChannelTrigger(TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, semaphoreId_)
             .value);
-    fifo_.sync(curFifoHead);
+    fifo_.sync(curFifoHead, maxSpinCount);
   }
 
   /// Push a @ref TriggerData, a @ref TriggerFlag, and a @ref TriggerSync at the same time to the FIFO.
@@ -161,14 +170,17 @@ struct BasePortChannelDeviceHandle {
   /// @param src The source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
-    putWithSignalAndFlush(dst, offset, src, offset, size);
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size,
+                                                   int64_t maxSpinCount = 1000000) {
+    putWithSignalAndFlush(dst, offset, src, offset, size, maxSpinCount);
   }
 
   /// Push a @ref TriggerSync to the FIFO.
-  MSCCLPP_DEVICE_INLINE void flush() {
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
     uint64_t curFifoHead = fifo_.push(ChannelTrigger(TriggerSync, 0, 0, 0, 0, 1, semaphoreId_).value);
-    fifo_.sync(curFifoHead);
+    fifo_.sync(curFifoHead, maxSpinCount);
   }
 
   /// Check if the port channel has been signaled.
@@ -186,7 +198,7 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   MemoryId dst_;
   MemoryId src_;
 
-  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle() = default;
+  MSCCLPP_INLINE PortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                      Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
@@ -224,8 +236,10 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BasePortChannelDeviceHandle::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size);
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
+                                                   int64_t maxSpinCount = 1000000) {
+    BasePortChannelDeviceHandle::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size, maxSpinCount);
   }
 
   /// Push a @ref TriggerData, a @ref TriggerFlag, and a @ref TriggerSync at the same time to the FIFO.

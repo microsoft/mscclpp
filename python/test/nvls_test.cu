@@ -59,8 +59,6 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   deviceSyncer.sync(gridDim.x);
 
   for (int idx = bid * blockDim.x + tid; idx < nelem; idx += blockDim.x * gridDim.x) {
-    if (dev_ptr[idx] != ((nranks * (nranks - 1)) / 2)) {
-      __assert_fail("dev_ptr[idx] != nranks", __FILE__, __LINE__, __PRETTY_FUNCTION__);
-    }
+    MSCCLPP_ASSERT_DEVICE(dev_ptr[idx] == ((nranks * (nranks - 1)) / 2), "dev_ptr[idx] != nranks");
   }
 }

@@ -212,13 +212,12 @@ struct Executor::Impl {
   void setupConnections(ExecutionContext& context, int rank, const ExecutionPlan& plan, size_t sendBufferSize,
                         size_t recvBufferSize) {
     std::vector<int> connectedPeers = plan.impl_->getConnectedPeers(rank);
-    std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+    std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
     for (int peer : connectedPeers) {
       Transport transport =
           inSameNode(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
-      connectionFutures.push_back(this->comm->connectOnSetup(peer, 0, transport));
+      connectionFutures.push_back(this->comm->connect(peer, 0, transport));
     }
-    this->comm->setup();
     for (size_t i = 0; i < connectionFutures.size(); i++) {
       context.connections[connectedPeers[i]] = connectionFutures[i].get();
     }
@@ -262,16 +261,15 @@ struct Executor::Impl {
       RegisteredMemory memory =
           this->comm->registerMemory(getBufferInfo(bufferType).first, getBufferInfo(bufferType).second, transportFlags);
       std::vector<int> connectedPeers = getConnectedPeers(channelInfos);
-      std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
+      std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
       for (int peer : connectedPeers) {
-        comm->sendMemoryOnSetup(memory, peer, 0);
+        comm->sendMemory(memory, peer, 0);
       }
       channelInfos = plan.impl_->getChannelInfos(rank, bufferType);
       connectedPeers = getConnectedPeers(channelInfos);
       for (int peer : connectedPeers) {
-        remoteRegMemoryFutures.push_back(comm->recvMemoryOnSetup(peer, 0));
+        remoteRegMemoryFutures.push_back(comm->recvMemory(peer, 0));
       }
-      comm->setup();
       for (size_t i = 0; i < remoteRegMemoryFutures.size(); i++) {
         context.registeredMemories[{bufferType, connectedPeers[i]}] = std::move(remoteRegMemoryFutures[i].get());
       }
@@ -307,7 +305,6 @@ struct Executor::Impl {
       channelInfos = plan.impl_->getUnpairedChannelInfos(rank, nranks, channelType);
       processChannelInfos(channelInfos);
     }
-    this->comm->setup();
     context.memorySemaphores = std::move(memorySemaphores);
     context.proxySemaphores = std::move(proxySemaphores);
 

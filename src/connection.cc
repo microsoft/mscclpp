@@ -277,7 +277,12 @@ EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEn
   t.join();
 
   // Starting Thread to Receive Messages
-  threadRecvMessages_ = std::thread(&EthernetConnection::recvMessages, this);
+  int deviceId = -1;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+  threadRecvMessages_ = std::thread([deviceId, this]() {
+    MSCCLPP_CUDATHROW(cudaSetDevice(deviceId));
+    this->recvMessages();
+  });
 
   INFO(MSCCLPP_NET, "Ethernet connection created");
 }

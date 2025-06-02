@@ -764,7 +764,7 @@ void AllGatherTestEngine::setupConnections() {
     auto service = std::dynamic_pointer_cast<AllGatherProxyService>(chanService_);
     setupMeshConnections(devPortChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,
                          [&](std::vector<std::shared_ptr<mscclpp::Connection>> conns,
-                             std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>>& remoteMemories,
+                             std::vector<std::shared_future<mscclpp::RegisteredMemory>>& remoteMemories,
                              const mscclpp::RegisteredMemory& localMemory) {
                            std::vector<mscclpp::SemaphoreId> semaphoreIds;
                            for (size_t i = 0; i < conns.size(); ++i) {
@@ -772,7 +772,6 @@ void AllGatherTestEngine::setupConnections() {
                              service->addRemoteMemory(remoteMemories[i].get());
                            }
                            service->setLocalMemory(localMemory);
-                           comm_->setup();
                          });
     auto portChannels = service->portChannels();
     if (portChannels.size() > sizeof(constRawPortChan) / sizeof(DeviceHandle<mscclpp::BasePortChannel>)) {

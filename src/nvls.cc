@@ -198,6 +198,11 @@ std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUdeviceptr devicePtr, si
                 ErrorCode::InvalidUsage);
   }
 
+  if ((uintptr_t)devicePtr % minMcGran_ != 0) {
+    WARN("NVLS connection tried to bind a buffer that is not aligned to the minimum granularity");
+    throw Error("This NVLS connection tried to bind a buffer that is not aligned to the minimum granularity",
+                ErrorCode::InvalidUsage);
+  }
   devBuffSize = ((devBuffSize + minMcGran_ - 1) / minMcGran_) * minMcGran_;
   size_t offset = allocateBuffer(devBuffSize);
   MSCCLPP_CUTHROW(cuMulticastBindAddr(mcHandle_, offset /*mcOffset*/, devicePtr, devBuffSize, 0));
@@ -265,7 +270,7 @@ NvlsConnection::DeviceMulticastPointer NvlsConnection::bindAllocatedMemory(CUdev
   return DeviceMulticastPointer((void*)devicePtr, mcPtr, size);
 }
 
-NvlsConnection::DeviceMulticastPointer::DeviceHandle NvlsConnection::DeviceMulticastPointer::deviceHandle() {
+NvlsConnection::DeviceMulticastPointer::DeviceHandle NvlsConnection::DeviceMulticastPointer::deviceHandle() const {
   NvlsConnection::DeviceMulticastPointer::DeviceHandle device;
   device.devicePtr = this->devicePtr_;
   device.mcPtr = this->mcPtr_.get();

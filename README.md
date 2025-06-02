@@ -15,6 +15,8 @@ A GPU-driven communication stack for scalable AI applications.
 
 See [Quick Start](https://microsoft.github.io/mscclpp/getting-started/quickstart.html) to quickly get started.
 
+Check our [paper](https://arxiv.org/abs/2504.09014) to know more about MSCCL++.
+
 ## Overview
 
 MSCCL++ redefines inter-GPU communication interfaces, thereby delivering a highly efficient and customizable communication stack for distributed GPU applications. Its design is specifically tailored to accommodate diverse performance optimization scenarios often encountered in state-of-the-art AI applications. Figure below provides a high-level overview of MSCCL++ abstractions in CUDA, C, and Python.
@@ -154,6 +156,18 @@ Customized proxies can be used for conducting a series of pre-defined data trans
 
 MSCCL++ provides Python bindings and interfaces, which simplifies integration with Python applications.
 
+## Projects using MSCCL++
+MSCCL++ is being used in many amazing projects to power their communication needs. Some projects include:
+
+- ARK: A GPU-driven system framework for scalable AI applications [[Paper link](https://www.usenix.org/conference/nsdi23/presentation/hwang)], Accepted at NSDI 2023 [![GitHub stars](https://img.shields.io/github/stars/microsoft/ark?style=social)](https://github.com/microsoft/ark)
+- FlashInfer: A Kernel Library for LLM Serving [![GitHub stars](https://img.shields.io/github/stars/flashinfer-ai/flashinfer?style=social)](https://github.com/flashinfer-ai/flashinfer)
+- ForestColl: Throughput-Optimal Collective Communications on Heterogeneous Network Fabrics [[Paper link](https://arxiv.org/abs/2402.06787)]
+- LMDeploy: A toolkit for compressing, deploying, and serving LLMs [![GitHub stars](https://img.shields.io/github/stars/InternLM/lmdeploy?style=social)](https://github.com/InternLM/lmdeploy)
+- Nanoflow: A throughput-oriented high-performance serving framework for LLMs [[Paper link](https://arxiv.org/abs/2408.12757)] [![GitHub stars](https://img.shields.io/github/stars/efeslab/Nanoflow?style=social)](https://github.com/efeslab/Nanoflow)
+- ROCm Communication Collectives Library (RCCL) [![GitHub stars](https://img.shields.io/github/stars/ROCm/rccl?style=social)]( https://github.com/ROCm/rccl)
+- Splitwise: Efficient generative LLM inference using phase splitting [[Paper link](https://arxiv.org/abs/2311.18677)], Accepted at ISCA 2024, Best Paper Nominee
+- TVM: Open deep learning compiler stack for cpu, gpu and specialized accelerators [![GitHub stars](https://img.shields.io/github/stars/apache/tvm?style=social)](https://github.com/apache/tvm)
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
@@ -175,3 +189,18 @@ trademarks or logos is subject to and must follow
 [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
 Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
 Any use of third-party trademarks or logos are subject to those third-party's policies.
+
+## Citation
+
+If you use this project for your work, please cite our [paper](https://arxiv.org/abs/2504.09014):
+```bibtex
+@misc{ShahJLRHJMSCZDMY2025,
+      title={MSCCL++: Rethinking GPU Communication Abstractions for Cutting-edge AI Applications}, 
+      author={Aashaka Shah and Abhinav Jangda and Binyang Li and Caio Rocha and Changho Hwang and Jithin Jose and Madan Musuvathi and Olli Saarikivi and Peng Cheng and Qinghua Zhou and Roshan Dathathri and Saeed Maleki and Ziyue Yang},
+      year={2025},
+      eprint={2504.09014},
+      archivePrefix={arXiv},
+      primaryClass={cs.DC},
+      url={https://arxiv.org/abs/2504.09014}, 
+}
+```

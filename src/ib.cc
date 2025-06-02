@@ -50,14 +50,44 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   }
   uintptr_t addr = reinterpret_cast<uintptr_t>(buff) & -pageSize;
   std::size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;
-  this->mr = IBVerbs::ibv_reg_mr2(pd, reinterpret_cast<void*>(addr), pages * pageSize,
-                                  IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
-                                      IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
-  if (this->mr == nullptr) {
-    std::stringstream err;
-    err << "ibv_reg_mr failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
+
+  CUdeviceptr dptr = reinterpret_cast<CUdeviceptr>(buff);
+  bool cuMemAlloc = mscclpp::isCuMemMapAllocated((void*)dptr);
+  int dmaBufSupported = 0;
+#if !defined(__HIP_PLATFORM_AMD__)
+  CUdevice dev;
+  MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
+  MSCCLPP_CUTHROW(cuDeviceGetAttribute(&dmaBufSupported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, dev));
+#endif  // !defined(__HIP_PLATFORM_AMD__)
+  if (cuMemAlloc && dmaBufSupported) {
+#if !defined(__HIP_PLATFORM_AMD__)
+    int fd;
+    MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
+
+    size_t offsetInDmaBuf = dptr % pageSize;
+    this->mr = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, (uint64_t)dptr, fd,
+                                          IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
+                                              IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
+    if (this->mr == nullptr) {
+      std::stringstream err;
+      err << "ibv_reg_dmabuf_mr failed (errno " << errno << ")";
+      throw mscclpp::IbError(err.str(), errno);
+    }
+#else
+    throw mscclpp::Error("Registeration of dma-buf based memory region failed on HIP platform",
+                         ErrorCode::InvalidUsage);
+#endif  // !defined(__HIP_PLATFORM_AMD__)
+  } else {
+    this->mr = IBVerbs::ibv_reg_mr2(pd, reinterpret_cast<void*>(addr), pages * pageSize,
+                                    IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
+                                        IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
+    if (this->mr == nullptr) {
+      std::stringstream err;
+      err << "ibv_reg_mr failed (errno " << errno << ")";
+      throw mscclpp::IbError(err.str(), errno);
+    }
   }
+
   this->size = pages * pageSize;
 }
 

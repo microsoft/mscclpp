@@ -30,7 +30,7 @@ template <template <typename> typename InboundDeleter, template <typename> typen
 class BaseSemaphore {
  protected:
   /// The registered memory for the remote peer's inbound semaphore ID.
-  NonblockingFuture<RegisteredMemory> remoteInboundSemaphoreIdsRegMem_;
+  std::shared_future<RegisteredMemory> remoteInboundSemaphoreIdsRegMem_;
 
   /// The inbound semaphore ID that is incremented by the remote peer and waited on by the local peer.
   ///

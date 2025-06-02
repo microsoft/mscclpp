@@ -213,8 +213,8 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   mscclpp::Transport ibTransport = mscclpp::getIBTransportByDeviceName(ibDevStr);
   std::vector<mscclpp::SemaphoreId> semaphoreIds;
   std::vector<mscclpp::RegisteredMemory> localMemories;
-  std::vector<mscclpp::NonblockingFuture<std::shared_ptr<mscclpp::Connection>>> connections(world_size);
-  std::vector<mscclpp::NonblockingFuture<mscclpp::RegisteredMemory>> remoteMemories;
+  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connections(world_size);
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemories;
 
   for (int r = 0; r < world_size; ++r) {
     if (r == rank) continue;
@@ -225,21 +225,17 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
       transport = ibTransport;
     }
     // Connect with all other ranks
-    connections[r] = comm.connectOnSetup(r, 0, transport);
+    connections[r] = comm.connect(r, 0, transport);
     auto memory = comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport);
     localMemories.push_back(memory);
-    comm.sendMemoryOnSetup(memory, r, 0);
-    remoteMemories.push_back(comm.recvMemoryOnSetup(r, 0));
+    comm.sendMemory(memory, r, 0);
+    remoteMemories.push_back(comm.recvMemory(r, 0));
   }
-
-  comm.setup();
 
   for (int r = 0; r < world_size; ++r) {
     if (r == rank) continue;
     semaphoreIds.push_back(proxyService.buildAndAddSemaphore(comm, connections[r].get()));
   }
-
-  comm.setup();
 
   std::vector<DeviceHandle<mscclpp::PortChannel>> portChannels;
   for (size_t i = 0; i < semaphoreIds.size(); ++i) {
