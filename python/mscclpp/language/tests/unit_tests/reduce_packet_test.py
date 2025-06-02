@@ -16,7 +16,7 @@ def reduce_packet_test(num_threads_per_block, min_message_size, max_message_size
         "reduce_packet_test",
         collective,
         gpus,
-        protocol="Simple",
+        protocol="LL",
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
         max_message_size=max_message_size,
