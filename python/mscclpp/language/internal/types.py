@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import List
 from collections import defaultdict
@@ -15,6 +15,7 @@ class SyncType(Enum):
 
     def __str__(self):
         return self.value
+
 
 class ReduceOperationType(Enum):
     sum = "sum"
@@ -42,26 +43,26 @@ class BufferType(Enum):
 
 class Instruction(Enum):
     start = "start"  # ?
-    nop = "nop" # OK
-    copy = "copy" # OK
+    nop = "nop"  # OK
+    copy = "copy"  # OK
     copy_packet = "cpkt"  # packet -> regular OK
     transform_to_packet = "tpkt"  # regular -> packet OK
-    reduce_copy = "rc" # OK
+    reduce_copy = "rc"  # OK
     reduce_copy_packet = "rcpkt"  # packet + packet -> packet OK
-    signal = "signal" # OK
-    wait = "wait" # OK
-    relaxed_signal = "rlxsignal" # OK
-    relaxed_wait = "rlxwait" # OK
+    signal = "signal"  # OK
+    wait = "wait"  # OK
+    relaxed_signal = "rlxsignal"  # OK
+    relaxed_wait = "rlxwait"  # OK
     barrier = "barrier"  # To Doc
     flush = "flush"  # To Doc
-    get = "get" # OK
-    put = "put" # OK
+    get = "get"  # OK
+    put = "put"  # OK
     put_packet = "ppkt"  # regular => packet OK
     read_put_packet = "rppkt"  # packet => packet OK
-    put_with_signal = "pws" # OK
-    put_with_signal_and_flush = "pwsf" # OK 
+    put_with_signal = "pws"  # OK
+    put_with_signal_and_flush = "pwsf"  # OK
     reduce_copy_send = "rcs"
-    reduce_copy_send_packet = "rcspkt" # packet + packet -> packet => packet
+    reduce_copy_send_packet = "rcspkt"  # packet + packet -> packet => packet
     read_reduce_copy = "rrc"
     read_reduce_copy_send = "rrcs"
     group_store = "gstore"  # To Doc

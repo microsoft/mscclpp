@@ -1,12 +1,12 @@
 {
-  "name": "allgather",
-  "collective": "allgather",
-  "inplace": true,
+  "name": "put_test",
+  "collective": "test",
+  "inplace": false,
   "protocol": "Simple",
   "gpus": [
     {
       "id": 0,
-      "input_chunks": 1,
+      "input_chunks": 2,
       "output_chunks": 2,
       "scratch_chunks": 0,
       "threadblocks": [
@@ -14,39 +14,51 @@
           "id": 0,
           "ops": [
             {
-              "name": "signal",
+              "name": "rlxsignal",
               "channel_ids": [
                 0
               ],
               "channel_type": "memory"
             },
             {
-              "name": "wait",
+              "name": "rlxsignal",
               "channel_ids": [
                 0
               ],
               "channel_type": "memory"
             },
             {
-              "name": "put",
+              "name": "nop"
+            },
+            {
+              "name": "rrc",
               "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
                 {
                   "type": "o",
                   "index": 0,
                   "size": 1
                 }
               ],
-              "dst_buff": [
-                {
-                  "buffer_id": 0,
-                  "index": 0,
-                  "size": 1
-                }
-              ],
               "channel_ids": [
                 0
               ],
-              "channel_type": "memory"
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
             },
             {
               "name": "signal",
@@ -61,6 +73,9 @@
                 0
               ],
               "channel_type": "memory"
+            },
+            {
+              "name": "nop"
             }
           ],
           "channels": [
@@ -92,7 +107,7 @@
       "remote_buffers": [
         {
           "rank": 1,
-          "type": "o",
+          "type": "i",
           "access_channel_types": [
             "memory"
           ]
@@ -101,7 +116,7 @@
     },
     {
       "id": 1,
-      "input_chunks": 1,
+      "input_chunks": 2,
       "output_chunks": 2,
       "scratch_chunks": 0,
       "threadblocks": [
@@ -109,39 +124,51 @@
           "id": 0,
           "ops": [
             {
-              "name": "signal",
+              "name": "rlxsignal",
               "channel_ids": [
                 0
               ],
               "channel_type": "memory"
             },
             {
-              "name": "wait",
+              "name": "rlxsignal",
               "channel_ids": [
                 0
               ],
               "channel_type": "memory"
             },
             {
-              "name": "put",
+              "name": "nop"
+            },
+            {
+              "name": "rrc",
               "src_buff": [
                 {
-                  "type": "o",
-                  "index": 1,
+                  "type": "i",
+                  "index": 0,
                   "size": 1
-                }
-              ],
-              "dst_buff": [
+                },
                 {
                   "buffer_id": 0,
                   "index": 1,
                   "size": 1
                 }
               ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
               "channel_ids": [
                 0
               ],
-              "channel_type": "memory"
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
             },
             {
               "name": "signal",
@@ -156,6 +183,9 @@
                 0
               ],
               "channel_type": "memory"
+            },
+            {
+              "name": "nop"
             }
           ],
           "channels": [
@@ -187,7 +217,7 @@
       "remote_buffers": [
         {
           "rank": 0,
-          "type": "o",
+          "type": "i",
           "access_channel_types": [
             "memory"
           ]

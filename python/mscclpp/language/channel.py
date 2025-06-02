@@ -1,5 +1,5 @@
 from mscclpp.language.internal.channel import BaseChannel
-from mscclpp.language.internal.types import RemoteBuffer, SyncType, ReduceOperationType
+from mscclpp.language.internal.types import RemoteBuffer, SyncType, ReduceOperationType, Chunk
 from mscclpp.language.internal.globals import get_program
 from dataclasses import dataclass
 from collections import defaultdict
@@ -25,7 +25,7 @@ class Channel(BaseChannel):
         self.channel_type = channel_type
         get_program().add_channel(self)
 
-    def signal(self, tb, sync):
+    def signal(self, tb, sync=SyncType.none):
         if sync == SyncType.before or sync == SyncType.both:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
@@ -38,7 +38,7 @@ class Channel(BaseChannel):
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
-    def wait(self, tb, sync):
+    def wait(self, tb, sync=SyncType.none):
         if sync == SyncType.before or sync == SyncType.both:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
@@ -51,7 +51,7 @@ class Channel(BaseChannel):
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
-    def relaxed_signal(self, tb, sync):
+    def relaxed_signal(self, tb, sync=SyncType.none):
         if sync == SyncType.before or sync == SyncType.both:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
@@ -64,7 +64,7 @@ class Channel(BaseChannel):
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
-    def relaxed_wait(self, tb, sync):
+    def relaxed_wait(self, tb, sync=SyncType.none):
         if sync == SyncType.before or sync == SyncType.both:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
@@ -77,11 +77,15 @@ class Channel(BaseChannel):
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
-    def get(self, dst_chunk, src_chunk, tb):
+    def get(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         if dst_chunk.rank != self.src_rank:
-            raise RuntimeError(f"Source chunk rank {dst_chunk.rank} does not match current channel source rank {self.src_rank}.")
+            raise RuntimeError(
+                f"Source chunk rank {dst_chunk.rank} does not match current channel source rank {self.src_rank}."
+            )
         if src_chunk.rank != self.dst_rank:
-            raise RuntimeError(f"Dst chunk rank {src_chunk.rank} does not match current channel dst rank {self.dst_rank}.")
+            raise RuntimeError(
+                f"Dst chunk rank {src_chunk.rank} does not match current channel dst rank {self.dst_rank}."
+            )
 
         remote_chunk = RemoteBuffer(src_chunk.rank, src_chunk.buffer, self.channel_type)
         tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
@@ -96,13 +100,24 @@ class Channel(BaseChannel):
 
         get_program().add_operation(self.src_rank, tb, op)
 
-    def put(self, dst_chunk, src_chunk, tb, with_signal=False, with_signal_and_flush=False):
+    def put(
+        self,
+        dst_chunk: Chunk,
+        src_chunk: Chunk,
+        tb: int,
+        with_signal: bool = False,
+        with_signal_and_flush: bool = False,
+    ):
         if (with_signal or with_signal_and_flush) and self.channel_type != ChannelType.port:
             raise RuntimeError(f"Only ChannelType.port support put with signal operation.")
         if src_chunk.rank != self.src_rank:
-            raise RuntimeError(f"Source chunk rank {src_chunk.rank} does not match current channel source rank {self.src_rank}.")
+            raise RuntimeError(
+                f"Source chunk rank {src_chunk.rank} does not match current channel source rank {self.src_rank}."
+            )
         if dst_chunk.rank != self.dst_rank:
-            raise RuntimeError(f"Dst chunk rank {dst_chunk.rank} does not match current channel dst rank {self.dst_rank}.")
+            raise RuntimeError(
+                f"Dst chunk rank {dst_chunk.rank} does not match current channel dst rank {self.dst_rank}."
+            )
 
         remote_chunk = RemoteBuffer(dst_chunk.rank, dst_chunk.buffer, self.channel_type)
         tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
@@ -118,16 +133,20 @@ class Channel(BaseChannel):
         )
 
         get_program().add_operation(self.src_rank, tb, op)
-    
-    def put_packet(self, dst_chunk, src_chunk, tb, from_packet=False):
+
+    def put_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int, from_packet: bool = False):
         if src_chunk.rank != self.src_rank:
-            raise RuntimeError(f"Source chunk rank {src_chunk.rank} does not match current channel source rank {self.src_rank}.")
-        if from_packet and src_chunk.type != BufferType.scratch:
-            raise RuntimeError(f"Source chunk must be of type scratch, got {src_chunk.type}.")
+            raise RuntimeError(
+                f"Source chunk rank {src_chunk.rank} does not match current channel source rank {self.src_rank}."
+            )
+        if from_packet and src_chunk.buffer != BufferType.scratch:
+            raise RuntimeError(f"Source chunk must be of type scratch.")
         if dst_chunk.rank != self.dst_rank:
-            raise RuntimeError(f"Dst chunk rank {dst_chunk.rank} does not match current channel dst rank {self.dst_rank}.")
-        if dst_chunk.type != BufferType.scratch:
-            raise RuntimeError(f"Destination chunk must be of type scratch, got {dst_chunk.type}.")
+            raise RuntimeError(
+                f"Dst chunk rank {dst_chunk.rank} does not match current channel dst rank {self.dst_rank}."
+            )
+        if dst_chunk.buffer != BufferType.scratch:
+            raise RuntimeError(f"Destination chunk must be of type scratch.")
 
         remote_chunk = RemoteBuffer(dst_chunk.rank, dst_chunk.buffer, self.channel_type)
         tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
@@ -144,16 +163,36 @@ class Channel(BaseChannel):
 
         get_program().add_operation(self.src_rank, tb, op)
 
-    def reduce(self, local_src_chunk, remote_src_chunks, tb, reduce_op=ReduceOperationType.sum, local_dst_chunk=None):
+    def reduce(
+        self,
+        local_src_chunk: Chunk,
+        remote_src_chunks: List[Chunk],
+        tb: int,
+        reduce_op: ReduceOperation = ReduceOperationType.sum,
+        local_dst_chunk: Chunk = None,
+    ):
         if local_dst_chunk is None:
             local_dst_chunk = local_src_chunk
         if local_src_chunk.rank != self.src_rank:
-            raise RuntimeError(f"Destination chunk rank {local_src_chunk.rank} does not match current channel source rank {self.src_rank}.")
+            raise RuntimeError(
+                f"Destination chunk rank {local_src_chunk.rank} does not match current channel source rank {self.src_rank}."
+            )
         for chunk in remote_src_chunks:
             if chunk.rank != self.dst_rank:
-                raise RuntimeError(f"Source chunk rank {chunk.rank} does not match current channel dst rank {self.dst_rank}.")
+                raise RuntimeError(
+                    f"Source chunk rank {chunk.rank} does not match current channel dst rank {self.dst_rank}."
+                )
 
-        remote_chunks = [RemoteChunk(get_program().setup_remote_chunk(self.src_rank, tb, RemoteBuffer(chunk.rank, chunk.buffer, self.channel_type)), chunk.index, chunk.size) for chunk in remote_src_chunks]
+        remote_chunks = [
+            RemoteChunk(
+                get_program().setup_remote_chunk(
+                    self.src_rank, tb, RemoteBuffer(chunk.rank, chunk.buffer, self.channel_type)
+                ),
+                chunk.index,
+                chunk.size,
+            )
+            for chunk in remote_src_chunks
+        ]
         tb_channel_id = get_program().setup_channel(tb, self)
 
         op = ReduceOperation(
@@ -163,7 +202,7 @@ class Channel(BaseChannel):
             [],
             [tb_channel_id],
             self.channel_type,
-            reduce_op
+            reduce_op,
         )
 
         get_program().add_operation(self.src_rank, tb, op)

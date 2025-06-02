@@ -70,7 +70,6 @@ class CopyOperation(BaseOperation):
         return result
 
 
-
 @dataclass
 class SignalOperation(BaseOperation):
     def __init__(self, channels_ids: List[int], channel_type: ChannelType, relaxed: bool = False):
@@ -154,7 +153,10 @@ class PutOperation(BaseOperation):
             raise RuntimeError(f"Put Operation from Packet is not Supported.")
         else:
             if with_signal:
-                self.name = Instruction.put_with_signal.value
+                if with_signal_and_flush:
+                    self.name = Instruction.put_with_signal_and_flush.value
+                else:
+                    self.name = Instruction.put_with_signal.value
             elif with_signal_and_flush:
                 self.name = Instruction.put_with_signal_and_flush.value
             else:
@@ -184,11 +186,11 @@ class ReduceOperation(BaseOperation):
         self,
         local_src_buff: List[LocalChunk],
         local_dst_buff: List[LocalChunk],
-        remote_src_buff: List[RemoteChunk],
-        remote_dst_buff: List[RemoteChunk],
-        channel_ids: List[int],
-        channel_type: ChannelType,
-        reduce_operation: ReduceOperationType,
+        remote_src_buff: List[RemoteChunk] = [],
+        remote_dst_buff: List[RemoteChunk] = [],
+        channel_ids: List[int] = [],
+        channel_type: ChannelType = ChannelType.none,
+        reduce_operation: ReduceOperationType = ReduceOperationType.sum,
         packet: bool = False,
     ):
         if packet and len(remote_src_buff) == 0 and len(remote_dst_buff) == 0:
@@ -217,10 +219,10 @@ class ReduceOperation(BaseOperation):
     def to_json(self):
         result = {"name": self.name}
         result["src_buff"] = []
-        for chunk in self.src_buff:
+        for chunk in self.local_src_buff:
             result["src_buff"].append(chunk.to_json())
         result["dst_buff"] = []
-        for chunk in self.dst_buff:
+        for chunk in self.local_dst_buff:
             result["dst_buff"].append(chunk.to_json())
 
         if len(self.remote_src_buff) > 0:
@@ -230,7 +232,9 @@ class ReduceOperation(BaseOperation):
             for chunk in self.remote_dst_buff:
                 result["dst_buff"].append(chunk.to_json())
 
-        result["channel_ids"] = self.channel_ids
-        result["channel_type"] = self.channel_type.value
+        if len(self.channel_ids) > 0:
+            result["channel_ids"] = self.channel_ids
+        if self.channel_type != ChannelType.none:
+            result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
         return result
