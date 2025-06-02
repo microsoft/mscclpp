@@ -25,7 +25,7 @@ struct Host2DeviceSemaphoreDeviceHandle {
   }
 
   /// Wait for the host to signal.
-  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 100000000) {
+  MSCCLPP_DEVICE_INLINE void wait([[maybe_unused]] int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
     uint64_t flag = (*expectedInboundSemaphoreId);
     POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < flag), maxSpinCount);
@@ -48,7 +48,7 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
   }
 
   /// Wait for the remote device to signal.
-  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 100000000) {
+  MSCCLPP_DEVICE_INLINE void wait([[maybe_unused]] int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
     uint64_t flag = (*expectedInboundSemaphoreId);
     POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderAcquire) < flag), maxSpinCount);
@@ -59,7 +59,7 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
   /// This function is a relaxed version of Wait() and provides no guarantee on the completion of memory operations.
   /// User requires to call proper fencing before using this function.
   ///
-  MSCCLPP_DEVICE_INLINE void relaxedWait(int64_t maxSpinCount = 100000000) {
+  MSCCLPP_DEVICE_INLINE void relaxedWait([[maybe_unused]] int64_t maxSpinCount = 100000000) {
     (*expectedInboundSemaphoreId) += 1;
     uint64_t flag = (*expectedInboundSemaphoreId);
     POLL_MAYBE_JAILBREAK((atomicLoad(inboundSemaphoreId, memoryOrderRelaxed) < flag), maxSpinCount);

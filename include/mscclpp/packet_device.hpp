@@ -85,7 +85,7 @@ union alignas(16) LL16Packet {
   /// @param flag The flag to read.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   /// @return The 8-byte data read.
-  MSCCLPP_DEVICE_INLINE uint2 read(uint32_t flag, int64_t maxSpinCount = 100000000) const {
+  MSCCLPP_DEVICE_INLINE uint2 read(uint32_t flag, [[maybe_unused]] int64_t maxSpinCount = 100000000) const {
     uint2 data;
     POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
     return data;
@@ -135,7 +135,7 @@ union alignas(8) LL8Packet {
 #endif
   }
 
-  MSCCLPP_DEVICE_INLINE uint32_t read(uint32_t flag, int64_t maxSpinCount = 1000000) const {
+  MSCCLPP_DEVICE_INLINE uint32_t read(uint32_t flag, [[maybe_unused]] int64_t maxSpinCount = 1000000) const {
     uint32_t data;
     POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);
     return data;
