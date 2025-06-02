@@ -62,6 +62,10 @@ struct BufferInfo {
   std::vector<ChannelType> accessChannelTypes;
 };
 
+struct SemaphoreInfo {
+  int initValue;
+};
+
 struct ExecutionPlan::Impl {
  public:
   Impl(const std::string planPath);
@@ -84,6 +88,7 @@ struct ExecutionPlan::Impl {
                               size_t constDstOffset);
   void setupChannels(const nlohmann::json& gpus);
   void setupRemoteBuffers(const nlohmann::json& gpus);
+  void setupSemaphores(const nlohmann::json& gpus, int rank);
   void setupOperations(const nlohmann::json& gpus, int rank, size_t contsSrcOffset, size_t constDstOffset);
 
   void reset();
@@ -100,6 +105,7 @@ struct ExecutionPlan::Impl {
   std::unordered_map<int, std::vector<BufferInfo>> remoteBufferInfos;
   std::unordered_map<int, std::vector<BufferInfo>> localBufferToSend;
   std::unordered_map<std::pair<int, ChannelType>, std::unordered_map<int, int>> channelCountMap;
+  std::vector<SemaphoreInfo> semaphoreInfos;
   // for nvls channels
   std::unordered_map<int, std::vector<NvlsInfo>> nvlsInfos;
   // threadblockChannelMap[rank][threadblock] = channelIndex
@@ -126,6 +132,8 @@ struct ExecutionPlan::Impl {
   size_t getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex) const;
   size_t getBufferSize(int rank, size_t inputSize, size_t outputSize, uint32_t index, uint32_t nChunks) const;
   size_t getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const;
+  void setupOperation(const nlohmann::json& op, Operation& operation, int rank, int threadBlockId,
+                      size_t constSrcOffset, size_t constDstOffset);
 
   // helper functions to setup the channels
   void parseChannels(const nlohmann::json& gpu, std::vector<ChannelInfo>& channelInfos,

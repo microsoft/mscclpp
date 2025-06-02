@@ -177,9 +177,10 @@ namespace mscclpp {
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
 
-#define MAX_DEVICE_SYNCERS 16
 #define MAX_DEVICE_FUNCTIONS_IN_PIPELINE 16
 __device__ DeviceSyncer deviceSyncers[MAX_DEVICE_SYNCERS];
+// TODO: change later to setup init values from the plan
+__device__ DeviceSemaphore DeviceSemaphores[MAX_DEVICE_SEMAPHORES];
 
 __shared__ DeviceHandle<BaseMemoryChannel>* memoryChannels_;
 __shared__ DeviceHandle<BasePortChannel>* portChannels_;

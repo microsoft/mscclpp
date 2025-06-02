@@ -8,34 +8,20 @@
       "id": 0,
       "input_chunks": 4,
       "output_chunks": 0,
+      "scratch_chunks": 4,
       "threadblocks": [
         {
           "id": 0,
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1024, "num_chunks": 1},
               "ops": [
                 {
                   "name": "copy",
                   "src_buffer": [ {"type": "i", "index": 0, "size": 1} ],
                   "dst_buffer": [ {"type": "s", "index": 0, "size": 1} ]
                 },
-                {"name": "nop"},
-                {"name": "sem_release", "id": 0}
-              ]
-            }
-          ],
-          "channels": []
-        },
-        {
-          "id": 1,
-          "ops": [
-            {
-              "name": "pipeline",
-              "iter_context": {"unit": 1024, "num_chunks": 1},
-              "ops": [
-                {"name": "sem_acquire", "id": 0},
                 {"name": "nop"},
                 {
                   "name": "signal",
@@ -47,6 +33,21 @@
                   "channel_ids": [0, 1, 2],
                   "channel_type": "memory"
                 },
+                {"name": "nop"},
+                {"name": "sem_release", "semaphore_id": 0}
+              ]
+            }
+          ],
+          "channels": []
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "pipeline",
+              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "ops": [
+                {"name": "sem_acquire", "semaphore_id": 0},
                 {"name": "nop"},
                 {
                   "name": "glres",
@@ -60,7 +61,7 @@
                   "channel_type": "switch"
                 },
                 {"name": "nop"},
-                {"name": "sem_acquire", "id": 1}
+                {"name": "sem_acquire", "semaphore_id": 1}
               ]
             }
           ],
@@ -74,9 +75,9 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1024, "num_chunks": 1},
               "ops": [
-                {"name": "sem_acquire", "id": 1},
+                {"name": "sem_acquire", "semaphore_id": 1},
                 {"name": "nop"},
                 {
                   "name": "signal",
@@ -113,41 +114,26 @@
         { "type": "memory", "connected_to": [1, 2, 3] }
       ],
       "remote_buffers": [],
-      "semaphores": [ {"init": 0}, {"init": 0} ]
+      "semaphores": [ {"init_value": 0}, {"init_value": 0} ]
     },
     {
       "id": 1,
       "input_chunks": 4,
       "output_chunks": 0,
-      "scratch_chunks": 0,
+      "scratch_chunks": 4,
       "threadblocks": [
         {
           "id": 0,
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1024, "num_chunks": 1},
               "ops": [
                 {
                   "name": "copy",
                   "src_buffer": [ {"type": "i", "index": 1, "size": 1} ],
                   "dst_buffer": [ {"type": "s", "index": 1, "size": 1} ]
                 },
-                {"name": "nop"},
-                {"name": "sem_release", "id": 0}
-              ]
-            }
-          ],
-          "channels": []
-        },
-        {
-          "id": 1,
-          "ops": [
-            {
-              "name": "pipeline",
-              "iter_context": {"unit": 1024, "num_chunks": 1},
-              "ops": [
-                {"name": "sem_acquire", "id": 0},
                 {"name": "nop"},
                 {
                   "name": "signal",
@@ -159,6 +145,21 @@
                   "channel_ids": [0, 1, 2],
                   "channel_type": "memory"
                 },
+                {"name": "nop"},
+                {"name": "sem_release", "semaphore_id": 0}
+              ]
+            }
+          ],
+          "channels": []
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "pipeline",
+              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "ops": [
+                {"name": "sem_acquire", "semaphore_id": 0},
                 {"name": "nop"},
                 {
                   "name": "glres",
@@ -172,7 +173,7 @@
                   "channel_type": "switch"
                 },
                 {"name": "nop"},
-                {"name": "sem_acquire", "id": 1}
+                {"name": "sem_acquire", "semaphore_id": 1}
               ]
             }
           ],
@@ -186,9 +187,9 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1024, "num_chunks": 1},
               "ops": [
-                {"name": "sem_acquire", "id": 1},
+                {"name": "sem_acquire", "semaphore_id": 1},
                 {"name": "nop"},
                 {
                   "name": "signal",
@@ -216,7 +217,7 @@
       ],
       "channels": [
         {
-          "buff": "i",
+          "buff": "s",
           "type": "switch",
           "rank_groups": [
             { "size": 4, "ranks": [0, 1, 2, 3] }
@@ -225,41 +226,26 @@
         { "type": "memory", "connected_to": [0, 2, 3] }
       ],
       "remote_buffers": [],
-      "semaphores": [ {"init": 0}, {"init": 0} ]
+      "semaphores": [ {"init_value": 0}, {"init_value": 0} ]
     },
     {
       "id": 2,
       "input_chunks": 4,
       "output_chunks": 0,
-      "scratch_chunks": 0,
+      "scratch_chunks": 4,
       "threadblocks": [
         {
           "id": 0,
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1024, "num_chunks": 1},
               "ops": [
                 {
                   "name": "copy",
                   "src_buffer": [ {"type": "i", "index": 2, "size": 1} ],
                   "dst_buffer": [ {"type": "s", "index": 2, "size": 1} ]
                 },
-                {"name": "nop"},
-                {"name": "sem_release", "id": 0}
-              ]
-            }
-          ],
-          "channels": []
-        },
-        {
-          "id": 1,
-          "ops": [
-            {
-              "name": "pipeline",
-              "iter_context": {"unit": 1024, "num_chunks": 1},
-              "ops": [
-                {"name": "sem_acquire", "id": 0},
                 {"name": "nop"},
                 {
                   "name": "signal",
@@ -271,6 +257,21 @@
                   "channel_ids": [0, 1, 2],
                   "channel_type": "memory"
                 },
+                {"name": "nop"},
+                {"name": "sem_release", "semaphore_id": 0}
+              ]
+            }
+          ],
+          "channels": []
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "pipeline",
+              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "ops": [
+                {"name": "sem_acquire", "semaphore_id": 0},
                 {"name": "nop"},
                 {
                   "name": "glres",
@@ -284,7 +285,7 @@
                   "channel_type": "switch"
                 },
                 {"name": "nop"},
-                {"name": "sem_acquire", "id": 1}
+                {"name": "sem_acquire", "semaphore_id": 1}
               ]
             }
           ],
@@ -298,9 +299,9 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1024, "num_chunks": 1},
               "ops": [
-                {"name": "sem_acquire", "id": 1},
+                {"name": "sem_acquire", "semaphore_id": 1},
                 {"name": "nop"},
                 {
                   "name": "signal",
@@ -328,7 +329,7 @@
       ],
       "channels": [
         {
-          "buff": "i",
+          "buff": "s",
           "type": "switch",
           "rank_groups": [
             { "size": 4, "ranks": [0, 1, 2, 3] }
@@ -337,41 +338,26 @@
         { "type": "memory", "connected_to": [0, 1, 3] }
       ],
       "remote_buffers": [],
-      "semaphores": [ {"init": 0}, {"init": 0} ]
+      "semaphores": [ {"init_value": 0}, {"init_value": 0} ]
     },
     {
       "id": 3,
       "input_chunks": 4,
       "output_chunks": 0,
-      "scratch_chunks": 0,
+      "scratch_chunks": 4,
       "threadblocks": [
         {
           "id": 0,
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1024, "num_chunks": 1},
               "ops": [
                 {
                   "name": "copy",
                   "src_buffer": [ {"type": "i", "index": 3, "size": 1} ],
                   "dst_buffer": [ {"type": "s", "index": 3, "size": 1} ]
                 },
-                {"name": "nop"},
-                {"name": "sem_release", "id": 0}
-              ]
-            }
-          ],
-          "channels": []
-        },
-        {
-          "id": 1,
-          "ops": [
-            {
-              "name": "pipeline",
-              "iter_context": {"unit": 1024, "num_chunks": 1},
-              "ops": [
-                {"name": "sem_acquire", "id": 0},
                 {"name": "nop"},
                 {
                   "name": "signal",
@@ -383,6 +369,21 @@
                   "channel_ids": [0, 1, 2],
                   "channel_type": "memory"
                 },
+                {"name": "nop"},
+                {"name": "sem_release", "semaphore_id": 0}
+              ]
+            }
+          ],
+          "channels": []
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "pipeline",
+              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "ops": [
+                {"name": "sem_acquire", "semaphore_id": 0},
                 {"name": "nop"},
                 {
                   "name": "glres",
@@ -396,7 +397,7 @@
                   "channel_type": "switch"
                 },
                 {"name": "nop"},
-                {"name": "sem_acquire", "id": 1}
+                {"name": "sem_acquire", "semaphore_id": 1}
               ]
             }
           ],
@@ -410,9 +411,9 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1024, "num_chunks": 1},
               "ops": [
-                {"name": "sem_acquire", "id": 1},
+                {"name": "sem_acquire", "semaphore_id": 1},
                 {"name": "nop"},
                 {
                   "name": "signal",
@@ -440,7 +441,7 @@
       ],
       "channels": [
         {
-          "buff": "i",
+          "buff": "s",
           "type": "switch",
           "rank_groups": [
             { "size": 4, "ranks": [0, 1, 2, 3] }
@@ -449,7 +450,7 @@
         { "type": "memory", "connected_to": [0, 1, 2] }
       ],
       "remote_buffers": [],
-      "semaphores": [ {"init": 0}, {"init": 0} ]
+      "semaphores": [ {"init_value": 0}, {"init_value": 0} ]
     }
   ],
   "num_threads_per_block": 1024,

@@ -18,6 +18,9 @@ constexpr int OUTPUT_BUFFER_MEMORY_ID = 1;
 constexpr int SCRATCH_BUFFER_MEMORY_ID = 2;
 constexpr int MAX_RESERVED_MEMORY_IDS = 3;
 
+constexpr int MAX_DEVICE_SYNCERS = 16;
+constexpr int MAX_DEVICE_SEMAPHORES = 16;
+
 enum class BufferType : uint8_t {
   NONE,
   INPUT,
@@ -58,6 +61,8 @@ enum class OperationType : uint8_t {
   RELAXED_SIGNAL,
   RELAXED_WAIT,
   PIPELINE,
+  SEM_RELEASE,
+  SEM_ACQUIRE,
 };
 
 struct Channels {
@@ -102,13 +107,15 @@ struct Operation {
     };
     struct {
       uint32_t unitSize;
-      uint32_t maxBufferSize;
-      uint8_t nIterations;
+      uint32_t nIterations;
       uint8_t nOperations;
     };
     struct {
       uint32_t deviceSyncerIndex;
       uint32_t nThreadBlocks;
+    };
+    struct {
+      uint32_t semaphoreId;
     };
   };
 };

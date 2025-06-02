@@ -12,6 +12,7 @@
 #include "execution_plan.hpp"
 
 namespace mscclpp {
+
 struct ExecutionContextKey {
   void* sendBuff;
   void* recvBuff;

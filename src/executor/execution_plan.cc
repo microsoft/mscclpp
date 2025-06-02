@@ -64,6 +64,10 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::RELAXED_WAIT;
   } else if (str == "pipeline") {
     return mscclpp::OperationType::PIPELINE;
+  } else if (str == "sem_acquire") {
+    return mscclpp::OperationType::SEM_ACQUIRE;
+  } else if (str == "sem_release") {
+    return mscclpp::OperationType::SEM_RELEASE;
   } else {
     throw mscclpp::Error("Invalid operation type", mscclpp::ErrorCode::ExecutorError);
   }
@@ -430,7 +434,48 @@ void ExecutionPlan::Impl::setupRemoteBuffers(const json& gpus) {
   }
 }
 
+void ExecutionPlan::Impl::setupSemaphores(const json& gpus, int rank) {
+  auto& gpu = gpus[rank];
+  if (gpu["id"] != rank) {
+    throw Error("GPU ID does not match rank", ErrorCode::ExecutorError);
+  }
+  if (!gpu.contains("semaphores")) {
+    return;
+  }
+  for (const auto& sem : gpu["semaphores"]) {
+    SemaphoreInfo info;
+    info.initValue = sem["init_value"];
+    this->semaphoreInfos.push_back(info);
+  }
+}
+
 void ExecutionPlan::Impl::setupOperations(const json& gpus, int rank, size_t constSrcOffset, size_t constDstOffset) {
+  // setup threadblocks and operations
+  auto gpu = gpus[rank];
+  if (gpu["id"] != rank) {
+    throw Error("GPU ID does not match rank", ErrorCode::ExecutorError);
+  }
+  for (const auto& threadblock : gpu["threadblocks"]) {
+    int threadBlockId = threadblock["id"];
+    std::vector<Operation> ops;
+    for (const auto& op : threadblock["ops"]) {
+      Operation operation = {};
+      this->setupOperation(op, operation, rank, threadBlockId, constSrcOffset, constDstOffset);
+      ops.push_back(operation);
+      if (operation.type == OperationType::PIPELINE) {
+        for (const auto& innerOp : op["ops"]) {
+          Operation pipelineOp = {};
+          this->setupOperation(innerOp, pipelineOp, rank, threadBlockId, constSrcOffset, constDstOffset);
+          ops.push_back(pipelineOp);
+        }
+      }
+    }
+    this->operations.push_back(ops);
+  }
+}
+
+void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& operation, int rank, int threadBlockId,
+                                         size_t constSrcOffset, size_t constDstOffset) {
   auto getConstOffset = [&](BufferType type) -> size_t {
     switch (type) {
       case BufferType::INPUT:
@@ -457,91 +502,82 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, int rank, size_t con
     return this->remoteBufferInfos[rank][id].bufferType;
   };
 
-  // setup threadblocks and operations
-  auto gpu = gpus[rank];
-  if (gpu["id"] != rank) {
-    throw Error("GPU ID does not match rank", ErrorCode::ExecutorError);
+  operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
+  if (op.contains("channel_type")) {
+    operation.channelType = convertToChannelType(op["channel_type"]);
   }
-  for (const auto& threadblock : gpu["threadblocks"]) {
-    int threadBlockId = threadblock["id"];
-    std::unordered_map<ChannelKey, std::vector<int>> channelIndexes;
-    std::vector<Operation> ops;
-    for (const auto& op : threadblock["ops"]) {
-      Operation operation = {};
-      std::vector<uint32_t> chunkIndexes;
-      operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
-      if (op.contains("channel_type")) {
-        operation.channelType = convertToChannelType(op["channel_type"]);
+  if (op.contains("channel_ids")) {
+    operation.nChannels = op["channel_ids"].size();
+    if (operation.channelType == mscclpp::ChannelType::SWITCH) {
+      operation.nvlsInputIndex = op["channel_ids"][0];
+    } else {
+      for (uint32_t i = 0; i < op["channel_ids"].size(); i++) {
+        operation.channelIndexes[i] = op["channel_ids"][i];
       }
-      if (op.contains("channel_ids")) {
-        operation.nChannels = op["channel_ids"].size();
-        if (operation.channelType == mscclpp::ChannelType::SWITCH) {
-          operation.nvlsInputIndex = op["channel_ids"][0];
-        } else {
-          for (uint32_t i = 0; i < op["channel_ids"].size(); i++) {
-            operation.channelIndexes[i] = op["channel_ids"][i];
-          }
-        }
-      }
-      if (op.contains("src_buff")) {
-        operation.nInputs = op["src_buff"].size();
-        for (int i = 0; i < operation.nInputs; i++) {
-          auto& buff = op["src_buff"][i];
-          size_t constOffset = 0;
-          if (buff.contains("type")) {
-            operation.inputBufferRefs[i].type = convertToBufferType(buff["type"]);
-            constOffset = getConstOffset(operation.inputBufferRefs[i].type);
-          }
-          if (buff.contains("buff_id")) {
-            operation.inputBufferRefs[i].id = buff["buff_id"];
-            BufferType bufferType =
-                getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
-            constOffset = getConstOffset(bufferType);
-          }
-          if (buff.contains("switch_channel_id")) {
-            int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
-            constOffset = getConstOffset(this->nvlsInfos[rank][switchChannelIdx].bufferType);
-          }
-          operation.inputOffsets[i] =
-              this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
-          operation.inputBufferSizes[i] =
-              this->getBufferSize(rank, this->inputSize, this->outputSize, buff["index"], buff["size"]);
-        }
-      }
-      if (op.contains("dst_buff")) {
-        operation.nOutputs = op["dst_buff"].size();
-        for (int i = 0; i < operation.nOutputs; i++) {
-          auto& buff = op["dst_buff"][i];
-          size_t constOffset = 0;
-          if (buff.contains("type")) {
-            operation.outputBufferRefs[i].type = convertToBufferType(buff["type"]);
-            constOffset = getConstOffset(operation.outputBufferRefs[i].type);
-          }
-          if (buff.contains("buff_id")) {
-            operation.outputBufferRefs[i].id = buff["buff_id"];
-            BufferType bufferType =
-                getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
-            constOffset = getConstOffset(bufferType);
-          }
-          if (buff.contains("switch_channel_id")) {
-            int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
-            constOffset = getConstOffset(this->nvlsInfos[rank][switchChannelIdx].bufferType);
-          }
-          operation.outputOffsets[i] =
-              this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
-          operation.outputBufferSizes[i] =
-              this->getBufferSize(rank, this->inputSize, this->outputSize, buff["index"], buff["size"]);
-        }
-      }
-      if (op.contains("barrier_id")) {
-        operation.deviceSyncerIndex = op["barrier_id"];
-      }
-      if (op.contains("nthread_blocks")) {
-        operation.nThreadBlocks = op["nthread_blocks"];
-      }
-      ops.push_back(operation);
     }
-    this->operations.push_back(ops);
+  }
+  if (op.contains("src_buff")) {
+    operation.nInputs = op["src_buff"].size();
+    for (int i = 0; i < operation.nInputs; i++) {
+      auto& buff = op["src_buff"][i];
+      size_t constOffset = 0;
+      if (buff.contains("type")) {
+        operation.inputBufferRefs[i].type = convertToBufferType(buff["type"]);
+        constOffset = getConstOffset(operation.inputBufferRefs[i].type);
+      }
+      if (buff.contains("buff_id")) {
+        operation.inputBufferRefs[i].id = buff["buff_id"];
+        BufferType bufferType = getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
+        constOffset = getConstOffset(bufferType);
+      }
+      if (buff.contains("switch_channel_id")) {
+        int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
+        constOffset = getConstOffset(this->nvlsInfos[rank][switchChannelIdx].bufferType);
+      }
+      operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
+      operation.inputBufferSizes[i] =
+          this->getBufferSize(rank, this->inputSize, this->outputSize, buff["index"], buff["size"]);
+    }
+  }
+  if (op.contains("dst_buff")) {
+    operation.nOutputs = op["dst_buff"].size();
+    for (int i = 0; i < operation.nOutputs; i++) {
+      auto& buff = op["dst_buff"][i];
+      size_t constOffset = 0;
+      if (buff.contains("type")) {
+        operation.outputBufferRefs[i].type = convertToBufferType(buff["type"]);
+        constOffset = getConstOffset(operation.outputBufferRefs[i].type);
+      }
+      if (buff.contains("buff_id")) {
+        operation.outputBufferRefs[i].id = buff["buff_id"];
+        BufferType bufferType = getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
+        constOffset = getConstOffset(bufferType);
+      }
+      if (buff.contains("switch_channel_id")) {
+        int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
+        constOffset = getConstOffset(this->nvlsInfos[rank][switchChannelIdx].bufferType);
+      }
+      operation.outputOffsets[i] =
+          this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
+      operation.outputBufferSizes[i] =
+          this->getBufferSize(rank, this->inputSize, this->outputSize, buff["index"], buff["size"]);
+    }
+  }
+  if (op.contains("barrier_id")) {
+    operation.deviceSyncerIndex = op["barrier_id"];
+  }
+  if (op.contains("nthread_blocks")) {
+    operation.nThreadBlocks = op["nthread_blocks"];
+  }
+  if (op.contains("semaphore_id")) {
+    operation.semaphoreId = op["semaphore_id"];
+  }
+  if (op.contains("iter_context")) {
+    operation.unitSize = op["iter_context"]["unit_size"];
+    operation.nOperations = op["ops"].size();
+    int nChunks = op["iter_context"]["num_chunks"];
+    size_t sizes = nChunks * getUpperBoundChunkSize(rank, this->inputSize, this->outputSize);
+    operation.nIterations = (sizes + (operation.unitSize - 1)) / operation.unitSize;
   }
 }
 
@@ -592,15 +628,15 @@ size_t ExecutionPlan::Impl::getBufferSize(int rank, size_t inputSize, size_t out
 size_t ExecutionPlan::Impl::getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const {
   size_t nInputChunks = this->inputChunks.at(rank);
   size_t nOutputChunks = this->outputChunks.at(rank);
-  size_t inputChunkSize = 0;
-  size_t outputChunkSize = 0;
   if (nInputChunks != 0) {
-    inputChunkSize = inputSize / nInputChunks;
+    size_t nelems = inputSize / this->bufferAlignment;
+    return (nelems + nInputChunks - 1) / nInputChunks * this->bufferAlignment;
   }
   if (nOutputChunks != 0) {
-    outputChunkSize = outputSize / nOutputChunks;
+    size_t nelems = outputSize / this->bufferAlignment;
+    return (nelems + nOutputChunks - 1) / nOutputChunks * this->bufferAlignment;
   }
-  return std::max(inputChunkSize, outputChunkSize);
+  throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
 }
 
 void ExecutionPlan::Impl::reset() {
