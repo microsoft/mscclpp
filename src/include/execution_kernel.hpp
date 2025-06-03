@@ -713,7 +713,7 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   }
 #endif
   if (opType == OperationType::PIPELINE) {
-    *nSteps = op.nOperations;
+    *nSteps = op.nOperations + 1;
     return handlePipeline<T, PacketType>(op, input, output, scratch);
   }
   return;
