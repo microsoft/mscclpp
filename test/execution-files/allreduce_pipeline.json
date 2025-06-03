@@ -49,7 +49,7 @@
                   "channel_type": "memory"
                 },
                 {"name": "nop"},
-                {"name": "sem_release", "semaphore_id": 0}
+                {"name": "sem_release", "semaphore_ids": [0]}
               ]
             }
           ],
@@ -64,7 +64,7 @@
               "name": "pipeline",
               "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
-                {"name": "sem_acquire", "semaphore_id": 0},
+                {"name": "sem_acquire", "semaphore_ids": [0]},
                 {"name": "nop"},
                 {
                   "name": "glres",
@@ -78,7 +78,7 @@
                   "channel_type": "switch"
                 },
                 {"name": "nop"},
-                {"name": "sem_release", "semaphore_id": 1}
+                {"name": "sem_release", "semaphore_ids": [1]}
               ]
             }
           ],
@@ -93,7 +93,7 @@
               "name": "pipeline",
               "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
-                {"name": "sem_acquire", "semaphore_id": 1},
+                {"name": "sem_acquire", "semaphore_ids": [1]},
                 {"name": "nop"},
                 {
                   "name": "signal",
@@ -192,7 +192,7 @@
                   "channel_type": "memory"
                 },
                 {"name": "nop"},
-                {"name": "sem_release", "semaphore_id": 0}
+                {"name": "sem_release", "semaphore_ids": [0]}
               ]
             }
           ],
@@ -207,7 +207,7 @@
               "name": "pipeline",
               "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
-                {"name": "sem_acquire", "semaphore_id": 0},
+                {"name": "sem_acquire", "semaphore_ids": [0]},
                 {"name": "nop"},
                 {
                   "name": "glres",
@@ -221,7 +221,7 @@
                   "channel_type": "switch"
                 },
                 {"name": "nop"},
-                {"name": "sem_release", "semaphore_id": 1}
+                {"name": "sem_release", "semaphore_ids": [1]}
               ]
             }
           ],
@@ -236,7 +236,7 @@
               "name": "pipeline",
               "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
-                {"name": "sem_acquire", "semaphore_id": 1},
+                {"name": "sem_acquire", "semaphore_ids": [1]},
                 {"name": "nop"},
                 {
                   "name": "signal",
@@ -335,7 +335,7 @@
                   "channel_type": "memory"
                 },
                 {"name": "nop"},
-                {"name": "sem_release", "semaphore_id": 0}
+                {"name": "sem_release", "semaphore_ids": [0]}
               ]
             }
           ],
@@ -350,7 +350,7 @@
               "name": "pipeline",
               "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
-                {"name": "sem_acquire", "semaphore_id": 0},
+                {"name": "sem_acquire", "semaphore_ids": [0]},
                 {"name": "nop"},
                 {
                   "name": "glres",
@@ -364,7 +364,7 @@
                   "channel_type": "switch"
                 },
                 {"name": "nop"},
-                {"name": "sem_release", "semaphore_id": 1}
+                {"name": "sem_release", "semaphore_ids": [1]}
               ]
             }
           ],
@@ -379,7 +379,7 @@
               "name": "pipeline",
               "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
-                {"name": "sem_acquire", "semaphore_id": 1},
+                {"name": "sem_acquire", "semaphore_ids": [1]},
                 {"name": "nop"},
                 {
                   "name": "signal",
@@ -478,7 +478,7 @@
                   "channel_type": "memory"
                 },
                 {"name": "nop"},
-                {"name": "sem_release", "semaphore_id": 0}
+                {"name": "sem_release", "semaphore_ids": [0]}
               ]
             }
           ],
@@ -493,7 +493,7 @@
               "name": "pipeline",
               "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
-                {"name": "sem_acquire", "semaphore_id": 0},
+                {"name": "sem_acquire", "semaphore_ids": [0]},
                 {"name": "nop"},
                 {
                   "name": "glres",
@@ -507,7 +507,7 @@
                   "channel_type": "switch"
                 },
                 {"name": "nop"},
-                {"name": "sem_release", "semaphore_id": 1}
+                {"name": "sem_release", "semaphore_ids": [1]}
               ]
             }
           ],
@@ -522,7 +522,7 @@
               "name": "pipeline",
               "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
-                {"name": "sem_acquire", "semaphore_id": 1},
+                {"name": "sem_acquire", "semaphore_ids": [1]},
                 {"name": "nop"},
                 {
                   "name": "signal",

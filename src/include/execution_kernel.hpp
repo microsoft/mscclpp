@@ -628,13 +628,19 @@ MSCCLPP_DEVICE_INLINE void handlePipeline(const Operation& op, T* input, T* outp
 }
 
 MSCCLPP_DEVICE_INLINE void handleSemRelease(const Operation& op) {
-  DeviceSemaphore* sem = &DeviceSemaphores[op.deviceSyncerIndex];
-  sem->release();
+  int tid = threadIdx.x;
+  if (tid < op.nDeviceSemaphores) {
+    DeviceSemaphore* sem = &DeviceSemaphores[op.deviceSemaphoreIds[tid]];
+    sem->release();
+  }
 }
 
 MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op) {
-  DeviceSemaphore* sem = &DeviceSemaphores[op.deviceSyncerIndex];
-  sem->acquire();
+  int tid = threadIdx.x;
+  if (tid < op.nDeviceSemaphores) {
+    DeviceSemaphore* sem = &DeviceSemaphores[op.deviceSemaphoreIds[tid]];
+    sem->acquire();
+  }
 }
 
 template <typename T, typename PacketType>

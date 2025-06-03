@@ -115,7 +115,8 @@ struct Operation {
       uint32_t nThreadBlocks;
     };
     struct {
-      uint32_t deviceSemaphoreId;
+      uint32_t deviceSemaphoreIds[MAX_DEVICE_SEMAPHORES];
+      uint32_t nDeviceSemaphores;
     };
   };
 };
