@@ -113,13 +113,13 @@ class IbQp {
 
 class IbCtx {
  public:
-#if defined(USE_IBVERBS)
+#if defined(IBVERBS_LIBRARY)
   IbCtx(const std::string& devName);
   ~IbCtx();
 
   IbQp* createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend, int port = -1);
   const IbMr* registerMr(void* buff, std::size_t size);
-#else
+#else   // !defined(IBVERBS_LIBRARY)
   IbCtx([[maybe_unused]] const std::string& devName) {}
   ~IbCtx() {}
 
@@ -128,7 +128,7 @@ class IbCtx {
     return nullptr;
   }
   const IbMr* registerMr([[maybe_unused]] void* buff, [[maybe_unused]] std::size_t size) { return nullptr; }
-#endif
+#endif  // !defined(IBVERBS_LIBRARY)
 
   const std::string& getDevName() const { return this->devName; };
 
