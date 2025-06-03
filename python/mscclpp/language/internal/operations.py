@@ -29,6 +29,17 @@ class RemoteChunk:
 
 
 @dataclass
+class NVLSChunk:
+    rank: int
+    type: BufferType
+    index: int
+    size: int
+
+    def to_json(self):
+        return {"rank": self.rank, "type": self.type.value, "index": self.index, "size": self.size}
+
+
+@dataclass
 class SyncOperation(BaseOperation):
     def __init__(self):
         self.name = Instruction.nop.value
@@ -236,5 +247,71 @@ class ReduceOperation(BaseOperation):
             result["channel_ids"] = self.channel_ids
         if self.channel_type != ChannelType.none:
             result["channel_type"] = self.channel_type.value
+        result["reduce_op"] = self.reduce_operation.value
+        return result
+
+
+@dataclass
+class GroupLoadReduce(BaseOperation):
+    def __init__(
+        self,
+        buffer_type: BufferType,
+        buffer_offset: int,
+        size: int,
+        dst_chunk: NVLSChunk,
+        tb_channel_id: List[int] = [],
+        channel_type: ChannelType = ChannelType.switch,
+        reduce_operation: ReduceOperationType = ReduceOperationType.sum,
+    ):
+        self.name = Instruction.group_load_reduce.value
+        self.buffer_type = buffer_type.value
+        self.buffer_offset = buffer_offset
+        self.size = size
+        self.dst_chunk = dst_chunk
+        self.tb_channel_id = tb_channel_id
+        self.channel_type = channel_type
+        self.reduce_operation = reduce_operation
+
+    def to_json(self):
+        result = {"name": self.name}
+        result["buffer_type"] = self.dst_chunk.type.value
+        result["buffer_offset"] = self.buffer_offset
+        result["size"] = self.size
+        result["dst_chunk"] = self.dst_chunk.to_json()
+        result["channel_ids"] = self.tb_channel_id
+        result["channel_type"] = self.channel_type.value
+        result["reduce_op"] = self.reduce_operation.value
+        return result
+
+
+@dataclass
+class GroupStore(BaseOperation):
+    def __init__(
+        self,
+        src_chunk: NVLSChunk,
+        buffer_type: BufferType,
+        buffer_offset: int,
+        size: int,
+        tb_channel_id: List[int] = [],
+        channel_type: ChannelType = ChannelType.switch,
+        reduce_operation: ReduceOperationType = ReduceOperationType.sum,
+    ):
+        self.name = Instruction.group_load_reduce.value
+        self.src_chunk = src_chunk
+        self.buffer_type = buffer_type
+        self.buffer_offset = buffer_offset
+        self.size = size
+        self.tb_channel_id = tb_channel_id
+        self.channel_type = channel_type
+        self.reduce_operation = reduce_operation
+
+    def to_json(self):
+        result = {"name": self.name}
+        result["src_chunk"] = self.src_chunk.to_json()
+        result["buffer_type"] = self.buffer_type.value
+        result["buffer_offset"] = self.buffer_offset
+        result["size"] = self.size
+        result["channel_ids"] = self.tb_channel_id
+        result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
         return result

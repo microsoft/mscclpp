@@ -33,7 +33,12 @@ def reduce_send_packet_test(num_threads_per_block, min_message_size, max_message
                     ch = Channel(dst_rank, src_rank, ChannelType.memory)
                     ch.relaxed_signal(tb=0)
                     ch.relaxed_wait(tb=0, sync=SyncType.after)
-                    rank.reduce(scratch_buffers[src_rank][0:1], [scratch_buffers[src_rank][1:2]], tb=0, dst_chunk=scratch_buffers[src_rank][2:3])
+                    rank.reduce(
+                        scratch_buffers[src_rank][0:1],
+                        [scratch_buffers[src_rank][1:2]],
+                        tb=0,
+                        dst_chunk=scratch_buffers[src_rank][2:3],
+                    )
                     ch.put(scratch_buffers[dst_rank][3:4], scratch_buffers[src_rank][2:3], tb=0)
                     ch.signal(tb=0, sync=SyncType.before)
                     ch.wait(tb=0, sync=SyncType.after)

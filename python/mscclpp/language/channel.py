@@ -1,5 +1,5 @@
 from mscclpp.language.internal.channel import BaseChannel
-from mscclpp.language.internal.types import RemoteBuffer, SyncType, ReduceOperationType, Chunk
+from mscclpp.language.internal.types import RemoteBuffer, SyncType, ReduceOperationType, Chunk, RankGroup
 from mscclpp.language.internal.globals import get_program
 from dataclasses import dataclass
 from collections import defaultdict
@@ -31,7 +31,7 @@ class Channel(BaseChannel):
             get_program().add_operation(self.src_rank, tb, sync_op)
 
         tb_channel_id = get_program().setup_channel(tb, self)
-        op = SignalOperation([tb_channel_id], self.channel_type)
+        op = SignalOperation(tb_channel_id, self.channel_type)
         get_program().add_operation(self.src_rank, tb, op)
 
         if sync == SyncType.after or sync == SyncType.both:
@@ -44,7 +44,7 @@ class Channel(BaseChannel):
             get_program().add_operation(self.src_rank, tb, sync_op)
 
         tb_channel_id = get_program().setup_channel(tb, self)
-        op = WaitOperation([tb_channel_id], self.channel_type)
+        op = WaitOperation(tb_channel_id, self.channel_type)
         get_program().add_operation(self.src_rank, tb, op)
 
         if sync == SyncType.after or sync == SyncType.both:
@@ -57,7 +57,7 @@ class Channel(BaseChannel):
             get_program().add_operation(self.src_rank, tb, sync_op)
 
         tb_channel_id = get_program().setup_channel(tb, self)
-        op = SignalOperation([tb_channel_id], self.channel_type, True)
+        op = SignalOperation(tb_channel_id, self.channel_type, True)
         get_program().add_operation(self.src_rank, tb, op)
 
         if sync == SyncType.after or sync == SyncType.both:
@@ -70,7 +70,7 @@ class Channel(BaseChannel):
             get_program().add_operation(self.src_rank, tb, sync_op)
 
         tb_channel_id = get_program().setup_channel(tb, self)
-        op = SignalOperation([tb_channel_id], self.channel_type, True)
+        op = SignalOperation(tb_channel_id, self.channel_type, True)
         get_program().add_operation(self.src_rank, tb, op)
 
         if sync == SyncType.after or sync == SyncType.both:
@@ -94,7 +94,7 @@ class Channel(BaseChannel):
         op = GetOperation(
             [RemoteChunk(tb_chunk_id, src_chunk.index, src_chunk.size)],
             [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
-            [tb_channel_id],
+            tb_channel_id,
             self.channel_type,
         )
 
@@ -126,7 +126,7 @@ class Channel(BaseChannel):
         op = PutOperation(
             [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
             [RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
-            [tb_channel_id],
+            tb_channel_id,
             self.channel_type,
             with_signal=with_signal,
             with_signal_and_flush=with_signal_and_flush,
@@ -155,7 +155,7 @@ class Channel(BaseChannel):
         op = PutOperation(
             [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
             [RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
-            [tb_channel_id],
+            tb_channel_id,
             self.channel_type,
             from_packet=from_packet,
             to_packet=True,
@@ -200,9 +200,97 @@ class Channel(BaseChannel):
             [LocalChunk(local_dst_chunk.buffer, local_dst_chunk.index, local_dst_chunk.size)],
             remote_chunks,
             [],
-            [tb_channel_id],
+            tb_channel_id,
             self.channel_type,
             reduce_op,
         )
 
         get_program().add_operation(self.src_rank, tb, op)
+
+
+@dataclass
+class SwitchChannel(BaseChannel):
+    __channel_counts = defaultdict(lambda: defaultdict(int))
+
+    def __init__(self, rank_list: List[int], buffer_type: BufferType):
+        num_ranks = get_program().num_ranks
+        if not all(rank < num_ranks for rank in rank_list):
+            raise RuntimeError(f"One or more ranks in {rank_list} are out of bounds. Number of ranks: {num_ranks}")
+
+        for rank in rank_list:
+            if rank >= num_ranks:
+                raise RuntimeError(f"Rank {rank} is out of bounds. Number of ranks: {num_ranks}")
+            self.channel_id = SwitchChannel.__channel_counts[rank][buffer_type]
+            SwitchChannel.__channel_counts[rank][buffer_type] += 1
+
+        self.rank_group = RankGroup(len(rank_list), rank_list)
+        self.buffer_type = buffer_type
+        self.channel_type = ChannelType.switch
+
+        get_program().add_channel(self)
+
+    def group_load_reduce(self, buffer_offset, size, dst_chunk: Chunk, tb, reduce_op=ReduceOperationType.sum):
+        if dst_chunk.rank not in self.rank_group.ranks:
+            raise RuntimeError(
+                f"Destination chunk rank {dst_chunk.rank} is not part of the rank group {self.rank_group.ranks}."
+            )
+        if dst_chunk.size != size:
+            raise RuntimeError(f"Destination chunk size {dst_chunk.size} does not match the required size {size}.")
+
+        if self.buffer_type != BufferType.scratch:
+            for rank in self.rank_group.ranks:
+                if get_program().buffers[rank][self.buffer_type].size < buffer_offset + size:
+                    raise RuntimeError(
+                        f"Buffer size {get_program().buffers[rank][BufferType.input].size} is smaller than "
+                        f"required size {buffer_offset + size} for rank {rank}."
+                    )
+        else:
+            for rank in self.rank_group.ranks:
+                if get_program().gpus[rank].scratch_chunks < buffer_offset + size:
+                    get_program().gpus[rank].scratch_chunks = buffer_offset + size
+
+        tb_channel_id = get_program().setup_channel(tb, self)
+        for rank in self.rank_group.ranks:
+            op = GroupLoadReduce(
+                self.buffer_type,
+                buffer_offset,
+                size,
+                NVLSChunk(dst_chunk.rank, dst_chunk.buffer, dst_chunk.index, dst_chunk.size),
+                [tb_channel_id[rank]],
+                self.channel_type,
+                reduce_op,
+            )
+            get_program().add_operation(rank, tb, op)
+
+    def group_store(self, src_chunk: Chunk, buffer_offset, size, tb, reduce_op=ReduceOperationType.sum):
+        if src_chunk.rank not in self.rank_group.ranks:
+            raise RuntimeError(
+                f"Destination chunk rank {src_chunk.rank} is not part of the rank group {self.rank_group.ranks}."
+            )
+        if src_chunk.size != size:
+            raise RuntimeError(f"Destination chunk size {src_chunk.size} does not match the required size {size}.")
+
+        if self.buffer_type != BufferType.scratch:
+            for rank in self.rank_group.ranks:
+                if get_program().buffers[rank][self.buffer_type].size < buffer_offset + size:
+                    raise RuntimeError(
+                        f"Buffer size {get_program().buffers[rank][BufferType.input].size} is smaller than "
+                        f"required size {buffer_offset + size} for rank {rank}."
+                    )
+        else:
+            for rank in self.rank_group.ranks:
+                if get_program().gpus[rank].scratch_chunks < buffer_offset + size:
+                    get_program().gpus[rank].scratch_chunks = buffer_offset + size
+
+        tb_channel_id = get_program().setup_channel(tb, self)
+        for rank in self.rank_group.ranks:
+            op = GroupStore(
+                NVLSChunk(src_chunk.rank, src_chunk.buffer, src_chunk.index, src_chunk.size),
+                self.buffer_type,
+                buffer_offset,
+                size,
+                [tb_channel_id[rank]],
+                self.channel_type,
+                reduce_op,
+            )
+            get_program().add_operation(rank, tb, op)

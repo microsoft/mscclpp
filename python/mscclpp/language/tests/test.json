@@ -1,122 +1,84 @@
 {
-  "name": "put_test",
-  "collective": "test",
-  "inplace": false,
+  "name": null,
+  "collective": "allgather",
+  "inplace": true,
   "protocol": "Simple",
   "gpus": [
     {
       "id": 0,
-      "input_chunks": 2,
+      "input_chunks": 1,
       "output_chunks": 2,
-      "scratch_chunks": 0,
+      "scratch_chunks": 1,
       "threadblocks": [
         {
           "id": 0,
           "ops": [
             {
-              "name": "rlxsignal",
+              "name": "glre",
+              "buffer_type": "s",
+              "buffer_offset": 0,
+              "size": 1,
+              "dst_chunk": {
+                "rank": 0,
+                "type": "s",
+                "index": 0,
+                "size": 1
+              },
               "channel_ids": [
                 0
               ],
-              "channel_type": "memory"
-            },
-            {
-              "name": "rlxsignal",
-              "channel_ids": [
-                0
-              ],
-              "channel_type": "memory"
-            },
-            {
-              "name": "nop"
-            },
-            {
-              "name": "rrc",
-              "src_buff": [
-                {
-                  "type": "i",
-                  "index": 0,
-                  "size": 1
-                },
-                {
-                  "buffer_id": 0,
-                  "index": 1,
-                  "size": 1
-                }
-              ],
-              "dst_buff": [
-                {
-                  "type": "o",
-                  "index": 0,
-                  "size": 1
-                }
-              ],
-              "channel_ids": [
-                0
-              ],
-              "channel_type": "memory",
+              "channel_type": "switch",
               "reduce_op": "sum"
             },
             {
-              "name": "nop"
-            },
-            {
-              "name": "signal",
+              "name": "glre",
+              "src_chunk": {
+                "rank": 0,
+                "type": "s",
+                "index": 0,
+                "size": 1
+              },
+              "buffer_type": "i",
+              "buffer_offset": 0,
+              "size": 1,
               "channel_ids": [
                 0
               ],
-              "channel_type": "memory"
-            },
-            {
-              "name": "wait",
-              "channel_ids": [
-                0
-              ],
-              "channel_type": "memory"
-            },
-            {
-              "name": "nop"
+              "channel_type": "switch",
+              "reduce_op": "sum"
             }
           ],
           "channels": [
             {
-              "channel_type": "memory",
+              "channel_type": "switch",
               "channel_ids": [
                 0
               ]
             }
           ],
-          "remote_buffer_refs": [
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "buffer_type": "i",
+          "channel_type": "switch",
+          "rank_group": [
             {
-              "access_channel_type": "memory",
-              "remote_buffer_ids": [
-                0
+              "size": 2,
+              "ranks": [
+                0,
+                1
               ]
             }
           ]
         }
       ],
-      "channels": [
-        {
-          "type": "memory",
-          "connected_to": [
-            1
-          ]
-        }
-      ],
-      "remote_buffers": [
-        {
-          "rank": 1,
-          "type": "i",
-          "access_channel_types": [
-            "memory"
-          ]
-        }
-      ]
+      "remote_buffers": []
     },
     {
       "id": 1,
-      "input_chunks": 2,
+      "input_chunks": 1,
       "output_chunks": 2,
       "scratch_chunks": 0,
       "threadblocks": [
@@ -124,105 +86,67 @@
           "id": 0,
           "ops": [
             {
-              "name": "rlxsignal",
+              "name": "glre",
+              "buffer_type": "s",
+              "buffer_offset": 0,
+              "size": 1,
+              "dst_chunk": {
+                "rank": 0,
+                "type": "s",
+                "index": 0,
+                "size": 1
+              },
               "channel_ids": [
                 0
               ],
-              "channel_type": "memory"
-            },
-            {
-              "name": "rlxsignal",
-              "channel_ids": [
-                0
-              ],
-              "channel_type": "memory"
-            },
-            {
-              "name": "nop"
-            },
-            {
-              "name": "rrc",
-              "src_buff": [
-                {
-                  "type": "i",
-                  "index": 0,
-                  "size": 1
-                },
-                {
-                  "buffer_id": 0,
-                  "index": 1,
-                  "size": 1
-                }
-              ],
-              "dst_buff": [
-                {
-                  "type": "o",
-                  "index": 0,
-                  "size": 1
-                }
-              ],
-              "channel_ids": [
-                0
-              ],
-              "channel_type": "memory",
+              "channel_type": "switch",
               "reduce_op": "sum"
             },
             {
-              "name": "nop"
-            },
-            {
-              "name": "signal",
+              "name": "glre",
+              "src_chunk": {
+                "rank": 0,
+                "type": "s",
+                "index": 0,
+                "size": 1
+              },
+              "buffer_type": "i",
+              "buffer_offset": 0,
+              "size": 1,
               "channel_ids": [
                 0
               ],
-              "channel_type": "memory"
-            },
-            {
-              "name": "wait",
-              "channel_ids": [
-                0
-              ],
-              "channel_type": "memory"
-            },
-            {
-              "name": "nop"
+              "channel_type": "switch",
+              "reduce_op": "sum"
             }
           ],
           "channels": [
             {
-              "channel_type": "memory",
+              "channel_type": "switch",
               "channel_ids": [
                 0
               ]
             }
           ],
-          "remote_buffer_refs": [
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "buffer_type": "i",
+          "channel_type": "switch",
+          "rank_group": [
             {
-              "access_channel_type": "memory",
-              "remote_buffer_ids": [
-                0
+              "size": 2,
+              "ranks": [
+                0,
+                1
               ]
             }
           ]
         }
       ],
-      "channels": [
-        {
-          "type": "memory",
-          "connected_to": [
-            0
-          ]
-        }
-      ],
-      "remote_buffers": [
-        {
-          "rank": 0,
-          "type": "i",
-          "access_channel_types": [
-            "memory"
-          ]
-        }
-      ]
+      "remote_buffers": []
     }
   ],
   "num_threads_per_block": 1024,

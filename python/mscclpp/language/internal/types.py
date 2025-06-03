@@ -123,3 +123,15 @@ class RemoteBuffer:
 
     def __hash__(self):
         return hash((self.rank, self.type))
+
+
+@dataclass
+class RankGroup:
+    size: int
+    ranks: List[int]
+
+    def to_json(self):
+        return {
+            "size": self.size,
+            "ranks": self.ranks,
+        }

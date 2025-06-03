@@ -2,7 +2,7 @@ from mscclpp.language.channel import Channel
 from dataclasses import dataclass, field
 from mscclpp.language.internal.threadblock import Threadblock
 from mscclpp.language.internal.operations import BaseOperation
-from mscclpp.language.internal.types import RemoteBuffer
+from mscclpp.language.internal.types import RemoteBuffer, ChannelType
 
 
 @dataclass
@@ -46,13 +46,30 @@ class Gpu:
 
     def to_json(self) -> dict:
         channels = {}
+        nvls_channels = {}
         for ch in self.channels:
-            if ch.channel_type not in channels:
-                channels[ch.channel_type] = []
-            channels[ch.channel_type].append(ch.dst_rank)
+            if ch.channel_type != ChannelType.switch:
+                if ch.channel_type not in channels:
+                    channels[ch.channel_type] = []
+                channels[ch.channel_type].append(ch.dst_rank)
+            else:
+                if ch.buffer_type not in nvls_channels:
+                    nvls_channels[ch.buffer_type] = []
+                nvls_channels[ch.buffer_type].append(ch)
+
         json_channels = []
         for ch_type, dst_ranks in channels.items():
-            json_channels.append({"type": ch_type.value, "connected_to": dst_ranks})
+            json_channels.append({"channel_type": ch_type.value, "connected_to": dst_ranks})
+
+        for buffer_type, nvls_channels in nvls_channels.items():
+            json_channels.append(
+                {
+                    "buffer_type": buffer_type.value,
+                    "channel_type": ChannelType.switch.value,
+                    "rank_group": [ch.rank_group.to_json() for ch in nvls_channels],
+                }
+            )
+
         return {
             "id": self.id,
             "input_chunks": self.input_chunks,
