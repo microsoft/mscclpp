@@ -11,6 +11,8 @@
 #include <mscclpp/utils.hpp>
 #include <sstream>
 
+#include "utils_internal.hpp"
+
 double parseSize(const char* value) {
   std::string valueStr(value);
   std::istringstream iss(valueStr);
