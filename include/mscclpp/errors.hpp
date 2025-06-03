@@ -28,13 +28,13 @@ std::string errorToString(enum ErrorCode error);
 /// Base class for all errors thrown by MSCCL++.
 class BaseError : public std::runtime_error {
  public:
-  /// Constructor for @ref BaseError.
+  /// Constructor of BaseError.
   ///
   /// @param message The error message.
   /// @param errorCode The error code.
   BaseError(const std::string& message, int errorCode);
 
-  /// Constructor for @ref BaseError.
+  /// Constructor of BaseError.
   ///
   /// @param errorCode The error code.
   explicit BaseError(int errorCode);

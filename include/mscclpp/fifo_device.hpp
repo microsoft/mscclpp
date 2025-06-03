@@ -20,7 +20,7 @@ namespace mscclpp {
 /// This struct is used as a work element in the concurrent FIFO where multiple device threads can push
 /// ProxyTrigger elements and a single host proxy thread consumes these work elements.
 ///
-/// Do not use the most significant bit of @ref snd as it is reserved for memory consistency purposes
+/// Do not use the most significant bit of snd as it is reserved for memory consistency purposes.
 struct alignas(16) ProxyTrigger {
   uint64_t fst, snd;
 };
@@ -29,11 +29,11 @@ struct alignas(16) ProxyTrigger {
 /// work elements and a single host proxy thread consumes them.
 ///
 /// The FIFO has a head pointer allocated on the device which starts at 0 and goes up to 2^64-1, which is almost
-/// infinity. There are two copies of the tail, one on the device, @ref FifoDeviceHandle::tailReplica, and another on
+/// infinity. There are two copies of the tail, one on the device, FifoDeviceHandle::tailReplica, and another on
 /// the host, namely, hostTail. The host always has the "true" tail and occasionally pushes it to the copy on the
 /// device. Therefore, most of the time, the device has a stale version. The invariants are: tailReplica <= hostTail <=
-/// head. The @ref push() function increments head, hostTail is updated in @ref Fifo::pop(), and it occasionally flushes
-/// it to tailReplica via @ref Fifo::flushTail().
+/// head. The push() function increments head, hostTail is updated in Fifo::pop(), and it occasionally flushes
+/// it to tailReplica via Fifo::flushTail().
 ///
 /// Duplicating the tail is a good idea because the FIFO is large enough, and we do not need frequent updates for the
 /// tail as there is usually enough space for device threads to push their work into.

@@ -22,6 +22,8 @@
 #include <string>
 #include <type_traits>
 
+#include "utils_internal.hpp"
+
 int isMainProc = 0;
 
 mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,

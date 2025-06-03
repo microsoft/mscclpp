@@ -6,6 +6,7 @@
 #include <mscclpp/gpu_utils.hpp>
 
 #include "mp_unit_tests.hpp"
+#include "utils_internal.hpp"
 
 void IbTestBase::SetUp() {
   MSCCLPP_CUDATHROW(cudaGetDeviceCount(&cudaDevNum));

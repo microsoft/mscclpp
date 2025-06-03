@@ -5,6 +5,7 @@
 #include <mscclpp/concurrency_device.hpp>
 
 #include "mp_unit_tests.hpp"
+#include "utils_internal.hpp"
 
 void PortChannelOneToOneTest::SetUp() {
   // Use only two ranks

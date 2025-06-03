@@ -12,6 +12,8 @@
 
 #if !defined(DEBUG_BUILD)
 
+/// Assert a condition on the device and print a message if the condition is false.
+/// This macro does nothing in a release mode build (when DEBUG_BUILD is undefined).
 #define MSCCLPP_ASSERT_DEVICE(__cond, __msg)
 
 #else  // defined(DEBUG_BUILD)
@@ -24,6 +26,8 @@ extern "C" __host__ __device__ void __assert_fail(const char *__assertion, const
                                                   const char *__function) __THROW;
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
 
+/// Assert a condition on the device and print a message if the condition is false.
+/// This macro does nothing in a release mode build (when DEBUG_BUILD is undefined).
 #define MSCCLPP_ASSERT_DEVICE(__cond, __msg)                         \
   do {                                                               \
     if (!(__cond)) {                                                 \
