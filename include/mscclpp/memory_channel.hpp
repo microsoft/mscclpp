@@ -29,7 +29,7 @@ struct BaseMemoryChannel {
 
   BaseMemoryChannel& operator=(BaseMemoryChannel& other) = default;
 
-  /// Device-side handle for @ref BaseMemoryChannel.
+  /// Device-side handle for BaseMemoryChannel.
   using DeviceHandle = BaseMemoryChannelDeviceHandle;
 
   /// Returns the device-side handle.
@@ -59,7 +59,7 @@ struct MemoryChannel : public BaseMemoryChannel {
   MemoryChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, void* src,
                 void* packetBuffer = nullptr);
 
-  /// Device-side handle for @ref MemoryChannel.
+  /// Device-side handle for MemoryChannel.
   using DeviceHandle = MemoryChannelDeviceHandle;
 
   /// Returns the device-side handle.
@@ -69,7 +69,7 @@ struct MemoryChannel : public BaseMemoryChannel {
   DeviceHandle deviceHandle() const;
 };
 
-/// @deprecated Use @ref MemoryChannel instead.
+/// @deprecated Use MemoryChannel instead.
 [[deprecated("Use MemoryChannel instead.")]] typedef MemoryChannel SmChannel;
 
 }  // namespace mscclpp

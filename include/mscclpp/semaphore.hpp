@@ -14,7 +14,7 @@ namespace mscclpp {
 
 /// A base class for semaphores.
 ///
-/// An semaphore is a synchronization mechanism that allows the local peer to wait for the remote peer to complete a
+/// A semaphore is a synchronization mechanism that allows the local peer to wait for the remote peer to complete a
 /// data transfer. The local peer signals the remote peer that it has completed a data transfer by incrementing the
 /// outbound semaphore ID. The incremented outbound semaphore ID is copied to the remote peer's inbound semaphore ID so
 /// that the remote peer can wait for the local peer to complete a data transfer. Vice versa, the remote peer signals
@@ -22,9 +22,9 @@ namespace mscclpp {
 /// copying the incremented value to the local peer's inbound semaphore ID.
 ///
 /// @tparam InboundDeleter The deleter for inbound semaphore IDs. This is either `std::default_delete` for host memory
-/// or @ref CudaDeleter for device memory.
+/// or CudaDeleter for device memory.
 /// @tparam OutboundDeleter The deleter for outbound semaphore IDs. This is either `std::default_delete` for host memory
-/// or @ref CudaDeleter for device memory.
+/// or CudaDeleter for device memory.
 ///
 template <template <typename> typename InboundDeleter, template <typename> typename OutboundDeleter>
 class BaseSemaphore {
@@ -34,19 +34,19 @@ class BaseSemaphore {
 
   /// The inbound semaphore ID that is incremented by the remote peer and waited on by the local peer.
   ///
-  /// The location of @ref localInboundSemaphore_ can be either on the host or on the device.
+  /// The location of localInboundSemaphore_ can be either on the host or on the device.
   std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> localInboundSemaphore_;
 
   /// The expected inbound semaphore ID to be incremented by the local peer and compared to the
-  /// @ref localInboundSemaphore_.
+  /// localInboundSemaphore_.
   ///
-  /// The location of @ref expectedInboundSemaphore_ can be either on the host or on the device.
+  /// The location of expectedInboundSemaphore_ can be either on the host or on the device.
   std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> expectedInboundSemaphore_;
 
   /// The outbound semaphore ID that is incremented by the local peer and copied to the remote peer's @ref
   /// localInboundSemaphore_.
   ///
-  /// The location of @ref outboundSemaphore_ can be either on the host or on the device.
+  /// The location of outboundSemaphore_ can be either on the host or on the device.
   std::unique_ptr<uint64_t, OutboundDeleter<uint64_t>> outboundSemaphore_;
 
  public:
@@ -81,7 +81,7 @@ class Host2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, std::defau
   /// Signal the device.
   void signal();
 
-  /// Device-side handle for @ref Host2DeviceSemaphore.
+  /// Device-side handle for Host2DeviceSemaphore.
   using DeviceHandle = Host2DeviceSemaphoreDeviceHandle;
 
   /// Returns the device-side handle.
@@ -93,7 +93,7 @@ class Host2HostSemaphore : public BaseSemaphore<std::default_delete, std::defaul
  public:
   /// Constructor
   /// @param communicator The communicator.
-  /// @param connection The connection associated with this semaphore. @ref Transport::CudaIpc is not allowed for @ref
+  /// @param connection The connection associated with this semaphore. Transport::CudaIpc is not allowed for
   /// Host2HostSemaphore.
   Host2HostSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
 
@@ -127,7 +127,7 @@ class MemoryDevice2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, de
   /// Constructor.
   MemoryDevice2DeviceSemaphore() = delete;
 
-  /// Device-side handle for @ref MemoryDevice2DeviceSemaphore.
+  /// Device-side handle for MemoryDevice2DeviceSemaphore.
   using DeviceHandle = MemoryDevice2DeviceSemaphoreDeviceHandle;
 
   /// Returns the device-side handle.
@@ -136,7 +136,7 @@ class MemoryDevice2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, de
   bool isRemoteInboundSemaphoreIdSet_;
 };
 
-/// @deprecated Use @ref MemoryDevice2DeviceSemaphore instead.
+/// @deprecated Use MemoryDevice2DeviceSemaphore instead.
 [[deprecated(
     "Use MemoryDevice2DeviceSemaphore instead.")]] typedef MemoryDevice2DeviceSemaphore SmDevice2DeviceSemaphore;
 

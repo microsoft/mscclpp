@@ -10,7 +10,7 @@ function(add_mscclpp_test_executable name sources)
     endif()
     add_executable(${name} ${sources} common.cc)
     target_link_libraries(${name} ${TEST_LIBS_COMMON} MPI::MPI_CXX nlohmann_json::nlohmann_json)
-    target_include_directories(${name} ${TEST_INC_COMMON})
+    target_include_directories(${name} ${TEST_INC_COMMON} ${TEST_INC_INTERNAL})
 endfunction()
 
 add_mscclpp_test_executable(sendrecv_test_perf sendrecv_test.cu)
