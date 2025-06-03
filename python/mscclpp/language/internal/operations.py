@@ -119,7 +119,7 @@ class WaitOperation(BaseOperation):
 @dataclass
 class BarrierOperation(BaseOperation):
     __current_barriers = []
-    
+
     def __init__(self, rank: int, tb_list: List[int]):
         if len(BarrierOperation.__current_barriers) <= rank:
             BarrierOperation.__current_barriers.append({})
@@ -135,7 +135,7 @@ class BarrierOperation(BaseOperation):
         result["tb_list"] = len(self.barrier_info.tb_list)
 
         return result
-    
+
     class BarrierInfo:
         def __init__(self, tb_list):
             self.tb_list = tb_list
@@ -145,7 +145,6 @@ class BarrierOperation(BaseOperation):
 
         def __hash__(self):
             return hash(tuple(self.tb_list))
-
 
 
 @dataclass

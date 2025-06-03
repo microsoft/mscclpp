@@ -25,12 +25,7 @@ def group_store_test(num_threads_per_block, min_message_size, max_message_size):
         dst_chunk = Buffer(0, 1)
 
         ch = SwitchChannel(rank_list=[0, 1], buffer_type=BufferType.input)
-        ch.group_store(
-            src_chunk=dst_chunk[0:1],
-            buffer_offset=0,
-            size=1,
-            tb=0
-        )
+        ch.group_store(src_chunk=dst_chunk[0:1], buffer_offset=0, size=1, tb=0)
 
         print(JSON())
 
