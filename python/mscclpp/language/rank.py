@@ -72,6 +72,12 @@ class Rank:
         )
         get_program().add_operation(self.rank, tb, op)
 
+    def barrier(self, tb_list: List[int]):
+        op = BarrierOperation(self.rank, tb_list)
+
+        for tb in tb_list:
+            get_program().add_operation(self.rank, tb, op)
+
 
 class BaseBuffer:
     def __init__(self, rank, buffer_type, offset, size):

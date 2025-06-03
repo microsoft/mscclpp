@@ -76,6 +76,22 @@ class Channel(BaseChannel):
         if sync == SyncType.after or sync == SyncType.both:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
+    
+    def flush(self, tb, sync=SyncType.none):
+        if self.channel_type != ChannelType.port:
+            raise RuntimeError(f"Flush operation is only supported for ChannelType.port.")
+        
+        if sync == SyncType.before or sync == SyncType.both:
+            sync_op = SyncOperation()
+            get_program().add_operation(self.src_rank, tb, sync_op)
+
+        tb_channel_id = get_program().setup_channel(tb, self)
+        op = FlushOperation(tb_channel_id, self.channel_type)
+        get_program().add_operation(self.src_rank, tb, op)
+
+        if sync == SyncType.after or sync == SyncType.both:
+            sync_op = SyncOperation()
+            get_program().add_operation(self.src_rank, tb, sync_op)
 
     def get(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         if dst_chunk.rank != self.src_rank:

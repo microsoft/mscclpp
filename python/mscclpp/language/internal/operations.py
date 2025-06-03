@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from collections import defaultdict
 from typing import List
 from mscclpp.language.internal.types import ChannelType, Instruction, BufferType, ReduceOperationType
 
@@ -105,6 +106,52 @@ class WaitOperation(BaseOperation):
             self.name = Instruction.relaxed_wait.value
         else:
             self.name = Instruction.wait.value
+        self.channel_ids = channels_ids
+        self.channel_type = channel_type
+
+    def to_json(self):
+        result = {"name": self.name}
+        result["channel_ids"] = self.channel_ids
+        result["channel_type"] = self.channel_type.value
+        return result
+
+
+@dataclass
+class BarrierOperation(BaseOperation):
+    __current_barriers = []
+    
+    def __init__(self, rank: int, tb_list: List[int]):
+        if len(BarrierOperation.__current_barriers) <= rank:
+            BarrierOperation.__current_barriers.append({})
+        barrier_info = BarrierOperation.BarrierInfo(tb_list)
+        self.barrier_id = BarrierOperation.__current_barriers[rank].get(barrier_info, 0)
+        BarrierOperation.__current_barriers[rank][barrier_info] = self.barrier_id + 1
+        self.name = Instruction.barrier.value
+        self.barrier_info = barrier_info
+
+    def to_json(self):
+        result = {"name": self.name}
+        result["barrier_id"] = self.barrier_id
+        result["tb_list"] = len(self.barrier_info.tb_list)
+
+        return result
+    
+    class BarrierInfo:
+        def __init__(self, tb_list):
+            self.tb_list = tb_list
+
+        def __eq__(self, other):
+            return self.tb_list == other.tb_list
+
+        def __hash__(self):
+            return hash(tuple(self.tb_list))
+
+
+
+@dataclass
+class FlushOperation(BaseOperation):
+    def __init__(self, channels_ids: List[int], channel_type: ChannelType):
+        self.name = Instruction.flush.value
         self.channel_ids = channels_ids
         self.channel_type = channel_type
 
@@ -296,7 +343,7 @@ class GroupStore(BaseOperation):
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
-        self.name = Instruction.group_load_reduce.value
+        self.name = Instruction.group_store.value
         self.src_chunk = src_chunk
         self.buffer_type = buffer_type
         self.buffer_offset = buffer_offset
