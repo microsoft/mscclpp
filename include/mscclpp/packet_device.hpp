@@ -15,7 +15,7 @@
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace mscclpp {
-/// LL (low latency) protocol packet.
+/// LL (low latency) protocol packet with 8 bytes of data and 8 bytes of flags.
 union alignas(16) LL16Packet {
   // Assume data is written with an atomicity of 8 bytes (IB/RDMA).
   struct {
@@ -59,7 +59,7 @@ union alignas(16) LL16Packet {
   /// @param flag The flag to write.
   MSCCLPP_DEVICE_INLINE void write(uint2 val, uint32_t flag) { write(val.x, val.y, flag); }
 
-  /// Helper of @ref read().
+  /// Helper of read().
   /// @param flag The flag to read.
   /// @param data The 8-byte data read.
   /// @return True if the flag is not equal to the given flag.
@@ -81,7 +81,7 @@ union alignas(16) LL16Packet {
 #endif
   }
 
-  /// Read 8 bytes of data from the packet.
+  /// Read 8 bytes of data from the packet. It will spin until the flag is equal to the given flag.
   /// @param flag The flag to read.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   /// @return The 8-byte data read.
@@ -96,6 +96,7 @@ union alignas(16) LL16Packet {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
+/// LL (low latency) protocol packet with 4 bytes of data and 4 bytes of flags.
 union alignas(8) LL8Packet {
   // Assume data is written with an atomicity of 8 bytes (IB/RDMA).
   struct {
@@ -111,6 +112,9 @@ union alignas(8) LL8Packet {
 
   MSCCLPP_DEVICE_INLINE LL8Packet(uint32_t val, uint32_t flag) : data(val), flag(flag) {}
 
+  /// Write 4 bytes of data to the packet.
+  /// @param val The 4-byte data to write.
+  /// @param flag The flag to write.
   MSCCLPP_DEVICE_INLINE void write(uint32_t val, uint32_t flag) {
 #if defined(MSCCLPP_DEVICE_CUDA)
     asm volatile("st.volatile.global.v2.u32 [%0], {%1,%2};" ::"l"(&raw_), "r"(val), "r"(flag));
@@ -121,6 +125,10 @@ union alignas(8) LL8Packet {
 #endif
   }
 
+  /// Helper of read().
+  /// @param flag The flag to read.
+  /// @param data The 4-byte data read.
+  /// @return True if the flag is not equal to the given flag.
   MSCCLPP_DEVICE_INLINE bool readOnce(uint32_t flag, uint32_t& data) const {
 #if defined(MSCCLPP_DEVICE_CUDA)
     uint32_t f;
@@ -135,6 +143,10 @@ union alignas(8) LL8Packet {
 #endif
   }
 
+  /// Read 4 bytes of data from the packet. It will spin until the flag is equal to the given flag.
+  /// @param flag The flag to read.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  /// @return The 4-byte data read.
   MSCCLPP_DEVICE_INLINE uint32_t read(uint32_t flag, [[maybe_unused]] int64_t maxSpinCount = 1000000) const {
     uint32_t data;
     POLL_MAYBE_JAILBREAK(readOnce(flag, data), maxSpinCount);

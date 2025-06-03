@@ -3,16 +3,25 @@
 
 #include "utils_internal.hpp"
 
+#include <signal.h>
 #include <unistd.h>
 
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <memory>
 #include <mscclpp/env.hpp>
 #include <mscclpp/errors.hpp>
+#include <sstream>
 #include <string>
 
 #include "debug.h"
+
+// Throw upon SIGALRM.
+static void sigalrmTimeoutHandler(int) {
+  signal(SIGALRM, SIG_IGN);
+  throw mscclpp::Error("Timer timed out", mscclpp::ErrorCode::Timeout);
+}
 
 constexpr char HOSTID_FILE[32] = "/proc/sys/kernel/random/boot_id";
 
@@ -30,6 +39,39 @@ static bool matchPort(const int port1, const int port2) {
 }
 
 namespace mscclpp {
+
+Timer::Timer(int timeout) { set(timeout); }
+
+Timer::~Timer() {
+  if (timeout_ > 0) {
+    alarm(0);
+    signal(SIGALRM, SIG_DFL);
+  }
+}
+
+int64_t Timer::elapsed() const {
+  auto end = std::chrono::steady_clock::now();
+  return std::chrono::duration_cast<std::chrono::microseconds>(end - start_).count();
+}
+
+void Timer::set(int timeout) {
+  timeout_ = timeout;
+  if (timeout > 0) {
+    signal(SIGALRM, sigalrmTimeoutHandler);
+    alarm(timeout);
+  }
+  start_ = std::chrono::steady_clock::now();
+}
+
+void Timer::reset() { set(timeout_); }
+
+void Timer::print(const std::string& name) {
+  auto us = elapsed();
+  std::stringstream ss;
+  ss << name << ": " << us << " us\n";
+  std::cout << ss.str();
+}
+
 std::string int64ToBusId(int64_t id) {
   char busId[20];
   std::snprintf(busId, sizeof(busId), "%04lx:%02lx:%02lx.%01lx", (id) >> 20, (id & 0xff000) >> 12, (id & 0xff0) >> 4,
