@@ -38,7 +38,9 @@
               ]
             }
           ],
-          "channels": []
+          "channels": [
+            { "channel_type": "memory", "channel_ids": [0, 1, 2] }
+          ]
         },
         {
           "id": 1,
@@ -66,8 +68,7 @@
             }
           ],
           "channels": [
-            { "buff": "s", "channel_type": "switch", "channel_ids": [0] },
-            { "channel_type": "memory", "channel_ids": [0, 1, 2] }
+            { "buff": "s", "channel_type": "switch", "channel_ids": [0] }
           ]
         },
         {
@@ -150,7 +151,9 @@
               ]
             }
           ],
-          "channels": []
+          "channels": [
+            { "channel_type": "memory", "channel_ids": [0, 1, 2] }
+          ]
         },
         {
           "id": 1,
@@ -178,8 +181,7 @@
             }
           ],
           "channels": [
-            { "buff": "s", "channel_type": "switch", "channel_ids": [0] },
-            { "channel_type": "memory", "channel_ids": [0, 1, 2] }
+            { "buff": "s", "channel_type": "switch", "channel_ids": [0] }
           ]
         },
         {
@@ -262,7 +264,9 @@
               ]
             }
           ],
-          "channels": []
+          "channels": [
+            { "channel_type": "memory", "channel_ids": [0, 1, 2] }
+          ]
         },
         {
           "id": 1,
@@ -290,8 +294,7 @@
             }
           ],
           "channels": [
-            { "buff": "s", "channel_type": "switch", "channel_ids": [0] },
-            { "channel_type": "memory", "channel_ids": [0, 1, 2] }
+            { "buff": "s", "channel_type": "switch", "channel_ids": [0] }
           ]
         },
         {
@@ -374,7 +377,9 @@
               ]
             }
           ],
-          "channels": []
+          "channels": [
+            { "channel_type": "memory", "channel_ids": [0, 1, 2] }
+          ]
         },
         {
           "id": 1,
@@ -402,8 +407,7 @@
             }
           ],
           "channels": [
-            { "buff": "s", "channel_type": "switch", "channel_ids": [0] },
-            { "channel_type": "memory", "channel_ids": [0, 1, 2] }
+            { "buff": "s", "channel_type": "switch", "channel_ids": [0] }
           ]
         },
         {
