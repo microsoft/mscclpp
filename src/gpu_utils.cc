@@ -22,7 +22,7 @@ CudaStreamWithFlags::~CudaStreamWithFlags() {
 }
 
 void CudaStreamWithFlags::set(unsigned int flags) {
-  if (!empty()) throw Error("CudaStreamWithFlags already set", ErrorCode::InternalError);
+  if (!empty()) throw Error("CudaStreamWithFlags already set", ErrorCode::InvalidUsage);
   MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream_, flags));
 }
 

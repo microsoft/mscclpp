@@ -20,7 +20,7 @@ namespace mscclpp {
 template <class>
 constexpr bool dependentFalse = false;  // workaround before CWG2518/P2593R1
 
-/// Device-side handle for @ref Host2DeviceSemaphore.
+/// Device-side handle for Host2DeviceSemaphore.
 struct DeviceMulticastPointerDeviceHandle {
   void* devicePtr;
   void* mcPtr;
