@@ -43,7 +43,7 @@ class BaseSemaphore {
   /// The location of expectedInboundSemaphore_ can be either on the host or on the device.
   std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> expectedInboundSemaphore_;
 
-  /// The outbound semaphore ID that is incremented by the local peer and copied to the remote peer's @ref
+  /// The outbound semaphore ID that is incremented by the local peer and copied to the remote peer's
   /// localInboundSemaphore_.
   ///
   /// The location of outboundSemaphore_ can be either on the host or on the device.
