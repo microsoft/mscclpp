@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_PORT_CHANNEL_HPP_
 #define MSCCLPP_PORT_CHANNEL_HPP_
 
+#include <set>
+
 #include "core.hpp"
 #include "port_channel_device.hpp"
 #include "proxy.hpp"
@@ -45,6 +47,10 @@ class ProxyService : public BaseProxyService {
   /// @return The ID of the memory region.
   MemoryId addMemory(RegisteredMemory memory);
 
+  /// Unregister a memory region from the proxy service.
+  /// @param memoryId The ID of the memory region to unregister.
+  void removeMemory(MemoryId memoryId);
+
   /// Get a semaphore by ID.
   /// @param id The ID of the semaphore.
   /// @return The semaphore.
@@ -72,6 +78,7 @@ class ProxyService : public BaseProxyService {
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> semaphores_;
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
+  std::set<MemoryId> reusableMemoryIds_;
   int deviceNumaNode;
   std::unordered_map<std::shared_ptr<Connection>, int> inflightRequests;
 

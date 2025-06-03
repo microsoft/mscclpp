@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <mscclpp/core.hpp>
+#include <mscclpp/port_channel.hpp>
 
 class LocalCommunicatorTest : public ::testing::Test {
  protected:
@@ -12,10 +13,12 @@ class LocalCommunicatorTest : public ::testing::Test {
     bootstrap = std::make_shared<mscclpp::TcpBootstrap>(0, 1);
     bootstrap->initialize(bootstrap->createUniqueId());
     comm = std::make_shared<mscclpp::Communicator>(bootstrap);
+    proxyService = std::make_shared<mscclpp::ProxyService>();
   }
 
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   std::shared_ptr<mscclpp::Communicator> comm;
+  std::shared_ptr<mscclpp::ProxyService> proxyService;
 };
 
 TEST_F(LocalCommunicatorTest, RegisterMemory) {
@@ -35,4 +38,13 @@ TEST_F(LocalCommunicatorTest, SendMemoryToSelf) {
   EXPECT_EQ(sameMemory.data(), memory.data());
   EXPECT_EQ(sameMemory.size(), memory.size());
   EXPECT_EQ(sameMemory.transports(), memory.transports());
+}
+
+TEST_F(LocalCommunicatorTest, ProxyServiceAddRemoveMemory) {
+  auto memory = mscclpp::RegisteredMemory();
+  auto memoryId = proxyService->addMemory(memory);
+  EXPECT_EQ(memoryId, 0);
+  proxyService->removeMemory(memoryId);
+  memoryId = proxyService->addMemory(memory);
+  EXPECT_EQ(memoryId, 0);
 }

@@ -38,8 +38,24 @@ MSCCLPP_API_CPP SemaphoreId ProxyService::addSemaphore(std::shared_ptr<Host2Devi
 }
 
 MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {
+  if (!reusableMemoryIds_.empty()) {
+    auto it = reusableMemoryIds_.begin();
+    MemoryId memoryId = *it;
+    reusableMemoryIds_.erase(it);
+    memories_[memoryId] = memory;
+    return memoryId;
+  }
   memories_.push_back(memory);
   return memories_.size() - 1;
+}
+
+MSCCLPP_API_CPP void ProxyService::removeMemory(MemoryId memoryId) {
+  if (reusableMemoryIds_.find(memoryId) != reusableMemoryIds_.end() || memoryId >= memories_.size()) {
+    WARN("Attempted to remove a memory that is not registered or already removed: %u", memoryId);
+    return;
+  }
+  memories_[memoryId] = RegisteredMemory();
+  reusableMemoryIds_.insert(memoryId);
 }
 
 MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(SemaphoreId id) const {
