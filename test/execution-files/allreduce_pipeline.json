@@ -15,12 +15,27 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
                 {
                   "name": "copy",
-                  "src_buffer": [ {"type": "i", "index": 0, "size": 1} ],
-                  "dst_buffer": [ {"type": "s", "index": 0, "size": 1} ]
+                  "src_buff": [ {"type": "i", "index": 0, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 0, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "i", "index": 1, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 1, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "i", "index": 2, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 2, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "i", "index": 3, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 3, "size": 1} ]
                 },
                 {"name": "nop"},
                 {
@@ -47,7 +62,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_id": 0},
                 {"name": "nop"},
@@ -63,7 +78,7 @@
                   "channel_type": "switch"
                 },
                 {"name": "nop"},
-                {"name": "sem_acquire", "semaphore_id": 1}
+                {"name": "sem_release", "semaphore_id": 1}
               ]
             }
           ],
@@ -76,7 +91,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_id": 1},
                 {"name": "nop"},
@@ -93,14 +108,29 @@
                 {"name": "nop"},
                 {
                   "name": "copy",
-                  "src_buffer": [ {"type": "s", "index": 0, "size": 1} ],
-                  "dst_buffer": [ {"type": "o", "index": 0, "size": 1} ]
+                  "src_buff": [ {"type": "s", "index": 0, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 0, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "s", "index": 1, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 1, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "s", "index": 2, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 2, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "s", "index": 3, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 3, "size": 1} ]
                 }
               ]
             }
           ],
           "channels": [
-            { "channel_type": "memory", "channel_ids": [0, 1, 2] }
+            { "channel_type": "memory", "channel_ids": [3, 4, 5] }
           ]
         }
       ],
@@ -112,7 +142,7 @@
             { "size": 4, "ranks": [0, 1, 2, 3] }
           ]
         },
-        { "type": "memory", "connected_to": [1, 2, 3] }
+        { "type": "memory", "connected_to": [1, 2, 3, 1, 2, 3] }
       ],
       "remote_buffers": [],
       "semaphores": [ {"init_value": 0}, {"init_value": 0} ]
@@ -128,12 +158,27 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
                 {
                   "name": "copy",
-                  "src_buffer": [ {"type": "i", "index": 1, "size": 1} ],
-                  "dst_buffer": [ {"type": "s", "index": 1, "size": 1} ]
+                  "src_buff": [ {"type": "i", "index": 0, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 0, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "i", "index": 1, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 1, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "i", "index": 2, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 2, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "i", "index": 3, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 3, "size": 1} ]
                 },
                 {"name": "nop"},
                 {
@@ -160,7 +205,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_id": 0},
                 {"name": "nop"},
@@ -176,7 +221,7 @@
                   "channel_type": "switch"
                 },
                 {"name": "nop"},
-                {"name": "sem_acquire", "semaphore_id": 1}
+                {"name": "sem_release", "semaphore_id": 1}
               ]
             }
           ],
@@ -189,7 +234,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_id": 1},
                 {"name": "nop"},
@@ -206,14 +251,29 @@
                 {"name": "nop"},
                 {
                   "name": "copy",
-                  "src_buffer": [ {"type": "s", "index": 1, "size": 1} ],
-                  "dst_buffer": [ {"type": "o", "index": 1, "size": 1} ]
+                  "src_buff": [ {"type": "s", "index": 0, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 0, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "s", "index": 1, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 1, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "s", "index": 2, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 2, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "s", "index": 3, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 3, "size": 1} ]
                 }
               ]
             }
           ],
           "channels": [
-            { "channel_type": "memory", "channel_ids": [0, 1, 2] }
+            { "channel_type": "memory", "channel_ids": [3, 4, 5] }
           ]
         }
       ],
@@ -225,7 +285,7 @@
             { "size": 4, "ranks": [0, 1, 2, 3] }
           ]
         },
-        { "type": "memory", "connected_to": [0, 2, 3] }
+        { "type": "memory", "connected_to": [0, 2, 3, 0, 2, 3] }
       ],
       "remote_buffers": [],
       "semaphores": [ {"init_value": 0}, {"init_value": 0} ]
@@ -241,12 +301,27 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
                 {
                   "name": "copy",
-                  "src_buffer": [ {"type": "i", "index": 2, "size": 1} ],
-                  "dst_buffer": [ {"type": "s", "index": 2, "size": 1} ]
+                  "src_buff": [ {"type": "i", "index": 0, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 0, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "i", "index": 1, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 1, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "i", "index": 2, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 2, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "i", "index": 3, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 3, "size": 1} ]
                 },
                 {"name": "nop"},
                 {
@@ -273,7 +348,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_id": 0},
                 {"name": "nop"},
@@ -289,7 +364,7 @@
                   "channel_type": "switch"
                 },
                 {"name": "nop"},
-                {"name": "sem_acquire", "semaphore_id": 1}
+                {"name": "sem_release", "semaphore_id": 1}
               ]
             }
           ],
@@ -302,7 +377,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_id": 1},
                 {"name": "nop"},
@@ -319,14 +394,29 @@
                 {"name": "nop"},
                 {
                   "name": "copy",
-                  "src_buffer": [ {"type": "s", "index": 2, "size": 1} ],
-                  "dst_buffer": [ {"type": "o", "index": 2, "size": 1} ]
+                  "src_buff": [ {"type": "s", "index": 0, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 0, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "s", "index": 1, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 1, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "s", "index": 2, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 2, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "s", "index": 3, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 3, "size": 1} ]
                 }
               ]
             }
           ],
           "channels": [
-            { "channel_type": "memory", "channel_ids": [0, 1, 2] }
+            { "channel_type": "memory", "channel_ids": [3, 4, 5] }
           ]
         }
       ],
@@ -338,7 +428,7 @@
             { "size": 4, "ranks": [0, 1, 2, 3] }
           ]
         },
-        { "type": "memory", "connected_to": [0, 1, 3] }
+        { "type": "memory", "connected_to": [0, 1, 3, 0, 1, 3] }
       ],
       "remote_buffers": [],
       "semaphores": [ {"init_value": 0}, {"init_value": 0} ]
@@ -354,12 +444,27 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
                 {
                   "name": "copy",
-                  "src_buffer": [ {"type": "i", "index": 3, "size": 1} ],
-                  "dst_buffer": [ {"type": "s", "index": 3, "size": 1} ]
+                  "src_buff": [ {"type": "i", "index": 0, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 0, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "i", "index": 1, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 1, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "i", "index": 2, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 2, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "i", "index": 3, "size": 1} ],
+                  "dst_buff": [ {"type": "s", "index": 3, "size": 1} ]
                 },
                 {"name": "nop"},
                 {
@@ -386,7 +491,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_id": 0},
                 {"name": "nop"},
@@ -402,7 +507,7 @@
                   "channel_type": "switch"
                 },
                 {"name": "nop"},
-                {"name": "sem_acquire", "semaphore_id": 1}
+                {"name": "sem_release", "semaphore_id": 1}
               ]
             }
           ],
@@ -415,7 +520,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1024, "num_chunks": 1},
+              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_id": 1},
                 {"name": "nop"},
@@ -432,14 +537,29 @@
                 {"name": "nop"},
                 {
                   "name": "copy",
-                  "src_buffer": [ {"type": "s", "index": 3, "size": 1} ],
-                  "dst_buffer": [ {"type": "o", "index": 3, "size": 1} ]
+                  "src_buff": [ {"type": "s", "index": 0, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 0, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "s", "index": 1, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 1, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "s", "index": 2, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 2, "size": 1} ]
+                },
+                {
+                  "name": "copy",
+                  "src_buff": [ {"type": "s", "index": 3, "size": 1} ],
+                  "dst_buff": [ {"type": "i", "index": 3, "size": 1} ]
                 }
               ]
             }
           ],
           "channels": [
-            { "channel_type": "memory", "channel_ids": [0, 1, 2] }
+            { "channel_type": "memory", "channel_ids": [3, 4, 5] }
           ]
         }
       ],
@@ -451,7 +571,7 @@
             { "size": 4, "ranks": [0, 1, 2, 3] }
           ]
         },
-        { "type": "memory", "connected_to": [0, 1, 2] }
+        { "type": "memory", "connected_to": [0, 1, 2, 0, 1, 2] }
       ],
       "remote_buffers": [],
       "semaphores": [ {"init_value": 0}, {"init_value": 0} ]

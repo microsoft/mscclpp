@@ -570,7 +570,7 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
     operation.nThreadBlocks = op["nthread_blocks"];
   }
   if (op.contains("semaphore_id")) {
-    operation.semaphoreId = op["semaphore_id"];
+    operation.deviceSemaphoreId = op["semaphore_id"];
   }
   if (op.contains("iter_context")) {
     operation.unitSize = op["iter_context"]["unit_size"];

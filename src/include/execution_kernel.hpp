@@ -205,7 +205,9 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
 }
 
 template <typename T, typename PacketType>
-MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, uint8_t* nSteps);
+MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch,
+                                                 uint8_t* nSteps = nullptr, uint32_t offset = 0,
+                                                 uint32_t unitSize = UINT32_MAX);
 
 MSCCLPP_DEVICE_INLINE void handleNop() { __syncthreads(); }
 
@@ -559,10 +561,14 @@ MSCCLPP_DEVICE_INLINE void handleTransformToPacket(Operation* op, void* input, v
 //   }
 // }
 
-MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* output, void* scratch) {
-  uint32_t size = op.inputBufferSizes[0];
-  uint32_t dstOffset = op.outputOffsets[0];
-  uint32_t srcOffset = op.inputOffsets[0];
+MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* output, void* scratch, uint32_t offset,
+                                      uint32_t unitSize) {
+  uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  if (size <= 0) {
+    return;
+  }
+  uint32_t dstOffset = op.outputOffsets[0] + offset;
+  uint32_t srcOffset = op.inputOffsets[0] + offset;
   char* srcData = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
   char* dstData = static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[0].type)) + dstOffset;
   mscclpp::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
@@ -570,15 +576,20 @@ MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* ou
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 template <typename T>
-MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op) {
+MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint32_t offset, uint32_t unitSize) {
   using vectorType = typename VectorType<T>::type;
   using nvlsType = typename VectorType<T>::nvls_type;
   // nvls can only handle 4 bytes alignment
-  const uint32_t size = op.inputBufferSizes[0];
-  assert(size % sizeof(vectorType) == 0);
+  const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  if (size <= 0) {
+    return;
+  }
+
   const uint32_t nInt4 = size / sizeof(nvlsType);
-  const uint32_t srcOffset = op.inputOffsets[0];
-  const uint32_t dstOffset = op.outputOffsets[0];
+  const uint32_t srcOffset = op.inputOffsets[0] + offset;
+  const uint32_t dstOffset = op.outputOffsets[0] + offset;
+  assert(srcOffset % sizeof(vectorType) == 0 && dstOffset % sizeof(vectorType) == 0);
+
   const uint32_t srcOffset4 = srcOffset / sizeof(nvlsType);
   const uint32_t dstOffset4 = dstOffset / sizeof(nvlsType);
   nvlsType* src4 = (nvlsType*)nvlsChannels_[op.nvlsInputIndex].mcPtr;
@@ -602,30 +613,36 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op) {
 }
 #endif
 
-// template <typename T, typename PacketType>
-// MSCCLPP_DEVICE_INLINE void handlePipeline(Operation* operations, void* input, void* output, void* scratch) {
-//   uint16_t nIterations = operations->nIterations;
-//   uint16_t nOperations = operations->nOperations;
-//   uint32_t unitSize = operations->unitSize;
-//   for (uint16_t i = 0; i < nIterations; i++) {
-//     for (uint16_t opId = 0; opId < nOperations; opId++) {
-//       uint32_t size =
-//           (operations[opId].size - i * unitSize) > unitSize ? unitSize : max(operations[opId].size - i * unitSize,
-//           0);
-//       operations[opId].size = size;
-//       if (size == 0) {
-//         continue;
-//       }
-//       DeviceFunction func = getDeviceFunction<T, PacketType>(operations[opId], nullptr);
-//       func(operations + opId, input, output, scratch);
-//     }
-//   }
-// }
+template <typename T, typename PacketType>
+MSCCLPP_DEVICE_INLINE void handlePipeline(const Operation& op, T* input, T* output, T* scratch) {
+  uint16_t nIterations = op.nIterations;
+  uint16_t nOperations = op.nOperations;
+  uint32_t unitSize = op.unitSize;
+  const Operation* operations = &op + 1;
+  for (uint16_t i = 0; i < nIterations; i++) {
+    uint32_t offset = i * unitSize;
+    for (uint8_t opId = 0; opId < nOperations; opId++) {
+      executeDeviceFunction<T, PacketType>(operations[opId], input, output, scratch, nullptr, offset, unitSize);
+    }
+  }
+}
+
+MSCCLPP_DEVICE_INLINE void handleSemRelease(const Operation& op) {
+  DeviceSemaphore* sem = &DeviceSemaphores[op.deviceSyncerIndex];
+  sem->release();
+}
+
+MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op) {
+  DeviceSemaphore* sem = &DeviceSemaphores[op.deviceSyncerIndex];
+  sem->acquire();
+}
 
 template <typename T, typename PacketType>
-MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch,
-                                                 uint8_t* nSteps) {
-  *nSteps = 1;
+MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch, uint8_t* nSteps,
+                                                 uint32_t offset, uint32_t unitSize) {
+  if (nSteps != nullptr) {
+    *nSteps = 1;
+  }
   OperationType opType = op.type;
   if (opType == OperationType::NOP) {
     return handleNop();
@@ -642,15 +659,15 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   if (opType == OperationType::FLUSH) {
     return handleFlush(op);
   }
-  if (opType == OperationType::PUT) {
-    return handlePut(op, input, output, scratch);
-  }
-  if (opType == OperationType::PUT_WITH_SIGNAL) {
-    return handlePut<true>(op, input, output, scratch);
-  }
-  if (opType == OperationType::PUT_WITH_SIGNAL_AND_FLUSH) {
-    return handlePut<true, true>(op, input, output, scratch);
-  }
+  // if (opType == OperationType::PUT) {
+  //   return handlePut(op, input, output, scratch);
+  // }
+  // if (opType == OperationType::PUT_WITH_SIGNAL) {
+  //   return handlePut<true>(op, input, output, scratch);
+  // }
+  // if (opType == OperationType::PUT_WITH_SIGNAL_AND_FLUSH) {
+  //   return handlePut<true, true>(op, input, output, scratch);
+  // }
   // if (opType == OperationType::PUT_PACKET) {
   //   return handlePutPacket<PacketType>;
   // }
@@ -664,7 +681,7 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   //   return handleReadReduceCopySend<T, false>;
   // }
   if (opType == OperationType::COPY) {
-    return handleCopy(op, input, output, scratch);
+    return handleCopy(op, input, output, scratch, offset, unitSize);
   }
   // // if (opType == OperationType::REDUCE_SEND) {
   // //   return handleReduceSend<T>;
@@ -678,15 +695,21 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   // if (opType == OperationType::TRANSFORM_TO_PACKET) {
   //   return handleTransformToPacket<PacketType>;
   // }
+  if (opType == OperationType::SEM_ACQUIRE) {
+    return handleSemAquire(op);
+  }
+  if (opType == OperationType::SEM_RELEASE) {
+    return handleSemRelease(op);
+  }
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   if (opType == OperationType::MULTI_LOAD_REDUCE_STORE) {
-    return handleMultiLoadReduceStore<T>(op);
+    return handleMultiLoadReduceStore<T>(op, offset, unitSize);
   }
 #endif
-  // if (opType == OperationType::PIPELINE) {
-  //   *nSteps = op.nIterations;
-  //   return handlePipeline<T, PacketType>;
-  // }
+  if (opType == OperationType::PIPELINE) {
+    *nSteps = op.nOperations;
+    return handlePipeline<T, PacketType>(op, input, output, scratch);
+  }
   return;
 }
 
