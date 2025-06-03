@@ -32,12 +32,12 @@ std::shared_ptr<RegisteredMemory::Impl> Connection::getImpl(RegisteredMemory& me
 
 std::shared_ptr<Endpoint::Impl> Connection::getImpl(Endpoint& memory) { return memory.pimpl_; }
 
-std::string Connection::getTransportName() {
+std::string Connection::getTransportName() const {
   return TransportNames[static_cast<int>(this->transport())] + " -> " +
          TransportNames[static_cast<int>(this->remoteTransport())];
 }
 
-int Connection::getMaxWriteQueueSize() { return maxWriteQueueSize; }
+int Connection::getMaxWriteQueueSize() const { return maxWriteQueueSize; }
 
 // CudaIpcConnection
 
@@ -60,9 +60,9 @@ CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndp
   INFO(MSCCLPP_P2P, "Cuda IPC connection created");
 }
 
-Transport CudaIpcConnection::transport() { return Transport::CudaIpc; }
+Transport CudaIpcConnection::transport() const { return Transport::CudaIpc; }
 
-Transport CudaIpcConnection::remoteTransport() { return Transport::CudaIpc; }
+Transport CudaIpcConnection::remoteTransport() const { return Transport::CudaIpc; }
 
 void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                               uint64_t size) {
@@ -144,9 +144,9 @@ IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Cont
   INFO(MSCCLPP_NET, "IB connection via %s created", getIBDeviceName(transport_).c_str());
 }
 
-Transport IBConnection::transport() { return transport_; }
+Transport IBConnection::transport() const { return transport_; }
 
-Transport IBConnection::remoteTransport() { return remoteTransport_; }
+Transport IBConnection::remoteTransport() const { return remoteTransport_; }
 
 void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                          uint64_t size) {
@@ -273,7 +273,12 @@ EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEn
   t.join();
 
   // Starting Thread to Receive Messages
-  threadRecvMessages_ = std::thread(&EthernetConnection::recvMessages, this);
+  int deviceId = -1;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+  threadRecvMessages_ = std::thread([deviceId, this]() {
+    MSCCLPP_CUDATHROW(cudaSetDevice(deviceId));
+    this->recvMessages();
+  });
 
   INFO(MSCCLPP_NET, "Ethernet connection created");
 }
@@ -284,9 +289,9 @@ EthernetConnection::~EthernetConnection() {
   threadRecvMessages_.join();
 }
 
-Transport EthernetConnection::transport() { return Transport::Ethernet; }
+Transport EthernetConnection::transport() const { return Transport::Ethernet; }
 
-Transport EthernetConnection::remoteTransport() { return Transport::Ethernet; }
+Transport EthernetConnection::remoteTransport() const { return Transport::Ethernet; }
 
 void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                                uint64_t size) {

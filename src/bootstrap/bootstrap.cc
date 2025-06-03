@@ -52,14 +52,14 @@ MSCCLPP_API_CPP void Bootstrap::groupBarrier(const std::vector<int>& ranks) {
 MSCCLPP_API_CPP void Bootstrap::send(const std::vector<char>& data, int peer, int tag) {
   size_t size = data.size();
   send((void*)&size, sizeof(size_t), peer, tag);
-  send((void*)data.data(), data.size(), peer, tag + 1);
+  send((void*)data.data(), data.size(), peer, tag);
 }
 
 MSCCLPP_API_CPP void Bootstrap::recv(std::vector<char>& data, int peer, int tag) {
   size_t size;
   recv((void*)&size, sizeof(size_t), peer, tag);
   data.resize(size);
-  recv((void*)data.data(), data.size(), peer, tag + 1);
+  recv((void*)data.data(), data.size(), peer, tag);
 }
 
 struct UniqueIdInternal {
@@ -528,6 +528,7 @@ std::shared_ptr<Socket> TcpBootstrap::Impl::getPeerRecvSocket(int peer, int tag)
     if (recvPeer == peer && recvTag == tag) {
       return sock;
     }
+    // TODO(chhwang): set an exit condition or timeout
   }
 }
 
@@ -574,11 +575,11 @@ MSCCLPP_API_CPP TcpBootstrap::TcpBootstrap(int rank, int nRanks) { pimpl_ = std:
 
 MSCCLPP_API_CPP UniqueId TcpBootstrap::getUniqueId() const { return pimpl_->getUniqueId(); }
 
-MSCCLPP_API_CPP int TcpBootstrap::getRank() { return pimpl_->getRank(); }
+MSCCLPP_API_CPP int TcpBootstrap::getRank() const { return pimpl_->getRank(); }
 
-MSCCLPP_API_CPP int TcpBootstrap::getNranks() { return pimpl_->getNranks(); }
+MSCCLPP_API_CPP int TcpBootstrap::getNranks() const { return pimpl_->getNranks(); }
 
-MSCCLPP_API_CPP int TcpBootstrap::getNranksPerNode() { return pimpl_->getNranksPerNode(); }
+MSCCLPP_API_CPP int TcpBootstrap::getNranksPerNode() const { return pimpl_->getNranksPerNode(); }
 
 MSCCLPP_API_CPP void TcpBootstrap::send(void* data, int size, int peer, int tag) {
   pimpl_->send(data, size, peer, tag);

@@ -21,9 +21,9 @@ class CudaIpcConnection : public Connection {
  public:
   CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, std::shared_ptr<CudaStreamWithFlags> stream);
 
-  Transport transport() override;
+  Transport transport() const override;
 
-  Transport remoteTransport() override;
+  Transport remoteTransport() const override;
 
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
@@ -43,9 +43,9 @@ class IBConnection : public Connection {
  public:
   IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context);
 
-  Transport transport() override;
+  Transport transport() const override;
 
-  Transport remoteTransport() override;
+  Transport remoteTransport() const override;
 
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
@@ -70,9 +70,9 @@ class EthernetConnection : public Connection {
 
   ~EthernetConnection();
 
-  Transport transport() override;
+  Transport transport() const override;
 
-  Transport remoteTransport() override;
+  Transport remoteTransport() const override;
 
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;

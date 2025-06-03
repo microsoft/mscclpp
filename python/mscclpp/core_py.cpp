@@ -27,11 +27,9 @@ extern void register_npkit(nb::module_& m);
 extern void register_gpu_utils(nb::module_& m);
 
 template <typename T>
-void def_nonblocking_future(nb::handle& m, const std::string& typestr) {
-  std::string pyclass_name = std::string("NonblockingFuture") + typestr;
-  nb::class_<NonblockingFuture<T>>(m, pyclass_name.c_str())
-      .def("ready", &NonblockingFuture<T>::ready)
-      .def("get", &NonblockingFuture<T>::get);
+void def_shared_future(nb::handle& m, const std::string& typestr) {
+  std::string pyclass_name = std::string("shared_future_") + typestr;
+  nb::class_<std::shared_future<T>>(m, pyclass_name.c_str()).def("get", &std::shared_future<T>::get);
 }
 
 void register_core(nb::module_& m) {
@@ -160,8 +158,8 @@ void register_core(nb::module_& m) {
       .def("create_endpoint", &Context::createEndpoint, nb::arg("config"))
       .def("connect", &Context::connect, nb::arg("local_endpoint"), nb::arg("remote_endpoint"));
 
-  def_nonblocking_future<RegisteredMemory>(m, "RegisteredMemory");
-  def_nonblocking_future<std::shared_ptr<Connection>>(m, "shared_ptr_Connection");
+  def_shared_future<RegisteredMemory>(m, "RegisteredMemory");
+  def_shared_future<std::shared_ptr<Connection>>(m, "shared_ptr_Connection");
 
   nb::class_<Communicator>(m, "Communicator")
       .def(nb::init<std::shared_ptr<Bootstrap>, std::shared_ptr<Context>>(), nb::arg("bootstrap"),
@@ -174,14 +172,15 @@ void register_core(nb::module_& m) {
             return self->registerMemory((void*)ptr, size, transports);
           },
           nb::arg("ptr"), nb::arg("size"), nb::arg("transports"))
-      .def("send_memory_on_setup", &Communicator::sendMemoryOnSetup, nb::arg("memory"), nb::arg("remoteRank"),
-           nb::arg("tag"))
-      .def("recv_memory_on_setup", &Communicator::recvMemoryOnSetup, nb::arg("remoteRank"), nb::arg("tag"))
-      .def("connect_on_setup", &Communicator::connectOnSetup, nb::arg("remoteRank"), nb::arg("tag"),
-           nb::arg("localConfig"))
+      .def("send_memory", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remoteRank"), nb::arg("tag"))
+      .def("recv_memory", &Communicator::recvMemory, nb::arg("remoteRank"), nb::arg("tag"))
+      .def("connect", &Communicator::connect, nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
+      .def("send_memory_on_setup", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remoteRank"), nb::arg("tag"))
+      .def("recv_memory_on_setup", &Communicator::recvMemory, nb::arg("remoteRank"), nb::arg("tag"))
+      .def("connect_on_setup", &Communicator::connect, nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
       .def("remote_rank_of", &Communicator::remoteRankOf)
       .def("tag_of", &Communicator::tagOf)
-      .def("setup", &Communicator::setup);
+      .def("setup", [](Communicator*) {});
 }
 
 NB_MODULE(_mscclpp, m) {

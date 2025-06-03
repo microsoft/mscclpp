@@ -28,7 +28,7 @@
 
 namespace {
 CUmemAllocationHandleType getNvlsMemHandleType() {
-#if (CUDA_NVLS_SUPPORTED)
+#if (CUDA_NVLS_API_AVAILABLE)
   if (mscclpp::detail::nvlsCompatibleMemHandleType & CU_MEM_HANDLE_TYPE_FABRIC) {
     return CU_MEM_HANDLE_TYPE_FABRIC;
   } else {
@@ -113,11 +113,11 @@ MSCCLPP_API_CPP void* RegisteredMemory::data() const { return pimpl_->data; }
 
 MSCCLPP_API_CPP void* RegisteredMemory::originalDataPtr() const { return pimpl_->originalDataPtr; }
 
-MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl_->size; }
+MSCCLPP_API_CPP size_t RegisteredMemory::size() const { return pimpl_->size; }
 
-MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl_->transports; }
+MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() const { return pimpl_->transports; }
 
-MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
+MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() const {
   std::vector<char> result;
   std::copy_n(reinterpret_cast<char*>(&pimpl_->originalDataPtr), sizeof(pimpl_->originalDataPtr),
               std::back_inserter(result));
@@ -232,7 +232,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
     if (this->isCuMemMapAlloc) {
-#if (CUDA_NVLS_SUPPORTED)
+#if (CUDA_NVLS_API_AVAILABLE)
       CUmemGenericAllocationHandle handle;
       if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
         MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsMemHandleType()));

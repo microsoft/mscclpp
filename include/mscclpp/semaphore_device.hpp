@@ -13,7 +13,7 @@
 
 namespace mscclpp {
 
-/// Device-side handle for @ref Host2DeviceSemaphore.
+/// Device-side handle for Host2DeviceSemaphore.
 struct Host2DeviceSemaphoreDeviceHandle {
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Poll if the host has signaled.
@@ -32,11 +32,15 @@ struct Host2DeviceSemaphoreDeviceHandle {
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
+  /// A local memory space where a host thread (on behalf of the remote device) will write its semaphore value
+  /// and the local device will read it.
   uint64_t* inboundSemaphoreId;
+
+  /// A local memory space where the local device stores the expected value of the inboundSemaphoreId to wait for.
   uint64_t* expectedInboundSemaphoreId;
 };
 
-/// Device-side handle for @ref MemoryDevice2DeviceSemaphore.
+/// Device-side handle for MemoryDevice2DeviceSemaphore.
 struct MemoryDevice2DeviceSemaphoreDeviceHandle {
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Poll if the remote device has signaled.
@@ -95,17 +99,6 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
     atomicStore(remoteInboundSemaphoreId, semaphoreGetLocal(), memoryOrderRelaxed);
   }
 
-  /// Signal the remote device for copied packets.
-  ///
-  /// Unlike @ref signal(), this function provides no guarantee on the completion of memory operations. This is
-  /// intended to be used with @ref putPackets() and @ref getPackets() that use flags inside packets to indicate the
-  /// completion of copies.
-  ///
-  MSCCLPP_DEVICE_INLINE void signalPacket() {
-    semaphoreIncrement();
-    *remoteInboundSemaphoreId = semaphoreGetLocal();
-  }
-
   /// Increase the counter of the local semaphore.
   MSCCLPP_DEVICE_INLINE void semaphoreIncrement() { *outboundSemaphoreId += 1; }
 
@@ -113,13 +106,21 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
   MSCCLPP_DEVICE_INLINE uint64_t semaphoreGetLocal() const { return *outboundSemaphoreId; }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
+  /// A local memory space where the remote device will write its semaphore value and the local device will read it.
   uint64_t* inboundSemaphoreId;
+
+  /// A local memory space where the local device stores the semaphore value to be written to the remote device.
   uint64_t* outboundSemaphoreId;
+
+  /// A remote memory space where the local device writes its outboundSemaphoreId on. This is inboundSemaphoreId of the
+  /// remote device.
   uint64_t* remoteInboundSemaphoreId;
+
+  /// A local memory space where the local device stores the expected value of the inboundSemaphoreId to wait for.
   uint64_t* expectedInboundSemaphoreId;
 };
 
-/// @deprecated Use @ref MemoryDevice2DeviceSemaphoreDeviceHandle instead.
+/// @deprecated Use MemoryDevice2DeviceSemaphoreDeviceHandle instead.
 [[deprecated("Use MemoryDevice2DeviceSemaphoreDeviceHandle instead.")]] typedef MemoryDevice2DeviceSemaphoreDeviceHandle
     SmDevice2DeviceSemaphoreDeviceHandle;
 

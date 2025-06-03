@@ -7,6 +7,7 @@
 #include <thread>
 
 #include "socket.h"
+#include "utils_internal.hpp"
 
 TEST(Socket, ListenAndConnect) {
   mscclpp::Timer timeout(3);

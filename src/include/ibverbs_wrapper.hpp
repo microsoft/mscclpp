@@ -34,6 +34,7 @@ struct IBVerbs {
     ibv_create_qp_lib = (ibv_create_qp_t)dlsym(handle, "ibv_create_qp");
     ibv_destroy_cq_lib = (ibv_destroy_cq_t)dlsym(handle, "ibv_destroy_cq");
     ibv_reg_mr_lib = (ibv_reg_mr_t)dlsym(handle, "ibv_reg_mr");
+    ibv_reg_dmabuf_mr_lib = (ibv_reg_dmabuf_mr_t)dlsym(handle, "ibv_reg_dmabuf_mr");
     ibv_dereg_mr_lib = (ibv_dereg_mr_t)dlsym(handle, "ibv_dereg_mr");
     ibv_query_gid_lib = (ibv_query_gid_t)dlsym(handle, "ibv_query_gid");
     ibv_modify_qp_lib = (ibv_modify_qp_t)dlsym(handle, "ibv_modify_qp");
@@ -48,6 +49,10 @@ struct IBVerbs {
       throw mscclpp::IbError("Failed to load one or more function in the ibibverbs library: " + std::string(dlerror()),
                              errno);
       dlclose(handle);
+    }
+
+    if (!ibv_reg_dmabuf_mr_lib) {
+      WARN("ibv_reg_dmabuf_mr is not support in current ibverbs.");
     }
   }
 
@@ -151,6 +156,16 @@ struct IBVerbs {
     return nullptr;
   }
 
+  // Static method to register a dma-buf based memory region
+  static struct ibv_mr* ibv_reg_dmabuf_mr(struct ibv_pd* pd, uint64_t offset, size_t length, uint64_t iova, int fd,
+                                          int access) {
+    if (!initialized) initialize();
+    if (ibv_reg_dmabuf_mr_lib) {
+      return ibv_reg_dmabuf_mr_lib(pd, offset, length, iova, fd, access);
+    }
+    return nullptr;
+  }
+
   // Static method to deregister a memory region
   static int ibv_dereg_mr(struct ibv_mr* mr) {
     if (!initialized) initialize();
@@ -239,6 +254,8 @@ struct IBVerbs {
   typedef int (*ibv_destroy_cq_t)(struct ibv_cq*);
   typedef int (*ibv_destroy_qp_t)(struct ibv_qp*);
   typedef struct ibv_mr* (*ibv_reg_mr_t)(struct ibv_pd*, void*, size_t, int);
+  typedef struct ibv_mr* (*ibv_reg_dmabuf_mr_t)(struct ibv_pd*, uint64_t offset, size_t length, uint64_t iova, int fd,
+                                                int access);
   typedef int (*ibv_dereg_mr_t)(struct ibv_mr*);
   typedef int (*ibv_query_gid_t)(struct ibv_context*, uint8_t, int, union ibv_gid*);
   typedef int (*ibv_modify_qp_t)(struct ibv_qp*, struct ibv_qp_attr*, int);
@@ -246,7 +263,7 @@ struct IBVerbs {
   typedef struct ibv_mr* (*ibv_reg_mr_iova2_t)(struct ibv_pd* pd, void* addr, size_t length, uint64_t iova,
                                                unsigned int access);
 
-  static inline ibv_get_device_list_t ibv_get_device_list_lib;
+  static inline ibv_get_device_list_t ibv_get_device_list_lib = nullptr;
   static inline ibv_free_device_list_t ibv_free_device_list_lib = nullptr;
   static inline ibv_alloc_pd_t ibv_alloc_pd_lib = nullptr;
   static inline ibv_dealloc_pd_t ibv_dealloc_pd_lib = nullptr;
@@ -257,6 +274,7 @@ struct IBVerbs {
   static inline ibv_create_qp_t ibv_create_qp_lib = nullptr;
   static inline ibv_destroy_cq_t ibv_destroy_cq_lib = nullptr;
   static inline ibv_reg_mr_t ibv_reg_mr_lib = nullptr;
+  static inline ibv_reg_dmabuf_mr_t ibv_reg_dmabuf_mr_lib = nullptr;
   static inline ibv_dereg_mr_t ibv_dereg_mr_lib = nullptr;
   static inline ibv_query_gid_t ibv_query_gid_lib = nullptr;
   static inline ibv_modify_qp_t ibv_modify_qp_lib = nullptr;
