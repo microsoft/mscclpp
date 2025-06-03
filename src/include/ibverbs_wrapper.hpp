@@ -19,9 +19,12 @@ struct IBVerbs {
   // Static method to initialize the library
   static void initialize() {
     initialized = true;
-    handle = dlopen(IBVERBS_LIBRARY, RTLD_NOW);
+    handle = dlopen("libibverbs.so", RTLD_NOW);
     if (!handle) {
-      throw mscclpp::IbError("Failed to load libibverbs: " + std::string(dlerror()), errno);
+      handle = dlopen(IBVERBS_LIBRARY, RTLD_NOW);
+      if (!handle) {
+        throw mscclpp::IbError("Failed to load libibverbs: " + std::string(dlerror()), errno);
+      }
     }
 
     // Load the necessary functions
