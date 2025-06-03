@@ -113,11 +113,11 @@ MSCCLPP_API_CPP void* RegisteredMemory::data() const { return pimpl_->data; }
 
 MSCCLPP_API_CPP void* RegisteredMemory::originalDataPtr() const { return pimpl_->originalDataPtr; }
 
-MSCCLPP_API_CPP size_t RegisteredMemory::size() { return pimpl_->size; }
+MSCCLPP_API_CPP size_t RegisteredMemory::size() const { return pimpl_->size; }
 
-MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() { return pimpl_->transports; }
+MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() const { return pimpl_->transports; }
 
-MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() {
+MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() const {
   std::vector<char> result;
   std::copy_n(reinterpret_cast<char*>(&pimpl_->originalDataPtr), sizeof(pimpl_->originalDataPtr),
               std::back_inserter(result));
