@@ -123,13 +123,13 @@ class BarrierOperation(BaseOperation):
         for _ in range(len(BarrierOperation.__current_barriers), rank + 1):
             BarrierOperation.__current_barriers.append({})
         barrier_info = BarrierOperation.BarrierInfo(tb_list)
-        
+
         if barrier_info not in BarrierOperation.__current_barriers[rank]:
             self.barrier_id = len(BarrierOperation.__current_barriers[rank])
             BarrierOperation.__current_barriers[rank][barrier_info] = self.barrier_id
         else:
             self.barrier_id = BarrierOperation.__current_barriers[rank][barrier_info]
-        
+
         self.name = Instruction.barrier.value
         self.barrier_info = barrier_info
 

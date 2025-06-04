@@ -13,15 +13,8 @@ class ThreadBlock:
         self.__intra_remote_buffer_ids = {}
         self.__channels = {}
         self.__nvls_channels = {}
-        self.__intra_channel_ids = {
-            ChannelType.memory: {},
-            ChannelType.port: {}
-        }
-        self.__intra_nvls_channel_ids = {
-            BufferType.input: {},
-            BufferType.output: {},
-            BufferType.scratch: {}
-        }
+        self.__intra_channel_ids = {ChannelType.memory: {}, ChannelType.port: {}}
+        self.__intra_nvls_channel_ids = {BufferType.input: {}, BufferType.output: {}, BufferType.scratch: {}}
 
     def add_channel(self, channel):
         if channel.channel_type is ChannelType.switch:
@@ -29,7 +22,7 @@ class ThreadBlock:
                 self.__nvls_channels[channel.buffer_type] = ThreadBlock.NVLSChannel(
                     channel_type=ChannelType.switch, buffer_type=channel.buffer_type
                 )
-            
+
             channel_id = channel.channel_ids[self.rank]
             if channel_id not in self.__intra_nvls_channel_ids[channel.buffer_type]:
                 self.__intra_nvls_channel_ids[channel.buffer_type][channel_id] = len(
@@ -55,7 +48,7 @@ class ThreadBlock:
                 self.__remote_buffers[access_channel_type] = ThreadBlock.RemoteBuffer(
                     access_channel_type=access_channel_type
                 )
-        
+
         if remote_buffer.id not in self.__intra_remote_buffer_ids:
             self.__intra_remote_buffer_ids[remote_buffer.id] = len(self.__intra_remote_buffer_ids)
         for channel_access in remote_buffer.channel_access:
@@ -64,13 +57,16 @@ class ThreadBlock:
 
     def add_operation(self, op):
         self.ops.append(op)
-    
+
     def to_json(self) -> dict:
         return {
             "id": self.id,
             "ops": [op.to_json() for op in self.ops],
-            "channels": [ch.to_json() for ch in self.__channels.values() if len(ch.channel_ids) > 0] + [ch.to_json() for ch in self.__nvls_channels.values() if len(ch.channel_ids) > 0],
-            "remote_buffer_refs": [rb.to_json() for rb in self.__remote_buffers.values()] if self.__remote_buffers else [],
+            "channels": [ch.to_json() for ch in self.__channels.values() if len(ch.channel_ids) > 0]
+            + [ch.to_json() for ch in self.__nvls_channels.values() if len(ch.channel_ids) > 0],
+            "remote_buffer_refs": (
+                [rb.to_json() for rb in self.__remote_buffers.values()] if self.__remote_buffers else []
+            ),
         }
 
     @dataclass
@@ -80,7 +76,7 @@ class ThreadBlock:
 
         def to_json(self) -> dict:
             return {"channel_type": self.channel_type.value, "channel_ids": self.channel_ids}
-        
+
     @dataclass
     class NVLSChannel:
         channel_type: ChannelType
@@ -88,7 +84,11 @@ class ThreadBlock:
         channel_ids: list[int] = field(default_factory=list)
 
         def to_json(self) -> dict:
-            return {"channel_type": self.channel_type.value, "buffer_type": self.buffer_type.value, "channel_ids": self.channel_ids}    
+            return {
+                "channel_type": self.channel_type.value,
+                "buffer_type": self.buffer_type.value,
+                "channel_ids": self.channel_ids,
+            }
 
     @dataclass
     class RemoteBuffer:
@@ -96,4 +96,7 @@ class ThreadBlock:
         remote_buffer_ids: set[int] = field(default_factory=set)
 
         def to_json(self) -> dict:
-            return {"access_channel_type": self.access_channel_type.value, "remote_buffer_ids": list(self.remote_buffer_ids)}
+            return {
+                "access_channel_type": self.access_channel_type.value,
+                "remote_buffer_ids": list(self.remote_buffer_ids),
+            }

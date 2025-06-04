@@ -126,11 +126,17 @@ class Channel:
         if (with_signal or with_signal_and_flush) and self.channel_type != ChannelType.port:
             raise RuntimeError(f"Only ChannelType.port support put with signal operation.")
         if src_chunk.rank != self.src_rank:
-            raise RuntimeError(f"Source chunk rank {src_chunk.rank} does not match current channel source rank {self.src_rank}.")
+            raise RuntimeError(
+                f"Source chunk rank {src_chunk.rank} does not match current channel source rank {self.src_rank}."
+            )
         if dst_chunk.rank != self.dst_rank:
-            raise RuntimeError(f"Dst chunk rank {dst_chunk.rank} does not match current channel dst rank {self.dst_rank}.")
+            raise RuntimeError(
+                f"Dst chunk rank {dst_chunk.rank} does not match current channel dst rank {self.dst_rank}."
+            )
         if dst_chunk.size != src_chunk.size:
-            raise RuntimeError(f"Destination chunk size {dst_chunk.size} does not match source chunk size {src_chunk.size}.")
+            raise RuntimeError(
+                f"Destination chunk size {dst_chunk.size} does not match source chunk size {src_chunk.size}."
+            )
 
         remote_chunk = RemoteBuffer(dst_chunk.rank, dst_chunk.buffer, self.channel_type)
         tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
@@ -149,15 +155,21 @@ class Channel:
 
     def put_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int, from_packet: bool = False):
         if src_chunk.rank != self.src_rank:
-            raise RuntimeError(f"Source chunk rank {src_chunk.rank} does not match current channel source rank {self.src_rank}.")
+            raise RuntimeError(
+                f"Source chunk rank {src_chunk.rank} does not match current channel source rank {self.src_rank}."
+            )
         if from_packet and src_chunk.buffer != BufferType.scratch:
             raise RuntimeError(f"Source chunk must be of type scratch.")
         if dst_chunk.rank != self.dst_rank:
-            raise RuntimeError(f"Dst chunk rank {dst_chunk.rank} does not match current channel dst rank {self.dst_rank}.")
+            raise RuntimeError(
+                f"Dst chunk rank {dst_chunk.rank} does not match current channel dst rank {self.dst_rank}."
+            )
         if dst_chunk.buffer != BufferType.scratch:
             raise RuntimeError(f"Destination chunk must be of type scratch.")
         if dst_chunk.size != src_chunk.size:
-            raise RuntimeError(f"Destination chunk size {dst_chunk.size} does not match source chunk size {src_chunk.size}.")
+            raise RuntimeError(
+                f"Destination chunk size {dst_chunk.size} does not match source chunk size {src_chunk.size}."
+            )
 
         remote_chunk = RemoteBuffer(dst_chunk.rank, dst_chunk.buffer, self.channel_type)
         tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
@@ -185,18 +197,28 @@ class Channel:
         if local_dst_chunk is None:
             local_dst_chunk = local_src_chunk
         if local_src_chunk.rank != self.src_rank:
-            raise RuntimeError(f"Destination chunk rank {local_src_chunk.rank} does not match current channel source rank {self.src_rank}.")
+            raise RuntimeError(
+                f"Destination chunk rank {local_src_chunk.rank} does not match current channel source rank {self.src_rank}."
+            )
         if local_src_chunk.size != local_dst_chunk.size:
-            raise RuntimeError(f"Source chunk size {local_src_chunk.size} does not match destination chunk size {local_dst_chunk.size}.")
+            raise RuntimeError(
+                f"Source chunk size {local_src_chunk.size} does not match destination chunk size {local_dst_chunk.size}."
+            )
         for chunk in remote_src_chunks:
             if chunk.rank != self.dst_rank:
-                raise RuntimeError(f"Source chunk rank {chunk.rank} does not match current channel dst rank {self.dst_rank}.")
+                raise RuntimeError(
+                    f"Source chunk rank {chunk.rank} does not match current channel dst rank {self.dst_rank}."
+                )
             if chunk.size != local_src_chunk.size:
-                raise RuntimeError(f"Source chunk size {chunk.size} does not match local source chunk size {local_src_chunk.size}.")
+                raise RuntimeError(
+                    f"Source chunk size {chunk.size} does not match local source chunk size {local_src_chunk.size}."
+                )
 
         remote_chunks = [
             RemoteChunk(
-                get_program().setup_remote_chunk(self.src_rank, tb, RemoteBuffer(chunk.rank, chunk.buffer, self.channel_type)),
+                get_program().setup_remote_chunk(
+                    self.src_rank, tb, RemoteBuffer(chunk.rank, chunk.buffer, self.channel_type)
+                ),
                 chunk.index,
                 chunk.size,
             )
