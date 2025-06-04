@@ -42,32 +42,32 @@ class BufferType(Enum):
 
 
 class Instruction(Enum):
-    start = "start"  # ?
-    nop = "nop"  # OK
-    copy = "copy"  # OK
-    copy_packet = "cpkt"  # packet -> regular OK
-    transform_to_packet = "tpkt"  # regular -> packet OK
-    reduce_copy = "rc"  # OK
-    reduce_copy_packet = "rcpkt"  # packet + packet -> packet OK
-    signal = "signal"  # OK
-    wait = "wait"  # OK
-    relaxed_signal = "rlxsignal"  # OK
-    relaxed_wait = "rlxwait"  # OK
-    barrier = "barrier"  # To Doc
-    flush = "flush"  # To Doc
-    get = "get"  # OK
-    put = "put"  # OK
-    put_packet = "ppkt"  # regular => packet OK
-    read_put_packet = "rppkt"  # packet => packet OK
-    put_with_signal = "pws"  # OK
-    put_with_signal_and_flush = "pwsf"  # OK
+    start = "start"
+    nop = "nop"
+    copy = "copy"
+    copy_packet = "cpkt"
+    transform_to_packet = "tpkt"
+    reduce_copy = "rc"
+    reduce_copy_packet = "rcpkt"
+    signal = "signal"
+    wait = "wait"
+    relaxed_signal = "rlxsignal"
+    relaxed_wait = "rlxwait"
+    barrier = "barrier"
+    flush = "flush"
+    get = "get"
+    put = "put"
+    put_packet = "ppkt"
+    read_put_packet = "rppkt"
+    put_with_signal = "pws"
+    put_with_signal_and_flush = "pwsf"
     reduce_copy_send = "rcs"
-    reduce_copy_send_packet = "rcspkt"  # packet + packet -> packet => packet
+    reduce_copy_send_packet = "rcspkt"
     read_reduce_copy = "rrc"
     read_reduce_copy_send = "rrcs"
-    group_store = "gstore"  # To Doc
-    group_load_reduce = "glre"  # To Doc
-    group_load_reduce_store = "glres"  # To Doc
+    group_store = "gstore"
+    group_load_reduce = "glre"
+    group_load_reduce_store = "glres"
 
     def __str__(self):
         return self.value

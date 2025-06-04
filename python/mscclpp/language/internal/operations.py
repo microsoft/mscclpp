@@ -136,7 +136,7 @@ class BarrierOperation(BaseOperation):
     def to_json(self):
         result = {"name": self.name}
         result["barrier_id"] = self.barrier_id
-        result["tb_list"] = len(self.barrier_info.tb_list)
+        result["num_threadblocks"] = len(self.barrier_info.tb_list)
 
         return result
 
@@ -264,10 +264,12 @@ class ReduceOperation(BaseOperation):
                 self.name = Instruction.reduce_copy_send_packet.value
             else:
                 self.name = Instruction.reduce_copy_send.value
-        elif len(remote_dst_buff) == 0:
+        elif len(remote_dst_buff) == 0 and not packet:
             self.name = Instruction.read_reduce_copy.value
-        else:
+        elif not packet:
             self.name = Instruction.read_reduce_copy_send.value
+        else:
+            raise RuntimeError(f"Reduce Operation invalid parameters.")
 
         self.local_src_buff = local_src_buff
         self.local_dst_buff = local_dst_buff
