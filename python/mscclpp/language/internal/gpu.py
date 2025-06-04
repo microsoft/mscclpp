@@ -12,7 +12,7 @@ class Gpu:
     output_chunks: int = 0
     scratch_chunks: int = 0
     threadblocks: list = field(default_factory=list)
-    remote_buffers: set = field(default_factory=set)
+    remote_buffers: dict = field(default_factory=dict)
 
     __channels: dict = field(default_factory=dict, init=False)
     __nvls_channels: dict = field(default_factory=dict, init=False)
@@ -34,11 +34,11 @@ class Gpu:
         return self.threadblocks[tb].add_channel(channel)
 
     def add_remote_buffer(self, tb: int, remote_buffer: RemoteBuffer) -> int:
-        if remote_buffer not in self.remote_buffers:
+        if (remote_buffer.rank, remote_buffer.type) not in self.remote_buffers:
             remote_buffer.set_id()
-            self.remote_buffers.add(remote_buffer)
+            self.remote_buffers[(remote_buffer.rank, remote_buffer.type)] = remote_buffer
         else:
-            gpu_remote_buffer = self.remote_buffer.find(remote_buffer)
+            gpu_remote_buffer = self.remote_buffers[(remote_buffer.rank, remote_buffer.type)]
             gpu_remote_buffer.channel_access.update(remote_buffer.channel_access)
             remote_buffer = gpu_remote_buffer
 
@@ -62,7 +62,7 @@ class Gpu:
             "threadblocks": [tb.to_json() for tb in self.threadblocks],
             "channels": [ch.to_json() for ch in self.__channels.values()]
             + [ch.to_json() for ch in self.__nvls_channels.values()],
-            "remote_buffers": [rb.to_json() for rb in self.remote_buffers],
+            "remote_buffers": [rb.to_json() for rb in self.remote_buffers.values()],
         }
 
     @dataclass

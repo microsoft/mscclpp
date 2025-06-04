@@ -254,7 +254,7 @@ class ReduceOperation(BaseOperation):
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
         packet: bool = False,
     ):
-        if packet and len(remote_src_buff) == 0 and len(remote_dst_buff) == 0:
+        if len(remote_src_buff) == 0 and len(remote_dst_buff) == 0:
             if packet:
                 self.name = Instruction.reduce_copy_packet.value
             else:

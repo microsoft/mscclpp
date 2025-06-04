@@ -29,6 +29,7 @@ def put_test(num_threads_per_block, min_message_size, max_message_size):
                 if src_rank != dst_rank:
                     rank = Rank(dst_rank)
                     dst_buff = rank.get_input_buffer()
+                    output_buff = rank.get_output_buffer()
                     ch = Channel(dst_rank, src_rank, ChannelType.memory)
                     ch.relaxed_signal(tb=0)
                     ch.relaxed_wait(tb=0, sync=SyncType.after)
@@ -39,7 +40,7 @@ def put_test(num_threads_per_block, min_message_size, max_message_size):
         print(JSON())
 
 
-parser = argparse.ArgumentParser()
+""" parser = argparse.ArgumentParser()
 
 parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
 parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
@@ -47,4 +48,5 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-put_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+put_test(args.num_threads_per_block, args.min_message_size, args.max_message_size) """
+put_test(1024, 0, 2**64 - 1)  # Example call with default values

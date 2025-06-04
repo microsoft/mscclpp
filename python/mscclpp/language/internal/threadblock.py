@@ -58,8 +58,8 @@ class ThreadBlock:
         
         if remote_buffer.id not in self.__intra_remote_buffer_ids:
             self.__intra_remote_buffer_ids[remote_buffer.id] = len(self.__intra_remote_buffer_ids)
-            for channel_access in remote_buffer.channel_access:
-                self.__remote_buffers[channel_access].remote_buffer_ids.append(remote_buffer.id)
+        for channel_access in remote_buffer.channel_access:
+            self.__remote_buffers[channel_access].remote_buffer_ids.add(remote_buffer.id)
         return self.__intra_remote_buffer_ids[remote_buffer.id]
 
     def add_operation(self, op):
@@ -93,7 +93,7 @@ class ThreadBlock:
     @dataclass
     class RemoteBuffer:
         access_channel_type: ChannelType
-        remote_buffer_ids: list[int] = field(default_factory=list)
+        remote_buffer_ids: set[int] = field(default_factory=set)
 
         def to_json(self) -> dict:
-            return {"access_channel_type": self.access_channel_type.value, "remote_buffer_ids": self.remote_buffer_ids}
+            return {"access_channel_type": self.access_channel_type.value, "remote_buffer_ids": list(self.remote_buffer_ids)}

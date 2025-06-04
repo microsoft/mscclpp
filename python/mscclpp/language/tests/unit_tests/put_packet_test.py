@@ -30,6 +30,9 @@ def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
                     dst_buff = Buffer(dst_rank, 1)
                     ch = Channel(dst_rank, src_rank, ChannelType.memory)
                     ch.put_packet(dst_buff[0:1], src_buff[0:1], tb=0)
+                    ch = Channel(dst_rank, src_rank, ChannelType.port)
+                    ch.put_packet(dst_buff[0:1], src_buff[0:1], tb=0)
+                    ch.put_packet(dst_buff[0:1], src_buff[0:1], tb=0)
 
         print(JSON())
 

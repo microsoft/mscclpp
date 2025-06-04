@@ -21,9 +21,9 @@ class Rank:
 
     def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int, from_packet: bool = False, to_packet: bool = False):
         if dst_chunk.rank != self.rank or src_chunk.rank != self.rank:
-            raise RuntimeError(
-                f"Inconsistent ranks: dst {dst_chunk.rank}, src {src_chunk.rank}, self {self.rank}. They must match."
-            )
+            raise RuntimeError(f"Inconsistent ranks: dst {dst_chunk.rank}, src {src_chunk.rank}, self {self.rank}. They must match.")
+        if dst_chunk.size != src_chunk.size:
+            raise RuntimeError(f"Inconsistent chunk sizes: dst {dst_chunk.size}, src {src_chunk.size}. They must match.")
         if from_packet and src_chunk.buffer != BufferType.scratch:
             raise RuntimeError(f"Source chunk must be of type scratch.")
         if to_packet and dst_chunk.buffer != BufferType.scratch:
@@ -50,9 +50,9 @@ class Rank:
         if dst_chunk is None:
             dst_chunk = src_chunk
         if dst_chunk.rank != self.rank or src_chunk.rank != self.rank:
-            raise RuntimeError(
-                f"Inconsistent ranks: dst {dst_chunk.rank}, src {src_chunk.rank}, self {self.rank}. They must match."
-            )
+            raise RuntimeError(f"Inconsistent ranks: dst {dst_chunk.rank}, src {src_chunk.rank}, self {self.rank}. They must match.")
+        if dst_chunk.size != src_chunk.size:
+            raise RuntimeError(f"Inconsistent chunk sizes: dst {dst_chunk.size}, src {src_chunk.size}. They must match.")
         if packet and src_chunk.buffer != BufferType.scratch:
             raise RuntimeError(f"Source chunk must be of type scratch.")
         if packet and dst_chunk.buffer != BufferType.scratch:
@@ -60,6 +60,8 @@ class Rank:
         for chunk in other_chunks:
             if chunk.rank != self.rank:
                 raise RuntimeError(f"Other chunk rank {chunk.rank} does not match current rank {self.rank}.")
+            if chunk.size != src_chunk.size:
+                raise RuntimeError(f"Inconsistent chunk sizes: other {chunk.size}, src {src_chunk.size}. They must match.")
             if packet and chunk.buffer != BufferType.scratch:
                 raise RuntimeError(f"Other chunk must be of type scratch.")
 

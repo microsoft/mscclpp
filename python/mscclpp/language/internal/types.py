@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import List
+from typing import List, Set
 from collections import defaultdict
 
 
@@ -107,7 +107,7 @@ class RemoteBuffer:
 
         self.rank: int = rank
         self.type: int = type
-        self.channel_access: List[ChannelType] = [channel_access]
+        self.channel_access: Set[ChannelType] = {channel_access}
 
     def set_id(self):
         if self.id == -1:
