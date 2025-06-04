@@ -9,17 +9,17 @@ TEST(GpuUtilsTest, StreamPool) {
   auto streamPool = mscclpp::gpuStreamPool();
   cudaStream_t s;
   {
-    auto stream1 = streamPool->getStream(cudaStreamNonBlocking);
+    auto stream1 = streamPool->getStream();
     s = stream1;
     EXPECT_NE(s, nullptr);
   }
   {
-    auto stream2 = streamPool->getStream(cudaStreamNonBlocking);
+    auto stream2 = streamPool->getStream();
     EXPECT_EQ(cudaStream_t(stream2), s);
   }
   {
-    auto stream3 = streamPool->getStream(cudaStreamNonBlocking);
-    auto stream4 = streamPool->getStream(cudaStreamNonBlocking);
+    auto stream3 = streamPool->getStream();
+    auto stream4 = streamPool->getStream();
     EXPECT_NE(cudaStream_t(stream3), cudaStream_t(stream4));
   }
   streamPool->clear();

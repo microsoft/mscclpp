@@ -35,13 +35,13 @@ GpuStream::~GpuStream() { pool_->streams_.push_back(stream_); }
 
 GpuStreamPool::GpuStreamPool() {}
 
-GpuStream GpuStreamPool::getStream(unsigned int flags) {
+GpuStream GpuStreamPool::getStream() {
   if (!streams_.empty()) {
     auto stream = streams_.back();
     streams_.pop_back();
     return GpuStream(shared_from_this(), stream);
   }
-  return GpuStream(shared_from_this(), std::make_shared<CudaStreamWithFlags>(flags));
+  return GpuStream(shared_from_this(), std::make_shared<CudaStreamWithFlags>(cudaStreamNonBlocking));
 }
 
 void GpuStreamPool::clear() { streams_.clear(); }
@@ -71,7 +71,7 @@ void setReadWriteMemoryAccess(void* base, size_t size) {
 void* gpuCalloc(size_t bytes) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   void* ptr;
-  auto stream = gpuStreamPool()->getStream(cudaStreamNonBlocking);
+  auto stream = gpuStreamPool()->getStream();
   MSCCLPP_CUDATHROW(cudaMalloc(&ptr, bytes));
   MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, bytes, stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
@@ -90,7 +90,7 @@ void* gpuCallocHost(size_t bytes) {
 void* gpuCallocUncached(size_t bytes) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   void* ptr;
-  auto stream = gpuStreamPool()->getStream(cudaStreamNonBlocking);
+  auto stream = gpuStreamPool()->getStream();
   MSCCLPP_CUDATHROW(hipExtMallocWithFlags((void**)&ptr, bytes, hipDeviceMallocUncached));
   MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, bytes, stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
@@ -160,7 +160,7 @@ void* gpuCallocPhysical(size_t bytes, size_t gran, size_t align) {
   MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, nbytes, align, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, nbytes, 0, memHandle, 0));
   setReadWriteMemoryAccess(devicePtr, nbytes);
-  auto stream = gpuStreamPool()->getStream(cudaStreamNonBlocking);
+  auto stream = gpuStreamPool()->getStream();
   MSCCLPP_CUDATHROW(cudaMemsetAsync(devicePtr, 0, nbytes, stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
