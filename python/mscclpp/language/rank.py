@@ -19,7 +19,7 @@ class Rank:
     def get_output_buffer(self):
         return get_program().buffers[self.rank][BufferType.output]
 
-    def copy(self, dst_chunk, src_chunk, tb, from_packet=False, to_packet=False):
+    def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int, from_packet: bool = False, to_packet: bool = False):
         if dst_chunk.rank != self.rank or src_chunk.rank != self.rank:
             raise RuntimeError(
                 f"Inconsistent ranks: dst {dst_chunk.rank}, src {src_chunk.rank}, self {self.rank}. They must match."
@@ -42,17 +42,17 @@ class Rank:
         self,
         src_chunk: Chunk,
         other_chunks: List[Chunk],
-        tb,
-        reduce_op=ReduceOperationType.sum,
-        packet=False,
-        dst_chunk=None,
+        tb: int,
+        dst_chunk: Chunk = None,
+        reduce_op: ReduceOperationType = ReduceOperationType.sum,
+        packet: bool = False,
     ):
         if dst_chunk is None:
             dst_chunk = src_chunk
-        if src_chunk.rank != self.rank:
-            raise RuntimeError(f"Source chunk rank {src_chunk.rank} does not match current rank {self.rank}.")
-        if dst_chunk.rank != self.rank:
-            raise RuntimeError(f"Destination chunk rank {dst_chunk.rank} does not match current rank {self.rank}.")
+        if dst_chunk.rank != self.rank or src_chunk.rank != self.rank:
+            raise RuntimeError(
+                f"Inconsistent ranks: dst {dst_chunk.rank}, src {src_chunk.rank}, self {self.rank}. They must match."
+            )
         if packet and src_chunk.buffer != BufferType.scratch:
             raise RuntimeError(f"Source chunk must be of type scratch.")
         if packet and dst_chunk.buffer != BufferType.scratch:
@@ -80,7 +80,7 @@ class Rank:
 
 
 class BaseBuffer:
-    def __init__(self, rank, buffer_type, offset, size):
+    def __init__(self, rank: int, buffer_type: BufferType, offset: int, size: int):
         self.rank = rank
         self.buffer_type = buffer_type
         self.offset = offset
@@ -95,7 +95,7 @@ class BaseBuffer:
 
 
 class Buffer(BaseBuffer):
-    def __init__(self, rank, size):
+    def __init__(self, rank: int, size: int):
         if rank >= get_program().num_ranks:
             raise RuntimeError(f"Rank {rank} is out of bounds. Number of ranks: {self.prog.num_ranks}")
 

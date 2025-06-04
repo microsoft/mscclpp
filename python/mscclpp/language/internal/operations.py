@@ -1,7 +1,6 @@
-from dataclasses import dataclass, field
-from collections import defaultdict
-from typing import List
 from mscclpp.language.internal.types import ChannelType, Instruction, BufferType, ReduceOperationType
+from dataclasses import dataclass
+from typing import List
 
 
 @dataclass
@@ -121,11 +120,16 @@ class BarrierOperation(BaseOperation):
     __current_barriers = []
 
     def __init__(self, rank: int, tb_list: List[int]):
-        if len(BarrierOperation.__current_barriers) <= rank:
+        for _ in range(len(BarrierOperation.__current_barriers), rank + 1):
             BarrierOperation.__current_barriers.append({})
         barrier_info = BarrierOperation.BarrierInfo(tb_list)
-        self.barrier_id = BarrierOperation.__current_barriers[rank].get(barrier_info, 0)
-        BarrierOperation.__current_barriers[rank][barrier_info] = self.barrier_id + 1
+        
+        if barrier_info not in BarrierOperation.__current_barriers[rank]:
+            self.barrier_id = len(BarrierOperation.__current_barriers[rank])
+            BarrierOperation.__current_barriers[rank][barrier_info] = self.barrier_id
+        else:
+            self.barrier_id = BarrierOperation.__current_barriers[rank][barrier_info]
+        
         self.name = Instruction.barrier.value
         self.barrier_info = barrier_info
 
@@ -310,7 +314,7 @@ class GroupLoadReduce(BaseOperation):
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
         self.name = Instruction.group_load_reduce.value
-        self.buffer_type = buffer_type.value
+        self.buffer_type = buffer_type
         self.buffer_offset = buffer_offset
         self.size = size
         self.dst_chunk = dst_chunk
@@ -320,7 +324,7 @@ class GroupLoadReduce(BaseOperation):
 
     def to_json(self):
         result = {"name": self.name}
-        result["buffer_type"] = self.dst_chunk.type.value
+        result["buffer_type"] = self.buffer_type.value
         result["buffer_offset"] = self.buffer_offset
         result["size"] = self.size
         result["dst_chunk"] = self.dst_chunk.to_json()

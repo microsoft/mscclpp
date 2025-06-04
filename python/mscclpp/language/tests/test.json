@@ -1,5 +1,5 @@
 {
-  "name": "flush_test",
+  "name": "get_test",
   "collective": "test",
   "inplace": false,
   "protocol": "Simple",
@@ -14,11 +14,59 @@
           "id": 0,
           "ops": [
             {
-              "name": "flush",
+              "name": "rlxsignal",
               "channel_ids": [
                 0
               ],
-              "channel_type": "port"
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "get",
+              "src_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -26,33 +74,143 @@
           ],
           "channels": [
             {
-              "channel_type": "port",
+              "channel_type": "memory",
               "channel_ids": [
                 0
               ]
             }
           ],
-          "remote_buffer_refs": []
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
         }
       ],
       "channels": [
         {
-          "channel_type": "port",
+          "channel_type": "memory",
           "connected_to": [
             1
           ]
         }
       ],
-      "remote_buffers": []
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
     },
     {
       "id": 1,
       "input_chunks": 2,
       "output_chunks": 0,
       "scratch_chunks": 0,
-      "threadblocks": [],
-      "channels": [],
-      "remote_buffers": []
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "get",
+              "src_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
     }
   ],
   "num_threads_per_block": 1024,

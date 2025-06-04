@@ -10,7 +10,7 @@ from mscclpp.language.collectives import *
 
 
 def flush_test(num_threads_per_block, min_message_size, max_message_size):
-    gpus = 2
+    gpus = 3
     collective = TestCollective(gpus, 0, 0)
     with MSCCLPPProgram(
         "flush_test",
@@ -23,7 +23,7 @@ def flush_test(num_threads_per_block, min_message_size, max_message_size):
         max_message_size=max_message_size,
     ):
         ch = Channel(1, 0, ChannelType.port)
-        ch.flush(tb=0, sync=SyncType.after)
+        ch.flush(tb=0, sync=SyncType.before)
 
         print(JSON())
 

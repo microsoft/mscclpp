@@ -10,8 +10,8 @@ from mscclpp.language.collectives import *
 
 
 def group_store_test(num_threads_per_block, min_message_size, max_message_size):
-    gpus = 2
-    collective = TestCollective(gpus, 1, 0)
+    gpus = 3
+    collective = TestCollective(gpus, 1, 1)
     with MSCCLPPProgram(
         "group_store_test",
         collective,
@@ -22,7 +22,7 @@ def group_store_test(num_threads_per_block, min_message_size, max_message_size):
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
-        dst_chunk = Buffer(0, 1)
+        dst_chunk = Buffer(0, 2)
 
         ch = SwitchChannel(rank_list=[0, 1], buffer_type=BufferType.input)
         ch.group_store(src_chunk=dst_chunk[0:1], buffer_offset=0, size=1, tb=0)
