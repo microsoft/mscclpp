@@ -55,6 +55,9 @@ MSCCLPP_API_CPP void Fifo::flushTail(bool sync) {
     // Nothing to flush if the tail is not replicated.
     return;
   }
+#if defined(MSCCLPP_DEVICE_HIP)
+  *(pimpl->tailReplica.get()) = *(pimpl->hostTail.get());
+#else   // !defined(MSCCLPP_DEVICE_HIP)
   // Flush the tail to device memory. This is either triggered every ProxyFlushPeriod to make sure that the fifo can
   // make progress even if there is no request mscclppSync. However, mscclppSync type is for flush request.
   AvoidCudaGraphCaptureGuard cgcGuard;
@@ -63,6 +66,7 @@ MSCCLPP_API_CPP void Fifo::flushTail(bool sync) {
   if (sync) {
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(pimpl->stream));
   }
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
 }
 
 MSCCLPP_API_CPP int Fifo::size() const { return pimpl->size; }
