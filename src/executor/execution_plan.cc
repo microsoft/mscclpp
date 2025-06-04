@@ -508,12 +508,8 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
   }
   if (op.contains("channel_ids")) {
     operation.nChannels = op["channel_ids"].size();
-    if (operation.channelType == mscclpp::ChannelType::SWITCH) {
-      operation.nvlsInputIndex = op["channel_ids"][0];
-    } else {
-      for (uint32_t i = 0; i < op["channel_ids"].size(); i++) {
-        operation.channelIndexes[i] = op["channel_ids"][i];
-      }
+    for (uint32_t i = 0; i < op["channel_ids"].size(); i++) {
+      operation.channelIndexes[i] = op["channel_ids"][i];
     }
   }
   if (op.contains("src_buff")) {
@@ -532,7 +528,10 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
       }
       if (buff.contains("switch_channel_id")) {
         int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
-        constOffset = getConstOffset(this->nvlsInfos[rank][switchChannelIdx].bufferType);
+        BufferType bufferType = this->nvlsInfos[rank][switchChannelIdx].bufferType;
+        constOffset = getConstOffset(bufferType);
+        operation.nvlsInputBufferType = bufferType;
+        operation.nvlsInputIndex = buff["switch_channel_id"];
       }
       operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
       operation.inputBufferSizes[i] =
@@ -555,7 +554,10 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
       }
       if (buff.contains("switch_channel_id")) {
         int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
-        constOffset = getConstOffset(this->nvlsInfos[rank][switchChannelIdx].bufferType);
+        BufferType bufferType = this->nvlsInfos[rank][switchChannelIdx].bufferType;
+        constOffset = getConstOffset(bufferType);
+        operation.nvlsOutputBufferType = bufferType;
+        operation.nvlsOutputIndex = buff["switch_channel_id"];
       }
       operation.outputOffsets[i] =
           this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;

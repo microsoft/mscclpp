@@ -182,6 +182,8 @@ __device__ DeviceSyncer deviceSyncers[MAX_DEVICE_SYNCERS];
 // TODO: change later to setup init values from the plan
 __device__ DeviceSemaphore DeviceSemaphores[MAX_DEVICE_SEMAPHORES];
 
+__constant__ uint32_t BUFFER_SIZES[3] = {UINT32_MAX, UINT32_MAX, 1 << 26 /* 64MB */};
+
 __shared__ DeviceHandle<BaseMemoryChannel>* memoryChannels_;
 __shared__ DeviceHandle<BasePortChannel>* portChannels_;
 __shared__ DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels_;
@@ -204,7 +206,16 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
   return nullptr;
 }
 
-template <typename T, typename PacketType>
+template <bool ReuseScratch>
+MSCCLPP_DEVICE_INLINE uint32_t getOffset(BufferType bufferType, uint32_t offset) {
+  if constexpr (!ReuseScratch) {
+    return offset;
+  } else {
+    return offset % BUFFER_SIZES[(uint32_t)bufferType];
+  }
+}
+
+template <typename T, typename PacketType, bool ReuseScratch = true>
 MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch,
                                                  uint8_t* nSteps = nullptr, uint32_t offset = 0,
                                                  uint32_t unitSize = UINT32_MAX);
@@ -561,21 +572,22 @@ MSCCLPP_DEVICE_INLINE void handleTransformToPacket(Operation* op, void* input, v
 //   }
 // }
 
+template <bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* output, void* scratch, uint32_t offset,
                                       uint32_t unitSize) {
   uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
   if (size <= 0) {
     return;
   }
-  uint32_t dstOffset = op.outputOffsets[0] + offset;
-  uint32_t srcOffset = op.inputOffsets[0] + offset;
+  uint32_t dstOffset = getOffset<ReuseScratch>(op.outputBufferRefs[0].type, op.outputOffsets[0] + offset);
+  uint32_t srcOffset = getOffset<ReuseScratch>(op.inputBufferRefs[0].type, op.inputOffsets[0] + offset);
   char* srcData = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
   char* dstData = static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[0].type)) + dstOffset;
   mscclpp::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
 }
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
-template <typename T>
+template <typename T, bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint32_t offset, uint32_t unitSize) {
   using vectorType = typename VectorType<T>::type;
   using nvlsType = typename VectorType<T>::nvls_type;
@@ -586,8 +598,8 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
   }
 
   const uint32_t nInt4 = size / sizeof(nvlsType);
-  const uint32_t srcOffset = op.inputOffsets[0] + offset;
-  const uint32_t dstOffset = op.outputOffsets[0] + offset;
+  const uint32_t srcOffset = getOffset<ReuseScratch>(op.nvlsInputBufferType, op.inputOffsets[0] + offset);
+  const uint32_t dstOffset = getOffset<ReuseScratch>(op.nvlsOutputBufferType, op.outputOffsets[0] + offset);
   assert(srcOffset % sizeof(vectorType) == 0 && dstOffset % sizeof(vectorType) == 0);
 
   const uint32_t srcOffset4 = srcOffset / sizeof(nvlsType);
@@ -643,7 +655,7 @@ MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op) {
   }
 }
 
-template <typename T, typename PacketType>
+template <typename T, typename PacketType, bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch, uint8_t* nSteps,
                                                  uint32_t offset, uint32_t unitSize) {
   if (nSteps != nullptr) {
@@ -687,7 +699,7 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   //   return handleReadReduceCopySend<T, false>;
   // }
   if (opType == OperationType::COPY) {
-    return handleCopy(op, input, output, scratch, offset, unitSize);
+    return handleCopy<ReuseScratch>(op, input, output, scratch, offset, unitSize);
   }
   // // if (opType == OperationType::REDUCE_SEND) {
   // //   return handleReduceSend<T>;
@@ -709,7 +721,7 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   }
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   if (opType == OperationType::MULTI_LOAD_REDUCE_STORE) {
-    return handleMultiLoadReduceStore<T>(op, offset, unitSize);
+    return handleMultiLoadReduceStore<T, ReuseScratch>(op, offset, unitSize);
   }
 #endif
   if (opType == OperationType::PIPELINE) {

@@ -22,10 +22,10 @@ constexpr int MAX_DEVICE_SYNCERS = 16;
 constexpr int MAX_DEVICE_SEMAPHORES = 16;
 
 enum class BufferType : uint8_t {
-  NONE,
   INPUT,
   OUTPUT,
   SCRATCH,
+  NONE,
 };
 
 enum class ChannelType : uint8_t {
@@ -72,6 +72,7 @@ struct Channels {
 };
 
 struct RemoteBuffers {
+  BufferType remoteBufferTypes[MAX_CHANNEL];
   void* remoteBuffersViaMemoryChannel[MAX_CHANNEL];
   MemoryId remoteBuffersViaPortChannel[MAX_CHANNEL];
 };
@@ -86,11 +87,17 @@ struct Operation {
   ChannelType channelType;
   union {
     BufferRef inputBufferRefs[MAX_CHANNEL_PER_OPERATION];
-    uint8_t nvlsInputIndex;
+    struct {
+      uint8_t nvlsInputIndex;
+      BufferType nvlsInputBufferType;
+    };
   };
   union {
     BufferRef outputBufferRefs[MAX_CHANNEL_PER_OPERATION];
-    uint8_t nvlsOutputIndex;
+    struct {
+      uint8_t nvlsOutputIndex;
+      BufferType nvlsOutputBufferType;
+    };
   };
 
   union {
