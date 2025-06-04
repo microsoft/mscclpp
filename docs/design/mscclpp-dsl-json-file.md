@@ -218,14 +218,14 @@ Example
     "src_buff": [
       {
         "type": "i",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
     "dst_buff": [
       {
-        "type": "s",
-        "offset": 0,
+        "type": "o",
+        "index": 0,
         "size": 1
       }
     ]
@@ -244,14 +244,14 @@ Example
     "src_buff": [
       {
         "type": "s",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
     "dst_buff": [
       {
         "type": "o",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ]
@@ -270,14 +270,14 @@ Example
     "src_buff": [
       {
         "type": "i",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
     "dst_buff": [
       {
         "type": "s",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ]
@@ -296,20 +296,19 @@ Example
     "src_buff": [
       {
         "type": "i",
-        "offset": 0,
+        "index": 0,
         "size": 1
-      
       },
       {
-        "type": "s",
-        "offset": 0,
+        "type": "i",
+        "index": 1,
         "size": 1
-      },
+      }
     ],
     "dst_buff": [
       {
         "type": "o",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
@@ -329,20 +328,19 @@ Example
     "src_buff": [
       {
         "type": "s",
-        "offset": 0,
+        "index": 0,
         "size": 1
       },
       {
         "type": "s",
-        "offset": 1,
+        "index": 1,
         "size": 1
-      
       }
     ],
     "dst_buff": [
       {
         "type": "s",
-        "offset": 2,
+        "index": 2,
         "size": 1
       }
     ],
@@ -360,10 +358,10 @@ Example
 "ops": [
   {
     "name": "signal",
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory",
+    "channel_type": "memory"
   }
 ]
 ```
@@ -377,10 +375,10 @@ Example
 "ops": [
   {
     "name": "wait",
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory",
+    "channel_type": "memory"
   }
 ]
 ```
@@ -393,10 +391,10 @@ Example
 "ops": [
   {
     "name": "rlxsignal",
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory",
+    "channel_type": "memory"
   }
 ]
 ```
@@ -409,10 +407,40 @@ Example
 "ops": [
   {
     "name": "rlxwait",
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory",
+    "channel_type": "memory"
+  }
+]
+```
+
+#### Barrier Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "barrier",
+    "barrier_id": 0,
+    "tb_list": 2
+  }
+]
+```
+
+#### Flush Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "flush",
+    "channel_ids": [
+      0
+    ],
+    "channel_type": "port"
   }
 ]
 ```
@@ -428,21 +456,21 @@ Example
     "src_buff": [
       {
         "buffer_id": 0,
-        "offset": 0,
+        "index": 1,
         "size": 1
       }
     ],
     "dst_buff": [
       {
         "type": "i",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory"
+    "channel_type": "memory"
   }
 ]
 ```
@@ -459,21 +487,21 @@ Example
     "src_buff": [
       {
         "type": "i",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
     "dst_buff": [
       {
         "buffer_id": 0,
-        "offset": 0,
+        "index": 1,
         "size": 1
       }
     ],
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory"
+    "channel_type": "memory"
   }
 ]
 ```
@@ -489,22 +517,21 @@ Example
     "src_buff": [
       {
         "type": "i",
-        "offset": 0,
+        "index": 0,
         "size": 1
-      
       }
     ],
     "dst_buff": [
       {
         "buffer_id": 0,
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory"
+    "channel_type": "memory"
   }
 ]
 ```
@@ -520,22 +547,21 @@ Example
     "src_buff": [
       {
         "type": "s",
-        "offset": 0,
+        "index": 0,
         "size": 1
-      
       }
     ],
     "dst_buff": [
       {
         "buffer_id": 0,
-        "offset": 0,
+        "index": 1,
         "size": 1
       }
     ],
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory"
+    "channel_type": "memory"
   }
 ]
 ```
@@ -551,21 +577,21 @@ Example
     "src_buff": [
       {
         "type": "i",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
     "dst_buff": [
       {
         "buffer_id": 0,
-        "offset": 0,
+        "index": 1,
         "size": 1
       }
     ],
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory"
+    "channel_type": "port"
   }
 ]
 ```
@@ -581,21 +607,21 @@ Example
     "src_buff": [
       {
         "type": "i",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
     "dst_buff": [
       {
         "buffer_id": 0,
-        "offset": 0,
+        "index": 1,
         "size": 1
       }
     ],
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory"
+    "channel_type": "port"
   }
 ]
 ```
@@ -611,34 +637,34 @@ Example
     "local_src_buff": [
       {
         "type": "i",
-        "offset": 0,
+        "index": 0,
         "size": 1
       
       },
       {
         "type": "i",
-        "offset": 1,
+        "index": 1,
         "size": 1
       }
     ],
     "local_dst_buff": [
       {
         "type": "o",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
     "remote_dst_buff": [
       {
         "buffer_id": 1,
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory",
+    "channel_type": "memory",
     "reduce_op": "sum"
   }
 ]
@@ -655,34 +681,34 @@ Example
     "local_src_buff": [
       {
         "type": "s",
-        "offset": 0,
+        "index": 0,
         "size": 1
       
       },
       {
         "type": "s",
-        "offset": 1,
+        "index": 1,
         "size": 1
       }
     ],
     "local_dst_buff": [
       {
         "type": "s",
-        "offset": 2,
+        "index": 2,
         "size": 1
       }
     ],
     "remote_dst_buff": [
       {
         "buffer_id": 0,
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory",
+    "channel_type": "memory",
     "reduce_op": "sum"
   }
 ]
@@ -696,31 +722,29 @@ Example
 "ops": [
   {
     "name": "rrc",
-    "local_src_buff": [
+    "src_buff": [
       {
         "type": "i",
-        "offset": 0,
+        "index": 0,
         "size": 1
-      }
-    ],
-    "remote_src_buff": [
+      },
       {
         "buffer_id": 0,
-        "offset": 0,
+        "index": 1,
         "size": 1
       }
     ],
-    "local_dst_buff": [
+    "dst_buff": [
       {
         "type": "o",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory",
+    "channel_type": "memory",
     "reduce_op": "sum"
   }
 ]
@@ -737,35 +761,87 @@ Example
     "local_src_buff": [
       {
         "type": "i",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
     "remote_src_buff": [
       {
         "buffer_id": 0,
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
     "local_dst_buff": [
       {
         "type": "o",
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
     "remote_dst_buff": [
       {
         "buffer_id": 1,
-        "offset": 0,
+        "index": 0,
         "size": 1
       }
     ],
-    "cids": [
+    "channel_ids": [
       0
     ],
-    "ctype": "memory",
+    "channel_type": "memory",
+    "reduce_op": "sum"
+  }
+]
+```
+
+#### Group Load Reduce Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "glre",
+    "buffer_type": "i",
+    "buffer_offset": 0,
+    "size": 1,
+    "dst_chunk": {
+      "rank": 0,
+      "type": "s",
+      "index": 0,
+      "size": 1
+    },
+    "channel_ids": [
+      0
+    ],
+    "channel_type": "switch",
+    "reduce_op": "sum"
+  }
+]
+```
+
+#### Group Store Operation
+
+Example
+
+```json
+"ops": [
+  {
+    "name": "gstore",
+    "src_chunk": {
+      "rank": 0,
+      "type": "s",
+      "index": 0,
+      "size": 1
+    },
+    "buffer_type": "i",
+    "buffer_offset": 0,
+    "size": 1,
+    "channel_ids": [
+      0
+    ],
+    "channel_type": "switch",
     "reduce_op": "sum"
   }
 ]
