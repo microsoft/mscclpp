@@ -24,52 +24,26 @@ class Channel:
         self.channel_type = channel_type
         get_program().add_channel(self)
 
-    def signal(self, tb: int, sync: SyncType = SyncType.none):
+    def signal(self, tb: int, sync: SyncType = SyncType.none, relaxed = False):
         if sync == SyncType.before or sync == SyncType.both:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
         tb_channel_id = get_program().setup_channel(tb, self)
-        op = SignalOperation(tb_channel_id, self.channel_type)
+        op = SignalOperation(tb_channel_id, self.channel_type, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
         if sync == SyncType.after or sync == SyncType.both:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
-    def wait(self, tb: int, sync: SyncType = SyncType.none):
+    def wait(self, tb: int, sync: SyncType = SyncType.none, relaxed = False):
         if sync == SyncType.before or sync == SyncType.both:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
         tb_channel_id = get_program().setup_channel(tb, self)
-        op = WaitOperation(tb_channel_id, self.channel_type)
-        get_program().add_operation(self.src_rank, tb, op)
-
-        if sync == SyncType.after or sync == SyncType.both:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
-
-    def relaxed_signal(self, tb: int, sync: SyncType = SyncType.none):
-        if sync == SyncType.before or sync == SyncType.both:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
-
-        tb_channel_id = get_program().setup_channel(tb, self)
-        op = SignalOperation(tb_channel_id, self.channel_type, True)
-        get_program().add_operation(self.src_rank, tb, op)
-
-        if sync == SyncType.after or sync == SyncType.both:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
-
-    def relaxed_wait(self, tb: int, sync: SyncType = SyncType.none):
-        if sync == SyncType.before or sync == SyncType.both:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
-
-        tb_channel_id = get_program().setup_channel(tb, self)
-        op = WaitOperation(tb_channel_id, self.channel_type, True)
+        op = WaitOperation(tb_channel_id, self.channel_type, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
         if sync == SyncType.after or sync == SyncType.both:

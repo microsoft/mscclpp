@@ -26,8 +26,8 @@ def relaxed_signal_wait_test(num_threads_per_block, min_message_size, max_messag
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
                     ch = Channel(dst_rank, src_rank, ChannelType.memory)
-                    ch.relaxed_signal(tb=0)
-                    ch.relaxed_wait(tb=0)
+                    ch.signal(tb=0, relaxed=True)
+                    ch.wait(tb=0, relaxed=True)
 
         print(JSON())
 
