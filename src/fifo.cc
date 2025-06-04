@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <mscclpp/env.hpp>
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/gpu_utils.hpp>
 
@@ -15,14 +16,9 @@ struct Fifo::Impl {
   detail::UniqueGpuPtr<uint64_t> tailReplica;
   const int size;
 
-  // allocated on the host. Only accessed by the host. This is a copy of the
-  // value pointed to by fifoTailDev and the invariant is that
-  // *fifoTailDev <= hostTail. Meaning that host's copy of tail is
-  // always ahead of the device's copy and host updates the device's copy
-  // only when it is needed. Therefore, hostTail is the "true" tail
-  // and fifoTailDev is a "stale" tail. See proxy.cc to undertand how
-  // these updates are pushed to the device.
-  uint64_t hostTail;
+  // The original tail of this fifo allocated on the host. If a tail replica is used
+  // (when `env()->fifoUseTailReplica == true`), it always holds that *tailReplica <= *hostTail.
+  std::shared_ptr<uint64_t> hostTail;
 
   // for transferring fifo tail
   CudaStreamWithFlags stream;
@@ -30,9 +26,9 @@ struct Fifo::Impl {
   Impl(int size)
       : triggers(detail::gpuCallocHostUnique<ProxyTrigger>(size)),
         head(detail::gpuCallocUnique<uint64_t>()),
-        tailReplica(detail::gpuCallocUnique<uint64_t>()),
+        tailReplica(env()->fifoUseTailReplica ? detail::gpuCallocUnique<uint64_t>() : nullptr),
         size(size),
-        hostTail(0),
+        hostTail(env()->fifoUseTailReplica ? std::make_shared<uint64_t>(0) : detail::gpuCallocHostShared<uint64_t>()),
         stream(cudaStreamNonBlocking) {}
 };
 
@@ -41,7 +37,7 @@ MSCCLPP_API_CPP Fifo::~Fifo() = default;
 
 MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
   ProxyTrigger trigger;
-  ProxyTrigger* ptr = &pimpl->triggers.get()[pimpl->hostTail % pimpl->size];
+  ProxyTrigger* ptr = &pimpl->triggers.get()[*(pimpl->hostTail) % pimpl->size];
   // we are loading fst first. if fst is non-zero then snd is also valid
   trigger.fst = atomicLoad(&(ptr->fst), memoryOrderAcquire);
   trigger.snd = ptr->snd;
@@ -49,15 +45,20 @@ MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
 }
 
 MSCCLPP_API_CPP void Fifo::pop() {
-  atomicStore(&(pimpl->triggers.get()[pimpl->hostTail % pimpl->size].fst), uint64_t{0}, memoryOrderRelease);
-  (pimpl->hostTail)++;
+  uint64_t curTail = *(pimpl->hostTail);
+  atomicStore(&(pimpl->triggers.get()[curTail % pimpl->size].fst), uint64_t{0}, memoryOrderRelease);
+  *(pimpl->hostTail) = curTail + 1;
 }
 
 MSCCLPP_API_CPP void Fifo::flushTail(bool sync) {
+  if (!env()->fifoUseTailReplica) {
+    // Nothing to flush if the tail is not replicated.
+    return;
+  }
   // Flush the tail to device memory. This is either triggered every ProxyFlushPeriod to make sure that the fifo can
   // make progress even if there is no request mscclppSync. However, mscclppSync type is for flush request.
   AvoidCudaGraphCaptureGuard cgcGuard;
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(pimpl->tailReplica.get(), &pimpl->hostTail, sizeof(uint64_t),
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(pimpl->tailReplica.get(), pimpl->hostTail.get(), sizeof(uint64_t),
                                     cudaMemcpyHostToDevice, pimpl->stream));
   if (sync) {
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(pimpl->stream));
@@ -70,7 +71,8 @@ MSCCLPP_API_CPP FifoDeviceHandle Fifo::deviceHandle() const {
   FifoDeviceHandle deviceHandle;
   deviceHandle.triggers = pimpl->triggers.get();
   deviceHandle.head = pimpl->head.get();
-  deviceHandle.tailReplica = pimpl->tailReplica.get();
+  // tailReplica refers to the original tail if `fifoUseTailReplica == false`.
+  deviceHandle.tailReplica = env()->fifoUseTailReplica ? pimpl->tailReplica.get() : pimpl->hostTail.get();
   deviceHandle.size = pimpl->size;
   return deviceHandle;
 }
