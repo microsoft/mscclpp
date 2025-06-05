@@ -17,7 +17,7 @@ build-dir = "build/{wheel_tag}"
 [tool.scikit-build.wheel]
 packages = ["python/mscclpp", "python/mscclpp_benchmark"]
 install-dir = "mscclpp"
-license-files = ["LICENSE", "CITATION.cff", "CODE_OF_CONDUCT.md", "README.md", "SECURITY.md", "SUPPORT.md"]
+license-files = ["VERSION", "LICENSE", "CITATION.cff", "CODE_OF_CONDUCT.md", "README.md", "SECURITY.md", "SUPPORT.md"]
 exclude = ["mscclpp/*.cpp"]
 
 [tool.scikit-build.cmake.define]
