@@ -24,7 +24,7 @@ class Channel:
         self.channel_type = channel_type
         get_program().add_channel(self)
 
-    def signal(self, tb: int, sync: SyncType = SyncType.none, relaxed = False):
+    def signal(self, tb: int, sync: SyncType = SyncType.none, relaxed=False):
         if sync == SyncType.before or sync == SyncType.both:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
@@ -37,7 +37,7 @@ class Channel:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
-    def wait(self, tb: int, sync: SyncType = SyncType.none, relaxed = False):
+    def wait(self, tb: int, sync: SyncType = SyncType.none, relaxed=False):
         if sync == SyncType.before or sync == SyncType.both:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
@@ -261,7 +261,7 @@ class SwitchChannel:
                 self.buffer_type,
                 buffer_offset,
                 size,
-                NVLSChunk(dst_chunk.rank, dst_chunk.buffer, dst_chunk.index, dst_chunk.size),
+                dst_chunk,
                 [tb_channel_id[i]],
                 self.channel_type,
                 reduce_op,
@@ -291,7 +291,7 @@ class SwitchChannel:
         tb_channel_id = get_program().setup_channel(tb, self)
         for i in range(len(self.rank_group.ranks)):
             op = GroupStore(
-                NVLSChunk(src_chunk.rank, src_chunk.buffer, src_chunk.index, src_chunk.size),
+                src_chunk,
                 self.buffer_type,
                 buffer_offset,
                 size,

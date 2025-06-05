@@ -93,6 +93,9 @@ class Chunk:
     def __hash__(self):
         return hash((self.rank, self.buffer, self.index, self.size))
 
+    def to_json(self):
+        return {"rank": self.rank, "type": self.buffer.value, "index": self.index, "size": self.size}
+
 
 @dataclass
 class RemoteBuffer:

@@ -1,4 +1,4 @@
-from mscclpp.language.internal.types import ChannelType, Instruction, BufferType, ReduceOperationType
+from mscclpp.language.internal.types import ChannelType, Instruction, BufferType, ReduceOperationType, Chunk
 from dataclasses import dataclass
 from typing import List
 
@@ -29,23 +29,12 @@ class RemoteChunk:
 
 
 @dataclass
-class NVLSChunk:
-    rank: int
-    type: BufferType
-    index: int
-    size: int
-
-    def to_json(self):
-        return {"rank": self.rank, "type": self.type.value, "index": self.index, "size": self.size}
-
-
-@dataclass
 class SyncOperation(BaseOperation):
     def __init__(self):
-        self.name = Instruction.nop.value
+        self.name = Instruction.nop
 
     def to_json(self):
-        result = {"name": self.name}
+        result = {"name": self.name.value}
         return result
 
 
@@ -61,17 +50,17 @@ class CopyOperation(BaseOperation):
         if from_packet and to_packet:
             raise RuntimeError(f"Copy Operation from Packet to Packet is not Supported.")
         elif from_packet:
-            self.name = Instruction.copy_packet.value
+            self.name = Instruction.copy_packet
         elif to_packet:
-            self.name = Instruction.transform_to_packet.value
+            self.name = Instruction.transform_to_packet
         else:
-            self.name = Instruction.copy.value
+            self.name = Instruction.copy
 
         self.src_buff = src_buff
         self.dst_buff = dst_buff
 
     def to_json(self):
-        result = {"name": self.name}
+        result = {"name": self.name.value}
         result["src_buff"] = []
         for chunk in self.src_buff:
             result["src_buff"].append(chunk.to_json())
@@ -85,14 +74,14 @@ class CopyOperation(BaseOperation):
 class SignalOperation(BaseOperation):
     def __init__(self, channels_ids: List[int], channel_type: ChannelType, relaxed: bool = False):
         if relaxed:
-            self.name = Instruction.relaxed_signal.value
+            self.name = Instruction.relaxed_signal
         else:
-            self.name = Instruction.signal.value
+            self.name = Instruction.signal
         self.channel_ids = channels_ids
         self.channel_type = channel_type
 
     def to_json(self):
-        result = {"name": self.name}
+        result = {"name": self.name.value}
         result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
         return result
@@ -102,14 +91,14 @@ class SignalOperation(BaseOperation):
 class WaitOperation(BaseOperation):
     def __init__(self, channels_ids: List[int], channel_type: ChannelType, relaxed: bool = False):
         if relaxed:
-            self.name = Instruction.relaxed_wait.value
+            self.name = Instruction.relaxed_wait
         else:
-            self.name = Instruction.wait.value
+            self.name = Instruction.wait
         self.channel_ids = channels_ids
         self.channel_type = channel_type
 
     def to_json(self):
-        result = {"name": self.name}
+        result = {"name": self.name.value}
         result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
         return result
@@ -130,11 +119,11 @@ class BarrierOperation(BaseOperation):
         else:
             self.barrier_id = BarrierOperation.__current_barriers[rank][barrier_info]
 
-        self.name = Instruction.barrier.value
+        self.name = Instruction.barrier
         self.barrier_info = barrier_info
 
     def to_json(self):
-        result = {"name": self.name}
+        result = {"name": self.name.value}
         result["barrier_id"] = self.barrier_id
         result["num_threadblocks"] = len(self.barrier_info.tb_list)
 
@@ -154,12 +143,12 @@ class BarrierOperation(BaseOperation):
 @dataclass
 class FlushOperation(BaseOperation):
     def __init__(self, channels_ids: List[int], channel_type: ChannelType):
-        self.name = Instruction.flush.value
+        self.name = Instruction.flush
         self.channel_ids = channels_ids
         self.channel_type = channel_type
 
     def to_json(self):
-        result = {"name": self.name}
+        result = {"name": self.name.value}
         result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
         return result
@@ -174,14 +163,14 @@ class GetOperation(BaseOperation):
         channel_ids: List[int],
         channel_type: ChannelType,
     ):
-        self.name = Instruction.get.value
+        self.name = Instruction.get
         self.src_buff = src_buff
         self.dst_buff = dst_buff
         self.channel_ids = channel_ids
         self.channel_type = channel_type
 
     def to_json(self):
-        result = {"name": self.name}
+        result = {"name": self.name.value}
         result["src_buff"] = []
         for chunk in self.src_buff:
             result["src_buff"].append(chunk.to_json())
@@ -207,21 +196,21 @@ class PutOperation(BaseOperation):
         with_signal_and_flush: bool = False,
     ):
         if from_packet and to_packet:
-            self.name = Instruction.read_put_packet.value
+            self.name = Instruction.read_put_packet
         elif to_packet:
-            self.name = Instruction.put_packet.value
+            self.name = Instruction.put_packet
         elif from_packet:
             raise RuntimeError(f"Put Operation from Packet is not Supported.")
         else:
             if with_signal:
                 if with_signal_and_flush:
-                    self.name = Instruction.put_with_signal_and_flush.value
+                    self.name = Instruction.put_with_signal_and_flush
                 else:
-                    self.name = Instruction.put_with_signal.value
+                    self.name = Instruction.put_with_signal
             elif with_signal_and_flush:
-                self.name = Instruction.put_with_signal_and_flush.value
+                self.name = Instruction.put_with_signal_and_flush
             else:
-                self.name = Instruction.put.value
+                self.name = Instruction.put
 
         self.src_buff = src_buff
         self.dst_buff = dst_buff
@@ -229,7 +218,7 @@ class PutOperation(BaseOperation):
         self.channel_type = channel_type
 
     def to_json(self):
-        result = {"name": self.name}
+        result = {"name": self.name.value}
         result["src_buff"] = []
         for chunk in self.src_buff:
             result["src_buff"].append(chunk.to_json())
@@ -256,18 +245,18 @@ class ReduceOperation(BaseOperation):
     ):
         if len(remote_src_buff) == 0 and len(remote_dst_buff) == 0:
             if packet:
-                self.name = Instruction.reduce_copy_packet.value
+                self.name = Instruction.reduce_copy_packet
             else:
-                self.name = Instruction.reduce_copy.value
+                self.name = Instruction.reduce_copy
         elif len(remote_src_buff) == 0:
             if packet:
-                self.name = Instruction.reduce_copy_send_packet.value
+                self.name = Instruction.reduce_copy_send_packet
             else:
-                self.name = Instruction.reduce_copy_send.value
+                self.name = Instruction.reduce_copy_send
         elif len(remote_dst_buff) == 0 and not packet:
-            self.name = Instruction.read_reduce_copy.value
+            self.name = Instruction.read_reduce_copy
         elif not packet:
-            self.name = Instruction.read_reduce_copy_send.value
+            self.name = Instruction.read_reduce_copy_send
         else:
             raise RuntimeError(f"Reduce Operation invalid parameters.")
 
@@ -280,7 +269,7 @@ class ReduceOperation(BaseOperation):
         self.reduce_operation = reduce_operation
 
     def to_json(self):
-        result = {"name": self.name}
+        result = {"name": self.name.value}
         result["src_buff"] = []
         for chunk in self.local_src_buff:
             result["src_buff"].append(chunk.to_json())
@@ -310,12 +299,12 @@ class GroupLoadReduce(BaseOperation):
         buffer_type: BufferType,
         buffer_offset: int,
         size: int,
-        dst_chunk: NVLSChunk,
+        dst_chunk: Chunk,
         tb_channel_id: List[int] = [],
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
-        self.name = Instruction.group_load_reduce.value
+        self.name = Instruction.group_load_reduce
         self.buffer_type = buffer_type
         self.buffer_offset = buffer_offset
         self.size = size
@@ -325,7 +314,7 @@ class GroupLoadReduce(BaseOperation):
         self.reduce_operation = reduce_operation
 
     def to_json(self):
-        result = {"name": self.name}
+        result = {"name": self.name.value}
         result["buffer_type"] = self.buffer_type.value
         result["buffer_offset"] = self.buffer_offset
         result["size"] = self.size
@@ -340,7 +329,7 @@ class GroupLoadReduce(BaseOperation):
 class GroupStore(BaseOperation):
     def __init__(
         self,
-        src_chunk: NVLSChunk,
+        src_chunk: Chunk,
         buffer_type: BufferType,
         buffer_offset: int,
         size: int,
@@ -348,7 +337,7 @@ class GroupStore(BaseOperation):
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
-        self.name = Instruction.group_store.value
+        self.name = Instruction.group_store
         self.src_chunk = src_chunk
         self.buffer_type = buffer_type
         self.buffer_offset = buffer_offset
@@ -358,7 +347,7 @@ class GroupStore(BaseOperation):
         self.reduce_operation = reduce_operation
 
     def to_json(self):
-        result = {"name": self.name}
+        result = {"name": self.name.value}
         result["src_chunk"] = self.src_chunk.to_json()
         result["buffer_type"] = self.buffer_type.value
         result["buffer_offset"] = self.buffer_offset
