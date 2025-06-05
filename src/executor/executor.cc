@@ -129,6 +129,7 @@ struct ExecutionContext {
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
   std::shared_ptr<char> scratchBuffer;
+  std::shared_ptr<char> smemaphores;
   size_t scratchBufferSize;
   int nthreadsPerBlock;
   DeviceExecutionPlanKey currentDevicePlan;
@@ -187,6 +188,7 @@ struct Executor::Impl {
     this->setupChannels(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
     this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
+    this->setupSemaphores(context, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
         GpuBuffer(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
@@ -342,6 +344,17 @@ struct Executor::Impl {
     }
   }
 
+  void setupSemaphores(ExecutionContext& context, const ExecutionPlan& plan) {
+    std::vector<DeviceSemaphore> semaphores;
+    for (const SemaphoreInfo& info : plan.impl_->semaphoreInfos) {
+      DeviceSemaphore semaphore(info.initValue);
+      semaphores.push_back(semaphore);
+    }
+    context.smemaphores = GpuBuffer(semaphores.size() * sizeof(DeviceSemaphore)).memory();
+    gpuMemcpy(context.smemaphores.get(), (char*)semaphores.data(), semaphores.size() * sizeof(DeviceSemaphore),
+              cudaMemcpyHostToDevice);
+  }
+
   void setupDeviceExecutionPlan(ExecutionContext& context, const DeviceExecutionPlanKey& key, int rank,
                                 const ExecutionPlan& plan) {
     std::vector<DeviceExecutionPlan> deviceExecutionPlans;
@@ -409,13 +422,13 @@ struct Executor::Impl {
         ExecutionKernel::launchKernel<LL16Packet>(
             rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
             context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
-            sharedMemSize, stream, ++flag);
+            (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, ++flag);
         break;
       case PacketType::LL8:
         ExecutionKernel::launchKernel<LL8Packet>(
             rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
             context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
-            sharedMemSize, stream, ++flag);
+            (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, ++flag);
         break;
       default:
         throw Error("Invalid packet type", ErrorCode::ExecutorError);

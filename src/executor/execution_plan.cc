@@ -251,6 +251,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize, size_t o
   }
   this->setupChannels(gpus);
   this->setupRemoteBuffers(gpus);
+  this->setupSemaphores(gpus, rank);
   this->setupOperations(gpus, rank, contsSrcOffset, constDstOffset);
 }
 

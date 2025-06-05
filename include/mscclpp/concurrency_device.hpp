@@ -57,6 +57,10 @@ struct DeviceSemaphore {
   /// Construct a new DeviceSemaphore object.
   MSCCLPP_INLINE DeviceSemaphore() = default;
 
+  // / Construct a new DeviceSemaphore object with an initial value.
+  /// @param initialValue The initial value of the semaphore.
+  MSCCLPP_INLINE DeviceSemaphore(int initialValue) : semaphore_(initialValue) {}
+
   /// Destroy the DeviceSemaphore object.
   MSCCLPP_INLINE ~DeviceSemaphore() = default;
 

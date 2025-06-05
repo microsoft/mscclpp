@@ -179,8 +179,7 @@ namespace mscclpp {
 
 #define MAX_DEVICE_FUNCTIONS_IN_PIPELINE 16
 __device__ DeviceSyncer deviceSyncers[MAX_DEVICE_SYNCERS];
-// TODO: change later to setup init values from the plan
-__device__ DeviceSemaphore DeviceSemaphores[MAX_DEVICE_SEMAPHORES];
+__device__ DeviceSemaphore* deviceSemaphores;
 
 __constant__ uint32_t BUFFER_SIZES[3] = {UINT32_MAX, UINT32_MAX, 1 << 26 /* 64MB */};
 
@@ -642,7 +641,7 @@ MSCCLPP_DEVICE_INLINE void handlePipeline(const Operation& op, T* input, T* outp
 MSCCLPP_DEVICE_INLINE void handleSemRelease(const Operation& op) {
   int tid = threadIdx.x;
   if (tid < op.nDeviceSemaphores) {
-    DeviceSemaphore* sem = &DeviceSemaphores[op.deviceSemaphoreIds[tid]];
+    DeviceSemaphore* sem = &deviceSemaphores[op.deviceSemaphoreIds[tid]];
     sem->release();
   }
 }
@@ -650,7 +649,7 @@ MSCCLPP_DEVICE_INLINE void handleSemRelease(const Operation& op) {
 MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op) {
   int tid = threadIdx.x;
   if (tid < op.nDeviceSemaphores) {
-    DeviceSemaphore* sem = &DeviceSemaphores[op.deviceSemaphoreIds[tid]];
+    DeviceSemaphore* sem = &deviceSemaphores[op.deviceSemaphoreIds[tid]];
     sem->acquire();
   }
 }
@@ -733,7 +732,8 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
 
 template <typename T, typename PacketType = LL16Packet>
 __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
-                                size_t scratchSize, DeviceExecutionPlan* plan, uint32_t flag
+                                size_t scratchSize, DeviceExecutionPlan* plan, DeviceSemaphore* semaphores,
+                                uint32_t flag
 #if defined(ENABLE_NPKIT)
                                 ,
                                 NpKitEventCollectContext* npKitEventCollectContexts, uint64_t* cpuTimestamp) {
@@ -758,6 +758,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
     sharedMem[i] = ((int4*)localPlan)[i];
   }
   __syncshm();
+  deviceSemaphores = semaphores;
   localPlan = (DeviceExecutionPlan*)sharedMem;
   int nOperations = localPlan->nOperations;
   Operation* operations = (Operation*)localPlan->operations;
@@ -819,12 +820,12 @@ class ExecutionKernel {
 #if defined(MSCCLPP_DEVICE_HIP)
   template <typename PacketType>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
-                           size_t scratchSize, DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize,
-                           cudaStream_t stream, uint32_t flag = 0) {
+                           size_t scratchSize, DataType dataType, DeviceExecutionPlan* plan,
+                           DeviceSemaphore* semaphores, size_t sharedMemSize, cudaStream_t stream, uint32_t flag = 0) {
     switch (dataType) {
       case DataType::INT32:
         executionKernel<int32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, plan, flag
+            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -834,7 +835,7 @@ class ExecutionKernel {
         break;
       case DataType::UINT32:
         executionKernel<uint32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, plan, flag
+            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -844,7 +845,7 @@ class ExecutionKernel {
         break;
       case DataType::FLOAT16:
         executionKernel<half, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, plan, flag
+            rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -854,7 +855,7 @@ class ExecutionKernel {
         break;
       case DataType::FLOAT32:
         executionKernel<float, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, plan, flag
+            rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -864,7 +865,7 @@ class ExecutionKernel {
         break;
       case DataType::BFLOAT16:
         executionKernel<__bfloat16, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchSize, plan, flag
+            rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -877,8 +878,8 @@ class ExecutionKernel {
 #else   // !defined(MSCCLPP_DEVICE_HIP)
   template <typename PacketType>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
-                           size_t scratchSize, DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize,
-                           cudaStream_t stream, uint32_t flag = 0);
+                           size_t scratchSize, DataType dataType, DeviceExecutionPlan* plan,
+                           DeviceSemaphore* semaphores, size_t sharedMemSize, cudaStream_t stream, uint32_t flag = 0);
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
 };
 }  // namespace mscclpp
