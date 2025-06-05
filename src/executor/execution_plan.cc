@@ -106,7 +106,8 @@ std::set groupChannelType{mscclpp::ChannelType::SWITCH};
 namespace mscclpp {
 using json = nlohmann::json;
 
-ExecutionPlan::Impl::Impl(const std::string planPath) : planPath(planPath), isUsingPacket(false) {
+ExecutionPlan::Impl::Impl(const std::string& planPath, int rank)
+    : planPath(planPath), isUsingPacket(false), rank(rank) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
   this->name = obj["name"];
@@ -146,7 +147,7 @@ std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank, size_t sendBuf
   if (sendBuffserSize == 0 && recvBufferSize == 0) {
     return this->nvlsInfos.at(rank);
   }
-  size_t chunkSize = this->getUpperBoundChunkSize(rank, sendBuffserSize, recvBufferSize);
+  size_t chunkSize = this->getUpperBoundChunkSize(sendBuffserSize, recvBufferSize);
   std::vector<NvlsInfo> infos = this->nvlsInfos.at(rank);
   for (auto& info : infos) {
     info.bufferSize = info.bufferSize * chunkSize;
@@ -183,35 +184,34 @@ std::vector<BufferInfo> ExecutionPlan::Impl::getLocalBufferToSend(int rank) cons
   return this->localBufferToSend.at(rank);
 }
 
-size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const {
+size_t ExecutionPlan::Impl::getScratchBufferSize(size_t inputSize, size_t outputSize) const {
   size_t sizePerRank = 0;
-  if (this->inputChunks.at(rank) != 0)
-    sizePerRank = inputSize / this->inputChunks.at(rank);
-  else if (this->outputChunks.at(rank) != 0)
-    sizePerRank = outputSize / this->outputChunks.at(rank);
+  if (this->inputChunks != 0)
+    sizePerRank = inputSize / this->inputChunks;
+  else if (this->outputChunks != 0)
+    sizePerRank = outputSize / this->outputChunks;
   else
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
 
   if (this->isUsingPacket) {
-    return sizePerRank * this->scratchChunks.at(rank) * 2 /* data + flag*/ * 2 /*double buffer*/;
+    return sizePerRank * this->scratchChunks * 2 /* data + flag*/ * 2 /*double buffer*/;
   }
-  return sizePerRank * this->scratchChunks.at(rank);
+  return sizePerRank * this->scratchChunks;
 }
 
-size_t ExecutionPlan::Impl::getMaxScratchBufferSize(int rank) const {
+size_t ExecutionPlan::Impl::getMaxScratchBufferSize() const {
   if (this->maxMessageSize == std::numeric_limits<uint64_t>::max()) {
     return std::numeric_limits<size_t>::max();
   }
   size_t sizePerChunk = 0;
-  if (this->inputChunks.at(rank) != 0)
-    sizePerChunk = maxMessageSize / this->inputChunks.at(rank);
-  else if (this->outputChunks.at(rank) != 0)
-    sizePerChunk = maxMessageSize / this->outputChunks.at(rank);
+  if (this->inputChunks != 0)
+    sizePerChunk = maxMessageSize / this->inputChunks;
+  else if (this->outputChunks != 0)
+    sizePerChunk = maxMessageSize / this->outputChunks;
   else
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
 
-  return this->getScratchBufferSize(rank, sizePerChunk * this->inputChunks.at(rank),
-                                    sizePerChunk * this->outputChunks.at(rank));
+  return this->getScratchBufferSize(sizePerChunk * this->inputChunks, sizePerChunk * this->outputChunks);
 }
 
 std::vector<Operation> ExecutionPlan::Impl::getOperations(int threadblock) const {
@@ -243,16 +243,17 @@ void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize, size_t o
   this->isInPlace = obj["inplace"];
   const auto& gpus = obj["gpus"];
 
-  for (const auto& gpu : gpus) {
-    int rank = gpu["id"];
-    this->inputChunks[rank] = gpu["input_chunks"];
-    this->outputChunks[rank] = gpu["output_chunks"];
-    this->scratchChunks[rank] = gpu["scratch_chunks"];
+  auto& gpu = gpus[rank];
+  if (gpu["id"] != rank) {
+    throw Error("GPU rank does not match", ErrorCode::ExecutorError);
   }
+  this->inputChunks = gpu["input_chunks"];
+  this->outputChunks = gpu["output_chunks"];
+  this->scratchChunks = gpu["scratch_chunks"];
   this->setupChannels(gpus);
   this->setupRemoteBuffers(gpus);
-  this->setupSemaphores(gpus, rank);
-  this->setupOperations(gpus, rank, contsSrcOffset, constDstOffset);
+  this->setupSemaphores(gpu);
+  this->setupOperations(gpu, contsSrcOffset, constDstOffset);
 }
 
 void ExecutionPlan::Impl::lightLoadExecutionPlan(int rank, size_t inputSize, size_t outputSize, size_t contsSrcOffset,
@@ -267,17 +268,18 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(int rank, size_t inputSize, siz
     this->isUsingPacket = true;
   }
   const auto& gpus = obj["gpus"];
-
-  for (const auto& gpu : gpus) {
-    int rank = gpu["id"];
-    this->inputChunks[rank] = gpu["input_chunks"];
-    this->outputChunks[rank] = gpu["output_chunks"];
-    this->scratchChunks[rank] = gpu["scratch_chunks"];
+  const auto& gpu = gpus[rank];
+  if (gpu["id"] != rank) {
+    throw Error("GPU rank does not match", ErrorCode::ExecutorError);
   }
+
+  this->inputChunks = gpu["input_chunks"];
+  this->outputChunks = gpu["output_chunks"];
+  this->scratchChunks = gpu["scratch_chunks"];
 
   this->inputSize = inputSize;
   this->outputSize = outputSize;
-  this->setupOperations(gpus, rank, contsSrcOffset, constDstOffset);
+  this->setupOperations(gpus, contsSrcOffset, constDstOffset);
 }
 
 void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo>& channelInfos,
@@ -435,11 +437,7 @@ void ExecutionPlan::Impl::setupRemoteBuffers(const json& gpus) {
   }
 }
 
-void ExecutionPlan::Impl::setupSemaphores(const json& gpus, int rank) {
-  auto& gpu = gpus[rank];
-  if (gpu["id"] != rank) {
-    throw Error("GPU ID does not match rank", ErrorCode::ExecutorError);
-  }
+void ExecutionPlan::Impl::setupSemaphores(const json& gpu) {
   if (!gpu.contains("semaphores")) {
     return;
   }
@@ -450,12 +448,8 @@ void ExecutionPlan::Impl::setupSemaphores(const json& gpus, int rank) {
   }
 }
 
-void ExecutionPlan::Impl::setupOperations(const json& gpus, int rank, size_t constSrcOffset, size_t constDstOffset) {
+void ExecutionPlan::Impl::setupOperations(const json& gpu, size_t constSrcOffset, size_t constDstOffset) {
   // setup threadblocks and operations
-  auto gpu = gpus[rank];
-  if (gpu["id"] != rank) {
-    throw Error("GPU ID does not match rank", ErrorCode::ExecutorError);
-  }
   for (const auto& threadblock : gpu["threadblocks"]) {
     int threadBlockId = threadblock["id"];
     std::vector<Operation> ops;
@@ -534,9 +528,9 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
         operation.nvlsInputBufferType = bufferType;
         operation.nvlsInputIndex = buff["switch_channel_id"];
       }
-      operation.inputOffsets[i] = this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
+      operation.inputOffsets[i] = this->getOffset(this->inputSize, this->outputSize, buff["index"]) + constOffset;
       operation.inputBufferSizes[i] =
-          this->getBufferSize(rank, this->inputSize, this->outputSize, buff["index"], buff["size"]);
+          this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
     }
   }
   if (op.contains("dst_buff")) {
@@ -560,10 +554,9 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
         operation.nvlsOutputBufferType = bufferType;
         operation.nvlsOutputIndex = buff["switch_channel_id"];
       }
-      operation.outputOffsets[i] =
-          this->getOffset(rank, this->inputSize, this->outputSize, buff["index"]) + constOffset;
+      operation.outputOffsets[i] = this->getOffset(this->inputSize, this->outputSize, buff["index"]) + constOffset;
       operation.outputBufferSizes[i] =
-          this->getBufferSize(rank, this->inputSize, this->outputSize, buff["index"], buff["size"]);
+          this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
     }
   }
   if (op.contains("barrier_id")) {
@@ -582,39 +575,37 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
     operation.unitSize = op["iter_context"]["unit_size"];
     operation.nOperations = op["ops"].size();
     int nChunks = op["iter_context"]["num_chunks"];
-    size_t sizes = nChunks * getUpperBoundChunkSize(rank, this->inputSize, this->outputSize);
+    size_t sizes = nChunks * getUpperBoundChunkSize(this->inputSize, this->outputSize);
     operation.nIterations = (sizes + (operation.unitSize - 1)) / operation.unitSize;
   }
 }
 
-std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunksForRank(int rank, size_t inputSize,
-                                                                         size_t outputSize) const {
+std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunks(size_t inputSize, size_t outputSize) const {
   std::pair<size_t, uint32_t> sizePerRank;
-  if (this->inputChunks.at(rank) == 0 && this->outputChunks.at(rank) == 0) {
+  if (this->inputChunks == 0 && this->outputChunks == 0) {
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
-  } else if (this->inputChunks.at(rank) != 0 && this->outputChunks.at(rank) != 0) {
-    if (inputSize / this->inputChunks.at(rank) != outputSize / this->outputChunks.at(rank))
+  } else if (this->inputChunks != 0 && this->outputChunks != 0) {
+    if (inputSize / this->inputChunks != outputSize / this->outputChunks)
       throw mscclpp::Error("Size per chunks inconsistent: inputSize " + std::to_string(inputSize) + " inputChunks " +
-                               std::to_string(this->inputChunks.at(rank)) + " outputSize " +
-                               std::to_string(outputSize) + " outputChunks " +
-                               std::to_string(this->outputChunks.at(rank)),
+                               std::to_string(this->inputChunks) + " outputSize " + std::to_string(outputSize) +
+                               " outputChunks " + std::to_string(this->outputChunks),
                            mscclpp::ErrorCode::ExecutorError);
     else
-      sizePerRank = std::make_pair(inputSize, this->inputChunks.at(rank));
-  } else if (this->inputChunks.at(rank) != 0) {
-    sizePerRank = std::make_pair(inputSize, this->inputChunks.at(rank));
-  } else if (this->outputChunks.at(rank) != 0) {
-    sizePerRank = std::make_pair(outputSize, this->outputChunks.at(rank));
+      sizePerRank = std::make_pair(inputSize, this->inputChunks);
+  } else if (this->inputChunks != 0) {
+    sizePerRank = std::make_pair(inputSize, this->inputChunks);
+  } else if (this->outputChunks != 0) {
+    sizePerRank = std::make_pair(outputSize, this->outputChunks);
   }
   return sizePerRank;
 }
 
-size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex) const {
+size_t ExecutionPlan::Impl::getOffset(size_t inputSize, size_t outputSize, uint32_t chunkIndex) const {
   if (inputSize % this->bufferAlignment != 0) {
     throw Error("inputSize must be a multiple of alignment", ErrorCode::ExecutorError);
   }
 
-  auto rankSizeAndChunks = getSizeAndChunksForRank(rank, inputSize, outputSize);
+  auto rankSizeAndChunks = getSizeAndChunks(inputSize, outputSize);
   uint32_t nChunks = rankSizeAndChunks.second;
   uint32_t nelems = rankSizeAndChunks.first / (this->bufferAlignment * sizeof(uint8_t));
 
@@ -624,16 +615,15 @@ size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, size_t outputS
   return static_cast<size_t>(offset) * this->bufferAlignment;
 }
 
-size_t ExecutionPlan::Impl::getBufferSize(int rank, size_t inputSize, size_t outputSize, uint32_t index,
-                                          uint32_t nChunks) const {
-  uint32_t beginOff = getOffset(rank, inputSize, outputSize, index);
-  uint32_t endOff = getOffset(rank, inputSize, outputSize, index + nChunks);
+size_t ExecutionPlan::Impl::getBufferSize(size_t inputSize, size_t outputSize, uint32_t index, uint32_t nChunks) const {
+  uint32_t beginOff = getOffset(inputSize, outputSize, index);
+  uint32_t endOff = getOffset(inputSize, outputSize, index + nChunks);
   return endOff - beginOff;
 }
 
-size_t ExecutionPlan::Impl::getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const {
-  size_t nInputChunks = this->inputChunks.at(rank);
-  size_t nOutputChunks = this->outputChunks.at(rank);
+size_t ExecutionPlan::Impl::getUpperBoundChunkSize(size_t inputSize, size_t outputSize) const {
+  size_t nInputChunks = this->inputChunks;
+  size_t nOutputChunks = this->outputChunks;
   if (nInputChunks != 0) {
     size_t nelems = inputSize / this->bufferAlignment;
     return (nelems + nInputChunks - 1) / nInputChunks * this->bufferAlignment;
@@ -652,14 +642,11 @@ void ExecutionPlan::Impl::reset() {
   this->threadblockMemoryChannelMap.clear();
   this->threadblockPortChannelMap.clear();
   this->threadblockNvlsChannelMap.clear();
-  this->inputChunks.clear();
-  this->outputChunks.clear();
-  this->scratchChunks.clear();
 }
 
 void ExecutionPlan::Impl::operationsReset() { this->operations.clear(); }
 
-ExecutionPlan::ExecutionPlan(const std::string& planPath) : impl_(std::make_shared<Impl>(planPath)) {}
+ExecutionPlan::ExecutionPlan(const std::string& planPath, int rank) : impl_(std::make_shared<Impl>(planPath, rank)) {}
 
 std::string ExecutionPlan::name() const { return this->impl_->name; }
 

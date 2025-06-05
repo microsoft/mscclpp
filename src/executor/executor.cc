@@ -176,9 +176,9 @@ struct Executor::Impl {
     plan.impl_->loadExecutionPlan(rank, inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
 
     ExecutionContext context;
-    size_t maxScratchBufferSize = plan.impl_->getMaxScratchBufferSize(rank);
+    size_t maxScratchBufferSize = plan.impl_->getMaxScratchBufferSize();
     size_t scratchBufferSize =
-        std::min(plan.impl_->getScratchBufferSize(rank, sendMemRange, recvMemRange), maxScratchBufferSize);
+        std::min(plan.impl_->getScratchBufferSize(sendMemRange, recvMemRange), maxScratchBufferSize);
     std::shared_ptr<char> scratchBuffer = GpuBuffer(scratchBufferSize).memory();
     context.scratchBuffer = scratchBuffer;
     context.scratchBufferSize = scratchBufferSize;

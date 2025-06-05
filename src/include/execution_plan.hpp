@@ -68,7 +68,7 @@ struct SemaphoreInfo {
 
 struct ExecutionPlan::Impl {
  public:
-  Impl(const std::string planPath);
+  Impl(const std::string& planPath, int rank);
   ~Impl() = default;
 
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
@@ -77,8 +77,8 @@ struct ExecutionPlan::Impl {
   std::vector<int> getConnectedPeers(int rank) const;
   std::vector<BufferInfo> getRemoteBufferInfos(int rank) const;
   std::vector<BufferInfo> getLocalBufferToSend(int rank) const;
-  size_t getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const;
-  size_t getMaxScratchBufferSize(int rank) const;
+  size_t getScratchBufferSize(size_t inputSize, size_t outputSize) const;
+  size_t getMaxScratchBufferSize() const;
   std::vector<Operation> getOperations(int threadblock) const;
   int getThreadblockCount() const;
   int getNThreadsPerBlock() const;
@@ -88,8 +88,8 @@ struct ExecutionPlan::Impl {
                               size_t constDstOffset);
   void setupChannels(const nlohmann::json& gpus);
   void setupRemoteBuffers(const nlohmann::json& gpus);
-  void setupSemaphores(const nlohmann::json& gpus, int rank);
-  void setupOperations(const nlohmann::json& gpus, int rank, size_t contsSrcOffset, size_t constDstOffset);
+  void setupSemaphores(const nlohmann::json& gpu);
+  void setupOperations(const nlohmann::json& gpu, size_t contsSrcOffset, size_t constDstOffset);
 
   void reset();
   void operationsReset();
@@ -98,6 +98,8 @@ struct ExecutionPlan::Impl {
   std::string collective;
   const std::string planPath;
   bool isUsingPacket;
+  int rank;
+
   // operations for current ranks [threadblock] = list[operations]
   std::vector<std::vector<Operation>> operations;
   std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
@@ -116,9 +118,9 @@ struct ExecutionPlan::Impl {
   std::unordered_map<int, std::vector<std::vector<int>>> threadblockMemoryChannelBufferMap;
   std::unordered_map<int, std::vector<std::vector<int>>> threadblockPortChannelBufferMap;
 
-  std::unordered_map<int, uint32_t> inputChunks;
-  std::unordered_map<int, uint32_t> outputChunks;
-  std::unordered_map<int, uint32_t> scratchChunks;
+  uint32_t inputChunks;
+  uint32_t outputChunks;
+  uint32_t scratchChunks;
   size_t inputSize;
   size_t outputSize;
   int nThreadsPerBlock;
@@ -128,10 +130,10 @@ struct ExecutionPlan::Impl {
   bool isInPlace;
 
  private:
-  std::pair<size_t, uint32_t> getSizeAndChunksForRank(int rank, size_t inputSize, size_t outputSize) const;
-  size_t getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex) const;
-  size_t getBufferSize(int rank, size_t inputSize, size_t outputSize, uint32_t index, uint32_t nChunks) const;
-  size_t getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const;
+  std::pair<size_t, uint32_t> getSizeAndChunks(size_t inputSize, size_t outputSize) const;
+  size_t getOffset(size_t inputSize, size_t outputSize, uint32_t chunkIndex) const;
+  size_t getBufferSize(size_t inputSize, size_t outputSize, uint32_t index, uint32_t nChunks) const;
+  size_t getUpperBoundChunkSize(size_t inputSize, size_t outputSize) const;
   void setupOperation(const nlohmann::json& op, Operation& operation, int rank, int threadBlockId,
                       size_t constSrcOffset, size_t constDstOffset);
 
