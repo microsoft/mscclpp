@@ -1,5 +1,6 @@
 from mscclpp.language.channel import Channel
 from mscclpp.language.internal.types import ChannelType, RemoteBuffer
+from mscclpp.language.optmize.optmizer import *
 from dataclasses import dataclass, field
 
 
@@ -42,23 +43,6 @@ class Threadblock:
             ChannelType.switch: {},
         }
 
-    def to_json(self) -> dict:
-        channels = []
-        for ch in self.__channels.values():
-            if len(ch.channel_ids) > 0:
-                channels.append({"channel_type": ch.channel_type.value, "channel_ids": list(ch.channel_ids)})
-        remote_buffers = []
-        for rb in self.__remote_buffers.values():
-            if len(rb.remote_buffer_ids) > 0:
-                remote_buffers.append(rb.to_json())
-
-        return {
-            "id": self.id,
-            "ops": [op.to_json() for op in self.ops],
-            "channels": channels,
-            "remote_buffer_refs": remote_buffers,
-        }
-
     def add_channel(self, channel: Channel):
         if channel.channel_id not in self.__intra_channel_ids[channel.channel_type]:
             self.__intra_channel_ids[channel.channel_type][channel.channel_id] = len(
@@ -76,3 +60,24 @@ class Threadblock:
 
     def add_operation(self, op):
         self.ops.append(op)
+
+    def optmize_operations(self):
+        self.ops = fuse_instructions(self.ops)
+
+    def to_json(self) -> dict:
+        self.optmize_operations()
+        channels = []
+        for ch in self.__channels.values():
+            if len(ch.channel_ids) > 0:
+                channels.append({"channel_type": ch.channel_type.value, "channel_ids": list(ch.channel_ids)})
+        remote_buffers = []
+        for rb in self.__remote_buffers.values():
+            if len(rb.remote_buffer_ids) > 0:
+                remote_buffers.append(rb.to_json())
+
+        return {
+            "id": self.id,
+            "ops": [op.to_json() for op in self.ops],
+            "channels": channels,
+            "remote_buffer_refs": remote_buffers,
+        }
