@@ -39,16 +39,21 @@ GpuStream GpuStreamPool::getStream() {
   if (!streams_.empty()) {
     auto stream = streams_.back();
     streams_.pop_back();
-    return GpuStream(shared_from_this(), stream);
+    return GpuStream(gpuStreamPool(), stream);
   }
-  return GpuStream(shared_from_this(), std::make_shared<CudaStreamWithFlags>(cudaStreamNonBlocking));
+  return GpuStream(gpuStreamPool(), std::make_shared<CudaStreamWithFlags>(cudaStreamNonBlocking));
 }
 
 void GpuStreamPool::clear() { streams_.clear(); }
 
+// A global pool instance
+std::shared_ptr<GpuStreamPool> gGpuStreamPool_;
+
 std::shared_ptr<GpuStreamPool> gpuStreamPool() {
-  static std::shared_ptr<GpuStreamPool> pool = std::make_shared<GpuStreamPool>();
-  return pool;
+  if (!gGpuStreamPool_) {
+    gGpuStreamPool_ = std::make_shared<GpuStreamPool>();
+  }
+  return gGpuStreamPool_;
 }
 
 namespace detail {
