@@ -25,7 +25,7 @@ class Channel:
         get_program().add_channel(self)
 
     def signal(self, tb: int, sync: SyncType = SyncType.none, relaxed=False):
-        if sync == SyncType.before or sync == SyncType.both:
+        if sync == SyncType.before:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
@@ -33,12 +33,12 @@ class Channel:
         op = SignalOperation(tb_channel_ids, self.channel_type, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
-        if sync == SyncType.after or sync == SyncType.both:
+        if sync == SyncType.after:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
     def wait(self, tb: int, sync: SyncType = SyncType.none, relaxed=False):
-        if sync == SyncType.before or sync == SyncType.both:
+        if sync == SyncType.before:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
@@ -46,7 +46,7 @@ class Channel:
         op = WaitOperation(tb_channel_ids, self.channel_type, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
-        if sync == SyncType.after or sync == SyncType.both:
+        if sync == SyncType.after:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
@@ -54,7 +54,7 @@ class Channel:
         if self.channel_type != ChannelType.port:
             raise RuntimeError(f"Flush operation is only supported for ChannelType.port.")
 
-        if sync == SyncType.before or sync == SyncType.both:
+        if sync == SyncType.before:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
@@ -62,11 +62,14 @@ class Channel:
         op = FlushOperation(tb_channel_ids, self.channel_type)
         get_program().add_operation(self.src_rank, tb, op)
 
-        if sync == SyncType.after or sync == SyncType.both:
+        if sync == SyncType.after:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
     def get(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+        if self.channel_type != ChannelType.memory:
+            raise RuntimeError(f"Get operation is only supported for ChannelType.memory.")
+
         if dst_chunk.rank != self.src_rank:
             raise RuntimeError(
                 f"Source chunk rank {dst_chunk.rank} does not match current channel source rank {self.src_rank}."

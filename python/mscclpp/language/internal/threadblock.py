@@ -1,4 +1,5 @@
 from mscclpp.language.internal.types import ChannelType, RemoteBuffer, BufferType
+from mscclpp.language.internal.optmizer import *
 from dataclasses import dataclass, field
 
 
@@ -57,6 +58,9 @@ class ThreadBlock:
 
     def add_operation(self, op):
         self.ops.append(op)
+
+    def optimize_operations(self):
+        self.ops = fuse_instructions(self.ops)
 
     def to_json(self) -> dict:
         return {
