@@ -29,8 +29,8 @@ class Channel:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
-        tb_channel_id = get_program().setup_channel(tb, self)
-        op = SignalOperation(tb_channel_id, self.channel_type, relaxed)
+        tb_channel_ids = get_program().setup_channel(tb, self)
+        op = SignalOperation(tb_channel_ids, self.channel_type, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
         if sync == SyncType.after or sync == SyncType.both:
@@ -42,8 +42,8 @@ class Channel:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
-        tb_channel_id = get_program().setup_channel(tb, self)
-        op = WaitOperation(tb_channel_id, self.channel_type, relaxed)
+        tb_channel_ids = get_program().setup_channel(tb, self)
+        op = WaitOperation(tb_channel_ids, self.channel_type, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
         if sync == SyncType.after or sync == SyncType.both:
@@ -58,8 +58,8 @@ class Channel:
             sync_op = SyncOperation()
             get_program().add_operation(self.src_rank, tb, sync_op)
 
-        tb_channel_id = get_program().setup_channel(tb, self)
-        op = FlushOperation(tb_channel_id, self.channel_type)
+        tb_channel_ids = get_program().setup_channel(tb, self)
+        op = FlushOperation(tb_channel_ids, self.channel_type)
         get_program().add_operation(self.src_rank, tb, op)
 
         if sync == SyncType.after or sync == SyncType.both:
@@ -78,12 +78,12 @@ class Channel:
 
         remote_chunk = RemoteBuffer(src_chunk.rank, src_chunk.buffer, self.channel_type)
         tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
-        tb_channel_id = get_program().setup_channel(tb, self)
+        tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = GetOperation(
             [RemoteChunk(tb_chunk_id, src_chunk.index, src_chunk.size)],
             [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
-            tb_channel_id,
+            tb_channel_ids,
             self.channel_type,
         )
 
@@ -114,12 +114,12 @@ class Channel:
 
         remote_chunk = RemoteBuffer(dst_chunk.rank, dst_chunk.buffer, self.channel_type)
         tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
-        tb_channel_id = get_program().setup_channel(tb, self)
+        tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
             [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
             [RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
-            tb_channel_id,
+            tb_channel_ids,
             self.channel_type,
             with_signal=with_signal,
             with_signal_and_flush=with_signal_and_flush,
@@ -147,12 +147,12 @@ class Channel:
 
         remote_chunk = RemoteBuffer(dst_chunk.rank, dst_chunk.buffer, self.channel_type)
         tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
-        tb_channel_id = get_program().setup_channel(tb, self)
+        tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
             [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
             [RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
-            tb_channel_id,
+            tb_channel_ids,
             self.channel_type,
             from_packet=from_packet,
             to_packet=True,
@@ -198,14 +198,14 @@ class Channel:
             )
             for chunk in remote_src_chunks
         ]
-        tb_channel_id = get_program().setup_channel(tb, self)
+        tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = ReduceOperation(
             [LocalChunk(local_src_chunk.buffer, local_src_chunk.index, local_src_chunk.size)],
             [LocalChunk(local_dst_chunk.buffer, local_dst_chunk.index, local_dst_chunk.size)],
             remote_chunks,
             [],
-            tb_channel_id,
+            tb_channel_ids,
             self.channel_type,
             reduce_op,
         )
@@ -255,14 +255,14 @@ class SwitchChannel:
                 if get_program().gpus[rank].scratch_chunks < buffer_offset + size:
                     get_program().gpus[rank].scratch_chunks = buffer_offset + size
 
-        tb_channel_id = get_program().setup_channel(tb, self)
+        tb_channel_ids = get_program().setup_channel(tb, self)
         for i in range(len(self.rank_group.ranks)):
             op = GroupLoadReduce(
                 self.buffer_type,
                 buffer_offset,
                 size,
                 dst_chunk,
-                [tb_channel_id[i]],
+                [tb_channel_ids[i]],
                 self.channel_type,
                 reduce_op,
             )
@@ -288,14 +288,14 @@ class SwitchChannel:
                 if get_program().gpus[rank].scratch_chunks < buffer_offset + size:
                     get_program().gpus[rank].scratch_chunks = buffer_offset + size
 
-        tb_channel_id = get_program().setup_channel(tb, self)
+        tb_channel_ids = get_program().setup_channel(tb, self)
         for i in range(len(self.rank_group.ranks)):
             op = GroupStore(
                 src_chunk,
                 self.buffer_type,
                 buffer_offset,
                 size,
-                [tb_channel_id[i]],
+                [tb_channel_ids[i]],
                 self.channel_type,
                 reduce_op,
             )
