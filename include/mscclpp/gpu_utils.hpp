@@ -98,7 +98,7 @@ class GpuStream {
 
 /// A pool of managed GPU streams. Only provides non-blocking streams.
 /// This is intended to be used for reusing temporal streams.
-class GpuStreamPool : public std::enable_shared_from_this<GpuStreamPool> {
+class GpuStreamPool {
  public:
   GpuStreamPool();
 
