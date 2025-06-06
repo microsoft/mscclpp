@@ -67,6 +67,10 @@ class MSCCLPPProgram:
     def add_operation(self, rank, tb, operation):
         self.gpus[rank].add_operation(tb, operation)
 
+    def optimize_operations(self):
+        for gpu in self.gpus:
+            gpu.optimize_operations()
+
     def to_json(self):
         json_obj = {
             "name": self.name,

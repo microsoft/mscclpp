@@ -9,11 +9,11 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def group_load_reduce_test(num_threads_per_block, min_message_size, max_message_size):
+def flush_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 3
-    collective = TestCollective(gpus, 1, 1)
+    collective = TestCollective(gpus, 0, 0)
     with MSCCLPPProgram(
-        "group_load_reduce_test",
+        "flush_test",
         collective,
         gpus,
         protocol="Simple",
@@ -22,13 +22,10 @@ def group_load_reduce_test(num_threads_per_block, min_message_size, max_message_
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
-        dst_chunk = Buffer(0, 2)
-        
-        ch = SwitchChannel(rank_list=[0, 1], buffer_type=BufferType.input)
-        ch.group_load_reduce(buffer_offset=0, size=1, tb=0, dst_chunk=dst_chunk[0:1])
-        
-        ch = SwitchChannel(rank_list=[0, 2], buffer_type=BufferType.input)
-        ch.group_load_reduce(buffer_offset=0, size=1, tb=0, dst_chunk=dst_chunk[0:1])
+        ch = Channel(1, 0, ChannelType.port)
+        ch.flush(tb=0, sync=SyncType.after)
+        ch = Channel(1, 0, ChannelType.port)
+        ch.flush(tb=0, sync=SyncType.before)
 
         print(JSON())
 
@@ -41,4 +38,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-group_load_reduce_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+flush_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

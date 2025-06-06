@@ -53,6 +53,10 @@ class Gpu:
 
         self.threadblocks[tb].add_operation(operation)
 
+    def optimize_operations(self):
+        for tb in self.threadblocks:
+            tb.optimize_operations()
+
     def to_json(self) -> dict:
         return {
             "id": self.id,

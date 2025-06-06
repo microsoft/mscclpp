@@ -33,6 +33,13 @@ class SyncOperation(BaseOperation):
     def __init__(self):
         self.name = Instruction.nop
 
+    def __add__(self, other):
+        fused_operation = None
+        if isinstance(other, SyncOperation):
+            fused_operation = SyncOperation()
+
+        return fused_operation
+
     def to_json(self):
         result = {"name": self.name.value}
         return result
@@ -59,6 +66,9 @@ class CopyOperation(BaseOperation):
         self.src_buff = src_buff
         self.dst_buff = dst_buff
 
+    def __add__(self, other):
+        return None
+
     def to_json(self):
         result = {"name": self.name.value}
         result["src_buff"] = []
@@ -77,12 +87,30 @@ class SignalOperation(BaseOperation):
             self.name = Instruction.relaxed_signal
         else:
             self.name = Instruction.signal
-        self.channel_ids = channels_ids
+        self.channel_ids = set(channels_ids)
         self.channel_type = channel_type
+
+    def __add__(self, other):
+        fused_operation = None
+        if (
+            isinstance(other, SignalOperation)
+            and self.channel_type == other.channel_type
+            and self.name == other.name
+            and not self.channel_ids & other.channel_ids
+        ):
+            fused_operation = SignalOperation(
+                channels_ids=self.channel_ids | other.channel_ids,
+                channel_type=self.channel_type,
+                relaxed=(self.name == Instruction.relaxed_signal),
+            )
+        if isinstance(other, SyncOperation):
+            fused_operation = self
+
+        return fused_operation
 
     def to_json(self):
         result = {"name": self.name.value}
-        result["channel_ids"] = self.channel_ids
+        result["channel_ids"] = list(self.channel_ids)
         result["channel_type"] = self.channel_type.value
         return result
 
@@ -94,12 +122,30 @@ class WaitOperation(BaseOperation):
             self.name = Instruction.relaxed_wait
         else:
             self.name = Instruction.wait
-        self.channel_ids = channels_ids
+        self.channel_ids = set(channels_ids)
         self.channel_type = channel_type
+
+    def __add__(self, other):
+        fused_operation = None
+        if (
+            isinstance(other, WaitOperation)
+            and self.name == other.name
+            and not self.channel_ids & other.channel_ids
+            and self.channel_type == other.channel_type
+        ):
+            fused_operation = WaitOperation(
+                channels_ids=self.channel_ids | other.channel_ids,
+                channel_type=self.channel_type,
+                relaxed=(self.name == Instruction.relaxed_wait),
+            )
+        if isinstance(other, SyncOperation):
+            fused_operation = self
+
+        return fused_operation
 
     def to_json(self):
         result = {"name": self.name.value}
-        result["channel_ids"] = self.channel_ids
+        result["channel_ids"] = list(self.channel_ids)
         result["channel_type"] = self.channel_type.value
         return result
 
@@ -121,6 +167,9 @@ class BarrierOperation(BaseOperation):
 
         self.name = Instruction.barrier
         self.barrier_info = barrier_info
+
+    def __add__(self, other):
+        return None
 
     def to_json(self):
         result = {"name": self.name.value}
@@ -144,12 +193,28 @@ class BarrierOperation(BaseOperation):
 class FlushOperation(BaseOperation):
     def __init__(self, channels_ids: List[int], channel_type: ChannelType):
         self.name = Instruction.flush
-        self.channel_ids = channels_ids
+        self.channel_ids = set(channels_ids)
         self.channel_type = channel_type
+
+    def __add__(self, other):
+        fused_operation = None
+        if (
+            isinstance(other, FlushOperation)
+            and self.channel_type == other.channel_type
+            and not self.channel_ids & other.channel_ids
+        ):
+            fused_operation = FlushOperation(
+                channels_ids=self.channel_ids | other.channel_ids,
+                channel_type=self.channel_type
+            )
+        if isinstance(other, SyncOperation):
+            fused_operation = self
+
+        return fused_operation
 
     def to_json(self):
         result = {"name": self.name.value}
-        result["channel_ids"] = self.channel_ids
+        result["channel_ids"] = list(self.channel_ids)
         result["channel_type"] = self.channel_type.value
         return result
 
@@ -168,6 +233,22 @@ class GetOperation(BaseOperation):
         self.dst_buff = dst_buff
         self.channel_ids = channel_ids
         self.channel_type = channel_type
+
+    def __add__(self, other):
+        fused_operation = None
+        if (
+            isinstance(other, GetOperation)
+            and self.src_buff[0].size == other.src_buff[0].size
+            and self.channel_type == other.channel_type
+        ):
+            fused_operation = GetOperation(
+                src_buff=self.src_buff + other.src_buff,
+                dst_buff=self.dst_buff + other.dst_buff,
+                channel_ids=self.channel_ids + other.channel_ids,
+                channel_type=self.channel_type,
+            )
+
+        return fused_operation
 
     def to_json(self):
         result = {"name": self.name.value}
@@ -216,6 +297,26 @@ class PutOperation(BaseOperation):
         self.dst_buff = dst_buff
         self.channel_ids = channel_ids
         self.channel_type = channel_type
+
+    def __add__(self, other):
+        fused_operation = None
+        if (
+            isinstance(other, PutOperation)
+            and self.name == Instruction.put or self.name == Instruction.put_with_signal or self.name == Instruction.put_with_signal_and_flush
+            and self.name == other.name
+            and self.src_buff[0].size == other.src_buff[0].size
+            and self.channel_type == other.channel_type
+        ):
+            fused_operation = PutOperation(
+                src_buff=self.src_buff + other.src_buff,
+                dst_buff=self.dst_buff + other.dst_buff,
+                channel_ids=self.channel_ids + other.channel_ids,
+                channel_type=self.channel_type,
+                with_signal=self.with_signal,
+                with_signal_and_flush=self.with_signal_and_flush,
+            )
+
+        return fused_operation
 
     def to_json(self):
         result = {"name": self.name.value}
@@ -267,6 +368,30 @@ class ReduceOperation(BaseOperation):
         self.channel_ids = channel_ids
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
+        self.packet = packet
+
+    def __add__(self, other):
+        fused_operation = None
+        if (
+            isinstance(other, ReduceOperation)
+            and (self.name == Instruction.reduce_copy or self.name == Instruction.reduce_copy_packet or self.name == Instruction.read_reduce_copy)
+            and self.name == other.name
+            and self.local_src_buff[0] == other.local_src_buff[0]
+            and self.local_dst_buff == other.local_dst_buff
+            and self.channel_type == other.channel_type
+            and self.reduce_operation == other.reduce_operation
+        ):
+            fused_operation = ReduceOperation(
+                self.local_src_buff + other.local_src_buff[1:],
+                self.local_dst_buff,
+                remote_src_buff=self.remote_src_buff + other.remote_src_buff,
+                channel_ids=self.channel_ids + other.channel_ids,
+                channel_type=self.channel_type,
+                reduce_operation=self.reduce_operation,
+                packet=self.packet,
+            )
+
+        return fused_operation
 
     def to_json(self):
         result = {"name": self.name.value}
@@ -313,6 +438,9 @@ class GroupLoadReduce(BaseOperation):
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
 
+    def __add__(self, other):
+        return None
+
     def to_json(self):
         result = {"name": self.name.value}
         result["buffer_type"] = self.buffer_type.value
@@ -345,6 +473,9 @@ class GroupStore(BaseOperation):
         self.tb_channel_id = tb_channel_id
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
+
+    def __add__(self, other):
+        return None
 
     def to_json(self):
         result = {"name": self.name.value}
