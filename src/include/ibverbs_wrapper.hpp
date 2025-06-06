@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_IBVERBS_WRAPPER_HPP_
 #define MSCCLPP_IBVERBS_WRAPPER_HPP_
 
+#if defined(IBVERBS_LIBRARY)
+
 #include <dlfcn.h>
 #include <infiniband/verbs.h>
 
@@ -19,7 +21,10 @@ struct IBVerbs {
     initialized = true;
     handle = dlopen("libibverbs.so", RTLD_NOW);
     if (!handle) {
-      throw mscclpp::IbError("Failed to load libibverbs: " + std::string(dlerror()), errno);
+      handle = dlopen(IBVERBS_LIBRARY, RTLD_NOW);
+      if (!handle) {
+        throw mscclpp::IbError("Failed to load libibverbs: " + std::string(dlerror()), errno);
+      }
     }
 
     // Load the necessary functions
@@ -286,5 +291,7 @@ struct IBVerbs {
 };
 
 }  // namespace mscclpp
+
+#endif  // defined(IBVERBS_LIBRARY)
 
 #endif  // MSCCLPP_IBVERBS_WRAPPER_HPP_
