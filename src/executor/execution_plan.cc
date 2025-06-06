@@ -184,34 +184,31 @@ std::vector<BufferInfo> ExecutionPlan::Impl::getLocalBufferToSend(int rank) cons
   return this->localBufferToSend.at(rank);
 }
 
-size_t ExecutionPlan::Impl::getScratchBufferSize(size_t inputSize, size_t outputSize) const {
-  size_t sizePerRank = 0;
-  if (this->inputChunks != 0)
-    sizePerRank = inputSize / this->inputChunks;
-  else if (this->outputChunks != 0)
-    sizePerRank = outputSize / this->outputChunks;
-  else
+size_t ExecutionPlan::Impl::calScratchBufferSize(size_t inputSize, size_t outputSize) const {
+  size_t sizePerChunk = 0;
+  size_t size = 0;
+  if (this->inputChunks != 0) {
+    sizePerChunk = (inputSize + this->inputChunks - 1) / this->inputChunks;
+  } else if (this->outputChunks != 0) {
+    sizePerChunk = (outputSize + this->outputChunks - 1) / this->outputChunks;
+  } else {
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
+  }
 
   if (this->isUsingPacket) {
-    return sizePerRank * this->scratchChunks * 2 /* data + flag*/ * 2 /*double buffer*/;
+    size = sizePerChunk * this->scratchChunks * 2 /* data + flag*/ * 2 /*double buffer*/;
+  } else {
+    size = sizePerChunk * this->scratchChunks;
   }
-  return sizePerRank * this->scratchChunks;
+  return (size + this->bufferAlignment - 1) / this->bufferAlignment * this->bufferAlignment;
 }
 
-size_t ExecutionPlan::Impl::getMaxScratchBufferSize() const {
-  if (this->maxMessageSize == std::numeric_limits<uint64_t>::max()) {
-    return std::numeric_limits<size_t>::max();
+size_t ExecutionPlan::Impl::calScratchChunkSize(size_t scratchSize) const {
+  if (this->scratchChunks == 0) {
+    return 0;
   }
-  size_t sizePerChunk = 0;
-  if (this->inputChunks != 0)
-    sizePerChunk = maxMessageSize / this->inputChunks;
-  else if (this->outputChunks != 0)
-    sizePerChunk = maxMessageSize / this->outputChunks;
-  else
-    throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
-
-  return this->getScratchBufferSize(sizePerChunk * this->inputChunks, sizePerChunk * this->outputChunks);
+  size_t size = (scratchSize + this->scratchChunks - 1) / this->scratchChunks;
+  return (size + this->bufferAlignment - 1) / this->bufferAlignment * this->bufferAlignment;
 }
 
 std::vector<Operation> ExecutionPlan::Impl::getOperations(int threadblock) const {
@@ -240,6 +237,10 @@ void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize, size_t o
   this->nThreadsPerBlock = obj.value("num_threads_per_block", 1024);
   this->minMessageSize = obj.value("min_message_size", 0);
   this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
+  if (!isMessageSizeValid(inputSize, outputSize)) {
+    throw Error("Input or output size is not valid", ErrorCode::ExecutorError);
+  }
+
   this->isInPlace = obj["inplace"];
   const auto& gpus = obj["gpus"];
 
@@ -258,6 +259,9 @@ void ExecutionPlan::Impl::loadExecutionPlan(int rank, size_t inputSize, size_t o
 
 void ExecutionPlan::Impl::lightLoadExecutionPlan(int rank, size_t inputSize, size_t outputSize, size_t contsSrcOffset,
                                                  size_t constDstOffset) {
+  if (!isMessageSizeValid(inputSize, outputSize)) {
+    throw Error("Input or output size is not valid", ErrorCode::ExecutorError);
+  }
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
   if (this->name != obj["name"]) {
@@ -280,6 +284,17 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(int rank, size_t inputSize, siz
   this->inputSize = inputSize;
   this->outputSize = outputSize;
   this->setupOperations(gpus, contsSrcOffset, constDstOffset);
+}
+
+bool ExecutionPlan::Impl::isMessageSizeValid(size_t inputSize, size_t outputSize) const {
+  size_t size = inputSize;
+  if (this->collective == "allgather") {
+    size = outputSize;
+  }
+  if (size < this->minMessageSize || size > this->maxMessageSize) {
+    return false;
+  }
+  return true;
 }
 
 void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo>& channelInfos,
@@ -528,6 +543,7 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
         operation.nvlsInputBufferType = bufferType;
         operation.nvlsInputIndex = buff["switch_channel_id"];
       }
+      // TODO: here we need to use another offset, if scratch and algo reusable, get another scrathc offset
       operation.inputOffsets[i] = this->getOffset(this->inputSize, this->outputSize, buff["index"]) + constOffset;
       operation.inputBufferSizes[i] =
           this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);

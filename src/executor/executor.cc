@@ -131,6 +131,7 @@ struct ExecutionContext {
   std::shared_ptr<char> scratchBuffer;
   std::shared_ptr<char> smemaphores;
   size_t scratchBufferSize;
+  uint32_t scratchChunkSize;
   int nthreadsPerBlock;
   DeviceExecutionPlanKey currentDevicePlan;
 };
@@ -140,6 +141,7 @@ struct Executor::Impl {
   int nranks;
   std::shared_ptr<Communicator> comm;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
+  std::shared_ptr<char> predefinedScratchBuffer;
 
   Impl(std::shared_ptr<Communicator> comm) : comm(comm) {
     this->nranksPerNode = comm->bootstrap()->getNranksPerNode();
@@ -176,11 +178,17 @@ struct Executor::Impl {
     plan.impl_->loadExecutionPlan(rank, inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
 
     ExecutionContext context;
-    size_t maxScratchBufferSize = plan.impl_->getMaxScratchBufferSize();
-    size_t scratchBufferSize =
-        std::min(plan.impl_->getScratchBufferSize(sendMemRange, recvMemRange), maxScratchBufferSize);
-    std::shared_ptr<char> scratchBuffer = GpuBuffer(scratchBufferSize).memory();
-    context.scratchBuffer = scratchBuffer;
+    size_t scratchBufferSize = plan.impl_->calScratchBufferSize(std::min(sendMemRange, plan.impl_->maxMessageSize),
+                                                                std::min(recvMemRange, plan.impl_->maxMessageSize));
+    if (plan.impl_->isReuseScratchBuffer) {
+      scratchBufferSize = PREDFINED_SCRATCH_SIZE;
+      context.scratchChunkSize = plan.impl_->calScratchChunkSize(PREDFINED_SCRATCH_SIZE);
+      context.scratchBuffer = this->predefinedScratchBuffer;
+    }
+    if (!context.scratchBuffer) {
+      context.scratchBuffer = GpuBuffer(scratchBufferSize).memory();
+    }
+    // TODO: we need to avoid setup channel if all thing is reusable
     context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
     context.nthreadsPerBlock = plan.impl_->getNThreadsPerBlock();
@@ -415,19 +423,21 @@ struct Executor::Impl {
 #endif
     size_t sharedMemSize = sizeof(DeviceExecutionPlan) + NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
 #else
-    size_t sharedMemSize = sizeof(DeviceExecutionPlan);
+    uint32_t sharedMemSize = sizeof(DeviceExecutionPlan);
 #endif
     switch (packetType) {
       case PacketType::LL16:
         ExecutionKernel::launchKernel<LL16Packet>(
             rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
-            context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
+            context.scratchBufferSize, context.scratchChunkSize, dataType,
+            (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
             (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, ++flag);
         break;
       case PacketType::LL8:
         ExecutionKernel::launchKernel<LL8Packet>(
             rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
-            context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
+            context.scratchBufferSize, context.scratchChunkSize, dataType,
+            (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
             (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, ++flag);
         break;
       default:

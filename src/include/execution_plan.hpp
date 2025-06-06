@@ -77,12 +77,13 @@ struct ExecutionPlan::Impl {
   std::vector<int> getConnectedPeers(int rank) const;
   std::vector<BufferInfo> getRemoteBufferInfos(int rank) const;
   std::vector<BufferInfo> getLocalBufferToSend(int rank) const;
-  size_t getScratchBufferSize(size_t inputSize, size_t outputSize) const;
-  size_t getMaxScratchBufferSize() const;
+  size_t calScratchBufferSize(size_t inputSize, size_t outputSize) const;
+  size_t calScratchChunkSize(size_t scratchSize) const;
   std::vector<Operation> getOperations(int threadblock) const;
   int getThreadblockCount() const;
   int getNThreadsPerBlock() const;
 
+  bool isMessageSizeValid(size_t inputSize, size_t outputSize) const;
   void loadExecutionPlan(int rank, size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
   void lightLoadExecutionPlan(int rank, size_t inputSize, size_t outputSize, size_t contsSrcOffset,
                               size_t constDstOffset);
@@ -98,6 +99,7 @@ struct ExecutionPlan::Impl {
   std::string collective;
   const std::string planPath;
   bool isUsingPacket;
+  bool isReuseScratchBuffer;
   int rank;
 
   // operations for current ranks [threadblock] = list[operations]

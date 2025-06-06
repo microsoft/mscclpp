@@ -181,8 +181,6 @@ namespace mscclpp {
 __device__ DeviceSyncer deviceSyncers[MAX_DEVICE_SYNCERS];
 __device__ DeviceSemaphore* deviceSemaphores;
 
-__constant__ uint32_t BUFFER_SIZES[3] = {UINT32_MAX, UINT32_MAX, 1 << 26 /* 64MB */};
-
 __shared__ DeviceHandle<BaseMemoryChannel>* memoryChannels_;
 __shared__ DeviceHandle<BasePortChannel>* portChannels_;
 __shared__ DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels_;
@@ -190,6 +188,7 @@ __shared__ void** remoteMemoriesViaMemoryChan_;
 __shared__ MemoryId* remoteMemoriesViaPortChan_;
 __shared__ uint32_t flag_;
 __shared__ uint32_t scratchSize_;
+__shared__ uint32_t scratchChunkSize_;
 
 template <typename T>
 MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType bufferType) {
@@ -209,15 +208,17 @@ template <bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE uint32_t getOffset(BufferType bufferType, uint32_t offset) {
   if constexpr (!ReuseScratch) {
     return offset;
+  } else if (bufferType != BufferType::SCRATCH) {
+    return offset;
   } else {
-    return offset % BUFFER_SIZES[(uint32_t)bufferType];
+    return offset % scratchChunkSize_;
   }
 }
 
 template <typename T, typename PacketType, bool ReuseScratch = true>
 MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch,
                                                  uint8_t* nSteps = nullptr, uint32_t offset = 0,
-                                                 uint32_t unitSize = UINT32_MAX);
+                                                 uint32_t unitSize = UINT32_MAX, int rank = 0);
 
 MSCCLPP_DEVICE_INLINE void handleNop() { __syncthreads(); }
 
@@ -578,8 +579,8 @@ MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* ou
   if (size <= 0) {
     return;
   }
-  uint32_t dstOffset = getOffset<ReuseScratch>(op.outputBufferRefs[0].type, op.outputOffsets[0] + offset);
-  uint32_t srcOffset = getOffset<ReuseScratch>(op.inputBufferRefs[0].type, op.inputOffsets[0] + offset);
+  uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.outputBufferRefs[0].type, offset);
+  uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset);
   char* srcData = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
   char* dstData = static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[0].type)) + dstOffset;
   mscclpp::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
@@ -597,8 +598,8 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
   }
 
   const uint32_t nInt4 = size / sizeof(nvlsType);
-  const uint32_t srcOffset = getOffset<ReuseScratch>(op.nvlsInputBufferType, op.inputOffsets[0] + offset);
-  const uint32_t dstOffset = getOffset<ReuseScratch>(op.nvlsOutputBufferType, op.outputOffsets[0] + offset);
+  const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.nvlsInputBufferType, offset);
+  const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
   assert(srcOffset % sizeof(vectorType) == 0 && dstOffset % sizeof(vectorType) == 0);
 
   const uint32_t srcOffset4 = srcOffset / sizeof(nvlsType);
@@ -646,7 +647,7 @@ MSCCLPP_DEVICE_INLINE void handleSemRelease(const Operation& op) {
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op) {
+MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op, int rank) {
   int tid = threadIdx.x;
   if (tid < op.nDeviceSemaphores) {
     DeviceSemaphore* sem = &deviceSemaphores[op.deviceSemaphoreIds[tid]];
@@ -656,7 +657,7 @@ MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op) {
 
 template <typename T, typename PacketType, bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch, uint8_t* nSteps,
-                                                 uint32_t offset, uint32_t unitSize) {
+                                                 uint32_t offset, uint32_t unitSize, int rank) {
   if (nSteps != nullptr) {
     *nSteps = 1;
   }
@@ -713,7 +714,7 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   //   return handleTransformToPacket<PacketType>;
   // }
   if (opType == OperationType::SEM_ACQUIRE) {
-    return handleSemAquire(op);
+    return handleSemAquire(op, rank);
   }
   if (opType == OperationType::SEM_RELEASE) {
     return handleSemRelease(op);
@@ -732,8 +733,8 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
 
 template <typename T, typename PacketType = LL16Packet>
 __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
-                                size_t scratchSize, DeviceExecutionPlan* plan, DeviceSemaphore* semaphores,
-                                uint32_t flag
+                                uint32_t scratchSize, uint32_t scratchChunkSize, DeviceExecutionPlan* plan,
+                                DeviceSemaphore* semaphores, uint32_t flag
 #if defined(ENABLE_NPKIT)
                                 ,
                                 NpKitEventCollectContext* npKitEventCollectContexts, uint64_t* cpuTimestamp) {
@@ -769,6 +770,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   remoteMemoriesViaPortChan_ = localPlan->remoteBuffers.remoteBuffersViaPortChannel;
   scratchSize_ = scratchSize;
   flag_ = flag;
+  scratchChunkSize_ = scratchChunkSize;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
 #if defined(MSCCLPP_DEVICE_HIP)
@@ -800,7 +802,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                               event_buffer, &event_buffer_head);
 #endif
     uint8_t nSteps = 0;
-    executeDeviceFunction<T, PacketType>(op, input, output, scratch, &nSteps);
+    executeDeviceFunction<T, PacketType>(op, input, output, scratch, &nSteps, rank);
     i += nSteps;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT)
@@ -820,12 +822,13 @@ class ExecutionKernel {
 #if defined(MSCCLPP_DEVICE_HIP)
   template <typename PacketType>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
-                           size_t scratchSize, DataType dataType, DeviceExecutionPlan* plan,
-                           DeviceSemaphore* semaphores, size_t sharedMemSize, cudaStream_t stream, uint32_t flag = 0) {
+                           uint32_t scratchSize, uint32_t scratchChunkSize, DataType dataType,
+                           DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t sharedMemSize,
+                           cudaStream_t stream, uint32_t flag = 0) {
     switch (dataType) {
       case DataType::INT32:
         executionKernel<int32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, plan, semaphores, flag
+            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -835,7 +838,8 @@ class ExecutionKernel {
         break;
       case DataType::UINT32:
         executionKernel<uint32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, plan, semaphores, flag
+            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, scratchChunkSize, plan, semaphores,
+            flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -845,7 +849,7 @@ class ExecutionKernel {
         break;
       case DataType::FLOAT16:
         executionKernel<half, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, plan, semaphores, flag
+            rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -855,7 +859,7 @@ class ExecutionKernel {
         break;
       case DataType::FLOAT32:
         executionKernel<float, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, plan, semaphores, flag
+            rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -865,7 +869,8 @@ class ExecutionKernel {
         break;
       case DataType::BFLOAT16:
         executionKernel<__bfloat16, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchSize, plan, semaphores, flag
+            rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchSize, scratchChunkSize, plan,
+            semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -878,8 +883,9 @@ class ExecutionKernel {
 #else   // !defined(MSCCLPP_DEVICE_HIP)
   template <typename PacketType>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
-                           size_t scratchSize, DataType dataType, DeviceExecutionPlan* plan,
-                           DeviceSemaphore* semaphores, size_t sharedMemSize, cudaStream_t stream, uint32_t flag = 0);
+                           uint32_t scratchSize, uint32_t scratchChunkSize, DataType dataType,
+                           DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t sharedMemSize,
+                           cudaStream_t stream, uint32_t flag = 0);
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
 };
 }  // namespace mscclpp

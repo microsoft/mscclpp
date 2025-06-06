@@ -21,11 +21,13 @@ constexpr int MAX_RESERVED_MEMORY_IDS = 3;
 constexpr int MAX_DEVICE_SYNCERS = 16;
 constexpr int MAX_DEVICE_SEMAPHORES = 16;
 
+constexpr uint32_t PREDFINED_SCRATCH_SIZE = 1 << 26;  // 64 MB
+
 enum class BufferType : uint8_t {
+  NONE,
   INPUT,
   OUTPUT,
   SCRATCH,
-  NONE,
 };
 
 enum class ChannelType : uint8_t {
