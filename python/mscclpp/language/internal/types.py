@@ -8,7 +8,6 @@ from collections import defaultdict
 
 
 class SyncType(Enum):
-    both = "both"
     before = "before"
     after = "after"
     none = "none"

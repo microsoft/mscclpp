@@ -46,9 +46,9 @@ def allgather_example(name, num_threads_per_block, min_message_size, max_message
                     # Define a channel from src_rank → dst_rank using memory channel
                     ch = Channel(dst_rank, src_rank, ChannelType.memory)
                     # Step 1: source signals to indicate it is ready to receive data
-                    ch.signal(tb=0, sync=None)
+                    ch.signal(tb=0, sync=None, relaxed=True)
                     # Step 2: wait for the destination rank to be ready
-                    ch.wait(tb=0, sync="after")
+                    ch.wait(tb=0, sync="after", relaxed=True)
                     # Step 3: source rank sends data to destination rank
                     ch.put(dst_chunk, src_chunk, tb=0)
                     # Step 4: source signals to indicate put is done
