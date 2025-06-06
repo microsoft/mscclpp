@@ -1,5 +1,5 @@
 from mscclpp.language.internal.types import BufferType, Chunk
-from mscclpp.language.internal.operations import CopyOperation, LocalChunk
+from mscclpp.language.internal.operations import *
 from mscclpp.language.internal.globals import get_program
 from dataclasses import dataclass
 
@@ -19,20 +19,80 @@ class Rank:
     def get_output_buffer(self):
         return get_program().buffers[self.rank][BufferType.output]
 
-    def copy(self, dst_chunk, src_chunk, tb):
-        if dst_chunk.rank != self.rank:
-            raise RuntimeError(f"Cannot copy to chunk from different rank: {dst_chunk.rank} != {self.rank}")
+    def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int, from_packet: bool = False, to_packet: bool = False):
+        if dst_chunk.rank != self.rank or src_chunk.rank != self.rank:
+            raise RuntimeError(
+                f"Inconsistent ranks: dst {dst_chunk.rank}, src {src_chunk.rank}, self {self.rank}. They must match."
+            )
+        if dst_chunk.size != src_chunk.size:
+            raise RuntimeError(
+                f"Inconsistent chunk sizes: dst {dst_chunk.size}, src {src_chunk.size}. They must match."
+            )
+        if from_packet and src_chunk.buffer != BufferType.scratch:
+            raise RuntimeError(f"Source chunk must be of type scratch.")
+        if to_packet and dst_chunk.buffer != BufferType.scratch:
+            raise RuntimeError(f"Destination chunk must be of type scratch.")
 
         op = CopyOperation(
             [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
             [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+            from_packet,
+            to_packet,
         )
 
         get_program().add_operation(self.rank, tb, op)
 
+    def reduce(
+        self,
+        src_chunk: Chunk,
+        other_chunks: List[Chunk],
+        tb: int,
+        dst_chunk: Chunk = None,
+        reduce_op: ReduceOperationType = ReduceOperationType.sum,
+        packet: bool = False,
+    ):
+        if dst_chunk is None:
+            dst_chunk = src_chunk
+        if dst_chunk.rank != self.rank or src_chunk.rank != self.rank:
+            raise RuntimeError(
+                f"Inconsistent ranks: dst {dst_chunk.rank}, src {src_chunk.rank}, self {self.rank}. They must match."
+            )
+        if dst_chunk.size != src_chunk.size:
+            raise RuntimeError(
+                f"Inconsistent chunk sizes: dst {dst_chunk.size}, src {src_chunk.size}. They must match."
+            )
+        if packet and src_chunk.buffer != BufferType.scratch:
+            raise RuntimeError(f"Source chunk must be of type scratch.")
+        if packet and dst_chunk.buffer != BufferType.scratch:
+            raise RuntimeError(f"Destination chunk must be of type scratch.")
+        for chunk in other_chunks:
+            if chunk.rank != self.rank:
+                raise RuntimeError(f"Other chunk rank {chunk.rank} does not match current rank {self.rank}.")
+            if chunk.size != src_chunk.size:
+                raise RuntimeError(
+                    f"Inconsistent chunk sizes: other {chunk.size}, src {src_chunk.size}. They must match."
+                )
+            if packet and chunk.buffer != BufferType.scratch:
+                raise RuntimeError(f"Other chunk must be of type scratch.")
+
+        op = ReduceOperation(
+            [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)]
+            + [LocalChunk(chunk.buffer, chunk.index, chunk.size) for chunk in other_chunks],
+            [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+            reduce_operation=reduce_op,
+            packet=packet,
+        )
+        get_program().add_operation(self.rank, tb, op)
+
+    def barrier(self, tb_list: List[int]):
+        op = BarrierOperation(self.rank, tb_list)
+
+        for tb in tb_list:
+            get_program().add_operation(self.rank, tb, op)
+
 
 class BaseBuffer:
-    def __init__(self, rank, buffer_type, offset, size):
+    def __init__(self, rank: int, buffer_type: BufferType, offset: int, size: int):
         self.rank = rank
         self.buffer_type = buffer_type
         self.offset = offset
@@ -47,7 +107,7 @@ class BaseBuffer:
 
 
 class Buffer(BaseBuffer):
-    def __init__(self, rank, size):
+    def __init__(self, rank: int, size: int):
         if rank >= get_program().num_ranks:
             raise RuntimeError(f"Rank {rank} is out of bounds. Number of ranks: {self.prog.num_ranks}")
 
