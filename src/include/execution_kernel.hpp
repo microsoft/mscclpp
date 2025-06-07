@@ -218,7 +218,7 @@ MSCCLPP_DEVICE_INLINE uint32_t getOffset(BufferType bufferType, uint32_t offset)
 template <typename T, typename PacketType, bool ReuseScratch = true>
 MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch,
                                                  uint8_t* nSteps = nullptr, uint32_t offset = 0,
-                                                 uint32_t unitSize = UINT32_MAX, int rank = 0);
+                                                 uint32_t unitSize = UINT32_MAX);
 
 MSCCLPP_DEVICE_INLINE void handleNop() { __syncthreads(); }
 
@@ -647,7 +647,7 @@ MSCCLPP_DEVICE_INLINE void handleSemRelease(const Operation& op) {
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op, int rank) {
+MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op) {
   int tid = threadIdx.x;
   if (tid < op.nDeviceSemaphores) {
     DeviceSemaphore* sem = &deviceSemaphores[op.deviceSemaphoreIds[tid]];
@@ -657,7 +657,7 @@ MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op, int rank) {
 
 template <typename T, typename PacketType, bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch, uint8_t* nSteps,
-                                                 uint32_t offset, uint32_t unitSize, int rank) {
+                                                 uint32_t offset, uint32_t unitSize) {
   if (nSteps != nullptr) {
     *nSteps = 1;
   }
@@ -714,7 +714,7 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   //   return handleTransformToPacket<PacketType>;
   // }
   if (opType == OperationType::SEM_ACQUIRE) {
-    return handleSemAquire(op, rank);
+    return handleSemAquire(op);
   }
   if (opType == OperationType::SEM_RELEASE) {
     return handleSemRelease(op);
@@ -802,7 +802,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                               event_buffer, &event_buffer_head);
 #endif
     uint8_t nSteps = 0;
-    executeDeviceFunction<T, PacketType>(op, input, output, scratch, &nSteps, rank);
+    executeDeviceFunction<T, PacketType>(op, input, output, scratch, &nSteps);
     i += nSteps;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT)

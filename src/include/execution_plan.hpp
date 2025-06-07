@@ -73,12 +73,13 @@ struct ExecutionPlan::Impl {
 
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
   std::vector<ChannelInfo> getUnpairedChannelInfos(int rank, int worldSize, ChannelType channelType);
-  std::vector<NvlsInfo> getNvlsInfos(int rank, size_t sendBuffserSize = 0, size_t recvBufferSize = 0) const;
+  std::vector<NvlsInfo> getNvlsInfos(int rank, size_t sendBuffserSize = 0, size_t recvBufferSize = 0,
+                                     size_t scratchBufferSize = 0) const;
   std::vector<int> getConnectedPeers(int rank) const;
   std::vector<BufferInfo> getRemoteBufferInfos(int rank) const;
   std::vector<BufferInfo> getLocalBufferToSend(int rank) const;
   size_t calScratchBufferSize(size_t inputSize, size_t outputSize) const;
-  size_t calScratchChunkSize(size_t scratchSize) const;
+  size_t calMaxScratchChunkSize(size_t scratchSize) const;
   std::vector<Operation> getOperations(int threadblock) const;
   int getThreadblockCount() const;
   int getNThreadsPerBlock() const;
@@ -99,7 +100,7 @@ struct ExecutionPlan::Impl {
   std::string collective;
   const std::string planPath;
   bool isUsingPacket;
-  bool isReuseScratchBuffer;
+  bool reuseResources = true;
   int rank;
 
   // operations for current ranks [threadblock] = list[operations]
@@ -133,7 +134,8 @@ struct ExecutionPlan::Impl {
 
  private:
   std::pair<size_t, uint32_t> getSizeAndChunks(size_t inputSize, size_t outputSize) const;
-  size_t getOffset(size_t inputSize, size_t outputSize, uint32_t chunkIndex) const;
+  size_t getOffset(size_t inputSize, size_t outputSize, uint32_t chunkIndex,
+                   BufferType bufferType = BufferType::NONE) const;
   size_t getBufferSize(size_t inputSize, size_t outputSize, uint32_t index, uint32_t nChunks) const;
   size_t getUpperBoundChunkSize(size_t inputSize, size_t outputSize) const;
   void setupOperation(const nlohmann::json& op, Operation& operation, int rank, int threadBlockId,

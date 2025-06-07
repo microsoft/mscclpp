@@ -16,7 +16,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
+              "iter_context": {"unit_size": 524288, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_ids": [2]},
                 {"name": "nop"},
@@ -65,7 +65,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
+              "iter_context": {"unit_size": 524288, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_ids": [0]},
                 {"name": "nop"},
@@ -94,7 +94,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
+              "iter_context": {"unit_size": 524288, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_ids": [1]},
                 {"name": "nop"},
@@ -163,7 +163,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
+              "iter_context": {"unit_size": 524288, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_ids": [2]},
                 {"name": "nop"},
@@ -212,7 +212,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
+              "iter_context": {"unit_size": 524288, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_ids": [0]},
                 {"name": "nop"},
@@ -241,7 +241,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
+              "iter_context": {"unit_size": 524288, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_ids": [1]},
                 {"name": "nop"},
@@ -278,6 +278,7 @@
                 },
                 {"name": "nop"},
                 {"name": "sem_release", "semaphore_ids": [2]}
+                
               ]
             }
           ],
@@ -310,7 +311,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
+              "iter_context": {"unit_size": 524288, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_ids": [2]},
                 {"name": "nop"},
@@ -359,7 +360,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
+              "iter_context": {"unit_size": 524288, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_ids": [0]},
                 {"name": "nop"},
@@ -388,7 +389,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
+              "iter_context": {"unit_size": 524288, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_ids": [1]},
                 {"name": "nop"},
@@ -425,6 +426,7 @@
                 },
                 {"name": "nop"},
                 {"name": "sem_release", "semaphore_ids": [2]}
+                
               ]
             }
           ],
@@ -457,7 +459,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
+              "iter_context": {"unit_size": 524288, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_ids": [2]},
                 {"name": "nop"},
@@ -506,7 +508,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
+              "iter_context": {"unit_size": 524288, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_ids": [0]},
                 {"name": "nop"},
@@ -535,7 +537,7 @@
           "ops": [
             {
               "name": "pipeline",
-              "iter_context": {"unit_size": 1048576, "num_chunks": 1},
+              "iter_context": {"unit_size": 524288, "num_chunks": 1},
               "ops": [
                 {"name": "sem_acquire", "semaphore_ids": [1]},
                 {"name": "nop"},

@@ -143,13 +143,17 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int rank, 
   return unpaired;
 }
 
-std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank, size_t sendBuffserSize, size_t recvBufferSize) const {
-  if (sendBuffserSize == 0 && recvBufferSize == 0) {
+std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank, size_t sendBuffserSize, size_t recvBufferSize,
+                                                        size_t scratchBufferSize) const {
+  if (sendBuffserSize == 0 && recvBufferSize == 0 && scratchBufferSize == 0) {
     return this->nvlsInfos.at(rank);
   }
   size_t chunkSize = this->getUpperBoundChunkSize(sendBuffserSize, recvBufferSize);
   std::vector<NvlsInfo> infos = this->nvlsInfos.at(rank);
   for (auto& info : infos) {
+    if (info.bufferType == BufferType::SCRATCH) {
+      chunkSize = this->calMaxScratchChunkSize(scratchBufferSize);
+    }
     info.bufferSize = info.bufferSize * chunkSize;
   }
   return infos;
@@ -185,6 +189,10 @@ std::vector<BufferInfo> ExecutionPlan::Impl::getLocalBufferToSend(int rank) cons
 }
 
 size_t ExecutionPlan::Impl::calScratchBufferSize(size_t inputSize, size_t outputSize) const {
+  if (reuseResources && this->scratchChunks > 0) {
+    return PREDFINED_SCRATCH_SIZE;
+  }
+
   size_t sizePerChunk = 0;
   size_t size = 0;
   if (this->inputChunks != 0) {
@@ -203,7 +211,7 @@ size_t ExecutionPlan::Impl::calScratchBufferSize(size_t inputSize, size_t output
   return (size + this->bufferAlignment - 1) / this->bufferAlignment * this->bufferAlignment;
 }
 
-size_t ExecutionPlan::Impl::calScratchChunkSize(size_t scratchSize) const {
+size_t ExecutionPlan::Impl::calMaxScratchChunkSize(size_t scratchSize) const {
   if (this->scratchChunks == 0) {
     return 0;
   }
@@ -527,24 +535,26 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
     for (int i = 0; i < operation.nInputs; i++) {
       auto& buff = op["src_buff"][i];
       size_t constOffset = 0;
+      BufferType bufferType = BufferType::NONE;
       if (buff.contains("type")) {
-        operation.inputBufferRefs[i].type = convertToBufferType(buff["type"]);
+        bufferType = convertToBufferType(buff["type"]);
+        operation.inputBufferRefs[i].type = bufferType;
         constOffset = getConstOffset(operation.inputBufferRefs[i].type);
       }
       if (buff.contains("buff_id")) {
         operation.inputBufferRefs[i].id = buff["buff_id"];
-        BufferType bufferType = getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
+        bufferType = getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
         constOffset = getConstOffset(bufferType);
       }
       if (buff.contains("switch_channel_id")) {
         int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
-        BufferType bufferType = this->nvlsInfos[rank][switchChannelIdx].bufferType;
+        bufferType = this->nvlsInfos[rank][switchChannelIdx].bufferType;
         constOffset = getConstOffset(bufferType);
         operation.nvlsInputBufferType = bufferType;
         operation.nvlsInputIndex = buff["switch_channel_id"];
       }
-      // TODO: here we need to use another offset, if scratch and algo reusable, get another scrathc offset
-      operation.inputOffsets[i] = this->getOffset(this->inputSize, this->outputSize, buff["index"]) + constOffset;
+      operation.inputOffsets[i] =
+          this->getOffset(this->inputSize, this->outputSize, buff["index"], bufferType) + constOffset;
       operation.inputBufferSizes[i] =
           this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
     }
@@ -554,23 +564,26 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
     for (int i = 0; i < operation.nOutputs; i++) {
       auto& buff = op["dst_buff"][i];
       size_t constOffset = 0;
+      BufferType bufferType = BufferType::NONE;
       if (buff.contains("type")) {
-        operation.outputBufferRefs[i].type = convertToBufferType(buff["type"]);
+        bufferType = convertToBufferType(buff["type"]);
+        operation.outputBufferRefs[i].type = bufferType;
         constOffset = getConstOffset(operation.outputBufferRefs[i].type);
       }
       if (buff.contains("buff_id")) {
         operation.outputBufferRefs[i].id = buff["buff_id"];
-        BufferType bufferType = getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
+        bufferType = getRemoteBufferTypeWithId(buff["buff_id"], rank, threadBlockId, operation.channelType);
         constOffset = getConstOffset(bufferType);
       }
       if (buff.contains("switch_channel_id")) {
         int switchChannelIdx = this->threadblockNvlsChannelMap[rank][threadBlockId][buff["switch_channel_id"]];
-        BufferType bufferType = this->nvlsInfos[rank][switchChannelIdx].bufferType;
+        bufferType = this->nvlsInfos[rank][switchChannelIdx].bufferType;
         constOffset = getConstOffset(bufferType);
         operation.nvlsOutputBufferType = bufferType;
         operation.nvlsOutputIndex = buff["switch_channel_id"];
       }
-      operation.outputOffsets[i] = this->getOffset(this->inputSize, this->outputSize, buff["index"]) + constOffset;
+      operation.outputOffsets[i] =
+          this->getOffset(this->inputSize, this->outputSize, buff["index"], bufferType) + constOffset;
       operation.outputBufferSizes[i] =
           this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
     }
@@ -616,11 +629,15 @@ std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunks(size_t inputSi
   return sizePerRank;
 }
 
-size_t ExecutionPlan::Impl::getOffset(size_t inputSize, size_t outputSize, uint32_t chunkIndex) const {
+size_t ExecutionPlan::Impl::getOffset(size_t inputSize, size_t outputSize, uint32_t chunkIndex,
+                                      BufferType bufferType) const {
+  if (bufferType == BufferType::SCRATCH && this->reuseResources) {
+    return chunkIndex * this->calMaxScratchChunkSize(PREDFINED_SCRATCH_SIZE);
+  }
+
   if (inputSize % this->bufferAlignment != 0) {
     throw Error("inputSize must be a multiple of alignment", ErrorCode::ExecutorError);
   }
-
   auto rankSizeAndChunks = getSizeAndChunks(inputSize, outputSize);
   uint32_t nChunks = rankSizeAndChunks.second;
   uint32_t nelems = rankSizeAndChunks.first / (this->bufferAlignment * sizeof(uint8_t));

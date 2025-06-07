@@ -141,7 +141,6 @@ struct Executor::Impl {
   int nranks;
   std::shared_ptr<Communicator> comm;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
-  std::shared_ptr<char> predefinedScratchBuffer;
 
   Impl(std::shared_ptr<Communicator> comm) : comm(comm) {
     this->nranksPerNode = comm->bootstrap()->getNranksPerNode();
@@ -180,22 +179,16 @@ struct Executor::Impl {
     ExecutionContext context;
     size_t scratchBufferSize = plan.impl_->calScratchBufferSize(std::min(sendMemRange, plan.impl_->maxMessageSize),
                                                                 std::min(recvMemRange, plan.impl_->maxMessageSize));
-    if (plan.impl_->isReuseScratchBuffer) {
-      scratchBufferSize = PREDFINED_SCRATCH_SIZE;
-      context.scratchChunkSize = plan.impl_->calScratchChunkSize(PREDFINED_SCRATCH_SIZE);
-      context.scratchBuffer = this->predefinedScratchBuffer;
-    }
-    if (!context.scratchBuffer) {
-      context.scratchBuffer = GpuBuffer(scratchBufferSize).memory();
-    }
+    context.scratchChunkSize = plan.impl_->calMaxScratchChunkSize(scratchBufferSize);
+    context.scratchBuffer = GpuBuffer(scratchBufferSize).memory();
     // TODO: we need to avoid setup channel if all thing is reusable
     context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
     context.nthreadsPerBlock = plan.impl_->getNThreadsPerBlock();
-    this->setupConnections(context, rank, plan, sendMemRange, recvMemRange);
+    this->setupConnections(context, rank, plan, sendMemRange, recvMemRange, scratchBufferSize);
     this->setupChannels(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
-    this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
+    this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, scratchBufferSize, rank, plan);
     this->setupSemaphores(context, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
@@ -225,7 +218,7 @@ struct Executor::Impl {
   };
 
   void setupConnections(ExecutionContext& context, int rank, const ExecutionPlan& plan, size_t sendBufferSize,
-                        size_t recvBufferSize) {
+                        size_t recvBufferSize, size_t scratchBufferSize) {
     std::vector<int> connectedPeers = plan.impl_->getConnectedPeers(rank);
     std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
     for (int peer : connectedPeers) {
@@ -237,7 +230,7 @@ struct Executor::Impl {
       context.connections[connectedPeers[i]] = connectionFutures[i].get();
     }
 
-    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank, sendBufferSize, recvBufferSize);
+    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank, sendBufferSize, recvBufferSize, scratchBufferSize);
     for (const NvlsInfo& info : nvlsInfos) {
       std::shared_ptr<NvlsConnection> nvlsConnection =
           mscclpp::connectNvlsCollective(this->comm, info.ranks, info.bufferSize);
@@ -340,8 +333,8 @@ struct Executor::Impl {
   }
 
   void setupNvlsChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
-                         size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
-    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank, sendBufferSize, recvBufferSize);
+                         size_t recvBufferSize, size_t scratchBufferSize, int rank, const ExecutionPlan& plan) {
+    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank, sendBufferSize, recvBufferSize, scratchBufferSize);
     for (size_t i = 0; i < nvlsInfos.size(); i++) {
       std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[i];
       NvlsInfo info = nvlsInfos[i];
