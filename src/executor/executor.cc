@@ -12,6 +12,7 @@
 #include "execution_plan.hpp"
 
 namespace mscclpp {
+
 struct ExecutionContextKey {
   void* sendBuff;
   void* recvBuff;
@@ -113,16 +114,24 @@ struct ExecutionContext {
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<int, std::shared_ptr<Connection>> connections;
   std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
-  std::unordered_map<std::pair<BufferType, int>, mscclpp::RegisteredMemory> registeredMemories;
+
+  // For registered memories, registeredMemoryAddresses is used for memoryChannel and registeredMemoryIds is used for
+  // proxy channel
+  std::vector<mscclpp::RegisteredMemory> registeredMemories;
+  std::vector<void*> registeredMemoryAddresses;
+  std::vector<mscclpp::MemoryId> registeredMemoryIds;
+
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::vector<mscclpp::SemaphoreId> proxySemaphores;
-  std::vector<mscclpp::MemoryChannel> memoryChannels;
-  std::vector<mscclpp::PortChannel> portChannels;
+  std::vector<mscclpp::BaseMemoryChannel> memoryChannels;
+  std::vector<mscclpp::BasePortChannel> portChannels;
   std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
   std::shared_ptr<char> scratchBuffer;
+  std::shared_ptr<char> smemaphores;
   size_t scratchBufferSize;
+  uint32_t scratchChunkSize;
   int nthreadsPerBlock;
   DeviceExecutionPlanKey currentDevicePlan;
 };
@@ -153,7 +162,7 @@ struct Executor::Impl {
         return this->contexts[key];
       }
       plan.impl_->operationsReset();
-      plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
+      plan.impl_->lightLoadExecutionPlan(rank, inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
       this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, rank, plan);
       this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
           GpuBuffer(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
@@ -165,21 +174,22 @@ struct Executor::Impl {
     }
 
     plan.impl_->reset();
-    plan.impl_->loadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
+    plan.impl_->loadExecutionPlan(rank, inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
 
     ExecutionContext context;
-    size_t maxScratchBufferSize = plan.impl_->getMaxScratchBufferSize(rank);
-    size_t scratchBufferSize =
-        std::min(plan.impl_->getScratchBufferSize(rank, sendMemRange, recvMemRange), maxScratchBufferSize);
-    std::shared_ptr<char> scratchBuffer = GpuBuffer(scratchBufferSize).memory();
-    context.scratchBuffer = scratchBuffer;
+    size_t scratchBufferSize = plan.impl_->calScratchBufferSize(std::min(sendMemRange, plan.impl_->maxMessageSize),
+                                                                std::min(recvMemRange, plan.impl_->maxMessageSize));
+    context.scratchChunkSize = plan.impl_->calMaxScratchChunkSize(scratchBufferSize);
+    context.scratchBuffer = GpuBuffer(scratchBufferSize).memory();
+    // TODO: we need to avoid setup channel if all thing is reusable
     context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
     context.nthreadsPerBlock = plan.impl_->getNThreadsPerBlock();
-    this->setupConnections(context, rank, plan, sendMemRange, recvMemRange);
+    this->setupConnections(context, rank, plan, sendMemRange, recvMemRange, scratchBufferSize);
+    this->setupChannels(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
-    this->setupChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
-    this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
+    this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, scratchBufferSize, rank, plan);
+    this->setupSemaphores(context, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
         GpuBuffer(context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
@@ -192,25 +202,23 @@ struct Executor::Impl {
     return context;
   }
 
-  TransportFlags getTransportFlags(std::vector<ChannelInfo>& infos, int rank) {
+  TransportFlags getTransportFlags(const BufferInfo& info, int rank) {
     TransportFlags flags;
-    for (ChannelInfo& info : infos) {
-      if (info.channelType == ChannelType::MEMORY) {
+    for (const ChannelType& type : info.accessChannelTypes) {
+      if (type == ChannelType::MEMORY) {
         flags |= Transport::CudaIpc;
-      } else if (info.channelType == ChannelType::PORT) {
-        for (int peer : info.connectedPeers) {
-          if (!inSameNode(rank, peer, this->nranksPerNode)) {
-            flags |= IBs[rank % this->nranksPerNode];
-          } else
-            flags |= Transport::CudaIpc;
-        }
+      } else if (type == ChannelType::PORT) {
+        if (!inSameNode(rank, info.accessRank, this->nranksPerNode)) {
+          flags |= IBs[rank % this->nranksPerNode];
+        } else
+          flags |= Transport::CudaIpc;
       }
     }
     return flags;
   };
 
   void setupConnections(ExecutionContext& context, int rank, const ExecutionPlan& plan, size_t sendBufferSize,
-                        size_t recvBufferSize) {
+                        size_t recvBufferSize, size_t scratchBufferSize) {
     std::vector<int> connectedPeers = plan.impl_->getConnectedPeers(rank);
     std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
     for (int peer : connectedPeers) {
@@ -222,7 +230,7 @@ struct Executor::Impl {
       context.connections[connectedPeers[i]] = connectionFutures[i].get();
     }
 
-    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank, sendBufferSize, recvBufferSize);
+    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank, sendBufferSize, recvBufferSize, scratchBufferSize);
     for (const NvlsInfo& info : nvlsInfos) {
       std::shared_ptr<NvlsConnection> nvlsConnection =
           mscclpp::connectNvlsCollective(this->comm, info.ranks, info.bufferSize);
@@ -244,40 +252,42 @@ struct Executor::Impl {
           throw Error("Invalid buffer type", ErrorCode::ExecutorError);
       }
     };
-    auto getConnectedPeers = [&](std::vector<ChannelInfo>& infos) {
-      std::set<int> peers;
-      for (ChannelInfo& info : infos) {
-        for (int peer : info.connectedPeers) {
-          peers.insert(peer);
-        }
-      }
-      return std::vector<int>(peers.begin(), peers.end());
-    };
 
-    std::vector<BufferType> bufferTypes = plan.impl_->getConnectedBufferTypes(rank);
-    for (BufferType bufferType : bufferTypes) {
-      std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfosByDstRank(rank, bufferType);
-      TransportFlags transportFlags = getTransportFlags(channelInfos, rank);
+    // Add local src,dst and scratch to registeredMemoryIds
+    for (auto& bufferType : {BufferType::INPUT, BufferType::OUTPUT, BufferType::SCRATCH}) {
+      TransportFlags flags = Transport::CudaIpc;
+#if defined(USE_IBVERBS)
+      flags |= IBs[rank % this->nranksPerNode];
+#endif
+      RegisteredMemory localMemory;
+      auto bufferInfo = getBufferInfo(bufferType);
+      if (bufferInfo.second > 0) {
+        localMemory =
+            this->comm->registerMemory(getBufferInfo(bufferType).first, getBufferInfo(bufferType).second, flags);
+      }
+      context.proxyService->addMemory(localMemory);
+    }
+
+    for (const auto& bufferInfo : plan.impl_->getLocalBufferToSend(rank)) {
       RegisteredMemory memory =
-          this->comm->registerMemory(getBufferInfo(bufferType).first, getBufferInfo(bufferType).second, transportFlags);
-      std::vector<int> connectedPeers = getConnectedPeers(channelInfos);
-      std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
-      for (int peer : connectedPeers) {
-        comm->sendMemory(memory, peer, 0);
-      }
-      channelInfos = plan.impl_->getChannelInfos(rank, bufferType);
-      connectedPeers = getConnectedPeers(channelInfos);
-      for (int peer : connectedPeers) {
-        remoteRegMemoryFutures.push_back(comm->recvMemory(peer, 0));
-      }
-      for (size_t i = 0; i < remoteRegMemoryFutures.size(); i++) {
-        context.registeredMemories[{bufferType, connectedPeers[i]}] = std::move(remoteRegMemoryFutures[i].get());
+          this->comm->registerMemory(getBufferInfo(bufferInfo.bufferType).first,
+                                     getBufferInfo(bufferInfo.bufferType).second, getTransportFlags(bufferInfo, rank));
+      comm->sendMemory(memory, bufferInfo.accessRank, 0);
+    }
+    for (const auto& bufferInfo : plan.impl_->getRemoteBufferInfos(rank)) {
+      std::shared_future<RegisteredMemory> remoteRegMemoryFuture = comm->recvMemory(bufferInfo.rank, 0);
+      context.registeredMemories.emplace_back(std::move(remoteRegMemoryFuture.get()));
+      for (ChannelType chanType : bufferInfo.accessChannelTypes) {
+        if (chanType == ChannelType::MEMORY) {
+          context.registeredMemoryAddresses.push_back(context.registeredMemories.back().data());
+        } else if (chanType == ChannelType::PORT) {
+          context.registeredMemoryIds.push_back(context.proxyService->addMemory(context.registeredMemories.back()));
+        }
       }
     }
   }
 
-  void setupChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
-                     size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
+  void setupChannels(ExecutionContext& context, int rank, const ExecutionPlan& plan) {
     const auto channelTypes = {ChannelType::MEMORY, ChannelType::PORT};
     std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
     std::vector<mscclpp::SemaphoreId> proxySemaphores;
@@ -300,44 +310,22 @@ struct Executor::Impl {
       // Current semaphore construction requires two-way communication, e.g., to construct a semaphore signaling from
       // rank 0 to rank 1, both rank 0 and rank 1 need to send a message to each other. This PR fixes an executor bug
       // that fails to conduct two-way communication for constructing such one-way semaphores, and instead hangs
-      // during the semaphore construction. In the future, we may need to change the implementation to construct
-      // semaphore via one-way communication.
+      // during the semaphore construction.
       channelInfos = plan.impl_->getUnpairedChannelInfos(rank, nranks, channelType);
       processChannelInfos(channelInfos);
     }
     context.memorySemaphores = std::move(memorySemaphores);
     context.proxySemaphores = std::move(proxySemaphores);
 
-    auto getBufferSize = [&](BufferType type) {
-      switch (type) {
-        case BufferType::INPUT:
-          return sendBufferSize;
-        case BufferType::OUTPUT:
-          return recvBufferSize;
-        case BufferType::SCRATCH:
-          return context.scratchBufferSize;
-        default:
-          throw Error("Invalid buffer type", ErrorCode::ExecutorError);
-      }
-    };
-
     for (ChannelType channelType : channelTypes) {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(rank, channelType);
       int index = 0;
       for (ChannelInfo& info : channelInfos) {
-        void* src = getBuffer(info.srcBufferType, sendbuff, recvbuff, context.scratchBuffer.get());
-        size_t bufferSize = getBufferSize(info.srcBufferType);
-        TransportFlags transport = getTransportFlags(channelInfos, rank);
-        RegisteredMemory localMemory = this->comm->registerMemory(src, bufferSize, transport);
-        for (int peer : info.connectedPeers) {
+        for (size_t i = 0; i < info.connectedPeers.size(); i++) {
           if (channelType == ChannelType::MEMORY) {
-            context.memoryChannels.emplace_back(context.memorySemaphores[index++],
-                                                context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
+            context.memoryChannels.emplace_back(context.memorySemaphores[index++]);
           } else if (channelType == ChannelType::PORT) {
-            context.portChannels.emplace_back(context.proxyService->portChannel(
-                context.proxySemaphores[index++],
-                context.proxyService->addMemory(context.registeredMemories[{info.dstBufferType, peer}]),
-                context.proxyService->addMemory(localMemory)));
+            context.portChannels.emplace_back(context.proxyService->basePortChannel(context.proxySemaphores[index++]));
           }
         }
       }
@@ -345,8 +333,8 @@ struct Executor::Impl {
   }
 
   void setupNvlsChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
-                         size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
-    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank, sendBufferSize, recvBufferSize);
+                         size_t recvBufferSize, size_t scratchBufferSize, int rank, const ExecutionPlan& plan) {
+    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank, sendBufferSize, recvBufferSize, scratchBufferSize);
     for (size_t i = 0; i < nvlsInfos.size(); i++) {
       std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[i];
       NvlsInfo info = nvlsInfos[i];
@@ -357,27 +345,48 @@ struct Executor::Impl {
     }
   }
 
+  void setupSemaphores(ExecutionContext& context, const ExecutionPlan& plan) {
+    std::vector<DeviceSemaphore> semaphores;
+    for (const SemaphoreInfo& info : plan.impl_->semaphoreInfos) {
+      DeviceSemaphore semaphore(info.initValue);
+      semaphores.push_back(semaphore);
+    }
+    context.smemaphores = GpuBuffer(semaphores.size() * sizeof(DeviceSemaphore)).memory();
+    gpuMemcpy(context.smemaphores.get(), (char*)semaphores.data(), semaphores.size() * sizeof(DeviceSemaphore),
+              cudaMemcpyHostToDevice);
+  }
+
   void setupDeviceExecutionPlan(ExecutionContext& context, const DeviceExecutionPlanKey& key, int rank,
                                 const ExecutionPlan& plan) {
     std::vector<DeviceExecutionPlan> deviceExecutionPlans;
-    for (int threadblock = 0; threadblock < plan.impl_->getThreadblockCount(rank); threadblock++) {
+    for (int threadblock = 0; threadblock < plan.impl_->getThreadblockCount(); threadblock++) {
       DeviceExecutionPlan deviceExecutionPlan = {};
-      std::vector<Operation> ops = plan.impl_->getOperations(rank, threadblock);
+      std::vector<Operation> ops = plan.impl_->getOperations(threadblock);
       deviceExecutionPlan.nOperations = ops.size();
       deviceExecutionPlan.nMemoryChannels = plan.impl_->threadblockMemoryChannelMap.at(rank).at(threadblock).size();
       deviceExecutionPlan.nPortChannels = plan.impl_->threadblockPortChannelMap.at(rank).at(threadblock).size();
       int chanIndex = 0;
-      for (const auto& [index, _] : plan.impl_->threadblockMemoryChannelMap.at(rank).at(threadblock)) {
+      for (const int index : plan.impl_->threadblockMemoryChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.memoryChannels[chanIndex++] = mscclpp::deviceHandle(context.memoryChannels[index]);
       }
       chanIndex = 0;
-      for (const auto& [index, _] : plan.impl_->threadblockPortChannelMap.at(rank).at(threadblock)) {
+      for (const int index : plan.impl_->threadblockPortChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.portChannels[chanIndex++] = mscclpp::deviceHandle(context.portChannels[index]);
       }
       chanIndex = 0;
-      for (const auto& [index, _] : plan.impl_->threadblockNvlsChannelMap.at(rank).at(threadblock)) {
+      for (const int index : plan.impl_->threadblockNvlsChannelMap.at(rank).at(threadblock)) {
         deviceExecutionPlan.channels.nvlsChannels[chanIndex++] = mscclpp::deviceHandle(context.nvlsChannels[index]);
       }
+      int memIndex = 0;
+      for (const int index : plan.impl_->threadblockMemoryChannelBufferMap.at(rank).at(threadblock)) {
+        deviceExecutionPlan.remoteBuffers.remoteBuffersViaMemoryChannel[memIndex++] =
+            context.registeredMemoryAddresses[index];
+      }
+      memIndex = 0;
+      for (const int index : plan.impl_->threadblockPortChannelBufferMap.at(rank).at(threadblock)) {
+        deviceExecutionPlan.remoteBuffers.remoteBuffersViaPortChannel[memIndex++] = context.registeredMemoryIds[index];
+      }
+
       if (ops.size() > MAX_OPERATION) {
         throw Error("Executor plan launching " + std::to_string(ops.size()) +
                         " operations, exceeding device execution plan support (" + std::to_string(MAX_OPERATION) + ")",
@@ -407,20 +416,22 @@ struct Executor::Impl {
 #endif
     size_t sharedMemSize = sizeof(DeviceExecutionPlan) + NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
 #else
-    size_t sharedMemSize = sizeof(DeviceExecutionPlan);
+    uint32_t sharedMemSize = sizeof(DeviceExecutionPlan);
 #endif
     switch (packetType) {
       case PacketType::LL16:
         ExecutionKernel::launchKernel<LL16Packet>(
             rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
-            context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
-            sharedMemSize, stream, ++flag);
+            context.scratchBufferSize, context.scratchChunkSize, dataType,
+            (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
+            (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, ++flag);
         break;
       case PacketType::LL8:
         ExecutionKernel::launchKernel<LL8Packet>(
             rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
-            context.scratchBufferSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
-            sharedMemSize, stream, ++flag);
+            context.scratchBufferSize, context.scratchChunkSize, dataType,
+            (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
+            (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, ++flag);
         break;
       default:
         throw Error("Invalid packet type", ErrorCode::ExecutorError);
