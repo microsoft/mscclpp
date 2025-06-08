@@ -24,6 +24,7 @@ struct ChannelKey {
 
 struct NvlsInfo {
   std::vector<int> ranks;
+  uint32_t nChunks;
   size_t bufferSize;
   BufferType bufferType;
 };
@@ -73,8 +74,7 @@ struct ExecutionPlan::Impl {
 
   std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
   std::vector<ChannelInfo> getUnpairedChannelInfos(int rank, int worldSize, ChannelType channelType);
-  std::vector<NvlsInfo> getNvlsInfos(int rank, size_t sendBuffserSize = 0, size_t recvBufferSize = 0,
-                                     size_t scratchBufferSize = 0) const;
+  void populateNvlsInfos(size_t sendBuffserSize, size_t recvBufferSize, size_t scratchBufferSize) const;
   std::vector<int> getConnectedPeers(int rank) const;
   std::vector<BufferInfo> getRemoteBufferInfos(int rank) const;
   std::vector<BufferInfo> getLocalBufferToSend(int rank) const;
@@ -84,7 +84,6 @@ struct ExecutionPlan::Impl {
   int getThreadblockCount() const;
   int getNThreadsPerBlock() const;
 
-  bool isMessageSizeValid(size_t inputSize, size_t outputSize) const;
   void loadExecutionPlan(int rank, size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
   void lightLoadExecutionPlan(int rank, size_t inputSize, size_t outputSize, size_t contsSrcOffset,
                               size_t constDstOffset);
@@ -100,7 +99,7 @@ struct ExecutionPlan::Impl {
   std::string collective;
   const std::string planPath;
   bool isUsingPacket;
-  bool reuseResources = true;
+  bool reuseResources;
   int rank;
 
   // operations for current ranks [threadblock] = list[operations]
@@ -140,6 +139,7 @@ struct ExecutionPlan::Impl {
   size_t getUpperBoundChunkSize(size_t inputSize, size_t outputSize) const;
   void setupOperation(const nlohmann::json& op, Operation& operation, int rank, int threadBlockId,
                       size_t constSrcOffset, size_t constDstOffset);
+  bool isMessageSizeValid(size_t inputSize, size_t outputSize) const;
 
   // helper functions to setup the channels
   void parseChannels(const nlohmann::json& gpu, std::vector<ChannelInfo>& channelInfos,

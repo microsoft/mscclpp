@@ -185,10 +185,11 @@ struct Executor::Impl {
     context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
     context.nthreadsPerBlock = plan.impl_->getNThreadsPerBlock();
-    this->setupConnections(context, rank, plan, sendMemRange, recvMemRange, scratchBufferSize);
+    plan.impl_->populateNvlsInfos(sendMemRange, recvMemRange, scratchBufferSize);
+    this->setupConnections(context, rank, plan);
     this->setupChannels(context, rank, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
-    this->setupNvlsChannels(context, sendbuff, recvbuff, sendMemRange, recvMemRange, scratchBufferSize, rank, plan);
+    this->setupNvlsChannels(context, sendbuff, recvbuff, rank, plan);
     this->setupSemaphores(context, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, rank, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
@@ -217,8 +218,7 @@ struct Executor::Impl {
     return flags;
   };
 
-  void setupConnections(ExecutionContext& context, int rank, const ExecutionPlan& plan, size_t sendBufferSize,
-                        size_t recvBufferSize, size_t scratchBufferSize) {
+  void setupConnections(ExecutionContext& context, int rank, const ExecutionPlan& plan) {
     std::vector<int> connectedPeers = plan.impl_->getConnectedPeers(rank);
     std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
     for (int peer : connectedPeers) {
@@ -230,7 +230,7 @@ struct Executor::Impl {
       context.connections[connectedPeers[i]] = connectionFutures[i].get();
     }
 
-    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank, sendBufferSize, recvBufferSize, scratchBufferSize);
+    std::vector<NvlsInfo> nvlsInfos = plan.impl_->nvlsInfos.at(rank);
     for (const NvlsInfo& info : nvlsInfos) {
       std::shared_ptr<NvlsConnection> nvlsConnection =
           mscclpp::connectNvlsCollective(this->comm, info.ranks, info.bufferSize);
@@ -332,9 +332,9 @@ struct Executor::Impl {
     }
   }
 
-  void setupNvlsChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
-                         size_t recvBufferSize, size_t scratchBufferSize, int rank, const ExecutionPlan& plan) {
-    std::vector<NvlsInfo> nvlsInfos = plan.impl_->getNvlsInfos(rank, sendBufferSize, recvBufferSize, scratchBufferSize);
+  void setupNvlsChannels(ExecutionContext& context, void* sendbuff, void* recvbuff, int rank,
+                         const ExecutionPlan& plan) {
+    std::vector<NvlsInfo> nvlsInfos = plan.impl_->nvlsInfos.at(rank);
     for (size_t i = 0; i < nvlsInfos.size(); i++) {
       std::shared_ptr<NvlsConnection> nvlsConnection = context.nvlsConnections[i];
       NvlsInfo info = nvlsInfos[i];

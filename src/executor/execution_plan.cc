@@ -113,6 +113,7 @@ ExecutionPlan::Impl::Impl(const std::string& planPath, int rank)
   this->name = obj["name"];
   this->collective = obj["collective"];
   this->isInPlace = obj["inplace"];
+  this->reuseResources = obj["reuse_resources"];
   this->bufferAlignment = obj.value("buffer_alignment", 16);
   this->minMessageSize = obj.value("min_message_size", 0);
   this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
@@ -143,11 +144,8 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int rank, 
   return unpaired;
 }
 
-std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank, size_t sendBuffserSize, size_t recvBufferSize,
-                                                        size_t scratchBufferSize) const {
-  if (sendBuffserSize == 0 && recvBufferSize == 0 && scratchBufferSize == 0) {
-    return this->nvlsInfos.at(rank);
-  }
+void ExecutionPlan::Impl::populateNvlsInfos(size_t sendBuffserSize, size_t recvBufferSize,
+                                            size_t scratchBufferSize) const {
   size_t chunkSize = this->getUpperBoundChunkSize(sendBuffserSize, recvBufferSize);
   std::vector<NvlsInfo> infos = this->nvlsInfos.at(rank);
   for (auto& info : infos) {
@@ -156,7 +154,6 @@ std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank, size_t sendBuf
     }
     info.bufferSize = info.bufferSize * chunkSize;
   }
-  return infos;
 }
 
 std::vector<int> ExecutionPlan::Impl::getConnectedPeers(int rank) const {
@@ -316,7 +313,7 @@ void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo
       NvlsInfo info;
       info.bufferType = convertToBufferType(channel["buff"]);
       for (const auto& group : channel["rank_groups"]) {
-        info.bufferSize = (int)group["size"];
+        info.nChunks = (int)group["size"];
         info.ranks.clear();
         for (int rank : group["ranks"]) {
           info.ranks.push_back(rank);
@@ -387,8 +384,7 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
       const std::vector<ChannelInfo> channelInfos = this->getChannelInfos(rank, channelType);
       int index = 0;
       if (channelType == ChannelType::SWITCH) {
-        const std::vector<NvlsInfo> nvlsInfos = this->getNvlsInfos(rank);
-        for (const auto& info : nvlsInfos) {
+        for (const auto& info : this->nvlsInfos[rank]) {
           ChannelKey key = {info.bufferType, ChannelType::SWITCH};
           channelMap[key].push_back(index++);
         }
