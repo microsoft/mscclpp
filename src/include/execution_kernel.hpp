@@ -186,6 +186,7 @@ __shared__ DeviceHandle<BasePortChannel>* portChannels_;
 __shared__ DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels_;
 __shared__ void** remoteMemoriesViaMemoryChan_;
 __shared__ MemoryId* remoteMemoriesViaPortChan_;
+__shared__ BufferType* remoteBufferTypes_;
 __shared__ uint32_t flag_;
 __shared__ uint32_t scratchSize_;
 __shared__ uint32_t scratchChunkSize_;
@@ -280,8 +281,9 @@ MSCCLPP_DEVICE_INLINE void handleGet(Operation* operation, void* input, void* ou
   }
 }
 
-template <bool PutWithSignal = false, bool PutWithSignalAndFlush = false>
-MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* output, void* scratch) {
+template <bool ReuseScratch, bool PutWithSignal = false, bool PutWithSignalAndFlush = false>
+MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* output, void* scratch, uint32_t offset,
+                                     uint32_t unitSize) {
   ChannelType chType = op.channelType;
   uint32_t count = op.nOutputs;
   const uint8_t* channelIndexes = op.channelIndexes;
@@ -291,9 +293,10 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
   char* src = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type));
   if (chType == ChannelType::MEMORY) {
     for (int i = 0; i < count; i++) {
-      uint32_t dstOffset = dstOffsets[i];
-      uint32_t srcOffset = srcOffsets[i];
-      uint32_t size = outputSizes[i];
+      uint32_t dstOffset =
+          dstOffsets[i] + getOffset<ReuseScratch>(remoteBufferTypes_[op.outputBufferRefs[i].id], offset);
+      uint32_t srcOffset = srcOffsets[i] + getOffset<ReuseScratch>(op.inputBufferRefs[i].type, offset);
+      uint32_t size = min(outputSizes[i] - offset, unitSize);
       char* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[op.outputBufferRefs[i].id]);
       mscclpp::copy(remoteMemory + dstOffset, src + srcOffset, size, threadIdx.x, blockDim.x);
     }
@@ -302,17 +305,19 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
   if (chType == ChannelType::PORT) {
     int tid = threadIdx.x;
     if (tid < count) {
-      uint32_t size = outputSizes[tid];
+      uint32_t size = min(outputSizes[tid] - offset, unitSize);
       MemoryId dstMemoryId = remoteMemoriesViaPortChan_[op.outputBufferRefs[tid].id];
-      MemoryId srcMemoryId = remoteMemoriesViaPortChan_[op.inputBufferRefs[tid].id];
+      MemoryId srcMemoryId = static_cast<MemoryId>(op.inputBufferRefs[tid].type);
+      uint32_t dstOffset =
+          dstOffsets[tid] + getOffset<ReuseScratch>(remoteBufferTypes_[op.outputBufferRefs[tid].id], offset);
+      uint32_t srcOffset = srcOffsets[tid] + getOffset<ReuseScratch>(op.inputBufferRefs[tid].type, offset);
       if constexpr (PutWithSignal) {
-        portChannels_[channelIndexes[tid]].putWithSignal(dstMemoryId, dstOffsets[tid], srcMemoryId, srcOffsets[tid],
-                                                         size);
+        portChannels_[channelIndexes[tid]].putWithSignal(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size);
       } else if constexpr (PutWithSignalAndFlush) {
-        portChannels_[channelIndexes[tid]].putWithSignalAndFlush(dstMemoryId, (uint64_t)dstOffsets[tid], srcMemoryId,
-                                                                 (uint64_t)srcOffsets[tid], size);
+        portChannels_[channelIndexes[tid]].putWithSignalAndFlush(dstMemoryId, (uint64_t)dstOffset, srcMemoryId,
+                                                                 (uint64_t)srcOffsets, size);
       } else {
-        portChannels_[channelIndexes[tid]].put(dstMemoryId, dstOffsets[tid], srcMemoryId, srcOffsets[tid], size);
+        portChannels_[channelIndexes[tid]].put(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size);
       }
     }
   }
@@ -677,15 +682,15 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   if (opType == OperationType::FLUSH) {
     return handleFlush(op);
   }
-  // if (opType == OperationType::PUT) {
-  //   return handlePut(op, input, output, scratch);
-  // }
-  // if (opType == OperationType::PUT_WITH_SIGNAL) {
-  //   return handlePut<true>(op, input, output, scratch);
-  // }
-  // if (opType == OperationType::PUT_WITH_SIGNAL_AND_FLUSH) {
-  //   return handlePut<true, true>(op, input, output, scratch);
-  // }
+  if (opType == OperationType::PUT) {
+    return handlePut<ReuseScratch>(op, input, output, scratch, offset, unitSize);
+  }
+  if (opType == OperationType::PUT_WITH_SIGNAL) {
+    return handlePut<ReuseScratch, true>(op, input, output, scratch, offset, unitSize);
+  }
+  if (opType == OperationType::PUT_WITH_SIGNAL_AND_FLUSH) {
+    return handlePut<ReuseScratch, true, true>(op, input, output, scratch, offset, unitSize);
+  }
   // if (opType == OperationType::PUT_PACKET) {
   //   return handlePutPacket<PacketType>;
   // }
@@ -768,6 +773,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
   nvlsChannels_ = localPlan->channels.nvlsChannels;
   remoteMemoriesViaMemoryChan_ = localPlan->remoteBuffers.remoteBuffersViaMemoryChannel;
   remoteMemoriesViaPortChan_ = localPlan->remoteBuffers.remoteBuffersViaPortChannel;
+  remoteBufferTypes_ = localPlan->remoteBuffers.remoteBufferTypes;
   scratchSize_ = scratchSize;
   flag_ = flag;
   scratchChunkSize_ = scratchChunkSize;

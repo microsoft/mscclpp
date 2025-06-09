@@ -154,7 +154,7 @@ struct Executor::Impl {
                                          size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendMemRange, recvMemRange, plan.impl_->name};
     DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset};
-    
+
     // The plan is not related to any specific input/output message size or memory address
     if (plan.impl_->reuseResources) {
       key = {nullptr, nullptr, 0, 0, plan.impl_->name};

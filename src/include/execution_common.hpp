@@ -13,10 +13,6 @@ namespace mscclpp {
 constexpr int MAX_CHANNEL = 16;
 constexpr int MAX_CHANNEL_PER_OPERATION = 8;
 constexpr int MAX_OPERATION = 64;
-constexpr int INPUT_BUFFER_MEMORY_ID = 0;
-constexpr int OUTPUT_BUFFER_MEMORY_ID = 1;
-constexpr int SCRATCH_BUFFER_MEMORY_ID = 2;
-constexpr int MAX_RESERVED_MEMORY_IDS = 3;
 
 constexpr int MAX_DEVICE_SYNCERS = 16;
 constexpr int MAX_DEVICE_SEMAPHORES = 16;
@@ -24,10 +20,10 @@ constexpr int MAX_DEVICE_SEMAPHORES = 16;
 constexpr uint32_t PREDFINED_SCRATCH_SIZE = 1 << 26;  // 64 MB
 
 enum class BufferType : uint8_t {
-  NONE,
-  INPUT,
-  OUTPUT,
-  SCRATCH,
+  NONE = UINT8_MAX,
+  INPUT = 0,
+  OUTPUT = 1,
+  SCRATCH = 2,
 };
 
 enum class ChannelType : uint8_t {
