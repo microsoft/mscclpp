@@ -135,6 +135,7 @@ struct ExecutionContext {
   uint32_t scratchChunkSize;
   int nthreadsPerBlock;
   DeviceExecutionPlanKey currentDevicePlan;
+  bool reuseResources;
 };
 
 struct Executor::Impl {
@@ -183,6 +184,7 @@ struct Executor::Impl {
     plan.impl_->loadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
 
     ExecutionContext context;
+    context.reuseResources = plan.impl_->reuseResources;
     size_t scratchBufferSize = plan.impl_->calScratchBufferSize(std::min(sendMemRange, plan.impl_->maxMessageSize),
                                                                 std::min(recvMemRange, plan.impl_->maxMessageSize));
     context.scratchChunkSize = plan.impl_->calMaxScratchChunkSize(scratchBufferSize);
@@ -407,13 +409,33 @@ struct Executor::Impl {
     context.deviceExecutionPlans[key] = std::move(deviceExecutionPlans);
   }
 
+  template <typename PacketType>
+  void launchKernelHelper(ExecutionContext& context, int rank, void* sendbuff, void* recvbuff, DataType dataType,
+                          cudaStream_t stream, uint32_t sharedMemSize, const uint32_t& flag) {
+    DeviceExecutionPlanKey key = context.currentDevicePlan;
+    int nthreadblocks = context.deviceExecutionPlans[key].size();
+    if (context.reuseResources) {
+      ExecutionKernel::launchKernel<PacketType, true>(
+          rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
+          context.scratchBufferSize, context.scratchChunkSize, dataType,
+          (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
+          (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, flag);
+    } else {
+      ExecutionKernel::launchKernel<PacketType, false>(
+          rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
+          context.scratchBufferSize, context.scratchChunkSize, dataType,
+          (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
+          (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, flag);
+    }
+  }
+
   void launchKernel(ExecutionContext& context, int rank, void* sendbuff, void* recvbuff, DataType dataType,
                     cudaStream_t stream, PacketType packetType) {
     static uint32_t flag = 0;
-    DeviceExecutionPlanKey key = context.currentDevicePlan;
-    int nthreadblocks = context.deviceExecutionPlans[key].size();
 #if defined(ENABLE_NPKIT)
 #if defined(__HIP_PLATFORM_AMD__)
+    DeviceExecutionPlanKey key = context.currentDevicePlan;
+    int nthreadblocks = context.deviceExecutionPlans[key].size();
     if (nthreadblocks > NPKIT_MAX_NUM_GPU_THREADBLOCKS) {
       throw Error("Executor plan launching " + std::to_string(nthreadblocks) +
                       " thread blocks, exceeding NPKit support (" + std::to_string(NPKIT_MAX_NUM_GPU_THREADBLOCKS) +
@@ -427,18 +449,10 @@ struct Executor::Impl {
 #endif
     switch (packetType) {
       case PacketType::LL16:
-        ExecutionKernel::launchKernel<LL16Packet>(
-            rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
-            context.scratchBufferSize, context.scratchChunkSize, dataType,
-            (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
-            (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, ++flag);
+        launchKernelHelper<LL16Packet>(context, rank, sendbuff, recvbuff, dataType, stream, sharedMemSize, ++flag);
         break;
       case PacketType::LL8:
-        ExecutionKernel::launchKernel<LL8Packet>(
-            rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, (void*)context.scratchBuffer.get(),
-            context.scratchBufferSize, context.scratchChunkSize, dataType,
-            (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
-            (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, ++flag);
+        launchKernelHelper<LL8Packet>(context, rank, sendbuff, recvbuff, dataType, stream, sharedMemSize, ++flag);
         break;
       default:
         throw Error("Invalid packet type", ErrorCode::ExecutorError);

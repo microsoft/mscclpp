@@ -6,14 +6,14 @@
 #if defined(MSCCLPP_DEVICE_CUDA)
 namespace mscclpp {
 
-template <typename PacketType>
+template <typename PacketType, bool ReuseScratch>
 void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
                                    uint32_t scratchSize, uint32_t scrachChunkSize, DataType dataType,
                                    DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t sharedMemSize,
                                    cudaStream_t stream, uint32_t flag) {
   switch (dataType) {
     case DataType::INT32:
-      executionKernel<int32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+      executionKernel<int32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
           rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, scrachChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
           ,
@@ -23,7 +23,7 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
 #endif
       break;
     case DataType::UINT32:
-      executionKernel<uint32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+      executionKernel<uint32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
           rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, scrachChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
           ,
@@ -33,7 +33,7 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
 #endif
       break;
     case DataType::FLOAT16:
-      executionKernel<half, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+      executionKernel<half, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
           rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, scrachChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
           ,
@@ -43,7 +43,7 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
 #endif
       break;
     case DataType::FLOAT32:
-      executionKernel<float, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+      executionKernel<float, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
           rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, scrachChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
           ,
@@ -53,7 +53,7 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
 #endif
       break;
     case DataType::BFLOAT16:
-      executionKernel<__bfloat16, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+      executionKernel<__bfloat16, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
           rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchSize, scrachChunkSize, plan,
           semaphores, flag
 #if defined(ENABLE_NPKIT)
@@ -66,15 +66,17 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
   }
 }
 
-template void ExecutionKernel::launchKernel<LL16Packet>(int rank, int nthreadblocks, int nthreads, void* src, void* dst,
-                                                        void* scratch, uint32_t scratchSize, uint32_t scrachChunkSize,
-                                                        DataType dataType, DeviceExecutionPlan* plan,
-                                                        DeviceSemaphore* semaphores, uint32_t sharedMemSize,
-                                                        cudaStream_t stream, uint32_t flag);
-template void ExecutionKernel::launchKernel<LL8Packet>(int rank, int nthreadblocks, int nthreads, void* src, void* dst,
-                                                       void* scratch, uint32_t scratchSize, uint32_t scrachChunkSize,
-                                                       DataType dataType, DeviceExecutionPlan* plan,
-                                                       DeviceSemaphore* semaphores, uint32_t sharedMemSize,
-                                                       cudaStream_t stream, uint32_t flag);
+#define INSTANTIATE_LAUNCH(PKT, REUSE)                                                                      \
+  template void ExecutionKernel::launchKernel<PKT, REUSE>(                                                  \
+      int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch, uint32_t scratchSize, \
+      uint32_t scratchChunkSize, DataType dataType, DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, \
+      uint32_t sharedMemSize, cudaStream_t stream, uint32_t flag);
+
+INSTANTIATE_LAUNCH(LL16Packet, true)
+INSTANTIATE_LAUNCH(LL8Packet, true)
+INSTANTIATE_LAUNCH(LL16Packet, false)
+INSTANTIATE_LAUNCH(LL8Packet, false)
+#undef INSTANTIATE_LAUNCH
+
 }  // namespace mscclpp
 #endif

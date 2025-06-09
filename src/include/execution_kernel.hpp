@@ -216,7 +216,7 @@ MSCCLPP_DEVICE_INLINE uint32_t getOffset(BufferType bufferType, uint32_t offset)
   }
 }
 
-template <typename T, typename PacketType, bool ReuseScratch = true>
+template <typename T, typename PacketType, bool ReuseScratch = false>
 MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch,
                                                  uint8_t* nSteps = nullptr, uint32_t offset = 0,
                                                  uint32_t unitSize = UINT32_MAX);
@@ -630,7 +630,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
 }
 #endif
 
-template <typename T, typename PacketType>
+template <typename T, typename PacketType, bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handlePipeline(const Operation& op, T* input, T* output, T* scratch) {
   uint16_t nIterations = op.nIterations;
   uint16_t nOperations = op.nOperations;
@@ -639,7 +639,8 @@ MSCCLPP_DEVICE_INLINE void handlePipeline(const Operation& op, T* input, T* outp
   for (uint16_t i = 0; i < nIterations; i++) {
     uint32_t offset = i * unitSize;
     for (uint8_t opId = 0; opId < nOperations; opId++) {
-      executeDeviceFunction<T, PacketType>(operations[opId], input, output, scratch, nullptr, offset, unitSize);
+      executeDeviceFunction<T, PacketType, ReuseScratch>(operations[opId], input, output, scratch, nullptr, offset,
+                                                         unitSize);
     }
   }
 }
@@ -731,12 +732,12 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
 #endif
   if (opType == OperationType::PIPELINE) {
     *nSteps = op.nOperations + 1;
-    return handlePipeline<T, PacketType>(op, input, output, scratch);
+    return handlePipeline<T, PacketType, ReuseScratch>(op, input, output, scratch);
   }
   return;
 }
 
-template <typename T, typename PacketType = LL16Packet>
+template <typename T, typename PacketType = LL16Packet, bool ReuseScratch = false>
 __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
                                 uint32_t scratchSize, uint32_t scratchChunkSize, DeviceExecutionPlan* plan,
                                 DeviceSemaphore* semaphores, uint32_t flag
@@ -808,7 +809,7 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                               event_buffer, &event_buffer_head);
 #endif
     uint8_t nSteps = 0;
-    executeDeviceFunction<T, PacketType>(op, input, output, scratch, &nSteps);
+    executeDeviceFunction<T, PacketType, ReuseScratch>(op, input, output, scratch, &nSteps);
     i += nSteps;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT)
@@ -826,14 +827,14 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
 class ExecutionKernel {
  public:
 #if defined(MSCCLPP_DEVICE_HIP)
-  template <typename PacketType>
+  template <typename PacketType, bool ReuseScratch>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
                            uint32_t scratchSize, uint32_t scratchChunkSize, DataType dataType,
                            DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t sharedMemSize,
                            cudaStream_t stream, uint32_t flag = 0) {
     switch (dataType) {
       case DataType::INT32:
-        executionKernel<int32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+        executionKernel<int32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
@@ -843,7 +844,7 @@ class ExecutionKernel {
 #endif
         break;
       case DataType::UINT32:
-        executionKernel<uint32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+        executionKernel<uint32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, scratchChunkSize, plan, semaphores,
             flag
 #if defined(ENABLE_NPKIT)
@@ -854,7 +855,7 @@ class ExecutionKernel {
 #endif
         break;
       case DataType::FLOAT16:
-        executionKernel<half, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+        executionKernel<half, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
@@ -864,7 +865,7 @@ class ExecutionKernel {
 #endif
         break;
       case DataType::FLOAT32:
-        executionKernel<float, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+        executionKernel<float, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
@@ -874,7 +875,7 @@ class ExecutionKernel {
 #endif
         break;
       case DataType::BFLOAT16:
-        executionKernel<__bfloat16, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+        executionKernel<__bfloat16, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchSize, scratchChunkSize, plan,
             semaphores, flag
 #if defined(ENABLE_NPKIT)
@@ -887,7 +888,7 @@ class ExecutionKernel {
     }
   }
 #else   // !defined(MSCCLPP_DEVICE_HIP)
-  template <typename PacketType>
+  template <typename PacketType, bool ReuseScratch>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
                            uint32_t scratchSize, uint32_t scratchChunkSize, DataType dataType,
                            DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t sharedMemSize,
