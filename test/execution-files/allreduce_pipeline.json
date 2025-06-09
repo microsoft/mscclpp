@@ -3,7 +3,7 @@
   "collective": "allreduce",
   "protocol": "Simple",
   "inplace": true,
-  "reuse_resources ": true,
+  "reuse_resources": true,
   "gpus": [
     {
       "id": 0,

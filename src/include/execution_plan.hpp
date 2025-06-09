@@ -96,11 +96,6 @@ struct ExecutionPlan::Impl {
 
   // operations for current ranks [threadblock] = list[operations]
   std::vector<std::vector<Operation>> operations;
-  std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
-  std::unordered_map<int, std::vector<ChannelInfo>> channelInfosByDstRank;
-  std::unordered_map<int, std::vector<BufferInfo>> remoteBufferInfos;
-  std::unordered_map<int, std::vector<BufferInfo>> localBufferToSend;
-  std::unordered_map<std::pair<int, ChannelType>, std::unordered_map<int, int>> channelCountMap;
   std::vector<SemaphoreInfo> semaphoreInfos;
   // for nvls channels
   std::unordered_map<int, std::vector<NvlsInfo>> nvlsInfos;
@@ -141,11 +136,16 @@ struct ExecutionPlan::Impl {
   void parseChannels(const nlohmann::json& gpu, std::vector<ChannelInfo>& channelInfos,
                      std::vector<NvlsInfo>& nvlsInfos,
                      std::map<std::pair<int, ChannelType>, std::vector<int>>& chanConnectedPeersMap, int rank);
-  void parseRemoteBuffer(const nlohmann::json& gpu, int rank);
+  void parseRemoteBuffer(const nlohmann::json& gpus);
 
   bool isMessageSizeValid(size_t inputSize, size_t outputSize) const;
 
+  std::unordered_map<std::pair<int, ChannelType>, std::unordered_map<int, int>> channelCountMap_;
   std::unordered_map<int, std::unordered_map<std::pair<int, ChannelType>, int>> bufferIndexMap_;
+  std::unordered_map<int, std::vector<ChannelInfo>> channelInfos_;
+  std::unordered_map<int, std::vector<ChannelInfo>> channelInfosByDstRank_;
+  std::unordered_map<int, std::vector<BufferInfo>> remoteBufferInfos_;
+  std::unordered_map<int, std::vector<BufferInfo>> localBufferToSend_;
 };
 
 }  // namespace mscclpp

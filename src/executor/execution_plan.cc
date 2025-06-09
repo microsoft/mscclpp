@@ -121,7 +121,7 @@ ExecutionPlan::Impl::Impl(const std::string& planPath, int rank)
 
 std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(ChannelType channelType) const {
   auto pred = [channelType](const ChannelInfo& info) { return info.channelType == channelType; };
-  return filter(this->channelInfos.at(rank), pred);
+  return filter(this->channelInfos_.at(rank), pred);
 }
 
 std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int worldSize, ChannelType channelType) {
@@ -130,8 +130,8 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int worldS
     if (peer == rank) {
       continue;
     }
-    if (this->channelCountMap[{rank, channelType}][peer] < this->channelCountMap[{peer, channelType}][rank]) {
-      int count = this->channelCountMap[{peer, channelType}][rank] - this->channelCountMap[{rank, channelType}][peer];
+    if (this->channelCountMap_[{rank, channelType}][peer] < this->channelCountMap_[{peer, channelType}][rank]) {
+      int count = this->channelCountMap_[{peer, channelType}][rank] - this->channelCountMap_[{rank, channelType}][peer];
       for (int i = 0; i < count; i++) {
         ChannelInfo info;
         info.channelType = channelType;
@@ -145,12 +145,12 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int worldS
 
 std::vector<int> ExecutionPlan::Impl::getConnectedPeers() const {
   std::set<int> peers;
-  for (const auto& info : this->channelInfos.at(rank)) {
+  for (const auto& info : this->channelInfos_.at(rank)) {
     for (int peer : info.connectedPeers) {
       peers.insert(peer);
     }
   }
-  for (const auto& info : this->channelInfosByDstRank.at(rank)) {
+  for (const auto& info : this->channelInfosByDstRank_.at(rank)) {
     for (int peer : info.connectedPeers) {
       peers.insert(peer);
     }
@@ -159,17 +159,17 @@ std::vector<int> ExecutionPlan::Impl::getConnectedPeers() const {
 }
 
 std::vector<BufferInfo> ExecutionPlan::Impl::getRemoteBufferInfos() const {
-  if (this->remoteBufferInfos.find(rank) == this->remoteBufferInfos.end()) {
+  if (this->remoteBufferInfos_.find(rank) == this->remoteBufferInfos_.end()) {
     return std::vector<BufferInfo>();
   }
-  return this->remoteBufferInfos.at(rank);
+  return this->remoteBufferInfos_.at(rank);
 }
 
 std::vector<BufferInfo> ExecutionPlan::Impl::getLocalBufferToSend() const {
-  if (this->localBufferToSend.find(rank) == this->localBufferToSend.end()) {
+  if (this->localBufferToSend_.find(rank) == this->localBufferToSend_.end()) {
     return std::vector<BufferInfo>();
   }
-  return this->localBufferToSend.at(rank);
+  return this->localBufferToSend_.at(rank);
 }
 
 size_t ExecutionPlan::Impl::calScratchBufferSize(size_t inputSize, size_t outputSize) const {
@@ -310,30 +310,33 @@ void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo
       for (const auto& peer : channel["connected_to"]) {
         info.connectedPeers.push_back(peer);
         chanConnectedPeersMap[{peer, info.channelType}].push_back(rank);
-        this->channelCountMap[{rank, info.channelType}][peer]++;
+        this->channelCountMap_[{rank, info.channelType}][peer]++;
       }
       channelInfos.push_back(info);
     }
   }
 }
 
-void ExecutionPlan::Impl::parseRemoteBuffer(const nlohmann::json& gpu, int rank) {
-  auto& bufferInfos = this->remoteBufferInfos[rank];
+void ExecutionPlan::Impl::parseRemoteBuffer(const nlohmann::json& gpus) {
+  auto& bufferInfos = this->remoteBufferInfos_[rank];
   auto& bufferIndexMap = this->bufferIndexMap_[rank];
-  std::unordered_map<ChannelType, int> channelCountMap;
-  for (auto& remoteBuffer : gpu["remote_buffers"]) {
-    int bufferId = bufferInfos.size();
-    int oriRank = remoteBuffer["rank"];
-    BufferType bufferType = convertToBufferType(remoteBuffer["type"]);
-    std::vector<ChannelType> accessChannels;
-    for (const auto& channel : remoteBuffer["access_channel_types"]) {
-      ChannelType chanType = convertToChannelType(channel);
-      accessChannels.push_back(chanType);
-      bufferIndexMap[{bufferId, chanType}] = channelCountMap[chanType]++;
+  for (const auto& gpu : gpus) {
+    std::unordered_map<ChannelType, int> channelCountMap;
+    int gpuRank = gpu["id"];
+    for (auto& remoteBuffer : gpu["remote_buffers"]) {
+      int bufferId = bufferInfos.size();
+      int oriRank = remoteBuffer["rank"];
+      BufferType bufferType = convertToBufferType(remoteBuffer["type"]);
+      std::vector<ChannelType> accessChannels;
+      for (const auto& channel : remoteBuffer["access_channel_types"]) {
+        ChannelType chanType = convertToChannelType(channel);
+        accessChannels.push_back(chanType);
+        bufferIndexMap[{bufferId, chanType}] = channelCountMap[chanType]++;
+      }
+      BufferInfo info{oriRank, gpuRank, bufferType, accessChannels};
+      bufferInfos.push_back(info);
+      this->localBufferToSend_[oriRank].push_back(info);
     }
-    BufferInfo info{oriRank, rank, bufferType, accessChannels};
-    bufferInfos.push_back(info);
-    this->localBufferToSend[oriRank].push_back(info);
   }
 }
 
@@ -347,7 +350,7 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
     std::vector<ChannelInfo> channelInfos;
     std::vector<NvlsInfo> nvlsInfos;
     this->parseChannels(gpu, channelInfos, nvlsInfos, chanConnectedPeersMap, rank);
-    this->channelInfos[rank] = channelInfos;
+    this->channelInfos_[rank] = channelInfos;
     this->nvlsInfos[rank] = nvlsInfos;
   }
 
@@ -356,7 +359,7 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
     ChannelInfo info;
     info.channelType = channelType;
     info.connectedPeers = connectedFrom;
-    this->channelInfosByDstRank[peer].push_back(info);
+    this->channelInfosByDstRank_[peer].push_back(info);
   }
 
   // setup threadblockChannels
@@ -386,10 +389,7 @@ void ExecutionPlan::Impl::setupChannels(const json& gpus) {
 }
 
 void ExecutionPlan::Impl::setupRemoteBuffers(const json& gpus) {
-  for (const auto& gpu : gpus) {
-    int rank = gpu["id"];
-    this->parseRemoteBuffer(gpu, rank);
-  }
+  this->parseRemoteBuffer(gpus);
 
   // setup threadblockBuffers
   const auto& gpu = gpus[rank];
@@ -473,7 +473,7 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
     } else {
       throw Error("Invalid channel type", ErrorCode::ExecutorError);
     }
-    return this->remoteBufferInfos[rank][id].bufferType;
+    return this->remoteBufferInfos_[rank][id].bufferType;
   };
 
   operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
@@ -626,7 +626,6 @@ size_t ExecutionPlan::Impl::getUpperBoundChunkSize(size_t inputSize, size_t outp
 
 void ExecutionPlan::Impl::reset() {
   this->operations.clear();
-  this->channelInfos.clear();
   this->nvlsInfos.clear();
   this->threadblockMemoryChannels.clear();
   this->threadblockPortChannels.clear();
@@ -634,6 +633,13 @@ void ExecutionPlan::Impl::reset() {
   this->threadblockMemoryChannelBuffers.clear();
   this->threadblockPortChannelBuffers.clear();
   this->semaphoreInfos.clear();
+
+  this->channelInfos_.clear();
+  this->channelCountMap_.clear();
+  this->channelInfosByDstRank_.clear();
+  this->remoteBufferInfos_.clear();
+  this->localBufferToSend_.clear();
+  this->bufferIndexMap_.clear();
 }
 
 void ExecutionPlan::Impl::operationsReset() { this->operations.clear(); }
