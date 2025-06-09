@@ -154,6 +154,11 @@ struct Executor::Impl {
                                          size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendMemRange, recvMemRange, plan.impl_->name};
     DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset};
+    
+    // The plan is not related to any specific input/output message size or memory address
+    if (plan.impl_->reuseResources) {
+      key = {nullptr, nullptr, 0, 0, plan.impl_->name};
+    }
     if (this->contexts.find(key) != this->contexts.end()) {
       auto& devicePlans = this->contexts[key].deviceExecutionPlans;
       if (this->contexts[key].currentDevicePlan == devicePlanKey) {
@@ -182,7 +187,6 @@ struct Executor::Impl {
                                                                 std::min(recvMemRange, plan.impl_->maxMessageSize));
     context.scratchChunkSize = plan.impl_->calMaxScratchChunkSize(scratchBufferSize);
     context.scratchBuffer = GpuBuffer(scratchBufferSize).memory();
-    // TODO: we need to avoid setup channel if all thing is reusable
     context.scratchBufferSize = scratchBufferSize;
     context.proxyService = std::make_shared<ProxyService>();
     context.nthreadsPerBlock = plan.impl_->nThreadsPerBlock;
