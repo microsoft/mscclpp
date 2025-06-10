@@ -40,10 +40,10 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::REDUCE;
   } else if (str == "rs") {
     return mscclpp::OperationType::REDUCE_SEND;
-  } else if (str == "rrc") {
-    return mscclpp::OperationType::READ_REDUCE_COPY;
-  } else if (str == "rrcs") {
-    return mscclpp::OperationType::READ_REDUCE_COPY_SEND;
+  } else if (str == "rr") {
+    return mscclpp::OperationType::READ_REDUCE;
+  } else if (str == "rrs") {
+    return mscclpp::OperationType::READ_REDUCE_SEND;
   } else if (str == "ppkt") {
     return mscclpp::OperationType::PUT_PACKET;
   } else if (str == "rppkt") {
@@ -113,7 +113,7 @@ ExecutionPlan::Impl::Impl(const std::string& planPath, int rank)
   this->name = obj["name"];
   this->collective = obj["collective"];
   this->isInPlace = obj["inplace"];
-  this->reuseResources = obj["reuse_resources"];
+  this->reuseResources = obj.value("reuse_resources", false);
   this->bufferAlignment = obj.value("buffer_alignment", 16);
   this->minMessageSize = obj.value("min_message_size", 0);
   this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
@@ -291,7 +291,7 @@ void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo
                                         std::map<std::pair<int, ChannelType>, std::vector<int>>& chanConnectedPeersMap,
                                         int rank) {
   for (const auto& channel : gpu["channels"]) {
-    ChannelType chanType = convertToChannelType(channel["type"]);
+    ChannelType chanType = convertToChannelType(channel["channel_type"]);
 
     if (chanType == ChannelType::SWITCH) {
       NvlsInfo info;
@@ -306,7 +306,7 @@ void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo
       }
     } else {
       ChannelInfo info;
-      info.channelType = convertToChannelType(channel["type"]);
+      info.channelType = chanType;
       for (const auto& peer : channel["connected_to"]) {
         info.connectedPeers.push_back(peer);
         chanConnectedPeersMap[{peer, info.channelType}].push_back(rank);
@@ -318,11 +318,11 @@ void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo
 }
 
 void ExecutionPlan::Impl::parseRemoteBuffer(const nlohmann::json& gpus) {
-  auto& bufferInfos = this->remoteBufferInfos_[rank];
-  auto& bufferIndexMap = this->bufferIndexMap_[rank];
   for (const auto& gpu : gpus) {
     std::unordered_map<ChannelType, int> channelCountMap;
     int gpuRank = gpu["id"];
+    auto& bufferInfos = this->remoteBufferInfos_[gpuRank];
+    auto& bufferIndexMap = this->bufferIndexMap_[gpuRank];
     for (auto& remoteBuffer : gpu["remote_buffers"]) {
       int bufferId = bufferInfos.size();
       int oriRank = remoteBuffer["rank"];

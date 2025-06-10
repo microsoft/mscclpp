@@ -142,12 +142,12 @@
       "channels": [
         {
           "buff": "s",
-          "type": "switch",
+          "channel_type": "switch",
           "rank_groups": [
             { "size": 4, "ranks": [0, 1, 2, 3] }
           ]
         },
-        { "type": "memory", "connected_to": [1, 2, 3, 1, 2, 3] }
+        { "channel_type": "memory", "connected_to": [1, 2, 3, 1, 2, 3] }
       ],
       "remote_buffers": [],
       "semaphores": [ {"init_value": 0}, {"init_value": 0}, {"init_value": 32} ]
@@ -290,12 +290,12 @@
       "channels": [
         {
           "buff": "s",
-          "type": "switch",
+          "channel_type": "switch",
           "rank_groups": [
             { "size": 4, "ranks": [0, 1, 2, 3] }
           ]
         },
-        { "type": "memory", "connected_to": [0, 2, 3, 0, 2, 3] }
+        { "channel_type": "memory", "connected_to": [0, 2, 3, 0, 2, 3] }
       ],
       "remote_buffers": [],
       "semaphores": [ {"init_value": 0}, {"init_value": 0}, {"init_value": 32} ]
@@ -438,12 +438,12 @@
       "channels": [
         {
           "buff": "s",
-          "type": "switch",
+          "channel_type": "switch",
           "rank_groups": [
             { "size": 4, "ranks": [0, 1, 2, 3] }
           ]
         },
-        { "type": "memory", "connected_to": [0, 1, 3, 0, 1, 3] }
+        { "channel_type": "memory", "connected_to": [0, 1, 3, 0, 1, 3] }
       ],
       "remote_buffers": [],
       "semaphores": [ {"init_value": 0}, {"init_value": 0}, {"init_value": 32} ]
@@ -585,12 +585,12 @@
       "channels": [
         {
           "buff": "s",
-          "type": "switch",
+          "channel_type": "switch",
           "rank_groups": [
             { "size": 4, "ranks": [0, 1, 2, 3] }
           ]
         },
-        { "type": "memory", "connected_to": [0, 1, 2, 0, 1, 2] }
+        { "channel_type": "memory", "connected_to": [0, 1, 2, 0, 1, 2] }
       ],
       "remote_buffers": [],
       "semaphores": [ {"init_value": 0}, {"init_value": 0}, {"init_value": 32} ]
