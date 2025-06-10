@@ -8,13 +8,13 @@
 
 #include "api.h"
 
-// Convert a logical cudaDev index to the NVML device minor number
-static const std::string getBusId(int cudaDev) {
+// Convert a logical deviceId index to the NVML device minor number
+static const std::string getBusId(int deviceId) {
   // On most systems, the PCI bus ID comes back as in the 0000:00:00.0
   // format. Still need to allocate proper space in case PCI domain goes
   // higher.
   char busIdChar[] = "00000000:00:00.0";
-  MSCCLPP_CUDATHROW(cudaDeviceGetPCIBusId(busIdChar, sizeof(busIdChar), cudaDev));
+  MSCCLPP_CUDATHROW(cudaDeviceGetPCIBusId(busIdChar, sizeof(busIdChar), deviceId));
   // we need the hex in lower case format
   for (size_t i = 0; i < sizeof(busIdChar); i++) {
     busIdChar[i] = std::tolower(busIdChar[i]);
@@ -24,8 +24,8 @@ static const std::string getBusId(int cudaDev) {
 
 namespace mscclpp {
 
-MSCCLPP_API_CPP int getDeviceNumaNode(int cudaDev) {
-  std::string busId = getBusId(cudaDev);
+MSCCLPP_API_CPP int getDeviceNumaNode(int deviceId) {
+  std::string busId = getBusId(deviceId);
   std::string file_str = "/sys/bus/pci/devices/" + busId + "/numa_node";
   std::ifstream file(file_str);
   int numaNode;

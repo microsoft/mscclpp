@@ -575,11 +575,11 @@ MSCCLPP_API_CPP TcpBootstrap::TcpBootstrap(int rank, int nRanks) { pimpl_ = std:
 
 MSCCLPP_API_CPP UniqueId TcpBootstrap::getUniqueId() const { return pimpl_->getUniqueId(); }
 
-MSCCLPP_API_CPP int TcpBootstrap::getRank() { return pimpl_->getRank(); }
+MSCCLPP_API_CPP int TcpBootstrap::getRank() const { return pimpl_->getRank(); }
 
-MSCCLPP_API_CPP int TcpBootstrap::getNranks() { return pimpl_->getNranks(); }
+MSCCLPP_API_CPP int TcpBootstrap::getNranks() const { return pimpl_->getNranks(); }
 
-MSCCLPP_API_CPP int TcpBootstrap::getNranksPerNode() { return pimpl_->getNranksPerNode(); }
+MSCCLPP_API_CPP int TcpBootstrap::getNranksPerNode() const { return pimpl_->getNranksPerNode(); }
 
 MSCCLPP_API_CPP void TcpBootstrap::send(void* data, int size, int peer, int tag) {
   pimpl_->send(data, size, peer, tag);

@@ -27,6 +27,7 @@ class BaseProxyService {
 class ProxyService : public BaseProxyService {
  public:
   /// Constructor.
+  /// @param fifoSize The size of the FIFO used by the proxy service. Default is DEFAULT_FIFO_SIZE.
   ProxyService(size_t fifoSize = DEFAULT_FIFO_SIZE);
 
   /// Build and add a semaphore to the proxy service.
@@ -98,7 +99,7 @@ struct BasePortChannel {
 
   BasePortChannel& operator=(BasePortChannel& other) = default;
 
-  /// Device-side handle for @ref BasePortChannel.
+  /// Device-side handle for BasePortChannel.
   using DeviceHandle = BasePortChannelDeviceHandle;
 
   /// Returns the device-side handle.
@@ -133,7 +134,7 @@ struct PortChannel : public BasePortChannel {
   /// Assignment operator.
   PortChannel& operator=(PortChannel& other) = default;
 
-  /// Device-side handle for @ref PortChannel.
+  /// Device-side handle for PortChannel.
   using DeviceHandle = PortChannelDeviceHandle;
 
   /// Returns the device-side handle.
@@ -143,10 +144,10 @@ struct PortChannel : public BasePortChannel {
   DeviceHandle deviceHandle() const;
 };
 
-/// @deprecated Use @ref BasePortChannel instead.
+/// @deprecated Use BasePortChannel instead.
 [[deprecated("Use BasePortChannel instead.")]] typedef BasePortChannel BaseProxyChannel;
 
-/// @deprecated Use @ref PortChannel instead.
+/// @deprecated Use PortChannel instead.
 [[deprecated("Use PortChannel instead.")]] typedef PortChannel ProxyChannel;
 
 }  // namespace mscclpp

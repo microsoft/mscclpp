@@ -14,7 +14,7 @@ namespace mscclpp {
 
 /// A base class for semaphores.
 ///
-/// An semaphore is a synchronization mechanism that allows the local peer to wait for the remote peer to complete a
+/// A semaphore is a synchronization mechanism that allows the local peer to wait for the remote peer to complete a
 /// data transfer. The local peer signals the remote peer that it has completed a data transfer by incrementing the
 /// outbound semaphore ID. The incremented outbound semaphore ID is copied to the remote peer's inbound semaphore ID so
 /// that the remote peer can wait for the local peer to complete a data transfer. Vice versa, the remote peer signals

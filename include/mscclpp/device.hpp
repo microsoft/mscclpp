@@ -18,7 +18,7 @@
 #define MSCCLPP_DEVICE_HIP
 #else  // !(defined(__HIP_PLATFORM_AMD__))
 #define MSCCLPP_DEVICE_CUDA
-#endif  // !(defined(__HIP_PLATFORM_AMD__))
+#endif  // defined(__HIP_PLATFORM_AMD__)
 
 #else  // !(defined(__NVCC__) || defined(__HIP_PLATFORM_AMD__))
 
