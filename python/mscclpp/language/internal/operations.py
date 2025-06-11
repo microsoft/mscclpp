@@ -330,7 +330,8 @@ class PutOperation(BaseOperation):
         result["dst_buff"] = []
         for chunk in self.dst_buff:
             result["dst_buff"].append(chunk.to_json())
-        result["channel_ids"] = self.channel_ids
+        if self.channel_ids == ChannelType.port:
+            result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
         return result
 
@@ -437,7 +438,7 @@ class ReduceOperation(BaseOperation):
                 remote_dst_buff=self.remote_dst_buff + other.dst_buff,
                 channel_ids=self.channel_ids,
                 put_channel_ids=self.put_channel_ids + other.channel_ids,
-                channel_type=self.channel_type,
+                channel_type=other.channel_type,
                 reduce_operation=self.reduce_operation,
                 packet=self.packet,
             )
@@ -460,10 +461,10 @@ class ReduceOperation(BaseOperation):
             for chunk in self.remote_dst_buff:
                 result["dst_buff"].append(chunk.to_json())
 
-        if len(self.channel_ids) > 0:
+        """ if len(self.channel_ids) > 0:
             result["channel_ids"] = self.channel_ids
         if len(self.put_channel_ids) > 0:
-            result["output_channel_ids"] = self.put_channel_ids
+            result["output_channel_ids"] = self.put_channel_ids """
         if self.channel_type != ChannelType.none:
             result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
