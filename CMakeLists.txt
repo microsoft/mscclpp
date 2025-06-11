@@ -1,9 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-set(MSCCLPP_MAJOR "0")
-set(MSCCLPP_MINOR "6")
-set(MSCCLPP_PATCH "0")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" MSCCLPP_VERSION_CONTENT)
+if(MSCCLPP_VERSION_CONTENT MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+    set(MSCCLPP_MAJOR "${CMAKE_MATCH_1}")
+    set(MSCCLPP_MINOR "${CMAKE_MATCH_2}")
+    set(MSCCLPP_PATCH "${CMAKE_MATCH_3}")
+else()
+    message(FATAL_ERROR "VERSION file must be in the format MAJOR.MINOR.PATCH")
+endif()
 
 set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})
 set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
@@ -21,7 +26,7 @@ option(MSCCLPP_BUILD_APPS_NCCL "Build NCCL interfaces" ON)
 option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
-option(MSCCLPP_NPKIT_FLAGS "Enable NPKIT" OFF)
+option(MSCCLPP_NPKIT_FLAGS "Set NPKIT flags" OFF)
 set(MSCCLPP_GPU_ARCHS "" CACHE STRING "Specify GPU architectures with delimiters (comma, space, or semicolon).")
 
 if(MSCCLPP_BYPASS_GPU_CHECK)
@@ -124,7 +129,6 @@ endif()
 # Format targets
 include(${PROJECT_SOURCE_DIR}/cmake/AddFormatTargets.cmake)
 
-# Find ibverbs and libnuma
 find_package(IBVerbs)
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)

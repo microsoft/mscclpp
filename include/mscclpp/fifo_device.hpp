@@ -45,7 +45,7 @@ struct FifoDeviceHandle {
   /// @param trigger The trigger to push.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   /// @return The new head of the FIFO.
-  MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, int64_t maxSpinCount = 1000000) {
+  MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
     uint64_t curFifoHead = atomicFetchAdd(this->head, (uint64_t)1, memoryOrderRelaxed);
 
     // make the last bit intentionally non-zero so that we can safely poll. Don't worry, we will change it back in host
@@ -87,7 +87,7 @@ struct FifoDeviceHandle {
   ///
   /// @param curFifoHead The current head of the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  MSCCLPP_DEVICE_INLINE void sync(uint64_t curFifoHead, int64_t maxSpinCount = 1000000) {
+  MSCCLPP_DEVICE_INLINE void sync(uint64_t curFifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
     // Same as push but in this case checking the fist condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
     OR_POLL_MAYBE_JAILBREAK((curFifoHead >= atomicLoad(this->tailReplica, memoryOrderRelaxed)),
