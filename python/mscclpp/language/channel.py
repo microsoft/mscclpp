@@ -335,7 +335,7 @@ class PortChannel:
 
         get_program().add_operation(self.src_rank, tb, op)
 
-    # Put operation transfering in packet format on the local buffer to packet format on the remote buffer.
+    # Put operation transfer in packet format on the local buffer to packet format on the remote buffer.
     def put_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         if src_chunk.rank != self.src_rank:
             raise RuntimeError(
