@@ -45,7 +45,9 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
                     input_index = peer * gpu_size
                     tb = peer if peer < gpu else peer - 1
                     channels[(peer, gpu)].put_packet(
-                        scratch_buffer[peer][scratch_index : scratch_index + gpu_size], input_buffer[input_index : input_index + gpu_size], tb
+                        scratch_buffer[peer][scratch_index : scratch_index + gpu_size],
+                        input_buffer[input_index : input_index + gpu_size],
+                        tb,
                     )
 
         # Each rank performs a local reduction on the nth chunk
@@ -61,13 +63,15 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
                 input_buffer = rank.get_input_buffer()
                 input_index = gpu * gpu_size + index
                 rank.reduce(input_buffer[input_index : input_index + 1], chunks, index, packet=True)
-                
+
                 for peer in range(gpu_size):
                     if peer != gpu:
                         scratch_index = gpu if gpu < peer else gpu - 1
                         scratch_index = gpu_size * (gpu_size - 1) + scratch_index * gpu_size + index
                         channels[(peer, gpu)].put_packet(
-                            scratch_buffer[peer][scratch_index : scratch_index + 1], input_buffer[input_index : input_index + 1], index
+                            scratch_buffer[peer][scratch_index : scratch_index + 1],
+                            input_buffer[input_index : input_index + 1],
+                            index,
                         )
 
         # Each rank get final result from scratch space
@@ -80,7 +84,10 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
                     scratch_index = peer if peer < gpu else peer - 1
                     scratch_index = gpu_size * (gpu_size - 1) + scratch_index * gpu_size
                     rank.copy(
-                        input_buffer[input_index : input_index + gpu_size], scratch_buffer[gpu][scratch_index : scratch_index + gpu_size], peer, from_packet=True
+                        input_buffer[input_index : input_index + gpu_size],
+                        scratch_buffer[gpu][scratch_index : scratch_index + gpu_size],
+                        peer,
+                        from_packet=True,
                     )
 
         print(JSON())
