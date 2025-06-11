@@ -464,6 +464,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(const Operation& op, void* inp
   const uint32_t dstOffsetByBytes = op.outputOffsets[0];
   const uint32_t* inputOffsets = op.inputOffsets + 1;
   const uint32_t* outputOffsets = op.outputOffsets + 1;
+  const BufferRef* outputBufferRefs = op.outputBufferRefs + 1;
 
   uint32_t nPackets = size / sizeof(PacketPayload<PacketType>);
   const uint32_t intputBaseOffset = flag_ & 0x1 ? 0 : scratchSize_ >> 1;
@@ -487,7 +488,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(const Operation& op, void* inp
       PacketType pkt(data, flag_);
       for (uint32_t index = 0; index < nDstChannels; ++index) {
         uint32_t offset = (intputBaseOffset + outputOffsets[index] * 2) / sizeof(PacketType);
-        void* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[op.outputBufferRefs[index].id]);
+        void* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[outputBufferRefs[index].id]);
         mscclpp::write<PacketType>(remoteMemory, offset + idx, pkt);
       }
     }
