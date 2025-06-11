@@ -386,12 +386,13 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(const Operation& op, void* input, voi
   const uint32_t* sizes = op.inputBufferSizes;
   const uint8_t* channelIndexes = op.channelIndexes;
   const uint32_t scratchBaseOffset = flag_ & 0x1 ? 0 : scratchSize_ >> 1;
+  void* inputBuff = getBuffer(input, output, scratch, op.inputBufferRefs[0].type);
   if (chType == ChannelType::MEMORY) {
     for (int index = 0; index < nDstChannels; ++index) {
       uint32_t size = sizes[index];
       mscclpp::copyToPackets<PacketType>((char*)remoteMemoriesViaMemoryChan_[op.outputBufferRefs[index].id] +
                                              scratchBaseOffset + dstOffsets[index] * 2,
-                                         (char*)input + srcOffsets[index], size, threadIdx.x, blockDim.x, flag_);
+                                         (char*)inputBuff + srcOffsets[index], size, threadIdx.x, blockDim.x, flag_);
     }
   }
   if (chType == ChannelType::PORT) {
