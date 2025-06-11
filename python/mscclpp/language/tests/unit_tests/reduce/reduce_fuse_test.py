@@ -9,27 +9,25 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
-    gpus = 2
-    collective = TestCollective(gpus, 1, 0)
+def reduce_test(num_threads_per_block, min_message_size, max_message_size):
+    gpus = 1
+    collective = TestCollective(gpus, 3, 2)
     with MSCCLPPProgram(
-        "put_packet_test",
+        "reduce_test",
         collective,
         gpus,
-        protocol="LL",
+        protocol="Simple",
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
-        min_message_size=min_message_size,
         max_message_size=max_message_size,
+        min_message_size=min_message_size,
     ):
-        for src_rank in range(gpus):
-            rank = Rank(src_rank)
-            src_buff = rank.get_input_buffer()
-            for dst_rank in range(gpus):
-                if src_rank != dst_rank:
-                    dst_buff = Buffer(dst_rank, 1)
-                    ch = Channel(dst_rank, src_rank)
-                    ch.put_packet(dst_buff[0:1], src_buff[0:1], tb=0)
+        rank = Rank(0)
+        input_buffer = rank.get_input_buffer()
+        output_buffer = rank.get_output_buffer()
+
+        rank.reduce(input_buffer[0:1], [input_buffer[1:2]], tb=0, dst_chunk=output_buffer[0:1])
+        rank.reduce(input_buffer[0:1], [input_buffer[2:3]], tb=0, dst_chunk=output_buffer[0:1])
 
         print(JSON())
 
@@ -42,4 +40,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-put_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+reduce_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

@@ -44,7 +44,7 @@ def allgather_example(name, num_threads_per_block, min_message_size, max_message
                 # Skip sending from a rank to itself
                 if src_rank != dst_rank:
                     # Define a channel from src_rank → dst_rank using memory channel
-                    ch = Channel(dst_rank, src_rank, ChannelType.memory)
+                    ch = Channel(dst_rank, src_rank)
                     # Step 1: source signals to indicate it is ready to receive data
                     ch.signal(tb=0, sync=None, relaxed=True)
                     # Step 2: wait for the destination rank to be ready

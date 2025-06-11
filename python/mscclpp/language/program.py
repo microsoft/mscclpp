@@ -16,6 +16,8 @@ class MSCCLPPProgram:
         collective: Collective,
         num_ranks: int,
         protocol: str = "Simple",
+        instr_fusion: bool = True,
+        reuse_resources: bool = False,
         num_threads_per_block: int = 1024,
         use_double_scratch_buffer: bool = False,
         buffer_alignment: int = 16,
@@ -26,6 +28,8 @@ class MSCCLPPProgram:
         self.collective = collective
         self.num_ranks = num_ranks
         self.protocol = protocol
+        self.instr_fusion = instr_fusion
+        self.reuse_resources = reuse_resources
         self.num_threads_per_block = num_threads_per_block
         self.use_double_scratch_buffer = use_double_scratch_buffer
         self.buffer_alignment = buffer_alignment
@@ -67,12 +71,18 @@ class MSCCLPPProgram:
     def add_operation(self, rank, tb, operation):
         self.gpus[rank].add_operation(tb, operation)
 
+    def optimize_operations(self):
+        if self.instr_fusion:
+            for gpu in self.gpus:
+                gpu.optimize_operations()
+
     def to_json(self):
         json_obj = {
             "name": self.name,
             "collective": self.collective.name,
-            "inplace": self.collective.inplace,
             "protocol": self.protocol,
+            "inplace": self.collective.inplace,
+            "reuse_resources": self.reuse_resources,
             "gpus": [gpu.to_json() for gpu in self.gpus],
             "num_threads_per_block": self.num_threads_per_block,
             "use_double_scratch_buffer": self.use_double_scratch_buffer,

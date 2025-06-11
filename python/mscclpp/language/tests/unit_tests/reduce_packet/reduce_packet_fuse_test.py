@@ -9,21 +9,24 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def flush_test(num_threads_per_block, min_message_size, max_message_size):
-    gpus = 3
+def reduce_packet_test(num_threads_per_block, min_message_size, max_message_size):
+    gpus = 1
     collective = TestCollective(gpus, 0, 0)
     with MSCCLPPProgram(
-        "flush_test",
+        "reduce_packet_test",
         collective,
         gpus,
-        protocol="Simple",
+        protocol="LL",
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
-        min_message_size=min_message_size,
         max_message_size=max_message_size,
+        min_message_size=min_message_size,
     ):
-        ch = Channel(1, 0, ChannelType.port)
-        ch.flush(tb=0, sync=SyncType.before)
+        rank = Rank(0)
+        scratch_buffer = Buffer(0, 4)
+
+        rank.reduce(scratch_buffer[0:1], [scratch_buffer[1:2]], tb=0, packet=True, dst_chunk=scratch_buffer[3:4])
+        rank.reduce(scratch_buffer[0:1], [scratch_buffer[2:3]], tb=0, packet=True, dst_chunk=scratch_buffer[3:4])
 
         print(JSON())
 
@@ -36,4 +39,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-flush_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+reduce_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

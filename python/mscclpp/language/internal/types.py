@@ -46,8 +46,8 @@ class Instruction(Enum):
     copy = "copy"
     copy_packet = "cpkt"
     transform_to_packet = "tpkt"
-    reduce_copy = "rc"
-    reduce_copy_packet = "rcpkt"
+    reduce = "re"
+    reduce_packet = "repkt"
     signal = "signal"
     wait = "wait"
     relaxed_signal = "rlxsignal"
@@ -60,10 +60,10 @@ class Instruction(Enum):
     read_put_packet = "rppkt"
     put_with_signal = "pws"
     put_with_signal_and_flush = "pwsf"
-    reduce_copy_send = "rcs"
-    reduce_copy_send_packet = "rcspkt"
-    read_reduce_copy = "rrc"
-    read_reduce_copy_send = "rrcs"
+    reduce_send = "res"
+    reduce_send_packet = "respkt"
+    read_reduce = "rre"
+    read_reduce_send = "rres"
     group_store = "gstore"
     group_load_reduce = "glre"
     group_load_reduce_store = "glres"
@@ -100,31 +100,34 @@ class Chunk:
 class RemoteBuffer:
     __remote_buffer_count = defaultdict(int)
 
-    def __init__(self, rank: int, type: BufferType, channel_access: ChannelType, set_id: bool = False):
+    def __init__(
+        self, local_rank: int, remote_rank: int, type: BufferType, channel_access: ChannelType, set_id: bool = False
+    ):
         if set_id:
-            self.id = RemoteBuffer.__remote_buffer_count[rank]
-            RemoteBuffer.__remote_buffer_count[rank] += 1
+            self.id = RemoteBuffer.__remote_buffer_count[local_rank]
+            RemoteBuffer.__remote_buffer_count[local_rank] += 1
         else:
             self.id = -1
 
-        self.rank: int = rank
+        self.local_rank: int = local_rank
+        self.remote_rank: int = remote_rank
         self.type: int = type
         self.channel_access: Set[ChannelType] = {channel_access}
 
     def set_id(self):
         if self.id == -1:
-            self.id = RemoteBuffer.__remote_buffer_count[self.rank]
-            RemoteBuffer.__remote_buffer_count[self.rank] += 1
+            self.id = RemoteBuffer.__remote_buffer_count[self.local_rank]
+            RemoteBuffer.__remote_buffer_count[self.local_rank] += 1
 
     def to_json(self):
         return {
-            "rank": self.rank,
+            "rank": self.remote_rank,
             "type": self.type.value,
             "access_channel_types": [ch.value for ch in self.channel_access],
         }
 
     def __hash__(self):
-        return hash((self.rank, self.type))
+        return hash((self.remote_rank, self.type))
 
 
 @dataclass
