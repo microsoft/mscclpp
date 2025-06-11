@@ -28,6 +28,34 @@ void CudaStreamWithFlags::set(unsigned int flags) {
 
 bool CudaStreamWithFlags::empty() const { return stream_ == nullptr; }
 
+GpuStream::GpuStream(std::shared_ptr<GpuStreamPool> pool, std::shared_ptr<CudaStreamWithFlags> stream)
+    : pool_(pool), stream_(stream) {}
+
+GpuStream::~GpuStream() { pool_->streams_.push_back(stream_); }
+
+GpuStreamPool::GpuStreamPool() {}
+
+GpuStream GpuStreamPool::getStream() {
+  if (!streams_.empty()) {
+    auto stream = streams_.back();
+    streams_.pop_back();
+    return GpuStream(gpuStreamPool(), stream);
+  }
+  return GpuStream(gpuStreamPool(), std::make_shared<CudaStreamWithFlags>(cudaStreamNonBlocking));
+}
+
+void GpuStreamPool::clear() { streams_.clear(); }
+
+// A global pool instance
+std::shared_ptr<GpuStreamPool> gGpuStreamPool_;
+
+std::shared_ptr<GpuStreamPool> gpuStreamPool() {
+  if (!gGpuStreamPool_) {
+    gGpuStreamPool_ = std::make_shared<GpuStreamPool>();
+  }
+  return gGpuStreamPool_;
+}
+
 namespace detail {
 
 CUmemAllocationHandleType nvlsCompatibleMemHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
@@ -48,7 +76,7 @@ void setReadWriteMemoryAccess(void* base, size_t size) {
 void* gpuCalloc(size_t bytes) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   void* ptr;
-  CudaStreamWithFlags stream(cudaStreamNonBlocking);
+  auto stream = gpuStreamPool()->getStream();
   MSCCLPP_CUDATHROW(cudaMalloc(&ptr, bytes));
   MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, bytes, stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
@@ -67,7 +95,7 @@ void* gpuCallocHost(size_t bytes) {
 void* gpuCallocUncached(size_t bytes) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   void* ptr;
-  CudaStreamWithFlags stream(cudaStreamNonBlocking);
+  auto stream = gpuStreamPool()->getStream();
   MSCCLPP_CUDATHROW(hipExtMallocWithFlags((void**)&ptr, bytes, hipDeviceMallocUncached));
   MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, bytes, stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
@@ -137,7 +165,7 @@ void* gpuCallocPhysical(size_t bytes, size_t gran, size_t align) {
   MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)&devicePtr, nbytes, align, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)devicePtr, nbytes, 0, memHandle, 0));
   setReadWriteMemoryAccess(devicePtr, nbytes);
-  CudaStreamWithFlags stream(cudaStreamNonBlocking);
+  auto stream = gpuStreamPool()->getStream();
   MSCCLPP_CUDATHROW(cudaMemsetAsync(devicePtr, 0, nbytes, stream));
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
