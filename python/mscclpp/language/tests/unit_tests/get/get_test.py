@@ -29,7 +29,7 @@ def get_test(num_threads_per_block, min_message_size, max_message_size):
                 if src_rank != dst_rank:
                     rank = Rank(dst_rank)
                     dst_buff = rank.get_input_buffer()
-                    ch = Channel(dst_rank, src_rank, ChannelType.memory)
+                    ch = Channel(dst_rank, src_rank)
                     ch.signal(tb=0, relaxed=True)
                     ch.wait(tb=0, sync=SyncType.after, relaxed=True)
                     ch.get(src_buff[0:1], dst_buff[1:2], tb=0)

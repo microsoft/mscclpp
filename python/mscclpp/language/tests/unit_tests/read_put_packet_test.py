@@ -29,7 +29,7 @@ def read_put_packet_test(num_threads_per_block, min_message_size, max_message_si
         for src_rank in range(gpus):
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
-                    ch = Channel(dst_rank, src_rank, ChannelType.memory)
+                    ch = Channel(dst_rank, src_rank)
                     ch.put_packet(
                         scratch_buffers[dst_rank][1:2], scratch_buffers[src_rank][0:1], tb=0, from_packet=True
                     )

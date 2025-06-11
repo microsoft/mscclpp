@@ -28,7 +28,7 @@ def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
                     dst_buff = Buffer(dst_rank, 1)
-                    ch = Channel(dst_rank, src_rank, ChannelType.memory)
+                    ch = Channel(dst_rank, src_rank)
                     ch.put_packet(dst_buff[0:1], src_buff[0:1], tb=0)
 
         print(JSON())

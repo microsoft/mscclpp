@@ -16,6 +16,7 @@ class MSCCLPPProgram:
         collective: Collective,
         num_ranks: int,
         protocol: str = "Simple",
+        reuse_resources: bool = False,
         num_threads_per_block: int = 1024,
         use_double_scratch_buffer: bool = False,
         buffer_alignment: int = 16,
@@ -26,6 +27,7 @@ class MSCCLPPProgram:
         self.collective = collective
         self.num_ranks = num_ranks
         self.protocol = protocol
+        self.reuse_resources = reuse_resources
         self.num_threads_per_block = num_threads_per_block
         self.use_double_scratch_buffer = use_double_scratch_buffer
         self.buffer_alignment = buffer_alignment
@@ -75,8 +77,9 @@ class MSCCLPPProgram:
         json_obj = {
             "name": self.name,
             "collective": self.collective.name,
-            "inplace": self.collective.inplace,
             "protocol": self.protocol,
+            "inplace": self.collective.inplace,
+            "reuse_resources": self.reuse_resources,
             "gpus": [gpu.to_json() for gpu in self.gpus],
             "num_threads_per_block": self.num_threads_per_block,
             "use_double_scratch_buffer": self.use_double_scratch_buffer,

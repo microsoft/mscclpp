@@ -30,7 +30,7 @@ def reduce_send_packet_test(num_threads_per_block, min_message_size, max_message
             rank = Rank(src_rank)
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
-                    ch = Channel(dst_rank, src_rank, ChannelType.memory)
+                    ch = Channel(dst_rank, src_rank)
                     ch.signal(tb=0, relaxed=True)
                     ch.wait(tb=0, sync=SyncType.after, relaxed=True)
                     rank.reduce(
