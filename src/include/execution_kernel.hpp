@@ -502,9 +502,7 @@ MSCCLPP_DEVICE_INLINE void handleCopyPacket(const Operation& op, void* input, vo
   const uint32_t dstOffset = op.outputOffsets[0];
   const uint32_t srcOffset = op.inputOffsets[0];
   const uint32_t inputScratchBaseOffset = flag_ & 0x1 ? 0 : scratchSize_ >> 1;
-  PacketType* srcPackets =
-      (PacketType*)(static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) +
-                    inputScratchBaseOffset + 2 * srcOffset);
+  PacketType* srcPackets = (PacketType*)(static_cast<char*>(scratch) + inputScratchBaseOffset + 2 * srcOffset);
   PacketPayload<PacketType>* result =
       (PacketPayload<PacketType>*)(static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[0].type)) +
                                    dstOffset);

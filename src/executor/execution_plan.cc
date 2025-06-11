@@ -48,13 +48,13 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::PUT_PACKET;
   } else if (str == "rppkt") {
     return mscclpp::OperationType::READ_PUT_PACKET;
-  } else if (str == "rspkt") {
+  } else if (str == "respkt") {
     return mscclpp::OperationType::REDUCE_SEND_PACKET;
   } else if (str == "cpkt") {
     return mscclpp::OperationType::COPY_PACKET;
   } else if (str == "tpkt") {
     return mscclpp::OperationType::TRANSFORM_TO_PACKET;
-  } else if (str == "rpkt") {
+  } else if (str == "repkt") {
     return mscclpp::OperationType::REDUCE_PACKET;
   } else if (str == "glres") {
     return mscclpp::OperationType::MULTI_LOAD_REDUCE_STORE;
@@ -497,9 +497,9 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
         operation.inputBufferRefs[i].type = bufferType;
         constOffset = getConstOffset(operation.inputBufferRefs[i].type);
       }
-      if (buff.contains("buff_id")) {
-        operation.inputBufferRefs[i].id = buff["buff_id"];
-        bufferType = getRemoteBufferTypeWithId(buff["buff_id"], threadBlockId, operation.channelType);
+      if (buff.contains("buffer_id")) {
+        operation.inputBufferRefs[i].id = buff["buffer_id"];
+        bufferType = getRemoteBufferTypeWithId(buff["buffer_id"], threadBlockId, operation.channelType);
         constOffset = getConstOffset(bufferType);
       }
       if (buff.contains("switch_channel_id")) {
@@ -526,9 +526,9 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
         operation.outputBufferRefs[i].type = bufferType;
         constOffset = getConstOffset(operation.outputBufferRefs[i].type);
       }
-      if (buff.contains("buff_id")) {
-        operation.outputBufferRefs[i].id = buff["buff_id"];
-        bufferType = getRemoteBufferTypeWithId(buff["buff_id"], threadBlockId, operation.channelType);
+      if (buff.contains("buffer_id")) {
+        operation.outputBufferRefs[i].id = buff["buffer_id"];
+        bufferType = getRemoteBufferTypeWithId(buff["buffer_id"], threadBlockId, operation.channelType);
         constOffset = getConstOffset(bufferType);
       }
       if (buff.contains("switch_channel_id")) {
