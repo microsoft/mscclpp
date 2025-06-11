@@ -1,13 +1,22 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import List
+from typing import List, Set
 from collections import defaultdict
 
 
-class ReduceOperation(Enum):
+class SyncType(Enum):
+    before = "before"
+    after = "after"
+    none = "none"
+
+    def __str__(self):
+        return self.value
+
+
+class ReduceOperationType(Enum):
     sum = "sum"
     min = "min"
     max = "max"
@@ -37,24 +46,24 @@ class Instruction(Enum):
     copy = "copy"
     copy_packet = "cpkt"
     transform_to_packet = "tpkt"
-    reduce = "re"
-    reduce_packet = "rpkt"
+    reduce_copy = "rc"
+    reduce_copy_packet = "rcpkt"
     signal = "signal"
     wait = "wait"
     relaxed_signal = "rlxsignal"
     relaxed_wait = "rlxwait"
+    barrier = "barrier"
+    flush = "flush"
+    get = "get"
     put = "put"
     put_packet = "ppkt"
-    read_reduce_copy = "rrc"
-    read_reduce_copy_send = "rrcs"
-    reduce_send = "rs"
-    reduce_send_packet = "rspkt"
     read_put_packet = "rppkt"
     put_with_signal = "pws"
     put_with_signal_and_flush = "pwsf"
-    get = "get"
-    flush = "flush"
-    barrier = "barrier"
+    reduce_copy_send = "rcs"
+    reduce_copy_send_packet = "rcspkt"
+    read_reduce_copy = "rrc"
+    read_reduce_copy_send = "rrcs"
     group_store = "gstore"
     group_load_reduce = "glre"
     group_load_reduce_store = "glres"
@@ -83,6 +92,9 @@ class Chunk:
     def __hash__(self):
         return hash((self.rank, self.buffer, self.index, self.size))
 
+    def to_json(self):
+        return {"rank": self.rank, "type": self.buffer.value, "index": self.index, "size": self.size}
+
 
 @dataclass
 class RemoteBuffer:
@@ -97,7 +109,7 @@ class RemoteBuffer:
 
         self.rank: int = rank
         self.type: int = type
-        self.channel_access: List[ChannelType] = [channel_access]
+        self.channel_access: Set[ChannelType] = {channel_access}
 
     def set_id(self):
         if self.id == -1:
@@ -113,3 +125,15 @@ class RemoteBuffer:
 
     def __hash__(self):
         return hash((self.rank, self.type))
+
+
+@dataclass
+class RankGroup:
+    size: int
+    ranks: List[int]
+
+    def to_json(self):
+        return {
+            "size": self.size,
+            "ranks": self.ranks,
+        }

@@ -32,6 +32,25 @@ class Collective:
             return buffer_length * instances
 
 
+class TestCollective(Collective):
+    def __init__(self, num_ranks, input_size, output_size):
+        Collective.__init__(self, num_ranks, 1, False)
+        self.name = "test"
+        self.input_size = input_size
+        self.output_size = output_size
+
+    # Initializes input buffer for a test collective
+    def init_buffers(self):
+        rank_buffers = []
+        for rank in range(self.num_ranks):
+            buffers = {
+                BufferType.input: BaseBuffer(rank, BufferType.input, 0, self.input_size),
+                BufferType.output: BaseBuffer(rank, BufferType.output, 0, self.output_size),
+            }
+            rank_buffers.append(buffers)
+        return rank_buffers
+
+
 class AllGather(Collective):
     def __init__(self, num_ranks, chunk_factor, inplace):
         Collective.__init__(self, num_ranks, chunk_factor, inplace)

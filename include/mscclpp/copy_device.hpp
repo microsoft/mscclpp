@@ -23,11 +23,12 @@ namespace detail {
 /// This function is intended to be collectively called by multiple threads. Each thread copies a part of
 /// elements.
 ///
+/// @tparam T The type of the elements to be copied.
 /// @param dst The destination address.
 /// @param src The source address.
 /// @param numElems The number of elements to be copied.
-/// @param threadId The index of the current thread among all threads running this function. This is different
-/// from the `threadIdx` in CUDA.
+/// @param threadId The index of the current thread among all threads running this function.
+/// Should be less than @p numThreads.
 /// @param numThreads The total number of threads that run this function.
 ///
 template <typename T>
@@ -43,7 +44,27 @@ MSCCLPP_DEVICE_INLINE void copy(T* dst, T* src, uint64_t numElems, uint32_t thre
 
 }  // namespace detail
 
-/// this is a helper for copy function
+/// Helper function of mscclpp::copy(). Copy data from the source memory to the destination memory.
+///
+/// This function is intended to be collectively called by multiple threads. Each thread copies a part of
+/// elements.
+///
+/// @note The source and destination addresses do not have to be aligned to the size of @p T, but the misalignment
+/// to the size of @p T should be multiple of 4 bytes and should be the same for both source and destination addresses.
+/// The behavior of this function is undefined otherwise.
+/// @note The number of bytes to be copied should be a multiple of 4 bytes. If the number of bytes is not a multiple
+/// of 4 bytes, the remainder bytes will not be copied.
+///
+/// @tparam T The type of the elements to be copied.
+/// @tparam CopyRemainder If false, the function will not copy data that is unaligned to the size of @p T. If true,
+/// the function will try to copy the unaligned data with conditions (see the notes).
+/// @param dst The destination address.
+/// @param src The source address.
+/// @param bytes Bytes of the data to be copied. Should be a multiple of 4 bytes.
+/// @param threadId The index of the current thread among all threads running this function.
+/// Should be less than @p numThreads.
+/// @param numThreads The total number of threads that run this function.
+///
 template <typename T, bool CopyRemainder = true>
 MSCCLPP_DEVICE_INLINE void copyHelper(void* dst, void* src, uint64_t bytes, uint32_t threadId, uint32_t numThreads) {
   int* dstInt = reinterpret_cast<int*>(dst);
@@ -70,17 +91,27 @@ MSCCLPP_DEVICE_INLINE void copyHelper(void* dst, void* src, uint64_t bytes, uint
   }
 }
 
-/// Copy aligned data from the source memory to the destination memory.
+/// Copy data from the source memory to the destination memory.
 ///
-/// This function is a warpper of Element<T>::copy(). Unlike Element<T>::copy(), this function can copy remainder
-/// bytes when @p CopyRemainder is true. Still, the  16.
-/// @tparam CopyRemainder Whether to copy remainder bytes when the number of bytes is not a multiple of @p
-/// Alignment.
-/// @param dst The destination address. Should be aligned to @p Alignment in the same way as @p src.
-/// @param src The source address. Should be aligned to @p Alignment in the same way as @p dst.
-/// @param bytes Bytes of the data to be copied. Should be a multiple of @p Alignment.
-/// @param threadId The index of the current thread among all threads running this function. This is different from
-/// the `threadIdx` in CUDA.
+/// This function is intended to be collectively called by multiple threads. Each thread copies a part of
+/// elements.
+///
+/// @note The source and destination addresses do not have to be aligned to the @p Alignment value,
+/// but the misalignment to @p Alignment should be multiple of 4 bytes and should be the same for both source
+/// and destination addresses.
+/// The behavior of this function is undefined otherwise.
+/// @note The number of bytes to be copied should be a multiple of 4 bytes. If the number of bytes is not a multiple
+/// of 4 bytes, the remainder bytes will not be copied.
+///
+/// @tparam Alignment The alignment of the data to be copied. A larger alignment value is more likely to achieve higher
+/// copying throughput. Should be one of 4, 8, or 16.
+/// @tparam CopyRemainder If false, the function will not copy data that is unaligned to the @p Alignment value.
+/// If true, the function will try to copy the unaligned data with conditions (see the notes).
+/// @param dst The destination address.
+/// @param src The source address.
+/// @param bytes Bytes of the data to be copied. Should be a multiple of 4 bytes.
+/// @param threadId The index of the current thread among all threads running this function.
+/// Should be less than @p numThreads.
 /// @param numThreads The total number of threads that run this function.
 ///
 template <int Alignment = 16, bool CopyRemainder = true>
@@ -110,13 +141,17 @@ MSCCLPP_DEVICE_INLINE T read(void* src, uint64_t index) {
 
 /// Read data from the origin and write packets to the target buffer.
 ///
+/// This function is intended to be collectively called by multiple threads. Each thread copies a part of
+/// packets.
+///
+/// @tparam PacketType The packet type. It should be either LL16Packet or LL8Packet.
 /// @param targetPtr The target buffer.
 /// @param originPtr The origin buffer.
 /// @param originBytes The number of bytes to write to the target buffer.
-/// @param threadId The thread ID. The thread ID should be less than @p numThreads.
-/// @param numThreads The number of threads that call this function.
-/// @param flag The flag to write.
-/// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
+/// @param threadId The index of the current thread among all threads running this function.
+/// Should be less than @p numThreads.
+/// @param numThreads The total number of threads that run this function.
+/// @param flag The flag to write in the packets.
 ///
 template <typename PacketType = LL16Packet>
 MSCCLPP_DEVICE_INLINE void copyToPackets(void* targetPtr, const void* originPtr, uint64_t originBytes,
@@ -150,13 +185,17 @@ MSCCLPP_DEVICE_INLINE void copyToPackets<LL8Packet>(void* targetPtr, const void*
 
 /// Read packets from the target buffer and write retrieved data to the origin.
 ///
-/// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
+/// This function is intended to be collectively called by multiple threads. Each thread reads a part of
+/// packets.
+///
+/// @tparam PacketType The packet type. It should be either LL16Packet or LL8Packet.
 /// @param originPtr The origin buffer.
 /// @param targetPtr The target buffer.
 /// @param originBytes The number of bytes to read from the origin buffer.
-/// @param threadId The thread ID. The thread ID should be less than @p numThreads.
-/// @param numThreads The number of threads that call this function.
-/// @param flag The flag to read.
+/// @param threadId The index of the current thread among all threads running this function.
+/// Should be less than @p numThreads.
+/// @param numThreads The total number of threads that run this function.
+/// @param flag The flag to write in the packets.
 /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
 ///
 template <typename PacketType = LL16Packet>

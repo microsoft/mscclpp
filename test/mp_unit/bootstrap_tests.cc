@@ -110,17 +110,17 @@ TEST_F(BootstrapTest, TimeoutWithId) {
 class MPIBootstrap : public mscclpp::Bootstrap {
  public:
   MPIBootstrap() : Bootstrap() {}
-  int getRank() override {
+  int getRank() const override {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     return rank;
   }
-  int getNranks() override {
+  int getNranks() const override {
     int worldSize;
     MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
     return worldSize;
   }
-  int getNranksPerNode() override {
+  int getNranksPerNode() const override {
     MPI_Comm shmcomm;
     MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
     int shmrank;
