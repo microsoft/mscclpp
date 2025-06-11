@@ -42,7 +42,7 @@ def put_test(num_threads_per_block, min_message_size, max_message_size):
         print(JSON())
 
 
-""" parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser()
 
 parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
 parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
@@ -50,5 +50,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-put_test(args.num_threads_per_block, args.min_message_size, args.max_message_size) """
-put_test(1024, 0, 2**64 - 1)  # Example call with default values
+put_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

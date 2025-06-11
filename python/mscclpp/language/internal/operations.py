@@ -381,7 +381,7 @@ class ReduceOperation(BaseOperation):
         if (
             isinstance(other, ReduceOperation)
             and (
-                self.name == Instruction.reduc
+                self.name == Instruction.reduce
                 or self.name == Instruction.reduce_packet
                 or self.name == Instruction.read_reduce
             )

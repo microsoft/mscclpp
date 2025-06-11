@@ -38,8 +38,9 @@ def reduce_send_packet_test(num_threads_per_block, min_message_size, max_message
                         [scratch_buffers[src_rank][1:2]],
                         tb=0,
                         dst_chunk=scratch_buffers[src_rank][2:3],
+                        packet=True
                     )
-                    ch.put(scratch_buffers[dst_rank][3:4], scratch_buffers[src_rank][2:3], tb=0)
+                    ch.put_packet(scratch_buffers[dst_rank][3:4], scratch_buffers[src_rank][2:3], tb=0)
                     ch.signal(tb=0, sync=SyncType.before)
                     ch.wait(tb=0, sync=SyncType.after)
 
