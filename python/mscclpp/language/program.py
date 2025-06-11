@@ -16,6 +16,7 @@ class MSCCLPPProgram:
         collective: Collective,
         num_ranks: int,
         protocol: str = "Simple",
+        instr_fusion: bool = True,
         reuse_resources: bool = False,
         num_threads_per_block: int = 1024,
         use_double_scratch_buffer: bool = False,
@@ -27,6 +28,7 @@ class MSCCLPPProgram:
         self.collective = collective
         self.num_ranks = num_ranks
         self.protocol = protocol
+        self.instr_fusion = instr_fusion
         self.reuse_resources = reuse_resources
         self.num_threads_per_block = num_threads_per_block
         self.use_double_scratch_buffer = use_double_scratch_buffer
@@ -70,8 +72,9 @@ class MSCCLPPProgram:
         self.gpus[rank].add_operation(tb, operation)
 
     def optimize_operations(self):
-        for gpu in self.gpus:
-            gpu.optimize_operations()
+        if self.instr_fusion:
+            for gpu in self.gpus:
+                gpu.optimize_operations()
 
     def to_json(self):
         json_obj = {
