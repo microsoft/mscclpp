@@ -29,13 +29,11 @@ std::string errorToString(enum ErrorCode error);
 class BaseError : public std::runtime_error {
  public:
   /// Constructor of BaseError.
-  ///
   /// @param message The error message.
   /// @param errorCode The error code.
   BaseError(const std::string& message, int errorCode);
 
   /// Constructor of BaseError.
-  ///
   /// @param errorCode The error code.
   explicit BaseError(int errorCode);
 
@@ -43,12 +41,10 @@ class BaseError : public std::runtime_error {
   virtual ~BaseError() = default;
 
   /// Get the error code.
-  ///
   /// @return The error code.
   int getErrorCode() const;
 
   /// Get the error message.
-  ///
   /// @return The error message.
   const char* what() const noexcept override;
 

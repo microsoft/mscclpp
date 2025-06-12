@@ -36,7 +36,7 @@ class NvlsConnection {
     friend class NvlsConnection;
   };
 
-  /// @brief bind the memory allocated via mscclpp::GpuBuffer to the multicast handle. The behavior
+  /// Bind memory allocated via mscclpp::GpuBuffer to the multicast handle. The behavior
   /// is undefined if the devicePtr is not allocated by mscclpp::GpuBuffer.
   /// @param devicePtr The device pointer returned by `mscclpp::GpuBuffer::data()`.
   /// @param size The bytes of the memory to bind to the multicast handle.
@@ -53,14 +53,12 @@ class NvlsConnection {
 class Communicator;
 
 /// Connect to NVLS on setup.
-///
-/// This function used to connect to NVLS on setup. NVLS collective using multicast operations to send/recv data.
-/// Here we need to put all involved ranks into the collective group.
-///
+/// This function is used to connect to NVLS on setup. NVLS collective uses multicast operations to send/recv data.
+/// All involved ranks must be included in the collective group.
 /// @param comm The communicator.
 /// @param allRanks The ranks of all processes involved in the collective.
-/// @param config The configuration for the local endpoint.
-/// @return std::shared_ptr<NvlsConnection> A shared pointer to the NVLS connection.
+/// @param bufferSize The size of the buffer for the connection.
+/// @return A shared pointer to the NVLS connection.
 std::shared_ptr<NvlsConnection> connectNvlsCollective(std::shared_ptr<Communicator> comm, std::vector<int> allRanks,
                                                       size_t bufferSize);
 

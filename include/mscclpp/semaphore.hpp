@@ -12,7 +12,7 @@
 
 namespace mscclpp {
 
-/// A base class for semaphores.
+/// Base class for semaphores.
 ///
 /// A semaphore is a synchronization mechanism that allows the local peer to wait for the remote peer to complete a
 /// data transfer. The local peer signals the remote peer that it has completed a data transfer by incrementing the
@@ -21,11 +21,10 @@ namespace mscclpp {
 /// the local peer that it has completed a data transfer by incrementing the remote peer's outbound semaphore ID and
 /// copying the incremented value to the local peer's inbound semaphore ID.
 ///
-/// @tparam InboundDeleter The deleter for inbound semaphore IDs. This is either `std::default_delete` for host memory
+/// @tparam InboundDeleter The deleter for inbound semaphore IDs. Either `std::default_delete` for host memory
 /// or CudaDeleter for device memory.
-/// @tparam OutboundDeleter The deleter for outbound semaphore IDs. This is either `std::default_delete` for host memory
+/// @tparam OutboundDeleter The deleter for outbound semaphore IDs. Either `std::default_delete` for host memory
 /// or CudaDeleter for device memory.
-///
 template <template <typename> typename InboundDeleter, template <typename> typename OutboundDeleter>
 class BaseSemaphore {
  protected:
@@ -33,25 +32,21 @@ class BaseSemaphore {
   std::shared_future<RegisteredMemory> remoteInboundSemaphoreIdsRegMem_;
 
   /// The inbound semaphore ID that is incremented by the remote peer and waited on by the local peer.
-  ///
-  /// The location of localInboundSemaphore_ can be either on the host or on the device.
+  /// The location can be either on the host or on the device.
   std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> localInboundSemaphore_;
 
   /// The expected inbound semaphore ID to be incremented by the local peer and compared to the
   /// localInboundSemaphore_.
-  ///
-  /// The location of expectedInboundSemaphore_ can be either on the host or on the device.
+  /// The location can be either on the host or on the device.
   std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> expectedInboundSemaphore_;
 
   /// The outbound semaphore ID that is incremented by the local peer and copied to the remote peer's
   /// localInboundSemaphore_.
-  ///
-  /// The location of outboundSemaphore_ can be either on the host or on the device.
+  /// The location can be either on the host or on the device.
   std::unique_ptr<uint64_t, OutboundDeleter<uint64_t>> outboundSemaphore_;
 
  public:
   /// Constructs a BaseSemaphore.
-  ///
   /// @param localInboundSemaphoreId The inbound semaphore ID
   /// @param expectedInboundSemaphoreId The expected inbound semaphore ID
   /// @param outboundSemaphoreId The outbound semaphore ID
@@ -63,7 +58,7 @@ class BaseSemaphore {
         outboundSemaphore_(std::move(outboundSemaphoreId)) {}
 };
 
-/// A semaphore for sending signals from the host to the device.
+/// Semaphore for sending signals from host to device.
 class Host2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, std::default_delete> {
  private:
   std::shared_ptr<Connection> connection_;
@@ -88,13 +83,12 @@ class Host2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, std::defau
   DeviceHandle deviceHandle();
 };
 
-/// A semaphore for sending signals from the local host to a remote host.
+/// Semaphore for sending signals from local host to remote host.
 class Host2HostSemaphore : public BaseSemaphore<std::default_delete, std::default_delete> {
  public:
   /// Constructor
   /// @param communicator The communicator.
-  /// @param connection The connection associated with this semaphore. Transport::CudaIpc is not allowed for
-  /// Host2HostSemaphore.
+  /// @param connection The connection associated with this semaphore. Transport::CudaIpc is not allowed.
   Host2HostSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
 
   /// Returns the connection.
@@ -116,7 +110,7 @@ class Host2HostSemaphore : public BaseSemaphore<std::default_delete, std::defaul
   std::shared_ptr<Connection> connection_;
 };
 
-/// A semaphore for sending signals from the local device to a peer device via a GPU thread.
+/// Semaphore for sending signals from local device to peer device via GPU thread.
 class MemoryDevice2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, detail::GpuDeleter> {
  public:
   /// Constructor.

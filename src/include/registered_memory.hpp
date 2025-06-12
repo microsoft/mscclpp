@@ -60,7 +60,7 @@ struct RegisteredMemory::Impl {
   int fileDesc = -1;
 
   Impl(void* data, size_t size, TransportFlags transports, Context::Impl& contextImpl);
-  /// Constructs a RegisteredMemory::Impl from a vector of data. The constructor should only be used for the remote
+  /// Constructs a RegisteredMemory::Impl from a vector of data. This constructor should only be used for remote
   /// memory.
   Impl(const std::vector<char>& data);
   ~Impl();

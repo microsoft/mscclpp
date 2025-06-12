@@ -12,7 +12,7 @@
 
 namespace mscclpp {
 
-/// Memory channel without specifying source/destination memory regions.
+/// Base memory channel without source/destination memory regions.
 struct BaseMemoryChannel {
  protected:
   std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore_;
@@ -33,9 +33,7 @@ struct BaseMemoryChannel {
   using DeviceHandle = BaseMemoryChannelDeviceHandle;
 
   /// Returns the device-side handle.
-  ///
   /// User should make sure the BaseMemoryChannel is not released when using the returned handle.
-  ///
   DeviceHandle deviceHandle() const;
 };
 
@@ -54,7 +52,7 @@ struct MemoryChannel : public BaseMemoryChannel {
   /// @param semaphore The semaphore used to synchronize the communication.
   /// @param dst Registered memory of the destination.
   /// @param src The source memory address.
-  /// @param packetBuffer A buffer used to store packets. @p packetBuffer is optional and if it is nullptr,
+  /// @param packetBuffer A buffer used to store packets. Optional; if nullptr,
   /// unpackPacket() and unpackPackets() methods are not available.
   MemoryChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, void* src,
                 void* packetBuffer = nullptr);
@@ -63,9 +61,7 @@ struct MemoryChannel : public BaseMemoryChannel {
   using DeviceHandle = MemoryChannelDeviceHandle;
 
   /// Returns the device-side handle.
-  ///
   /// User should make sure the MemoryChannel is not released when using the returned handle.
-  ///
   DeviceHandle deviceHandle() const;
 };
 

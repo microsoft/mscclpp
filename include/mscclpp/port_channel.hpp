@@ -14,7 +14,7 @@ namespace mscclpp {
 struct BasePortChannel;
 struct PortChannel;
 
-/// Base class for proxy services. Proxy services are used to proxy data between devices.
+/// Base class for proxy services used to proxy data between devices.
 class BaseProxyService {
  public:
   BaseProxyService() = default;
@@ -80,7 +80,7 @@ class ProxyService : public BaseProxyService {
   ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
 };
 
-/// Port channel without specifying source/destination memory regions.
+/// Base port channel without source/destination memory regions.
 struct BasePortChannel {
  protected:
   SemaphoreId semaphoreId_;
@@ -103,9 +103,7 @@ struct BasePortChannel {
   using DeviceHandle = BasePortChannelDeviceHandle;
 
   /// Returns the device-side handle.
-  ///
   /// User should make sure the BasePortChannel is not released when using the returned handle.
-  ///
   DeviceHandle deviceHandle() const;
 };
 
@@ -138,9 +136,7 @@ struct PortChannel : public BasePortChannel {
   using DeviceHandle = PortChannelDeviceHandle;
 
   /// Returns the device-side handle.
-  ///
   /// User should make sure the PortChannel is not released when using the returned handle.
-  ///
   DeviceHandle deviceHandle() const;
 };
 

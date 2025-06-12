@@ -51,7 +51,7 @@ struct Communicator::Impl {
   Impl(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<Context> context);
 
   // Set the last RecvItem for a {remoteRank, tag} pair.
-  // This is used to store the corresponding RecvItem of a future returned by recvMemory() or connect().
+  // Used to store the corresponding RecvItem of a future returned by recvMemory() or connect().
   void setLastRecvItem(int remoteRank, int tag, std::shared_ptr<BaseRecvItem> item);
 
   // Return the last RecvItem that is not ready.
