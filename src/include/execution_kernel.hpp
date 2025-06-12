@@ -228,13 +228,18 @@ MSCCLPP_DEVICE_INLINE void handleBarrier(const Operation& op) {
   syncer->sync(op.nThreadBlocks);
 }
 
+template <bool Relaxed = false>
 MSCCLPP_DEVICE_INLINE void handleSignal(const Operation& op) {
   int nChannels = op.nChannels;
   ChannelType chType = op.channelType;
   const uint8_t* channelIndex = op.channelIndexes;
   int tid = threadIdx.x;
   if (tid < nChannels && chType == ChannelType::MEMORY) {
-    memoryChannels_[channelIndex[tid]].signal();
+    if constexpr (Relaxed) {
+      memoryChannels_[channelIndex[tid]].relaxedSignal();
+    } else {
+      memoryChannels_[channelIndex[tid]].signal();
+    }
     return;
   }
   if (tid < nChannels && chType == ChannelType::PORT) {
@@ -242,13 +247,18 @@ MSCCLPP_DEVICE_INLINE void handleSignal(const Operation& op) {
   }
 }
 
+template <bool Relaxed = false>
 MSCCLPP_DEVICE_INLINE void handleWait(const Operation& op) {
   int nChannels = op.nChannels;
   ChannelType chType = op.channelType;
   const uint8_t* channelIndex = op.channelIndexes;
   int tid = threadIdx.x;
   if (tid < nChannels && chType == ChannelType::MEMORY) {
-    memoryChannels_[channelIndex[tid]].wait();
+    if constexpr (Relaxed) {
+      memoryChannels_[channelIndex[tid]].relaxedWait();
+    } else {
+      memoryChannels_[channelIndex[tid]].wait();
+    }
     return;
   }
   if (tid < nChannels && chType == ChannelType::PORT) {
@@ -265,19 +275,20 @@ MSCCLPP_DEVICE_INLINE void handleFlush(const Operation& op) {
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleGet(Operation* operation, void* input, void* output, void* scratch) {
-  uint32_t count = operation->nInputs;
-  uint32_t* sizes = operation->inputBufferSizes;
-  uint32_t* srcOffsets = operation->inputOffsets;
-  uint32_t* dstOffsets = operation->outputOffsets;
+template <bool ReuseScratch>
+MSCCLPP_DEVICE_INLINE void handleGet(const Operation& op, void* input, void* output, void* scratch, uint32_t offset,
+                                     uint32_t unitSize) {
+  const uint32_t count = op.nInputs;
+  const uint32_t* sizes = op.inputBufferSizes;
+  const uint32_t* srcOffsets = op.inputOffsets;
+  const uint32_t* dstOffsets = op.outputOffsets;
   for (int i = 0; i < count; i++) {
-    uint32_t dstOffset = dstOffsets[i];
-    uint32_t srcOffset = srcOffsets[i];
-    uint32_t size = sizes[i];
-    char* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[operation->inputBufferRefs[i].id]);
-    mscclpp::copy(
-        static_cast<char*>(getBuffer(input, output, scratch, operation->outputBufferRefs[i].type)) + srcOffset,
-        remoteMemory + dstOffset, size, threadIdx.x, blockDim.x);
+    uint32_t dstOffset = dstOffsets[i] + getOffset<ReuseScratch>(op.outputBufferRefs[i].type, offset);
+    uint32_t srcOffset = srcOffsets[i] + getOffset<ReuseScratch>(remoteBufferTypes_[op.inputBufferRefs[i].id], offset);
+    uint32_t size = min(sizes[i] - offset, unitSize);
+    char* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[op.inputBufferRefs[i].id]);
+    mscclpp::copy(static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[i].type)) + srcOffset,
+                  remoteMemory + dstOffset, size, threadIdx.x, blockDim.x);
   }
 }
 
@@ -324,8 +335,8 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
 }
 
 template <typename T, bool ReuseScratch, bool SendToRemote = true>
-MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(const Operation& op, void* input, void* output, void* scratch,
-                                                    uint32_t offset, uint32_t unitSize) {
+MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input, void* output, void* scratch,
+                                                uint32_t offset, uint32_t unitSize) {
   const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
   const uint32_t nInt4 = size / sizeof(int4);
   const uint32_t inputOffset4 =
@@ -535,59 +546,70 @@ MSCCLPP_DEVICE_INLINE void handleTransformToPacket(const Operation& op, void* in
   mscclpp::copyToPackets<PacketType>(dst, src, size, threadIdx.x, blockDim.x, flag_);
 }
 
-// template <typename T, bool SendToRemote = true>
-// MSCCLPP_DEVICE_INLINE void handleReduceSend(Operation* op, void* input, void* output, void* scratch) {
-//   const uint32_t size = op->size;
-//   const uint32_t nInt4 = size / sizeof(int4);
-//   int nSrcs = op->nInputs;
-//   int nOutChannels = op->nOutputs;
-//   uint32_t* inputOffsets = op->inputOffsets;
-//   uint32_t* outputOffsets = op->outputOffsets;
-//   T* input =
-//       getBuffer<T>(static_cast<T*>(src), static_cast<T*>(dst), static_cast<T*>(scratch), op->localInputBufferType);
-//   uint32_t srcOffsetByBytes = op->inputOffset;
+template <typename T, bool ReuseScratch, bool SendToRemote = true>
+MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, void* output, void* scratch,
+                                            uint32_t offset, uint32_t unitSize) {
+  const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  const uint32_t nInt4 = size / sizeof(int4);
+  int nInput = op.nInputs - 1;
+  int nOutput = op.nOutputs - 1;
+  const uint32_t* inputOffsets = op.inputOffsets + 1;
+  const uint32_t* outputOffsets = op.outputOffsets + 1;
+  const BufferRef* inputBufferRefs = op.inputBufferRefs + 1;
+  const BufferRef* outputBufferRefs = op.outputBufferRefs + 1;
+  uint32_t srcOffsetByBytes = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset);
+  uint32_t dstOffsetByBytes = op.outputOffsets[0] + getOffset<ReuseScratch>(op.outputBufferRefs[0].type, offset);
 
-//   const uint32_t srcOffset4 = op->inputOffset / sizeof(int4);
-//   const uint32_t dstOffset4 = op->outputOffset / sizeof(int4);
-//   int4* src4 = (int4*)src;
-//   int4* dst4 = (int4*)dst;
-//   int4* input4 = (int4*)input;  // need to fix
-//   for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
-//     int4 tmp = src4[srcOffset4 + idx];
-//     for (int index = 0; index < nSrcs; ++index) {
-//       size_t offset = inputOffsets[index] / sizeof(int4);
-//       int4 val = input4[offset + idx];
-//       tmp = add_vectors<T>(tmp, val);
-//     }
-//     dst4[dstOffset4 + idx] = tmp;
-//     if constexpr (SendToRemote) {
-//       for (int index = 0; index < nOutChannels; ++index) {
-//         size_t offset = outputOffsets[index] / sizeof(int4);
-//         void* remoteMemory = remoteMemoriesViaMemoryChan_[op->outputBufferIndexes[index]];
-//         mscclpp::write(remoteMemory, offset + idx, tmp);
-//       }
-//     }
-//   }
-//   // handle rest of data
-//   size_t processed = nInt4 * sizeof(int4);
-//   const size_t startIdx = (srcOffsetByBytes + processed) / sizeof(T);
-//   const size_t endIdx = (srcOffsetByBytes + size) / sizeof(T);
-//   for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
-//     T tmp = static_cast<T*>(src)[idx];
-//     for (int index = 0; index < nSrcs; ++index) {
-//       size_t offset = inputOffsets[index] / sizeof(T);
-//       tmp = add_elements(tmp, input[offset + idx]);
-//     }
-//     static_cast<T*>(dst)[idx] = tmp;
-//     if constexpr (SendToRemote) {
-//       for (int index = 0; index < nOutChannels; ++index) {
-//         size_t offset = outputOffsets[index] / sizeof(T);
-//         void* remoteMemory = remoteMemoriesViaMemoryChan_[op->outputBufferIndexes[index]];
-//         mscclpp::write<T>(remoteMemory, offset + idx, tmp);
-//       }
-//     }
-//   }
-// }
+  const uint32_t srcOffset4 = srcOffsetByBytes / sizeof(int4);
+  const uint32_t dstOffset4 = dstOffsetByBytes / sizeof(int4);
+  int4* src4 = (int4*)getBuffer(input, output, scratch, op.inputBufferRefs[0].type);
+  int4* dst4 = (int4*)getBuffer(input, output, scratch, op.outputBufferRefs[0].type);
+  for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
+    int4 tmp = src4[srcOffset4 + idx];
+    for (int index = 0; index < nInput; ++index) {
+      int4* buff4 = static_cast<int4*>(getBuffer(input, output, scratch, inputBufferRefs[index].type));
+      size_t buffOffset =
+          (inputOffsets[index] + getOffset<ReuseScratch>(outputBufferRefs[index].type, offset)) / sizeof(int4);
+      int4 val = buff4[buffOffset + idx];
+      tmp = add_vectors<T>(tmp, val);
+    }
+    dst4[dstOffset4 + idx] = tmp;
+    if constexpr (SendToRemote) {
+      for (int index = 0; index < nOutput; ++index) {
+        size_t outOffset =
+            (outputOffsets[index] + getOffset<ReuseScratch>(remoteBufferTypes_[outputBufferRefs[index].id], offset)) /
+            sizeof(int4);
+        void* remoteMemory = remoteMemoriesViaMemoryChan_[outputBufferRefs[index].id];
+        mscclpp::write(remoteMemory, outOffset + idx, tmp);
+      }
+    }
+  }
+  // handle rest of data
+  uint32_t processed = nInt4 * sizeof(int4);
+  const uint32_t startIdx = (srcOffsetByBytes + processed) / sizeof(T);
+  const uint32_t endIdx = (srcOffsetByBytes + size) / sizeof(T);
+  T* src = (T*)src4;
+  T* dst = (T*)dst4;
+  for (uint32_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
+    T tmp = src[idx];
+    for (int index = 0; index < nInput; ++index) {
+      T* buff = static_cast<T*>(getBuffer(input, output, scratch, inputBufferRefs[index].type));
+      uint32_t buffOffset =
+          (inputOffsets[index] + getOffset<ReuseScratch>(inputBufferRefs[index].type, offset)) / sizeof(T);
+      tmp = add_elements(tmp, buff[buffOffset + idx]);
+    }
+    dst[idx] = tmp;
+    if constexpr (SendToRemote) {
+      for (int index = 0; index < nOutput; ++index) {
+        uint32_t outOffset =
+            (outputOffsets[index] + getOffset<ReuseScratch>(remoteBufferTypes_[outputBufferRefs[index].id], offset)) /
+            sizeof(T);
+        void* remoteMemory = remoteMemoriesViaMemoryChan_[outputBufferRefs[index].id];
+        mscclpp::write<T>(remoteMemory, outOffset + idx, tmp);
+      }
+    }
+  }
+}
 
 template <bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* output, void* scratch, uint32_t offset,
@@ -692,6 +714,12 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   if (opType == OperationType::WAIT) {
     return handleWait(op);
   }
+  if (opType == OperationType::RELAXED_SIGNAL) {
+    return handleSignal<true>(op);
+  }
+  if (opType == OperationType::RELAXED_WAIT) {
+    return handleWait<true>(op);
+  }
   if (opType == OperationType::FLUSH) {
     return handleFlush(op);
   }
@@ -710,21 +738,21 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   if (opType == OperationType::READ_PUT_PACKET) {
     return handleReadPutPacket<PacketType>(op, scratch);
   }
-  // if (opType == OperationType::GET) {
-  //   return handleGet;
-  // }
+  if (opType == OperationType::GET) {
+    return handleGet<ReuseScratch>(op, input, output, scratch, offset, unitSize);
+  }
   if (opType == OperationType::READ_REDUCE_SEND) {
-    return handleReadReduceCopySend<T, ReuseScratch, true>(op, input, output, scratch, offset, unitSize);
+    return handleReadReduceSend<T, ReuseScratch, true>(op, input, output, scratch, offset, unitSize);
   }
   if (opType == OperationType::READ_REDUCE) {
-    return handleReadReduceCopySend<T, ReuseScratch, false>(op, input, output, scratch, offset, unitSize);
+    return handleReadReduceSend<T, ReuseScratch, false>(op, input, output, scratch, offset, unitSize);
   }
   if (opType == OperationType::COPY) {
     return handleCopy<ReuseScratch>(op, input, output, scratch, offset, unitSize);
   }
-  // if (opType == OperationType::REDUCE_SEND) {
-  //   return handleReduceSend<T>;
-  // }
+  if (opType == OperationType::REDUCE_SEND) {
+    return handleReduceSend<T, ReuseScratch>(op, input, output, scratch, offset, unitSize);
+  }
   if (opType == OperationType::REDUCE_SEND_PACKET) {
     return handleReduceSendPacket<T, PacketType>(op, input, output, scratch);
   }
