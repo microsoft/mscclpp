@@ -21,4 +21,12 @@ std::string getHostName(int maxlen, const char delim) {
   return hostname.substr(0, i);
 }
 
+SpinLock::SpinLock(std::atomic_flag& flag) : flag_(flag) {
+  while (flag_.test_and_set(std::memory_order_acq_rel)) {
+    // Spin until the lock is acquired.
+  }
+}
+
+SpinLock::~SpinLock() { flag_.clear(std::memory_order_release); }
+
 }  // namespace mscclpp

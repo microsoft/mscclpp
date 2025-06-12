@@ -35,6 +35,16 @@ std::string getIBDeviceName(Transport ibTransport);
 /// @return The InfiniBand transport associated with the specified device name.
 Transport getIBTransportByDeviceName(const std::string& ibDeviceName);
 
+/// A simple spinlock implementation using std::atomic_flag.
+/// It is used to protect shared resources in a multi-threaded environment.
+class SpinLock {
+ public:
+  SpinLock(std::atomic_flag& flag);
+  ~SpinLock();
+
+ private:
+  std::atomic_flag& flag_;
+};
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_UTILS_HPP_

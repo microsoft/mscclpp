@@ -48,6 +48,9 @@ class ProxyService : public BaseProxyService {
   MemoryId addMemory(RegisteredMemory memory);
 
   /// Unregister a memory region from the proxy service.
+  /// @note It is the caller’s responsibility to manage memory lifetimes safely.
+  ///       ProxyService only ensures that memory remains valid while it is in use by the service;
+  ///       other peers may still hold references to that memory beyond this scope.
   /// @param memoryId The ID of the memory region to unregister.
   void removeMemory(MemoryId memoryId);
 
@@ -79,8 +82,9 @@ class ProxyService : public BaseProxyService {
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
   std::set<MemoryId> reusableMemoryIds_;
-  int deviceNumaNode;
-  std::unordered_map<std::shared_ptr<Connection>, int> inflightRequests;
+  int deviceNumaNode_;
+  std::unordered_map<std::shared_ptr<Connection>, int> inflightRequests_;
+  std::atomic_flag lock_;
 
   void bindThread();
 

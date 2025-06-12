@@ -23,7 +23,8 @@ MSCCLPP_API_CPP ProxyService::ProxyService(size_t fifoSize)
                                      [&]() { bindThread(); }, fifoSize)) {
   int cudaDevice;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
-  deviceNumaNode = getDeviceNumaNode(cudaDevice);
+  deviceNumaNode_ = getDeviceNumaNode(cudaDevice);
+  inflightRequests_.reserve(32);  // Reserve to prevent frequent reallocations.
 }
 
 MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
@@ -50,6 +51,7 @@ MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {
 }
 
 MSCCLPP_API_CPP void ProxyService::removeMemory(MemoryId memoryId) {
+  SpinLock spin(lock_);
   if (reusableMemoryIds_.find(memoryId) != reusableMemoryIds_.end() || memoryId >= memories_.size()) {
     WARN("Attempted to remove a memory that is not registered or already removed: %u", memoryId);
     return;
@@ -75,9 +77,9 @@ MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_->start(); }
 MSCCLPP_API_CPP void ProxyService::stopProxy() { proxy_->stop(); }
 
 MSCCLPP_API_CPP void ProxyService::bindThread() {
-  if (deviceNumaNode >= 0) {
-    numaBind(deviceNumaNode);
-    INFO(MSCCLPP_INIT, "NUMA node of ProxyService proxy thread is set to %d", deviceNumaNode);
+  if (deviceNumaNode_ >= 0) {
+    numaBind(deviceNumaNode_);
+    INFO(MSCCLPP_INIT, "NUMA node of ProxyService proxy thread is set to %d", deviceNumaNode_);
   }
 }
 
@@ -89,23 +91,24 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
   int maxWriteQueueSize = semaphore->connection()->getMaxWriteQueueSize();
 
   if (trigger->fields.type & TriggerData) {
+    SpinLock spin(lock_);
     RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
     RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
     semaphore->connection()->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
                                    trigger->fields.size);
-    inflightRequests[semaphore->connection()]++;
+    inflightRequests_[semaphore->connection()]++;
   }
 
   if (trigger->fields.type & TriggerFlag) {
     semaphore->signal();
-    inflightRequests[semaphore->connection()]++;
+    inflightRequests_[semaphore->connection()]++;
   }
 
   if (trigger->fields.type & TriggerSync ||
-      (maxWriteQueueSize != -1 && inflightRequests[semaphore->connection()] > maxWriteQueueSize)) {
+      (maxWriteQueueSize != -1 && inflightRequests_[semaphore->connection()] > maxWriteQueueSize)) {
     semaphore->connection()->flush();
     result = ProxyHandlerResult::FlushFifoTailAndContinue;
-    inflightRequests[semaphore->connection()] = 0;
+    inflightRequests_[semaphore->connection()] = 0;
   }
 
   return result;
