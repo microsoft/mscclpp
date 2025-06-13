@@ -39,7 +39,7 @@ Transport getIBTransportByDeviceName(const std::string& ibDeviceName);
 /// It is used to protect shared resources in a multi-threaded environment.
 class SpinLock {
  public:
-  SpinLock(std::atomic_flag& flag);
+  SpinLock(std::atomic_flag& flag, bool yield = true);
   ~SpinLock();
 
  private:

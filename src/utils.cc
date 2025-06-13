@@ -21,9 +21,11 @@ std::string getHostName(int maxlen, const char delim) {
   return hostname.substr(0, i);
 }
 
-SpinLock::SpinLock(std::atomic_flag& flag) : flag_(flag) {
+SpinLock::SpinLock(std::atomic_flag& flag, bool yield) : flag_(flag) {
   while (flag_.test_and_set(std::memory_order_acq_rel)) {
-    // Spin until the lock is acquired.
+    if (yield) {
+      std::this_thread::yield();
+    }
   }
 }
 

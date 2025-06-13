@@ -28,16 +28,19 @@ MSCCLPP_API_CPP ProxyService::ProxyService(size_t fifoSize)
 
 MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
                                                                std::shared_ptr<Connection> connection) {
+  SpinLock spin(lock_);
   semaphores_.push_back(std::make_shared<Host2DeviceSemaphore>(communicator, connection));
   return semaphores_.size() - 1;
 }
 
 MSCCLPP_API_CPP SemaphoreId ProxyService::addSemaphore(std::shared_ptr<Host2DeviceSemaphore> semaphore) {
+  SpinLock spin(lock_);
   semaphores_.push_back(semaphore);
   return semaphores_.size() - 1;
 }
 
 MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {
+  SpinLock spin(lock_);
   if (!reusableMemoryIds_.empty()) {
     auto it = reusableMemoryIds_.begin();
     MemoryId memoryId = *it;
@@ -83,6 +86,7 @@ MSCCLPP_API_CPP void ProxyService::bindThread() {
 }
 
 ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
+  SpinLock spin(lock_, false);
   ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
   std::shared_ptr<Host2DeviceSemaphore> semaphore = semaphores_[trigger->fields.semaphoreId];
 
@@ -90,7 +94,6 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
   int maxWriteQueueSize = semaphore->connection()->getMaxWriteQueueSize();
 
   if (trigger->fields.type & TriggerData) {
-    SpinLock spin(lock_);
     RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
     RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
     semaphore->connection()->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
