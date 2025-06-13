@@ -58,9 +58,9 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::REDUCE_PACKET;
   } else if (str == "glres") {
     return mscclpp::OperationType::MULTI_LOAD_REDUCE_STORE;
-  } else if (str == "rsignal") {
+  } else if (str == "rlxsignal") {
     return mscclpp::OperationType::RELAXED_SIGNAL;
-  } else if (str == "rwait") {
+  } else if (str == "rlxwait") {
     return mscclpp::OperationType::RELAXED_WAIT;
   } else if (str == "pipeline") {
     return mscclpp::OperationType::PIPELINE;
@@ -150,9 +150,11 @@ std::vector<int> ExecutionPlan::Impl::getConnectedPeers() const {
       peers.insert(peer);
     }
   }
-  for (const auto& info : this->channelInfosByDstRank_.at(rank)) {
-    for (int peer : info.connectedPeers) {
-      peers.insert(peer);
+  if (this->channelInfosByDstRank_.find(rank) != this->channelInfosByDstRank_.end()) {
+    for (const auto& info : this->channelInfosByDstRank_.at(rank)) {
+      for (int peer : info.connectedPeers) {
+        peers.insert(peer);
+      }
     }
   }
   return std::vector<int>(peers.begin(), peers.end());
@@ -295,7 +297,7 @@ void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo
 
     if (chanType == ChannelType::SWITCH) {
       NvlsInfo info;
-      info.bufferType = convertToBufferType(channel["buff"]);
+      info.bufferType = convertToBufferType(channel["buffer_type"]);
       for (const auto& group : channel["rank_groups"]) {
         info.nChunks = (int)group["size"];
         info.ranks.clear();
