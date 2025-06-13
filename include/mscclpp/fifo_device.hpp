@@ -50,7 +50,7 @@ struct FifoDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   /// @return The new head of the FIFO.
   MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
-    uint64_t curFifoHead = atomicFetchAdd(this->head, (uint64_t)1, memoryOrderRelaxed);
+    uint64_t curFifoHead = atomicFetchAdd(head, (uint64_t)1, memoryOrderRelaxed);
 
     // make the last bit intentionally non-zero so that we can safely poll. Don't worry, we will change it back in host
     // side
@@ -61,13 +61,12 @@ struct FifoDeviceHandle {
     // for the second condition we need to read CPU memory.
     // As atomic access is slow, we first check using the bare pointer and then use the atomic load if the
     // condition is not met.
-    if (curFifoHead >= size + *(this->tailReplica)) {
-      OR_POLL_MAYBE_JAILBREAK((curFifoHead >= size + atomicLoad(this->tailReplica, memoryOrderRelaxed)),
-                              (atomicLoad(&(this->triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0),
-                              maxSpinCount);
+    if (curFifoHead >= size + *tailCache) {
+      OR_POLL_MAYBE_JAILBREAK((curFifoHead >= size + (*tailCache = atomicLoad(tail, memoryOrderRelaxed))),
+                              (atomicLoad(&(triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0), maxSpinCount);
     }
 
-    ProxyTrigger* triggerPtr = &(this->triggers[curFifoHead % size]);
+    ProxyTrigger* triggerPtr = &(triggers[curFifoHead % size]);
 
     // Make sure the data is visible to the host before we update the tail.
 #if defined(MSCCLPP_DEVICE_CUDA)
@@ -94,18 +93,20 @@ struct FifoDeviceHandle {
   MSCCLPP_DEVICE_INLINE void sync(uint64_t curFifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
     // Same as push but in this case checking the fist condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
-    OR_POLL_MAYBE_JAILBREAK((curFifoHead >= atomicLoad(this->tailReplica, memoryOrderRelaxed)),
-                            (atomicLoad(&(this->triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0),
-                            maxSpinCount);
+    OR_POLL_MAYBE_JAILBREAK((curFifoHead >= (*tailCache = atomicLoad(tail, memoryOrderRelaxed))),
+                            (atomicLoad(&(triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0), maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
-  /// The FIFO buffer that is allocated on the host via `cudaHostAlloc()`.
+  /// The FIFO buffer on the host.
   ProxyTrigger* triggers;
-  /// Replica of the FIFO tail.
-  uint64_t* tailReplica;
   /// The FIFO head. Allocated on the device and only accessed by the device.
   uint64_t* head;
+  /// The FIFO tail. Refers to the original tail on the host when `env()->fifoUseTailReplica` is false,
+  /// otherwise refers to the tail replica on the device.
+  uint64_t* tail;
+  /// Cached value of tail.
+  uint64_t* tailCache;
   /// The FIFO size.
   int size;
 };
