@@ -14,6 +14,7 @@ struct Fifo::Impl {
   detail::UniqueGpuHostPtr<ProxyTrigger> triggers;
   detail::UniqueGpuPtr<uint64_t> head;
   detail::UniqueGpuPtr<uint64_t> tailReplica;
+  detail::UniqueGpuPtr<uint64_t> tailCache;
   const int size;
 
   // The original tail of this fifo allocated on the host. If a tail replica is used
@@ -27,6 +28,7 @@ struct Fifo::Impl {
       : triggers(detail::gpuCallocHostUnique<ProxyTrigger>(size)),
         head(detail::gpuCallocUnique<uint64_t>()),
         tailReplica(env()->fifoUseTailReplica ? detail::gpuCallocUnique<uint64_t>() : nullptr),
+        tailCache(detail::gpuCallocUnique<uint64_t>()),
         size(size),
         hostTail(env()->fifoUseTailReplica ? std::make_shared<uint64_t>(0) : detail::gpuCallocHostShared<uint64_t>()),
         stream(cudaStreamNonBlocking) {}
@@ -75,8 +77,8 @@ MSCCLPP_API_CPP FifoDeviceHandle Fifo::deviceHandle() const {
   FifoDeviceHandle deviceHandle;
   deviceHandle.triggers = pimpl->triggers.get();
   deviceHandle.head = pimpl->head.get();
-  // tailReplica refers to the original tail if `fifoUseTailReplica == false`.
-  deviceHandle.tailReplica = env()->fifoUseTailReplica ? pimpl->tailReplica.get() : pimpl->hostTail.get();
+  deviceHandle.tail = env()->fifoUseTailReplica ? pimpl->tailReplica.get() : pimpl->hostTail.get();
+  deviceHandle.tailCache = pimpl->tailCache.get();
   deviceHandle.size = pimpl->size;
   return deviceHandle;
 }
