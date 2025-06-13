@@ -20,7 +20,8 @@ MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_pt
 
 MSCCLPP_API_CPP ProxyService::ProxyService(size_t fifoSize)
     : proxy_(std::make_shared<Proxy>([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); },
-                                     [&]() { bindThread(); }, fifoSize)) {
+                                     [&]() { bindThread(); }, fifoSize)),
+      lock_(false) {
   int cudaDevice;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
   deviceNumaNode_ = getDeviceNumaNode(cudaDevice);
