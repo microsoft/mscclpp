@@ -1,200 +1,65 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" MSCCLPP_VERSION_CONTENT)
-if(MSCCLPP_VERSION_CONTENT MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
-    set(MSCCLPP_MAJOR "${CMAKE_MATCH_1}")
-    set(MSCCLPP_MINOR "${CMAKE_MATCH_2}")
-    set(MSCCLPP_PATCH "${CMAKE_MATCH_3}")
-else()
-    message(FATAL_ERROR "VERSION file must be in the format MAJOR.MINOR.PATCH")
-endif()
-
-set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})
-set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
-
 cmake_minimum_required(VERSION 3.25)
-project(mscclpp LANGUAGES CXX)
+
+# Read version from file
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" MSCCLPP_VERSION)
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" _ ${MSCCLPP_VERSION})
+set(MSCCLPP_MAJOR ${CMAKE_MATCH_1})
+set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})
+
+project(mscclpp VERSION ${MSCCLPP_VERSION} LANGUAGES CXX)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
-# Options
+# Build options
 option(MSCCLPP_ENABLE_TRACE "Enable tracing" OFF)
 option(MSCCLPP_BUILD_TESTS "Build tests" ON)
 option(MSCCLPP_BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(MSCCLPP_BUILD_APPS_NCCL "Build NCCL interfaces" ON)
-option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA." OFF)
-option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
-option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
+option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA" OFF)
+option(MSCCLPP_USE_ROCM "Use AMD/ROCm" OFF)
+option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check" OFF)
 option(MSCCLPP_NPKIT_FLAGS "Set NPKIT flags" OFF)
-set(MSCCLPP_GPU_ARCHS "" CACHE STRING "Specify GPU architectures with delimiters (comma, space, or semicolon).")
+option(MSCCLPP_SUPPRESS_EXTERNAL_WARNINGS "Suppress warnings from external dependencies" ON)
+set(MSCCLPP_GPU_ARCHS "" CACHE STRING "GPU architectures (comma/space/semicolon separated)")
 
-if(MSCCLPP_BYPASS_GPU_CHECK)
-    if(MSCCLPP_USE_CUDA)
-        message(STATUS "Bypassing GPU check: using NVIDIA/CUDA.")
-        find_package(CUDAToolkit REQUIRED)
-    elseif(MSCCLPP_USE_ROCM)
-        message(STATUS "Bypassing GPU check: using AMD/ROCm.")
-        # Temporal fix for rocm5.6
-        set(CMAKE_PREFIX_PATH "/opt/rocm;${CMAKE_PREFIX_PATH}")
-        find_package(hip REQUIRED)
-    else()
-        message(FATAL_ERROR "Bypassing GPU check: neither NVIDIA/CUDA nor AMD/ROCm is specified.")
-    endif()
-else()
-    # Detect GPUs
-    include(CheckNvidiaGpu)
-    include(CheckAmdGpu)
-    if(NVIDIA_FOUND AND AMD_FOUND)
-        message(STATUS "Detected NVIDIA/CUDA and AMD/ROCm: prioritizing NVIDIA/CUDA.")
-        set(MSCCLPP_USE_CUDA ON)
-        set(MSCCLPP_USE_ROCM OFF)
-    elseif(NVIDIA_FOUND)
-        message(STATUS "Detected NVIDIA/CUDA.")
-        set(MSCCLPP_USE_CUDA ON)
-        set(MSCCLPP_USE_ROCM OFF)
-    elseif(AMD_FOUND)
-        message(STATUS "Detected AMD/ROCm.")
-        set(MSCCLPP_USE_CUDA OFF)
-        set(MSCCLPP_USE_ROCM ON)
-    else()
-        message(FATAL_ERROR "Neither NVIDIA/CUDA nor AMD/ROCm is found.")
-    endif()
-endif()
+# Set compiler flags
+include(CompilerFlags)
 
-if(MSCCLPP_GPU_ARCHS)
-    # Remove any leading/trailing whitespace
-    string(STRIP "${MSCCLPP_GPU_ARCHS}" MSCCLPP_GPU_ARCHS)
-
-    # Split the string into a list
-    string(REPLACE " " ";" MSCCLPP_GPU_ARCHS "${MSCCLPP_GPU_ARCHS}")
-    string(REPLACE "," ";" MSCCLPP_GPU_ARCHS "${MSCCLPP_GPU_ARCHS}")
-
-    # Check if the list is empty
-    if(NOT MSCCLPP_GPU_ARCHS)
-        message(FATAL_ERROR "MSCCLPP_GPU_ARCHS is given empty. Please specify GPU architectures or do not set MSCCLPP_GPU_ARCHS.")
-    endif()
-elseif(MSCCLPP_USE_CUDA)
-    # CUDA 11 or higher is required
-    if(CUDAToolkit_VERSION_MAJOR LESS 11)
-        message(FATAL_ERROR "CUDA 11 or higher is required but detected ${CUDAToolkit_VERSION}")
-    endif()
-
-    # Ampere architecture
-    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 11)
-        set(MSCCLPP_GPU_ARCHS 80)
-    endif()
-
-    # Hopper architecture
-    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12)
-        set(MSCCLPP_GPU_ARCHS ${MSCCLPP_GPU_ARCHS} 90)
-    endif()
-
-    # Blackwell architecture
-    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12 AND CUDAToolkit_VERSION_MINOR GREATER_EQUAL 8)
-        set(MSCCLPP_GPU_ARCHS ${MSCCLPP_GPU_ARCHS} 100)
-    endif()
-elseif(MSCCLPP_USE_ROCM)
-    set(CMAKE_HIP_ARCHITECTURES gfx90a gfx941 gfx942)
-endif()
-
-message(STATUS "GPU architectures: ${MSCCLPP_GPU_ARCHS}")
-
-# Declare project
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
-if(MSCCLPP_USE_CUDA)
-    set(CMAKE_CUDA_STANDARD 17)
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall,-Wextra")
-    enable_language(CUDA)
-
-    set(CMAKE_CUDA_ARCHITECTURES ${MSCCLPP_GPU_ARCHS})
-
-    set(GPU_LIBRARIES CUDA::cudart CUDA::cuda_driver)
-    set(GPU_INCLUDE_DIRS ${CUDAToolkit_INCLUDE_DIRS})
-else()
-    set(CMAKE_HIP_STANDARD 17)
-    set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -Wall -Wextra")
-
-    set(CMAKE_HIP_ARCHITECTURES ${MSCCLPP_GPU_ARCHS})
-
-    set(GPU_LIBRARIES hip::device)
-    set(GPU_INCLUDE_DIRS ${hip_INCLUDE_DIRS})
-endif()
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  add_compile_definitions(DEBUG_BUILD)
-endif()
+# GPU detection and configuration
+include(ConfigureGpu)
 
 # Format targets
-include(${PROJECT_SOURCE_DIR}/cmake/AddFormatTargets.cmake)
+include(AddFormatTargets)
 
-find_package(IBVerbs)
-find_package(NUMA REQUIRED)
-find_package(Threads REQUIRED)
+# External dependencies
+include(ExternalDependencies)
 
-include(FetchContent)
-FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
-FetchContent_MakeAvailable(json)
+# Core library configuration
+include(LibraryTargets)
 
-add_library(mscclpp_obj OBJECT)
-target_include_directories(mscclpp_obj
-    SYSTEM PRIVATE
-    ${GPU_INCLUDE_DIRS}
-    ${NUMA_INCLUDE_DIRS})
-target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} nlohmann_json::nlohmann_json Threads::Threads dl)
-if(IBVERBS_FOUND)
-    target_include_directories(mscclpp_obj SYSTEM PRIVATE ${IBVERBS_INCLUDE_DIRS})
-    target_link_libraries(mscclpp_obj PRIVATE ${IBVERBS_LIBRARIES})
-    target_compile_definitions(mscclpp_obj PUBLIC USE_IBVERBS)
-endif()
-set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
-if(MSCCLPP_USE_CUDA)
-    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_CUDA)
-elseif(MSCCLPP_USE_ROCM)
-    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_ROCM)
-endif()
-if(MSCCLPP_ENABLE_TRACE)
-    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_ENABLE_TRACE)
-endif()
-if(MSCCLPP_NPKIT_FLAGS)
-    target_compile_definitions(mscclpp_obj PRIVATE ${MSCCLPP_NPKIT_FLAGS})
-endif()
-
-# libmscclpp
-add_library(mscclpp SHARED)
-target_link_libraries(mscclpp PUBLIC mscclpp_obj)
-set_target_properties(mscclpp PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
-add_library(mscclpp_static STATIC)
-target_link_libraries(mscclpp_static PUBLIC mscclpp_obj)
-set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
-
+# Add source directories
 add_subdirectory(include)
 add_subdirectory(src)
 
-if("${INSTALL_PREFIX}" STREQUAL "")
-    set(INSTALL_PREFIX "./")
-endif()
+# Installation
+set(INSTALL_PREFIX "./" CACHE STRING "Installation prefix")
+install(TARGETS mscclpp_obj FILE_SET HEADERS DESTINATION ${INSTALL_PREFIX}/include)
+install(TARGETS mscclpp LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
+install(TARGETS mscclpp_static ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
 
-install(TARGETS mscclpp_obj
-    FILE_SET HEADERS DESTINATION ${INSTALL_PREFIX}/include)
-install(TARGETS mscclpp
-    LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
-install(TARGETS mscclpp_static
-    ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
-
-# Tests
+# Optional components
 if(MSCCLPP_BUILD_TESTS)
-    enable_testing() # Called here to allow ctest from the build directory
+    enable_testing()
     add_subdirectory(test)
 endif()
 
-# Python bindings
 if(MSCCLPP_BUILD_PYTHON_BINDINGS)
     add_subdirectory(python)
 endif()
 
-# NCCL interfaces
 if(MSCCLPP_BUILD_APPS_NCCL)
     add_subdirectory(apps/nccl)
 endif()

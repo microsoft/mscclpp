@@ -60,8 +60,3 @@ The executor is a versatile tool designed to specify how mscclpp executes algori
 
 Decision Flowchart for Message Size-Based Algorithm Execution
 ```
-
-This is an example of executing the interface with the executor:
-``` bash
-mpirun -np 8 -x MSCCLPP_EXECUTION_PLAN_DIR=/root/azure-mscclpp/nccl/test/execution-files ./apps/nccl/test/nccl_api_test
-```
