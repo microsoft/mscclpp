@@ -13,9 +13,8 @@ void register_fifo(nb::module_& m) {
 
   nb::class_<FifoDeviceHandle>(m, "FifoDeviceHandle")
       .def_rw("triggers", &FifoDeviceHandle::triggers)
-      .def_rw("tail_replica", &FifoDeviceHandle::tail)
       .def_rw("tail", &FifoDeviceHandle::tail)
-      .def_rw("tail_cache", &FifoDeviceHandle::tail)
+      .def_rw("tail_cache", &FifoDeviceHandle::tailCache)
       .def_rw("head", &FifoDeviceHandle::head)
       .def_rw("size", &FifoDeviceHandle::size)
       .def_prop_ro("raw", [](const FifoDeviceHandle& self) -> nb::bytes {
@@ -26,7 +25,6 @@ void register_fifo(nb::module_& m) {
       .def(nb::init<int>(), nb::arg("size") = DEFAULT_FIFO_SIZE)
       .def("poll", &Fifo::poll)
       .def("pop", &Fifo::pop)
-      .def("flush_tail", &Fifo::flushTail, nb::arg("sync") = false)
       .def("size", &Fifo::size)
       .def("device_handle", &Fifo::deviceHandle);
 }

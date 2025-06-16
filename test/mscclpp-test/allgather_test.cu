@@ -574,7 +574,7 @@ mscclpp::ProxyHandlerResult AllGatherProxyService::handleTrigger(mscclpp::ProxyT
       conn->flush();
     }
   }
-  return mscclpp::ProxyHandlerResult::FlushFifoTailAndContinue;
+  return mscclpp::ProxyHandlerResult::Continue;
 }
 
 class AllGatherTestColl : public BaseTestColl {
