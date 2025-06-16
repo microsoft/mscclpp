@@ -17,8 +17,9 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
         collective,
         gpu_size,
         protocol="LL",
+        instr_fusion=True,
         num_threads_per_block=num_threads_per_block,
-        use_double_scratch_buffer=False,
+        use_double_scratch_buffer=True,
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
@@ -104,3 +105,5 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 args = parser.parse_args()
 
 allreduce_example(args.name, args.num_gpus, args.num_threads_per_block, args.min_message_size, args.max_message_size)
+
+""" allreduce_example("allreduce", 4, 1024, 0, 2**64 - 1) """

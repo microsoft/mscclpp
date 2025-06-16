@@ -502,14 +502,14 @@ class GroupLoadReduce(BaseOperation):
             and self.channel_ids == other.channel_ids
             and self.channel_type == other.channel_type
         ):
-            fused_operation = ReduceOperation(
-                self.local_src_buff + other.local_src_buff[1:],
-                self.local_dst_buff,
-                remote_src_buff=self.remote_src_buff + other.remote_src_buff,
-                channel_ids=self.channel_ids + other.channel_ids,
+            fused_operation = GroupLoadReduceStore(
+                buffer_type=self.buffer_type,
+                size=self.size,
+                src_index=[self.buffer_offset],
+                dst_index=[other.buffer_offset],
+                channel_ids=self.channel_ids,
                 channel_type=self.channel_type,
                 reduce_operation=self.reduce_operation,
-                packet=self.packet,
             )
 
         return fused_operation
@@ -535,8 +535,7 @@ class GroupStore(BaseOperation):
         buffer_offset: int,
         size: int,
         channel_ids: List[int] = [],
-        channel_type: ChannelType = ChannelType.switch,
-        reduce_operation: ReduceOperationType = ReduceOperationType.sum,
+        channel_type: ChannelType = ChannelType.switch
     ):
         self.name = Instruction.group_store
         self.src_chunk = src_chunk
@@ -545,7 +544,6 @@ class GroupStore(BaseOperation):
         self.size = size
         self.channel_ids = channel_ids
         self.channel_type = channel_type
-        self.reduce_operation = reduce_operation
 
     def __add__(self, other):
         return None
@@ -558,7 +556,6 @@ class GroupStore(BaseOperation):
         result["size"] = self.size
         result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
-        result["reduce_op"] = self.reduce_operation.value
         return result
 
 
@@ -588,11 +585,12 @@ class GroupLoadReduceStore(BaseOperation):
 
     def to_json(self):
         result = {"name": self.name.value}
-        result["buffer_type"] = self.buffer_type.value
-        result["size"] = self.size
-        result["src_index"] = self.src_index
-        result["dst_index"] = self.dst_index
-        result["channel_ids"] = self.channel_ids
+        result["src_buff"] = []
+        for i in range(len(self.src_index)):
+            result["src_buff"].append({"switch_channel_id": self.channel_ids[i], "index": self.src_index[i],"size": self.size})
+        result["dst_buff"] = []
+        for i in range(len(self.dst_index)):
+            result["dst_buff"].append({"switch_channel_id": self.channel_ids[i], "index": self.src_index[i],"size": self.size})
         result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
         return result

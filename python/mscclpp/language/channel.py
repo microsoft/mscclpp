@@ -124,7 +124,7 @@ class Channel:
             )
 
         remote_chunk = RemoteBuffer(src_chunk.rank, dst_chunk.rank, dst_chunk.buffer, self.channel_type)
-        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
+        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
@@ -372,7 +372,7 @@ class PortChannel:
 
 @dataclass
 class SwitchChannel:
-    __channel_counts = defaultdict(lambda: defaultdict(int))
+    __channel_counts = defaultdict(int)
 
     def __init__(self, rank_list: List[int], buffer_type: BufferType):
         num_ranks = get_program().num_ranks
@@ -383,8 +383,8 @@ class SwitchChannel:
         for rank in rank_list:
             if rank >= num_ranks:
                 raise RuntimeError(f"Rank {rank} is out of bounds. Number of ranks: {num_ranks}")
-            self.channel_ids[rank] = SwitchChannel.__channel_counts[rank][buffer_type]
-            SwitchChannel.__channel_counts[rank][buffer_type] += 1
+            self.channel_ids[rank] = SwitchChannel.__channel_counts[rank]
+            SwitchChannel.__channel_counts[rank] += 1
 
         self.channel_type = ChannelType.switch
         self.buffer_type = buffer_type
@@ -392,7 +392,13 @@ class SwitchChannel:
 
         get_program().add_channel(self)
 
-    def group_load_reduce(self, buffer_offset, size, dst_chunk: Chunk, tb, reduce_op=ReduceOperationType.sum):
+    def at_rank(self, rank):
+        if rank not in self.rank_group.ranks:
+            raise RuntimeError(f"Rank {rank} is not part of this SwitchChannel's rank group.")
+        return SwitchChannel.SwitchChannelRankView(self, rank)
+
+    def group_load_reduce(self, rank, buffer_offset, size, dst_chunk: Chunk, tb, reduce_op=ReduceOperationType.sum):
+        self.src_rank = rank
         if dst_chunk.rank not in self.rank_group.ranks:
             raise RuntimeError(
                 f"Destination chunk rank {dst_chunk.rank} is not part of the rank group {self.rank_group.ranks}."
@@ -413,19 +419,19 @@ class SwitchChannel:
                     get_program().gpus[rank].scratch_chunks = buffer_offset + size
 
         tb_channel_ids = get_program().setup_channel(tb, self)
-        for i in range(len(self.rank_group.ranks)):
-            op = GroupLoadReduce(
-                self.buffer_type,
-                buffer_offset,
-                size,
-                dst_chunk,
-                [tb_channel_ids[i]],
-                self.channel_type,
-                reduce_op,
-            )
-            get_program().add_operation(self.rank_group.ranks[i], tb, op)
+        op = GroupLoadReduce(
+            self.buffer_type,
+            buffer_offset,
+            size,
+            dst_chunk,
+            tb_channel_ids,
+            self.channel_type,
+            reduce_op,
+        )
+        get_program().add_operation(self.src_rank, tb, op)
 
-    def group_store(self, src_chunk: Chunk, buffer_offset, size, tb, reduce_op=ReduceOperationType.sum):
+    def group_store(self, rank, src_chunk: Chunk, buffer_offset, size, tb):
+        self.src_rank = rank
         if src_chunk.rank not in self.rank_group.ranks:
             raise RuntimeError(
                 f"Destination chunk rank {src_chunk.rank} is not part of the rank group {self.rank_group.ranks}."
@@ -446,14 +452,23 @@ class SwitchChannel:
                     get_program().gpus[rank].scratch_chunks = buffer_offset + size
 
         tb_channel_ids = get_program().setup_channel(tb, self)
-        for i in range(len(self.rank_group.ranks)):
-            op = GroupStore(
-                src_chunk,
-                self.buffer_type,
-                buffer_offset,
-                size,
-                [tb_channel_ids[i]],
-                self.channel_type,
-                reduce_op,
-            )
-            get_program().add_operation(self.rank_group.ranks[i], tb, op)
+        op = GroupStore(
+            src_chunk,
+            self.buffer_type,
+            buffer_offset,
+            size,
+            tb_channel_ids,
+            self.channel_type
+        )
+        get_program().add_operation(self.src_rank, tb, op)
+
+    class SwitchChannelRankView:
+        def __init__(self, channel, rank):
+            self._channel: SwitchChannel = channel
+            self._rank: int = rank
+
+        def group_load_reduce(self, buffer_offset, size, dst_chunk: Chunk, tb, reduce_op=ReduceOperationType.sum):
+            return self._channel.group_load_reduce(self._rank, buffer_offset, size, dst_chunk, tb, reduce_op)
+
+        def group_store(self, src_chunk: Chunk, buffer_offset, size, tb):
+            return self._channel.group_store(self._rank, src_chunk, buffer_offset, size, tb)

@@ -33,7 +33,7 @@ class Gpu:
 
         return self.threadblocks[tb].add_channel(channel)
 
-    def add_remote_buffer(self, tb: int, remote_buffer: RemoteBuffer) -> int:
+    def add_remote_buffer(self, tb: int, remote_buffer: RemoteBuffer, channel_access: ChannelType) -> int:
         if (remote_buffer.remote_rank, remote_buffer.type) not in self.remote_buffers:
             remote_buffer.set_id()
             self.remote_buffers[(remote_buffer.remote_rank, remote_buffer.type)] = remote_buffer
@@ -45,7 +45,7 @@ class Gpu:
         for i in range(len(self.threadblocks), tb + 1):
             self.threadblocks.append(ThreadBlock(self.id, i))
 
-        return self.threadblocks[tb].add_remote_buffer(remote_buffer)
+        return self.threadblocks[tb].add_remote_buffer(remote_buffer, channel_access)
 
     def add_operation(self, tb: int, operation: BaseOperation):
         for i in range(len(self.threadblocks), tb + 1):

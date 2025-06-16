@@ -58,15 +58,11 @@ class MSCCLPPProgram:
 
     def setup_channel(self, tb, channel):
         tb_channel_ids = []
-        if channel.channel_type == ChannelType.switch:
-            for gpu in channel.rank_group.ranks:
-                tb_channel_ids.append(self.gpus[gpu].setup_channel(tb, channel))
-        else:
-            tb_channel_ids.append(self.gpus[channel.src_rank].setup_channel(tb, channel))
+        tb_channel_ids.append(self.gpus[channel.src_rank].setup_channel(tb, channel))
         return tb_channel_ids
 
-    def setup_remote_chunk(self, rank, tb, remote_chunk: RemoteBuffer):
-        return self.gpus[rank].add_remote_buffer(tb, remote_chunk)
+    def setup_remote_chunk(self, rank, tb, remote_chunk: RemoteBuffer, channel_access: ChannelType):
+        return self.gpus[rank].add_remote_buffer(tb, remote_chunk, channel_access)
 
     def add_operation(self, rank, tb, operation):
         self.gpus[rank].add_operation(tb, operation)
