@@ -4,8 +4,6 @@
 #ifndef MSCCLPP_FIFO_HPP_
 #define MSCCLPP_FIFO_HPP_
 
-#include <cstdint>
-#include <functional>
 #include <memory>
 
 #include "fifo_device.hpp"
@@ -14,36 +12,29 @@ namespace mscclpp {
 
 constexpr size_t DEFAULT_FIFO_SIZE = 128;
 
-/// A class representing a host proxy FIFO that can consume work elements pushed by device threads.
+/// Host-side proxy FIFO for device-produced work elements.
 class Fifo {
  public:
-  /// Constructs a new Fifo object.
-  /// @param size The number of entires in the FIFO.
+  /// Construct a FIFO with a given number of entries.
+  /// @param size Number of entries (default: 128).
   Fifo(int size = DEFAULT_FIFO_SIZE);
 
-  /// Destroys the Fifo object.
+  /// Destructor.
   ~Fifo();
 
-  /// Polls the FIFO for a trigger.
-  ///
-  /// Returns ProxyTrigger which is the trigger at the head of fifo.
+  /// Poll and get the trigger at the head.
+  /// @return ProxyTrigger at the head of the FIFO.
   ProxyTrigger poll();
 
-  /// Pops a trigger from the FIFO.
+  /// Remove the head trigger.
   void pop();
 
-  /// Flushes the tail of the FIFO.
-  ///
-  /// @param sync If true, waits for the flush to complete before returning.
-  void flushTail(bool sync = false);
-
-  /// Return the FIFO size.
-  /// @return The FIFO size.
+  /// Get FIFO size.
+  /// @return Number of entries in the FIFO.
   int size() const;
 
-  /// Returns a FifoDeviceHandle object representing the device FIFO.
-  ///
-  /// @return A FifoDeviceHandle object representing the device FIFO.
+  /// Get device-side FIFO handle.
+  /// @return FifoDeviceHandle for device access.
   FifoDeviceHandle deviceHandle() const;
 
  private:

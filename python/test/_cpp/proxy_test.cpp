@@ -57,7 +57,7 @@ class MyProxyService {
       semaphores_[nghr]->signal();
       connections_[nghr]->flush();
     }
-    return mscclpp::ProxyHandlerResult::FlushFifoTailAndContinue;
+    return mscclpp::ProxyHandlerResult::Continue;
   }
 
   void start() { proxy_.start(); }

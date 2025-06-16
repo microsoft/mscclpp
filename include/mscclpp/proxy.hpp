@@ -11,48 +11,44 @@
 
 namespace mscclpp {
 
-/// Possible return values of a ProxyHandler.
+/// Return values for ProxyHandler.
 enum class ProxyHandlerResult {
-  /// Move to the next trigger in the FIFO.
+  /// Move to next trigger in FIFO.
   Continue,
-  /// Flush the FIFO and continue to the next trigger.
-  FlushFifoTailAndContinue,
-  /// Stop the proxy and exit.
+  /// Stop and exit proxy.
   Stop,
 };
 
 class Proxy;
 
-/// Type of handler function for the proxy.
+/// Handler function type for proxy.
 using ProxyHandler = std::function<ProxyHandlerResult(ProxyTrigger)>;
 
 /// Host-side proxy for PortChannels.
 class Proxy {
  public:
-  /// Constructor of Proxy.
-  /// @param handler The handler function to be called for each trigger in the FIFO.
-  /// @param threadInit Optional function to be called in the proxy thread before starting the FIFO consumption.
-  /// @param fifoSize The size of the FIFO. Default is DEFAULT_FIFO_SIZE.
+  /// Proxy constructor.
+  /// @param handler Handler for each FIFO trigger.
+  /// @param threadInit Optional function run in proxy thread before FIFO consumption.
+  /// @param fifoSize FIFO size (default: DEFAULT_FIFO_SIZE).
   Proxy(ProxyHandler handler, std::function<void()> threadInit, size_t fifoSize = DEFAULT_FIFO_SIZE);
 
-  /// Constructor of Proxy.
-  /// @param handler The handler function to be called for each trigger in the FIFO.
-  /// @param fifoSize The size of the FIFO. Default is DEFAULT_FIFO_SIZE.
+  /// Proxy constructor.
+  /// @param handler Handler for each FIFO trigger.
+  /// @param fifoSize FIFO size (default: DEFAULT_FIFO_SIZE).
   Proxy(ProxyHandler handler, size_t fifoSize = DEFAULT_FIFO_SIZE);
 
-  /// Destructor of Proxy.
-  /// This will stop the proxy if it is running.
+  /// Destructor. Stops proxy if running.
   ~Proxy();
 
-  /// Start the proxy.
+  /// Start proxy.
   void start();
 
-  /// Stop the proxy.
+  /// Stop proxy.
   void stop();
 
-  /// This is a concurrent fifo which is multiple threads from the device
-  /// can produce for and the sole proxy thread consumes it.
-  /// @return A reference to the FIFO object used by the proxy.
+  /// Get reference to FIFO used by proxy.
+  /// @return Reference to FIFO.
   Fifo& fifo();
 
  private:

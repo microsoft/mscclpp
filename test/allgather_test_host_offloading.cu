@@ -169,7 +169,7 @@ class MyProxyService {
       }
       flusher++;
     }
-    return mscclpp::ProxyHandlerResult::FlushFifoTailAndContinue;
+    return mscclpp::ProxyHandlerResult::Continue;
   }
 
   void start() { proxy_.start(); }
