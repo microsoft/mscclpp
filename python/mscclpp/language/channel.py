@@ -61,7 +61,7 @@ class Channel:
             )
 
         remote_chunk = RemoteBuffer(dst_chunk.rank, src_chunk.rank, src_chunk.buffer, self.channel_type)
-        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
+        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = GetOperation(
@@ -93,7 +93,7 @@ class Channel:
             )
 
         remote_chunk = RemoteBuffer(src_chunk.rank, dst_chunk.rank, dst_chunk.buffer, self.channel_type)
-        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
+        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
@@ -169,7 +169,7 @@ class Channel:
         remote_chunks = [
             RemoteChunk(
                 get_program().setup_remote_chunk(
-                    self.src_rank, tb, RemoteBuffer(local_src_chunk.rank, chunk.rank, chunk.buffer, self.channel_type)
+                    self.src_rank, tb, RemoteBuffer(local_src_chunk.rank, chunk.rank, chunk.buffer, self.channel_type), self.channel_type
                 ),
                 chunk.index,
                 chunk.size,
@@ -267,7 +267,7 @@ class PortChannel:
             )
 
         remote_chunk = RemoteBuffer(src_chunk.rank, dst_chunk.rank, dst_chunk.buffer, self.channel_type)
-        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
+        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
@@ -294,7 +294,7 @@ class PortChannel:
             )
 
         remote_chunk = RemoteBuffer(src_chunk.rank, dst_chunk.rank, dst_chunk.buffer, self.channel_type)
-        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
+        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
@@ -322,7 +322,7 @@ class PortChannel:
             )
 
         remote_chunk = RemoteBuffer(src_chunk.rank, dst_chunk.rank, dst_chunk.buffer, self.channel_type)
-        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
+        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
@@ -355,7 +355,7 @@ class PortChannel:
             )
 
         remote_chunk = RemoteBuffer(src_chunk.rank, dst_chunk.rank, dst_chunk.buffer, self.channel_type)
-        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk)
+        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(

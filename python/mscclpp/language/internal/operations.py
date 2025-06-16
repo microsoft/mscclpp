@@ -1,4 +1,4 @@
-from mscclpp.language.internal.types import ChannelType, Instruction, BufferType, ReduceOperationType, Chunk
+from mscclpp.language.internal.types import ChannelType, Instruction, BufferType, ReduceOperationType, Chunk, SyncType
 from dataclasses import dataclass
 from typing import List
 
