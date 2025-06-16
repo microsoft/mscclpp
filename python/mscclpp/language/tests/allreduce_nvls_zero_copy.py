@@ -33,31 +33,31 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
         for gpu in range(gpu_size):
             src_rank = gpu
             for peer in range(gpu_size):
-                    if peer != src_rank:
-                        dst_rank = peer
-                        channels[(dst_rank, src_rank)].signal(tb=0, relaxed=True)
+                if peer != src_rank:
+                    dst_rank = peer
+                    channels[(dst_rank, src_rank)].signal(tb=0, relaxed=True)
             for peer in range(gpu_size):
-                    if peer != src_rank:
-                        dst_rank = peer
-                        channels[(dst_rank, src_rank)].wait(tb=0, relaxed=True, sync=SyncType.after)
+                if peer != src_rank:
+                    dst_rank = peer
+                    channels[(dst_rank, src_rank)].wait(tb=0, relaxed=True, sync=SyncType.after)
 
         for gpu in range(gpu_size):
             buffer_offset = gpu
             rank = Rank(gpu)
             input_buffer = rank.get_input_buffer()
-            nvls_chan.at_rank(gpu).group_load_reduce(buffer_offset, 1, input_buffer[gpu: gpu + 1], 0)
-            nvls_chan.at_rank(gpu).group_store(input_buffer[gpu: gpu + 1], buffer_offset, 1, tb=0)
+            nvls_chan.at_rank(gpu).group_load_reduce(buffer_offset, 1, input_buffer[gpu : gpu + 1], 0)
+            nvls_chan.at_rank(gpu).group_store(input_buffer[gpu : gpu + 1], buffer_offset, 1, tb=0)
 
         for gpu in range(gpu_size):
             src_rank = gpu
             for peer in range(gpu_size):
-                    if peer != src_rank:
-                        dst_rank = peer
-                        channels[(dst_rank, src_rank)].signal(tb=0, sync=SyncType.before)
+                if peer != src_rank:
+                    dst_rank = peer
+                    channels[(dst_rank, src_rank)].signal(tb=0, sync=SyncType.before)
             for peer in range(gpu_size):
-                    if peer != src_rank:
-                        dst_rank = peer
-                        channels[(dst_rank, src_rank)].wait(tb=0)
+                if peer != src_rank:
+                    dst_rank = peer
+                    channels[(dst_rank, src_rank)].wait(tb=0)
 
         print(JSON())
 

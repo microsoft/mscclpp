@@ -535,7 +535,7 @@ class GroupStore(BaseOperation):
         buffer_offset: int,
         size: int,
         channel_ids: List[int] = [],
-        channel_type: ChannelType = ChannelType.switch
+        channel_type: ChannelType = ChannelType.switch,
     ):
         self.name = Instruction.group_store
         self.src_chunk = src_chunk
@@ -587,10 +587,14 @@ class GroupLoadReduceStore(BaseOperation):
         result = {"name": self.name.value}
         result["src_buff"] = []
         for i in range(len(self.src_index)):
-            result["src_buff"].append({"switch_channel_id": self.channel_ids[i], "index": self.src_index[i],"size": self.size})
+            result["src_buff"].append(
+                {"switch_channel_id": self.channel_ids[i], "index": self.src_index[i], "size": self.size}
+            )
         result["dst_buff"] = []
         for i in range(len(self.dst_index)):
-            result["dst_buff"].append({"switch_channel_id": self.channel_ids[i], "index": self.src_index[i],"size": self.size})
+            result["dst_buff"].append(
+                {"switch_channel_id": self.channel_ids[i], "index": self.src_index[i], "size": self.size}
+            )
         result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
         return result

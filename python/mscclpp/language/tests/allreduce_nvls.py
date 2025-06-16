@@ -27,11 +27,11 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
             rank = Rank(src_rank)
             input_buffer = rank.get_input_buffer()
             scratch_buffer = Buffer(src_rank, gpu_size)
-            
-            dst_chunk = scratch_buffer[0: gpu_size]
-            src_chunk = input_buffer[0: gpu_size]
+
+            dst_chunk = scratch_buffer[0:gpu_size]
+            src_chunk = input_buffer[0:gpu_size]
             rank.copy(dst_chunk, src_chunk, tb=0)
-            
+
             for peer in range(gpu_size):
                 if peer != src_rank:
                     dst_rank = peer
@@ -42,8 +42,8 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
         # do allreduce in scratch buffer
         buffer_offset = src_rank
         nvls_chan = SwitchChannel(rank_list=[gpu for gpu in range(gpu_size)], buffer_type=BufferType.scratch)
-        nvls_chan.group_load_reduce(buffer_offset, 1, input_buffer[gpu: gpu + 1], 0)
-        nvls_chan.group_store(input_buffer[gpu: gpu + 1], buffer_offset, 1, tb=0)
+        nvls_chan.group_load_reduce(buffer_offset, 1, input_buffer[gpu : gpu + 1], 0)
+        nvls_chan.group_store(input_buffer[gpu : gpu + 1], buffer_offset, 1, tb=0)
 
         for gpu in range(gpu_size):
             src_rank = gpu
@@ -56,9 +56,9 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
                     chan = Channel(dst_rank, src_rank)
                     chan.signal(tb=0, sync="before")
                     chan.wait(tb=0, sync="after")
-                    
-            dst_chunk = input_buffer[0: gpu_size]
-            src_chunk = scratch_buffer[0: gpu_size]
+
+            dst_chunk = input_buffer[0:gpu_size]
+            src_chunk = scratch_buffer[0:gpu_size]
             rank.copy(dst_chunk, src_chunk, tb=0)
 
         print(JSON())

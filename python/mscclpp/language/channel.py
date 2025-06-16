@@ -452,14 +452,7 @@ class SwitchChannel:
                     get_program().gpus[rank].scratch_chunks = buffer_offset + size
 
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = GroupStore(
-            src_chunk,
-            self.buffer_type,
-            buffer_offset,
-            size,
-            tb_channel_ids,
-            self.channel_type
-        )
+        op = GroupStore(src_chunk, self.buffer_type, buffer_offset, size, tb_channel_ids, self.channel_type)
         get_program().add_operation(self.src_rank, tb, op)
 
     class SwitchChannelRankView:

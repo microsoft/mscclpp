@@ -38,7 +38,9 @@ class ThreadBlock:
             )
 
         if remote_buffer.id not in self.__intra_remote_buffer_ids[access_channel_type]:
-            self.__intra_remote_buffer_ids[access_channel_type][remote_buffer.id] = len(self.__intra_remote_buffer_ids[access_channel_type])
+            self.__intra_remote_buffer_ids[access_channel_type][remote_buffer.id] = len(
+                self.__intra_remote_buffer_ids[access_channel_type]
+            )
             self.__remote_buffers[access_channel_type].remote_buffer_ids.append(remote_buffer.id)
         return self.__intra_remote_buffer_ids[access_channel_type][remote_buffer.id]
 

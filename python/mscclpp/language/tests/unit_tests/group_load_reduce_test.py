@@ -25,10 +25,10 @@ def group_load_reduce_test(num_threads_per_block, min_message_size, max_message_
         dst_chunk = Buffer(0, 2)
 
         ch = SwitchChannel(rank_list=[0, 1], buffer_type=BufferType.input)
-        ch.group_load_reduce(buffer_offset=0, size=1, tb=0, dst_chunk=dst_chunk[0:1])
+        ch.at_rank(0).group_load_reduce(buffer_offset=0, size=1, tb=0, dst_chunk=dst_chunk[0:1])
 
         ch = SwitchChannel(rank_list=[0, 2], buffer_type=BufferType.input)
-        ch.group_load_reduce(buffer_offset=0, size=1, tb=0, dst_chunk=dst_chunk[0:1])
+        ch.at_rank(0).group_load_reduce(buffer_offset=0, size=1, tb=0, dst_chunk=dst_chunk[0:1])
 
         print(JSON())
 
