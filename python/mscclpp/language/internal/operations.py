@@ -83,7 +83,11 @@ class CopyOperation(BaseOperation):
 @dataclass
 class SignalOperation(BaseOperation):
     def __init__(
-        self, channels_ids: List[int], channel_type: ChannelType, data_sync: SyncType = SyncType.none, relaxed: bool = False
+        self,
+        channels_ids: List[int],
+        channel_type: ChannelType,
+        data_sync: SyncType = SyncType.none,
+        relaxed: bool = False,
     ):
         if relaxed:
             self.name = Instruction.relaxed_signal
@@ -107,7 +111,9 @@ class SignalOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
                 relaxed=(self.name == Instruction.relaxed_signal),
             )
-        elif isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation):
+        elif (
+            isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation)
+        ):
             if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
                 self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
         elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
@@ -125,7 +131,11 @@ class SignalOperation(BaseOperation):
 @dataclass
 class WaitOperation(BaseOperation):
     def __init__(
-        self, channels_ids: List[int], channel_type: ChannelType, data_sync: SyncType = SyncType.none, relaxed: bool = False
+        self,
+        channels_ids: List[int],
+        channel_type: ChannelType,
+        data_sync: SyncType = SyncType.none,
+        relaxed: bool = False,
     ):
         if relaxed:
             self.name = Instruction.relaxed_wait
@@ -149,7 +159,9 @@ class WaitOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
                 relaxed=(self.name == Instruction.relaxed_wait),
             )
-        elif isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation):
+        elif (
+            isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation)
+        ):
             if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
                 self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
         elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
@@ -186,7 +198,7 @@ class BarrierOperation(BaseOperation):
         fused_operation = None
         if isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
-    
+
         return fused_operation
 
     def to_json(self):
@@ -223,7 +235,9 @@ class FlushOperation(BaseOperation):
                 channel_type=self.channel_type,
                 data_sync=self.data_sync | other.data_sync,
             )
-        elif isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation):
+        elif (
+            isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation)
+        ):
             if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
                 self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
         elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):

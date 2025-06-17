@@ -23,15 +23,20 @@ def fuse_instructions(operations):
 
     return fused_operations
 
+
 def adding_data_sync(operations):
     result_operations = []
     data_sync_operations = {Instruction.signal, Instruction.wait, Instruction.flush}
 
     for operation in operations:
-        if operation.name in data_sync_operations and (operation.data_sync == SyncType.before or operation.data_sync == SyncType.both):
+        if operation.name in data_sync_operations and (
+            operation.data_sync == SyncType.before or operation.data_sync == SyncType.both
+        ):
             result_operations.append(SyncOperation())
         result_operations.append(operation)
-        if operation.name in data_sync_operations and (operation.data_sync == SyncType.after or operation.data_sync == SyncType.both):
+        if operation.name in data_sync_operations and (
+            operation.data_sync == SyncType.after or operation.data_sync == SyncType.both
+        ):
             result_operations.append(SyncOperation())
 
     return result_operations

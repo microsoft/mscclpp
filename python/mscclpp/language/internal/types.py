@@ -22,14 +22,14 @@ class SyncType(Enum):
 
         map_num = {SyncType.none: 0, SyncType.before: 1, SyncType.after: 2, SyncType.both: 3}
         return list(map_num.keys())[map_num[self] | map_num[other]]
-    
+
     def __and__(self, other):
         if not isinstance(other, SyncType):
             return NotImplemented
 
         map_num = {SyncType.none: 0, SyncType.before: 1, SyncType.after: 2, SyncType.both: 3}
         return list(map_num.keys())[map_num[self] & map_num[other]]
-    
+
     def __xor__(self, other):
         if not isinstance(other, SyncType):
             return NotImplemented
