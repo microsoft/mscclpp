@@ -31,9 +31,9 @@ def put_with_signal_test(num_threads_per_block, min_message_size, max_message_si
                     dst_buff = rank.get_input_buffer()
                     ch = PortChannel(dst_rank, src_rank, ChannelType.port)
                     ch.signal(tb=0, relaxed=True)
-                    ch.wait(tb=0, sync=SyncType.after, relaxed=True)
+                    ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
                     ch.put(dst_buff[1:2], src_buff[0:1], tb=0, with_signal=True)
-                    ch.wait(tb=0, sync=SyncType.after)
+                    ch.wait(tb=0, data_sync=SyncType.after)
 
         print(JSON())
 

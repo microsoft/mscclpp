@@ -54,7 +54,6 @@ class ThreadBlock:
         self.ops = adding_data_sync(self.ops)
 
     def to_json(self) -> dict:
-        self.adding_data_sync()
         return {
             "id": self.id,
             "ops": [op.to_json() for op in self.ops],

@@ -57,6 +57,10 @@ class Gpu:
         for tb in self.threadblocks:
             tb.optimize_operations()
 
+    def adding_data_sync(self):
+        for tb in self.threadblocks:
+            tb.adding_data_sync()
+
     def to_json(self) -> dict:
         return {
             "id": self.id,

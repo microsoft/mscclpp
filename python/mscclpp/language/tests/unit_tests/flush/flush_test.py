@@ -23,7 +23,7 @@ def flush_test(num_threads_per_block, min_message_size, max_message_size):
         max_message_size=max_message_size,
     ):
         ch = PortChannel(1, 0)
-        ch.flush(tb=0, sync=SyncType.before)
+        ch.flush(tb=0, data_sync=SyncType.before)
 
         print(JSON())
 
