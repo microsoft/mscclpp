@@ -31,18 +31,18 @@ class ThreadBlock:
             self.__channels[channel.channel_type].channel_ids.append(channel_id)
         return self.__intra_channel_ids[channel.channel_type][channel_id]
 
-    def add_remote_buffer(self, remote_buffer: RemoteBuffer, access_channel_type: ChannelType) -> int:
+    def add_remote_buffer(self, remote_buffer_id: int, access_channel_type: ChannelType) -> int:
         if access_channel_type not in self.__remote_buffers:
             self.__remote_buffers[access_channel_type] = ThreadBlock.RemoteBuffer(
                 access_channel_type=access_channel_type
             )
 
-        if remote_buffer.id not in self.__intra_remote_buffer_ids[access_channel_type]:
-            self.__intra_remote_buffer_ids[access_channel_type][remote_buffer.id] = len(
+        if remote_buffer_id not in self.__intra_remote_buffer_ids[access_channel_type]:
+            self.__intra_remote_buffer_ids[access_channel_type][remote_buffer_id] = len(
                 self.__intra_remote_buffer_ids[access_channel_type]
             )
-            self.__remote_buffers[access_channel_type].remote_buffer_ids.append(remote_buffer.id)
-        return self.__intra_remote_buffer_ids[access_channel_type][remote_buffer.id]
+            self.__remote_buffers[access_channel_type].remote_buffer_ids.append(remote_buffer_id)
+        return self.__intra_remote_buffer_ids[access_channel_type][remote_buffer_id]
 
     def add_operation(self, op):
         self.ops.append(op)

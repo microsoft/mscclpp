@@ -197,14 +197,14 @@ class PortChannel:
         self.channel_type = ChannelType.port
         get_program().add_channel(self)
 
-    def signal(self, tb: int, data_sync: SyncType = SyncType.none, relaxed=False):
+    def signal(self, tb: int, data_sync: SyncType = SyncType.none):
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = SignalOperation(tb_channel_ids, self.channel_type, relaxed)
-        get_program().add_operation(self.src_rank, tb, data_sync, op)
+        op = SignalOperation(tb_channel_ids, self.channel_type, data_sync)
+        get_program().add_operation(self.src_rank, tb, op)
 
-    def wait(self, tb: int, data_sync: SyncType = SyncType.none, relaxed=False):
+    def wait(self, tb: int, data_sync: SyncType = SyncType.none):
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = WaitOperation(tb_channel_ids, self.channel_type, data_sync, relaxed)
+        op = WaitOperation(tb_channel_ids, self.channel_type, data_sync)
         get_program().add_operation(self.src_rank, tb, op)
 
     def flush(self, tb: int, data_sync: SyncType = SyncType.none):

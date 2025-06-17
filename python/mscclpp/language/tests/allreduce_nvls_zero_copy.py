@@ -39,7 +39,7 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
             for peer in range(gpu_size):
                 if peer != src_rank:
                     dst_rank = peer
-                    channels[(dst_rank, src_rank)].wait(tb=0, relaxed=True, sync=SyncType.after)
+                    channels[(dst_rank, src_rank)].wait(tb=0, relaxed=True, data_sync=SyncType.after)
 
         for gpu in range(gpu_size):
             buffer_offset = gpu
@@ -53,7 +53,7 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
             for peer in range(gpu_size):
                 if peer != src_rank:
                     dst_rank = peer
-                    channels[(dst_rank, src_rank)].signal(tb=0, sync=SyncType.before)
+                    channels[(dst_rank, src_rank)].signal(tb=0, data_sync=SyncType.before)
             for peer in range(gpu_size):
                 if peer != src_rank:
                     dst_rank = peer

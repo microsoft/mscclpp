@@ -125,21 +125,10 @@ class RemoteBuffer:
     def __init__(
         self, local_rank: int, remote_rank: int, type: BufferType, channel_access: ChannelType, set_id: bool = False
     ):
-        if set_id:
-            self.id = RemoteBuffer.__remote_buffer_count[local_rank]
-            RemoteBuffer.__remote_buffer_count[local_rank] += 1
-        else:
-            self.id = -1
-
         self.local_rank: int = local_rank
         self.remote_rank: int = remote_rank
         self.type: int = type
         self.channel_access: Set[ChannelType] = {channel_access}
-
-    def set_id(self):
-        if self.id == -1:
-            self.id = RemoteBuffer.__remote_buffer_count[self.local_rank]
-            RemoteBuffer.__remote_buffer_count[self.local_rank] += 1
 
     def to_json(self):
         return {

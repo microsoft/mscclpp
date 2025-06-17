@@ -10,7 +10,7 @@ from mscclpp.language.collectives import *
 
 
 def flush_test(num_threads_per_block, min_message_size, max_message_size):
-    gpus = 1
+    gpus = 2
     collective = TestCollective(gpus, 0, 0)
     with MSCCLPPProgram(
         "flush_test",
