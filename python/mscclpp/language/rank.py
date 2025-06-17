@@ -81,10 +81,15 @@ class Rank:
         get_program().add_operation(self.rank, tb, op)
 
     def barrier(self, tb_list: List[int]):
-        op = BarrierOperation(self.rank, tb_list)
-
-        for tb in tb_list:
-            get_program().add_operation(self.rank, tb, op)
+        if len(tb_list) == 0:
+            raise RuntimeError("Barrier requires at least thread block.")
+        elif len(tb_list) == 1:
+            op = SyncOperation()
+            get_program().add_operation(self.rank, tb_list[0], op)
+        else:
+            op = BarrierOperation(self.rank, tb_list)
+            for tb in tb_list:
+                get_program().add_operation(self.rank, tb, op)
 
 
 class BaseBuffer:

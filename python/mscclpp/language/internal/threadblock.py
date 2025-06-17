@@ -50,7 +50,11 @@ class ThreadBlock:
     def optimize_operations(self):
         self.ops = fuse_instructions(self.ops)
 
+    def adding_data_sync(self):
+        self.ops = adding_data_sync(self.ops)
+
     def to_json(self) -> dict:
+        self.adding_data_sync()
         return {
             "id": self.id,
             "ops": [op.to_json() for op in self.ops],

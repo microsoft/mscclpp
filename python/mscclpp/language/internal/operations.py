@@ -82,13 +82,16 @@ class CopyOperation(BaseOperation):
 
 @dataclass
 class SignalOperation(BaseOperation):
-    def __init__(self, channels_ids: List[int], channel_type: ChannelType, relaxed: bool = False):
+    def __init__(
+        self, channels_ids: List[int], channel_type: ChannelType, data_sync: SyncType = SyncType.none, relaxed: bool = False
+    ):
         if relaxed:
             self.name = Instruction.relaxed_signal
         else:
             self.name = Instruction.signal
         self.channel_ids = set(channels_ids)
         self.channel_type = channel_type
+        self.data_sync = data_sync
 
     def __add__(self, other):
         fused_operation = None
@@ -101,10 +104,14 @@ class SignalOperation(BaseOperation):
             fused_operation = SignalOperation(
                 channels_ids=self.channel_ids | other.channel_ids,
                 channel_type=self.channel_type,
+                data_sync=self.data_sync | other.data_sync,
                 relaxed=(self.name == Instruction.relaxed_signal),
             )
-        if isinstance(other, SyncOperation):
-            fused_operation = self
+        elif isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation):
+            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
+                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
+        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
+            self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
 
@@ -117,13 +124,16 @@ class SignalOperation(BaseOperation):
 
 @dataclass
 class WaitOperation(BaseOperation):
-    def __init__(self, channels_ids: List[int], channel_type: ChannelType, relaxed: bool = False):
+    def __init__(
+        self, channels_ids: List[int], channel_type: ChannelType, data_sync: SyncType = SyncType.none, relaxed: bool = False
+    ):
         if relaxed:
             self.name = Instruction.relaxed_wait
         else:
             self.name = Instruction.wait
         self.channel_ids = set(channels_ids)
         self.channel_type = channel_type
+        self.data_sync = data_sync
 
     def __add__(self, other):
         fused_operation = None
@@ -136,10 +146,14 @@ class WaitOperation(BaseOperation):
             fused_operation = WaitOperation(
                 channels_ids=self.channel_ids | other.channel_ids,
                 channel_type=self.channel_type,
+                data_sync=self.data_sync | other.data_sync,
                 relaxed=(self.name == Instruction.relaxed_wait),
             )
-        if isinstance(other, SyncOperation):
-            fused_operation = self
+        elif isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation):
+            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
+                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
+        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
+            self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
 
@@ -169,7 +183,11 @@ class BarrierOperation(BaseOperation):
         self.barrier_info = barrier_info
 
     def __add__(self, other):
-        return None
+        fused_operation = None
+        if isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation):
+            other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
+    
+        return fused_operation
 
     def to_json(self):
         result = {"name": self.name.value}
@@ -191,19 +209,25 @@ class BarrierOperation(BaseOperation):
 
 @dataclass
 class FlushOperation(BaseOperation):
-    def __init__(self, channels_ids: List[int], channel_type: ChannelType):
+    def __init__(self, channels_ids: List[int], channel_type: ChannelType, data_sync: SyncType = SyncType.none):
         self.name = Instruction.flush
         self.channel_ids = set(channels_ids)
         self.channel_type = channel_type
+        self.data_sync = data_sync
 
     def __add__(self, other):
         fused_operation = None
         if isinstance(other, FlushOperation) and self.channel_type == other.channel_type:
             fused_operation = FlushOperation(
-                channels_ids=self.channel_ids | other.channel_ids, channel_type=self.channel_type
+                channels_ids=self.channel_ids | other.channel_ids,
+                channel_type=self.channel_type,
+                data_sync=self.data_sync | other.data_sync,
             )
-        if isinstance(other, SyncOperation):
-            fused_operation = self
+        elif isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation):
+            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
+                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
+        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
+            self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
 

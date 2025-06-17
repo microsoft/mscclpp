@@ -24,31 +24,15 @@ class Channel:
         self.channel_type = ChannelType.memory
         get_program().add_channel(self)
 
-    def signal(self, tb: int, sync: SyncType = SyncType.none, relaxed=False):
-        if sync == SyncType.before:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
-
+    def signal(self, tb: int, data_sync: SyncType = SyncType.none, relaxed=False):
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = SignalOperation(tb_channel_ids, self.channel_type, relaxed)
+        op = SignalOperation(tb_channel_ids, self.channel_type, data_sync, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
-        if sync == SyncType.after:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
-
-    def wait(self, tb: int, sync: SyncType = SyncType.none, relaxed=False):
-        if sync == SyncType.before:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
-
+    def wait(self, tb: int, data_sync: SyncType = SyncType.none, relaxed=False):
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = WaitOperation(tb_channel_ids, self.channel_type, relaxed)
+        op = WaitOperation(tb_channel_ids, self.channel_type, data_sync, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
-
-        if sync == SyncType.after:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
 
     def get(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         if dst_chunk.rank != self.src_rank:
@@ -169,7 +153,10 @@ class Channel:
         remote_chunks = [
             RemoteChunk(
                 get_program().setup_remote_chunk(
-                    self.src_rank, tb, RemoteBuffer(local_src_chunk.rank, chunk.rank, chunk.buffer, self.channel_type), self.channel_type
+                    self.src_rank,
+                    tb,
+                    RemoteBuffer(local_src_chunk.rank, chunk.rank, chunk.buffer, self.channel_type),
+                    self.channel_type,
                 ),
                 chunk.index,
                 chunk.size,
@@ -210,47 +197,23 @@ class PortChannel:
         self.channel_type = ChannelType.port
         get_program().add_channel(self)
 
-    def signal(self, tb: int, sync: SyncType = SyncType.none, relaxed=False):
-        if sync == SyncType.before:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
-
+    def signal(self, tb: int, data_sync: SyncType = SyncType.none, relaxed=False):
         tb_channel_ids = get_program().setup_channel(tb, self)
         op = SignalOperation(tb_channel_ids, self.channel_type, relaxed)
-        get_program().add_operation(self.src_rank, tb, op)
+        get_program().add_operation(self.src_rank, tb, data_sync, op)
 
-        if sync == SyncType.after:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
-
-    def wait(self, tb: int, sync: SyncType = SyncType.none, relaxed=False):
-        if sync == SyncType.before:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
-
+    def wait(self, tb: int, data_sync: SyncType = SyncType.none, relaxed=False):
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = WaitOperation(tb_channel_ids, self.channel_type, relaxed)
+        op = WaitOperation(tb_channel_ids, self.channel_type, data_sync, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
-        if sync == SyncType.after:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
-
-    def flush(self, tb: int, sync: SyncType = SyncType.none):
+    def flush(self, tb: int, data_sync: SyncType = SyncType.none):
         if self.channel_type != ChannelType.port:
             raise RuntimeError(f"Flush operation is only supported for ChannelType.port.")
 
-        if sync == SyncType.before:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
-
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = FlushOperation(tb_channel_ids, self.channel_type)
+        op = FlushOperation(tb_channel_ids, self.channel_type, data_sync)
         get_program().add_operation(self.src_rank, tb, op)
-
-        if sync == SyncType.after:
-            sync_op = SyncOperation()
-            get_program().add_operation(self.src_rank, tb, sync_op)
 
     def put(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         if src_chunk.rank != self.src_rank:
